@@ -7,8 +7,10 @@ type SidePanelContextValue = {
   tabs: SidePanelTarget[];
   openTarget: (target: SidePanelTarget) => void;
   openEmpty: () => void;
+  toggleEmpty: () => void;
   closePanel: () => void;
   closeTarget: (key: string) => void;
+  replaceTarget: (key: string, target: SidePanelTarget) => void;
   setActiveKey: (key: string | null) => void;
 };
 
@@ -36,6 +38,18 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     setActiveKey(null);
   }, []);
 
+  const toggleEmpty = useCallback(() => {
+    setOpen((current) => {
+      if (current) {
+        setActiveKey(null);
+        setTabs([]);
+        return false;
+      }
+      setActiveKey(null);
+      return true;
+    });
+  }, []);
+
   const closePanel = useCallback(() => {
     setOpen(false);
     setActiveKey(null);
@@ -60,6 +74,12 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const replaceTarget = useCallback((key: string, target: SidePanelTarget) => {
+    const nextKey = sidePanelTargetKey(target);
+    setTabs((current) => current.map((candidate) => (sidePanelTargetKey(candidate) === key ? target : candidate)));
+    setActiveKey((currentActiveKey) => (currentActiveKey === key ? nextKey : currentActiveKey));
+  }, []);
+
   const value = useMemo<SidePanelContextValue>(() => ({
     activeKey,
     closePanel,
@@ -67,9 +87,11 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     open,
     openEmpty,
     openTarget,
+    replaceTarget,
     setActiveKey,
     tabs,
-  }), [activeKey, closePanel, closeTarget, open, openEmpty, openTarget, tabs]);
+    toggleEmpty,
+  }), [activeKey, closePanel, closeTarget, open, openEmpty, openTarget, replaceTarget, tabs, toggleEmpty]);
 
   return <SidePanelContext.Provider value={value}>{children}</SidePanelContext.Provider>;
 }

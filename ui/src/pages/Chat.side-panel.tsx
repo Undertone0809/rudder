@@ -1,7 +1,10 @@
+import { agentsApi } from "@/api/agents";
+import { authApi } from "@/api/auth";
 import { automationsApi } from "@/api/automations";
 import { chatsApi } from "@/api/chats";
 import { issuesApi } from "@/api/issues";
 import { organizationsApi } from "@/api/orgs";
+import { CommentThread } from "@/components/CommentThread";
 import { PriorityIcon } from "@/components/PriorityIcon";
 import { StatusBadge } from "@/components/StatusBadge";
 import { StatusIcon } from "@/components/StatusIcon";
@@ -9,13 +12,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useSidePanel } from "@/context/SidePanelContext";
+import { useOperatorDisplayName } from "@/hooks/useOperatorDisplayName";
 import { queryKeys } from "@/lib/queryKeys";
-import { Link } from "@/lib/router";
-import { sidePanelFullPageHref, sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
+import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
-import type { Automation, AutomationDetail, AutomationRunSummary, AutomationTrigger, Issue, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
+import type { Agent, Automation, AutomationDetail, AutomationRunSummary, AutomationTrigger, Issue, IssueComment, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ArrowLeft,
+  ArrowRight,
   Bot,
   CalendarClock,
   CheckCircle2,
@@ -23,18 +28,21 @@ import {
   ChevronRight,
   Circle,
   Compass,
+  ExternalLink,
   FileCode2,
   FileText,
   Folder,
+  Globe2,
   Image as ImageIcon,
   Loader2,
   MessageSquare,
   Pencil,
   Play,
   Plus,
+  RotateCw,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { createElement, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { formatAutomationTimestamp, runSourceLabel, runStatusTitle, summarizeTrigger } from "./AutomationDetail.parts";
 import { conversationDisplayTitle } from "./Chat.parts";
 
@@ -57,6 +65,16 @@ const CHAT_SIDE_PANEL_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([
   ".txt",
   ".text",
 ]);
+const CHAT_SIDE_PANEL_BROWSER_BLANK_URL = "about:blank";
+
+type BrowserWebviewElement = HTMLElement & {
+  canGoBack?: () => boolean;
+  canGoForward?: () => boolean;
+  getURL?: () => string;
+  goBack?: () => void;
+  goForward?: () => void;
+  reload?: () => void;
+};
 
 function LoadingPanelBody() {
   return (
@@ -72,6 +90,38 @@ function humanizeSidePanelToken(value: string | null | undefined, fallback = "-"
   const trimmed = value?.trim();
   if (!trimmed) return fallback;
   return trimmed.replace(/_/g, " ");
+}
+
+function createChatSidePanelBrowserTarget(url = CHAT_SIDE_PANEL_BROWSER_BLANK_URL): Extract<SidePanelTarget, { kind: "browser" }> {
+  return {
+    kind: "browser",
+    url,
+    label: chatSidePanelBrowserLabel(url),
+    tabId: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+  };
+}
+
+function chatSidePanelBrowserLabel(url: string) {
+  const trimmed = url.trim();
+  if (!trimmed || trimmed === CHAT_SIDE_PANEL_BROWSER_BLANK_URL) return "New tab";
+  if (trimmed.startsWith("data:")) return "Data URL";
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.hostname || parsed.protocol.replace(":", "") || "Browser";
+  } catch {
+    return trimmed;
+  }
+}
+
+function normalizeChatSidePanelBrowserUrl(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return CHAT_SIDE_PANEL_BROWSER_BLANK_URL;
+  if (/^(about|data|file|https?):/i.test(trimmed)) return trimmed;
+  if (/\s/.test(trimmed)) return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
+  if (/^(localhost|\d{1,3}(?:\.\d{1,3}){3})(:\d+)?(\/.*)?$/i.test(trimmed) || trimmed.includes(".")) {
+    return `https://${trimmed}`;
+  }
+  return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
 }
 
 function sidePanelDate(value: Date | string | null | undefined, fallback = "-") {
@@ -118,7 +168,7 @@ function SidePanelEmptyState({
       label: "Browser",
       description: "Keep a browser tab beside the current workspace.",
       icon: Compass,
-      target: { kind: "browser", url: "about:blank", label: "Browser" },
+      target: createChatSidePanelBrowserTarget(),
     },
     {
       label: "Library",
@@ -192,7 +242,7 @@ function SidePanelPlaceholderView({
       body: "Open a chat reference to compare messages beside the current workspace.",
       actions: [
         { label: "Issue", target: { kind: "placeholder", targetKind: "issue", label: "Issue" } as SidePanelTarget },
-        { label: "Browser", target: { kind: "browser", url: "about:blank", label: "Browser" } as SidePanelTarget },
+        { label: "Browser", target: createChatSidePanelBrowserTarget() as SidePanelTarget },
       ],
     },
   }[target.targetKind];
@@ -220,14 +270,26 @@ function SidePanelPlaceholderView({
 
 function ChatIssueSidePanelView({
   issue,
+  comments,
   commentId,
   onUpdate,
+  onAddComment,
   updating,
+  addingComment,
+  currentUserId,
+  agentMap,
+  operatorDisplayName,
 }: {
   issue: Issue;
+  comments: IssueComment[];
   commentId: string | null;
   onUpdate: (data: Record<string, unknown>) => Promise<Issue>;
+  onAddComment: (body: string, reopen?: boolean) => Promise<void>;
   updating: boolean;
+  addingComment: boolean;
+  currentUserId: string | null;
+  agentMap: Map<string, Agent>;
+  operatorDisplayName: string | null;
 }) {
   const [editing, setEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState(issue.title);
@@ -374,15 +436,32 @@ function ChatIssueSidePanelView({
       </section>
 
       <section className="flex min-h-[10rem] flex-1 flex-col py-4">
-        <h4 className="text-sm font-semibold text-foreground">Comment</h4>
-        <div className="mt-3 space-y-3 text-sm text-muted-foreground">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h4 className="text-sm font-semibold text-foreground">Comment</h4>
+          <span className="text-xs text-muted-foreground">
+            {addingComment ? "Posting..." : `${comments.filter((comment) => !comment.deletedAt).length}`}
+          </span>
+        </div>
+        <div className="mb-3 space-y-3 text-sm text-muted-foreground">
           {commentId ? (
             <div className="rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-2">
               Target comment: <span className="font-mono text-foreground">{commentId}</span>
             </div>
           ) : null}
-          <p>Open the full issue to review the complete comment thread and activity.</p>
         </div>
+        <CommentThread
+          comments={comments}
+          orgId={issue.orgId}
+          projectId={issue.projectId}
+          issueStatus={issue.status}
+          agentMap={agentMap}
+          currentUserId={currentUserId}
+          operatorDisplayName={operatorDisplayName}
+          hideHeading
+          emptyMessage="No comments yet."
+          draftKey={`rudder:side-panel-issue-comment-draft:${issue.id}`}
+          onAdd={onAddComment}
+        />
       </section>
     </div>
   );
@@ -669,18 +748,234 @@ function ChatSidePanelLibraryTreeNode({
   );
 }
 
+function ChatSidePanelBrowserView({
+  target,
+  targetKey,
+  onOpenTarget,
+  onReplaceTarget,
+}: {
+  target: Extract<SidePanelTarget, { kind: "browser" }>;
+  targetKey: string;
+  onOpenTarget: (target: SidePanelTarget) => void;
+  onReplaceTarget: (key: string, target: SidePanelTarget) => void;
+}) {
+  const webviewRef = useRef<BrowserWebviewElement | null>(null);
+  const [addressValue, setAddressValue] = useState(target.url === CHAT_SIDE_PANEL_BROWSER_BLANK_URL ? "" : target.url);
+  const [currentUrl, setCurrentUrl] = useState(target.url);
+  const [title, setTitle] = useState(target.label);
+  const [loading, setLoading] = useState(false);
+  const [navigationState, setNavigationState] = useState({ canGoBack: false, canGoForward: false });
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const isBlank = currentUrl === CHAT_SIDE_PANEL_BROWSER_BLANK_URL;
+
+  const updateNavigationState = useCallback(() => {
+    const webview = webviewRef.current;
+    setNavigationState({
+      canGoBack: Boolean(webview?.canGoBack?.()),
+      canGoForward: Boolean(webview?.canGoForward?.()),
+    });
+  }, []);
+
+  const replaceBrowserTarget = useCallback((nextUrl: string, nextTitle = chatSidePanelBrowserLabel(nextUrl)) => {
+    const nextTarget: Extract<SidePanelTarget, { kind: "browser" }> = {
+      ...target,
+      url: nextUrl,
+      label: nextTitle,
+    };
+    setCurrentUrl(nextUrl);
+    setTitle(nextTitle);
+    setAddressValue(nextUrl === CHAT_SIDE_PANEL_BROWSER_BLANK_URL ? "" : nextUrl);
+    onReplaceTarget(targetKey, nextTarget);
+  }, [onReplaceTarget, target, targetKey]);
+
+  useEffect(() => {
+    setCurrentUrl(target.url);
+    setTitle(target.label);
+    setAddressValue(target.url === CHAT_SIDE_PANEL_BROWSER_BLANK_URL ? "" : target.url);
+    setLoadError(null);
+    updateNavigationState();
+  }, [target.label, target.url, updateNavigationState]);
+
+  useEffect(() => {
+    const webview = webviewRef.current;
+    if (!webview || webview.tagName.toLowerCase() !== "webview") return undefined;
+
+    const handleStart = () => {
+      setLoading(true);
+      setLoadError(null);
+      updateNavigationState();
+    };
+    const handleStop = () => {
+      setLoading(false);
+      const nextUrl = webview.getURL?.();
+      if (nextUrl && nextUrl !== currentUrl) {
+        replaceBrowserTarget(nextUrl, chatSidePanelBrowserLabel(nextUrl));
+      }
+      updateNavigationState();
+    };
+    const handleNavigate = (event: Event) => {
+      const nextUrl = "url" in event && typeof event.url === "string" ? event.url : webview.getURL?.();
+      if (nextUrl) {
+        replaceBrowserTarget(nextUrl, chatSidePanelBrowserLabel(nextUrl));
+      }
+      updateNavigationState();
+    };
+    const handleTitle = (event: Event) => {
+      const nextTitle = "title" in event && typeof event.title === "string" && event.title.trim()
+        ? event.title.trim()
+        : chatSidePanelBrowserLabel(webview.getURL?.() ?? currentUrl);
+      setTitle(nextTitle);
+      onReplaceTarget(targetKey, { ...target, url: webview.getURL?.() ?? currentUrl, label: nextTitle });
+    };
+    const handleFail = (event: Event) => {
+      const errorDescription = "errorDescription" in event && typeof event.errorDescription === "string"
+        ? event.errorDescription
+        : "Could not load this page.";
+      setLoading(false);
+      if (errorDescription !== "ERR_ABORTED") setLoadError(errorDescription);
+      updateNavigationState();
+    };
+
+    webview.addEventListener("did-start-loading", handleStart);
+    webview.addEventListener("did-stop-loading", handleStop);
+    webview.addEventListener("did-navigate", handleNavigate);
+    webview.addEventListener("did-navigate-in-page", handleNavigate);
+    webview.addEventListener("page-title-updated", handleTitle);
+    webview.addEventListener("did-fail-load", handleFail);
+    updateNavigationState();
+
+    return () => {
+      webview.removeEventListener("did-start-loading", handleStart);
+      webview.removeEventListener("did-stop-loading", handleStop);
+      webview.removeEventListener("did-navigate", handleNavigate);
+      webview.removeEventListener("did-navigate-in-page", handleNavigate);
+      webview.removeEventListener("page-title-updated", handleTitle);
+      webview.removeEventListener("did-fail-load", handleFail);
+    };
+  }, [currentUrl, onReplaceTarget, replaceBrowserTarget, target, targetKey, updateNavigationState]);
+
+  const navigateTo = useCallback((nextValue: string) => {
+    const nextUrl = normalizeChatSidePanelBrowserUrl(nextValue);
+    setLoadError(null);
+    replaceBrowserTarget(nextUrl, chatSidePanelBrowserLabel(nextUrl));
+  }, [replaceBrowserTarget]);
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    navigateTo(addressValue);
+  };
+
+  const openExternal = () => {
+    if (isBlank) return;
+    window.open(currentUrl, "_blank", "noopener,noreferrer");
+  };
+
+  return (
+    <div className="flex min-h-full flex-col" data-testid="chat-side-panel-browser-view">
+      <div className="flex shrink-0 items-center gap-1 border-b border-[color:var(--border-soft)] bg-[color:var(--surface-panel)] px-2 py-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label="Back"
+          disabled={!navigationState.canGoBack}
+          onClick={() => webviewRef.current?.goBack?.()}
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label="Forward"
+          disabled={!navigationState.canGoForward}
+          onClick={() => webviewRef.current?.goForward?.()}
+        >
+          <ArrowRight className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label="Reload"
+          disabled={isBlank}
+          onClick={() => webviewRef.current?.reload?.()}
+        >
+          <RotateCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+        </Button>
+        <form className="min-w-0 flex-1" onSubmit={handleSubmit}>
+          <Input
+            aria-label="Browser URL"
+            value={addressValue}
+            onChange={(event) => setAddressValue(event.currentTarget.value)}
+            placeholder="Enter a URL"
+            className="h-8 rounded-[var(--radius-md)] bg-[color:var(--surface-inset)] font-mono text-xs"
+          />
+        </form>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label="Open new browser tab"
+          onClick={() => onOpenTarget(createChatSidePanelBrowserTarget())}
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label="Open browser page externally"
+          disabled={isBlank}
+          onClick={openExternal}
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col bg-[color:var(--surface-inset)]">
+        <div className="flex h-8 shrink-0 items-center gap-2 border-b border-[color:var(--border-soft)] px-3 text-xs text-muted-foreground">
+          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Globe2 className="h-3.5 w-3.5" />}
+          <span className="min-w-0 truncate">{isBlank ? "New tab" : title}</span>
+        </div>
+        {loadError ? (
+          <div role="alert" className="border-b border-destructive/25 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            {loadError}
+          </div>
+        ) : null}
+        {isBlank ? (
+          <div className="flex min-h-[44vh] flex-1 items-center justify-center px-6 text-center" data-testid="chat-side-panel-browser-start">
+            <div className="max-w-[18rem]">
+              <Globe2 className="mx-auto h-12 w-12 text-muted-foreground" />
+              <h3 className="mt-4 text-base font-semibold text-foreground">Start browsing</h3>
+              <p className="mt-2 text-sm text-muted-foreground">Enter a URL to open a page.</p>
+            </div>
+          </div>
+        ) : createElement("webview", {
+          ref: (node: BrowserWebviewElement | null) => {
+            webviewRef.current = node;
+          },
+          src: currentUrl,
+          className: "min-h-[52vh] flex-1 bg-[color:var(--surface-panel)]",
+          "data-testid": "chat-side-panel-browser-webview",
+          allowpopups: "true",
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function ChatSidePanel({
+  desktopWidth,
   target,
   selectedOrganizationId,
-  onClose,
 }: {
+  desktopWidth?: number;
   target?: SidePanelTarget | null;
   selectedOrganizationId: string | null | undefined;
-  onClose?: () => void;
 }) {
   const sidePanel = useSidePanel();
   const queryClient = useQueryClient();
-  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const operatorDisplayName = useOperatorDisplayName();
 
   useEffect(() => {
     if (!target) return;
@@ -690,6 +985,7 @@ export function ChatSidePanel({
   const visibleTabs = sidePanel.tabs;
   const activeTarget = useMemo(() => {
     if (visibleTabs.length === 0) return null;
+    if (sidePanel.activeKey === null) return null;
     if (sidePanel.activeKey) {
       const matchingTab = visibleTabs.find((candidate) => sidePanelTargetKey(candidate) === sidePanel.activeKey);
       if (matchingTab) return matchingTab;
@@ -710,12 +1006,40 @@ export function ChatSidePanel({
     queryFn: () => issuesApi.get(issueTarget!.issueId),
     enabled: !!issueTarget,
   });
+  const issueCommentsQuery = useQuery({
+    queryKey: queryKeys.issues.comments(issueTarget?.issueId ?? "__none__"),
+    queryFn: () => issuesApi.listComments(issueTarget!.issueId),
+    enabled: !!issueTarget,
+  });
+  const agentsQuery = useQuery({
+    queryKey: queryKeys.agents.list(selectedOrganizationId ?? "__none__"),
+    queryFn: () => agentsApi.list(selectedOrganizationId!),
+    enabled: !!selectedOrganizationId && !!issueTarget,
+  });
+  const sessionQuery = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+    enabled: !!issueTarget,
+  });
   const updateIssueMutation = useMutation({
     mutationFn: ({ issueId, data }: { issueId: string; data: Record<string, unknown> }) =>
       issuesApi.update(issueId, data),
     onSuccess: (updatedIssue) => {
       queryClient.setQueryData(queryKeys.issues.detail(updatedIssue.id), updatedIssue);
       void queryClient.invalidateQueries({ queryKey: ["issues"] });
+      void queryClient.invalidateQueries({ queryKey: ["messenger"] });
+    },
+  });
+  const addIssueCommentMutation = useMutation({
+    mutationFn: ({ issueId, body, reopen }: { issueId: string; body: string; reopen?: boolean }) =>
+      issuesApi.addComment(issueId, body, reopen),
+    onSuccess: (comment, variables) => {
+      queryClient.setQueryData(queryKeys.issues.comment(variables.issueId, comment.id), comment);
+      queryClient.setQueryData(queryKeys.issues.comments(variables.issueId), (current: IssueComment[] | undefined) =>
+        current ? [...current, comment] : [comment],
+      );
+      void queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(variables.issueId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.issues.comments(variables.issueId) });
       void queryClient.invalidateQueries({ queryKey: ["messenger"] });
     },
   });
@@ -771,9 +1095,11 @@ export function ChatSidePanel({
       || (libraryFileTarget && libraryFileQuery.isPending)
       || (libraryDirectoryTarget && libraryDirectoryQuery.isPending),
   );
-  const error = issueQuery.error ?? chatQuery.error ?? chatMessagesQuery.error ?? automationQuery.error ?? automationRunsQuery.error ?? libraryFileQuery.error ?? libraryDirectoryQuery.error;
-  const fullPageHref = activeTarget ? sidePanelFullPageHref(activeTarget) : null;
+  const error = issueQuery.error ?? issueCommentsQuery.error ?? agentsQuery.error ?? sessionQuery.error ?? chatQuery.error ?? chatMessagesQuery.error ?? automationQuery.error ?? automationRunsQuery.error ?? libraryFileQuery.error ?? libraryDirectoryQuery.error;
   const issue = issueTarget ? issueQuery.data : null;
+  const issueComments = issueTarget ? (issueCommentsQuery.data ?? []) : [];
+  const currentUserId = sessionQuery.data?.user?.id ?? sessionQuery.data?.session?.userId ?? null;
+  const agentMap = new Map((agentsQuery.data ?? []).map((agent) => [agent.id, agent]));
   const chat = chatTarget ? chatQuery.data : null;
   const chatMessages = chatTarget ? (chatMessagesQuery.data ?? []) : [];
   const automation = automationTarget ? automationQuery.data : null;
@@ -782,11 +1108,6 @@ export function ChatSidePanel({
   const libraryDirectory = libraryDirectoryTarget ? libraryDirectoryQuery.data : null;
   const activeTargetKey = activeTarget ? sidePanelTargetKey(activeTarget) : "empty";
 
-  const closePanel = () => {
-    sidePanel.closePanel();
-    onClose?.();
-  };
-
   const openSidePanelTarget = (nextTarget: SidePanelTarget) => sidePanel.openTarget(nextTarget);
 
   const closeSidePanelTab = (tab: SidePanelTarget) => sidePanel.closeTarget(sidePanelTargetKey(tab));
@@ -794,18 +1115,6 @@ export function ChatSidePanel({
   const libraryDirectoryEntries = libraryDirectory?.entries ?? [];
   const libraryDirectoryFileCount = libraryDirectoryEntries.filter((entry) => !entry.isDirectory).length;
   const libraryDirectoryFolderCount = libraryDirectoryEntries.length - libraryDirectoryFileCount;
-  const addTabTargets: Array<{ label: string; icon: typeof Compass; target: SidePanelTarget }> = [
-    { label: "Issue", icon: Circle, target: { kind: "placeholder", targetKind: "issue", label: "Issue" } },
-    { label: "Automation", icon: Bot, target: { kind: "placeholder", targetKind: "automation", label: "Automation" } },
-    { label: "Library", icon: Folder, target: { kind: "library_directory", directoryPath: "", label: "Library" } },
-    { label: "Chat", icon: MessageSquare, target: { kind: "placeholder", targetKind: "chat", label: "Chat" } },
-    { label: "Browser", icon: Compass, target: { kind: "browser", url: "about:blank", label: "Browser" } },
-  ];
-  const addSidePanelTab = (nextTarget: SidePanelTarget) => {
-    openSidePanelTarget(nextTarget);
-    setAddMenuOpen(false);
-  };
-
   const isMobile = typeof window !== "undefined" && window.matchMedia?.("(max-width: 767px)").matches;
 
   return (
@@ -818,6 +1127,7 @@ export function ChatSidePanel({
           ? "fixed inset-x-3 bottom-3 top-[4.75rem] z-40"
           : "md:w-[min(420px,36vw)]",
       )}
+      style={!isMobile && desktopWidth ? { width: desktopWidth } : undefined}
       aria-label="Side Panel"
     >
       <div className={cn(
@@ -874,36 +1184,13 @@ export function ChatSidePanel({
               type="button"
               data-testid="chat-side-panel-add-tab"
               aria-label="Add Side Panel tab"
-              aria-haspopup="menu"
-              aria-expanded={addMenuOpen}
               className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-              onClick={() => setAddMenuOpen((value) => !value)}
+              onClick={sidePanel.openEmpty}
             >
               <Plus className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
-        {addMenuOpen ? (
-          <div
-            role="menu"
-            aria-label="Add Side Panel tab"
-            data-testid="chat-side-panel-add-menu"
-            className="absolute right-2 top-9 z-50 w-44 rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-panel)] p-1 shadow-[var(--shadow-lg)]"
-          >
-            {addTabTargets.map(({ label, icon: Icon, target }) => (
-              <button
-                key={label}
-                type="button"
-                role="menuitem"
-                className="flex w-full items-center gap-2 rounded-[var(--radius-md)] px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-[color:var(--surface-active)]"
-                onClick={() => addSidePanelTab(target)}
-              >
-                <Icon className="h-3.5 w-3.5 text-muted-foreground" />
-                <span>{label}</span>
-              </button>
-            ))}
-          </div>
-        ) : null}
       </div>
       <div className="workspace-main-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]">
         <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-4 py-4">
@@ -918,9 +1205,21 @@ export function ChatSidePanel({
           ) : issueTarget && issue ? (
             <ChatIssueSidePanelView
               issue={issue}
+              comments={issueComments}
               commentId={issueTarget.commentId}
               updating={updateIssueMutation.isPending}
+              addingComment={addIssueCommentMutation.isPending}
+              currentUserId={currentUserId}
+              agentMap={agentMap}
+              operatorDisplayName={operatorDisplayName}
               onUpdate={(data) => updateIssueMutation.mutateAsync({ issueId: issue.id, data })}
+              onAddComment={async (body, reopen) => {
+                await addIssueCommentMutation.mutateAsync({
+                  issueId: issue.id,
+                  body,
+                  ...(reopen === undefined ? {} : { reopen }),
+                });
+              }}
             />
           ) : automationTarget && automation ? (
             <ChatAutomationSidePanelView
@@ -993,16 +1292,6 @@ export function ChatSidePanel({
             <p className="text-sm text-muted-foreground">Open this target in the full page for details.</p>
           )}
         </div>
-      </div>
-      <div className="workspace-main-card flex shrink-0 items-center justify-between gap-3 rounded-[var(--desktop-workspace-radius)] px-3 py-2">
-        <div className="min-w-0 text-xs text-muted-foreground">
-          {activeTarget ? "Panel comments and quick actions stay here." : "Select a target to start working."}
-        </div>
-        {fullPageHref ? (
-          <Link to={fullPageHref} className="inline-flex h-8 shrink-0 items-center rounded-[var(--radius-sm)] px-2.5 text-xs text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground">
-            Full page
-          </Link>
-        ) : null}
       </div>
     </aside>
   );

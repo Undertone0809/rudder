@@ -61,6 +61,11 @@ import { WorktreeBanner } from "./WorktreeBanner";
 const INSTANCE_SETTINGS_MEMORY_KEY = "rudder.lastInstanceSettingsPath";
 const LAST_WORKSPACE_PATH_KEY = "rudder.lastWorkspacePath";
 const WORKSPACE_COLUMN_WIDTH_KEY_PREFIX = "rudder.workspace.contextWidth";
+const SIDE_PANEL_WIDTH_KEY = "rudder.workspace.sidePanelWidth";
+const SIDE_PANEL_DEFAULT_WIDTH = 420;
+const SIDE_PANEL_MIN_WIDTH = 340;
+const SIDE_PANEL_MAX_WIDTH = 560;
+const SIDE_PANEL_COLLAPSE_WIDTH = 292;
 
 type WorkspaceColumnFamily = "chat" | "messenger" | "issues" | "calendar" | "projects" | "agents" | "org" | "backups";
 
@@ -250,22 +255,114 @@ function readRememberedWorkspaceColumnWidth(family: WorkspaceColumnFamily): numb
   }
 }
 
-function GlobalSidePanelTrigger() {
+function clampSidePanelWidth(value: number, viewportWidth: number | null = getCurrentViewportWidth()): number {
+  const viewportMax = viewportWidth === null ? SIDE_PANEL_MAX_WIDTH : Math.max(SIDE_PANEL_MIN_WIDTH, Math.floor(viewportWidth * 0.42));
+  return Math.min(Math.min(SIDE_PANEL_MAX_WIDTH, viewportMax), Math.max(SIDE_PANEL_MIN_WIDTH, Math.round(value)));
+}
+
+function readRememberedSidePanelWidth(): number {
+  if (typeof window === "undefined") return SIDE_PANEL_DEFAULT_WIDTH;
+  try {
+    const raw = window.localStorage.getItem(SIDE_PANEL_WIDTH_KEY);
+    const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+    if (!Number.isFinite(parsed)) return SIDE_PANEL_DEFAULT_WIDTH;
+    return clampSidePanelWidth(parsed);
+  } catch {
+    return SIDE_PANEL_DEFAULT_WIDTH;
+  }
+}
+
+function DesktopSidePanelSlot({
+  selectedOrganizationId,
+}: {
+  selectedOrganizationId: string | null | undefined;
+}) {
   const sidePanel = useSidePanel();
-  if (sidePanel.open) return null;
+  const [sidePanelWidth, setSidePanelWidth] = useState(readRememberedSidePanelWidth);
+  const [resizingSidePanel, setResizingSidePanel] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(SIDE_PANEL_WIDTH_KEY, String(sidePanelWidth));
+    } catch {
+      // Ignore storage failures; width falls back to the default next time.
+    }
+  }, [sidePanelWidth]);
+
+  const startSidePanelResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!sidePanel.open) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = sidePanelWidth;
+    let latestWidth = startWidth;
+    const cleanupStyle = {
+      cursor: document.body.style.cursor,
+      userSelect: document.body.style.userSelect,
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    setResizingSidePanel(true);
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      latestWidth = startWidth - deltaX;
+      setSidePanelWidth(clampSidePanelWidth(latestWidth));
+    };
+
+    const stopResizing = () => {
+      document.body.style.cursor = cleanupStyle.cursor;
+      document.body.style.userSelect = cleanupStyle.userSelect;
+      setResizingSidePanel(false);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", stopResizing);
+      if (latestWidth <= SIDE_PANEL_COLLAPSE_WIDTH) {
+        sidePanel.closePanel();
+      }
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", stopResizing, { once: true });
+  }, [sidePanel, sidePanelWidth]);
+
+  if (!sidePanel.open) {
+    return (
+      <div className="group absolute inset-y-1 right-0 z-20 w-7" data-testid="side-panel-hover-edge">
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          data-testid="global-side-panel-trigger"
+          className="absolute right-[3px] top-1/2 h-11 w-7 -translate-y-1/2 rounded-l-[calc(var(--radius-sm)-1px)] rounded-r-none border-r-0 bg-[color:var(--surface-elevated)] text-muted-foreground opacity-0 shadow-[var(--shadow-sm)] transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:bg-[color:var(--surface-active)] hover:text-foreground"
+          onClick={sidePanel.openEmpty}
+          aria-label="Open Side Panel"
+          title="Open Side Panel"
+        >
+          <PanelRightOpen className="h-4 w-4" />
+        </Button>
+      </div>
+    );
+  }
+
   return (
-    <Button
-      type="button"
-      variant="outline"
-      size="icon"
-      data-testid="global-side-panel-trigger"
-      className="absolute right-[3px] top-1/2 z-20 h-11 w-7 -translate-y-1/2 rounded-l-[calc(var(--radius-sm)-1px)] rounded-r-none border-r-0 bg-[color:var(--surface-elevated)] text-muted-foreground shadow-[var(--shadow-sm)] hover:bg-[color:var(--surface-active)] hover:text-foreground"
-      onClick={sidePanel.openEmpty}
-      aria-label="Open Side Panel"
-      title="Open Side Panel"
-    >
-      <PanelRightOpen className="h-4 w-4" />
-    </Button>
+    <>
+      <div
+        data-testid="side-panel-resizer"
+        className={cn(
+          "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center transition-[width,opacity] duration-200 ease-out motion-reduce:transition-none",
+          "w-2 opacity-100 md:w-[9px]",
+          resizingSidePanel && "is-resizing",
+        )}
+        onPointerDown={startSidePanelResize}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize Side Panel"
+      >
+        <div className="workspace-column-resizer-line" />
+      </div>
+      <ChatSidePanel selectedOrganizationId={selectedOrganizationId} desktopWidth={sidePanelWidth} />
+    </>
   );
 }
 
@@ -976,7 +1073,6 @@ export function Layout() {
                         <TooltipContent side="right">Show Library sidebar</TooltipContent>
                       </Tooltip>
                     ) : null}
-                    <GlobalSidePanelTrigger />
                     <div
                       data-testid="workspace-main-card"
                       data-tour-target="workspace-main"
@@ -1015,7 +1111,7 @@ export function Layout() {
                         )}
                       </main>
                     </div>
-                    <ChatSidePanel selectedOrganizationId={selectedOrganizationId} />
+                    <DesktopSidePanelSlot selectedOrganizationId={selectedOrganizationId} />
                   </div>
                 ) : (
                   <main

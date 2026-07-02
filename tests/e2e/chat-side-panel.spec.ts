@@ -170,7 +170,7 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Issue details should stay beside the active chat.");
     await expect(sidePanel.getByLabel("Edit issue")).toBeVisible();
     await expect(sidePanel.locator('button[aria-label="Close Side Panel"]')).toHaveCount(0);
-    await expect(sidePanel.getByRole("link", { name: "Full page" })).toHaveAttribute("href", new RegExp(`/issues/${issue.id}`));
+    await expect(sidePanel.getByRole("link", { name: "Full page" })).toHaveCount(0);
 
     await sidePanel.getByLabel("Edit issue").click();
     await sidePanel.getByLabel("Issue title").fill("Reference issue target edited");
@@ -191,7 +191,7 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Next run");
     await expect(sidePanel).toContainText("Previous runs");
     await expect(sidePanel).toContainText("Run controls on full page");
-    await expect(sidePanel.getByRole("link", { name: "Full page" })).toHaveAttribute("href", new RegExp(`/automations/${automation.id}`));
+    await expect(sidePanel.getByRole("link", { name: "Full page" })).toHaveCount(0);
 
     await assistantMessage.locator('a[data-mention-kind="library_file"]').filter({ hasText: libraryFileName }).click();
     await expect(page).toHaveURL(new RegExp(`${hostChat.id}$`));
@@ -300,6 +300,7 @@ test.describe("Chat Side Panel", () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/${organization.issuePrefix}/dashboard`);
 
+    await page.getByTestId("side-panel-hover-edge").hover();
     await page.getByTestId("global-side-panel-trigger").click();
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
@@ -307,22 +308,20 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Browser");
     await expect(sidePanel).toContainText("Library");
     await expect(sidePanel).toContainText("Issue");
-    await expect(sidePanel.locator(".workspace-main-card")).toHaveCount(3);
+    await expect(sidePanel.locator(".workspace-main-card")).toHaveCount(2);
 
     await sidePanel.getByRole("button", { name: /Issue/ }).click();
     await expect(sidePanel).toContainText("Open an issue link");
-    await expect(sidePanel.getByRole("link", { name: "Full page" })).toHaveAttribute("href", new RegExp("/issues"));
+    await expect(sidePanel.getByRole("link", { name: "Full page" })).toHaveCount(0);
 
     await sidePanel.getByTestId("chat-side-panel-add-tab").click();
-    const addMenu = sidePanel.getByTestId("chat-side-panel-add-menu");
-    await expect(addMenu).toBeVisible();
-    await expect(addMenu.getByRole("menuitem", { name: "Issue" })).toBeVisible();
-    await expect(addMenu.getByRole("menuitem", { name: "Automation" })).toBeVisible();
-    await expect(addMenu.getByRole("menuitem", { name: "Library" })).toBeVisible();
-    await expect(addMenu.getByRole("menuitem", { name: "Chat" })).toBeVisible();
-    await expect(addMenu.getByRole("menuitem", { name: "Browser" })).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-add-menu")).toHaveCount(0);
+    await expect(sidePanel).toContainText("Open a panel");
+    await expect(sidePanel).toContainText("Browser");
+    await expect(sidePanel).toContainText("Library");
+    await expect(sidePanel).toContainText("Issue");
 
-    await addMenu.getByRole("menuitem", { name: "Library" }).click();
+    await sidePanel.getByRole("button", { name: /Library/ }).click();
     await expect(sidePanel).toContainText("Library root");
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
   });
