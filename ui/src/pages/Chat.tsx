@@ -1946,20 +1946,19 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               </div>
             </div> ) : selectedConversation ? ( <>
               <div className="pointer-events-none absolute right-3 top-12 z-20 flex justify-end gap-1.5 md:right-3 md:top-2">
-                <button
-                  type="button"
-                  data-testid="chat-side-panel-trigger"
-                  aria-label={sidePanelOpen ? "Close Side Panel" : "Open Side Panel"}
-                  aria-pressed={sidePanelOpen}
-                  title={sidePanelOpen ? "Close Side Panel" : "Open Side Panel"}
-                  className={cn(
-                    "pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
-                    sidePanelOpen && "bg-[color:var(--surface-active)] text-foreground",
-                  )}
-                  onClick={toggleEmptySidePanel}
-                >
-                  <PanelRight className="h-4 w-4" aria-hidden />
-                </button>
+                {!sidePanelOpen ? (
+                  <button
+                    type="button"
+                    data-testid="chat-side-panel-trigger"
+                    aria-label="Open Side Panel"
+                    aria-pressed={false}
+                    title="Open Side Panel"
+                    className="pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+                    onClick={toggleEmptySidePanel}
+                  >
+                    <PanelRight className="h-4 w-4" aria-hidden />
+                  </button>
+                ) : null}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button

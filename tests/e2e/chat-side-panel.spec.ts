@@ -176,7 +176,8 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Issue details should stay beside the active chat.");
     await expect(sidePanel).toContainText("Existing side panel comment should stay visible.");
     await expect(sidePanel.getByLabel("Edit issue")).toBeVisible();
-    await expect(sidePanel.locator('button[aria-label="Close Side Panel"]')).toHaveCount(0);
+    await expect(sidePanel.getByLabel("Close Side Panel")).toBeVisible();
+    await expect(sidePanel.getByLabel("Expand Side Panel")).toBeVisible();
     await expect(sidePanel.getByRole("link", { name: "Full page" })).toHaveCount(0);
 
     await sidePanel.locator('button:has([data-slot="issue-status-icon"])').first().click();
@@ -227,7 +228,7 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Active");
     await expect(sidePanel).toContainText("Next run");
     await expect(sidePanel).toContainText("Previous runs");
-    await expect(sidePanel).toContainText("Run controls on full page");
+    await expect(sidePanel.getByRole("button", { name: "Run now" })).toBeVisible();
     await expect(sidePanel.getByRole("link", { name: "Full page" })).toHaveCount(0);
 
     await assistantMessage.locator('a[data-mention-kind="library_file"]').filter({ hasText: libraryFileName }).click();
@@ -336,7 +337,6 @@ test.describe("Chat Side Panel", () => {
 
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/${organization.issuePrefix}/dashboard`);
-
     await page.getByTestId("side-panel-hover-edge").hover();
     await page.getByTestId("global-side-panel-trigger").click();
     const sidePanel = page.getByTestId("chat-side-panel");
@@ -345,7 +345,22 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Browser");
     await expect(sidePanel).toContainText("Library");
     await expect(sidePanel).toContainText("Issue");
+    await expect(page.getByTestId("side-panel-resizer")).toBeVisible();
     await expect(sidePanel.locator(".workspace-main-card")).toHaveCount(2);
+
+    const mainCardBox = await page.getByTestId("workspace-main-card").boundingBox();
+    const resizerBox = await page.getByTestId("side-panel-resizer").boundingBox();
+    const sidePanelBox = await sidePanel.boundingBox();
+    expect(mainCardBox).not.toBeNull();
+    expect(resizerBox).not.toBeNull();
+    expect(sidePanelBox).not.toBeNull();
+    expect(Math.round(resizerBox!.x - (mainCardBox!.x + mainCardBox!.width))).toBeGreaterThanOrEqual(0);
+    expect(Math.round(sidePanelBox!.x - (resizerBox!.x + resizerBox!.width))).toBeGreaterThanOrEqual(0);
+
+    await sidePanel.getByLabel("Expand Side Panel").click();
+    await expect(sidePanel.getByLabel("Restore Side Panel width")).toBeVisible();
+    await sidePanel.getByLabel("Restore Side Panel width").click();
+    await expect(sidePanel.getByLabel("Expand Side Panel")).toBeVisible();
 
     await sidePanel.getByRole("button", { name: /Issue/ }).click();
     await expect(sidePanel).toContainText("Open an issue link");
@@ -361,6 +376,16 @@ test.describe("Chat Side Panel", () => {
     await sidePanel.getByRole("button", { name: /Library/ }).click();
     await expect(sidePanel).toContainText("Library root");
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
+
+    const collapseStart = await page.getByTestId("side-panel-resizer").boundingBox();
+    expect(collapseStart).not.toBeNull();
+    await page.mouse.move(collapseStart!.x + collapseStart!.width / 2, collapseStart!.y + collapseStart!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(page.viewportSize()!.width - 16, collapseStart!.y + collapseStart!.height / 2, { steps: 8 });
+    await page.mouse.up();
+    await expect(sidePanel).toHaveCount(0);
+    await page.getByTestId("side-panel-hover-edge").hover();
+    await expect(page.getByTestId("global-side-panel-trigger")).toBeVisible();
   });
 
   test("opens a Browser side panel tab with URL navigation controls", async ({ page }) => {
@@ -370,18 +395,28 @@ test.describe("Chat Side Panel", () => {
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
 
+    const hostChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Side Panel Browser host chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(hostChatRes.ok(), await hostChatRes.text()).toBe(true);
+    const hostChat = await hostChatRes.json() as { id: string };
+
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto(`/${organization.issuePrefix}/dashboard`);
-
-    await page.getByTestId("side-panel-hover-edge").hover();
-    await page.getByTestId("global-side-panel-trigger").click();
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${hostChat.id}`);
+    await expect(page.getByTestId("chat-side-panel-trigger")).toHaveAttribute("aria-pressed", "false");
+    await page.getByTestId("chat-side-panel-trigger").click();
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("chat-side-panel-trigger")).toHaveCount(0);
 
     await sidePanel.getByRole("button", { name: /Browser/ }).click();
     await expect(sidePanel.getByTestId("chat-side-panel-browser-view")).toBeVisible();
@@ -400,5 +435,9 @@ test.describe("Chat Side Panel", () => {
     await sidePanel.getByLabel("Open new browser tab").click();
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
     await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toContainText("New tab");
+
+    await sidePanel.getByLabel("Close Side Panel").click();
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+    await expect(page.getByTestId("chat-side-panel-trigger")).toHaveAttribute("aria-pressed", "false");
   });
 });

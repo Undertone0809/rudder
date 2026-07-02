@@ -296,6 +296,7 @@ vi.mock("@/api/issues", () => ({
 vi.mock("@/api/automations", () => ({
   automationsApi: {
     get: vi.fn(),
+    run: vi.fn(async (automationId: string) => automationRun({ id: `run-${automationId}-manual`, automationId })),
     update: vi.fn(async (automationId: string, data: Partial<AutomationDetail>) => {
       const current = mockState.automations[automationId];
       if (!current) throw new Error("Automation not found");
@@ -834,6 +835,7 @@ function renderChat() {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
+  const toggleSidePanelExpanded = vi.fn();
   cleanupFn = () => {
     act(() => {
       root.unmount();
@@ -846,7 +848,12 @@ function renderChat() {
       <ThemeProvider>
         <SidePanelProvider>
           <Chat />
-          <ChatSidePanel selectedOrganizationId="org-1" />
+          <ChatSidePanel
+            selectedOrganizationId="org-1"
+            desktopWidth={420}
+            expanded={false}
+            onToggleExpanded={toggleSidePanelExpanded}
+          />
         </SidePanelProvider>
       </ThemeProvider>,
     );
@@ -858,6 +865,7 @@ function renderChat() {
 
   return {
     container,
+    toggleSidePanelExpanded,
     rerender: () => act(() => render(root)),
   };
 }
@@ -1113,7 +1121,7 @@ describe("Chat Side Panel link handling", () => {
     expect(sidePanel?.textContent).toContain("Launch Ops");
     expect(sidePanel?.textContent).toContain("Repeats");
     expect(sidePanel?.textContent).toContain("Previous runs");
-    expect(sidePanel?.textContent).toContain("Run controls on full page");
+    expect(sidePanel?.textContent).toContain("Run now");
     expect(mockState.navigate).not.toHaveBeenCalledWith("/automations/automation-1");
     expect(sidePanel?.querySelector<HTMLAnchorElement>('a[href="/automations/automation-1"]')).toBeNull();
   });
@@ -1740,6 +1748,8 @@ describe("Chat Side Panel link handling", () => {
     sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     expect(sidePanel?.textContent).toContain("Start browsing");
     expect(sidePanel?.querySelector("[data-testid='chat-side-panel-browser-view']")).not.toBeNull();
+    expect(sidePanel?.querySelector('[data-testid="chat-side-panel-collapse"]')).not.toBeNull();
+    expect(sidePanel?.querySelector('[data-testid="chat-side-panel-expand-toggle"]')).not.toBeNull();
 
     const urlInput = sidePanel!.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]');
     expect(urlInput).not.toBeNull();
@@ -1805,10 +1815,12 @@ describe("Chat Side Panel link handling", () => {
     expect(sidePanel).not.toBeNull();
     expect(sidePanel?.className).toContain("fixed");
     expect(sidePanel?.className).toContain("inset-x-3");
-    expect(sidePanelTrigger?.getAttribute("aria-pressed")).toBe("true");
+
+    const closeSidePanelButton = sidePanel?.querySelector<HTMLButtonElement>('[data-testid="chat-side-panel-collapse"]');
+    expect(closeSidePanelButton).not.toBeNull();
 
     await act(async () => {
-      sidePanelTrigger?.click();
+      closeSidePanelButton?.click();
       await Promise.resolve();
     });
 

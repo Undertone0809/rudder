@@ -65,6 +65,7 @@ const SIDE_PANEL_WIDTH_KEY = "rudder.workspace.sidePanelWidth";
 const SIDE_PANEL_DEFAULT_WIDTH = 420;
 const SIDE_PANEL_MIN_WIDTH = 340;
 const SIDE_PANEL_MAX_WIDTH = 560;
+const SIDE_PANEL_EXPANDED_WIDTH = 720;
 const SIDE_PANEL_COLLAPSE_WIDTH = 292;
 
 type WorkspaceColumnFamily = "chat" | "messenger" | "issues" | "calendar" | "projects" | "agents" | "org" | "backups";
@@ -257,7 +258,7 @@ function readRememberedWorkspaceColumnWidth(family: WorkspaceColumnFamily): numb
 
 function clampSidePanelWidth(value: number, viewportWidth: number | null = getCurrentViewportWidth()): number {
   const viewportMax = viewportWidth === null ? SIDE_PANEL_MAX_WIDTH : Math.max(SIDE_PANEL_MIN_WIDTH, Math.floor(viewportWidth * 0.42));
-  return Math.min(Math.min(SIDE_PANEL_MAX_WIDTH, viewportMax), Math.max(SIDE_PANEL_MIN_WIDTH, Math.round(value)));
+  return Math.min(Math.min(SIDE_PANEL_EXPANDED_WIDTH, viewportMax), Math.max(SIDE_PANEL_MIN_WIDTH, Math.round(value)));
 }
 
 function readRememberedSidePanelWidth(): number {
@@ -280,6 +281,7 @@ function DesktopSidePanelSlot({
   const sidePanel = useSidePanel();
   const [sidePanelWidth, setSidePanelWidth] = useState(readRememberedSidePanelWidth);
   const [resizingSidePanel, setResizingSidePanel] = useState(false);
+  const sidePanelExpanded = sidePanelWidth > SIDE_PANEL_MAX_WIDTH;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -361,7 +363,17 @@ function DesktopSidePanelSlot({
       >
         <div className="workspace-column-resizer-line" />
       </div>
-      <ChatSidePanel selectedOrganizationId={selectedOrganizationId} desktopWidth={sidePanelWidth} />
+      <ChatSidePanel
+        selectedOrganizationId={selectedOrganizationId}
+        desktopWidth={sidePanelWidth}
+        expanded={sidePanelExpanded}
+        onClose={sidePanel.closePanel}
+        onToggleExpanded={() => setSidePanelWidth((current) =>
+          current > SIDE_PANEL_MAX_WIDTH
+            ? clampSidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH)
+            : clampSidePanelWidth(SIDE_PANEL_EXPANDED_WIDTH),
+        )}
+      />
     </>
   );
 }

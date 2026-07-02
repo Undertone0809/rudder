@@ -38,8 +38,11 @@ import {
   Globe2,
   Image as ImageIcon,
   Loader2,
+  Maximize2,
   MessageSquare,
+  Minimize2,
   PackageOpen,
+  PanelRightClose,
   Pencil,
   Play,
   Plus,
@@ -484,13 +487,17 @@ function automationNextTrigger(automation: AutomationDetail): AutomationTrigger 
 
 function ChatAutomationSidePanelView({
   automation,
+  onRun,
   runs,
   onUpdate,
+  running,
   updating,
 }: {
   automation: AutomationDetail;
+  onRun: () => Promise<unknown>;
   runs: AutomationRunSummary[];
   onUpdate: (data: Record<string, unknown>) => Promise<Automation | AutomationDetail>;
+  running: boolean;
   updating: boolean;
 }) {
   const [error, setError] = useState<string | null>(null);
@@ -506,6 +513,14 @@ function ChatAutomationSidePanelView({
       await onUpdate({ status: active ? "paused" : "active" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not update this automation.");
+    }
+  };
+  const runNow = async () => {
+    setError(null);
+    try {
+      await onRun();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not run this automation.");
     }
   };
 
@@ -530,10 +545,10 @@ function ChatAutomationSidePanelView({
             {updating ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
             {active ? "Pause" : "Resume"}
           </Button>
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-[color:var(--surface-active)] px-2 py-1">
-            <Play className="h-3 w-3" />
-            Run controls on full page
-          </span>
+          <Button type="button" variant="outline" size="xs" onClick={() => void runNow()} disabled={running}>
+            {running ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+            {running ? "Starting..." : "Run now"}
+          </Button>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-[color:var(--surface-active)] px-2 py-1">
             <Bot className="h-3 w-3" />
             {automation.outputMode === "chat_output" ? "Sends to chat" : "Tracks issue"}
@@ -1068,10 +1083,16 @@ function ChatSidePanelBrowserView({
 
 export function ChatSidePanel({
   desktopWidth,
+  expanded = false,
+  onClose,
+  onToggleExpanded,
   target,
   selectedOrganizationId,
 }: {
   desktopWidth?: number;
+  expanded?: boolean;
+  onClose?: () => void;
+  onToggleExpanded?: () => void;
   target?: SidePanelTarget | null;
   selectedOrganizationId: string | null | undefined;
 }) {
@@ -1177,6 +1198,18 @@ export function ChatSidePanel({
       void queryClient.invalidateQueries({ queryKey: ["messenger"] });
     },
   });
+  const runAutomationMutation = useMutation({
+    mutationFn: (automationId: string) => automationsApi.run(automationId),
+    onSuccess: (run, automationId) => {
+      queryClient.setQueryData(queryKeys.automations.runs(automationId), (current: AutomationRunSummary[] | undefined) =>
+        current ? [run, ...current] : [run],
+      );
+      void queryClient.invalidateQueries({ queryKey: queryKeys.automations.detail(automationId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.automations.runs(automationId) });
+      void queryClient.invalidateQueries({ queryKey: ["automations"] });
+      void queryClient.invalidateQueries({ queryKey: ["messenger"] });
+    },
+  });
   const libraryFileQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFile(selectedOrganizationId ?? "__none__", libraryFileTarget?.filePath ?? ""),
     queryFn: () => organizationsApi.readWorkspaceFile(selectedOrganizationId!, libraryFileTarget!.filePath),
@@ -1241,48 +1274,48 @@ export function ChatSidePanel({
           role="tablist"
           aria-label="Side Panel targets"
           data-testid="chat-side-panel-tabs"
-          className="scrollbar-auto-hide flex shrink-0 gap-1 overflow-x-auto px-2 py-1.5"
+          className="scrollbar-auto-hide flex shrink-0 items-center gap-1 overflow-x-auto px-2 py-1.5"
         >
-          {visibleTabs.map((tab) => {
-            const tabKey = sidePanelTargetKey(tab);
-            const selected = tabKey === activeTargetKey;
-            return (
-              <div
-                key={tabKey}
-                role="presentation"
-                className={cn(
-                  "group flex h-7 max-w-[12.5rem] shrink-0 items-center rounded-full border pr-1 transition-colors",
-                  selected
-                    ? "border-[color:var(--border-strong)] bg-[color:var(--surface-active)] text-foreground"
-                    : "border-transparent text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground",
-                )}
-              >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={selected}
-                  data-testid="chat-side-panel-tab"
-                  className="min-w-0 flex-1 truncate rounded-l-full px-2.5 py-1 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                  onClick={() => sidePanel.setActiveKey(tabKey)}
+          <div className="scrollbar-auto-hide flex min-w-0 flex-1 gap-1 overflow-x-auto">
+            {visibleTabs.map((tab) => {
+              const tabKey = sidePanelTargetKey(tab);
+              const selected = tabKey === activeTargetKey;
+              return (
+                <div
+                  key={tabKey}
+                  role="presentation"
+                  className={cn(
+                    "group flex h-7 max-w-[12.5rem] shrink-0 items-center rounded-full border pr-1 transition-colors",
+                    selected
+                      ? "border-[color:var(--border-strong)] bg-[color:var(--surface-active)] text-foreground"
+                      : "border-transparent text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground",
+                  )}
                 >
-                  {tab.label}
-                </button>
-                <button
-                  type="button"
-                  data-testid="chat-side-panel-tab-close"
-                  aria-label={`Close ${tab.label} tab`}
-                  className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[color:var(--surface-panel)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    closeSidePanelTab(tab);
-                  }}
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-            );
-          })}
-          <div className="shrink-0">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    data-testid="chat-side-panel-tab"
+                    className="min-w-0 flex-1 truncate rounded-l-full px-2.5 py-1 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                    onClick={() => sidePanel.setActiveKey(tabKey)}
+                  >
+                    {tab.label}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="chat-side-panel-tab-close"
+                    aria-label={`Close ${tab.label} tab`}
+                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[color:var(--surface-panel)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      closeSidePanelTab(tab);
+                    }}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              );
+            })}
             <button
               type="button"
               data-testid="chat-side-panel-add-tab"
@@ -1291,6 +1324,30 @@ export function ChatSidePanel({
               onClick={sidePanel.openEmpty}
             >
               <Plus className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            {onToggleExpanded ? (
+              <button
+                type="button"
+                data-testid="chat-side-panel-expand-toggle"
+                aria-label={expanded ? "Restore Side Panel width" : "Expand Side Panel"}
+                title={expanded ? "Restore Side Panel width" : "Expand Side Panel"}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                onClick={onToggleExpanded}
+              >
+                {expanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              data-testid="chat-side-panel-collapse"
+              aria-label="Close Side Panel"
+              title="Close Side Panel"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              onClick={onClose ?? sidePanel.closePanel}
+            >
+              <PanelRightClose className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
@@ -1331,7 +1388,9 @@ export function ChatSidePanel({
             <ChatAutomationSidePanelView
               automation={automation}
               runs={automationRuns}
+              running={runAutomationMutation.isPending}
               updating={updateAutomationMutation.isPending}
+              onRun={() => runAutomationMutation.mutateAsync(automation.id)}
               onUpdate={(data) => updateAutomationMutation.mutateAsync({ automationId: automation.id, data })}
             />
           ) : placeholderTarget ? (
