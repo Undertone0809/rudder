@@ -1748,6 +1748,10 @@ describe("Chat Side Panel link handling", () => {
     sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     expect(sidePanel?.textContent).toContain("Start browsing");
     expect(sidePanel?.querySelector("[data-testid='chat-side-panel-browser-view']")).not.toBeNull();
+    const closeChatSidePanelButton = container.querySelector<HTMLButtonElement>('[data-testid="chat-side-panel-trigger"]');
+    expect(closeChatSidePanelButton).not.toBeNull();
+    expect(closeChatSidePanelButton?.getAttribute("aria-label")).toBe("Close Side Panel");
+    expect(closeChatSidePanelButton?.getAttribute("aria-pressed")).toBe("true");
     expect(sidePanel?.querySelector('[data-testid="chat-side-panel-collapse"]')).not.toBeNull();
     expect(sidePanel?.querySelector('[data-testid="chat-side-panel-expand-toggle"]')).not.toBeNull();
 
