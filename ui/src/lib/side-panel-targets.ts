@@ -44,6 +44,7 @@ export type SidePanelTarget =
       kind: "browser";
       url: string;
       label: string;
+      tabId?: string;
     }
   | {
       kind: "placeholder";
@@ -84,7 +85,7 @@ export function sidePanelTargetKey(target: SidePanelTarget) {
   if (target.kind === "library_entry") return `library-entry:${target.entryId}:${target.path ?? ""}`;
   if (target.kind === "library_file") return `library-file:${target.filePath}`;
   if (target.kind === "library_directory") return `library-directory:${target.directoryPath}`;
-  if (target.kind === "browser") return `browser:${target.url}`;
+  if (target.kind === "browser") return target.tabId ? `browser-tab:${target.tabId}` : `browser:${target.url}`;
   return `placeholder:${target.targetKind}`;
 }
 

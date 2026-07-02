@@ -4,6 +4,7 @@ import { automationsApi } from "@/api/automations";
 import { chatsApi } from "@/api/chats";
 import { issuesApi } from "@/api/issues";
 import { organizationsApi } from "@/api/orgs";
+import { AgentIcon } from "@/components/AgentIconPicker";
 import { CommentThread } from "@/components/CommentThread";
 import { PriorityIcon } from "@/components/PriorityIcon";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -22,6 +23,8 @@ import {
   ArrowLeft,
   ArrowRight,
   Bot,
+  Box,
+  Boxes,
   CalendarClock,
   CheckCircle2,
   ChevronDown,
@@ -36,10 +39,12 @@ import {
   Image as ImageIcon,
   Loader2,
   MessageSquare,
+  PackageOpen,
   Pencil,
   Play,
   Plus,
   RotateCw,
+  UserRound,
   X
 } from "lucide-react";
 import { createElement, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
@@ -621,14 +626,85 @@ function displayChatSidePanelWorkspaceEntryLabel(entry: Pick<OrganizationWorkspa
   return entry.displayLabel?.trim() || entry.name;
 }
 
+function isChatSidePanelLibrarySkillsRootPath(path: string) {
+  const segments = path.split("/").filter(Boolean);
+  return path === "skills"
+    || (segments.length === 3 && segments[0] === "agents" && segments[2] === "skills");
+}
+
+function isChatSidePanelLibrarySkillPackageFolderPath(path: string) {
+  const segments = path.split("/").filter(Boolean);
+  return (segments.length === 2 && segments[0] === "skills")
+    || (segments.length === 4 && segments[0] === "agents" && segments[2] === "skills");
+}
+
+function isChatSidePanelProjectLibraryFolderPath(path: string) {
+  const segments = path.split("/").filter(Boolean);
+  return segments.length === 2 && segments[0] === "projects";
+}
+
+function ChatSidePanelLibraryDirectoryIcon({ entry }: { entry: OrganizationWorkspaceFileEntry }) {
+  const isAgentWorkspace = entry.entityType === "agent_workspace";
+  if (isAgentWorkspace) {
+    return (
+      <span
+        data-testid="chat-side-panel-library-agent-icon"
+        className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted-foreground"
+      >
+        <AgentIcon icon={entry.agentIcon} role={entry.agentRole} className="h-3.5 w-3.5 text-[12px]" />
+      </span>
+    );
+  }
+
+  if (entry.path === "agents") {
+    return (
+      <UserRound
+        data-testid="chat-side-panel-library-agents-root-icon"
+        className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+      />
+    );
+  }
+
+  if (isChatSidePanelLibrarySkillsRootPath(entry.path)) {
+    return (
+      <Boxes
+        data-testid="chat-side-panel-library-skills-root-icon"
+        className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+      />
+    );
+  }
+
+  if (isChatSidePanelLibrarySkillPackageFolderPath(entry.path)) {
+    return (
+      <Box
+        data-testid="chat-side-panel-library-skill-folder-icon"
+        className="h-3.5 w-3.5 shrink-0 text-[#2f80ed]"
+      />
+    );
+  }
+
+  if (isChatSidePanelProjectLibraryFolderPath(entry.path)) {
+    return (
+      <PackageOpen
+        data-testid="chat-side-panel-library-project-icon"
+        className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+      />
+    );
+  }
+
+  return <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
+}
+
 function ChatSidePanelLibraryTree({
   entries,
   selectedOrganizationId,
   onOpenTarget,
+  selectedPath,
 }: {
   entries: OrganizationWorkspaceFileEntry[];
   selectedOrganizationId: string | null | undefined;
   onOpenTarget: (target: SidePanelTarget) => void;
+  selectedPath: string | null;
 }) {
   if (entries.length === 0) {
     return <div className="px-2 py-3 text-sm text-muted-foreground">This folder is empty or unavailable.</div>;
@@ -642,6 +718,7 @@ function ChatSidePanelLibraryTree({
           entry={entry}
           selectedOrganizationId={selectedOrganizationId}
           onOpenTarget={onOpenTarget}
+          selectedPath={selectedPath}
         />
       ))}
     </ul>
@@ -652,15 +729,18 @@ function ChatSidePanelLibraryTreeNode({
   entry,
   selectedOrganizationId,
   onOpenTarget,
+  selectedPath,
   depth = 0,
 }: {
   entry: OrganizationWorkspaceFileEntry;
   selectedOrganizationId: string | null | undefined;
   onOpenTarget: (target: SidePanelTarget) => void;
+  selectedPath: string | null;
   depth?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
   const primaryLabel = displayChatSidePanelWorkspaceEntryLabel(entry);
+  const isSelected = selectedPath === entry.path;
   const childrenQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFiles(selectedOrganizationId ?? "__none__", entry.path),
     queryFn: () => organizationsApi.listWorkspaceFiles(selectedOrganizationId!, entry.path),
@@ -673,7 +753,10 @@ function ChatSidePanelLibraryTreeNode({
     return (
       <li>
         <div
-          className="group flex w-full items-center rounded-md pr-1 text-sm text-foreground transition-[background-color,color,opacity,transform] duration-150 hover:bg-accent/60"
+          className={cn(
+            "group flex w-full items-center rounded-md pr-1 text-sm text-foreground transition-[background-color,color,opacity,transform] duration-150",
+            isSelected ? "bg-accent text-foreground" : "hover:bg-accent/60",
+          )}
           style={{ paddingLeft: `${depth * 14 + 8}px` }}
           data-workspace-entry-path={entry.path}
         >
@@ -686,10 +769,19 @@ function ChatSidePanelLibraryTreeNode({
             <span className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground">
               {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             </span>
-            <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <ChatSidePanelLibraryDirectoryIcon entry={entry} />
             <div className="min-w-0 flex-1">
               <div className="truncate font-medium">{primaryLabel}</div>
             </div>
+            {entry.entityType === "agent_workspace" ? (
+              <span
+                aria-hidden="true"
+                data-testid="chat-side-panel-library-agent-badge"
+                className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground"
+              >
+                Agent
+              </span>
+            ) : null}
           </button>
         </div>
         {expanded ? (
@@ -708,6 +800,7 @@ function ChatSidePanelLibraryTreeNode({
                   entry={childEntry}
                   selectedOrganizationId={selectedOrganizationId}
                   onOpenTarget={onOpenTarget}
+                  selectedPath={selectedPath}
                   depth={depth + 1}
                 />
               ))}
@@ -727,7 +820,12 @@ function ChatSidePanelLibraryTreeNode({
   return (
     <li>
       <div
-        className="group flex w-full items-center rounded-md pr-1 text-sm text-muted-foreground transition-[background-color,color,opacity,transform] duration-150 hover:bg-accent/50 hover:text-foreground"
+        className={cn(
+          "group flex w-full items-center rounded-md pr-1 text-sm transition-[background-color,color,opacity,transform] duration-150",
+          isSelected
+            ? "bg-accent text-foreground"
+            : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+        )}
         style={{ paddingLeft: `${depth * 14 + 23}px` }}
         data-workspace-entry-path={entry.path}
       >
@@ -739,6 +837,7 @@ function ChatSidePanelLibraryTreeNode({
             filePath: entry.path,
             label: primaryLabel,
           })}
+          aria-selected={isSelected}
         >
           <FileIcon className="h-3.5 w-3.5 shrink-0" />
           <span className="truncate">{primaryLabel}</span>
@@ -862,7 +961,9 @@ function ChatSidePanelBrowserView({
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    navigateTo(addressValue);
+    const formData = new FormData(event.currentTarget);
+    const submittedAddress = formData.get("browser-url");
+    navigateTo(typeof submittedAddress === "string" ? submittedAddress : addressValue);
   };
 
   const openExternal = () => {
@@ -906,6 +1007,7 @@ function ChatSidePanelBrowserView({
         <form className="min-w-0 flex-1" onSubmit={handleSubmit}>
           <Input
             aria-label="Browser URL"
+            name="browser-url"
             value={addressValue}
             onChange={(event) => setAddressValue(event.currentTarget.value)}
             placeholder="Enter a URL"
@@ -1109,6 +1211,7 @@ export function ChatSidePanel({
   const activeTargetKey = activeTarget ? sidePanelTargetKey(activeTarget) : "empty";
 
   const openSidePanelTarget = (nextTarget: SidePanelTarget) => sidePanel.openTarget(nextTarget);
+  const replaceSidePanelTarget = (key: string, nextTarget: SidePanelTarget) => sidePanel.replaceTarget(key, nextTarget);
 
   const closeSidePanelTab = (tab: SidePanelTarget) => sidePanel.closeTarget(sidePanelTargetKey(tab));
 
@@ -1193,7 +1296,10 @@ export function ChatSidePanel({
         </div>
       </div>
       <div className="workspace-main-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]">
-        <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        <div className={cn(
+          "scrollbar-auto-hide min-h-0 flex-1",
+          browserTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
+        )}>
           {!activeTarget ? (
             <SidePanelEmptyState onOpenTarget={openSidePanelTarget} />
           ) : loading ? (
@@ -1261,33 +1367,31 @@ export function ChatSidePanel({
               )}
             </div>
           ) : libraryDirectoryTarget ? (
-            <div className="space-y-3" data-testid="chat-side-panel-library-directory-view">
+            <div className="flex min-h-full flex-col" data-testid="chat-side-panel-library-directory-view">
               {libraryDirectory ? (
-                <div className="rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-2 text-sm">
-                  <div className="truncate font-mono text-xs text-muted-foreground">{libraryDirectory.directoryPath || "Library root"}</div>
+                <div className="shrink-0 px-2 pb-3 text-sm">
+                  <div className="truncate font-medium text-foreground">{libraryDirectory.directoryPath || "Library root"}</div>
                   <div className="mt-1 text-xs text-muted-foreground" data-testid="chat-side-panel-library-file-count">
                     {libraryDirectoryFileCount} file{libraryDirectoryFileCount === 1 ? "" : "s"} · {libraryDirectoryFolderCount} folder{libraryDirectoryFolderCount === 1 ? "" : "s"}
                   </div>
                 </div>
               ) : null}
-              <ChatSidePanelLibraryTree
-                entries={libraryDirectoryEntries}
-                selectedOrganizationId={selectedOrganizationId}
-                onOpenTarget={openSidePanelTarget}
-              />
-            </div>
-          ) : browserTarget ? (
-            <div className="space-y-4" data-testid="chat-side-panel-browser-view">
-              <div className="rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3">
-                <h3 className="text-base font-semibold text-foreground">{browserTarget.label}</h3>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  Browser targets are kept as panel tabs first. A secure embedded browsing surface can attach here when the app exposes one.
-                </p>
-                <div className="mt-3 rounded-[var(--radius-sm)] bg-[color:var(--surface-inset)] px-2 py-1.5 font-mono text-xs text-muted-foreground">
-                  {browserTarget.url}
-                </div>
+              <div className="-mx-2 min-h-0 flex-1 border-t border-border px-2 py-2">
+                <ChatSidePanelLibraryTree
+                  entries={libraryDirectoryEntries}
+                  selectedOrganizationId={selectedOrganizationId}
+                  onOpenTarget={openSidePanelTarget}
+                  selectedPath={libraryDirectoryTarget.directoryPath}
+                />
               </div>
             </div>
+          ) : browserTarget ? (
+            <ChatSidePanelBrowserView
+              target={browserTarget}
+              targetKey={activeTargetKey}
+              onOpenTarget={openSidePanelTarget}
+              onReplaceTarget={replaceSidePanelTarget}
+            />
           ) : (
             <p className="text-sm text-muted-foreground">Open this target in the full page for details.</p>
           )}
