@@ -352,6 +352,43 @@ test.describe("Workspace shell", () => {
     expect(Math.round(resizedContextBox!.width)).toBe(Math.floor(1280 / 3));
   });
 
+  test("scales the context card proportionally when the app width changes", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 820 });
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Workspace-Shell-Proportional-Resize-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+
+    await gotoOrganizationPath(page, organization, "/issues");
+
+    const contextCard = page.getByTestId("workspace-context-card");
+    const resizer = page.getByTestId("workspace-column-resizer");
+    await expect(contextCard).toBeVisible();
+    await expect(resizer).toBeVisible();
+
+    const initialContextBox = await contextCard.boundingBox();
+    const resizerBox = await resizer.boundingBox();
+    expect(initialContextBox).not.toBeNull();
+    expect(resizerBox).not.toBeNull();
+    expect(Math.round(initialContextBox!.width)).toBe(248);
+
+    await page.mouse.move(resizerBox!.x + resizerBox!.width / 2, resizerBox!.y + resizerBox!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(resizerBox!.x + resizerBox!.width / 2 + 112, resizerBox!.y + resizerBox!.height / 2);
+    await page.mouse.up();
+
+    await expect.poll(async () => Math.round((await contextCard.boundingBox())?.width ?? 0)).toBe(360);
+
+    await page.setViewportSize({ width: 1200, height: 820 });
+    await expect.poll(async () => Math.round((await contextCard.boundingBox())?.width ?? 0)).toBe(300);
+
+    await page.setViewportSize({ width: 1440, height: 820 });
+    await expect.poll(async () => Math.round((await contextCard.boundingBox())?.width ?? 0)).toBe(360);
+  });
+
   test("renders agents as a rail plus dual workspace cards", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {

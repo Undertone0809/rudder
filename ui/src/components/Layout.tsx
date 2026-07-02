@@ -227,6 +227,20 @@ function getCurrentViewportWidth(): number | null {
   return window.innerWidth;
 }
 
+function useViewportWidth(): number | null {
+  const [viewportWidth, setViewportWidth] = useState(getCurrentViewportWidth);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const updateViewportWidth = () => setViewportWidth(getCurrentViewportWidth());
+    updateViewportWidth();
+    window.addEventListener("resize", updateViewportWidth);
+    return () => window.removeEventListener("resize", updateViewportWidth);
+  }, []);
+
+  return viewportWidth;
+}
+
 export function getWorkspaceColumnMaxWidth(family: WorkspaceColumnFamily, viewportWidth: number | null = getCurrentViewportWidth()): number {
   const { max, maxViewportFraction } = WORKSPACE_COLUMN_WIDTH_LIMITS[family];
   if (!maxViewportFraction || viewportWidth === null || !Number.isFinite(viewportWidth)) return max;
@@ -261,6 +275,26 @@ function clampSidePanelWidth(value: number, viewportWidth: number | null = getCu
   return Math.min(Math.min(SIDE_PANEL_EXPANDED_WIDTH, viewportMax), Math.max(SIDE_PANEL_MIN_WIDTH, Math.round(value)));
 }
 
+export function resolveProportionalWorkspaceColumnWidth(
+  family: WorkspaceColumnFamily,
+  widthRatioValue: number,
+  viewportWidth: number,
+): number {
+  return clampWorkspaceColumnWidth(family, widthRatioValue * viewportWidth, viewportWidth);
+}
+
+export function resolveProportionalSidePanelWidth(
+  widthRatioValue: number,
+  viewportWidth: number,
+): number {
+  return clampSidePanelWidth(widthRatioValue * viewportWidth, viewportWidth);
+}
+
+function widthRatio(value: number, viewportWidth: number | null = getCurrentViewportWidth()): number | null {
+  if (viewportWidth === null || !Number.isFinite(viewportWidth) || viewportWidth <= 0) return null;
+  return value / viewportWidth;
+}
+
 function readRememberedSidePanelWidth(): number {
   if (typeof window === "undefined") return SIDE_PANEL_DEFAULT_WIDTH;
   try {
@@ -279,9 +313,11 @@ function DesktopSidePanelSlot({
   selectedOrganizationId: string | null | undefined;
 }) {
   const sidePanel = useSidePanel();
+  const viewportWidth = useViewportWidth();
   const [sidePanelWidth, setSidePanelWidth] = useState(readRememberedSidePanelWidth);
+  const sidePanelWidthRatioRef = useRef(widthRatio(sidePanelWidth));
   const [resizingSidePanel, setResizingSidePanel] = useState(false);
-  const expandedSidePanelWidth = clampSidePanelWidth(SIDE_PANEL_EXPANDED_WIDTH);
+  const expandedSidePanelWidth = clampSidePanelWidth(SIDE_PANEL_EXPANDED_WIDTH, viewportWidth);
   const sidePanelExpanded = sidePanelWidth >= expandedSidePanelWidth - 1;
 
   useEffect(() => {
@@ -292,6 +328,23 @@ function DesktopSidePanelSlot({
       // Ignore storage failures; width falls back to the default next time.
     }
   }, [sidePanelWidth]);
+
+  useEffect(() => {
+    if (viewportWidth === null || !Number.isFinite(viewportWidth)) return;
+    const sidePanelWidthRatio = sidePanelWidthRatioRef.current;
+    if (sidePanelWidthRatio === null) {
+      sidePanelWidthRatioRef.current = widthRatio(sidePanelWidth, viewportWidth);
+      return;
+    }
+    setSidePanelWidth(resolveProportionalSidePanelWidth(sidePanelWidthRatio, viewportWidth));
+  }, [viewportWidth]);
+
+  const setProportionalSidePanelWidth = useCallback((nextWidth: number) => {
+    const clampedWidth = clampSidePanelWidth(nextWidth, viewportWidth);
+    sidePanelWidthRatioRef.current = widthRatio(clampedWidth, viewportWidth);
+    setSidePanelWidth(clampedWidth);
+    return clampedWidth;
+  }, [viewportWidth]);
 
   const startSidePanelResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (!sidePanel.open) return;
@@ -311,7 +364,7 @@ function DesktopSidePanelSlot({
     const onPointerMove = (moveEvent: PointerEvent) => {
       const deltaX = moveEvent.clientX - startX;
       latestWidth = startWidth - deltaX;
-      setSidePanelWidth(clampSidePanelWidth(latestWidth));
+      setProportionalSidePanelWidth(latestWidth);
     };
 
     const stopResizing = () => {
@@ -327,7 +380,7 @@ function DesktopSidePanelSlot({
 
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", stopResizing, { once: true });
-  }, [sidePanel, sidePanelWidth]);
+  }, [setProportionalSidePanelWidth, sidePanel, sidePanelWidth]);
 
   if (!sidePanel.open) {
     return (
@@ -369,11 +422,13 @@ function DesktopSidePanelSlot({
         desktopWidth={sidePanelWidth}
         expanded={sidePanelExpanded}
         onClose={sidePanel.closePanel}
-        onToggleExpanded={() => setSidePanelWidth((current) =>
-          current >= expandedSidePanelWidth - 1
-            ? clampSidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH)
-            : expandedSidePanelWidth,
-        )}
+        onToggleExpanded={() => {
+          setProportionalSidePanelWidth(
+            sidePanelWidth >= expandedSidePanelWidth - 1
+              ? SIDE_PANEL_DEFAULT_WIDTH
+              : expandedSidePanelWidth,
+          );
+        }}
       />
     </>
   );
@@ -458,10 +513,12 @@ export function Layout() {
   const onboardingTriggered = useRef(false);
   const productTourTriggered = useRef(false);
   const lastMainScrollTop = useRef(0);
+  const viewportWidth = useViewportWidth();
   const [mobileNavVisible, setMobileNavVisible] = useState(true);
   const [contextColumnWidth, setContextColumnWidth] = useState<number>(() =>
     workspaceColumnFamily ? readRememberedWorkspaceColumnWidth(workspaceColumnFamily) : WORKSPACE_COLUMN_WIDTH_DEFAULTS.issues,
   );
+  const contextColumnWidthRatioRef = useRef(widthRatio(contextColumnWidth));
   const [resizingColumn, setResizingColumn] = useState(false);
   const mainScrollRef = useScrollbarActivityRef(`workspace-main:${relativeBoardPath}`);
   const { data: currentBoardAccess } = useQuery({
@@ -697,8 +754,21 @@ export function Layout() {
 
   useEffect(() => {
     if (!workspaceColumnFamily) return;
-    setContextColumnWidth(readRememberedWorkspaceColumnWidth(workspaceColumnFamily));
+    const rememberedWidth = readRememberedWorkspaceColumnWidth(workspaceColumnFamily);
+    contextColumnWidthRatioRef.current = widthRatio(rememberedWidth);
+    setContextColumnWidth(rememberedWidth);
   }, [workspaceColumnFamily]);
+
+  useEffect(() => {
+    if (!workspaceColumnFamily) return;
+    if (viewportWidth === null || !Number.isFinite(viewportWidth)) return;
+    const contextColumnWidthRatio = contextColumnWidthRatioRef.current;
+    if (contextColumnWidthRatio === null) {
+      contextColumnWidthRatioRef.current = widthRatio(contextColumnWidth, viewportWidth);
+      return;
+    }
+    setContextColumnWidth(resolveProportionalWorkspaceColumnWidth(workspaceColumnFamily, contextColumnWidthRatio, viewportWidth));
+  }, [viewportWidth, workspaceColumnFamily]);
 
   useEffect(() => {
     if (!workspaceColumnFamily) return;
@@ -867,7 +937,9 @@ export function Layout() {
 
     const onPointerMove = (moveEvent: PointerEvent) => {
       const deltaX = moveEvent.clientX - startX;
-      setContextColumnWidth(clampWorkspaceColumnWidth(workspaceColumnFamily, startWidth + deltaX));
+      const nextWidth = clampWorkspaceColumnWidth(workspaceColumnFamily, startWidth + deltaX);
+      contextColumnWidthRatioRef.current = widthRatio(nextWidth);
+      setContextColumnWidth(nextWidth);
     };
 
     const stopResizing = () => {

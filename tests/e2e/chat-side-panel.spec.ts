@@ -440,4 +440,30 @@ test.describe("Chat Side Panel", () => {
     await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
     await expect(page.getByTestId("chat-side-panel-trigger")).toHaveAttribute("aria-pressed", "false");
   });
+
+  test("scales the Side Panel proportionally when the app width changes", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Global-Side-Panel-Proportional-${Date.now()}` },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await page.getByTestId("global-side-panel-trigger").click();
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await expect.poll(async () => Math.round((await sidePanel.boundingBox())?.width ?? 0)).toBe(420);
+
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await expect.poll(async () => Math.round((await sidePanel.boundingBox())?.width ?? 0)).toBe(350);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect.poll(async () => Math.round((await sidePanel.boundingBox())?.width ?? 0)).toBe(420);
+  });
 });

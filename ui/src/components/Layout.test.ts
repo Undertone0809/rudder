@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { clampWorkspaceColumnWidth, getWorkspaceColumnMaxWidth, shouldUseFramelessWorkspaceMain } from "./Layout";
+import {
+  clampWorkspaceColumnWidth,
+  getWorkspaceColumnMaxWidth,
+  resolveProportionalSidePanelWidth,
+  resolveProportionalWorkspaceColumnWidth,
+  shouldUseFramelessWorkspaceMain,
+} from "./Layout";
 
 describe("workspace context column sizing", () => {
   it("lets the issues context column expand to one third of the viewport", () => {
@@ -14,6 +20,34 @@ describe("workspace context column sizing", () => {
   it("keeps other context columns on their fixed maximums", () => {
     expect(getWorkspaceColumnMaxWidth("chat", 1440)).toBe(420);
     expect(clampWorkspaceColumnWidth("chat", 900, 1440)).toBe(420);
+  });
+
+  it("scales the issues context column from the saved viewport ratio", () => {
+    const ratio = 360 / 1440;
+
+    expect(resolveProportionalWorkspaceColumnWidth("issues", ratio, 1200)).toBe(300);
+    expect(resolveProportionalWorkspaceColumnWidth("issues", ratio, 1440)).toBe(360);
+  });
+
+  it("keeps proportional context columns inside min and max limits", () => {
+    const ratio = 360 / 1440;
+
+    expect(resolveProportionalWorkspaceColumnWidth("issues", ratio, 800)).toBe(220);
+    expect(resolveProportionalWorkspaceColumnWidth("issues", 900 / 1440, 2400)).toBe(800);
+  });
+
+  it("scales the side panel from the saved viewport ratio", () => {
+    const ratio = 420 / 1440;
+
+    expect(resolveProportionalSidePanelWidth(ratio, 1200)).toBe(350);
+    expect(resolveProportionalSidePanelWidth(ratio, 1440)).toBe(420);
+  });
+
+  it("keeps proportional side panel width inside min and viewport limits", () => {
+    const ratio = 420 / 1440;
+
+    expect(resolveProportionalSidePanelWidth(ratio, 1000)).toBe(340);
+    expect(resolveProportionalSidePanelWidth(720 / 1440, 1440)).toBe(604);
   });
 });
 
