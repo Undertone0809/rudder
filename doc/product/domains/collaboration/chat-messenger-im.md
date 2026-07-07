@@ -656,6 +656,12 @@ Product model:
 - Side Panel targets are typed objects: issue, automation, Library file,
   Library directory, chat, browser tab, and explicit placeholders for target
   classes that need a link/search before loading a concrete object.
+- Issue targets render as a compact issue-detail workbench inside the panel,
+  not as a read-only preview with a separate edit mode. The title and
+  description are directly editable in place, and issue properties such as
+  status, priority, labels, assignee, reviewer, project, goal, and parent issue
+  use the same readable/editable issue-property controls as Issue Detail where
+  the panel has enough context to expose them.
 - The panel owns tab state, active target, add-tab affordances, empty-state
   choices, width/resizer behavior, and close/focus behavior. It does not become
   the owning domain for issue workflow, automation dispatch, Library path safety,
@@ -694,9 +700,10 @@ Flow:
 6. When the operator clicks the add-tab affordance while a target is already
    open, Rudder keeps existing tabs available but sets the active panel content
    to the empty `Open a panel` picker instead of showing a dropdown menu.
-7. Lightweight mutations exposed in the panel, such as issue title/description
-   edits or automation status edits, call the same domain APIs and show errors
-   in the panel instead of silently ignoring failures.
+7. Lightweight mutations exposed in the panel, such as issue title,
+   description, status, priority, assignee, reviewer, project, goal, parent, or
+   automation status edits, call the same domain APIs and show errors in the
+   panel instead of silently ignoring failures.
 8. Closing a tab focuses a neighboring tab or returns the panel to the empty
    picker state.
 9. When the operator hides the panel and reopens it in the same Messenger chat
@@ -719,6 +726,13 @@ Invariants:
   APIs.
 - Side Panel issue views must preserve `ISSUE.SURFACE.001`,
   `ISSUE.STATE.001`, assignment, reviewer, run, and routing semantics.
+- Side Panel issue views must remain readable at the docked panel width. They
+  may use a wider two-column issue-detail layout when the panel is expanded,
+  but the default docked view must not let viewport breakpoints squeeze the
+  issue title, description, activity, or properties into unreadable columns.
+- Issue title and description editing must be direct and discoverable in the
+  rendered issue view. The panel must not require a generic `Edit issue` button
+  before those fields can be changed.
 - Side Panel automation views must preserve automation definition, trigger,
   output, run-history, and dispatch semantics from `AUTOMATION.*`.
 - Side Panel Library views must preserve `LIBRARY.FILES.001` path safety,
@@ -744,17 +758,19 @@ Evidence:
   keys, labels, and full-page href generation.
 - Layout tests cover shared shell behavior and panel framing decisions.
 - Chat attachment/side-panel tests cover tab behavior, empty state, add-tab
-  actions that return to the empty picker without opening a dropdown menu, issue
-  and automation compact views, Library previews, and browser placeholder
-  behavior.
+  actions that return to the empty picker without opening a dropdown menu,
+  directly editable issue title/description fields, rendered/editable issue
+  assignee metadata, issue and automation compact views, Library previews, and
+  browser placeholder behavior.
 - Layout tests cover Side Panel context keys for Messenger chat and issue
   routes, and Side Panel E2E covers hiding/reopening tabs in one Messenger item,
   switching to an item with no panel history without inheriting tabs, and
   restoring the original item's active tab when returning.
 - Side Panel E2E covers opening issue, automation, Library, and chat references
-  without replacing the Chat route; editing an issue inside the panel; browsing
-  a Library directory tree; opening the global empty panel from Dashboard; and
-  keeping the desktop/web panel gutter compact against the main workspace.
+  without replacing the Chat route; editing an issue title, description,
+  status, and assignee inside the panel; browsing a Library directory tree;
+  opening the global empty panel from Dashboard; and keeping the desktop/web
+  panel gutter compact against the main workspace.
 - Desktop smoke covers the Side Panel Browser loading a local `/api/health` URL
   and normalizing a plain search query into browser navigation.
 
