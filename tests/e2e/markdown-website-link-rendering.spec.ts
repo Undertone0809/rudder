@@ -67,14 +67,22 @@ test("renders website markdown links as inline icon-leading text that wraps", as
     const style = window.getComputedStyle(element);
     const icon = element.querySelector(".rudder-website-link-icon");
     const labelStyle = label ? window.getComputedStyle(label) : null;
-    const labelRects = label
-      ? Array.from(label.getClientRects()).map((line) => ({
+    const firstTextNode = label?.firstChild && label.firstChild.nodeType === Node.TEXT_NODE
+      ? label.firstChild
+      : null;
+    const firstTextRange = firstTextNode ? document.createRange() : null;
+    if (firstTextRange && firstTextNode?.textContent) {
+      firstTextRange.setStart(firstTextNode, 0);
+      firstTextRange.setEnd(firstTextNode, firstTextNode.textContent.length);
+    }
+    const labelRects = firstTextRange
+      ? Array.from(firstTextRange.getClientRects()).map((line) => ({
         right: line.right,
       }))
       : [];
+    const firstTextLineRect = firstTextRange?.getClientRects()[0] ?? null;
     const markdownRect = markdown?.getBoundingClientRect();
     const iconRect = icon?.getBoundingClientRect();
-    const firstLabelRect = label?.getClientRects()[0];
     const maxLineRight = labelRects.reduce((max, line) => Math.max(max, line.right), 0);
     return {
       backgroundImage: style.backgroundImage,
@@ -87,8 +95,8 @@ test("renders website markdown links as inline icon-leading text that wraps", as
       paddingInlineStart: style.paddingInlineStart,
       labelOverflowWrap: labelStyle?.overflowWrap,
       iconHeight: iconRect?.height,
-      iconVerticalCenterDelta: iconRect && firstLabelRect
-        ? Math.abs((iconRect.top + iconRect.height / 2) - (firstLabelRect.top + firstLabelRect.height / 2))
+      iconVerticalCenterDelta: iconRect && firstTextLineRect
+        ? Math.abs((iconRect.top + iconRect.height / 2) - (firstTextLineRect.top + firstTextLineRect.height / 2))
         : null,
     };
   });
