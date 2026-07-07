@@ -1779,6 +1779,92 @@ describe("Chat Side Panel link handling", () => {
     expect(tabs.at(-1)?.textContent).toContain("New tab");
   });
 
+  it("does not call Electron webview APIs before dom-ready in the browser target", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "browser-side-panel-message", body: "Open the browser panel." })],
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const chatSidePanelButton = container.querySelector<HTMLButtonElement>('button[aria-label="Open Side Panel"]');
+    expect(chatSidePanelButton).not.toBeNull();
+    await act(async () => {
+      chatSidePanelButton?.click();
+      await Promise.resolve();
+    });
+
+    let sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    const browserOption = Array.from(sidePanel!.querySelectorAll<HTMLButtonElement>("button")).find(
+      (candidate) => candidate.textContent?.includes("Browser"),
+    );
+    await act(async () => {
+      browserOption?.click();
+      await Promise.resolve();
+    });
+
+    sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    const urlInput = sidePanel!.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]');
+    expect(urlInput).not.toBeNull();
+    await act(async () => {
+      urlInput!.value = "google";
+      urlInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      urlInput!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    const webview = sidePanel?.querySelector<HTMLElement & {
+      canGoBack?: () => boolean;
+      canGoForward?: () => boolean;
+      getURL?: () => string;
+    }>("[data-testid='chat-side-panel-browser-webview']");
+    expect(webview).not.toBeNull();
+    expect(webview?.getAttribute("src")).toBe("https://www.google.com/search?q=google");
+
+    const notReadyError = new Error("The WebView must be attached to the DOM and the dom-ready event emitted before this method can be called.");
+    const canGoBack = vi.fn(() => {
+      throw notReadyError;
+    });
+    const canGoForward = vi.fn(() => {
+      throw notReadyError;
+    });
+    const getURL = vi.fn(() => {
+      throw notReadyError;
+    });
+    Object.assign(webview!, { canGoBack, canGoForward, getURL });
+
+    await act(async () => {
+      webview!.dispatchEvent(new Event("did-start-loading"));
+      webview!.dispatchEvent(new Event("did-stop-loading"));
+      webview!.dispatchEvent(new Event("page-title-updated"));
+      await Promise.resolve();
+    });
+
+    expect(canGoBack).not.toHaveBeenCalled();
+    expect(canGoForward).not.toHaveBeenCalled();
+    expect(getURL).not.toHaveBeenCalled();
+    expect(container.querySelector("[data-testid='chat-side-panel-browser-view']")).not.toBeNull();
+
+    const readyUrl = vi.fn(() => "https://www.google.com/search?q=google");
+    Object.assign(webview!, {
+      canGoBack: vi.fn(() => false),
+      canGoForward: vi.fn(() => false),
+      getURL: readyUrl,
+    });
+
+    await act(async () => {
+      webview!.dispatchEvent(new Event("dom-ready"));
+      webview!.dispatchEvent(new Event("did-stop-loading"));
+      await Promise.resolve();
+    });
+
+    expect(readyUrl).toHaveBeenCalled();
+    expect(container.querySelector("[data-testid='chat-side-panel-browser-view']")).not.toBeNull();
+  });
+
   it("uses a mobile overlay Side Panel without removing the Chat composer", async () => {
     vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
       matches: query.includes("max-width: 767px"),

@@ -206,6 +206,7 @@ function SidePanelEmptyState({
           <button
             key={label}
             type="button"
+            data-testid={`chat-side-panel-empty-${label.toLowerCase()}-target`}
             className="flex items-center gap-3 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3 text-left text-sm transition-colors hover:bg-[color:var(--surface-active)]"
             onClick={() => onOpenTarget(target)}
           >
@@ -877,6 +878,7 @@ function ChatSidePanelBrowserView({
   onReplaceTarget: (key: string, target: SidePanelTarget) => void;
 }) {
   const webviewRef = useRef<BrowserWebviewElement | null>(null);
+  const webviewReadyRef = useRef(false);
   const [addressValue, setAddressValue] = useState(target.url === CHAT_SIDE_PANEL_BROWSER_BLANK_URL ? "" : target.url);
   const [currentUrl, setCurrentUrl] = useState(target.url);
   const [title, setTitle] = useState(target.label);
@@ -885,13 +887,26 @@ function ChatSidePanelBrowserView({
   const [loadError, setLoadError] = useState<string | null>(null);
   const isBlank = currentUrl === CHAT_SIDE_PANEL_BROWSER_BLANK_URL;
 
-  const updateNavigationState = useCallback(() => {
+  const safeWebviewCall = useCallback(<T,>(callback: (webview: BrowserWebviewElement) => T, fallback: T): T => {
     const webview = webviewRef.current;
-    setNavigationState({
-      canGoBack: Boolean(webview?.canGoBack?.()),
-      canGoForward: Boolean(webview?.canGoForward?.()),
-    });
+    if (!webviewReadyRef.current || !webview || webview.tagName.toLowerCase() !== "webview") return fallback;
+    try {
+      return callback(webview);
+    } catch {
+      return fallback;
+    }
   }, []);
+
+  const safeCurrentWebviewUrl = useCallback((fallback: string) => (
+    safeWebviewCall((webview) => webview.getURL?.() ?? fallback, fallback)
+  ), [safeWebviewCall]);
+
+  const updateNavigationState = useCallback(() => {
+    setNavigationState({
+      canGoBack: safeWebviewCall((webview) => Boolean(webview.canGoBack?.()), false),
+      canGoForward: safeWebviewCall((webview) => Boolean(webview.canGoForward?.()), false),
+    });
+  }, [safeWebviewCall]);
 
   const replaceBrowserTarget = useCallback((nextUrl: string, nextTitle = chatSidePanelBrowserLabel(nextUrl)) => {
     const nextTarget: Extract<SidePanelTarget, { kind: "browser" }> = {
@@ -910,8 +925,9 @@ function ChatSidePanelBrowserView({
     setTitle(target.label);
     setAddressValue(target.url === CHAT_SIDE_PANEL_BROWSER_BLANK_URL ? "" : target.url);
     setLoadError(null);
-    updateNavigationState();
-  }, [target.label, target.url, updateNavigationState]);
+    webviewReadyRef.current = false;
+    setNavigationState({ canGoBack: false, canGoForward: false });
+  }, [target.label, target.url]);
 
   useEffect(() => {
     const webview = webviewRef.current;
@@ -920,29 +936,29 @@ function ChatSidePanelBrowserView({
     const handleStart = () => {
       setLoading(true);
       setLoadError(null);
-      updateNavigationState();
     };
     const handleStop = () => {
       setLoading(false);
-      const nextUrl = webview.getURL?.();
+      const nextUrl = safeCurrentWebviewUrl("");
       if (nextUrl && nextUrl !== currentUrl) {
         replaceBrowserTarget(nextUrl, chatSidePanelBrowserLabel(nextUrl));
       }
       updateNavigationState();
     };
     const handleNavigate = (event: Event) => {
-      const nextUrl = "url" in event && typeof event.url === "string" ? event.url : webview.getURL?.();
+      const nextUrl = "url" in event && typeof event.url === "string" ? event.url : safeCurrentWebviewUrl("");
       if (nextUrl) {
         replaceBrowserTarget(nextUrl, chatSidePanelBrowserLabel(nextUrl));
       }
       updateNavigationState();
     };
     const handleTitle = (event: Event) => {
+      const nextUrl = safeCurrentWebviewUrl(currentUrl);
       const nextTitle = "title" in event && typeof event.title === "string" && event.title.trim()
         ? event.title.trim()
-        : chatSidePanelBrowserLabel(webview.getURL?.() ?? currentUrl);
+        : chatSidePanelBrowserLabel(nextUrl);
       setTitle(nextTitle);
-      onReplaceTarget(targetKey, { ...target, url: webview.getURL?.() ?? currentUrl, label: nextTitle });
+      onReplaceTarget(targetKey, { ...target, url: nextUrl, label: nextTitle });
     };
     const handleFail = (event: Event) => {
       const errorDescription = "errorDescription" in event && typeof event.errorDescription === "string"
@@ -952,7 +968,12 @@ function ChatSidePanelBrowserView({
       if (errorDescription !== "ERR_ABORTED") setLoadError(errorDescription);
       updateNavigationState();
     };
+    const handleDomReady = () => {
+      webviewReadyRef.current = true;
+      updateNavigationState();
+    };
 
+    webview.addEventListener("dom-ready", handleDomReady);
     webview.addEventListener("did-start-loading", handleStart);
     webview.addEventListener("did-stop-loading", handleStop);
     webview.addEventListener("did-navigate", handleNavigate);
@@ -962,6 +983,7 @@ function ChatSidePanelBrowserView({
     updateNavigationState();
 
     return () => {
+      webview.removeEventListener("dom-ready", handleDomReady);
       webview.removeEventListener("did-start-loading", handleStart);
       webview.removeEventListener("did-stop-loading", handleStop);
       webview.removeEventListener("did-navigate", handleNavigate);
@@ -969,7 +991,13 @@ function ChatSidePanelBrowserView({
       webview.removeEventListener("page-title-updated", handleTitle);
       webview.removeEventListener("did-fail-load", handleFail);
     };
-  }, [currentUrl, onReplaceTarget, replaceBrowserTarget, target, targetKey, updateNavigationState]);
+  }, [currentUrl, onReplaceTarget, replaceBrowserTarget, safeCurrentWebviewUrl, target, targetKey, updateNavigationState]);
+
+  const handleWebviewRef = useCallback((node: BrowserWebviewElement | null) => {
+    webviewRef.current = node;
+    webviewReadyRef.current = false;
+    if (!node) setNavigationState({ canGoBack: false, canGoForward: false });
+  }, []);
 
   const navigateTo = useCallback((nextValue: string) => {
     const nextUrl = normalizeChatSidePanelBrowserUrl(nextValue);
@@ -998,7 +1026,9 @@ function ChatSidePanelBrowserView({
           size="icon-xs"
           aria-label="Back"
           disabled={!navigationState.canGoBack}
-          onClick={() => webviewRef.current?.goBack?.()}
+          onClick={() => safeWebviewCall((webview) => {
+            webview.goBack?.();
+          }, undefined)}
         >
           <ArrowLeft className="h-3.5 w-3.5" />
         </Button>
@@ -1008,7 +1038,9 @@ function ChatSidePanelBrowserView({
           size="icon-xs"
           aria-label="Forward"
           disabled={!navigationState.canGoForward}
-          onClick={() => webviewRef.current?.goForward?.()}
+          onClick={() => safeWebviewCall((webview) => {
+            webview.goForward?.();
+          }, undefined)}
         >
           <ArrowRight className="h-3.5 w-3.5" />
         </Button>
@@ -1018,7 +1050,9 @@ function ChatSidePanelBrowserView({
           size="icon-xs"
           aria-label="Reload"
           disabled={isBlank}
-          onClick={() => webviewRef.current?.reload?.()}
+          onClick={() => safeWebviewCall((webview) => {
+            webview.reload?.();
+          }, undefined)}
         >
           <RotateCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
         </Button>
@@ -1071,9 +1105,7 @@ function ChatSidePanelBrowserView({
             </div>
           </div>
         ) : createElement("webview", {
-          ref: (node: BrowserWebviewElement | null) => {
-            webviewRef.current = node;
-          },
+          ref: handleWebviewRef,
           src: currentUrl,
           className: "min-h-[52vh] flex-1 bg-[color:var(--surface-panel)]",
           "data-testid": "chat-side-panel-browser-webview",

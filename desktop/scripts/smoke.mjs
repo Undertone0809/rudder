@@ -668,12 +668,23 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix)
   await page.getByTestId("global-side-panel-trigger").click();
   const sidePanel = page.getByTestId("chat-side-panel");
   await sidePanel.waitFor({ state: "visible", timeout: 15_000 });
-  await sidePanel.getByRole("button", { name: /Browser/ }).click();
-  await sidePanel.getByTestId("chat-side-panel-browser-view").waitFor({ state: "visible", timeout: 15_000 });
+  const browserView = sidePanel.getByTestId("chat-side-panel-browser-view");
+  if (!(await browserView.isVisible().catch(() => false))) {
+    const browserButton = sidePanel.getByTestId("chat-side-panel-empty-browser-target");
+    if (await browserButton.isVisible().catch(() => false)) {
+      await browserButton.click();
+    } else {
+      const panelText = await sidePanel.textContent().catch(() => "");
+      throw new Error(`Side Panel Browser action was not visible. Current Side Panel text: ${panelText}`);
+    }
+  }
+  await browserView.waitFor({ state: "visible", timeout: 15_000 });
+  const browserUrlInput = sidePanel.getByLabel("Browser URL");
+  await browserUrlInput.waitFor({ state: "visible", timeout: 15_000 });
 
   const healthUrl = `${baseUrl}/api/health`;
-  await sidePanel.getByLabel("Browser URL").fill(healthUrl);
-  await sidePanel.getByLabel("Browser URL").press("Enter");
+  await browserUrlInput.fill(healthUrl);
+  await browserUrlInput.press("Enter");
   await page.waitForFunction(async ({ expectedUrl }) => {
     const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview']");
     if (!webview || typeof webview.getURL !== "function") return false;
@@ -683,7 +694,16 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix)
     return bodyText.includes('"ok"') || bodyText.includes("ok");
   }, { expectedUrl: healthUrl }, { timeout: 30_000 });
 
-  console.log("[desktop-smoke] chat Side Panel Browser loaded local health URL");
+  await browserUrlInput.fill("google");
+  await browserUrlInput.press("Enter");
+  await page.waitForFunction(async () => {
+    const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview']");
+    if (!webview || typeof webview.getURL !== "function") return false;
+    return webview.getURL().startsWith("https://www.google.com/search?q=google");
+  }, null, { timeout: 30_000 });
+  await sidePanel.getByTestId("chat-side-panel-browser-view").waitFor({ state: "visible", timeout: 15_000 });
+
+  console.log("[desktop-smoke] chat Side Panel Browser loaded local health URL and search query");
   return page;
 }
 
