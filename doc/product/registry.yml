@@ -803,6 +803,7 @@ contracts:
       - tests/e2e/chat-side-panel.spec.ts
     related_plans:
       - doc/plans/2026-07-01-global-side-panel-workbench.md
+      - doc/plans/2026-07-07-messenger-side-panel-session-state.md
       - doc/plans/2026-06-30-chat-side-panel.md
   MESSENGER.ATTENTION.001:
     owner: product

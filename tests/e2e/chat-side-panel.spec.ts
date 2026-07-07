@@ -296,6 +296,201 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(4);
   });
 
+  test("keeps hidden Side Panel tabs scoped to the active Messenger chat", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Chat-Side-Panel-Session-State-${Date.now()}` },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    async function createChat(title: string, body?: string) {
+      const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+        data: {
+          title,
+          issueCreationMode: "manual_approval",
+          planMode: false,
+        },
+      });
+      expect(chatRes.ok(), await chatRes.text()).toBe(true);
+      const chat = await chatRes.json() as { id: string; title: string };
+      if (body) {
+        await e2eDb.insert(chatMessages).values({
+          id: randomUUID(),
+          orgId: organization.id,
+          conversationId: chat.id,
+          role: "assistant",
+          kind: "message",
+          status: "completed",
+          body,
+          structuredPayload: null,
+          replyingAgentId: null,
+          chatTurnId: randomUUID(),
+          turnVariant: 0,
+        });
+      }
+      return chat;
+    }
+
+    const panelTargetA = await createChat("Panel target A", "Panel target A body.");
+    const panelTargetB = await createChat("Panel target B", "Panel target B body.");
+    const otherChat = await createChat("Other chat without panel history", "Other chat has no panel history.");
+    const thirdChat = await createChat("Third chat without panel history", "Third chat has no panel history.");
+    const hostChat = await createChat("Session state host chat", [
+      `Compare [Panel target A](${buildChatMentionHref(panelTargetA.id)}) beside this chat.`,
+      `Compare [Panel target B](${buildChatMentionHref(panelTargetB.id)}) beside this chat.`,
+    ].join("\n\n"));
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${hostChat.id}`);
+
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(assistantMessage).toContainText("Panel target A", { timeout: 15_000 });
+
+    await assistantMessage.locator('a[data-mention-kind="chat"]').filter({ hasText: "Panel target A" }).click();
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await expect(sidePanel).toContainText("Panel target A body.");
+
+    await assistantMessage.locator('a[data-mention-kind="chat"]').filter({ hasText: "Panel target B" }).click();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
+    await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toContainText("Panel target B");
+    await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toHaveAttribute("aria-selected", "true");
+    await expect(sidePanel).toContainText("Panel target B body.");
+
+    await sidePanel.getByTestId("chat-side-panel-collapse").click();
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+    const chatSidePanelTrigger = () => page.getByTestId("workspace-main-card").getByTestId("chat-side-panel-trigger");
+    await expect(chatSidePanelTrigger()).toHaveAttribute("aria-pressed", "false");
+
+    await chatSidePanelTrigger().click();
+    await expect(sidePanel).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
+    await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toContainText("Panel target B");
+    await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toHaveAttribute("aria-selected", "true");
+    await expect(sidePanel).toContainText("Panel target B body.");
+
+    await sidePanel.getByTestId("chat-side-panel-collapse").click();
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+    await page.getByTestId(`messenger-thread-chat-${otherChat.id}`).click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${otherChat.id}$`));
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+
+    await chatSidePanelTrigger().click();
+    await expect(sidePanel).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-empty-state")).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(0);
+    await expect(sidePanel).not.toContainText("Panel target A body.");
+    await expect(sidePanel).not.toContainText("Panel target B body.");
+
+    await page.getByTestId(`messenger-thread-chat-${hostChat.id}`).click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${hostChat.id}$`));
+    await expect(sidePanel).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
+    await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toContainText("Panel target B");
+    await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toHaveAttribute("aria-selected", "true");
+    await expect(sidePanel).toContainText("Panel target B body.");
+
+    await page.getByTestId(`messenger-thread-chat-${thirdChat.id}`).click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${thirdChat.id}$`));
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+  });
+
+  test("keeps Side Panel tabs scoped to a concrete Messenger issue", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Chat-Side-Panel-Issue-Session-State-${Date.now()}` },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Issue panel session target",
+        description: "Issue route should keep its own side panel state.",
+        status: "todo",
+        priority: "medium",
+      },
+    });
+    expect(issueRes.ok(), await issueRes.text()).toBe(true);
+    const issue = await issueRes.json() as { id: string; identifier: string | null; title: string };
+    const issueRef = issue.identifier ?? issue.id;
+    const followRes = await page.request.post(`/api/issues/${issue.id}/follow`);
+    expect(followRes.ok(), await followRes.text()).toBe(true);
+
+    const otherChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Issue context no-history chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(otherChatRes.ok(), await otherChatRes.text()).toBe(true);
+    const otherChat = await otherChatRes.json() as { id: string };
+
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: otherChat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "No side panel history belongs to this chat.",
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.messengerSplitIssueNotificationsByOrg", JSON.stringify({ [orgId]: true }));
+    }, organization.id);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/issues/${issueRef}`, { waitUntil: "commit" });
+    await expect(page).toHaveURL(new RegExp(`/messenger/issues/${issueRef}$`));
+    await expect(page.locator("#main-content").getByRole("heading", { name: "Issue panel session target" })).toBeVisible({ timeout: 15_000 });
+
+    const globalSidePanelTrigger = page.getByTestId("global-side-panel-trigger");
+    await globalSidePanelTrigger.click({ force: true });
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await expect(sidePanel.getByTestId("chat-side-panel-empty-state")).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(0);
+    await sidePanel.getByTestId("chat-side-panel-empty-library-target").click();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(1);
+    await expect(sidePanel.getByTestId("chat-side-panel-tab").first()).toContainText("Library");
+    await expect(sidePanel.getByTestId("chat-side-panel-library-directory-view")).toBeVisible();
+
+    await sidePanel.getByTestId("chat-side-panel-collapse").click();
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+    await globalSidePanelTrigger.click({ force: true });
+    await expect(sidePanel).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(1);
+    await expect(sidePanel.getByTestId("chat-side-panel-tab").first()).toContainText("Library");
+    await expect(sidePanel.getByTestId("chat-side-panel-library-directory-view")).toBeVisible();
+
+    await page.getByTestId(`messenger-thread-chat-${otherChat.id}`).click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${otherChat.id}$`));
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+    await page.getByTestId("workspace-main-card").getByTestId("chat-side-panel-trigger").click();
+    await expect(sidePanel).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-empty-state")).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(0);
+
+    await page.getByTestId(`messenger-thread-issue-${issue.id}`).click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/issues/${issueRef}$`));
+    await expect(sidePanel).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(1);
+    await expect(sidePanel.getByTestId("chat-side-panel-tab").first()).toContainText("Library");
+    await expect(sidePanel.getByTestId("chat-side-panel-library-directory-view")).toBeVisible();
+  });
+
   test("opens a Library directory in the Side Panel with the Library file-tree UI", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Chat-Side-Panel-Library-Directory-${Date.now()}` },

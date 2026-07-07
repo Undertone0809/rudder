@@ -1376,7 +1376,7 @@ export function ChatSidePanel({
               aria-label="Close Side Panel"
               title="Close Side Panel"
               className="inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-              onClick={onClose ?? sidePanel.closePanel}
+              onClick={onClose ?? sidePanel.hidePanel}
             >
               <PanelRightClose className="h-3.5 w-3.5" />
             </button>

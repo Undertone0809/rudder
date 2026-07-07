@@ -222,6 +222,28 @@ export function shouldUseFramelessWorkspaceMain(relativePath: string): boolean {
   return relativePath === "/messenger";
 }
 
+function decodeSidePanelRouteSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+export function resolveSidePanelContextKey(relativePath: string): string | null {
+  const segments = relativePath.split("?")[0]?.split("#")[0]?.split("/").filter(Boolean) ?? [];
+  if (segments[0] === "messenger" && segments[1] === "chat" && segments[2]) {
+    return `chat:${decodeSidePanelRouteSegment(segments[2])}`;
+  }
+  if (segments[0] === "messenger" && segments[1] === "issues" && segments[2]) {
+    return `issue:${decodeSidePanelRouteSegment(segments[2])}`;
+  }
+  if (segments[0] === "chat" && segments[1]) {
+    return `chat:${decodeSidePanelRouteSegment(segments[1])}`;
+  }
+  return null;
+}
+
 function getCurrentViewportWidth(): number | null {
   if (typeof window === "undefined") return null;
   return window.innerWidth;
@@ -381,7 +403,7 @@ function DesktopSidePanelSlot({
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", stopResizing);
       if (latestWidth <= SIDE_PANEL_COLLAPSE_WIDTH) {
-        sidePanel.closePanel();
+        sidePanel.hidePanel();
       }
     };
 
@@ -398,7 +420,7 @@ function DesktopSidePanelSlot({
           size="icon"
           data-testid="global-side-panel-trigger"
           className="absolute right-[3px] top-1/2 h-11 w-7 -translate-y-1/2 rounded-l-[calc(var(--radius-sm)-1px)] rounded-r-none border-r-0 bg-[color:var(--surface-elevated)] text-muted-foreground opacity-0 shadow-[var(--shadow-sm)] transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:bg-[color:var(--surface-active)] hover:text-foreground"
-          onClick={sidePanel.openEmpty}
+          onClick={sidePanel.showPanel}
           aria-label="Open Side Panel"
           title="Open Side Panel"
         >
@@ -419,7 +441,7 @@ function DesktopSidePanelSlot({
           expanded
           onClose={() => {
             setProportionalSidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH);
-            sidePanel.closePanel();
+            sidePanel.hidePanel();
           }}
           onToggleExpanded={() => setProportionalSidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH)}
         />
@@ -448,7 +470,7 @@ function DesktopSidePanelSlot({
         selectedOrganizationId={selectedOrganizationId}
         desktopWidth={sidePanelWidth}
         expanded={sidePanelExpanded}
-        onClose={sidePanel.closePanel}
+        onClose={sidePanel.hidePanel}
         onToggleExpanded={() => {
           setProportionalSidePanelWidth(
             sidePanelWidth >= expandedSidePanelWidth - 1
@@ -459,6 +481,17 @@ function DesktopSidePanelSlot({
       />
     </>
   );
+}
+
+function SidePanelRouteContextBinder({ relativePath }: { relativePath: string }) {
+  const { setContextKey } = useSidePanel();
+  const sidePanelContextKey = useMemo(() => resolveSidePanelContextKey(relativePath), [relativePath]);
+
+  useLayoutEffect(() => {
+    setContextKey(sidePanelContextKey);
+  }, [setContextKey, sidePanelContextKey]);
+
+  return null;
 }
 
 export function Layout() {
@@ -1001,6 +1034,7 @@ export function Layout() {
       <DevRestartBanner devServer={health?.devServer} />
       <MarkdownMentionsProvider>
       <SidePanelProvider>
+      <SidePanelRouteContextBinder relativePath={relativeBoardPath} />
       <CalendarWorkspaceProvider>
       <div className={cn("min-h-0 flex-1", isMobile ? "w-full" : "flex overflow-hidden")}>
         {isMobile && sidebarOpen && (

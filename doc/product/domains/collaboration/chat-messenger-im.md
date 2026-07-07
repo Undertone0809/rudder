@@ -660,6 +660,16 @@ Product model:
   choices, width/resizer behavior, and close/focus behavior. It does not become
   the owning domain for issue workflow, automation dispatch, Library path safety,
   Messenger attention, or chat lifecycle.
+- In Messenger, panel tab state is session-scoped to the active work item when
+  the item has a stable chat or issue identity. Chat conversations and concrete
+  issue threads each keep their own in-memory Side Panel tabs and active tab
+  until the app session ends.
+- Hiding the Side Panel is a visibility action, not a tab-destruction action.
+  The operator must explicitly close a tab to remove it from the current item.
+- Switching Messenger to another item with no Side Panel history must not carry
+  over the prior item's tabs. If the panel is open and the next item has no
+  saved session panel state, Rudder closes the panel by default instead of
+  showing an empty panel over unrelated work.
 - The add-tab affordance opens the empty `Open a panel` picker directly. It must
   not automatically open a target-type menu; target choice belongs in the picker
   page so the operator can choose Browser, Library, Issue, or another supported
@@ -689,7 +699,16 @@ Flow:
    in the panel instead of silently ignoring failures.
 8. Closing a tab focuses a neighboring tab or returns the panel to the empty
    picker state.
-9. Browser tabs normalize address-bar input into either a URL or search-query
+9. When the operator hides the panel and reopens it in the same Messenger chat
+   or issue context, Rudder restores that context's tabs and active tab.
+10. When the operator switches from one Messenger item to another, Rudder
+   switches the Side Panel to the destination item's session state. If that
+   destination has no session state, the panel stays or becomes closed by
+   default.
+11. App restart may clear all Side Panel tab/session state; this contract does
+   not require server persistence, cross-device sync, or localStorage recovery
+   for tabs.
+12. Browser tabs normalize address-bar input into either a URL or search-query
    navigation, keep back/forward/reload state scoped to the embedded browser,
    and can open the current page externally as a secondary action.
 
@@ -728,6 +747,10 @@ Evidence:
   actions that return to the empty picker without opening a dropdown menu, issue
   and automation compact views, Library previews, and browser placeholder
   behavior.
+- Layout tests cover Side Panel context keys for Messenger chat and issue
+  routes, and Side Panel E2E covers hiding/reopening tabs in one Messenger item,
+  switching to an item with no panel history without inheriting tabs, and
+  restoring the original item's active tab when returning.
 - Side Panel E2E covers opening issue, automation, Library, and chat references
   without replacing the Chat route; editing an issue inside the panel; browsing
   a Library directory tree; opening the global empty panel from Dashboard; and
