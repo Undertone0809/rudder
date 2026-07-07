@@ -541,6 +541,7 @@ contracts:
       - server/src/__tests__/library-path-markdown.test.ts
       - server/src/__tests__/organization-workspace-browser.test.ts
       - desktop/src/ide-opener.test.ts
+      - ui/src/pages/OrganizationWorkspaceFilesSidebar.test.tsx
       - ui/src/pages/OrganizationWorkspaces.scrollbars.test.tsx
       - tests/e2e/organization-workspaces-launcher.spec.ts
     related_plans:
