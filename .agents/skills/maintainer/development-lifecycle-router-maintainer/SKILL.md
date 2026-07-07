@@ -5,9 +5,14 @@ description: "Use when a Rudder development request has an unclear lifecycle sta
 
 # Development Lifecycle Router Maintainer
 
+## Overview
+
 Use this skill as a routing layer: choose the current lifecycle stage, name the
 exit bar, and hand off to the smallest capable maintainer skill or normal coding
 workflow.
+
+This skill is a thin router. Load only the reference file needed for that route,
+then execute through the narrow owner or normal repo workflow.
 
 The reason this skill exists is to prevent two expensive mistakes:
 
@@ -15,10 +20,7 @@ The reason this skill exists is to prevent two expensive mistakes:
 - calling a stage complete without the product proof or reviewer evidence that
   the user's request actually requires
 
-Keep this file thin. Load the reference files below only when the current route
-needs them.
-
-## Reference Map
+## Quick Reference
 
 - `references/route-selection.md`: stage classifier, narrow-skill routing,
   meta-request precedence, and skill-optimization boundaries.
@@ -30,7 +32,7 @@ needs them.
 - `references/handoff-git.md`: git safety, final handoff shape, acceptance
   blockers, and common route templates.
 
-## Fast Start
+## Implementation
 
 Before editing files, running long checks, spawning reviewers, or committing:
 
@@ -47,7 +49,9 @@ Before editing files, running long checks, spawning reviewers, or committing:
 For obvious narrow requests, do not expand a lifecycle plan. Say the route,
 load the narrow skill, and execute it.
 
-## Non-Use Gate
+## When to Use
+
+### Non-Use Gate
 
 Use the narrow maintainer directly when all of these are true:
 
@@ -61,7 +65,7 @@ Keep ownership in this router only when it adds value by choosing a stage,
 resolving ambiguity, sequencing multiple stages, or protecting a high-risk
 handoff.
 
-## Core Rule
+## Core Pattern
 
 Route first, then execute.
 
@@ -83,8 +87,8 @@ writer implementation
 
 Pre-review is only for catching obvious diff, startup, safety, scope, or test
 readiness problems before verifier time is spent. It is not the final reviewer
-gate. Final review follows verifier `PASS` so reviewers can inspect the diff,
-tests, handoff, and verifier evidence together.
+gate. The final spawned reviewer gate follows verifier `PASS` so reviewers can
+inspect the diff, tests, handoff, and verifier evidence together.
 
 Separate verification from review:
 
@@ -187,6 +191,12 @@ assistant recommendations as evidence for the skill failure. They are not the
 active product task unless the newest user instruction says to continue that
 product task.
 
+If the screenshot contains visible UI markup, red boxes/arrows, or spatial
+corrections such as "this label belongs here", extract the routing failure from
+that annotation. Do not route to UI polish, implement the marked UI change, or
+optimize a different reviewer/design skill unless the newest user instruction
+names that as the target artifact.
+
 For this route:
 
 - name the target skill and path
@@ -248,3 +258,12 @@ Evidence: required / scenario / proven / missing or substituted
 Git: commit / push
 Residual risk: ...
 ```
+
+## Common Mistakes
+
+- Treating a screenshot or prior assistant recommendation as the current task
+  when the newest instruction asks to optimize a named skill.
+- Running broad lifecycle orchestration when a narrow maintainer can produce the
+  obvious next artifact safely.
+- Calling handoff complete from author-run tests, screenshots, CI, self-review,
+  or serial personas when the route requires spawned verifier/reviewer evidence.

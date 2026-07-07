@@ -615,6 +615,23 @@
         "The result does not proceed to final reviewers, handoff, commit, or push as complete until the required surface runs or the user lowers the bar.",
         "The result records the exact blocker if credentials, tunnel, callback, app installation, or user action prevents the live Feishu test."
       ]
+    },
+    {
+      "id": 46,
+      "prompt": "修改下 [$development-lifecycle-router-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md)。截图里 Messenger 左侧 Pinned 标题被红框标出来，旁边写着“PINNED 的文字应该放在这里才对的”，右侧上一轮还提到可以优化 reviewer skill。",
+      "expected_output": "Classifies the newest turn as skill_optimization and uses skill-creator with development-lifecycle-router-maintainer as the target artifact. It treats the red-box Pinned placement note and prior reviewer-skill mention as evidence for the router failure, extracts the reusable rule that screenshot annotations must not override explicit named-skill optimization, and patches the router or evals narrowly. It must not implement Messenger Pinned UI placement, route to rudder-ui-polish-maintainer, or optimize the reviewer skill unless the newest instruction explicitly names that artifact.",
+      "files": [
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/references/route-selection.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/evals/evals.json"
+      ],
+      "expectations": [
+        "The result gives the explicit request to modify development-lifecycle-router-maintainer precedence over the Messenger screenshot annotation.",
+        "The result names skill-creator as the primary workflow and development-lifecycle-router-maintainer as the target artifact.",
+        "The result treats the red-box Pinned placement note as evidence of the routing failure, not as authorization to edit Messenger UI.",
+        "The result does not route to rudder-ui-polish-maintainer or optimize the prior reviewer skill mentioned in the screenshot.",
+        "The result adds or proposes a validation case that protects future screenshot-annotation skill-optimization requests."
+      ]
     }
   ]
 }
