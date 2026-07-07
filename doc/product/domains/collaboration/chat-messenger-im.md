@@ -9,6 +9,7 @@ contract_ids:
   - CHAT.FORK.001
   - CHAT.RICH.REFERENCE.RENDERING.001
   - CHAT.WEBSITE.LINK.ICON.001
+  - CHAT.SIDE.PANEL.001
   - MESSENGER.ATTENTION.001
   - MESSENGER.CUSTOM.GROUPS.001
   - IM.FEISHU.001
@@ -37,8 +38,12 @@ related_code:
   - ui/src/components/MarkdownBody.tsx
   - ui/src/api/websiteMetadata.ts
   - ui/src/lib/source-badge.ts
+  - ui/src/lib/side-panel-targets.ts
+  - ui/src/context/SidePanelContext.tsx
+  - ui/src/components/Layout.tsx
   - ui/src/components/MilkdownMarkdownEditor.tsx
   - ui/src/components/MessengerContextSidebar.tsx
+  - ui/src/pages/Chat.side-panel.tsx
   - ui/src/pages/Chat.tsx
   - ui/src/pages/Chat.messages.tsx
   - ui/src/pages/Messenger.tsx
@@ -61,6 +66,8 @@ related_tests:
   - ui/src/lib/source-badge.test.ts
   - ui/src/components/MilkdownMarkdownEditor.test.ts
   - ui/src/components/MarkdownBody.test.tsx
+  - ui/src/lib/side-panel-targets.test.ts
+  - ui/src/components/Layout.test.ts
   - ui/src/pages/AgentDetail.runs.test.ts
   - ui/src/pages/Chat.attachment-preview.test.tsx
   - ui/src/pages/Chat.messages.test.tsx
@@ -69,6 +76,7 @@ related_tests:
   - tests/e2e/messenger-contract.spec.ts
   - tests/e2e/chat-fork.spec.ts
   - tests/e2e/chat-rich-references.spec.ts
+  - tests/e2e/chat-side-panel.spec.ts
   - tests/e2e/agent-detail-feishu-integration.spec.ts
   - tests/e2e/feishu-source-badges.spec.ts
 edit_policy: user_confirmed_only
@@ -96,6 +104,13 @@ Product model:
   payloads, and optional run attribution.
 - Chat-native assistant turns that invoke runtimes are Agent Runs under
   `RUN.CHAT.AGENT.001`.
+- A completed assistant answer may be refreshed as another variant of the same
+  chat turn. The visible branch controls let the operator compare prior and
+  refreshed variants without creating a new conversation.
+- Assistant message bodies contain user-visible assistant output only. Runtime
+  transcript evidence such as thinking/reasoning entries, scratchpad text, tool
+  logs, and incomplete adapter summaries remain run evidence, not chat bubble
+  body content.
 - Durable tracked work remains issue-centric unless the configured flow is
   explicitly chat-native, such as automation `chat_output`.
 
@@ -111,6 +126,9 @@ Flow:
    when the operator asks for that conversion/proposal path. The assistant must
    not emit an issue proposal merely because the work is large, durable,
    assignable, or issue-shaped.
+6. When the operator refreshes a completed assistant answer, Rudder reuses the
+   original turn context, creates a new turn variant, and surfaces branch
+   controls for moving between variants.
 
 Invariants:
 
@@ -120,6 +138,15 @@ Invariants:
 - Assistant-created issue proposals must be grounded in an explicit latest
   operator-authored request for issue creation, chat-to-issue conversion, or
   issue-proposal drafting.
+- When an assistant turn is stopped before completion, the chat may show only
+  already streamed user-visible assistant text as a partial reply. It must not
+  fill the bubble from provider reasoning/thinking events or incomplete runtime
+  summaries.
+- Refreshing an assistant answer is allowed only for completed assistant
+  messages in locally mutable chats. External-bound conversations that require a
+  fork-to-continue path must not expose direct refresh.
+- Refresh variants must remain scoped to the original chat turn. They must not
+  erase the earlier answer or make the prior variant unreachable.
 - Agent attribution is visible enough to navigate from message to run/agent.
 
 Evidence:
@@ -127,6 +154,10 @@ Evidence:
 - Chat E2E covers rich references, skill picker, attachments, draft
   persistence, and attribution navigation.
 - Chat assistant tests cover runtime-backed turns.
+- Chat assistant tests cover stopped runtime turns that keep reasoning out of
+  partial assistant bodies.
+- Chat refresh E2E covers refreshing a completed assistant answer as a second
+  turn variant and navigating back to the first variant.
 
 ## CHAT.TITLE.GENERATION.001
 
@@ -407,6 +438,9 @@ Product model:
 - If the source conversation is bound to an external IM provider such as
   Feishu, the fork keeps Rudder lineage but does not inherit the provider chat
   binding. The child is a normal Rudder chat that can be continued locally.
+- Refreshing a completed assistant answer is not a conversation fork. It creates
+  another variant inside the same chat turn, while `Fork` / `Fork from here`
+  create separate conversations with lineage.
 
 Flow:
 
@@ -433,6 +467,8 @@ Invariants:
   conversation is truncated at that response.
 - Forked conversations must not share mutable runtime context with the source
   conversation.
+- Turn variants created by assistant-answer refresh must not be treated as
+  forked conversations and must not create fork-family Messenger groups.
 - Forked conversations must not inherit external provider bindings from the
   source conversation. A fork from a Feishu-bound conversation is locally
   mutable in Rudder and must not send its future messages back to Feishu.
@@ -455,6 +491,8 @@ Evidence:
 - Chat fork E2E covers the visible fork workflow and copied-message boundary.
 - Feishu source badge E2E covers that a fork from a Feishu-bound conversation
   returns a normal Rudder chat with no Feishu outbound rows.
+- Chat refresh E2E covers that a refreshed assistant answer appears as a chat
+  branch/variant rather than as a forked conversation.
 
 ## CHAT.RICH.REFERENCE.RENDERING.001
 
@@ -474,6 +512,9 @@ Product model:
   icon, canonical title/code text, and normal inline wrapping behavior.
 - Composer/editor surfaces and read-only markdown surfaces share the same
   visual grammar for the same reference type.
+- Issue references that carry status metadata show the issue status icon inline,
+  whether they appear in assistant messages, user messages, comments, or other
+  read-only markdown bodies.
 - Composer tokens may use single-line truncation for very long labels, but
   short or ordinary labels remain visible without unnecessary abbreviation.
 
@@ -491,6 +532,10 @@ Invariants:
 - Rich-reference icons and labels must share a stable text baseline across
   composer, issue comment editor, issue description, rendered markdown, and
   Library document surfaces.
+- Chat user-message rendering and assistant/read-only markdown rendering must
+  not diverge for issue reference status icons or line-height rhythm. The same
+  reference type with the same status metadata should look like the same object
+  on both sides of a conversation.
 - Do not add one-off vertical offsets for a single surface unless visual proof
   shows the shared token contract is wrong for that whole class of tokens.
 - New reference kinds must join the same token grammar instead of inventing
@@ -505,6 +550,8 @@ Evidence:
 - CSS contract tests lock the composer token icon alignment and truncation
   behavior.
 - Markdown editor/body tests cover special markdown rendering consistency.
+- Chat message tests cover user-message issue reference status icons and their
+  parity with assistant markdown rendering.
 - Chat rich-reference E2E covers real chat insertion and rendering behavior.
 
 ## CHAT.WEBSITE.LINK.ICON.001
@@ -561,6 +608,108 @@ Evidence:
 - Markdown/body and chat message tests cover metadata icon rendering, generic
   fallback, image-load failure fallback, safe external-link attributes, and
   unchanged link text.
+- Website-link E2E covers real issue-page rendering, favicon-provider fallback,
+  inline wrapping, and internal-link no-fetch behavior.
+
+## CHAT.SIDE.PANEL.001
+
+Why:
+
+- Operators often need to inspect or lightly operate on a referenced issue,
+  automation, Library file, directory, chat, or browser-like target while keeping
+  their current work surface in view.
+- Chat remains an intake and coordination surface, but references should not
+  force route replacement when the user's job is quick context inspection or a
+  small adjacent edit.
+
+Product model:
+
+- The Side Panel is a global board workbench mounted in the shared organization
+  layout, not a Chat-only drawer.
+- Supported internal references can open or focus tabs in the Side Panel without
+  replacing the current route on ordinary clicks. Modifier-click and unsupported
+  links preserve normal navigation behavior.
+- Side Panel targets are typed objects: issue, automation, Library file,
+  Library directory, chat, browser tab, and explicit placeholders for target
+  classes that need a link/search before loading a concrete object.
+- The panel owns tab state, active target, add-tab affordances, empty-state
+  choices, width/resizer behavior, and close/focus behavior. It does not become
+  the owning domain for issue workflow, automation dispatch, Library path safety,
+  Messenger attention, or chat lifecycle.
+- The add-tab affordance opens the empty `Open a panel` picker directly. It must
+  not automatically open a target-type menu; target choice belongs in the picker
+  page so the operator can choose Browser, Library, Issue, or another supported
+  target from the panel body.
+- When a secure embedded browser surface is available, the Browser target can
+  load typed URLs and search queries inside the Side Panel. When that surface is
+  unavailable, Browser remains an empty tab/picker target and must not perform
+  unsafe remote fetches by itself.
+
+Flow:
+
+1. The operator opens the Side Panel from the global right-edge trigger, the
+   panel add-tab affordance, or a supported internal reference in
+   Chat/Messenger.
+2. The side-panel target parser normalizes the object into a stable tab key.
+3. If the target is already open, Rudder focuses the existing tab instead of
+   duplicating it.
+4. The target view loads through the existing organization-scoped API for that
+   domain.
+5. The panel renders the object in a compact workbench view and keeps the
+   current board route stable.
+6. When the operator clicks the add-tab affordance while a target is already
+   open, Rudder keeps existing tabs available but sets the active panel content
+   to the empty `Open a panel` picker instead of showing a dropdown menu.
+7. Lightweight mutations exposed in the panel, such as issue title/description
+   edits or automation status edits, call the same domain APIs and show errors
+   in the panel instead of silently ignoring failures.
+8. Closing a tab focuses a neighboring tab or returns the panel to the empty
+   picker state.
+9. Browser tabs normalize address-bar input into either a URL or search-query
+   navigation, keep back/forward/reload state scoped to the embedded browser,
+   and can open the current page externally as a secondary action.
+
+Invariants:
+
+- The Side Panel must not infer cross-organization access from a link string; all
+  target loads and mutations remain enforced by existing organization-scoped
+  APIs.
+- Side Panel issue views must preserve `ISSUE.SURFACE.001`,
+  `ISSUE.STATE.001`, assignment, reviewer, run, and routing semantics.
+- Side Panel automation views must preserve automation definition, trigger,
+  output, run-history, and dispatch semantics from `AUTOMATION.*`.
+- Side Panel Library views must preserve `LIBRARY.FILES.001` path safety,
+  protected paths, previews, and stable reference behavior.
+- Side Panel chat views must preserve chat lifecycle and Messenger attention
+  semantics; opening a chat target in the panel is not a read-state or routing
+  rewrite unless the owning Messenger/chat code performs that action.
+- Side Panel Browser navigation must not grant file, organization, or
+  application privileges beyond the embedded browser shell. Local board URLs are
+  navigable through the browser surface, but organization-scoped data still
+  relies on the normal board/API authorization model.
+- On desktop and web shells, the Side Panel docks directly against the main
+  workspace with only a narrow resize affordance between them. It must not leave
+  a broad blank gutter that visually separates the panel from the current work
+  surface.
+- The panel should not show a generic full-page footer as the primary action for
+  every target. Full-page navigation may remain a secondary object toolbar
+  action, but the panel's job is adjacent work.
+
+Evidence:
+
+- Side-panel target tests cover parsing supported route/mention targets, stable
+  keys, labels, and full-page href generation.
+- Layout tests cover shared shell behavior and panel framing decisions.
+- Chat attachment/side-panel tests cover tab behavior, empty state, add-tab
+  actions that return to the empty picker without opening a dropdown menu, issue
+  and automation compact views, Library previews, and browser placeholder
+  behavior.
+- Side Panel E2E covers opening issue, automation, Library, and chat references
+  without replacing the Chat route; editing an issue inside the panel; browsing
+  a Library directory tree; opening the global empty panel from Dashboard; and
+  keeping the desktop/web panel gutter compact against the main workspace.
+- Desktop smoke covers the Side Panel Browser loading a local `/api/health` URL
+  and normalizing a plain search query into browser navigation.
 
 ## MESSENGER.ATTENTION.001
 

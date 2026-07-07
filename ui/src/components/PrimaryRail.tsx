@@ -409,7 +409,7 @@ export function PrimaryRail({
             <Button
               variant="ghost"
               size="icon-sm"
-              className={railUtilityButtonClass}
+              className={cn(railUtilityButtonClass, "rail-create-menu-trigger")}
               data-tour-target="create-menu"
               title={t("common.create")}
               aria-label={t("common.create")}
@@ -420,7 +420,7 @@ export function PrimaryRail({
           <DropdownMenuContent
             side="right"
             align="start"
-            className="rail-create-menu-content glass-popover w-48 text-foreground"
+            className="rail-create-menu-content morph-popover morph-popover--from-left glass-popover w-48 text-foreground"
           >
             <DropdownMenuItem onClick={() => navigate("/messenger/chat")}>
               <MessageCirclePlus className="h-4 w-4" />

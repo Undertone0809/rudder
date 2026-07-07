@@ -676,6 +676,114 @@ describe("MessengerContextSidebar", () => {
     }));
   });
 
+  it("renders pinned and unpinned custom groups as the same top-level group surface", () => {
+    localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "custom" });
+    chatList = [];
+    customGroupList = [
+      {
+        id: "pinned-group",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Pinned group",
+        icon: "😀::amber",
+        pinnedAt: "2026-04-11T08:00:00.000Z",
+        sortOrder: 0,
+        collapsed: false,
+        createdAt: "2026-04-11T08:00:00.000Z",
+        updatedAt: "2026-04-11T08:00:00.000Z",
+        entries: [{
+          id: "entry-pinned",
+          orgId: "org-1",
+          userId: "local-board",
+          groupId: "pinned-group",
+          threadKey: "chat:pinned-grouped",
+          sortOrder: 0,
+          createdAt: "2026-04-11T08:00:00.000Z",
+          updatedAt: "2026-04-11T08:00:00.000Z",
+          thread: {
+            threadKey: "chat:pinned-grouped",
+            kind: "chat",
+            title: "Pinned grouped chat",
+            preview: "Pinned.",
+            subtitle: null,
+            href: "/messenger/chat/pinned-grouped",
+            latestActivityAt: "2026-04-11T08:00:00.000Z",
+            lastReadAt: null,
+            unreadCount: 0,
+            needsAttention: false,
+            isPinned: false,
+          },
+        }],
+      },
+      {
+        id: "regular-group",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Regular group",
+        icon: "folder::slate",
+        pinnedAt: null,
+        sortOrder: 1,
+        collapsed: false,
+        createdAt: "2026-04-11T08:00:00.000Z",
+        updatedAt: "2026-04-11T08:00:00.000Z",
+        entries: [{
+          id: "entry-regular",
+          orgId: "org-1",
+          userId: "local-board",
+          groupId: "regular-group",
+          threadKey: "chat:regular-grouped",
+          sortOrder: 0,
+          createdAt: "2026-04-11T08:00:00.000Z",
+          updatedAt: "2026-04-11T08:00:00.000Z",
+          thread: {
+            threadKey: "chat:regular-grouped",
+            kind: "chat",
+            title: "Regular grouped chat",
+            preview: "Regular.",
+            subtitle: null,
+            href: "/messenger/chat/regular-grouped",
+            latestActivityAt: "2026-04-11T09:00:00.000Z",
+            lastReadAt: null,
+            unreadCount: 0,
+            needsAttention: false,
+            isPinned: false,
+          },
+        }],
+      },
+    ];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [{
+        threadKey: "chat:loose-pinned",
+        kind: "chat",
+        title: "Loose pinned chat",
+        preview: "Pinned but not grouped.",
+        subtitle: null,
+        href: "/messenger/chat/loose-pinned",
+        latestActivityAt: "2026-04-11T09:55:00.000Z",
+        lastReadAt: null,
+        unreadCount: 0,
+        needsAttention: false,
+        isPinned: true,
+      }],
+    };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+    const pinnedClass = html.match(/data-testid="messenger-thread-section-custom-group-pinned-group"[^>]*class="([^"]+)"/)?.[1] ?? "";
+    const regularClass = html.match(/data-testid="messenger-thread-section-custom-group-regular-group"[^>]*class="([^"]+)"/)?.[1] ?? "";
+
+    expect(pinnedClass).toContain("group/custom-group");
+    expect(regularClass).toContain("group/custom-group");
+    expect(pinnedClass).toContain("mx-0.5");
+    expect(regularClass).toContain("mx-0.5");
+    expect(html.indexOf('data-testid="messenger-thread-section-custom-group-pinned-group"')).toBeLessThan(
+      html.indexOf('data-testid="messenger-thread-section-custom-pinned"'),
+    );
+    expect(html.indexOf('data-testid="messenger-thread-section-custom-pinned"')).toBeLessThan(
+      html.indexOf('data-testid="messenger-thread-section-custom-group-regular-group"'),
+    );
+  });
+
   it("orders ungrouped rows and group blocks by latest activity until the user moves them", () => {
     chatList = [];
     customGroupList = [

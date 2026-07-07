@@ -14,6 +14,13 @@ interface ParsedPiOutput {
   toolCalls: Array<{ toolCallId: string; toolName: string; args: unknown; result: string | null; isError: boolean }>;
 }
 
+export type PiJsonlLine =
+  | { type: "assistantText"; text: string; event: Record<string, unknown> }
+  | { type: "turnEnd"; stopReason: string; text: string; event: Record<string, unknown> }
+  | { type: "toolExecutionStart"; toolName: string; event: Record<string, unknown> }
+  | { type: "toolExecutionEnd"; toolName: string; isError: boolean; event: Record<string, unknown> }
+  | { type: "other"; event: Record<string, unknown> };
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -26,6 +33,13 @@ function extractTextContent(content: string | Array<{ type: string; text?: strin
     .filter((c) => c.type === "text" && c.text)
     .map((c) => c.text!)
     .join("");
+}
+
+function extractMessageText(message: Record<string, unknown> | null): string {
+  if (!message) return "";
+  const content = message.content as string | Array<{ type: string; text?: string }> | undefined;
+  const contentText = content ? extractTextContent(content) : "";
+  return contentText || asString(message.text, "");
 }
 
 export function parsePiJsonl(stdout: string): ParsedPiOutput {
@@ -84,8 +98,7 @@ export function parsePiJsonl(stdout: string): ParsedPiOutput {
     if (eventType === "turn_end") {
       const message = asRecord(event.message);
       if (message) {
-        const content = message.content as string | Array<{ type: string; text?: string }>;
-        const text = extractTextContent(content);
+        const text = extractMessageText(message);
         if (text) {
           result.finalMessage = text;
           result.messages.push(text);
@@ -204,6 +217,56 @@ export function parsePiJsonl(stdout: string): ParsedPiOutput {
   }
 
   return result;
+}
+
+export function parsePiJsonlLine(line: string): PiJsonlLine | null {
+  const event = parseJson(line);
+  if (!event || typeof event !== "object" || Array.isArray(event)) return null;
+  const record = event as Record<string, unknown>;
+  const eventType = asString(record.type, "");
+
+  if (eventType === "message_update") {
+    const assistantEvent = asRecord(record.assistantMessageEvent);
+    if (assistantEvent && asString(assistantEvent.type, "") === "text_delta") {
+      const text = asString(assistantEvent.delta, "");
+      if (text) return { type: "assistantText", text, event: record };
+    }
+    return { type: "other", event: record };
+  }
+
+  if (eventType === "turn_end") {
+    const message = asRecord(record.message);
+    const stopReason =
+      asString(message?.stopReason, "") ||
+      asString(message?.stop_reason, "") ||
+      asString(record.stopReason, "") ||
+      asString(record.stop_reason, "");
+    return {
+      type: "turnEnd",
+      stopReason,
+      text: extractMessageText(message),
+      event: record,
+    };
+  }
+
+  if (eventType === "tool_execution_start") {
+    return {
+      type: "toolExecutionStart",
+      toolName: asString(record.toolName, ""),
+      event: record,
+    };
+  }
+
+  if (eventType === "tool_execution_end") {
+    return {
+      type: "toolExecutionEnd",
+      toolName: asString(record.toolName, ""),
+      isError: record.isError === true,
+      event: record,
+    };
+  }
+
+  return { type: "other", event: record };
 }
 
 export function isPiUnknownSessionError(stdout: string, stderr: string): boolean {

@@ -569,7 +569,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       await guardActiveRun(() => maybeEmitAssistantDelta(input.onAssistantDelta, sentinelStream.finish()));
 
       const rawResultText = resultText(result);
-      const rawAssistantText = assistantTextAccumulator.fullText || rawResultText;
+      const rawAssistantText = assistantTextAccumulator.fullText;
       const partialBody =
         partialBodyFromRawAssistantText(
           rawAssistantText,

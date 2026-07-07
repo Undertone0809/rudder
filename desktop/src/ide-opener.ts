@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 export type DesktopIdeId = "cursor" | "vscode" | "windsurf" | "zed" | "webstorm" | "intellij";
+export type DesktopFileLaunchTargetId = DesktopIdeId | "defaultApp";
 export type DesktopWorkspaceLaunchTargetId =
   | DesktopIdeId
   | "xcode"
@@ -15,6 +16,11 @@ export type DesktopWorkspaceLaunchTargetId =
 
 export type DesktopIdeTarget = {
   id: DesktopIdeId;
+  label: string;
+};
+
+export type DesktopFileLaunchTarget = {
+  id: DesktopFileLaunchTargetId;
   label: string;
 };
 
@@ -62,6 +68,7 @@ type OpenWorkspaceOptions = DetectAvailableWorkspaceLaunchTargetsOptions & {
 
 type OpenWorkspaceFileInIdeOptions = DetectAvailableWorkspaceLaunchTargetsOptions & {
   openDarwinApp?: (appPath: string, absolutePath: string) => Promise<void>;
+  openDefaultApp?: (absolutePath: string, platform: NodeJS.Platform) => Promise<void>;
   runCommand?: (command: string, absolutePath: string, platform: NodeJS.Platform) => Promise<void>;
   runExecutable?: (executablePath: string, absolutePath: string, platform: NodeJS.Platform) => Promise<void>;
 };
@@ -365,6 +372,10 @@ function defaultOpenFolder(absolutePath: string, platform: NodeJS.Platform) {
   return execFilePromise("xdg-open", [absolutePath]);
 }
 
+function defaultOpenDefaultApp(absolutePath: string, platform: NodeJS.Platform) {
+  return defaultOpenFolder(absolutePath, platform);
+}
+
 function defaultRunCommand(command: string, absolutePath: string, platform: NodeJS.Platform) {
   if (platform === "win32") {
     return new Promise<void>((resolve, reject) => {
@@ -510,14 +521,25 @@ export async function openWorkspace(
 export async function openWorkspaceFileInIde(
   rootPath: string,
   filePath: string,
-  ideId?: DesktopIdeId,
+  ideId?: DesktopFileLaunchTargetId,
   options: OpenWorkspaceFileInIdeOptions = {},
 ) {
   const platform = options.platform ?? process.platform;
   const openDarwinApp = options.openDarwinApp ?? defaultOpenDarwinApp;
+  const openDefaultApp = options.openDefaultApp ?? defaultOpenDefaultApp;
   const runCommand = options.runCommand ?? defaultRunCommand;
   const runExecutable = options.runExecutable ?? defaultRunExecutable;
   const absolutePath = resolveWorkspaceFileAbsolutePath(rootPath, filePath);
+
+  if (ideId === "defaultApp") {
+    await openDefaultApp(absolutePath, platform);
+    return {
+      id: "defaultApp",
+      label: "Default app",
+      absolutePath,
+    };
+  }
+
   const detections = (await detectAvailableWorkspaceLaunchTargetsInternal(options)).filter(
     (entry): entry is DesktopWorkspaceLaunchDetection & { id: DesktopIdeId; kind: "ide" } =>
       entry.kind === "ide" && entry.id !== "xcode",

@@ -304,7 +304,12 @@ vi.mock("../api/projects", () => ({
 }));
 
 vi.mock("../components/InlineEditor", () => ({
-  InlineEditor: (props: { value?: string; placeholder?: string; mentions?: Array<Record<string, unknown>> }) => {
+  InlineEditor: (props: {
+    value?: string;
+    placeholder?: string;
+    mentions?: Array<Record<string, unknown>>;
+    variant?: string;
+  }) => {
     const { value, placeholder, mentions } = props;
     capturedInlineEditorProps.push(props);
     capturedMentions = mentions ?? [];
@@ -659,6 +664,7 @@ describe("IssueDetail", () => {
     expect(descriptionEditorProps).toMatchObject({
       multiline: true,
       editorEngine: "milkdown",
+      variant: "issue-description",
     });
     expect(descriptionEditorProps?.alwaysEdit).toBeUndefined();
   });

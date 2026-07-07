@@ -47,6 +47,9 @@ edit_policy: user_confirmed_only
 - `CHAT.RICH.REFERENCE.RENDERING.001`: markdown rich-reference tokens keep
   consistent labels, icon rhythm, baseline alignment, and truncation behavior
   across composers and read-only rendered markdown.
+- `CHAT.SIDE.PANEL.001`: Side Panel is a global board workbench for opening
+  supported referenced issues, automations, Library targets, chats, and browser
+  placeholders without replacing the current route.
 - `MESSENGER.ATTENTION.001`: Messenger aggregates chat, issue, approval, and
   run attention without becoming the source of every domain rule.
 - `MESSENGER.CUSTOM.GROUPS.001`: Messenger custom groups organize chat, issue,

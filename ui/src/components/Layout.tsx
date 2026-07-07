@@ -4,9 +4,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { CalendarWorkspaceProvider } from "@/context/CalendarWorkspaceContext";
 import { useI18n } from "@/context/I18nContext";
 import { MarkdownMentionsProvider } from "@/context/MarkdownMentionsContext";
+import { SidePanelProvider, useSidePanel } from "@/context/SidePanelContext";
 import { Link, Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, BookOpen, PanelLeftOpen, Settings, X } from "lucide-react";
+import { ArrowLeft, BookOpen, PanelLeftOpen, PanelRightOpen, Settings, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import { accessApi } from "../api/access";
 import { chatsApi } from "../api/chats";
@@ -39,6 +40,7 @@ import {
 } from "../lib/settings-overlay-state";
 import { scheduleSettingsPrefetchQueries } from "../lib/settings-prefetch";
 import { cn } from "../lib/utils";
+import { ChatSidePanel } from "../pages/Chat.side-panel";
 import { NotFoundPage } from "../pages/NotFound";
 import { OrganizationWorkspaceFilesSidebar } from "../pages/OrganizationWorkspaces";
 import { BreadcrumbBar } from "./BreadcrumbBar";
@@ -59,6 +61,12 @@ import { WorktreeBanner } from "./WorktreeBanner";
 const INSTANCE_SETTINGS_MEMORY_KEY = "rudder.lastInstanceSettingsPath";
 const LAST_WORKSPACE_PATH_KEY = "rudder.lastWorkspacePath";
 const WORKSPACE_COLUMN_WIDTH_KEY_PREFIX = "rudder.workspace.contextWidth";
+const SIDE_PANEL_WIDTH_KEY = "rudder.workspace.sidePanelWidth";
+const SIDE_PANEL_DEFAULT_WIDTH = 420;
+const SIDE_PANEL_MIN_WIDTH = 340;
+const SIDE_PANEL_MAX_WIDTH = 560;
+const SIDE_PANEL_EXPANDED_WIDTH = 720;
+const SIDE_PANEL_COLLAPSE_WIDTH = 292;
 
 type WorkspaceColumnFamily = "chat" | "messenger" | "issues" | "calendar" | "projects" | "agents" | "org" | "backups";
 
@@ -207,9 +215,30 @@ function getWorkspaceColumnFamily(relativePath: string): WorkspaceColumnFamily |
   return null;
 }
 
+export function shouldUseFramelessWorkspaceMain(relativePath: string): boolean {
+  if (/^\/(?:library|resources|workspaces)(?:\/|$)/.test(relativePath) && !/^\/workspaces\/backups(?:\/|$)/.test(relativePath)) return true;
+  if (/^\/chat(?:\/|$)/.test(relativePath)) return true;
+  if (/^\/messenger\/chat(?:\/|$)/.test(relativePath)) return true;
+  return relativePath === "/messenger";
+}
+
 function getCurrentViewportWidth(): number | null {
   if (typeof window === "undefined") return null;
   return window.innerWidth;
+}
+
+function useViewportWidth(): number | null {
+  const [viewportWidth, setViewportWidth] = useState(getCurrentViewportWidth);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const updateViewportWidth = () => setViewportWidth(getCurrentViewportWidth());
+    updateViewportWidth();
+    window.addEventListener("resize", updateViewportWidth);
+    return () => window.removeEventListener("resize", updateViewportWidth);
+  }, []);
+
+  return viewportWidth;
 }
 
 export function getWorkspaceColumnMaxWidth(family: WorkspaceColumnFamily, viewportWidth: number | null = getCurrentViewportWidth()): number {
@@ -239,6 +268,190 @@ function readRememberedWorkspaceColumnWidth(family: WorkspaceColumnFamily): numb
   } catch {
     return fallback;
   }
+}
+
+function clampSidePanelWidth(value: number, viewportWidth: number | null = getCurrentViewportWidth()): number {
+  const viewportMax = viewportWidth === null ? SIDE_PANEL_MAX_WIDTH : Math.max(SIDE_PANEL_MIN_WIDTH, Math.floor(viewportWidth * 0.42));
+  return Math.min(Math.min(SIDE_PANEL_EXPANDED_WIDTH, viewportMax), Math.max(SIDE_PANEL_MIN_WIDTH, Math.round(value)));
+}
+
+export function resolveProportionalWorkspaceColumnWidth(
+  family: WorkspaceColumnFamily,
+  widthRatioValue: number,
+  viewportWidth: number,
+): number {
+  return clampWorkspaceColumnWidth(family, widthRatioValue * viewportWidth, viewportWidth);
+}
+
+export function resolveProportionalSidePanelWidth(
+  widthRatioValue: number,
+  viewportWidth: number,
+): number {
+  return clampSidePanelWidth(widthRatioValue * viewportWidth, viewportWidth);
+}
+
+function widthRatio(value: number, viewportWidth: number | null = getCurrentViewportWidth()): number | null {
+  if (viewportWidth === null || !Number.isFinite(viewportWidth) || viewportWidth <= 0) return null;
+  return value / viewportWidth;
+}
+
+function readRememberedSidePanelWidth(): number {
+  if (typeof window === "undefined") return SIDE_PANEL_DEFAULT_WIDTH;
+  try {
+    const raw = window.localStorage.getItem(SIDE_PANEL_WIDTH_KEY);
+    const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+    if (!Number.isFinite(parsed)) return SIDE_PANEL_DEFAULT_WIDTH;
+    return clampSidePanelWidth(parsed);
+  } catch {
+    return SIDE_PANEL_DEFAULT_WIDTH;
+  }
+}
+
+function DesktopSidePanelSlot({
+  selectedOrganizationId,
+}: {
+  selectedOrganizationId: string | null | undefined;
+}) {
+  const sidePanel = useSidePanel();
+  const viewportWidth = useViewportWidth();
+  const [sidePanelWidth, setSidePanelWidth] = useState(readRememberedSidePanelWidth);
+  const sidePanelWidthRatioRef = useRef(widthRatio(sidePanelWidth));
+  const [resizingSidePanel, setResizingSidePanel] = useState(false);
+  const expandedSidePanelWidth = clampSidePanelWidth(SIDE_PANEL_EXPANDED_WIDTH, viewportWidth);
+  const sidePanelExpanded = sidePanelWidth >= expandedSidePanelWidth - 1;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(SIDE_PANEL_WIDTH_KEY, String(sidePanelWidth));
+    } catch {
+      // Ignore storage failures; width falls back to the default next time.
+    }
+  }, [sidePanelWidth]);
+
+  useEffect(() => {
+    if (viewportWidth === null || !Number.isFinite(viewportWidth)) return;
+    const sidePanelWidthRatio = sidePanelWidthRatioRef.current;
+    if (sidePanelWidthRatio === null) {
+      sidePanelWidthRatioRef.current = widthRatio(sidePanelWidth, viewportWidth);
+      return;
+    }
+    setSidePanelWidth(resolveProportionalSidePanelWidth(sidePanelWidthRatio, viewportWidth));
+  }, [viewportWidth]);
+
+  const setProportionalSidePanelWidth = useCallback((nextWidth: number) => {
+    const clampedWidth = clampSidePanelWidth(nextWidth, viewportWidth);
+    sidePanelWidthRatioRef.current = widthRatio(clampedWidth, viewportWidth);
+    setSidePanelWidth(clampedWidth);
+    return clampedWidth;
+  }, [viewportWidth]);
+
+  const startSidePanelResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!sidePanel.open) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = sidePanelWidth;
+    let latestWidth = startWidth;
+    const cleanupStyle = {
+      cursor: document.body.style.cursor,
+      userSelect: document.body.style.userSelect,
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    setResizingSidePanel(true);
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      latestWidth = startWidth - deltaX;
+      setProportionalSidePanelWidth(latestWidth);
+    };
+
+    const stopResizing = () => {
+      document.body.style.cursor = cleanupStyle.cursor;
+      document.body.style.userSelect = cleanupStyle.userSelect;
+      setResizingSidePanel(false);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", stopResizing);
+      if (latestWidth <= SIDE_PANEL_COLLAPSE_WIDTH) {
+        sidePanel.closePanel();
+      }
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", stopResizing, { once: true });
+  }, [setProportionalSidePanelWidth, sidePanel, sidePanelWidth]);
+
+  if (!sidePanel.open) {
+    return (
+      <div className="group absolute inset-y-1 right-0 z-20 w-7" data-testid="side-panel-hover-edge">
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          data-testid="global-side-panel-trigger"
+          className="absolute right-[3px] top-1/2 h-11 w-7 -translate-y-1/2 rounded-l-[calc(var(--radius-sm)-1px)] rounded-r-none border-r-0 bg-[color:var(--surface-elevated)] text-muted-foreground opacity-0 shadow-[var(--shadow-sm)] transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:bg-[color:var(--surface-active)] hover:text-foreground"
+          onClick={sidePanel.openEmpty}
+          aria-label="Open Side Panel"
+          title="Open Side Panel"
+        >
+          <PanelRightOpen className="h-4 w-4" />
+        </Button>
+      </div>
+    );
+  }
+
+  if (sidePanelExpanded) {
+    return (
+      <div
+        className="absolute inset-y-0 left-0 right-0 z-30 flex min-w-0"
+        data-testid="side-panel-expanded-overlay"
+      >
+        <ChatSidePanel
+          selectedOrganizationId={selectedOrganizationId}
+          expanded
+          onClose={() => {
+            setProportionalSidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH);
+            sidePanel.closePanel();
+          }}
+          onToggleExpanded={() => setProportionalSidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH)}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div
+        data-testid="side-panel-resizer"
+        className={cn(
+          "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center transition-[width,opacity] duration-200 ease-out motion-reduce:transition-none",
+          "opacity-100",
+          resizingSidePanel && "is-resizing",
+        )}
+        style={{ flexBasis: 4, maxWidth: 4, minWidth: 4, width: 4 }}
+        onPointerDown={startSidePanelResize}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize Side Panel"
+      >
+        <div className="workspace-column-resizer-line" />
+      </div>
+      <ChatSidePanel
+        selectedOrganizationId={selectedOrganizationId}
+        desktopWidth={sidePanelWidth}
+        expanded={sidePanelExpanded}
+        onClose={sidePanel.closePanel}
+        onToggleExpanded={() => {
+          setProportionalSidePanelWidth(
+            sidePanelWidth >= expandedSidePanelWidth - 1
+              ? SIDE_PANEL_DEFAULT_WIDTH
+              : expandedSidePanelWidth,
+          );
+        }}
+      />
+    </>
+  );
 }
 
 export function Layout() {
@@ -295,7 +508,10 @@ export function Layout() {
   );
   const isChatRoute = useMemo(() => /^\/chat(?:\/|$)/.test(relativeBoardPath), [relativeBoardPath]);
   const isMessengerRoute = useMemo(() => /^\/messenger(?:\/|$)/.test(relativeBoardPath), [relativeBoardPath]);
-  const useFramelessWorkspaceMain = isLibraryRoute || isChatRoute || isMessengerRoute;
+  const useFramelessWorkspaceMain = useMemo(
+    () => shouldUseFramelessWorkspaceMain(relativeBoardPath),
+    [relativeBoardPath],
+  );
   const isProjectsRoute = useMemo(() => /^\/projects(?:\/|$)/.test(relativeBoardPath), [relativeBoardPath]);
   const hasActiveChatConversation = useMemo(
     () => /\/chat\/[^/]+/.test(relativeBoardPath),
@@ -317,10 +533,12 @@ export function Layout() {
   const onboardingTriggered = useRef(false);
   const productTourTriggered = useRef(false);
   const lastMainScrollTop = useRef(0);
+  const viewportWidth = useViewportWidth();
   const [mobileNavVisible, setMobileNavVisible] = useState(true);
   const [contextColumnWidth, setContextColumnWidth] = useState<number>(() =>
     workspaceColumnFamily ? readRememberedWorkspaceColumnWidth(workspaceColumnFamily) : WORKSPACE_COLUMN_WIDTH_DEFAULTS.issues,
   );
+  const contextColumnWidthRatioRef = useRef(widthRatio(contextColumnWidth));
   const [resizingColumn, setResizingColumn] = useState(false);
   const mainScrollRef = useScrollbarActivityRef(`workspace-main:${relativeBoardPath}`);
   const { data: currentBoardAccess } = useQuery({
@@ -556,8 +774,21 @@ export function Layout() {
 
   useEffect(() => {
     if (!workspaceColumnFamily) return;
-    setContextColumnWidth(readRememberedWorkspaceColumnWidth(workspaceColumnFamily));
+    const rememberedWidth = readRememberedWorkspaceColumnWidth(workspaceColumnFamily);
+    contextColumnWidthRatioRef.current = widthRatio(rememberedWidth);
+    setContextColumnWidth(rememberedWidth);
   }, [workspaceColumnFamily]);
+
+  useEffect(() => {
+    if (!workspaceColumnFamily) return;
+    if (viewportWidth === null || !Number.isFinite(viewportWidth)) return;
+    const contextColumnWidthRatio = contextColumnWidthRatioRef.current;
+    if (contextColumnWidthRatio === null) {
+      contextColumnWidthRatioRef.current = widthRatio(contextColumnWidth, viewportWidth);
+      return;
+    }
+    setContextColumnWidth(resolveProportionalWorkspaceColumnWidth(workspaceColumnFamily, contextColumnWidthRatio, viewportWidth));
+  }, [viewportWidth, workspaceColumnFamily]);
 
   useEffect(() => {
     if (!workspaceColumnFamily) return;
@@ -726,7 +957,9 @@ export function Layout() {
 
     const onPointerMove = (moveEvent: PointerEvent) => {
       const deltaX = moveEvent.clientX - startX;
-      setContextColumnWidth(clampWorkspaceColumnWidth(workspaceColumnFamily, startWidth + deltaX));
+      const nextWidth = clampWorkspaceColumnWidth(workspaceColumnFamily, startWidth + deltaX);
+      contextColumnWidthRatioRef.current = widthRatio(nextWidth);
+      setContextColumnWidth(nextWidth);
     };
 
     const stopResizing = () => {
@@ -759,6 +992,7 @@ export function Layout() {
       <WorktreeBanner />
       <DevRestartBanner devServer={health?.devServer} />
       <MarkdownMentionsProvider>
+      <SidePanelProvider>
       <CalendarWorkspaceProvider>
       <div className={cn("min-h-0 flex-1", isMobile ? "w-full" : "flex overflow-hidden")}>
         {isMobile && sidebarOpen && (
@@ -944,43 +1178,46 @@ export function Layout() {
                         <TooltipContent side="right">Show Library sidebar</TooltipContent>
                       </Tooltip>
                     ) : null}
-                    <div
-                      data-testid="workspace-main-card"
-                      data-tour-target="workspace-main"
-                      className={cn(
-                        "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
-                        "workspace-main-card",
-                        useFramelessWorkspaceMain && "workspace-main-card--frameless",
-                      )}
-                    >
-                      {!useFramelessWorkspaceMain ? (
-                        <div data-testid="workspace-main-header" className="shrink-0">
-                          <BreadcrumbBar desktopChrome={macDesktopShell} variant="card" />
-                        </div>
-                      ) : null}
-                      <main
-                        id="main-content"
-                        tabIndex={-1}
-                        ref={mainScrollRef}
+                    <div className="workspace-main-panel-stack relative flex min-h-0 min-w-0 flex-1" data-testid="workspace-main-panel-stack">
+                      <div
+                        data-testid="workspace-main-card"
+                        data-tour-target="workspace-main"
                         className={cn(
-                          "scrollbar-auto-hide min-w-0 flex-1",
-                          shellMainPaddingClass,
-                          isMobile
-                            ? "overflow-visible pb-[calc(5rem+env(safe-area-inset-bottom))]"
-                            : useFramelessWorkspaceMain
-                              ? "overflow-hidden"
-                              : "overflow-auto",
+                          "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+                          "workspace-main-card",
+                          useFramelessWorkspaceMain && "workspace-main-card--frameless",
                         )}
                       >
-                        {hasUnknownOrganizationPrefix ? (
-                          <NotFoundPage
-                            scope="invalid_organization_prefix"
-                            requestedPrefix={orgPrefix ?? selectedOrganization?.issuePrefix}
-                          />
-                        ) : (
-                          <Outlet />
-                        )}
-                      </main>
+                        {!useFramelessWorkspaceMain ? (
+                          <div data-testid="workspace-main-header" className="shrink-0">
+                            <BreadcrumbBar desktopChrome={macDesktopShell} variant="card" />
+                          </div>
+                        ) : null}
+                        <main
+                          id="main-content"
+                          tabIndex={-1}
+                          ref={mainScrollRef}
+                          className={cn(
+                            "scrollbar-auto-hide min-w-0 flex-1",
+                            shellMainPaddingClass,
+                            isMobile
+                              ? "overflow-visible pb-[calc(5rem+env(safe-area-inset-bottom))]"
+                              : useFramelessWorkspaceMain
+                                ? "overflow-hidden"
+                                : "overflow-auto",
+                          )}
+                        >
+                          {hasUnknownOrganizationPrefix ? (
+                            <NotFoundPage
+                              scope="invalid_organization_prefix"
+                              requestedPrefix={orgPrefix ?? selectedOrganization?.issuePrefix}
+                            />
+                          ) : (
+                            <Outlet />
+                          )}
+                        </main>
+                      </div>
+                      <DesktopSidePanelSlot selectedOrganizationId={selectedOrganizationId} />
                     </div>
                   </div>
                 ) : (
@@ -1016,7 +1253,9 @@ export function Layout() {
       <NewProjectDialog />
       <NewGoalDialog />
       <NewAgentDialog />
+      {isMobile ? <ChatSidePanel selectedOrganizationId={selectedOrganizationId} /> : null}
       </CalendarWorkspaceProvider>
+      </SidePanelProvider>
       </MarkdownMentionsProvider>
     </div>
     </NavigationBackProvider>

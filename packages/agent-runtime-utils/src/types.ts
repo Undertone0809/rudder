@@ -170,6 +170,16 @@ export interface AgentRuntimeInvocationMeta {
     toolCount: number;
     fallbackReason?: string | null;
   };
+  rudderNativeTools?: {
+    available: boolean;
+    transport: string;
+    serverName?: string | null;
+    toolCount: number;
+    toolNames?: string[];
+    authMode?: string | null;
+    modelVisibleCliFallback?: boolean;
+    fallbackReason?: string | null;
+  };
   context?: Record<string, unknown>;
 }
 

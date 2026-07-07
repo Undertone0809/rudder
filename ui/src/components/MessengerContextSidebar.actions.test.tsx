@@ -202,7 +202,7 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
 vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
-  DropdownMenuContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenuContent: ({ children, className }: { children: ReactNode; className?: string }) => <div className={className}>{children}</div>,
   DropdownMenuItem: ({
     children,
     disabled,
@@ -239,7 +239,7 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuRadioGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DropdownMenuRadioItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DropdownMenuSub: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  DropdownMenuSubContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenuSubContent: ({ children, className }: { children: ReactNode; className?: string }) => <div className={className}>{children}</div>,
   DropdownMenuSubTrigger: ({ children }: { children: ReactNode }) => <button type="button">{children}</button>,
 }));
 
@@ -2357,7 +2357,7 @@ describe("MessengerContextSidebar chat actions", () => {
     renderSidebar();
 
     const text = document.body.textContent ?? "";
-    expect(text.indexOf("Pinned")).toBeLessThan(text.indexOf("Pinned group above loose pin"));
+    expect(text.indexOf("Pinned (1)")).toBeLessThan(text.indexOf("Pinned group above loose pin"));
     expect(text.indexOf("Pinned group above loose pin")).toBeLessThan(text.indexOf("Loose pinned thread"));
     expect(text.indexOf("Loose pinned thread")).toBeLessThan(text.indexOf("Regular group below pins"));
   });
@@ -2824,6 +2824,7 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(mockUseSortable).toHaveBeenCalledWith(expect.objectContaining({ id: "issues" }));
 
     expect(document.querySelector('[aria-label="Thread actions"]')).toBeTruthy();
+    expect(document.querySelector(".messenger-thread-actions-menu.morph-popover.morph-popover--from-right")).toBeTruthy();
     expect(issuesRow?.textContent).not.toContain("Pin");
     expect(document.body.textContent).not.toContain("Chat threads only");
     expect(document.body.textContent).toContain("New group");

@@ -5,6 +5,7 @@ export function parseCodexJsonl(stdout: string) {
   let sessionId: string | null = null;
   const messages: string[] = [];
   let terminalResult: string | null = null;
+  let terminalCompleted = false;
   let errorMessage: string | null = null;
   const usage = {
     inputTokens: 0,
@@ -46,6 +47,7 @@ export function parseCodexJsonl(stdout: string) {
       usage.cachedInputTokens = asNumber(usageObj.cached_input_tokens, usage.cachedInputTokens);
       usage.outputTokens = asNumber(usageObj.output_tokens, usage.outputTokens);
       terminalResult = asString(event.result, terminalResult ?? "") || terminalResult;
+      terminalCompleted = true;
       continue;
     }
 
@@ -58,7 +60,7 @@ export function parseCodexJsonl(stdout: string) {
 
   return {
     sessionId,
-    summary: messages.join("\n\n").trim() || terminalResult?.trim() || "",
+    summary: terminalCompleted ? messages.join("\n\n").trim() || terminalResult?.trim() || "" : "",
     usage,
     errorMessage,
   };

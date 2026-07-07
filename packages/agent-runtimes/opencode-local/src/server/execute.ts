@@ -41,7 +41,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateOpenCodeModelConfig } from "./models.js";
-import { isOpenCodeUnknownSessionError, parseOpenCodeJsonl } from "./parse.js";
+import { isOpenCodeUnknownSessionError, parseOpenCodeJsonl, parseOpenCodeJsonlLine } from "./parse.js";
 import { resolveManagedOpenCodeHomeDir } from "./skills.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -74,6 +74,8 @@ const OPENCODE_CONFIG_FILE_CANDIDATES = ["opencode.json", "opencode.jsonc"] as c
 const MANAGED_OPENCODE_CONFIG_FILE = "opencode.json";
 const OPENCODE_PROMPT_FILE_MESSAGE = "Follow the attached Rudder runtime prompt file exactly.";
 const CHAT_MODE_DEFAULT_TIMEOUT_SEC = 60;
+const DEFAULT_STARTUP_IDLE_TIMEOUT_SEC = 90;
+const DEFAULT_TOOL_LOOP_IDLE_TIMEOUT_SEC = 90;
 const SAFE_OPENCODE_STRING_CONFIG_KEYS = [
   "$schema",
   "model",
@@ -654,6 +656,14 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const timeoutSec = hasChatModeTimeoutFallback
     ? CHAT_MODE_DEFAULT_TIMEOUT_SEC
     : configuredTimeoutSec;
+  const toolLoopIdleTimeoutSec = Math.max(
+    1,
+    asNumber(config.toolLoopIdleTimeoutSec, asNumber(env.RUDDER_OPENCODE_TOOL_LOOP_IDLE_TIMEOUT_SEC, DEFAULT_TOOL_LOOP_IDLE_TIMEOUT_SEC)),
+  );
+  const startupIdleTimeoutSec = Math.max(
+    1,
+    asNumber(config.startupIdleTimeoutSec, asNumber(env.RUDDER_OPENCODE_STARTUP_IDLE_TIMEOUT_SEC, DEFAULT_STARTUP_IDLE_TIMEOUT_SEC)),
+  );
   const effectiveCommandNotes = hasChatModeTimeoutFallback
     ? [
         ...commandNotes,
@@ -696,20 +706,104 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       });
     }
 
+    let stdoutBuffer = "";
+    let sawTerminalContent = false;
+    let sawTerminalCompletionSummary = false;
+    let stoppedAfterTerminalText = false;
+    let stoppedAfterToolLoopIdle = false;
+    let stoppedAfterStartupIdle = false;
+    const terminalStopController = new AbortController();
+    let startupIdleTimer: ReturnType<typeof setTimeout> | null = null;
+    let toolLoopIdleTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearStartupIdleTimer = () => {
+      if (!startupIdleTimer) return;
+      clearTimeout(startupIdleTimer);
+      startupIdleTimer = null;
+    };
+    const clearToolLoopIdleTimer = () => {
+      if (!toolLoopIdleTimer) return;
+      clearTimeout(toolLoopIdleTimer);
+      toolLoopIdleTimer = null;
+    };
+    const armToolLoopIdleTimer = () => {
+      clearToolLoopIdleTimer();
+      toolLoopIdleTimer = setTimeout(() => {
+        stoppedAfterToolLoopIdle = true;
+        if (!terminalStopController.signal.aborted) terminalStopController.abort();
+      }, toolLoopIdleTimeoutSec * 1000);
+    };
+    startupIdleTimer = setTimeout(() => {
+      stoppedAfterStartupIdle = true;
+      if (!terminalStopController.signal.aborted) terminalStopController.abort();
+    }, startupIdleTimeoutSec * 1000);
+    const abortSignals: AbortSignal[] = [
+      ctx.abortSignal,
+      terminalStopController.signal,
+    ].filter((signal): signal is AbortSignal => Boolean(signal));
+    const combinedAbortSignal = abortSignals.length > 0
+      ? AbortSignal.any(abortSignals)
+      : undefined;
+    const bufferedOnLog = async (stream: "stdout" | "stderr", chunk: string) => {
+      if (stream !== "stdout") {
+        await onLog(stream, chunk);
+        return;
+      }
+
+      stdoutBuffer += chunk;
+      const lines = stdoutBuffer.split(/\r?\n/);
+      stdoutBuffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const parsedLine = parseOpenCodeJsonlLine(line.trim());
+        if (parsedLine) clearStartupIdleTimer();
+        if (parsedLine?.type === "assistantText" && parsedLine.text.trim().length > 0) {
+          sawTerminalContent = true;
+        }
+        const sawCompletionSummary =
+          parsedLine?.type === "syntheticText" &&
+          parsedLine.completion &&
+          parsedLine.text.trim().length > 0;
+        if (parsedLine && parsedLine.type !== "other") clearToolLoopIdleTimer();
+        if (sawCompletionSummary) {
+          sawTerminalCompletionSummary = true;
+        }
+        if (parsedLine?.type === "toolCallsStepFinish") {
+          armToolLoopIdleTimer();
+        }
+        if (parsedLine?.type === "terminalStop" && sawTerminalContent && !terminalStopController.signal.aborted) {
+          stoppedAfterTerminalText = true;
+          terminalStopController.abort();
+        }
+        if (parsedLine?.type === "terminalStop" && sawTerminalCompletionSummary && !terminalStopController.signal.aborted) {
+          stoppedAfterTerminalText = true;
+          terminalStopController.abort();
+        }
+      }
+      await onLog(stream, chunk);
+    };
+
     const proc = await runChildProcess(runId, command, args, {
-      cwd,
-      env: runtimeEnv,
-      timeoutSec,
-      graceSec,
-      stdin: useStdinPrompt ? prompt : undefined,
-      onSpawn,
-      abortSignal: ctx.abortSignal,
-      onLog,
-    });
+        cwd,
+        env: runtimeEnv,
+        timeoutSec,
+        graceSec,
+        stdin: useStdinPrompt ? prompt : undefined,
+        onSpawn,
+        abortSignal: combinedAbortSignal,
+        onLog: bufferedOnLog,
+      })
+      .finally(() => {
+        clearStartupIdleTimer();
+        clearToolLoopIdleTimer();
+      });
     return {
-      proc,
+      proc: stoppedAfterTerminalText && !proc.timedOut && proc.signal === "SIGTERM"
+        ? { ...proc, exitCode: 0, signal: null }
+        : proc,
       rawStderr: proc.stderr,
       parsed: parseOpenCodeJsonl(proc.stdout),
+      stoppedAfterTerminalText,
+      stoppedAfterToolLoopIdle,
+      stoppedAfterStartupIdle,
     };
   };
 
@@ -718,6 +812,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       proc: { exitCode: number | null; signal: string | null; timedOut: boolean; stdout: string; stderr: string };
       rawStderr: string;
       parsed: ReturnType<typeof parseOpenCodeJsonl>;
+      stoppedAfterToolLoopIdle?: boolean;
+      stoppedAfterStartupIdle?: boolean;
     },
     clearSessionOnMissingSession = false,
   ): AgentRuntimeExecutionResult => {
@@ -747,14 +843,25 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     const stderrLine = firstNonEmptyLine(attempt.proc.stderr);
     const rawExitCode = attempt.proc.exitCode;
     const parsedError = typeof attempt.parsed.errorMessage === "string" ? attempt.parsed.errorMessage.trim() : "";
+    const parsedSummary = attempt.parsed.summary.trim() || attempt.parsed.completionSummary?.trim() || "";
+    const startupIdle = attempt.stoppedAfterStartupIdle === true;
+    const toolLoopIdle = attempt.stoppedAfterToolLoopIdle === true;
     const missingFinalSummary =
       !parsedError &&
+      !startupIdle &&
+      !toolLoopIdle &&
       (rawExitCode ?? 0) === 0 &&
-      attempt.parsed.summary.trim().length === 0;
+      parsedSummary.length === 0;
     const synthesizedExitCode =
-      (parsedError || missingFinalSummary) && (rawExitCode ?? 0) === 0 ? 1 : rawExitCode;
+      (parsedError || missingFinalSummary || startupIdle || toolLoopIdle) && (rawExitCode ?? 0) === 0 ? 1 : rawExitCode;
     const fallbackErrorMessage =
       parsedError ||
+      (startupIdle
+        ? `OpenCode stopped after ${startupIdleTimeoutSec}s without emitting JSON output.`
+        : "") ||
+      (toolLoopIdle
+        ? `OpenCode stopped after ${toolLoopIdleTimeoutSec}s without continuing after a Rudder tool-call step.`
+        : "") ||
       (missingFinalSummary
         ? "OpenCode completed without a final text summary; Rudder requires final text to persist a trustworthy run result."
         : "") ||
@@ -767,6 +874,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       signal: attempt.proc.signal,
       timedOut: false,
       errorMessage: (synthesizedExitCode ?? 0) === 0 ? null : fallbackErrorMessage,
+      errorCode: startupIdle ? "opencode_startup_idle" : toolLoopIdle ? "opencode_tool_loop_idle" : null,
       usage: {
         inputTokens: attempt.parsed.usage.inputTokens,
         outputTokens: attempt.parsed.usage.outputTokens,
@@ -784,8 +892,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         stdout: attempt.proc.stdout,
         stderr: attempt.proc.stderr,
         ...(missingFinalSummary ? { summaryStatus: "missing_final_text" } : {}),
+        ...(startupIdle ? { summaryStatus: "startup_idle", stoppedAfterStartupIdle: true } : {}),
+        ...(toolLoopIdle ? { summaryStatus: "tool_loop_idle", stoppedAfterToolLoopIdle: true } : {}),
       },
-      summary: attempt.parsed.summary || ((synthesizedExitCode ?? 0) === 0 ? "" : fallbackErrorMessage),
+      summary: parsedSummary || ((synthesizedExitCode ?? 0) === 0 ? "" : fallbackErrorMessage),
       clearSession: Boolean(clearSessionOnMissingSession && !attempt.parsed.sessionId),
     };
   };

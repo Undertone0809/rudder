@@ -136,6 +136,19 @@ test.describe("UI Lab", () => {
 
   test("renders Markdown website links as inline icon-leading text", async ({ page }) => {
     const organization = await createUiLabOrganization(page);
+    await page.route("**/api/website-metadata?**", async (route) => {
+      const requestUrl = new URL(route.request().url());
+      const targetUrl = requestUrl.searchParams.get("url");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          url: targetUrl,
+          siteName: targetUrl?.includes("doc.rudder") ? "Rudder docs" : null,
+          iconUrl: targetUrl?.includes("doc.rudder") ? "/rudder-logo.png" : null,
+        }),
+      });
+    });
 
     await page.goto(`/${organization.issuePrefix}/ui-lab`);
     await page.getByRole("button", { name: /Common Components/ }).click();
@@ -164,6 +177,8 @@ test.describe("UI Lab", () => {
         borderRadius: style.borderRadius,
         display: style.display,
         iconDisplay: iconStyle?.display,
+        iconHeight: icon ? icon.getBoundingClientRect().height : null,
+        iconWidth: icon ? icon.getBoundingClientRect().width : null,
         paddingInlineEnd: style.paddingInlineEnd,
         paddingInlineStart: style.paddingInlineStart,
       };
@@ -172,11 +187,15 @@ test.describe("UI Lab", () => {
       backgroundImage: "none",
       borderTopWidth: "0px",
       borderRadius: "0px",
-      display: "inline",
+      display: "inline-flex",
       iconDisplay: "inline-block",
       paddingInlineEnd: "0px",
       paddingInlineStart: "0px",
     });
+    expect(render.iconHeight).toBeGreaterThan(10);
+    expect(render.iconHeight).toBeLessThan(18);
+    expect(render.iconWidth).toBeGreaterThan(10);
+    expect(render.iconWidth).toBeLessThan(18);
   });
 
   test("shows a hover copy action on command terminal transcript details", async ({ page, context }) => {

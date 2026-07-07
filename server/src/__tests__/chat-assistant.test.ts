@@ -2385,4 +2385,46 @@ describe("chatAssistantService operator profile prompt injection", () => {
     });
     expect(states).toEqual(["streaming", "stopped"]);
   });
+
+  it("does not expose reasoning as a stopped partial reply", async () => {
+    const svc = chatAssistantService({} as any);
+    const controller = new AbortController();
+    const assistantDeltas: string[] = [];
+
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "item.completed",
+          item: { type: "reasoning", text: "Internal reasoning should stay out of chat." },
+        })}\n`,
+      );
+      controller.abort();
+      return {
+        summary: "Internal reasoning should stay out of chat.",
+        resultJson: null,
+        timedOut: false,
+        exitCode: null,
+        signal: "SIGTERM",
+        errorMessage: "aborted",
+      };
+    });
+
+    const result = await svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      abortSignal: controller.signal,
+      onAssistantDelta: (delta) => {
+        assistantDeltas.push(delta);
+      },
+    });
+
+    expect(result).toEqual({
+      outcome: "stopped",
+      partialBody: "",
+      replyingAgentId: "agent-1",
+    });
+    expect(assistantDeltas.join("")).not.toContain("Internal reasoning");
+  });
 });

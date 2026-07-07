@@ -50,7 +50,7 @@ export function parseClaudeStreamJson(stdout: string) {
       model,
       costUsd: null as number | null,
       usage: null as UsageSummary | null,
-      summary: assistantTexts.join("\n\n").trim(),
+      summary: "",
       resultJson: null as Record<string, unknown> | null,
     };
   }

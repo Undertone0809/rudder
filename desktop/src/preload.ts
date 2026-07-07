@@ -145,6 +145,8 @@ type DesktopIdeTarget = {
   label: string;
 };
 
+type DesktopFileLaunchTargetId = DesktopIdeTarget["id"] | "defaultApp";
+
 type DesktopWorkspaceLaunchTarget = {
   id: "cursor" | "vscode" | "windsurf" | "zed" | "webstorm" | "intellij" | "xcode" | "terminal" | "warp" | "commandPrompt" | "powershell" | "finder";
   label: string;
@@ -193,7 +195,7 @@ contextBridge.exposeInMainWorld("desktopShell", {
     ipcRenderer.invoke("desktop:list-workspace-launch-targets") as Promise<DesktopWorkspaceLaunchTarget[]>,
   openWorkspace: (rootPath: string, targetId?: DesktopWorkspaceLaunchTarget["id"]) =>
     ipcRenderer.invoke("desktop:open-workspace", { rootPath, targetId }) as Promise<void>,
-  openWorkspaceFileInIde: (rootPath: string, filePath: string, ideId?: DesktopIdeTarget["id"]) =>
+  openWorkspaceFileInIde: (rootPath: string, filePath: string, ideId?: DesktopFileLaunchTargetId) =>
     ipcRenderer.invoke("desktop:open-workspace-file-in-ide", { rootPath, filePath, ideId }) as Promise<void>,
   copyText: (value: string) => ipcRenderer.invoke("desktop:copy-text", value),
   copyImage: (payload: DesktopImageDataPayload) => ipcRenderer.invoke("desktop:copy-image", payload),
@@ -260,7 +262,7 @@ declare global {
       listAvailableIdes(): Promise<DesktopIdeTarget[]>;
       listWorkspaceLaunchTargets(): Promise<DesktopWorkspaceLaunchTarget[]>;
       openWorkspace(rootPath: string, targetId?: DesktopWorkspaceLaunchTarget["id"]): Promise<void>;
-      openWorkspaceFileInIde(rootPath: string, filePath: string, ideId?: DesktopIdeTarget["id"]): Promise<void>;
+      openWorkspaceFileInIde(rootPath: string, filePath: string, ideId?: DesktopFileLaunchTargetId): Promise<void>;
       copyText(value: string): Promise<void>;
       copyImage(payload: DesktopImageDataPayload): Promise<void>;
       showImageInFolder(payload: DesktopImageDataPayload): Promise<void>;

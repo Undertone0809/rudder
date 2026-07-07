@@ -97,6 +97,15 @@
   --menu-item-radius: calc(var(--radius-sm) - 2px);
   --menu-item-padding-y: 0.375rem;
   --menu-item-font-size: 0.875rem;
+  --morph-popover-open-dur: 350ms;
+  --morph-popover-close-dur: 250ms;
+  --morph-popover-ease: cubic-bezier(0.34, 1.25, 0.64, 1);
+  --morph-popover-close-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --morph-popover-closed-size: 40px;
+  --morph-popover-radius-closed: 40px;
+  --morph-popover-radius-open: var(--radius-lg);
+  --morph-popover-slide: 18px;
+  --morph-popover-blur: 2px;
   --settings-choice-min-width: 7.75rem;
   --settings-choice-radius: calc(var(--radius-md) - 1px);
   --settings-choice-preview-radius: calc(var(--radius-md) - 4px);
@@ -1728,16 +1737,58 @@
     }
   }
 
-  .rail-create-menu-content {
-    transform-origin: left 1.25rem;
+  .rail-create-menu-trigger svg {
+    transition: transform var(--morph-popover-open-dur) var(--morph-popover-close-ease);
   }
 
-  .rail-create-menu-content[data-state="open"] {
-    animation: rail-create-menu-pop 170ms cubic-bezier(0.16, 1, 0.3, 1);
+  .rail-create-menu-trigger[data-state="open"] svg {
+    transform: scale(0.97) rotate(45deg);
   }
 
-  .rail-create-menu-content[data-state="closed"] {
-    animation: rail-create-menu-close 95ms ease-in;
+  .morph-popover.morph-popover {
+    --morph-popover-origin-x: 50%;
+    --morph-popover-origin-y: 1.25rem;
+    --morph-popover-enter-x: 0px;
+    --morph-popover-exit-x: 0px;
+    --morph-popover-clip-open: circle(150% at var(--morph-popover-origin-x) var(--morph-popover-origin-y));
+    --morph-popover-clip-closed: circle(calc(var(--morph-popover-closed-size) / 2) at var(--morph-popover-origin-x) var(--morph-popover-origin-y));
+    position: relative;
+    isolation: isolate;
+    clip-path: var(--morph-popover-clip-open);
+    transform-origin: var(--morph-popover-origin-x) var(--morph-popover-origin-y) !important;
+    will-change: clip-path, opacity, transform, filter;
+  }
+
+  .morph-popover.morph-popover--from-left {
+    --morph-popover-origin-x: 0;
+    --morph-popover-enter-x: calc(-1 * var(--morph-popover-slide));
+    --morph-popover-exit-x: calc(-0.55 * var(--morph-popover-slide));
+  }
+
+  .morph-popover.morph-popover--from-right {
+    --morph-popover-origin-x: 100%;
+    --morph-popover-enter-x: var(--morph-popover-slide);
+    --morph-popover-exit-x: calc(0.55 * var(--morph-popover-slide));
+  }
+
+  .morph-popover::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: var(--morph-popover-radius-open);
+    background: inherit;
+    box-shadow: inherit;
+    pointer-events: none;
+    clip-path: var(--morph-popover-clip-open);
+  }
+
+  .morph-popover[data-state="open"] {
+    animation: morph-popover-open var(--morph-popover-open-dur) var(--morph-popover-ease);
+  }
+
+  .morph-popover[data-state="closed"] {
+    animation: morph-popover-close var(--morph-popover-close-dur) var(--morph-popover-close-ease);
   }
 
   .automation-trigger-menu-trigger {
@@ -1776,34 +1827,44 @@
     animation: automation-trigger-menu-close 105ms ease-in;
   }
 
-  @keyframes rail-create-menu-pop {
+  @keyframes morph-popover-open {
     0% {
       opacity: 0;
-      filter: blur(5px);
-      transform: translateX(-10px) translateY(-4px) scale(0.94);
+      border-radius: var(--morph-popover-radius-closed);
+      filter: blur(var(--morph-popover-blur));
+      clip-path: var(--morph-popover-clip-closed);
+      transform: translateX(var(--morph-popover-enter-x)) scale(0.97);
     }
     70% {
       opacity: 1;
+      border-radius: var(--morph-popover-radius-open);
       filter: blur(0);
-      transform: translateX(1px) translateY(0) scale(1.015);
+      clip-path: var(--morph-popover-clip-open);
+      transform: translateX(calc(-0.08 * var(--morph-popover-enter-x))) scale(1.01);
     }
     100% {
       opacity: 1;
+      border-radius: var(--morph-popover-radius-open);
       filter: blur(0);
-      transform: translateX(0) translateY(0) scale(1);
+      clip-path: var(--morph-popover-clip-open);
+      transform: translateX(0) scale(1);
     }
   }
 
-  @keyframes rail-create-menu-close {
+  @keyframes morph-popover-close {
     from {
       opacity: 1;
+      border-radius: var(--morph-popover-radius-open);
       filter: blur(0);
-      transform: translateX(0) translateY(0) scale(1);
+      clip-path: var(--morph-popover-clip-open);
+      transform: translateX(0) scale(1);
     }
     to {
       opacity: 0;
-      filter: blur(4px);
-      transform: translateX(-6px) translateY(-2px) scale(0.97);
+      border-radius: var(--morph-popover-radius-closed);
+      filter: blur(var(--morph-popover-blur));
+      clip-path: var(--morph-popover-clip-closed);
+      transform: translateX(var(--morph-popover-exit-x)) scale(0.97);
     }
   }
 
@@ -1839,8 +1900,9 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .rail-create-menu-content[data-state="open"],
-    .rail-create-menu-content[data-state="closed"],
+    .rail-create-menu-trigger svg,
+    .morph-popover[data-state="open"],
+    .morph-popover[data-state="closed"],
     .automation-trigger-menu-content[data-state="open"],
     .automation-trigger-menu-content[data-state="closed"],
     .chat-review-block--action-pending,
@@ -1848,6 +1910,7 @@
     .command-palette-content--searching::before,
     .chat-composer--streaming::before {
       animation: none;
+      transition: none;
     }
   }
 
@@ -3140,6 +3203,39 @@ button[draggable="false"] {
   border-color: var(--code-border);
 }
 
+.rudder-library-document-editor-scroll {
+  container-type: inline-size;
+}
+
+.rudder-library-document-layout--with-outline {
+  transition: max-width 120ms ease-out;
+}
+
+.workspace-main-panel-stack:has(> [data-testid="side-panel-resizer"]) .rudder-library-document-layout--with-outline,
+.workspace-main-panel-stack:has(> [data-testid="side-panel-expanded-overlay"]) .rudder-library-document-layout--with-outline {
+  max-width: 880px;
+}
+
+.workspace-main-panel-stack:has(> [data-testid="side-panel-resizer"]) .rudder-library-document-outline,
+.workspace-main-panel-stack:has(> [data-testid="side-panel-expanded-overlay"]) .rudder-library-document-outline {
+  display: none;
+}
+
+.rudder-side-panel-library-document {
+  padding-bottom: 1rem;
+}
+
+@container (max-width: 1080px) {
+  .rudder-library-document-layout--with-outline {
+    max-width: 880px;
+    display: block;
+  }
+
+  .rudder-library-document-outline {
+    display: none;
+  }
+}
+
 .rudder-doc-editor-surface {
   --rudder-doc-editor-tab-strip-height: 53px;
   --rudder-doc-editor-breadcrumb-height: 32px;
@@ -3276,6 +3372,10 @@ button[draggable="false"] {
 }
 
 .rudder-edit-in-place-content {
+  min-height: 2rem;
+}
+
+.rudder-issue-description-surface {
   min-height: 2rem;
 }
 
@@ -4129,6 +4229,86 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
   font-size: 0.95rem;
 }
 
+.rudder-markdown.rudder-issue-description-markdown,
+.rudder-milkdown-content.rudder-issue-description-markdown {
+  font-size: 0.9375rem;
+  line-height: 1.75rem;
+  color: var(--foreground);
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(h1, h2, h3, h4, h5, h6),
+.rudder-milkdown-content.rudder-issue-description-markdown :where(h1, h2, h3, h4, h5, h6) {
+  margin: 1.35em 0 0.45em;
+  color: var(--foreground);
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(h1),
+.rudder-milkdown-content.rudder-issue-description-markdown :where(h1) {
+  font-size: 1.35em;
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(h2),
+.rudder-milkdown-content.rudder-issue-description-markdown :where(h2) {
+  font-size: 1.2em;
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(h3),
+.rudder-milkdown-content.rudder-issue-description-markdown :where(h3) {
+  font-size: 1.08em;
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(h4, h5, h6),
+.rudder-milkdown-content.rudder-issue-description-markdown :where(h4, h5, h6) {
+  font-size: 1em;
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(p),
+.rudder-milkdown-content.rudder-issue-description-markdown :where(p) {
+  margin: 0;
+  line-height: inherit;
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(p + p),
+.rudder-milkdown-content.rudder-issue-description-markdown :where(p + p) {
+  margin-top: 1.1em;
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(ul, ol),
+.rudder-milkdown-content.rudder-issue-description-markdown :where(ul, ol) {
+  margin: 0.6em 0;
+  padding-left: 1.45em;
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(li),
+.rudder-milkdown-content.rudder-issue-description-markdown :where(li) {
+  margin: 0.18em 0;
+  padding-left: 0.15em;
+  line-height: inherit;
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(li > p),
+.rudder-milkdown-content.rudder-issue-description-markdown :where(li > p) {
+  margin: 0;
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(li)::marker,
+.rudder-milkdown-content.rudder-issue-description-markdown :where(li)::marker {
+  color: var(--muted-foreground);
+}
+
+.rudder-markdown.rudder-issue-description-markdown > :first-child,
+.rudder-milkdown-content.rudder-issue-description-markdown .ProseMirror > :first-child {
+  margin-top: 0;
+}
+
+.rudder-markdown.rudder-issue-description-markdown > :last-child,
+.rudder-milkdown-content.rudder-issue-description-markdown .ProseMirror > :last-child {
+  margin-bottom: 0;
+}
+
 .rudder-markdown :where(strong, b) {
   color: var(--foreground);
   font-weight: 600;
@@ -4166,7 +4346,9 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
 }
 
 a.rudder-website-link {
-  display: inline;
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 100%;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -4187,22 +4369,26 @@ a.rudder-website-link:hover {
 
 .rudder-website-link-icon {
   display: inline-block;
-  width: 1em;
-  height: 1em;
-  margin-right: 0.24em;
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 0.25em;
   color: currentColor;
-  vertical-align: -0.12em;
+  line-height: 1;
+  vertical-align: -0.13em;
+  flex: 0 0 auto;
 }
 
 .rudder-website-link-logo {
   display: inline-block;
   object-fit: contain;
   border-radius: 2px;
+  background: transparent;
 }
 
 .rudder-website-link-label {
   min-width: 0;
   overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 a.rudder-website-link:hover .rudder-website-link-label {

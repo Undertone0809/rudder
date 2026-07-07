@@ -14,6 +14,7 @@ import {
   listWorkspaceLaunchTargets,
   openWorkspace,
   openWorkspaceFileInIde,
+  type DesktopFileLaunchTargetId,
   type DesktopWorkspaceLaunchTargetId,
 } from "./ide-opener.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
@@ -499,6 +500,7 @@ function createDesktopWebPreferences(preloadPath: string): Electron.WebPreferenc
     contextIsolation: true,
     nodeIntegration: false,
     sandbox: false,
+    webviewTag: true,
   };
 }
 
@@ -1329,7 +1331,7 @@ function registerIpc(): void {
   );
   ipcMain.handle(
     "desktop:open-workspace-file-in-ide",
-    async (_event, payload: { rootPath: string; filePath: string; ideId?: DesktopIdeTarget["id"] }) => {
+    async (_event, payload: { rootPath: string; filePath: string; ideId?: DesktopFileLaunchTargetId }) => {
       await openWorkspaceFileInIde(payload.rootPath, payload.filePath, payload.ideId);
     },
   );

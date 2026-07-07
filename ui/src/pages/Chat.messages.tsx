@@ -67,6 +67,7 @@ import {
   Loader2,
   Paperclip,
   Pencil,
+  RefreshCcw,
   Repeat,
   RotateCcw,
   Sparkles
@@ -908,6 +909,43 @@ export function ProposalCard({
 export const chatMessageHoverBarClass =
   "opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100";
 
+export type ChatTurnBranchControls = {
+  current: number;
+  total: number;
+  canPrev: boolean;
+  canNext: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+};
+
+function ChatTurnBranchSelector({ controls }: { controls: ChatTurnBranchControls }) {
+  return (
+    <span className="inline-flex items-center gap-0.5 rounded-md px-0.5 text-[11px] tabular-nums text-muted-foreground">
+      <button
+        type="button"
+        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+        aria-label="Previous branch"
+        disabled={!controls.canPrev}
+        onClick={controls.onPrev}
+      >
+        <ChevronLeft className="h-4 w-4" />
+      </button>
+      <span className="min-w-[2.25rem] text-center">
+        {controls.current}/{controls.total}
+      </span>
+      <button
+        type="button"
+        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+        aria-label="Next branch"
+        disabled={!controls.canNext}
+        onClick={controls.onNext}
+      >
+        <ChevronRight className="h-4 w-4" />
+      </button>
+    </span>
+  );
+}
+
 function CopyMessageButton({ onClick }: { onClick: () => void }) {
   return (
     <TooltipProvider>
@@ -1253,7 +1291,7 @@ export function ChatUserPlainTextBody({
               "rudder-mention-chip",
               `rudder-mention-chip--${mention.kind}`,
               mention.kind === "project" && "rudder-project-mention-chip",
-              mention.kind === "issue" && mention.commentId && mention.status && "rudder-mention-chip--with-status-icon",
+              mention.kind === "issue" && mention.status && "rudder-mention-chip--with-status-icon",
             )}
             data-mention-kind={mention.kind}
             data-mention-comment={mention.kind === "issue" && mention.commentId ? "true" : undefined}
@@ -2048,6 +2086,8 @@ export function ChatMessageItem({
   onEditUserMessage,
   onContinueInterruptedMessage,
   onRetryFailedMessage,
+  canRefreshAssistantMessage = false,
+  onRefreshAssistantMessage,
   onOpenImage,
   onOpenFile,
   onMarkdownLinkClick,
@@ -2079,6 +2119,8 @@ export function ChatMessageItem({
   onEditUserMessage?: (message: ChatMessage) => void;
   onContinueInterruptedMessage?: (message: ChatMessage) => void;
   onRetryFailedMessage?: (message: ChatMessage) => void;
+  canRefreshAssistantMessage?: boolean;
+  onRefreshAssistantMessage?: (message: ChatMessage) => void;
   onOpenImage: (preview: AttachmentPreviewState) => void;
   onOpenFile: (targetPath: string) => void;
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
@@ -2099,14 +2141,7 @@ export function ChatMessageItem({
   askUserAnswer?: AskUserAnswerRecord | null;
   animateAskUserAnswer?: boolean;
   issueCreatedMessage?: ChatMessage | null;
-  turnBranchControls?: {
-    current: number;
-    total: number;
-    canPrev: boolean;
-    canNext: boolean;
-    onPrev: () => void;
-    onNext: () => void;
-  } | null;
+  turnBranchControls?: ChatTurnBranchControls | null;
 }) {
   if (message.kind === "issue_proposal" || message.kind === "operation_proposal") {
     return (
@@ -2258,6 +2293,25 @@ export function ChatMessageItem({
                 className="text-[11px] tracking-normal"
               />
               <CopyMessageButton onClick={() => void onCopyMessageText(message.body)} />
+              {onRefreshAssistantMessage && canRefreshAssistantMessage ? (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
+                        aria-label="Refresh answer"
+                        onClick={() => onRefreshAssistantMessage(message)}
+                      >
+                        <RefreshCcw className="h-4 w-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" sideOffset={8}>
+                      Refresh answer
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ) : null}
               {onForkMessage && message.status !== "streaming" ? (
                 <button
                   type="button"
@@ -2345,7 +2399,7 @@ export function ChatMessageItem({
               body={message.body}
               skillReferences={skillReferences}
               onMarkdownLinkClick={onMarkdownLinkClick}
-              className="text-[15px] leading-7"
+              className="text-[15px] leading-[1.6]"
             />
             <ChatAttachmentList
               attachments={message.attachments}
@@ -2379,31 +2433,7 @@ export function ChatMessageItem({
               <Pencil className="h-4 w-4" />
             </button>
           ) : null}
-          {turnBranchControls ? (
-            <span className="inline-flex items-center gap-0.5 rounded-md px-0.5 text-[11px] tabular-nums text-muted-foreground">
-            <button
-              type="button"
-                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
-              aria-label="Previous branch"
-                disabled={!turnBranchControls.canPrev}
-                onClick={turnBranchControls.onPrev}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              <span className="min-w-[2.25rem] text-center">
-                {turnBranchControls.current}/{turnBranchControls.total}
-              </span>
-              <button
-                type="button"
-                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
-                aria-label="Next branch"
-                disabled={!turnBranchControls.canNext}
-                onClick={turnBranchControls.onNext}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </span>
-          ) : null}
+          {turnBranchControls ? <ChatTurnBranchSelector controls={turnBranchControls} /> : null}
           <HoverTimestampLabel
             date={message.createdAt}
             label={relativeTime(message.createdAt)}
@@ -2424,6 +2454,7 @@ export function OptimisticUserDraftItem({
   onMarkdownLinkClick,
   askUserAnswer,
   animateAskUserAnswer,
+  turnBranchControls,
 }: {
   body: string;
   createdAt: Date;
@@ -2433,6 +2464,7 @@ export function OptimisticUserDraftItem({
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
   askUserAnswer?: AskUserAnswerRecord | null;
   animateAskUserAnswer?: boolean;
+  turnBranchControls?: ChatTurnBranchControls | null;
 }) {
   return (
     <div className="flex justify-end transition-all duration-200">
@@ -2464,6 +2496,7 @@ export function OptimisticUserDraftItem({
           >
             <Pencil className="h-4 w-4" />
           </button>
+          {turnBranchControls ? <ChatTurnBranchSelector controls={turnBranchControls} /> : null}
           <HoverTimestampLabel
             date={createdAt}
             label={relativeTime(createdAt)}

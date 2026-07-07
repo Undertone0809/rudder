@@ -257,6 +257,38 @@ describe("desktop update flow", () => {
     expect(child.stdin.write).toHaveBeenCalledWith("force-apply\n", expect.any(Function));
   });
 
+  it("preserves active-run count on the final ready event after download progress", async () => {
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const { flow } = createFlow({
+      listActiveRunsForQuit: vi.fn(async () => ({ totalRuns: 2 })),
+      promptForDeferredUpdate: vi.fn(async () => "wait"),
+    });
+
+    await expect(flow.installUpdate("0.3.5-canary.8")).resolves.toMatchObject({
+      status: "waiting",
+      totalRuns: 2,
+    });
+
+    child.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "downloading_asset",
+      message: "Downloading desktop asset...",
+      percent: 42,
+    })}\n`);
+    child.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "ready_to_install",
+      message: "Desktop update is downloaded and verified.",
+      percent: 100,
+    })}\n`);
+
+    expect(flow.getDesktopUpdateProgress()).toMatchObject({
+      phase: "ready_to_install",
+      totalRuns: 2,
+    });
+  });
+
   it("force-applies immediately when the deferred update prompt chooses quit and update now", async () => {
     const child = createMockUpdateChild();
     spawnMock.mockReturnValue(child);

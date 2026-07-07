@@ -423,19 +423,21 @@ function useWebsiteMetadataIcon(url: URL) {
 
 export function WebsiteLinkIcon({ url }: { url: URL }) {
   const metadataIcon = useWebsiteMetadataIcon(url);
-  const [failedIconUrl, setFailedIconUrl] = useState<string | null>(null);
-  if (metadataIcon.status === "ready") {
-    if (metadataIcon.iconUrl === failedIconUrl) {
-      return <Globe2 className="rudder-website-link-icon" aria-hidden="true" data-website-icon="generic" />;
-    }
+  const [failedIconUrls, setFailedIconUrls] = useState<Set<string>>(() => new Set());
+  const iconUrl = metadataIcon.status === "ready" && !failedIconUrls.has(metadataIcon.iconUrl)
+    ? metadataIcon.iconUrl
+    : null;
+
+  if (iconUrl) {
     return (
       <img
-        src={metadataIcon.iconUrl}
+        src={iconUrl}
         alt=""
         className="rudder-website-link-icon rudder-website-link-logo"
         aria-hidden="true"
         data-website-icon="metadata"
-        onError={() => setFailedIconUrl(metadataIcon.iconUrl)}
+        referrerPolicy="no-referrer"
+        onError={() => setFailedIconUrls((current) => new Set(current).add(iconUrl))}
       />
     );
   }
@@ -968,7 +970,7 @@ export function MarkdownBody({
             className={cn(
               "rudder-mention-chip",
               `rudder-mention-chip--${mention.kind}`,
-              mention.kind === "issue" && mention.commentId && mention.status && "rudder-mention-chip--with-status-icon",
+              mention.kind === "issue" && mention.status && "rudder-mention-chip--with-status-icon",
               mention.kind === "project" && "rudder-project-mention-chip",
             )}
             data-mention-kind={mention.kind}
@@ -1019,7 +1021,10 @@ export function MarkdownBody({
         const mentionLink = (
           <a
             href={internalHref}
-            className="rudder-mention-chip rudder-mention-chip--issue"
+            className={cn(
+              "rudder-mention-chip rudder-mention-chip--issue",
+              mention.status && "rudder-mention-chip--with-status-icon",
+            )}
             data-mention-kind="issue"
             data-mention-status={mention.status ?? undefined}
             {...markdownSourceAttributes(node)}

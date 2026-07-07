@@ -16,11 +16,12 @@ interface InlineEditorProps {
   onMentionQueryChange?: (query: string | null) => void;
   editorEngine?: "legacy" | "milkdown";
   alwaysEdit?: boolean;
+  variant?: "default" | "issue-description";
 }
 
 /** Shared padding so display and edit modes occupy the exact same box. */
 const pad = "px-1 -mx-1";
-const markdownPad = "px-1";
+const markdownPad = pad;
 const AUTOSAVE_DEBOUNCE_MS = 900;
 
 function eventTargetElement(target: EventTarget | null): HTMLElement | null {
@@ -41,6 +42,7 @@ export function InlineEditor({
   onMentionQueryChange,
   editorEngine,
   alwaysEdit = false,
+  variant = "default",
 }: InlineEditorProps) {
   const [editing, setEditing] = useState(false);
   const [multilineFocused, setMultilineFocused] = useState(false);
@@ -73,6 +75,19 @@ export function InlineEditor({
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
   }, []);
+  const markdownSurfaceClassName = cn(
+    "rudder-inline-markdown-surface rounded",
+    variant === "issue-description" && "rudder-issue-description-surface",
+  );
+  const markdownBodyClassName = cn(
+    "rudder-inline-markdown-body",
+    variant === "issue-description" && "rudder-issue-description-markdown rudder-issue-description-markdown-read",
+  );
+  const markdownEditorContentClassName = cn(
+    "rudder-edit-in-place-content",
+    variant === "issue-description" && "rudder-issue-description-markdown rudder-issue-description-markdown-edit",
+    className,
+  );
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -159,7 +174,7 @@ export function InlineEditor({
       <div
         className={cn(
           markdownPad,
-          "rudder-inline-markdown-surface rounded",
+          markdownSurfaceClassName,
         )}
         onFocusCapture={() => setMultilineFocused(true)}
         onBlurCapture={(event) => {
@@ -189,7 +204,7 @@ export function InlineEditor({
           placeholder={placeholder}
           bordered={false}
           className="bg-transparent"
-          contentClassName={cn("rudder-edit-in-place-content", className)}
+          contentClassName={markdownEditorContentClassName}
           imageUploadHandler={imageUploadHandler}
           mentions={mentions}
           onMentionQueryChange={onMentionQueryChange}
@@ -255,7 +270,7 @@ export function InlineEditor({
   return (
     <DisplayTag
       className={cn(
-        multiline ? "rudder-inline-markdown-surface rounded" : "rounded overflow-hidden",
+        multiline ? markdownSurfaceClassName : "rounded overflow-hidden",
         multiline
           ? "cursor-text"
           : "cursor-pointer transition-colors hover:bg-accent/50",
@@ -271,7 +286,7 @@ export function InlineEditor({
     >
       {value && multiline ? (
         <MarkdownBody
-          className="rudder-inline-markdown-body"
+          className={markdownBodyClassName}
           copyMarkdownOnCopy
           onLinkClick={({ event }) => {
             event.stopPropagation();

@@ -35,9 +35,13 @@ contracts:
     docs:
       - doc/product/domains/issues/surfaces.md
     related_code:
+      - ui/src/components/InlineEditor.tsx
+      - ui/src/index.css
       - ui/src/pages/IssueDetail.tsx
       - ui/src/pages/Issues.tsx
     related_tests:
+      - ui/src/components/InlineEditor.test.tsx
+      - ui/src/pages/IssueDetail.test.tsx
       - tests/e2e/issue-detail-toolbar-actions.spec.ts
       - tests/e2e/issue-board-display-properties.spec.ts
     related_plans:
@@ -388,8 +392,11 @@ contracts:
       - cli/src/program.ts
       - packages/agent-runtime-utils/src/rudder-mcp.ts
       - packages/agent-runtime-utils/src/rudder-mcp-server.ts
+      - packages/agent-runtime-utils/src/types.ts
       - packages/agent-runtimes/claude-local/src/server/execute.ts
       - packages/agent-runtimes/codex-local/src/server/execute.ts
+      - packages/agent-runtimes/opencode-local/src/server/execute.ts
+      - packages/agent-runtimes/pi-local/src/server/execute.ts
       - server/resources/bundled-skills/rudder/SKILL.md
       - server/resources/bundled-skills/rudder/references/cli-reference.md
     related_tests:
@@ -397,6 +404,8 @@ contracts:
       - cli/src/__tests__/agent-v1-mcp-server.test.ts
       - server/src/__tests__/claude-local-execute.test.ts
       - server/src/__tests__/codex-local-execute.test.ts
+      - server/src/__tests__/opencode-local-execute.test.ts
+      - server/src/__tests__/pi-local-execute.test.ts
       - tests/e2e/agent-detail-integrations-tab.spec.ts
     related_plans:
       - doc/plans/2026-06-30-agent-v1-mcp-tools.md
@@ -525,10 +534,16 @@ contracts:
       - server/src/services/library-entries.ts
       - server/src/services/organization-workspace-browser.ts
       - ui/src/pages/OrganizationResources.tsx
+      - ui/src/pages/OrganizationWorkspaces.tsx
+      - desktop/src/ide-opener.ts
     related_tests:
       - server/src/__tests__/home-paths.test.ts
       - server/src/__tests__/library-path-markdown.test.ts
       - server/src/__tests__/organization-workspace-browser.test.ts
+      - desktop/src/ide-opener.test.ts
+      - ui/src/pages/OrganizationWorkspaceFilesSidebar.test.tsx
+      - ui/src/pages/OrganizationWorkspaces.scrollbars.test.tsx
+      - tests/e2e/organization-workspaces-launcher.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-06-30-org-library-folder-and-backup-zip.md
@@ -660,9 +675,11 @@ contracts:
       - server/src/services/chat-assistant.ts
       - server/src/services/chat-assistant.helpers.ts
       - ui/src/pages/Chat.tsx
+      - ui/src/pages/Chat.messages.tsx
     related_tests:
       - server/src/__tests__/chat-routes.test.ts
       - server/src/__tests__/chat-assistant.test.ts
+      - tests/e2e/chat-error-toast.spec.ts
       - tests/e2e/chat-rich-references.spec.ts
       - tests/e2e/chat-streaming.spec.ts
     related_plans:
@@ -715,6 +732,7 @@ contracts:
       - ui/src/pages/Chat.messages.test.tsx
       - ui/src/pages/Chat.attachment-preview.test.tsx
       - ui/src/components/MessengerContextSidebar.actions.test.tsx
+      - tests/e2e/chat-error-toast.spec.ts
       - tests/e2e/chat-fork.spec.ts
       - tests/e2e/feishu-source-badges.spec.ts
     related_plans:
@@ -728,11 +746,13 @@ contracts:
       - ui/src/index.css
       - ui/src/components/MarkdownBody.tsx
       - ui/src/components/MilkdownMarkdownEditor.tsx
+      - ui/src/pages/Chat.messages.tsx
       - ui/src/pages/Chat.tsx
     related_tests:
       - ui/src/lib/index-css.test.ts
       - ui/src/components/MilkdownMarkdownEditor.test.ts
       - ui/src/components/MarkdownBody.test.tsx
+      - ui/src/pages/Chat.messages.test.tsx
       - tests/e2e/chat-rich-references.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
@@ -754,8 +774,30 @@ contracts:
       - ui/src/components/MarkdownBody.test.tsx
       - ui/src/pages/Chat.messages.test.tsx
       - ui/src/lib/index-css.test.ts
+      - tests/e2e/markdown-website-link-rendering.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+  CHAT.SIDE.PANEL.001:
+    owner: product
+    domain: collaboration
+    status: active
+    docs:
+      - doc/product/domains/collaboration/chat-messenger-im.md
+    related_code:
+      - ui/src/lib/side-panel-targets.ts
+      - ui/src/context/SidePanelContext.tsx
+      - ui/src/components/Layout.tsx
+      - ui/src/pages/Chat.side-panel.tsx
+      - ui/src/pages/Chat.tsx
+      - desktop/scripts/smoke.mjs
+    related_tests:
+      - ui/src/lib/side-panel-targets.test.ts
+      - ui/src/components/Layout.test.ts
+      - ui/src/pages/Chat.attachment-preview.test.tsx
+      - tests/e2e/chat-side-panel.spec.ts
+    related_plans:
+      - doc/plans/2026-07-01-global-side-panel-workbench.md
+      - doc/plans/2026-06-30-chat-side-panel.md
   MESSENGER.ATTENTION.001:
     owner: product
     domain: collaboration
@@ -1056,6 +1098,23 @@ contracts:
       - tests/e2e/onboarding.spec.ts
     related_plans:
       - doc/plans/2026-05-08-onboarding-getting-started-dashboard.md
+  ORG.DESKTOP.UPDATE.001:
+    owner: product
+    domain: organizations-and-goals
+    spec_depth: compact
+    docs:
+      - doc/product/domains/organizations-and-goals/settings-onboarding-portability.md
+    related_code:
+      - desktop/src/desktop-update-flow.ts
+      - desktop/src/desktop-quit-flow.ts
+      - desktop/src/preload.ts
+      - ui/src/components/DesktopUpdatePromptBridge.tsx
+      - ui/src/components/DesktopUpdateStatusCard.tsx
+    related_tests:
+      - desktop/src/desktop-update-flow.test.ts
+      - desktop/src/desktop-quit-flow.test.ts
+      - ui/src/components/DesktopUpdatePromptBridge.test.tsx
+      - ui/src/components/DesktopUpdateStatusCard.test.tsx
   ORG.DESKTOP.RELEASE.NOTES.001:
     owner: product
     domain: organizations-and-goals

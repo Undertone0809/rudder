@@ -52,6 +52,7 @@ function streamDraft(overrides: Partial<ChatStreamDraft> = {}): ChatStreamDraft 
     userCreatedAt: createdAt,
     userMessageId: null,
     chatTurnId: null,
+    turnVariant: 0,
     editedFromCreatedAt: null,
     body: "partial",
     state: "streaming",

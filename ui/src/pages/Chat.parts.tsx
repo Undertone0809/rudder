@@ -3,9 +3,9 @@ import { type ChatStreamDraftState } from "@/context/ChatGenerationContext";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { formatAssigneeUserLabel } from "@/lib/assignees";
 import { displayChatTitle, isDefaultChatTitle, promoteDefaultChatTitle } from "@/lib/chat-title";
-import { parseMentionChipHref } from "@/lib/mention-chips";
 import { projectColorCssVars } from "@/lib/project-colors";
 import { Link } from "@/lib/router";
+import { sidePanelTargetFromHref, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn, relativeTime } from "@/lib/utils";
 import {
   chatAskUserRequestFromStructuredPayload,
@@ -394,166 +394,31 @@ export function shouldHandlePlainChatLinkClick(event: Parameters<MarkdownLinkCli
   return event.button === 0 && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
 }
 
-export type ChatSidePanelTarget =
-  | {
-      kind: "issue";
-      issueId: string;
-      ref: string | null;
-      commentId: string | null;
-      label: string;
-    }
-  | {
-      kind: "chat";
-      conversationId: string;
-      messageId: string | null;
-      label: string;
-    }
-  | {
-      kind: "library_file";
-      filePath: string;
-      label: string;
-    }
-  | {
-      kind: "library_directory";
-      directoryPath: string;
-      label: string;
-    }
-  | {
-      kind: "library_entry";
-      entryId: string;
-      path: string | null;
-      label: string;
-    };
-
-function chatSidePanelLabel(label: string | null | undefined, fallback: string) {
-  return label?.trim() || fallback;
-}
-
-function chatMessageIdFromHref(href: string) {
-  try {
-    const url = new URL(href, "http://rudder.local");
-    return (url.searchParams.get("messageId") ?? url.searchParams.get("targetMessageId") ?? "").trim() || null;
-  } catch {
-    return null;
-  }
-}
-
-function basenameLabel(path: string, fallback: string) {
-  return path.split("/").filter(Boolean).at(-1) ?? fallback;
-}
+export type ChatSidePanelTarget = Extract<
+  SidePanelTarget,
+  | { kind: "issue" }
+  | { kind: "chat" }
+  | { kind: "automation" }
+  | { kind: "library_file" }
+  | { kind: "library_directory" }
+  | { kind: "library_entry" }
+>;
 
 export function chatSidePanelTargetFromHref(
   href: string,
   label?: string | null,
 ): ChatSidePanelTarget | null {
-  const mention = parseMentionChipHref(href);
-  if (!mention) return chatSidePanelTargetFromInternalRouteHref(href, label);
-
-  if (mention.kind === "issue") {
-    return {
-      kind: "issue",
-      issueId: mention.issueId,
-      ref: mention.ref,
-      commentId: mention.commentId,
-      label: chatSidePanelLabel(label, mention.ref ?? "Issue"),
-    };
+  const target = sidePanelTargetFromHref(href, label);
+  if (
+    target?.kind === "issue"
+    || target?.kind === "chat"
+    || target?.kind === "automation"
+    || target?.kind === "library_file"
+    || target?.kind === "library_directory"
+    || target?.kind === "library_entry"
+  ) {
+    return target;
   }
-
-  if (mention.kind === "chat") {
-    return {
-      kind: "chat",
-      conversationId: mention.conversationId,
-      messageId: chatMessageIdFromHref(href),
-      label: chatSidePanelLabel(label, mention.title ?? "Chat"),
-    };
-  }
-
-  if (mention.kind === "library_file") {
-    return {
-      kind: "library_file",
-      filePath: mention.filePath,
-      label: chatSidePanelLabel(label, mention.title ?? basenameLabel(mention.filePath, "Library file")),
-    };
-  }
-
-  if (mention.kind === "library_directory") {
-    return {
-      kind: "library_directory",
-      directoryPath: mention.directoryPath,
-      label: chatSidePanelLabel(label, mention.title ?? basenameLabel(mention.directoryPath, "Library directory")),
-    };
-  }
-
-  if (mention.kind === "library_entry") {
-    return {
-      kind: "library_entry",
-      entryId: mention.entryId,
-      path: mention.path,
-      label: chatSidePanelLabel(label, mention.title ?? mention.path ?? "Library entry"),
-    };
-  }
-
-  return null;
-}
-
-function chatSidePanelTargetFromInternalRouteHref(
-  href: string,
-  label?: string | null,
-): ChatSidePanelTarget | null {
-  let url: URL;
-  try {
-    url = new URL(href, "http://rudder.local");
-  } catch {
-    return null;
-  }
-  if (url.origin !== "http://rudder.local") return null;
-
-  const segments = url.pathname.split("/").filter(Boolean).map((segment) => {
-    try {
-      return decodeURIComponent(segment);
-    } catch {
-      return segment;
-    }
-  });
-
-  const chatRoute = segments.length >= 2 && segments.at(-2) === "chat" ? segments.at(-1)?.trim() : "";
-  if (chatRoute) {
-    return {
-      kind: "chat",
-      conversationId: chatRoute,
-      messageId: chatMessageIdFromHref(href),
-      label: chatSidePanelLabel(label, "Chat"),
-    };
-  }
-
-  if (segments.at(-1) === "library") {
-    const filePath = (url.searchParams.get("path") ?? "").trim();
-    if (filePath) {
-      return {
-        kind: "library_file",
-        filePath,
-        label: chatSidePanelLabel(label, basenameLabel(filePath, "Library file")),
-      };
-    }
-    const directoryPath = (url.searchParams.get("directory") ?? "").trim();
-    if (directoryPath) {
-      return {
-        kind: "library_directory",
-        directoryPath,
-        label: chatSidePanelLabel(label, basenameLabel(directoryPath, "Library directory")),
-      };
-    }
-    const entryId = (url.searchParams.get("entry") ?? "").trim();
-    if (entryId) {
-      return {
-        kind: "library_entry",
-        entryId,
-        path: (url.searchParams.get("path") ?? "").trim() || null,
-        label: chatSidePanelLabel(label, entryId),
-      };
-    }
-  }
-
   return null;
 }
 
@@ -1225,6 +1090,27 @@ export function canRetryFailedChatMessage(message: Pick<ChatMessage, "role" | "k
     && message.kind === "message"
     && message.status === "failed"
     && Boolean(message.chatTurnId);
+}
+
+export function canRefreshAssistantChatMessage(message: Pick<ChatMessage, "role" | "kind" | "status" | "chatTurnId">) {
+  return message.role === "assistant"
+    && message.kind === "message"
+    && message.status === "completed"
+    && Boolean(message.chatTurnId);
+}
+
+export function canRefreshDisplayedAssistantChatMessage({
+  message,
+  branchControls,
+  hasActiveReply,
+}: {
+  message: Pick<ChatMessage, "role" | "kind" | "status" | "chatTurnId">;
+  branchControls: { current: number; total: number } | null | undefined;
+  hasActiveReply: boolean;
+}) {
+  if (hasActiveReply || !canRefreshAssistantChatMessage(message)) return false;
+  if (!branchControls) return true;
+  return branchControls.current === branchControls.total;
 }
 
 export function recoverableFailureFromMessage(

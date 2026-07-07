@@ -366,6 +366,29 @@ describe("index.css motion rules", () => {
     expect(reducedMotion).toContain(".automation-trigger-menu-content[data-state=\"open\"]");
   });
 
+  it("morphs popover menus from the trigger footprint", () => {
+    const rootTokens = cssBlock(":root");
+    const morphPopover = cssBlock(".morph-popover.morph-popover");
+    const leftOrigin = cssBlock(".morph-popover.morph-popover--from-left");
+    const rightOrigin = cssBlock(".morph-popover.morph-popover--from-right");
+    const morphOpen = cssBlock("@keyframes morph-popover-open");
+    const morphClose = cssBlock("@keyframes morph-popover-close");
+    const reducedMotion = indexCss.match(/@media \(prefers-reduced-motion: reduce\) \{[^}]+morph-popover\[data-state="closed"\][^}]+}/s)?.[0] ?? "";
+
+    expect(rootTokens).toContain("--morph-popover-open-dur: 350ms");
+    expect(rootTokens).toContain("--morph-popover-closed-size: 40px");
+    expect(morphPopover).toContain("--morph-popover-clip-closed");
+    expect(morphPopover).toContain("clip-path: var(--morph-popover-clip-open)");
+    expect(morphPopover).toContain("transform-origin: var(--morph-popover-origin-x) var(--morph-popover-origin-y) !important");
+    expect(morphPopover).toContain("will-change: clip-path, opacity, transform, filter");
+    expect(leftOrigin).toContain("--morph-popover-origin-x: 0");
+    expect(rightOrigin).toContain("--morph-popover-origin-x: 100%");
+    expect(morphOpen).toContain("clip-path: var(--morph-popover-clip-closed)");
+    expect(morphOpen).toContain("clip-path: var(--morph-popover-clip-open)");
+    expect(morphClose).toContain("border-radius: var(--morph-popover-radius-closed)");
+    expect(reducedMotion).toContain(".morph-popover[data-state=\"open\"]");
+  });
+
   it("keeps the macOS desktop shell translucent in light mode", () => {
     const lightDesktopBackdrop = cssBlock("html.desktop-shell-macos .app-shell-backdrop");
 
@@ -437,6 +460,19 @@ describe("index.css motion rules", () => {
     expect(tabsAndBreadcrumbHeader).not.toContain("--rudder-doc-editor-sidebar-header-height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px)");
   });
 
+  it("hides the Library document outline when the editor is narrow or the side panel is open", () => {
+    const editorScroll = cssBlock(".rudder-library-document-editor-scroll");
+    const sidePanelOutline = cssBlock(".workspace-main-panel-stack:has(> [data-testid=\"side-panel-resizer\"]) .rudder-library-document-outline,\n.workspace-main-panel-stack:has(> [data-testid=\"side-panel-expanded-overlay\"]) .rudder-library-document-outline");
+    const narrowContainer = indexCss.match(/@container \(max-width: 1080px\) \{(?<body>[\s\S]*?)\n\}/)?.groups?.body ?? "";
+
+    expect(editorScroll).toContain("container-type: inline-size");
+    expect(sidePanelOutline).toContain("display: none");
+    expect(narrowContainer).toContain(".rudder-library-document-layout--with-outline");
+    expect(narrowContainer).toContain("max-width: 880px");
+    expect(narrowContainer).toContain(".rudder-library-document-outline");
+    expect(narrowContainer).toContain("display: none");
+  });
+
   it("keeps desktop workspace shell and work-card corners aligned", () => {
     const rootTokens = cssBlock(":root");
     const workspaceShell = cssBlock(".workspace-shell");
@@ -462,7 +498,9 @@ describe("index.css motion rules", () => {
     const websiteLink = cssBlock("a.rudder-website-link");
     const websiteLinkHover = cssBlock("a.rudder-website-link:hover");
 
-    expect(websiteLink).toContain("display: inline");
+    expect(websiteLink).toContain("display: inline-flex");
+    expect(websiteLink).toContain("align-items: baseline");
+    expect(websiteLink).toContain("max-width: 100%");
     expect(websiteLink).toContain("color: var(--rudder-doc-link)");
     expect(websiteLink).toContain("overflow-wrap: anywhere");
     expect(websiteLinkHover).toContain("color: var(--rudder-doc-link-hover)");

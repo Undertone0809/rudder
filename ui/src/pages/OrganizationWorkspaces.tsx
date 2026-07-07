@@ -88,7 +88,7 @@ import { useI18n } from "../context/I18nContext";
 import { useToast } from "../context/ToastContext";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "../hooks/useViewedOrganization";
-import { readDesktopShell, type DesktopIdeTarget, type DesktopWorkspaceLaunchTarget } from "../lib/desktop-shell";
+import { readDesktopShell, type DesktopFileLaunchTargetId, type DesktopIdeTarget, type DesktopWorkspaceLaunchTarget } from "../lib/desktop-shell";
 import { extractDocumentOutline, type DocumentOutlineItem } from "../lib/document-outline";
 import type { AtomicInlineTokenElement } from "../lib/inline-token-dom";
 import { libraryCopy } from "../lib/library-copy";
@@ -198,6 +198,23 @@ const WORKSPACE_LAUNCH_TARGET_FALLBACKS: Partial<Record<DesktopWorkspaceLaunchTa
   powershell: { label: "PS", className: "bg-[#2563eb] text-white" },
 };
 
+type WorkspaceFileOpenTarget = {
+  fileTarget: true;
+  id: DesktopFileLaunchTargetId;
+  label: string;
+  kind: "app" | "ide";
+  workspaceTarget?: DesktopWorkspaceLaunchTarget;
+};
+
+type WorkspaceOpenTargetId = DesktopWorkspaceLaunchTarget["id"] | WorkspaceFileOpenTarget["id"];
+
+const DEFAULT_FILE_OPEN_TARGET: WorkspaceFileOpenTarget = {
+  fileTarget: true,
+  id: "defaultApp",
+  label: "Default app",
+  kind: "app",
+};
+
 function isWorkspaceLaunchTargetId(value: string | null): value is DesktopWorkspaceLaunchTarget["id"] {
   return WORKSPACE_LAUNCH_TARGET_IDS.includes(value as DesktopWorkspaceLaunchTarget["id"]);
 }
@@ -206,6 +223,25 @@ function isWorkspaceIdeLaunchTarget(
   target: DesktopWorkspaceLaunchTarget,
 ): target is DesktopWorkspaceLaunchTarget & { id: DesktopIdeTarget["id"]; kind: "ide" } {
   return target.kind === "ide" && target.id !== "xcode";
+}
+
+function isWorkspaceFileOpenTarget(
+  target: DesktopWorkspaceLaunchTarget | WorkspaceFileOpenTarget,
+): target is WorkspaceFileOpenTarget {
+  return "fileTarget" in target;
+}
+
+function workspaceFileOpenTargets(targets: DesktopWorkspaceLaunchTarget[]): WorkspaceFileOpenTarget[] {
+  return [
+    DEFAULT_FILE_OPEN_TARGET,
+    ...targets.filter(isWorkspaceIdeLaunchTarget).map((target) => ({
+      fileTarget: true as const,
+      id: target.id,
+      label: target.label,
+      kind: "ide" as const,
+      workspaceTarget: target,
+    })),
+  ];
 }
 
 function readStoredWorkspaceLaunchTargetId() {
@@ -217,6 +253,10 @@ function readStoredWorkspaceLaunchTargetId() {
 function writeStoredWorkspaceLaunchTargetId(targetId: DesktopWorkspaceLaunchTarget["id"]) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(WORKSPACE_LAUNCH_TARGET_STORAGE_KEY, targetId);
+}
+
+function workspaceLaunchMenuOpeningId(targetId: WorkspaceOpenTargetId | null) {
+  return targetId && isWorkspaceLaunchTargetId(targetId) ? targetId : null;
 }
 
 function clampWorkspaceTabContextMenuPosition(left: number, top: number) {
@@ -255,17 +295,18 @@ export function WorkspaceLaunchTargetIcon({
   target,
   className,
 }: {
-  target: DesktopWorkspaceLaunchTarget;
+  target: DesktopWorkspaceLaunchTarget | WorkspaceFileOpenTarget;
   className?: string;
 }) {
   const [nativeImageFailed, setNativeImageFailed] = useState(false);
   const [brandImageFailed, setBrandImageFailed] = useState(false);
+  const workspaceTarget = isWorkspaceFileOpenTarget(target) ? target.workspaceTarget : target;
   const slotClassName = cn(
     "inline-flex h-5 w-5 shrink-0 items-center justify-center",
     className,
   );
 
-  if (target.iconDataUrl && !nativeImageFailed) {
+  if (workspaceTarget?.iconDataUrl && !nativeImageFailed) {
     return (
       <span
         aria-hidden="true"
@@ -273,7 +314,7 @@ export function WorkspaceLaunchTargetIcon({
         data-workspace-launch-target-icon={target.id}
       >
         <img
-          src={target.iconDataUrl}
+          src={workspaceTarget.iconDataUrl}
           alt=""
           className="h-full w-full object-contain"
           onError={() => setNativeImageFailed(true)}
@@ -282,7 +323,7 @@ export function WorkspaceLaunchTargetIcon({
     );
   }
 
-  const brandFallback = WORKSPACE_LAUNCH_TARGET_BRAND_FALLBACKS[target.id];
+  const brandFallback = workspaceTarget ? WORKSPACE_LAUNCH_TARGET_BRAND_FALLBACKS[workspaceTarget.id] : null;
   if (brandFallback && !brandImageFailed) {
     return (
       <span
@@ -302,7 +343,7 @@ export function WorkspaceLaunchTargetIcon({
     );
   }
 
-  const appSpecificFallback = WORKSPACE_LAUNCH_TARGET_FALLBACKS[target.id];
+  const appSpecificFallback = workspaceTarget ? WORKSPACE_LAUNCH_TARGET_FALLBACKS[workspaceTarget.id] : null;
   if (appSpecificFallback) {
     return (
       <span
@@ -321,7 +362,7 @@ export function WorkspaceLaunchTargetIcon({
     );
   }
 
-  const Icon = target.kind === "terminal" ? Terminal : target.kind === "folder" ? FolderOpen : Code2;
+  const Icon = target.kind === "terminal" ? Terminal : target.kind === "folder" ? FolderOpen : target.kind === "app" ? ExternalLink : Code2;
   return (
     <span
       aria-hidden="true"
@@ -1336,7 +1377,7 @@ function DirectoryChildren({
   onCopyLink: (entry: OrganizationWorkspaceFileEntry) => void;
   onCopyAbsolutePath: (entry: OrganizationWorkspaceFileEntry) => void;
   onOpenEntry?: (entry: OrganizationWorkspaceFileEntry) => void;
-  onOpenEntryTarget?: (entry: OrganizationWorkspaceFileEntry, target: DesktopWorkspaceLaunchTarget) => void;
+  onOpenEntryTarget?: (entry: OrganizationWorkspaceFileEntry, target: DesktopWorkspaceLaunchTarget | WorkspaceFileOpenTarget) => void;
   onStartCreateEntry: (entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") => void;
   onCopyEntry: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
@@ -1351,7 +1392,7 @@ function DirectoryChildren({
   unlinkingResourceId: string | null;
   expandedDirectories: Set<string>;
   workspaceLaunchTargets: DesktopWorkspaceLaunchTarget[];
-  openingWorkspaceTargetId: DesktopWorkspaceLaunchTarget["id"] | null;
+  openingWorkspaceTargetId: WorkspaceOpenTargetId | null;
   projectResourceGroupsByLibraryPath: Map<string, ProjectResourceTreeGroup>;
   depth: number;
 }) {
@@ -1468,7 +1509,7 @@ function WorkspaceTreeNode({
   onCopyLink: (entry: OrganizationWorkspaceFileEntry) => void;
   onCopyAbsolutePath: (entry: OrganizationWorkspaceFileEntry) => void;
   onOpenEntry?: (entry: OrganizationWorkspaceFileEntry) => void;
-  onOpenEntryTarget?: (entry: OrganizationWorkspaceFileEntry, target: DesktopWorkspaceLaunchTarget) => void;
+  onOpenEntryTarget?: (entry: OrganizationWorkspaceFileEntry, target: DesktopWorkspaceLaunchTarget | WorkspaceFileOpenTarget) => void;
   onStartCreateEntry: (entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") => void;
   onCopyEntry: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
@@ -1483,7 +1524,7 @@ function WorkspaceTreeNode({
   unlinkingResourceId: string | null;
   expandedDirectories: Set<string>;
   workspaceLaunchTargets: DesktopWorkspaceLaunchTarget[];
-  openingWorkspaceTargetId: DesktopWorkspaceLaunchTarget["id"] | null;
+  openingWorkspaceTargetId: WorkspaceOpenTargetId | null;
   projectResourceGroupsByLibraryPath: Map<string, ProjectResourceTreeGroup>;
   depth?: number;
 }) {
@@ -1507,7 +1548,7 @@ function WorkspaceTreeNode({
   const canDropIntoDirectory = !isVirtualSkillEntry && entry.isDirectory && canCreateInsideWorkspaceDirectory(entry.path);
   const entryOpenTargets = entry.isDirectory
     ? workspaceLaunchTargets
-    : workspaceLaunchTargets.filter(isWorkspaceIdeLaunchTarget);
+    : workspaceFileOpenTargets(workspaceLaunchTargets);
   const isActive = activeEntryPath === entry.path
     || selectedSkillTreePath === entry.path
     || (!activeEntryPath && selectedFilePath === entry.path);
@@ -1648,7 +1689,7 @@ function WorkspaceTreeNode({
                     data-testid={`org-workspaces-entry-open-submenu-${entry.path}`}
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
-                    {entry.isDirectory ? "Open folder" : "Open in editor"}
+                    {entry.isDirectory ? "Open folder" : "Open In"}
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent
                     sideOffset={6}
@@ -1676,7 +1717,7 @@ function WorkspaceTreeNode({
               ) : onOpenEntry ? (
                 <DropdownMenuItem onSelect={() => onOpenEntry(entry)}>
                   <ExternalLink className="h-3.5 w-3.5" />
-                  {entry.isDirectory ? "Open folder" : "Open in editor"}
+                  {entry.isDirectory ? "Open folder" : "Open In"}
                 </DropdownMenuItem>
               ) : null
             ) : null}
@@ -2626,7 +2667,7 @@ function ProjectResourceDetailPanel({
   workspaceRootPath: string | null;
   workspaceLaunchTargets: DesktopWorkspaceLaunchTarget[];
   selectedWorkspaceLaunchTarget: DesktopWorkspaceLaunchTarget | null;
-  openingWorkspaceTargetId: DesktopWorkspaceLaunchTarget["id"] | null;
+  openingWorkspaceTargetId: WorkspaceOpenTargetId | null;
   onSelectWorkspaceLaunchTarget: (target: DesktopWorkspaceLaunchTarget) => void;
   onOpenWorkspaceTarget: (rootPath: string, target: DesktopWorkspaceLaunchTarget, toastLabel?: string) => void;
 }) {
@@ -3020,7 +3061,7 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
   );
   const [workspaceLaunchTargets, setWorkspaceLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
   const [openingWorkspaceTargetId, setOpeningWorkspaceTargetId] = useState<
-    DesktopWorkspaceLaunchTarget["id"] | null
+    WorkspaceOpenTargetId | null
   >(null);
   const expandedDirectories = useMemo(
     () => {
@@ -3493,29 +3534,37 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
     }
   }
 
-  async function handleOpenEntryTarget(entry: OrganizationWorkspaceFileEntry, target: DesktopWorkspaceLaunchTarget) {
+  async function handleOpenEntryTarget(entry: OrganizationWorkspaceFileEntry, target: DesktopWorkspaceLaunchTarget | WorkspaceFileOpenTarget) {
     if (entry.isDirectory) {
+      if (isWorkspaceFileOpenTarget(target)) return;
       await handleOpenWorkspaceTarget(joinWorkspacePath(workspaceRootPath, entry.path), target, "folder");
       return;
     }
 
-    if (!workspaceRootPath || !isWorkspaceIdeLaunchTarget(target)) return;
+    if (!workspaceRootPath) return;
     const desktopShell = readDesktopShell();
     if (typeof desktopShell?.openWorkspaceFileInIde !== "function") return;
 
-    setOpeningWorkspaceTargetId(target.id);
+    const fileTarget = isWorkspaceFileOpenTarget(target)
+      ? target
+      : workspaceFileOpenTargets([target]).find((candidate) => candidate.id === target.id);
+    if (!fileTarget) return;
+
+    setOpeningWorkspaceTargetId(fileTarget.id);
     try {
-      await desktopShell.openWorkspaceFileInIde(workspaceRootPath, entry.path, target.id);
-      writeStoredWorkspaceLaunchTargetId(target.id);
+      await desktopShell.openWorkspaceFileInIde(workspaceRootPath, entry.path, fileTarget.id);
+      if (fileTarget.workspaceTarget) {
+        writeStoredWorkspaceLaunchTargetId(fileTarget.workspaceTarget.id);
+      }
       pushToast({
-        title: `Opened file in ${target.label}`,
+        title: fileTarget.id === "defaultApp" ? "Opened file" : `Opened file in ${fileTarget.label}`,
         body: entry.path,
         tone: "info",
       });
     } catch (error) {
       pushToast({
         title: "Failed to open file",
-        body: error instanceof Error ? error.message : `Could not open ${entry.path} in ${target.label}.`,
+        body: error instanceof Error ? error.message : `Could not open ${entry.path} in ${fileTarget.label}.`,
         tone: "error",
       });
     } finally {
@@ -3637,7 +3686,7 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
               <WorkspaceLaunchMenu
                 rootPath={workspaceRootPath}
                 targets={workspaceLaunchTargets}
-                openingTargetId={openingWorkspaceTargetId}
+                openingTargetId={workspaceLaunchMenuOpeningId(openingWorkspaceTargetId)}
                 onOpenTarget={(rootPath, target, toastLabel) => {
                   void handleOpenWorkspaceTarget(rootPath, target, toastLabel);
                 }}
@@ -4024,7 +4073,7 @@ export function OrganizationWorkspaceBrowser({
     DesktopWorkspaceLaunchTarget["id"] | null
   >(() => readStoredWorkspaceLaunchTargetId());
   const [openingWorkspaceTargetId, setOpeningWorkspaceTargetId] = useState<
-    DesktopWorkspaceLaunchTarget["id"] | null
+    WorkspaceOpenTargetId | null
   >(null);
   const [isMobileViewport, setIsMobileViewport] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT : false,
@@ -5033,31 +5082,39 @@ export function OrganizationWorkspaceBrowser({
 
   const handleOpenEntryTarget = useCallback(async (
     entry: OrganizationWorkspaceFileEntry,
-    target: DesktopWorkspaceLaunchTarget,
+    target: DesktopWorkspaceLaunchTarget | WorkspaceFileOpenTarget,
   ) => {
     if (entry.isDirectory) {
+      if (isWorkspaceFileOpenTarget(target)) return;
       await handleOpenWorkspaceTarget(joinWorkspacePath(workspaceRootPath, entry.path), target, "folder");
       return;
     }
 
-    if (!workspaceRootPath || !isWorkspaceIdeLaunchTarget(target)) return;
+    if (!workspaceRootPath) return;
     const desktopShell = readDesktopShell();
     if (typeof desktopShell?.openWorkspaceFileInIde !== "function") return;
 
-    setOpeningWorkspaceTargetId(target.id);
+    const fileTarget = isWorkspaceFileOpenTarget(target)
+      ? target
+      : workspaceFileOpenTargets([target]).find((candidate) => candidate.id === target.id);
+    if (!fileTarget) return;
+
+    setOpeningWorkspaceTargetId(fileTarget.id);
     try {
-      await desktopShell.openWorkspaceFileInIde(workspaceRootPath, entry.path, target.id);
-      setLastWorkspaceLaunchTargetId(target.id);
-      writeStoredWorkspaceLaunchTargetId(target.id);
+      await desktopShell.openWorkspaceFileInIde(workspaceRootPath, entry.path, fileTarget.id);
+      if (fileTarget.workspaceTarget) {
+        setLastWorkspaceLaunchTargetId(fileTarget.workspaceTarget.id);
+        writeStoredWorkspaceLaunchTargetId(fileTarget.workspaceTarget.id);
+      }
       pushToast({
-        title: `Opened file in ${target.label}`,
+        title: fileTarget.id === "defaultApp" ? "Opened file" : `Opened file in ${fileTarget.label}`,
         body: entry.path,
         tone: "info",
       });
     } catch (error) {
       pushToast({
         title: "Failed to open file",
-        body: error instanceof Error ? error.message : `Could not open ${entry.path} in ${target.label}.`,
+        body: error instanceof Error ? error.message : `Could not open ${entry.path} in ${fileTarget.label}.`,
         tone: "error",
       });
     } finally {
@@ -5106,7 +5163,7 @@ export function OrganizationWorkspaceBrowser({
           <WorkspaceLaunchMenu
             rootPath={workspaceRootPath}
             targets={workspaceLaunchTargets}
-            openingTargetId={openingWorkspaceTargetId}
+            openingTargetId={workspaceLaunchMenuOpeningId(openingWorkspaceTargetId)}
             onOpenTarget={handleOpenWorkspaceTarget}
             className="h-8 w-8"
             testId="org-workspaces-launcher"
@@ -5839,7 +5896,7 @@ export function OrganizationWorkspaceBrowser({
                     <WorkspaceLaunchMenu
                       rootPath={workspaceRootPath}
                       targets={workspaceLaunchTargets}
-                      openingTargetId={openingWorkspaceTargetId}
+                      openingTargetId={workspaceLaunchMenuOpeningId(openingWorkspaceTargetId)}
                       onOpenTarget={handleOpenWorkspaceTarget}
                       contentAlign="start"
                       testId="org-workspaces-sidebar-launcher"
@@ -6289,14 +6346,14 @@ export function OrganizationWorkspaceBrowser({
                     <div
                       ref={setEditorScrollElementRef}
                       data-testid="org-workspaces-markdown-editor"
-                      className="scrollbar-auto-hide min-h-[280px] flex-1 overflow-auto bg-[color:var(--surface-elevated)]"
+                      className="rudder-library-document-editor-scroll scrollbar-auto-hide min-h-[280px] flex-1 overflow-auto bg-[color:var(--surface-elevated)]"
                       onClick={handleMarkdownEditorBlankClick}
                     >
                       <div
                         className={cn(
-                          "mx-auto min-h-full w-full px-8 py-8",
+                          "rudder-library-document-layout mx-auto min-h-full w-full px-8 py-8",
                           renderSelectedMarkdownOutlinePanel
-                            ? "max-w-[1180px] xl:grid xl:grid-cols-[minmax(0,880px)_220px] xl:gap-8"
+                            ? "rudder-library-document-layout--with-outline max-w-[1180px] xl:grid xl:grid-cols-[minmax(0,880px)_220px] xl:gap-8"
                             : "max-w-[880px]",
                         )}
                       >
@@ -6344,7 +6401,7 @@ export function OrganizationWorkspaceBrowser({
                           <aside
                             aria-label="Document sections"
                             data-testid="org-workspaces-document-outline"
-                            className="hidden min-w-0 xl:block"
+                            className="rudder-library-document-outline hidden min-w-0 xl:block"
                           >
                             <div className="sticky top-6 border-l border-border/60 py-1 pl-4">
                               <div className="mb-2 flex items-center justify-between gap-2">

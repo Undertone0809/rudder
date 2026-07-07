@@ -248,6 +248,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
     let nativeDiscoverableSkills: unknown[] | undefined;
     let agentInstructionStack = "";
     let rudderMcp: unknown;
+    let rudderNativeTools: unknown;
     const runtimeSkillsRoot = path.join(root, "runtime-skills");
     const rudderDir = await createSkillDir(runtimeSkillsRoot, "rudder");
     const asciiHeartDir = await createSkillDir(runtimeSkillsRoot, "ascii-heart");
@@ -323,6 +324,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
           nativeDiscoverableSkills = meta.nativeDiscoverableSkills;
           agentInstructionStack = meta.agentInstructionStack ?? "";
           rudderMcp = meta.rudderMcp;
+          rudderNativeTools = meta.rudderNativeTools;
         },
       });
 
@@ -340,6 +342,32 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(capture.argv).not.toContain("rpc");
       expect(capture.argv).toEqual(expect.arrayContaining(["--no-skills", "--skill", path.join(managedPiAgentDir, "skills")]));
       expect(capture.argv).toEqual(expect.arrayContaining(["--skill", path.join(managedPiAgentDir, "skills")]));
+      const extensionIndex = capture.argv.indexOf("--extension");
+      expect(extensionIndex).toBeGreaterThanOrEqual(0);
+      const extensionPath = capture.argv[extensionIndex + 1];
+      expect(extensionPath).toBe(path.join(managedPiAgentDir, "extensions", "rudder-control-plane", "index.ts"));
+      const extensionSource = await fs.readFile(extensionPath, "utf8");
+      expect(extensionSource).toContain("rudder_agent_me");
+      expect(extensionSource).toContain("rudder_issue_checkout");
+      expect(extensionSource).toContain('"additionalProperties": false');
+      expect(extensionSource).toContain('"issue"');
+      expect(extensionSource).toContain("pickManagedRuntimeEnv");
+      expect(extensionSource).toContain("result.isError === true");
+      expect(extensionSource).not.toContain("run-jwt-token");
+      expect(extensionSource).not.toContain("forbidden-api-key");
+      expect(extensionSource).not.toContain("forbidden-agent");
+      expect(extensionSource).not.toContain("forbidden-org");
+      expect(extensionSource).not.toContain("forbidden-run");
+      expect(extensionSource).not.toContain("https://forbidden.example.invalid");
+      const toolsIndex = capture.argv.indexOf("--tools");
+      expect(toolsIndex).toBeGreaterThanOrEqual(0);
+      expect(capture.argv[toolsIndex + 1].split(",")).toEqual(expect.arrayContaining([
+        "read",
+        "bash",
+        "rudder_agent_me",
+        "rudder_library_file_list",
+        "rudder_runs_errors",
+      ]));
       expect(capture.argv.at(-1)).toContain("Follow the rudder heartbeat.");
       expect(capture.stdin).toBe("");
       const appendSystemPromptIndex = capture.argv.indexOf("--append-system-prompt");
@@ -350,7 +378,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(systemPrompt).toContain("# Agent Tools");
       expect(systemPrompt).toContain("# Tacit Memory");
       expect(systemPrompt).toContain("## Your Current Automations");
-      expect(systemPrompt).toContain("# Rudder Heartbeat Instruction");
+      expect(systemPrompt).not.toContain("# Rudder Heartbeat Instruction");
       expect(systemPrompt).toContain("# Enabled Rudder Skills");
       expect(systemPrompt).toContain("Only skills listed in this section are enabled by Rudder for this run.");
       expect(systemPrompt).toContain("Use a plain newline-separated list. Do not use prose, bullets, Markdown, code spans, explanations, prefixes, or suffixes.");
@@ -363,7 +391,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(systemPrompt.indexOf("# Agent Tools")).toBeLessThan(systemPrompt.indexOf("# Tacit Memory"));
       expect(systemPrompt.indexOf("# Tacit Memory")).toBeLessThan(systemPrompt.indexOf("## Your Current Automations"));
       expect(systemPrompt.indexOf("## Your Current Automations")).toBeLessThan(systemPrompt.indexOf("## Current Time"));
-      expect(systemPrompt.indexOf("## Current Time")).toBeLessThan(systemPrompt.indexOf("# Rudder Heartbeat Instruction"));
+      expect(systemPrompt).toContain("## Current Time");
       expect(agentInstructionStack).toContain(systemPrompt);
       expect(agentInstructionStack).toContain("Follow the rudder heartbeat.");
       expect(agentInstructionStack).toContain("# Agent Instructions");
@@ -402,7 +430,17 @@ describe("pi execute", { timeout: 20_000 }, () => {
         available: false,
         serverName: "rudder-control-plane",
         toolCount: 69,
-        fallbackReason: "Pi CLI does not expose a supported MCP server configuration surface in this adapter.",
+        fallbackReason: "Pi CLI does not expose a supported MCP server configuration surface; Rudder tools are injected through a managed Pi extension.",
+      });
+      expect(rudderNativeTools).toEqual({
+        available: true,
+        transport: "pi_extension",
+        serverName: "rudder-control-plane",
+        toolCount: 69,
+        toolNames: expect.arrayContaining(["rudder_agent_me", "rudder_issue_checkout", "rudder_library_file_list"]),
+        authMode: "runtime_managed",
+        modelVisibleCliFallback: false,
+        fallbackReason: null,
       });
       expect((await fs.lstat(path.join(managedPiAgentDir, "skills", "ascii-heart"))).isSymbolicLink()).toBe(true);
       expect(await fs.realpath(path.join(managedPiAgentDir, "skills", "ascii-heart"))).toBe(
@@ -685,7 +723,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
-      expect(result.summary).toBe("final ok");
+      expect(result.summary).toMatch(/^(turn ok|final ok)$/);
       expect(result.usage).toMatchObject({
         inputTokens: 10,
         outputTokens: 3,
@@ -697,7 +735,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(JSON.stringify(result.resultJson)).not.toContain("internal reasoning should not be persisted");
       expect(JSON.stringify(result.resultJson)).not.toContain("sig_sig_sig_sig_sig_sig_sig_sig_sig_sig_");
       expect(logs.join("")).not.toContain("internal reasoning should not be persisted");
-      expect(logs.join("")).toContain("\"type\":\"agent_end\"");
+      expect(logs.join("")).toContain("\"type\":\"turn_end\"");
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;

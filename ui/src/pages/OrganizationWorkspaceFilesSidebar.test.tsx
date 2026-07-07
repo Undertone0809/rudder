@@ -348,7 +348,7 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     expect(onCollapseSidebar).toHaveBeenCalledTimes(1);
   });
 
-  it("offers installed IDE choices from the file Open in editor submenu", async () => {
+  it("offers default app and installed IDE choices from the file Open In submenu", async () => {
     const openWorkspace = vi.fn(async () => undefined);
     const openWorkspaceFileInIde = vi.fn(async () => undefined);
     mockState.desktopShell = {
@@ -369,23 +369,29 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     });
 
     openEntryMenu("docs/draft.md");
+    const openSubmenu = document.querySelector<HTMLElement>(
+      "[data-testid='org-workspaces-entry-open-submenu-docs/draft.md']",
+    );
+    expect(openSubmenu?.textContent).toContain("Open In");
+    expect(openSubmenu?.textContent).not.toContain("Open in editor");
     openEntryOpenSubmenu("docs/draft.md");
 
+    expect(document.querySelector("[data-testid='org-workspaces-entry-open-target-docs/draft.md-defaultApp']")).not.toBeNull();
     expect(document.querySelector("[data-testid='org-workspaces-entry-open-target-docs/draft.md-cursor']")).not.toBeNull();
     expect(document.querySelector("[data-testid='org-workspaces-entry-open-target-docs/draft.md-vscode']")).not.toBeNull();
     expect(document.querySelector("[data-testid='org-workspaces-entry-open-target-docs/draft.md-commandPrompt']")).toBeNull();
     expect(document.querySelector("[data-testid='org-workspaces-entry-open-target-docs/draft.md-powershell']")).toBeNull();
     expect(document.querySelector("[data-testid='org-workspaces-entry-open-target-docs/draft.md-finder']")).toBeNull();
 
-    const vscodeItem = document.querySelector<HTMLElement>(
-      "[data-testid='org-workspaces-entry-open-target-docs/draft.md-vscode']",
+    const defaultAppItem = document.querySelector<HTMLElement>(
+      "[data-testid='org-workspaces-entry-open-target-docs/draft.md-defaultApp']",
     );
     await act(async () => {
-      vscodeItem?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      defaultAppItem?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
-    expect(openWorkspaceFileInIde).toHaveBeenCalledWith("/tmp/rudder-org", "docs/draft.md", "vscode");
+    expect(openWorkspaceFileInIde).toHaveBeenCalledWith("/tmp/rudder-org", "docs/draft.md", "defaultApp");
     expect(openWorkspace).not.toHaveBeenCalled();
   });
 

@@ -11,6 +11,7 @@ import {
   resolveImageFilename,
 } from "@/lib/image-actions";
 import {
+  buildAutomationMentionHref,
   buildChatMentionHref,
   buildIssueMentionHref,
   buildLibraryDirectoryMentionHref,
@@ -40,6 +41,8 @@ import {
   buildChatProposalRevisionPrompt,
   buildDraftChatContextLinks,
   canContinueInterruptedChatMessage,
+  canRefreshAssistantChatMessage,
+  canRefreshDisplayedAssistantChatMessage,
   canRetryFailedChatMessage,
   chatEmptyStateHeading,
   chatIssueApprovalPayloadWithProposalOverride,
@@ -196,7 +199,7 @@ function renderSystemMessageBody(message: ChatMessage) {
   );
 }
 
-function renderChatMessageItem(messageToRender: ChatMessage) {
+function renderChatMessageItem(messageToRender: ChatMessage, options?: { canRefreshAssistantMessage?: boolean }) {
   return renderToStaticMarkup(
     <ThemeProvider>
       <ChatMessageItem
@@ -216,6 +219,8 @@ function renderChatMessageItem(messageToRender: ChatMessage) {
         onEditUserMessage={vi.fn()}
         onContinueInterruptedMessage={vi.fn()}
         onRetryFailedMessage={vi.fn()}
+        canRefreshAssistantMessage={options?.canRefreshAssistantMessage ?? false}
+        onRefreshAssistantMessage={vi.fn()}
         onOpenImage={vi.fn()}
         onOpenFile={vi.fn()}
         skillReferences={[]}
@@ -394,6 +399,20 @@ describe("ChatMessageItem", () => {
     expect(html).toContain(">Streaming</span>");
     expect(html).toContain("Partial automation response.");
     expect(html).toContain('aria-label="Copy message"');
+    expect(html).not.toContain('aria-label="Refresh answer"');
+  });
+
+  it("renders a refresh action for completed assistant messages in a turn", () => {
+    const html = renderChatMessageItem(message({
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Final answer.",
+      chatTurnId: "turn-1",
+    }), { canRefreshAssistantMessage: true });
+
+    expect(html).toContain('aria-label="Refresh answer"');
+    expect(html).toContain("Final answer.");
   });
 
   it("renders failed assistant messages with a visible failure callout and retry action", () => {
@@ -438,7 +457,7 @@ describe("ChatMessageItem", () => {
 });
 
 describe("Chat Side Panel targets", () => {
-  it("resolves issue, chat, and library targets from chat links", () => {
+  it("resolves issue, chat, automation, and library targets from chat links", () => {
     expect(chatSidePanelTargetFromHref(buildIssueMentionHref("issue-1", "ZST-1", "comment-1"))).toEqual({
       kind: "issue",
       issueId: "issue-1",
@@ -458,6 +477,11 @@ describe("Chat Side Panel targets", () => {
       messageId: "message-3",
       label: "Source message",
     });
+    expect(chatSidePanelTargetFromHref(buildAutomationMentionHref("automation-1", "Daily report"))).toEqual({
+      kind: "automation",
+      automationId: "automation-1",
+      label: "Daily report",
+    });
     expect(chatSidePanelTargetFromHref(buildLibraryFileMentionHref("docs/plan.md"), "Plan doc")).toEqual({
       kind: "library_file",
       filePath: "docs/plan.md",
@@ -473,6 +497,11 @@ describe("Chat Side Panel targets", () => {
       conversationId: "chat-2",
       messageId: "message-3",
       label: "Source message",
+    });
+    expect(chatSidePanelTargetFromHref("/automations/automation-1?t=Daily%20report")).toEqual({
+      kind: "automation",
+      automationId: "automation-1",
+      label: "Daily report",
     });
     expect(chatSidePanelTargetFromHref("/library?path=docs%2Fplan.md", "Plan doc")).toEqual({
       kind: "library_file",
@@ -1153,6 +1182,92 @@ describe("failed chat retry", () => {
     }))).toBe(false);
   });
 
+  it("offers refresh for completed assistant messages in a turn", () => {
+    expect(canRefreshAssistantChatMessage(message({
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      chatTurnId: "turn-1",
+    }))).toBe(true);
+
+    expect(canRefreshAssistantChatMessage(message({
+      role: "assistant",
+      kind: "message",
+      status: "streaming",
+      chatTurnId: "turn-1",
+    }))).toBe(false);
+    expect(canRefreshAssistantChatMessage(message({
+      role: "assistant",
+      kind: "message",
+      status: "failed",
+      chatTurnId: "turn-1",
+    }))).toBe(false);
+    expect(canRefreshAssistantChatMessage(message({
+      role: "assistant",
+      kind: "message",
+      status: "interrupted",
+      chatTurnId: "turn-1",
+    }))).toBe(false);
+    expect(canRefreshAssistantChatMessage(message({
+      role: "assistant",
+      kind: "message",
+      status: "stopped",
+      chatTurnId: "turn-1",
+    }))).toBe(false);
+    expect(canRefreshAssistantChatMessage(message({
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      chatTurnId: null,
+    }))).toBe(false);
+    expect(canRefreshAssistantChatMessage(message({
+      role: "user",
+      kind: "message",
+      status: "completed",
+      chatTurnId: "turn-1",
+    }))).toBe(false);
+  });
+
+  it("only offers displayed refresh on the active completed branch when no reply is running", () => {
+    const completedAssistant = message({
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      chatTurnId: "turn-1",
+    });
+
+    expect(canRefreshDisplayedAssistantChatMessage({
+      message: completedAssistant,
+      branchControls: null,
+      hasActiveReply: false,
+    })).toBe(true);
+    expect(canRefreshDisplayedAssistantChatMessage({
+      message: completedAssistant,
+      branchControls: { current: 2, total: 2 },
+      hasActiveReply: false,
+    })).toBe(true);
+    expect(canRefreshDisplayedAssistantChatMessage({
+      message: completedAssistant,
+      branchControls: { current: 1, total: 2 },
+      hasActiveReply: false,
+    })).toBe(false);
+    expect(canRefreshDisplayedAssistantChatMessage({
+      message: completedAssistant,
+      branchControls: { current: 2, total: 2 },
+      hasActiveReply: true,
+    })).toBe(false);
+    expect(canRefreshDisplayedAssistantChatMessage({
+      message: message({
+        role: "assistant",
+        kind: "message",
+        status: "failed",
+        chatTurnId: "turn-1",
+      }),
+      branchControls: { current: 2, total: 2 },
+      hasActiveReply: false,
+    })).toBe(false);
+  });
+
   it("finds the same-turn user message as the retry source", () => {
     const source = message({
       id: "user-1",
@@ -1414,6 +1529,43 @@ describe("computeDisplayedChatMessages", () => {
 
     expect(computeDisplayedChatMessages(messages, { chatTurnId: "turn-1", turnVariant: 0 }).map((row) => row.id))
       .toEqual(["user-1", "proposal-1", "system-1"]);
+  });
+
+  it("keeps prior turn variants visible while a newer variant is still streaming", () => {
+    const messages = [
+      message({
+        id: "user-v0",
+        role: "user",
+        kind: "message",
+        body: "Original request",
+        chatTurnId: "turn-1",
+        turnVariant: 0,
+        supersededAt: new Date("2026-05-07T00:01:00.000Z"),
+        createdAt: new Date("2026-05-07T00:00:00.000Z"),
+      }),
+      message({
+        id: "assistant-v0",
+        role: "assistant",
+        kind: "message",
+        body: "Original response",
+        chatTurnId: "turn-1",
+        turnVariant: 0,
+        supersededAt: new Date("2026-05-07T00:01:00.000Z"),
+        createdAt: new Date("2026-05-07T00:00:01.000Z"),
+      }),
+      message({
+        id: "context-after",
+        role: "system",
+        kind: "system_event",
+        body: "Unrelated system event.",
+        chatTurnId: null,
+        supersededAt: null,
+        createdAt: new Date("2026-05-07T00:00:02.000Z"),
+      }),
+    ];
+
+    expect(computeDisplayedChatMessages(messages, { chatTurnId: "turn-1", turnVariant: 0 }).map((row) => row.id))
+      .toEqual(["user-v0", "assistant-v0", "context-after"]);
   });
 });
 

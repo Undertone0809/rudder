@@ -37,6 +37,7 @@ related_tests:
   - server/src/__tests__/agent-run-context.test.ts
   - server/src/__tests__/workspace-backups.test.ts
   - server/src/__tests__/workspace-backups-routes.test.ts
+  - ui/src/pages/OrganizationWorkspaceFilesSidebar.test.tsx
   - tests/e2e/organization-workspaces-launcher.spec.ts
   - tests/e2e/workspace-shell.spec.ts
   - tests/e2e/workspace-backups.spec.ts
@@ -106,6 +107,13 @@ Product model:
   `org-name-2`.
 - Operators and agents can list, read, create, update, delete, rename, and link
   allowed files.
+- In Desktop shells, operators can launch the organization workspace in detected
+  local IDE, terminal, or folder targets, and can open individual files in the
+  system default app or detected IDE targets.
+- Individual file rows expose this through an `Open In` action. `Default app`
+  is a file-safe target that delegates to the operating system's configured
+  default app for that file type; detected IDEs such as Cursor or VS Code remain
+  explicit file targets.
 - Protected roots such as agent instruction, skills, and managed directories
   are excluded from normal mentionable Library surfaces unless an explicit
   management flow owns them.
@@ -122,6 +130,9 @@ Flow:
 4. Library entry cache/reference id is created or reused.
 5. Markdown/reference rendering can turn the Library file into a stable link.
 6. Project resources can attach eligible Library files as curated run context.
+7. In Desktop shells, Rudder asks the Desktop bridge for available launcher
+   targets and sends workspace/file open requests through that bridge rather
+   than through the server file API.
 
 Invariants:
 
@@ -133,6 +144,15 @@ Invariants:
   must stop before creating an empty replacement and tell the operator to
   restore the mapped folder name/path or restore from a workspace backup.
 - Protected paths are not ordinary Library content.
+- Desktop launchers are operator-local conveniences. They must not bypass
+  Library path validation, expose protected paths as ordinary entries, or imply
+  that browser/server deployments can open files on the operator machine.
+- File launcher menus should expose file-safe targets only. Workspace-level
+  terminal or folder launch targets remain workspace launch actions, not
+  per-file open actions.
+- The per-file `Default app` target must remain a Desktop bridge action, not a
+  server-side filesystem open. It is unavailable in non-Desktop shells that
+  cannot access the operator's local default application registry.
 
 Evidence:
 
@@ -141,6 +161,10 @@ Evidence:
   folder fail-fast behavior.
 - Library path markdown tests cover reference generation.
 - Organization workspace browser tests cover path safety and browser behavior.
+- Desktop launcher unit and E2E coverage checks detected workspace targets,
+  default-app/file target behavior, and Library sidebar launcher placement.
+- Organization workspace sidebar component tests cover the visible `Open In`
+  label and `Default app` file target.
 
 ## WORKSPACE.PROJECT.001
 

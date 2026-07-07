@@ -275,6 +275,7 @@ describe("user chat message rendering", () => {
     expect(link?.textContent).toBe(url);
     expect(link?.getAttribute("target")).toBe("_blank");
     expect(link?.classList.contains("rudder-website-link")).toBe(true);
+    expect(link?.querySelector("img.rudder-website-link-logo")).toBeNull();
     expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
     await act(async () => {
       await vi.waitFor(() => {
@@ -334,7 +335,7 @@ describe("user chat message rendering", () => {
     expect(mention?.classList.contains("rudder-mention-chip--with-status-icon")).toBe(true);
   });
 
-  it("keeps ordinary issue mentions lightweight even when status metadata is available", () => {
+  it("renders ordinary user issue mentions with the same status icon affordance as assistant markdown", () => {
     window.history.pushState({}, "", "/MARAAA/messenger/chat/chat-1");
     markdownMentionsMock.mentions = [{
       id: "issue:issue-1",
@@ -354,7 +355,7 @@ describe("user chat message rendering", () => {
     const mention = container.querySelector('[data-mention-kind="issue"]');
 
     expect(mention?.getAttribute("data-mention-status")).toBe("done");
-    expect(mention?.classList.contains("rudder-mention-chip--with-status-icon")).toBe(false);
+    expect(mention?.classList.contains("rudder-mention-chip--with-status-icon")).toBe(true);
   });
 
   it("renders automation-style assistant issue links as issue chips", () => {

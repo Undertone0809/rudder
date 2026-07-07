@@ -51,6 +51,7 @@
   },
   "dependencies": {
     "@rudderhq/agent-runtime-utils": "workspace:*",
+    "@rudderhq/shared": "workspace:*",
     "picocolors": "^1.1.1"
   },
   "devDependencies": {

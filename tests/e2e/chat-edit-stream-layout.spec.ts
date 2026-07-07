@@ -111,5 +111,24 @@ test.describe("Chat edit streaming layout", () => {
       page.getByTestId("chat-user-message-bubble").filter({ hasText: "Original edit target" }),
     ).toHaveCount(0);
     await expect(page.getByTestId("chat-user-message-bubble")).toHaveCount(1);
+    await expect(page.getByText("2/2")).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Previous branch" }).click();
+
+    await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Original edit target" })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Edited edit target" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("1/2")).toBeVisible({ timeout: 15_000 });
+
+    await page.getByRole("button", { name: "Next branch" }).click();
+    await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Edited edit target" })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Original edit target" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible({ timeout: 15_000 });
   });
 });

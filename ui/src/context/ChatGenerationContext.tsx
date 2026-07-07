@@ -10,6 +10,7 @@ export type ChatStreamDraft = {
   userCreatedAt: Date;
   userMessageId: string | null;
   chatTurnId: string | null;
+  turnVariant: number;
   editedFromCreatedAt: Date | null;
   body: string;
   state: ChatStreamDraftState;

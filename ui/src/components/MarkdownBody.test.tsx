@@ -922,7 +922,7 @@ describe("MarkdownBody", () => {
     expect(entityPreviewApiMocks.getLibraryEntry).toHaveBeenCalledWith("org-1", "entry-123");
   });
 
-  it("renders issue mentions with status metadata as prose links without an inline status control", () => {
+  it("renders issue mentions with status metadata using the status icon affordance", () => {
     markdownMentionsMock.mentions = [{
       id: "issue:issue-789",
       name: "PAP-123 auth flow",
@@ -943,8 +943,8 @@ describe("MarkdownBody", () => {
     expect(html).toContain('href="/issues/issue-789"');
     expect(html).toContain('data-mention-kind="issue"');
     expect(html).toContain('data-mention-status="done"');
+    expect(html).toContain("rudder-mention-chip--with-status-icon");
     expect(html).not.toContain('title="Open PAP-123 auth flow"');
-    expect(html).not.toContain("rudder-mention-chip--with-status-icon");
     expect(html).not.toContain('data-slot="issue-status-icon"');
     expect(html).not.toContain('data-status="done"');
     expect(html).toContain("当前自动化列表里已经完成");
@@ -1747,14 +1747,14 @@ describe("MarkdownBody", () => {
     expect(link?.getAttribute("rel")).toBe("noreferrer noopener");
     expect(link?.classList.contains("rudder-link-chip--website")).toBe(false);
     expect(link?.textContent).toBe("the guide");
-    expect(link?.querySelector("svg.rudder-website-link-icon")?.getAttribute("aria-hidden")).toBe("true");
+    expect(link?.querySelector("img.rudder-website-link-logo")).toBeNull();
     expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
     expect(link?.querySelector(".rudder-website-link-label")?.textContent).toBe("the guide");
     expect(link?.querySelector(".rudder-link-chip-domain")).toBeNull();
     expect(link?.querySelector(".rudder-link-chip-detail")).toBeNull();
   });
 
-  it("uses the generic website icon when metadata has no site icon", async () => {
+  it("keeps the generic website icon when metadata has no site icon", async () => {
     entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValueOnce({
       url: "https://openai.com/policies/terms-of-use/",
       siteName: "OpenAI",
@@ -1773,16 +1773,19 @@ describe("MarkdownBody", () => {
     expect(link?.getAttribute("href")).toBe("https://openai.com/policies/terms-of-use/");
     expect(link?.classList.contains("rudder-link-chip--website")).toBe(false);
     expect(link?.textContent).toBe("Terms of Use");
+    expect(link?.querySelector("img.rudder-website-link-logo")).toBeNull();
+    expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
     await act(async () => {
       await vi.waitFor(() => {
         expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith("https://openai.com/policies/terms-of-use/");
       });
     });
+
     expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
     expect(link?.querySelector("img.rudder-website-link-logo")).toBeNull();
   });
 
-  it("renders fetched website metadata icons before falling back to the generic icon", async () => {
+  it("replaces the generic website icon only with fetched metadata icons", async () => {
     entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValue({
       url: "https://x.com/my_knn_totoro/status/2068910037238772102",
       siteName: "X",
@@ -1798,6 +1801,7 @@ describe("MarkdownBody", () => {
     );
 
     const link = container.querySelector("a");
+    expect(link?.querySelector("img.rudder-website-link-logo")).toBeNull();
     expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
 
     await act(async () => {
@@ -1811,10 +1815,71 @@ describe("MarkdownBody", () => {
       });
     });
     expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("data-website-icon")).toBe("metadata");
+    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("aria-hidden")).toBe("true");
+    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(link?.textContent).toBe("tweet");
   });
 
-  it("falls back to the generic website icon when a fetched icon fails to load", async () => {
+  it("keeps the generic website icon when website metadata lookup is blocked", async () => {
+    const url = "https://developers.google.com/engineering-practices/code-review";
+    entityPreviewApiMocks.getWebsiteMetadata.mockRejectedValueOnce(new Error("Private network URLs cannot be inspected"));
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`Read [Google Engineering Practices](${url})`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const link = container.querySelector("a");
+    expect(link?.querySelector("img.rudder-website-link-logo")).toBeNull();
+    expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith(url);
+      });
+    });
+
+    expect(link?.querySelector("img.rudder-website-link-logo")).toBeNull();
+    expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
+  });
+
+  it.each([
+    "http://localhost:8080/post",
+    "http://127.0.0.1:8080/post",
+    "http://10.2.3.4/post",
+    "http://100.64.0.1/post",
+    "http://app.local/post",
+    "http://service.internal/post",
+    "http://intranet/post",
+  ])("does not request origin or provider favicons for private or internal origins: %s", async (url) => {
+    entityPreviewApiMocks.getWebsiteMetadata.mockRejectedValueOnce(new Error("Private network URLs cannot be inspected"));
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`Read [internal](${url})`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const link = container.querySelector("a");
+    expect(link?.querySelector("img.rudder-website-link-logo")).toBeNull();
+    expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith(url);
+      });
+    });
+
+    expect(link?.querySelector("img.rudder-website-link-logo")).toBeNull();
+    expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
+  });
+
+  it("falls back directly to the generic icon when a fetched metadata icon fails to load", async () => {
     const url = "https://example.com/post/";
     entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValue({
       url,
@@ -1878,6 +1943,7 @@ describe("MarkdownBody", () => {
     expect(link?.getAttribute("title")).toBe(url);
     expect(link?.getAttribute("target")).toBe("_blank");
     expect(link?.classList.contains("rudder-link-chip--website")).toBe(false);
+    expect(link?.querySelector("img.rudder-website-link-logo")).toBeNull();
     expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
     expect(link?.textContent).toBe(url);
   });
@@ -1930,7 +1996,7 @@ describe("MarkdownBody", () => {
     expect(mention?.getAttribute("href")).toBe("/ZST/issues/1664b23e");
     expect(mention?.getAttribute("data-mention-status")).toBe("done");
     expect(mention?.classList.contains("rudder-mention-chip")).toBe(true);
-    expect(mention?.classList.contains("rudder-mention-chip--with-status-icon")).toBe(false);
+    expect(mention?.classList.contains("rudder-mention-chip--with-status-icon")).toBe(true);
   });
 
   it("uses canonical issue identity for resolved internal issue links with opaque labels", () => {
