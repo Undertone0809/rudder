@@ -1149,9 +1149,11 @@ export function ChatSidePanel({
   const automationTarget = activeTarget?.kind === "automation" ? activeTarget : null;
   const libraryFileTarget = activeTarget?.kind === "library_file" ? activeTarget : null;
   const libraryDirectoryTarget = activeTarget?.kind === "library_directory" ? activeTarget : null;
+  const libraryEntryTarget = activeTarget?.kind === "library_entry" ? activeTarget : null;
   const browserTarget = activeTarget?.kind === "browser" ? activeTarget : null;
   const placeholderTarget = activeTarget?.kind === "placeholder" ? activeTarget : null;
 
+  const libraryFilePreviewPath = libraryFileTarget?.filePath ?? libraryEntryTarget?.path ?? null;
   const issueQuery = useQuery({
     queryKey: queryKeys.issues.detail(issueTarget?.issueId ?? "__none__"),
     queryFn: () => issuesApi.get(issueTarget!.issueId),
@@ -1239,9 +1241,9 @@ export function ChatSidePanel({
     },
   });
   const libraryFileQuery = useQuery({
-    queryKey: queryKeys.organizations.workspaceFile(selectedOrganizationId ?? "__none__", libraryFileTarget?.filePath ?? ""),
-    queryFn: () => organizationsApi.readWorkspaceFile(selectedOrganizationId!, libraryFileTarget!.filePath),
-    enabled: !!selectedOrganizationId && !!libraryFileTarget,
+    queryKey: queryKeys.organizations.workspaceFile(selectedOrganizationId ?? "__none__", libraryFilePreviewPath ?? ""),
+    queryFn: () => organizationsApi.readWorkspaceFile(selectedOrganizationId!, libraryFilePreviewPath!),
+    enabled: !!selectedOrganizationId && !!libraryFilePreviewPath,
   });
   const libraryDirectoryQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFiles(selectedOrganizationId ?? "__none__", libraryDirectoryTarget?.directoryPath ?? ""),
@@ -1255,7 +1257,7 @@ export function ChatSidePanel({
     (issueTarget && issueQuery.isPending)
       || (chatTarget && (chatQuery.isPending || chatMessagesQuery.isPending))
       || (automationTarget && (automationQuery.isPending || automationRunsQuery.isPending))
-      || (libraryFileTarget && libraryFileQuery.isPending)
+      || (libraryFilePreviewPath && libraryFileQuery.isPending)
       || (libraryDirectoryTarget && libraryDirectoryQuery.isPending),
   );
   const error = issueQuery.error ?? issueCommentsQuery.error ?? agentsQuery.error ?? sessionQuery.error ?? chatQuery.error ?? chatMessagesQuery.error ?? automationQuery.error ?? automationRunsQuery.error ?? libraryFileQuery.error ?? libraryDirectoryQuery.error;
@@ -1267,7 +1269,7 @@ export function ChatSidePanel({
   const chatMessages = chatTarget ? (chatMessagesQuery.data ?? []) : [];
   const automation = automationTarget ? automationQuery.data : null;
   const automationRuns = automationTarget ? (automationRunsQuery.data ?? []) : [];
-  const libraryFile = libraryFileTarget ? libraryFileQuery.data : null;
+  const libraryFile = libraryFilePreviewPath ? libraryFileQuery.data : null;
   const libraryDirectory = libraryDirectoryTarget ? libraryDirectoryQuery.data : null;
   const activeTargetKey = activeTarget ? sidePanelTargetKey(activeTarget) : "empty";
 
@@ -1443,7 +1445,7 @@ export function ChatSidePanel({
                 ))}
               </div>
             </div>
-          ) : libraryFileTarget && libraryFile ? (
+          ) : libraryFilePreviewPath && libraryFile ? (
             <ChatSidePanelLibraryFileView libraryFile={libraryFile} />
           ) : libraryDirectoryTarget ? (
             <div className="flex min-h-full flex-col" data-testid="chat-side-panel-library-directory-view">

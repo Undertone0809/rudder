@@ -24,10 +24,6 @@ function buildAutomationMentionHref(automationId: string, title?: string | null)
   return query ? `automation://${automationId}?${query}` : `automation://${automationId}`;
 }
 
-function buildLibraryFileMentionHref(filePath: string) {
-  return `library-file://file?p=${encodeURIComponent(filePath)}`;
-}
-
 function buildLibraryDirectoryMentionHref(directoryPath: string) {
   return `library-directory://directory?p=${encodeURIComponent(directoryPath)}`;
 }
@@ -99,6 +95,7 @@ test.describe("Chat Side Panel", () => {
     });
     expect(libraryFileRes.ok(), await libraryFileRes.text()).toBe(true);
     const libraryFileName = libraryFilePath.split("/").at(-1) ?? libraryFilePath;
+    const libraryFile = await libraryFileRes.json() as { markdownLink: string };
 
     const referencedChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
@@ -144,7 +141,7 @@ test.describe("Chat Side Panel", () => {
       body: [
         `Open [${issueRef}](${buildIssueMentionHref(issue.id, issueRef)}) beside this chat.`,
         `Inspect [${automation.title}](${buildAutomationMentionHref(automation.id, automation.title)}) beside this chat.`,
-        `Read [${libraryFileName}](${buildLibraryFileMentionHref(libraryFilePath)}) beside this chat.`,
+        `Read ${libraryFile.markdownLink} beside this chat.`,
         `Compare [Referenced detail chat](${buildChatMentionHref(referencedChat.id)}) beside this chat.`,
       ].join("\n\n"),
       structuredPayload: null,

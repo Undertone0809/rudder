@@ -1793,6 +1793,49 @@ describe("Chat Side Panel link handling", () => {
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(2);
   });
 
+  it("renders a stable Library entry target as an inline file preview", async () => {
+    mockState.workspaceFiles = {
+      "reports/activity.md": {
+        filePath: "reports/activity.md",
+        content: "# Activity report\n\nStable Library entry links should render inline.",
+        contentType: "text/markdown",
+        previewKind: "text",
+        contentPath: null,
+        truncated: false,
+      },
+    };
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <ThemeProvider>
+          <SidePanelProvider>
+            <ChatSidePanel
+              selectedOrganizationId="org-1"
+              target={{
+                kind: "library_entry",
+                entryId: "entry-activity",
+                path: "reports/activity.md",
+                label: "activity.md",
+              }}
+            />
+          </SidePanelProvider>
+        </ThemeProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel).not.toBeNull();
+    expect(sidePanel?.textContent).toContain("reports/activity.md");
+    expect(sidePanel?.textContent).toContain("Activity report");
+    expect(sidePanel?.textContent).toContain("Stable Library entry links should render inline.");
+    expect(sidePanel?.textContent).not.toContain("Open this target in the full page for details.");
+  });
+
   it("opens the empty Side Panel picker from the add-tab button without a menu", async () => {
     mockState.workspaceDirectories = {
       "": {
