@@ -135,10 +135,11 @@ export function RuntimeAdvancedOptions({
 /* ---- Internal sub-components ---- */
 
 export const ENABLED_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "gemini_local", "opencode_local", "pi_local", "cursor"]);
+const HIDDEN_ADAPTER_MENU_TYPES = new Set(["process", "http"]);
 
-/** Display list includes all real adapter types plus UI-only coming-soon entries. */
+/** Display list includes operator-facing runtime choices plus selected coming-soon entries. */
 export const ADAPTER_DISPLAY_LIST: { value: string; label: string; comingSoon: boolean }[] = [
-  ...AGENT_RUNTIME_TYPES.map((t) => ({
+  ...AGENT_RUNTIME_TYPES.filter((t) => !HIDDEN_ADAPTER_MENU_TYPES.has(t)).map((t) => ({
     value: t,
     label: adapterLabels[t] ?? t,
     comingSoon: !ENABLED_ADAPTER_TYPES.has(t),

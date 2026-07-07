@@ -44,6 +44,13 @@ test.describe("Agent configuration advanced options", () => {
     await expect(page.getByRole("button", { name: "GPT-5.5", exact: true })).toBeVisible();
     await expect(page.getByTestId("agent-fallback-model-1")).toContainText("GPT-5.4");
     await expect(page.getByText("Add fallback model", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Codex (local)", exact: true }).first().click();
+    const runtimeTypePopover = page.locator("[data-radix-popper-content-wrapper]").last();
+    await expect(runtimeTypePopover.getByText("Claude Code (local)", { exact: true })).toBeVisible();
+    await expect(runtimeTypePopover.getByText("OpenClaw Gateway", { exact: true })).toBeVisible();
+    await expect(runtimeTypePopover.getByText("Process", { exact: true })).toHaveCount(0);
+    await expect(runtimeTypePopover.getByText("HTTP", { exact: true })).toHaveCount(0);
+    await page.keyboard.press("Escape");
     await expect(page.getByText("Thinking effort", { exact: true }).first()).toBeVisible();
     const primaryThinkingEffortButton = page.getByRole("button", { name: "Auto", exact: true }).first();
     await expect(primaryThinkingEffortButton).toBeVisible();
