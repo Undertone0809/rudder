@@ -311,6 +311,7 @@ function ChatIssueSidePanelView({
       setError(err instanceof Error ? err.message : "Could not update this issue.");
     }
   };
+  const issueProperties = <IssueProperties issue={issue} onUpdate={(data) => void updateIssueField(data)} />;
 
   return (
     <div className="flex min-h-full flex-col" data-testid="chat-side-panel-issue-view">
@@ -332,15 +333,22 @@ function ChatIssueSidePanelView({
                 {issueRef}
               </span>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <StatusBadge status={issue.status} />
-              <span className="inline-flex items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-2.5 py-1 text-xs font-medium text-muted-foreground shadow-[var(--shadow-sm)]">
-                <PriorityIcon priority={issue.priority} showLabel />
-              </span>
-              {projectName ? (
-                <span className="rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-2.5 py-1 text-xs font-medium text-muted-foreground shadow-[var(--shadow-sm)]">{projectName}</span>
-              ) : null}
-            </div>
+            {expanded ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusBadge status={issue.status} />
+                <span className="inline-flex items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-2.5 py-1 text-xs font-medium text-muted-foreground shadow-[var(--shadow-sm)]">
+                  <PriorityIcon priority={issue.priority} showLabel />
+                </span>
+                {projectName ? (
+                  <span className="rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-2.5 py-1 text-xs font-medium text-muted-foreground shadow-[var(--shadow-sm)]">{projectName}</span>
+                ) : null}
+              </div>
+            ) : null}
+            {!expanded ? (
+              <section aria-label="Issue properties" className="border-y border-[color:var(--border-soft)] py-3">
+                <IssueProperties issue={issue} onUpdate={(data) => void updateIssueField(data)} showAuditFields={false} />
+              </section>
+            ) : null}
             <InlineEditor
               value={issue.description ?? ""}
               onSave={(description) => updateIssueField({ description: description.trim() || null })}
@@ -404,24 +412,26 @@ function ChatIssueSidePanelView({
           </section>
         </div>
 
-        <aside className={cn("space-y-3", expanded && "xl:sticky xl:top-0")}>
-          <section aria-label="Issue properties" className="rounded-lg border border-border bg-background/80 p-3">
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <p className="text-[11px] font-medium text-muted-foreground">Properties</p>
-            </div>
-            <IssueProperties issue={issue} onUpdate={(data) => void updateIssueField(data)} />
-          </section>
-          <section className="rounded-lg border border-border bg-background/80 p-3">
-            <div className="space-y-2 text-sm">
-              <SidePanelDetailRow label="Created">
-                <span className="truncate">{sidePanelDate(issue.createdAt)}</span>
-              </SidePanelDetailRow>
-              <SidePanelDetailRow label="Updated">
-                <span className="truncate">{sidePanelDate(issue.updatedAt)}</span>
-              </SidePanelDetailRow>
-            </div>
-          </section>
-        </aside>
+        {expanded ? (
+          <aside className="space-y-3 xl:sticky xl:top-0">
+            <section aria-label="Issue properties" className="rounded-lg border border-border bg-background/80 p-3">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <p className="text-[11px] font-medium text-muted-foreground">Properties</p>
+              </div>
+              {issueProperties}
+            </section>
+            <section className="rounded-lg border border-border bg-background/80 p-3">
+              <div className="space-y-2 text-sm">
+                <SidePanelDetailRow label="Created">
+                  <span className="truncate">{sidePanelDate(issue.createdAt)}</span>
+                </SidePanelDetailRow>
+                <SidePanelDetailRow label="Updated">
+                  <span className="truncate">{sidePanelDate(issue.updatedAt)}</span>
+                </SidePanelDetailRow>
+              </div>
+            </section>
+          </aside>
+        ) : null}
       </div>
     </div>
   );

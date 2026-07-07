@@ -49,6 +49,7 @@ interface IssuePropertiesProps {
   onUpdate: (data: Record<string, unknown>) => void;
   inline?: boolean;
   childIssues?: Issue[];
+  showAuditFields?: boolean;
 }
 
 function PropertyRow({
@@ -143,6 +144,7 @@ export function IssueProperties({
   onUpdate,
   inline,
   childIssues,
+  showAuditFields = true,
 }: IssuePropertiesProps) {
   const { selectedOrganizationId } = useOrganization();
   const { openNewIssue } = useDialog();
@@ -1128,48 +1130,52 @@ export function IssueProperties({
         )}
       </div>
 
-      <Separator />
+      {showAuditFields ? (
+        <>
+          <Separator />
 
-      <div className="space-y-1">
-        {(issue.createdByAgentId || issue.createdByUserId) && (
-          <PropertyRow label="Created by">
-            {issue.createdByAgentId ? (
-              <Link
-                to={`/agents/${issue.createdByAgentId}`}
-                className="hover:underline"
-              >
-                <AgentIdentity
-                  name={agentName(issue.createdByAgentId) ?? issue.createdByAgentId.slice(0, 8)}
-                  icon={issue.createdByAgentId ? agentById.get(issue.createdByAgentId)?.icon : null}
-                  role={issue.createdByAgentId ? agentById.get(issue.createdByAgentId)?.role : null}
-                  size="sm"
-                />
-              </Link>
-            ) : (
-              <>
-                <User className="h-3.5 w-3.5 text-muted-foreground" />
-                <span className="text-sm">{creatorUserLabel ?? "User"}</span>
-              </>
+          <div className="space-y-1">
+            {(issue.createdByAgentId || issue.createdByUserId) && (
+              <PropertyRow label="Created by">
+                {issue.createdByAgentId ? (
+                  <Link
+                    to={`/agents/${issue.createdByAgentId}`}
+                    className="hover:underline"
+                  >
+                    <AgentIdentity
+                      name={agentName(issue.createdByAgentId) ?? issue.createdByAgentId.slice(0, 8)}
+                      icon={issue.createdByAgentId ? agentById.get(issue.createdByAgentId)?.icon : null}
+                      role={issue.createdByAgentId ? agentById.get(issue.createdByAgentId)?.role : null}
+                      size="sm"
+                    />
+                  </Link>
+                ) : (
+                  <>
+                    <User className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="text-sm">{creatorUserLabel ?? "User"}</span>
+                  </>
+                )}
+              </PropertyRow>
             )}
-          </PropertyRow>
-        )}
-        {issue.startedAt && (
-          <PropertyRow label="Started">
-            <span className="text-sm">{formatDate(issue.startedAt)}</span>
-          </PropertyRow>
-        )}
-        {issue.completedAt && (
-          <PropertyRow label="Completed">
-            <span className="text-sm">{formatDate(issue.completedAt)}</span>
-          </PropertyRow>
-        )}
-        <PropertyRow label="Created">
-          <span className="text-sm">{formatDateTime(issue.createdAt)}</span>
-        </PropertyRow>
-        <PropertyRow label="Updated">
-          <span className="text-sm">{timeAgo(issue.updatedAt)}</span>
-        </PropertyRow>
-      </div>
+            {issue.startedAt && (
+              <PropertyRow label="Started">
+                <span className="text-sm">{formatDate(issue.startedAt)}</span>
+              </PropertyRow>
+            )}
+            {issue.completedAt && (
+              <PropertyRow label="Completed">
+                <span className="text-sm">{formatDate(issue.completedAt)}</span>
+              </PropertyRow>
+            )}
+            <PropertyRow label="Created">
+              <span className="text-sm">{formatDateTime(issue.createdAt)}</span>
+            </PropertyRow>
+            <PropertyRow label="Updated">
+              <span className="text-sm">{timeAgo(issue.updatedAt)}</span>
+            </PropertyRow>
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }

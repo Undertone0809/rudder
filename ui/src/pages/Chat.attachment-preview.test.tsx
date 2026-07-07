@@ -892,7 +892,7 @@ function installLocalStorageMock() {
   });
 }
 
-function renderChat() {
+function renderChat({ expanded = false }: { expanded?: boolean } = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -913,7 +913,7 @@ function renderChat() {
           <ChatSidePanel
             selectedOrganizationId="org-1"
             desktopWidth={420}
-            expanded={false}
+            expanded={expanded}
             onToggleExpanded={toggleSidePanelExpanded}
           />
         </SidePanelProvider>
@@ -1122,6 +1122,24 @@ describe("Chat mention sources", () => {
 });
 
 describe("Chat Side Panel link handling", () => {
+  async function openIssueReferenceSidePanel(container: HTMLElement) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const issueReference = container.querySelector<HTMLAnchorElement>('a[data-mention-kind="issue"]');
+    expect(issueReference).not.toBeNull();
+
+    await act(async () => {
+      issueReference?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+
+    const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel).not.toBeNull();
+    return sidePanel!;
+  }
+
   it("opens a supported chat reference in the Side Panel without leaving the current chat", async () => {
     mockState.messagesByChatId = {
       "chat-1": [
@@ -1303,36 +1321,53 @@ describe("Chat Side Panel link handling", () => {
     };
 
     const { container } = renderChat();
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    const issueReference = container.querySelector<HTMLAnchorElement>('a[data-mention-kind="issue"]');
-    expect(issueReference).not.toBeNull();
-
-    await act(async () => {
-      issueReference?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
-      await Promise.resolve();
-    });
-
-    const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
-    expect(sidePanel).not.toBeNull();
+    const sidePanel = await openIssueReferenceSidePanel(container);
     expect(sidePanel?.textContent).toContain("Polish side panel layout");
     expect(sidePanel?.textContent).toContain("RUD-42");
-    expect(sidePanel?.textContent).toContain("in progress");
+    expect(sidePanel?.textContent).toContain("In Progress");
     expect(sidePanel?.textContent).toContain("High");
-    expect(sidePanel?.textContent).toContain("Properties");
     expect(sidePanel?.textContent).toContain("Assignee");
     expect(sidePanel?.textContent).toContain("Wesley");
     expect(sidePanel?.textContent).toContain("Founding Engineer");
     expect(sidePanel?.textContent).toContain("Reviewer");
-    expect(sidePanel?.textContent).toContain("Me");
     expect(sidePanel?.textContent).toContain("Project");
-    expect(sidePanel?.textContent).toContain("Updated");
     expect(sidePanel?.textContent).toContain("Make the issue reference read like a task detail panel.");
     expect(sidePanel?.textContent).toContain("Activity");
     expect(sidePanel?.textContent).toContain("comment-1");
     expect(container.querySelector('button[aria-label="Edit issue"]')).toBeNull();
+    expect(sidePanel?.textContent?.indexOf("Assignee")).toBeLessThan(
+      sidePanel?.textContent?.indexOf("Make the issue reference read like a task detail panel.") ?? Number.POSITIVE_INFINITY,
+    );
+    expect(sidePanel?.textContent?.indexOf("Updated")).toBe(-1);
+  });
+
+  it("keeps the issue detail properties card on the right when the Side Panel is expanded", async () => {
+    mockState.issues["issue-1"] = issue();
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: "assistant-expanded-issue-side-panel",
+          role: "assistant",
+          body: `Review [RUD-42](${buildIssueMentionHref("issue-1", "RUD-42", "comment-1", "in_progress")}) next.`,
+          replyingAgentId: "agent-1",
+          createdAt: new Date("2026-05-12T09:06:00.000Z"),
+          updatedAt: new Date("2026-05-12T09:06:00.000Z"),
+        }),
+      ],
+    };
+
+    const { container } = renderChat({ expanded: true });
+    const sidePanel = await openIssueReferenceSidePanel(container);
+
+    expect(sidePanel.textContent).toContain("Properties");
+    expect(sidePanel.textContent).toContain("Created by");
+    expect(sidePanel.textContent).toContain("Updated");
+    expect(sidePanel.textContent.indexOf("Activity")).toBeLessThan(sidePanel.textContent.indexOf("Properties"));
+
+    const issueView = sidePanel.querySelector<HTMLElement>("[data-testid='chat-side-panel-issue-view']");
+    const propertiesRegion = sidePanel.querySelector<HTMLElement>("[aria-label='Issue properties']");
+    expect(issueView).not.toBeNull();
+    expect(propertiesRegion).not.toBeNull();
   });
 
   it("lets the operator directly edit issue title and description from the Side Panel", async () => {
