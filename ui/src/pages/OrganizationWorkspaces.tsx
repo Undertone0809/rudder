@@ -6346,14 +6346,14 @@ export function OrganizationWorkspaceBrowser({
                     <div
                       ref={setEditorScrollElementRef}
                       data-testid="org-workspaces-markdown-editor"
-                      className="scrollbar-auto-hide min-h-[280px] flex-1 overflow-auto bg-[color:var(--surface-elevated)]"
+                      className="rudder-library-document-editor-scroll scrollbar-auto-hide min-h-[280px] flex-1 overflow-auto bg-[color:var(--surface-elevated)]"
                       onClick={handleMarkdownEditorBlankClick}
                     >
                       <div
                         className={cn(
-                          "mx-auto min-h-full w-full px-8 py-8",
+                          "rudder-library-document-layout mx-auto min-h-full w-full px-8 py-8",
                           renderSelectedMarkdownOutlinePanel
-                            ? "max-w-[1180px] xl:grid xl:grid-cols-[minmax(0,880px)_220px] xl:gap-8"
+                            ? "rudder-library-document-layout--with-outline max-w-[1180px] xl:grid xl:grid-cols-[minmax(0,880px)_220px] xl:gap-8"
                             : "max-w-[880px]",
                         )}
                       >
@@ -6401,7 +6401,7 @@ export function OrganizationWorkspaceBrowser({
                           <aside
                             aria-label="Document sections"
                             data-testid="org-workspaces-document-outline"
-                            className="hidden min-w-0 xl:block"
+                            className="rudder-library-document-outline hidden min-w-0 xl:block"
                           >
                             <div className="sticky top-6 border-l border-border/60 py-1 pl-4">
                               <div className="mb-2 flex items-center justify-between gap-2">

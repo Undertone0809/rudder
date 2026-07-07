@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isPiUnknownSessionError, parsePiJsonl } from "./parse.js";
+import { isPiUnknownSessionError, parsePiJsonl, parsePiJsonlLine } from "./parse.js";
 
 describe("parsePiJsonl", () => {
   it("parses agent lifecycle and messages", () => {
@@ -64,6 +64,42 @@ describe("parsePiJsonl", () => {
 
     const parsed = parsePiJsonl(stdout);
     expect(parsed.messages).toContain("Hello World");
+  });
+
+  it("parses Pi turn_end text fields as final assistant text", () => {
+    const line = JSON.stringify({
+      type: "turn_end",
+      message: {
+        role: "assistant",
+        stopReason: "endTurn",
+        text: "{\"path\":\"mcp\",\"tools\":[\"rudder_agent_me\"],\"note\":\"ok\"}",
+      },
+    });
+
+    const parsed = parsePiJsonl(line);
+    expect(parsed.finalMessage).toBe("{\"path\":\"mcp\",\"tools\":[\"rudder_agent_me\"],\"note\":\"ok\"}");
+    expect(parsePiJsonlLine(line)).toMatchObject({
+      type: "turnEnd",
+      stopReason: "endTurn",
+      text: "{\"path\":\"mcp\",\"tools\":[\"rudder_agent_me\"],\"note\":\"ok\"}",
+    });
+  });
+
+  it("parses top-level turn_end stop reasons from sanitized Pi lines", () => {
+    const line = JSON.stringify({
+      type: "turn_end",
+      stopReason: "toolUse",
+      message: {
+        role: "assistant",
+        text: "I will call another tool.",
+      },
+    });
+
+    expect(parsePiJsonlLine(line)).toMatchObject({
+      type: "turnEnd",
+      stopReason: "toolUse",
+      text: "I will call another tool.",
+    });
   });
 
   it("parses tool execution", () => {

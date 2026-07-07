@@ -1,3 +1,4 @@
+import { addIssueCommentSchema, checkoutIssueSchema } from "@rudderhq/shared";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
@@ -9,6 +10,7 @@ import {
   getAgentCliCapabilityById,
   type AgentV1McpToolManifestEntry
 } from "./agent-v1-registry.js";
+import { RudderApiClient } from "./client/http.js";
 
 export const RUDDER_MCP_SERVER_NAME = "rudder-control-plane";
 
@@ -244,6 +246,8 @@ async function callTool(params: unknown, env: McpServerEnv): Promise<Record<stri
   const toolName = typeof record.name === "string" ? record.name : "";
   const args = record.arguments;
   const plan = buildAgentV1ToolCallPlan(toolName, args, env);
+  const directResult = await callToolDirectlyIfSupported(toolName, args, env);
+  if (directResult) return directResult;
   const tempDir = plan.tempFiles.length > 0 ? await fs.mkdtemp(path.join(os.tmpdir(), "rudder-mcp-")) : null;
   const materializedArgs = [...plan.args];
   try {
@@ -282,6 +286,99 @@ async function callTool(params: unknown, env: McpServerEnv): Promise<Record<stri
   } finally {
     if (tempDir) await fs.rm(tempDir, { recursive: true, force: true });
   }
+}
+
+async function callToolDirectlyIfSupported(
+  toolName: string,
+  rawArgs: unknown,
+  env: McpServerEnv,
+): Promise<Record<string, unknown> | null> {
+  const capabilityId = toolNameToCapabilityId(toolName);
+  if (!capabilityId) return null;
+  const input = isRecord(rawArgs) ? rawArgs : {};
+  const api = mcpApiClient(env);
+
+  switch (capabilityId) {
+    case "agent.me":
+      return mcpSuccess(await api.get("/api/agents/me"));
+    case "agent.inbox":
+      return mcpSuccess(await api.get("/api/agents/me/inbox-lite"));
+    case "issue.get":
+      return mcpSuccess(await api.get(`/api/issues/${encodeURIComponent(requiredAnyString(input, ["issue", "issueId"]))}`));
+    case "issue.context": {
+      const params = new URLSearchParams();
+      const wakeCommentId = optionalString(input.wakeCommentId);
+      if (wakeCommentId) params.set("wakeCommentId", wakeCommentId);
+      const query = params.toString();
+      return mcpSuccess(await api.get(
+        `/api/issues/${encodeURIComponent(requiredAnyString(input, ["issue", "issueId"]))}/heartbeat-context${query ? `?${query}` : ""}`,
+      ));
+    }
+    case "issue.checkout": {
+      const expectedStatuses = parseCsvInput(input.expectedStatuses, "todo,backlog,blocked");
+      const payload = checkoutIssueSchema.parse({
+        agentId: optionalString(env.RUDDER_AGENT_ID),
+        expectedStatuses,
+      });
+      return mcpSuccess(await api.post(
+        `/api/issues/${encodeURIComponent(requiredAnyString(input, ["issue", "issueId"]))}/checkout`,
+        payload,
+      ));
+    }
+    case "issue.comment": {
+      const payload = addIssueCommentSchema.parse({
+        body: requiredAnyString(input, ["body", "comment"]),
+        reopen: input.reopen === true ? true : undefined,
+      });
+      return mcpSuccess(await api.post(
+        `/api/issues/${encodeURIComponent(requiredAnyString(input, ["issue", "issueId"]))}/comments`,
+        payload,
+      ));
+    }
+    case "issue.done": {
+      const comment = requiredAnyString(input, ["comment", "body"]);
+      return mcpSuccess(await api.patch(
+        `/api/issues/${encodeURIComponent(requiredAnyString(input, ["issue", "issueId"]))}`,
+        { status: "done", comment },
+      ));
+    }
+    default:
+      return null;
+  }
+}
+
+function mcpApiClient(env: McpServerEnv): RudderApiClient {
+  const apiBase = optionalString(env.RUDDER_API_URL);
+  if (!apiBase) {
+    const err = new Error("Rudder MCP runtime context is incomplete. Missing RUDDER_API_URL.");
+    (err as Error & { code?: string }).code = "rudder_mcp_missing_runtime_context";
+    throw err;
+  }
+  return new RudderApiClient({
+    apiBase,
+    apiKey: optionalString(env.RUDDER_API_KEY) ?? undefined,
+    agentId: optionalString(env.RUDDER_AGENT_ID) ?? undefined,
+    runId: optionalString(env.RUDDER_RUN_ID) ?? undefined,
+  });
+}
+
+function mcpSuccess(data: unknown): Record<string, unknown> {
+  const text = JSON.stringify(data ?? {});
+  return {
+    content: [{ type: "text", text }],
+    ...structuredContentFromJsonText(text),
+    isError: false,
+  };
+}
+
+function parseCsvInput(value: unknown, fallback: string): string[] {
+  const source = Array.isArray(value)
+    ? value.map((entry) => optionalString(entry)).filter(Boolean).join(",")
+    : optionalString(value) || fallback;
+  return source
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 }
 
 function cliArgsForCapability(

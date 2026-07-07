@@ -45,10 +45,83 @@ const payload = {
 if (capturePath) {
   fs.writeFileSync(capturePath, JSON.stringify(payload), "utf8");
 }
+if (process.env.RUDDER_TEST_OPENCODE_STARTUP_IDLE === "1") {
+  setInterval(() => {}, 1000);
+} else {
 console.log(JSON.stringify({ type: "step_start", sessionID: "opencode-session-1" }));
 if (process.env.RUDDER_TEST_NO_FINAL_TEXT !== "1") {
   console.log(JSON.stringify({ type: "text", part: { type: "text", text: "hello" } }));
 }
+if (process.env.RUDDER_TEST_OPENCODE_COMPLETION_SUMMARY_LOOP === "1") {
+  console.log(JSON.stringify({
+    type: "text",
+    part: {
+      type: "text",
+      text: [
+        "## Goal",
+        "- Validate Rudder runtime tools.",
+        "",
+        "## Constraints & Preferences",
+        "- Use Rudder tools.",
+        "",
+        "## Progress",
+        "### Done",
+        "- Called rudder_agent_me tool successfully.",
+        "",
+        "### In Progress",
+        "- (none)",
+        "",
+        "## Next Steps",
+        "- Task complete - runtime validation successful.",
+        "",
+        "## Critical Context",
+        "- Tool call completed.",
+        "",
+        "## Relevant Files",
+        "- /tmp/rudder-prompt.md"
+      ].join("\\n")
+    }
+  }));
+}
+if (process.env.RUDDER_TEST_OPENCODE_NON_COMPLETION_SUMMARY === "1") {
+  console.log(JSON.stringify({
+    type: "text",
+    part: {
+      type: "text",
+      text: [
+        "## Goal",
+        "- No task initiated yet.",
+        "",
+        "## Constraints & Preferences",
+        "- (none)",
+        "",
+        "## Progress",
+        "### Done",
+        "- Read the prompt file.",
+        "",
+        "## Next Steps",
+        "- (none)",
+        "",
+        "## Critical Context",
+        "- Prompt loaded.",
+        "",
+        "## Relevant Files",
+        "- /tmp/rudder-prompt.md"
+      ].join("\\n")
+    }
+  }));
+}
+if (process.env.RUDDER_TEST_OPENCODE_TOOL_CALL_IDLE === "1") {
+  console.log(JSON.stringify({
+    type: "step_finish",
+    part: {
+      reason: "tool-calls",
+      cost: 0,
+      tokens: { input: 1, output: 1, cache: { read: 0, write: 0 } }
+    }
+  }));
+  setInterval(() => {}, 1000);
+} else {
 console.log(JSON.stringify({
   type: "step_finish",
   part: {
@@ -57,6 +130,42 @@ console.log(JSON.stringify({
     tokens: { input: 1, output: 1, cache: { read: 0, write: 0 } }
   }
 }));
+}
+}
+if (process.env.RUDDER_TEST_OPENCODE_COMPACTION_LOOP === "1") {
+  console.log(JSON.stringify({
+    type: "text",
+    part: {
+      type: "text",
+      metadata: { compaction_continue: true },
+      synthetic: true,
+      text: "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed."
+    }
+  }));
+  setInterval(() => {
+    console.log(JSON.stringify({ type: "step_start", sessionID: "opencode-session-1" }));
+  }, 50);
+}
+if (process.env.RUDDER_TEST_OPENCODE_COMPLETION_SUMMARY_LOOP === "1") {
+  setInterval(() => {
+    console.log(JSON.stringify({
+      type: "text",
+      part: {
+        type: "text",
+        text: "I don't have access to a rudder_agent_me tool."
+      }
+    }));
+  }, 50);
+}
+if (process.env.RUDDER_TEST_OPENCODE_NON_COMPLETION_SUMMARY === "1") {
+  console.log(JSON.stringify({
+    type: "text",
+    part: {
+      type: "text",
+      text: "final answer after continuation"
+    }
+  }));
+}
 `;
   await fs.writeFile(commandPath, script, "utf8");
   await fs.chmod(commandPath, 0o755);
@@ -391,6 +500,314 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       expect(result.errorMessage).toContain("without a final text summary");
       expect(result.summary).toContain("without a final text summary");
       expect(result.resultJson).toMatchObject({ summaryStatus: "missing_final_text" });
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("stops after terminal final text when OpenCode emits synthetic compaction continuation", async () => {
+    resetOpenCodeModelsCacheForTests();
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-execute-compaction-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "opencode");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeOpenCodeCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+    process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
+
+    try {
+      const result = await execute({
+        runId: "run-opencode-compaction",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "OpenCode Agent",
+          agentRuntimeType: "opencode_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "openai/gpt-4.1-mini",
+          timeoutSec: 30,
+          graceSec: 1,
+          env: {
+            ...clearInheritedGitIdentityEnv,
+            RUDDER_TEST_OPENCODE_COMPACTION_LOOP: "1",
+          },
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.signal).toBeNull();
+      expect(result.timedOut).toBe(false);
+      expect(result.errorMessage).toBeNull();
+      expect(result.summary).toBe("hello");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("stops after a completed OpenCode continuation summary without persisting later contradictory text", async () => {
+    resetOpenCodeModelsCacheForTests();
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-execute-completion-summary-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "opencode");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeOpenCodeCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+    process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
+
+    try {
+      const result = await execute({
+        runId: "run-opencode-completion-summary",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "OpenCode Agent",
+          agentRuntimeType: "opencode_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "openai/gpt-4.1-mini",
+          timeoutSec: 30,
+          graceSec: 1,
+          env: {
+            ...clearInheritedGitIdentityEnv,
+            RUDDER_TEST_NO_FINAL_TEXT: "1",
+            RUDDER_TEST_OPENCODE_COMPLETION_SUMMARY_LOOP: "1",
+          },
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.signal).toBeNull();
+      expect(result.timedOut).toBe(false);
+      expect(result.errorMessage).toBeNull();
+      expect(result.summary).toContain("Task complete");
+      expect(result.summary).not.toContain("don't have access");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not stop on a non-completion OpenCode continuation summary", async () => {
+    resetOpenCodeModelsCacheForTests();
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-execute-non-completion-summary-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "opencode");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeOpenCodeCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+    process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
+
+    try {
+      const result = await execute({
+        runId: "run-opencode-non-completion-summary",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "OpenCode Agent",
+          agentRuntimeType: "opencode_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "openai/gpt-4.1-mini",
+          timeoutSec: 30,
+          graceSec: 1,
+          env: {
+            ...clearInheritedGitIdentityEnv,
+            RUDDER_TEST_NO_FINAL_TEXT: "1",
+            RUDDER_TEST_OPENCODE_NON_COMPLETION_SUMMARY: "1",
+          },
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+      expect(result.summary).toBe("final answer after continuation");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails fast when OpenCode stops producing output after a tool-call step", async () => {
+    resetOpenCodeModelsCacheForTests();
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-execute-tool-idle-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "opencode");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeOpenCodeCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+    process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
+
+    try {
+      const result = await execute({
+        runId: "run-opencode-tool-idle",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "OpenCode Agent",
+          agentRuntimeType: "opencode_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "openai/gpt-4.1-mini",
+          graceSec: 1,
+          toolLoopIdleTimeoutSec: 1,
+          env: {
+            ...clearInheritedGitIdentityEnv,
+            RUDDER_TEST_NO_FINAL_TEXT: "1",
+            RUDDER_TEST_OPENCODE_TOOL_CALL_IDLE: "1",
+          },
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.signal).toBe("SIGTERM");
+      expect(result.errorCode).toBe("opencode_tool_loop_idle");
+      expect(result.errorMessage).toContain("without continuing after a Rudder tool-call step");
+      expect(result.resultJson).toMatchObject({
+        summaryStatus: "tool_loop_idle",
+        stoppedAfterToolLoopIdle: true,
+      });
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails fast when OpenCode emits no JSON output after startup", async () => {
+    resetOpenCodeModelsCacheForTests();
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-execute-startup-idle-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "opencode");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeOpenCodeCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+    process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
+
+    try {
+      const result = await execute({
+        runId: "run-opencode-startup-idle",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "OpenCode Agent",
+          agentRuntimeType: "opencode_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "openai/gpt-4.1-mini",
+          graceSec: 1,
+          startupIdleTimeoutSec: 1,
+          env: {
+            ...clearInheritedGitIdentityEnv,
+            RUDDER_TEST_OPENCODE_STARTUP_IDLE: "1",
+          },
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.signal).toBe("SIGTERM");
+      expect(result.errorCode).toBe("opencode_startup_idle");
+      expect(result.errorMessage).toContain("without emitting JSON output");
+      expect(result.resultJson).toMatchObject({
+        summaryStatus: "startup_idle",
+        stoppedAfterStartupIdle: true,
+      });
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;

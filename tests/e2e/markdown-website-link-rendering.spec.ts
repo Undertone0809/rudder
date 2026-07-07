@@ -8,6 +8,30 @@ test("renders website markdown links as inline icon-leading text that wraps", as
   const organization = await orgRes.json() as { id: string; issuePrefix: string };
 
   const url = "https://github.com/Undertone0809/rudder/releases?page=5";
+  const requestedUrls: string[] = [];
+  page.on("request", (request) => {
+    requestedUrls.push(request.url());
+  });
+  await page.route("**/api/website-metadata?**", async (route) => {
+    const requestUrl = new URL(route.request().url());
+    expect(requestUrl.searchParams.get("url")).toBe(url);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        url,
+        siteName: "GitHub",
+        iconUrl: "/api/website-metadata/icon?url=https%3A%2F%2Fgithub.githubassets.com%2Ffavicons%2Ffavicon.png",
+      }),
+    });
+  });
+  await page.route("**/api/website-metadata/icon?**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "image/svg+xml",
+      body: "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><rect width=\"16\" height=\"16\" rx=\"3\" fill=\"#24292f\"/></svg>",
+    });
+  });
   const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
     data: {
       title: "Website markdown link render",
@@ -33,14 +57,15 @@ test("renders website markdown links as inline icon-leading text that wraps", as
   await expect(link).toHaveAttribute("rel", "noreferrer noopener");
   const icon = link.locator("img.rudder-website-link-logo").first();
   await expect(icon).toBeVisible();
-  await expect(icon).toHaveAttribute("data-website-icon", "favicon-provider");
-  await expect(icon).toHaveAttribute("src", "https://icons.duckduckgo.com/ip3/github.com.ico");
+  await expect(icon).toHaveAttribute("data-website-icon", "metadata");
+  await expect(icon).toHaveAttribute("src", "/api/website-metadata/icon?url=https%3A%2F%2Fgithub.githubassets.com%2Ffavicons%2Ffavicon.png");
   await expect(link.locator(".rudder-link-chip-domain")).toHaveCount(0);
 
   const render = await link.evaluate((element) => {
     const label = element.querySelector(".rudder-website-link-label");
     const markdown = element.closest(".rudder-markdown") ?? element.parentElement;
     const style = window.getComputedStyle(element);
+    const icon = element.querySelector(".rudder-website-link-icon");
     const labelStyle = label ? window.getComputedStyle(label) : null;
     const labelRects = label
       ? Array.from(label.getClientRects()).map((line) => ({
@@ -48,6 +73,8 @@ test("renders website markdown links as inline icon-leading text that wraps", as
       }))
       : [];
     const markdownRect = markdown?.getBoundingClientRect();
+    const iconRect = icon?.getBoundingClientRect();
+    const firstLabelRect = label?.getClientRects()[0];
     const maxLineRight = labelRects.reduce((max, line) => Math.max(max, line.right), 0);
     return {
       backgroundImage: style.backgroundImage,
@@ -59,6 +86,10 @@ test("renders website markdown links as inline icon-leading text that wraps", as
       paddingInlineEnd: style.paddingInlineEnd,
       paddingInlineStart: style.paddingInlineStart,
       labelOverflowWrap: labelStyle?.overflowWrap,
+      iconHeight: iconRect?.height,
+      iconVerticalCenterDelta: iconRect && firstLabelRect
+        ? Math.abs((iconRect.top + iconRect.height / 2) - (firstLabelRect.top + firstLabelRect.height / 2))
+        : null,
     };
   });
 
@@ -72,7 +103,12 @@ test("renders website markdown links as inline icon-leading text that wraps", as
     paddingInlineEnd: "0px",
     paddingInlineStart: "0px",
   });
+  expect(render.iconHeight).toBeGreaterThan(10);
+  expect(render.iconHeight).toBeLessThan(18);
+  expect(render.iconVerticalCenterDelta).not.toBeNull();
+  expect(render.iconVerticalCenterDelta).toBeLessThanOrEqual(3);
   expect(render.lineCount).toBeGreaterThan(1);
+  expect(requestedUrls.some((requestUrl) => requestUrl.startsWith("https://icons.duckduckgo.com/"))).toBe(false);
 });
 
 test("does not fetch provider or origin favicons for internal website markdown links", async ({ page }) => {

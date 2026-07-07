@@ -413,6 +413,73 @@ describe("agent-v1 MCP server", () => {
     }
   });
 
+  it("executes core MCP tools through the runtime API context without shelling out to rudder", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+      if (url.endsWith("/api/agents/me")) {
+        expect(init?.method).toBe("GET");
+        expect(headers.get("authorization")).toBe("Bearer runtime-key");
+        expect(headers.get("x-rudder-agent-id")).toBeNull();
+        expect(headers.get("x-rudder-run-id")).toBeNull();
+        return new Response(JSON.stringify({ id: "runtime-agent", ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/issues/ISSUE-1/checkout")) {
+        expect(init?.method).toBe("POST");
+        expect(headers.get("authorization")).toBe("Bearer runtime-key");
+        expect(headers.get("x-rudder-agent-id")).toBe("11111111-1111-4111-8111-111111111111");
+        expect(headers.get("x-rudder-run-id")).toBe("22222222-2222-4222-8222-222222222222");
+        expect(JSON.parse(String(init?.body))).toEqual({
+          agentId: "11111111-1111-4111-8111-111111111111",
+          expectedStatuses: ["todo", "blocked"],
+        });
+        return new Response(JSON.stringify({ id: "ISSUE-1", status: "in_progress" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+
+    const env = buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+      RUDDER_AGENT_ID: "11111111-1111-4111-8111-111111111111",
+      RUDDER_RUN_ID: "22222222-2222-4222-8222-222222222222",
+      RUDDER_MCP_RUDDER_BIN: "/missing/rudder",
+    });
+
+    const meResponse = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "rudder_agent_me", arguments: {} },
+    }, env);
+    const checkoutResponse = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "rudder_issue_checkout",
+        arguments: { issue: "ISSUE-1", expectedStatuses: "todo,blocked" },
+      },
+    }, env);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(meResponse?.result).toMatchObject({
+      isError: false,
+      structuredContent: { id: "runtime-agent", ok: true },
+    });
+    expect(checkoutResponse?.result).toMatchObject({
+      isError: false,
+      structuredContent: { id: "ISSUE-1", status: "in_progress" },
+    });
+  });
+
   it("does not respond to JSON-RPC notifications", async () => {
     await expect(
       runAgentV1McpJsonRpcMessage(

@@ -1538,7 +1538,7 @@ describe("Chat Side Panel link handling", () => {
     mockState.workspaceFiles = {
       "notes.md": {
         filePath: "notes.md",
-        content: "# Side Panel notes",
+        content: "# Side Panel notes\n\n- Keep markdown rendered",
         contentType: "text/markdown",
         previewKind: "text",
         contentPath: null,
@@ -1648,7 +1648,10 @@ describe("Chat Side Panel link handling", () => {
     });
 
     sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
-    expect(sidePanel?.textContent).toContain("# Side Panel notes");
+    const markdownPreview = sidePanel?.querySelector("[data-testid='chat-side-panel-library-markdown-preview']");
+    expect(markdownPreview?.querySelector("h1")?.textContent).toBe("Side Panel notes");
+    expect(markdownPreview?.querySelector("li")?.textContent).toBe("Keep markdown rendered");
+    expect(markdownPreview?.textContent).not.toContain("# Side Panel notes");
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(2);
   });
 

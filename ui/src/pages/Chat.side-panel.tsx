@@ -6,6 +6,7 @@ import { issuesApi } from "@/api/issues";
 import { organizationsApi } from "@/api/orgs";
 import { AgentIcon } from "@/components/AgentIconPicker";
 import { CommentThread } from "@/components/CommentThread";
+import { MarkdownBody } from "@/components/MarkdownBody";
 import { PriorityIcon } from "@/components/PriorityIcon";
 import { StatusBadge } from "@/components/StatusBadge";
 import { StatusIcon } from "@/components/StatusIcon";
@@ -17,7 +18,7 @@ import { useOperatorDisplayName } from "@/hooks/useOperatorDisplayName";
 import { queryKeys } from "@/lib/queryKeys";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
-import type { Agent, Automation, AutomationDetail, AutomationRunSummary, AutomationTrigger, Issue, IssueComment, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
+import type { Agent, Automation, AutomationDetail, AutomationRunSummary, AutomationTrigger, Issue, IssueComment, OrganizationWorkspaceFileDetail, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -866,6 +867,50 @@ function ChatSidePanelLibraryTreeNode({
   );
 }
 
+function isChatSidePanelWorkspaceMarkdownFile(filePath: string | null | undefined, contentType: string | null | undefined) {
+  const normalized = filePath?.toLowerCase() ?? "";
+  return [".md", ".markdown", ".mdown", ".mdx"].some((extension) => normalized.endsWith(extension))
+    || contentType === "text/markdown";
+}
+
+function ChatSidePanelLibraryFileView({
+  libraryFile,
+}: {
+  libraryFile: OrganizationWorkspaceFileDetail;
+}) {
+  const markdown = isChatSidePanelWorkspaceMarkdownFile(libraryFile.filePath, libraryFile.contentType);
+
+  return (
+    <div className="flex min-h-full flex-col" data-testid="chat-side-panel-library-file-view">
+      <div className="shrink-0 rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3 text-sm">
+        <div className="font-mono text-xs text-muted-foreground">{libraryFile.filePath}</div>
+        <div className="mt-2 text-xs text-muted-foreground">
+          {libraryFile.contentType ?? libraryFile.previewKind}
+          {libraryFile.truncated ? " · truncated" : ""}
+        </div>
+      </div>
+      {libraryFile.previewKind === "text" && libraryFile.content !== null ? (
+        markdown ? (
+          <article className="min-w-0 flex-1 px-1 py-5" data-testid="chat-side-panel-library-markdown-preview">
+            <MarkdownBody
+              className="rudder-library-document-editor rudder-side-panel-library-document text-[15px] leading-7 text-foreground"
+              enableCodeBlockCopy
+            >
+              {libraryFile.content}
+            </MarkdownBody>
+          </article>
+        ) : (
+          <pre className="mt-4 max-h-[52vh] overflow-auto rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--code-surface)] p-3 text-xs leading-5 text-[color:var(--code-foreground)]"><code>{libraryFile.content}</code></pre>
+        )
+      ) : libraryFile.previewKind === "image" && libraryFile.contentPath ? (
+        <img src={libraryFile.contentPath} alt={libraryFile.filePath} className="mt-4 max-h-[52vh] rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] object-contain" />
+      ) : (
+        <p className="mt-4 text-sm text-muted-foreground">No inline preview is available for this file.</p>
+      )}
+    </div>
+  );
+}
+
 function ChatSidePanelBrowserView({
   target,
   targetKey,
@@ -1450,19 +1495,7 @@ export function ChatSidePanel({
               </div>
             </div>
           ) : libraryFileTarget && libraryFile ? (
-            <div className="space-y-4" data-testid="chat-side-panel-library-file-view">
-              <div className="rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3 text-sm">
-                <div className="font-mono text-xs text-muted-foreground">{libraryFile.filePath}</div>
-                <div className="mt-2 text-xs text-muted-foreground">{libraryFile.contentType ?? libraryFile.previewKind}{libraryFile.truncated ? " · truncated" : ""}</div>
-              </div>
-              {libraryFile.previewKind === "text" && libraryFile.content !== null ? (
-                <pre className="max-h-[52vh] overflow-auto rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--code-surface)] p-3 text-xs leading-5 text-[color:var(--code-foreground)]"><code>{libraryFile.content}</code></pre>
-              ) : libraryFile.previewKind === "image" && libraryFile.contentPath ? (
-                <img src={libraryFile.contentPath} alt={libraryFile.filePath} className="max-h-[52vh] rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] object-contain" />
-              ) : (
-                <p className="text-sm text-muted-foreground">No inline preview is available for this file.</p>
-              )}
-            </div>
+            <ChatSidePanelLibraryFileView libraryFile={libraryFile} />
           ) : libraryDirectoryTarget ? (
             <div className="flex min-h-full flex-col" data-testid="chat-side-panel-library-directory-view">
               {libraryDirectory ? (

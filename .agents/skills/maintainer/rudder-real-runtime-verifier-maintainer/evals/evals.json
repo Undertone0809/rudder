@@ -1,0 +1,23 @@
+{
+  "skill_name": "rudder-real-runtime-verifier-maintainer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "你不是说 OpenCode 和 Pi 都真实跑过吗？现在把 Codex、Claude、OpenCode、Pi 都在我本地 Rudder 上重新跑一遍，必须看 transcript，确认有没有 fallback 用 rudder cli。",
+      "expected_output": "Builds a runtime matrix, runs or inspects real local runs, checks structured transcripts for Rudder tools and shell/CLI fallback, separates provider blockers, and reports run IDs plus mutation ledger.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Pi 的 rudder_issue_context 传了 {} 后 missing argument，但是最后 issue done 了。这个算通过吗？",
+      "expected_output": "Does not blindly pass; classifies final product effect separately from schema/tool usability failure, cites Pi tool_execution events and nested tool error evidence, and recommends schema/error propagation fixes.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "OpenCode 默认模型没任何 JSON 输出，但 deepseek 模型跑通了 issue workflow。你怎么给验收结论？",
+      "expected_output": "Reports default model as failed or provider-blocked, alternate model as adapter-path pass, and explicitly avoids hiding the default failure behind the alternate-model success.",
+      "files": []
+    }
+  ]
+}

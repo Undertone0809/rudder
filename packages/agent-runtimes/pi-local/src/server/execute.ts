@@ -1,11 +1,13 @@
 import {
   RUDDER_MCP_MANAGED_ENV_KEYS,
+  RUDDER_MCP_SERVER_NAME,
   inferOpenAiCompatibleBiller,
   rudderMcpRuntimeMetadata,
   type AgentRuntimeExecutionContext,
-  type AgentRuntimeExecutionResult,
+  type AgentRuntimeExecutionResult
 } from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
+import { resolveRudderMcpCliCommand } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
 import {
   asNumber,
   asString,
@@ -32,6 +34,7 @@ import {
   selectPromptTemplate,
   shouldIncludeRuntimeHeartbeatInstructions,
 } from "@rudderhq/agent-runtime-utils/server-utils";
+import { RUDDER_AGENT_V1_MCP_TOOL_NAMES } from "@rudderhq/shared";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -42,7 +45,7 @@ import {
   parsePiModelId,
   parsePiModelProvider,
 } from "./opencode-anonymous-config.js";
-import { isPiUnknownSessionError, parsePiJsonl } from "./parse.js";
+import { isPiUnknownSessionError, parsePiJsonl, parsePiJsonlLine } from "./parse.js";
 import { resolveManagedPiHomeDir } from "./skills.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -265,6 +268,251 @@ function resolvePiSkillsDir(homeDir: string): string {
   return path.join(resolvePiRoot(homeDir), "agent", "skills");
 }
 
+function resolvePiExtensionsDir(homeDir: string): string {
+  return path.join(resolvePiRoot(homeDir), "agent", "extensions");
+}
+
+function renderJsonForTs(value: unknown): string {
+  return JSON.stringify(value, null, 2)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
+type RudderMcpToolManifestEntry = {
+  name: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+};
+
+async function loadRudderMcpToolsManifest(input: {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  runtimeEnv: Record<string, string>;
+}): Promise<{
+  tools: RudderMcpToolManifestEntry[];
+  fallbackReason: string | null;
+}> {
+  try {
+    const env = Object.fromEntries(
+      Object.entries({ ...process.env, ...input.runtimeEnv, ...input.env })
+        .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    );
+    const proc = await runChildProcess("pi-rudder-tools-list", input.command, input.args, {
+      cwd: process.cwd(),
+      env,
+      timeoutSec: 10,
+      graceSec: 2,
+      stdin: `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: "pi-rudder-tools-list",
+        method: "tools/list",
+        params: {},
+      })}\n`,
+      onLog: async () => {},
+    });
+    if ((proc.exitCode ?? 0) !== 0) {
+      return {
+        tools: [],
+        fallbackReason: firstNonEmptyLine(proc.stderr) || firstNonEmptyLine(proc.stdout) || `tools/list exited with code ${proc.exitCode ?? -1}`,
+      };
+    }
+    const line = proc.stdout.split(/\r?\n/).map((entry) => entry.trim()).find(Boolean);
+    const response = line ? parseJson(line) : null;
+    const result = parseObject(parseObject(response).result);
+    const tools = Array.isArray(result.tools) ? result.tools : [];
+    const entries = tools
+      .map((tool): RudderMcpToolManifestEntry | null => {
+        const record = parseObject(tool);
+        const name = asString(record.name, "").trim();
+        if (!name) return null;
+        const inputSchema = parseObject(record.inputSchema);
+        return {
+          name,
+          description: asString(record.description, "").trim() || undefined,
+          inputSchema: Object.keys(inputSchema).length > 0 ? inputSchema : undefined,
+        };
+      })
+      .filter((tool): tool is RudderMcpToolManifestEntry => Boolean(tool));
+    return {
+      tools: entries,
+      fallbackReason: entries.length > 0 ? null : "tools/list returned no tools",
+    };
+  } catch (err) {
+    return {
+      tools: [],
+      fallbackReason: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+async function ensurePiRudderToolsExtension(input: {
+  homeDir: string;
+  moduleDir: string;
+  runtimeEnv: Record<string, string>;
+  onLog: AgentRuntimeExecutionContext["onLog"];
+}): Promise<{
+  path: string;
+  configuredToolCount: number;
+  toolNames: string[];
+  schemaFallbackReason: string | null;
+}> {
+  const rudderMcp = await resolveRudderMcpCliCommand(input.moduleDir);
+  const extensionDir = path.join(resolvePiExtensionsDir(input.homeDir), RUDDER_MCP_SERVER_NAME);
+  const extensionPath = path.join(extensionDir, "index.ts");
+  const command = rudderMcp.command;
+  const commandArgs = rudderMcp.args;
+  const commandEnv = rudderMcp.env ?? {};
+  const manifest = await loadRudderMcpToolsManifest({
+    command,
+    args: commandArgs,
+    env: commandEnv,
+    runtimeEnv: input.runtimeEnv,
+  });
+  const toolEntries = manifest.tools.length > 0
+    ? manifest.tools
+    : RUDDER_AGENT_V1_MCP_TOOL_NAMES.map((name) => ({
+        name,
+        description: `Rudder Agent V1 control-plane tool ${name}. Runtime identity and authorization are injected by Rudder; do not pass orgId, agentId, runId, apiBase, or apiKey.`,
+        inputSchema: {
+          type: "object",
+          additionalProperties: true,
+          properties: {},
+        },
+      }));
+  const toolNames = toolEntries.map((entry) => entry.name);
+  const source = `import { spawn } from "node:child_process";
+import { Type } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+const RUDDER_MCP_COMMAND = ${renderJsonForTs(command)};
+const RUDDER_MCP_ARGS = ${renderJsonForTs(commandArgs)} as string[];
+const RUDDER_MCP_ENV = ${renderJsonForTs(commandEnv)} as Record<string, string>;
+const RUDDER_MCP_MANAGED_ENV_KEYS = ${renderJsonForTs([...RUDDER_MCP_MANAGED_ENV_KEYS])} as string[];
+const RUDDER_MCP_TOOLS = ${renderJsonForTs(toolEntries)} as Array<{
+  name: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+}>;
+
+function pickManagedRuntimeEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of RUDDER_MCP_MANAGED_ENV_KEYS) {
+    const value = process.env[key];
+    if (typeof value === "string" && value.trim().length > 0) env[key] = value;
+  }
+  return env;
+}
+
+function invokeRudderMcpTool(toolName: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(RUDDER_MCP_COMMAND, RUDDER_MCP_ARGS, {
+      env: { ...process.env, ...RUDDER_MCP_ENV, ...pickManagedRuntimeEnv() },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    const abort = () => {
+      child.kill("SIGTERM");
+      reject(new Error("Rudder MCP tool call aborted"));
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("error", (err) => {
+      signal?.removeEventListener("abort", abort);
+      reject(err);
+    });
+    child.on("close", (code) => {
+      signal?.removeEventListener("abort", abort);
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || stdout.trim() || \`Rudder MCP server exited with code \${code ?? -1}\`));
+        return;
+      }
+      const line = stdout.split(/\\r?\\n/).map((entry) => entry.trim()).find(Boolean);
+      if (!line) {
+        reject(new Error("Rudder MCP server returned an empty response"));
+        return;
+      }
+      try {
+        const response = JSON.parse(line) as Record<string, unknown>;
+        if (response.error && typeof response.error === "object") {
+          const error = response.error as { message?: unknown };
+          reject(new Error(typeof error.message === "string" ? error.message : JSON.stringify(response.error)));
+          return;
+        }
+        const result = (response.result && typeof response.result === "object" ? response.result : response) as Record<string, unknown>;
+        if (result.isError === true) {
+          const content = Array.isArray(result.content) ? result.content : [];
+          const textContent = content
+            .map((item) => {
+              if (!item || typeof item !== "object" || Array.isArray(item)) return "";
+              const record = item as Record<string, unknown>;
+              return record.type === "text" && typeof record.text === "string" ? record.text : "";
+            })
+            .filter(Boolean)
+            .join("\\n");
+          reject(new Error(textContent || JSON.stringify(result.structuredContent ?? result)));
+          return;
+        }
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+    child.stdin.end(JSON.stringify({
+      jsonrpc: "2.0",
+      id: "pi-rudder-tool",
+      method: "tools/call",
+      params: { name: toolName, arguments: params ?? {} },
+    }) + "\\n");
+  });
+}
+
+export default function rudderControlPlaneTools(pi: ExtensionAPI) {
+  for (const tool of RUDDER_MCP_TOOLS) {
+    const toolName = tool.name;
+    pi.registerTool({
+      name: toolName,
+      label: toolName,
+      description: tool.description || \`Rudder Agent V1 control-plane tool \${toolName}. Runtime identity and authorization are injected by Rudder; do not pass orgId, agentId, runId, apiBase, or apiKey.\`,
+      promptSnippet: \`Call Rudder control-plane tool \${toolName} with runtime-managed authentication.\`,
+      promptGuidelines: ["Prefer Rudder tools for Rudder control-plane work. Do not call the rudder CLI from bash for control-plane operations."],
+      parameters: tool.inputSchema ?? Type.Object({}, { additionalProperties: true }),
+      async execute(_toolCallId, params, signal) {
+        const result = await invokeRudderMcpTool(toolName, params as Record<string, unknown>, signal);
+        const content = Array.isArray(result.content) ? result.content : [{ type: "text", text: JSON.stringify(result.structuredContent ?? result) }];
+        return {
+          content,
+          details: result,
+        };
+      },
+    });
+  }
+}
+`;
+
+  await fs.mkdir(extensionDir, { recursive: true });
+  await fs.writeFile(extensionPath, source, { encoding: "utf8", mode: 0o600 });
+  await fs.chmod(extensionPath, 0o600);
+  await input.onLog(
+    "stdout",
+    `[rudder] Wrote managed Pi Rudder tool extension into ${extensionPath}.\n`,
+  );
+  if (manifest.fallbackReason) {
+    await input.onLog("stderr", `[rudder] Pi Rudder tool extension fell back to permissive schemas: ${manifest.fallbackReason}\n`);
+  }
+  return {
+    path: extensionPath,
+    configuredToolCount: toolEntries.length,
+    toolNames,
+    schemaFallbackReason: manifest.fallbackReason,
+  };
+}
+
 function renderPiRudderSkillBoundaryPrompt(
   loadedSkills: Array<{ key: string; runtimeName?: string | null; name?: string | null }>,
 ): string {
@@ -392,8 +640,10 @@ function buildSessionPath(sessionsDir: string, agentId: string, timestamp: strin
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
   const { runId, agent, runtime, config, context, onLog, onMeta, onSpawn, authToken } = ctx;
 
+  const configuredPromptTemplate = asString(config.promptTemplate, "");
+  const hasConfiguredPromptTemplate = configuredPromptTemplate.trim().length > 0;
   const promptTemplate = selectPromptTemplate(
-    asString(config.promptTemplate, ""),
+    configuredPromptTemplate,
     context,
   );
   const command = asString(config.command, "pi");
@@ -545,6 +795,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     Object.entries(ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, { ...process.env, ...env })))
       .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
   );
+  const rudderPiExtensionPath = await ensurePiRudderToolsExtension({
+    homeDir: managedHome,
+    moduleDir: __moduleDir,
+    runtimeEnv,
+    onLog,
+  });
   await ensureCommandResolvable(command, cwd, runtimeEnv);
 
   // Validate model is available before execution
@@ -600,7 +856,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const instructionRuntimeContext = prepareAgentInstructionRuntimeContext(context as Record<string, unknown>);
   const loadedInstructions = await loadAgentInstructionsPrefix({
     instructionsFilePath: resolvedInstructionsFilePath,
-    includeHeartbeatInstructions: shouldIncludeRuntimeHeartbeatInstructions(context as Record<string, unknown>),
+    includeHeartbeatInstructions:
+      !hasConfiguredPromptTemplate &&
+      shouldIncludeRuntimeHeartbeatInstructions(context as Record<string, unknown>),
     contextSectionsBeforeCurrentTime: instructionRuntimeContext.contextSectionsBeforeCurrentTime,
     onLog,
   });
@@ -712,8 +970,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (modelId) args.push("--model", modelId);
     if (thinking) args.push("--thinking", thinking);
 
-    args.push("--tools", "read,bash,edit,write,grep,find,ls");
+    args.push("--tools", ["read", "bash", "edit", "write", "grep", "find", "ls", ...rudderPiExtensionPath.toolNames].join(","));
     args.push("--session", sessionFile);
+    args.push("--extension", rudderPiExtensionPath.path);
 
     // Disable Pi's default user/project skill discovery, then add only Rudder's
     // selected managed skill directory for this run.
@@ -742,11 +1001,32 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         realizedSkills: loadedSkills,
         rudderMcp: rudderMcpRuntimeMetadata({
           available: false,
-          fallbackReason: "Pi CLI does not expose a supported MCP server configuration surface in this adapter.",
+          fallbackReason: "Pi CLI does not expose a supported MCP server configuration surface; Rudder tools are injected through a managed Pi extension.",
         }),
+        rudderNativeTools: {
+          available: rudderPiExtensionPath.schemaFallbackReason === null,
+          transport: "pi_extension",
+          serverName: RUDDER_MCP_SERVER_NAME,
+          toolCount: rudderPiExtensionPath.configuredToolCount,
+          toolNames: rudderPiExtensionPath.toolNames,
+          authMode: "runtime_managed",
+          modelVisibleCliFallback: false,
+          fallbackReason: rudderPiExtensionPath.schemaFallbackReason,
+        },
         context,
       });
     }
+
+    let sawAssistantText = false;
+    let stoppedAfterTerminalText = false;
+    const terminalStopController = new AbortController();
+    const abortSignals: AbortSignal[] = [
+      ctx.abortSignal,
+      terminalStopController.signal,
+    ].filter((signal): signal is AbortSignal => Boolean(signal));
+    const combinedAbortSignal = abortSignals.length > 0
+      ? AbortSignal.any(abortSignals)
+      : undefined;
 
     // Buffer stdout by lines to handle partial JSON chunks
     let stdoutBuffer = "";
@@ -767,6 +1047,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       for (const line of lines) {
         if (line) {
           const sanitizedLine = sanitizePiStdoutLine(line);
+          const parsedLine = sanitizedLine ? parsePiJsonlLine(sanitizedLine) : null;
+          if (parsedLine?.type === "assistantText" && parsedLine.text.trim().length > 0) {
+            sawAssistantText = true;
+          }
+          if (
+            parsedLine?.type === "turnEnd" &&
+            sawAssistantText &&
+            parsedLine.stopReason !== "toolUse" &&
+            !terminalStopController.signal.aborted
+          ) {
+            stoppedAfterTerminalText = true;
+            terminalStopController.abort();
+          }
           if (sanitizedLine) await onLog(stream, `${sanitizedLine}\n`);
         }
       }
@@ -778,7 +1071,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       timeoutSec,
       graceSec,
       onSpawn,
-      abortSignal: ctx.abortSignal,
+      abortSignal: combinedAbortSignal,
       onLog: bufferedOnLog,
     });
     
@@ -789,7 +1082,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     }
     
     return {
-      proc,
+      proc: stoppedAfterTerminalText && !proc.timedOut && proc.signal === "SIGTERM"
+        ? { ...proc, exitCode: 0, signal: null }
+        : proc,
       rawStderr: proc.stderr,
       parsed: parsePiJsonl(proc.stdout),
     };

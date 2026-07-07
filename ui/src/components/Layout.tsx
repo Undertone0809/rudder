@@ -1178,7 +1178,7 @@ export function Layout() {
                         <TooltipContent side="right">Show Library sidebar</TooltipContent>
                       </Tooltip>
                     ) : null}
-                    <div className="relative flex min-h-0 min-w-0 flex-1" data-testid="workspace-main-panel-stack">
+                    <div className="workspace-main-panel-stack relative flex min-h-0 min-w-0 flex-1" data-testid="workspace-main-panel-stack">
                       <div
                         data-testid="workspace-main-card"
                         data-tour-target="workspace-main"

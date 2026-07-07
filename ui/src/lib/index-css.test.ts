@@ -460,6 +460,19 @@ describe("index.css motion rules", () => {
     expect(tabsAndBreadcrumbHeader).not.toContain("--rudder-doc-editor-sidebar-header-height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px)");
   });
 
+  it("hides the Library document outline when the editor is narrow or the side panel is open", () => {
+    const editorScroll = cssBlock(".rudder-library-document-editor-scroll");
+    const sidePanelOutline = cssBlock(".workspace-main-panel-stack:has(> [data-testid=\"side-panel-resizer\"]) .rudder-library-document-outline,\n.workspace-main-panel-stack:has(> [data-testid=\"side-panel-expanded-overlay\"]) .rudder-library-document-outline");
+    const narrowContainer = indexCss.match(/@container \(max-width: 1080px\) \{(?<body>[\s\S]*?)\n\}/)?.groups?.body ?? "";
+
+    expect(editorScroll).toContain("container-type: inline-size");
+    expect(sidePanelOutline).toContain("display: none");
+    expect(narrowContainer).toContain(".rudder-library-document-layout--with-outline");
+    expect(narrowContainer).toContain("max-width: 880px");
+    expect(narrowContainer).toContain(".rudder-library-document-outline");
+    expect(narrowContainer).toContain("display: none");
+  });
+
   it("keeps desktop workspace shell and work-card corners aligned", () => {
     const rootTokens = cssBlock(":root");
     const workspaceShell = cssBlock(".workspace-shell");

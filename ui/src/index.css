@@ -3203,6 +3203,39 @@ button[draggable="false"] {
   border-color: var(--code-border);
 }
 
+.rudder-library-document-editor-scroll {
+  container-type: inline-size;
+}
+
+.rudder-library-document-layout--with-outline {
+  transition: max-width 120ms ease-out;
+}
+
+.workspace-main-panel-stack:has(> [data-testid="side-panel-resizer"]) .rudder-library-document-layout--with-outline,
+.workspace-main-panel-stack:has(> [data-testid="side-panel-expanded-overlay"]) .rudder-library-document-layout--with-outline {
+  max-width: 880px;
+}
+
+.workspace-main-panel-stack:has(> [data-testid="side-panel-resizer"]) .rudder-library-document-outline,
+.workspace-main-panel-stack:has(> [data-testid="side-panel-expanded-overlay"]) .rudder-library-document-outline {
+  display: none;
+}
+
+.rudder-side-panel-library-document {
+  padding-bottom: 1rem;
+}
+
+@container (max-width: 1080px) {
+  .rudder-library-document-layout--with-outline {
+    max-width: 880px;
+    display: block;
+  }
+
+  .rudder-library-document-outline {
+    display: none;
+  }
+}
+
 .rudder-doc-editor-surface {
   --rudder-doc-editor-tab-strip-height: 53px;
   --rudder-doc-editor-breadcrumb-height: 32px;
@@ -4313,7 +4346,9 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
 }
 
 a.rudder-website-link {
-  display: inline;
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 100%;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -4334,22 +4369,26 @@ a.rudder-website-link:hover {
 
 .rudder-website-link-icon {
   display: inline-block;
-  width: 1em;
-  height: 1em;
-  margin-right: 0.24em;
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 0.25em;
   color: currentColor;
-  vertical-align: -0.12em;
+  line-height: 1;
+  vertical-align: -0.13em;
+  flex: 0 0 auto;
 }
 
 .rudder-website-link-logo {
   display: inline-block;
   object-fit: contain;
   border-radius: 2px;
+  background: transparent;
 }
 
 .rudder-website-link-label {
   min-width: 0;
   overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 a.rudder-website-link:hover .rudder-website-link-label {
