@@ -498,7 +498,9 @@ describe("index.css motion rules", () => {
     const websiteLink = cssBlock("a.rudder-website-link");
     const websiteLinkHover = cssBlock("a.rudder-website-link:hover");
 
-    expect(websiteLink).toContain("display: inline");
+    expect(websiteLink).toContain("display: inline-flex");
+    expect(websiteLink).toContain("align-items: baseline");
+    expect(websiteLink).toContain("max-width: 100%");
     expect(websiteLink).toContain("color: var(--rudder-doc-link)");
     expect(websiteLink).toContain("overflow-wrap: anywhere");
     expect(websiteLinkHover).toContain("color: var(--rudder-doc-link-hover)");

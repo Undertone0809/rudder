@@ -187,7 +187,7 @@ test.describe("UI Lab", () => {
       backgroundImage: "none",
       borderTopWidth: "0px",
       borderRadius: "0px",
-      display: "inline",
+      display: "inline-flex",
       iconDisplay: "inline-block",
       paddingInlineEnd: "0px",
       paddingInlineStart: "0px",

@@ -97,7 +97,7 @@ test("renders website markdown links as inline icon-leading text that wraps", as
     backgroundImage: "none",
     borderTopWidth: "0px",
     borderRadius: "0px",
-    display: "inline",
+    display: "inline-flex",
     labelOverflowWrap: "anywhere",
     overflowsMarkdown: false,
     paddingInlineEnd: "0px",

@@ -37,6 +37,7 @@ related_tests:
   - server/src/__tests__/agent-run-context.test.ts
   - server/src/__tests__/workspace-backups.test.ts
   - server/src/__tests__/workspace-backups-routes.test.ts
+  - ui/src/pages/OrganizationWorkspaceFilesSidebar.test.tsx
   - tests/e2e/organization-workspaces-launcher.spec.ts
   - tests/e2e/workspace-shell.spec.ts
   - tests/e2e/workspace-backups.spec.ts
@@ -109,6 +110,10 @@ Product model:
 - In Desktop shells, operators can launch the organization workspace in detected
   local IDE, terminal, or folder targets, and can open individual files in the
   system default app or detected IDE targets.
+- Individual file rows expose this through an `Open In` action. `Default app`
+  is a file-safe target that delegates to the operating system's configured
+  default app for that file type; detected IDEs such as Cursor or VS Code remain
+  explicit file targets.
 - Protected roots such as agent instruction, skills, and managed directories
   are excluded from normal mentionable Library surfaces unless an explicit
   management flow owns them.
@@ -145,6 +150,9 @@ Invariants:
 - File launcher menus should expose file-safe targets only. Workspace-level
   terminal or folder launch targets remain workspace launch actions, not
   per-file open actions.
+- The per-file `Default app` target must remain a Desktop bridge action, not a
+  server-side filesystem open. It is unavailable in non-Desktop shells that
+  cannot access the operator's local default application registry.
 
 Evidence:
 
@@ -155,6 +163,8 @@ Evidence:
 - Organization workspace browser tests cover path safety and browser behavior.
 - Desktop launcher unit and E2E coverage checks detected workspace targets,
   default-app/file target behavior, and Library sidebar launcher placement.
+- Organization workspace sidebar component tests cover the visible `Open In`
+  label and `Default app` file target.
 
 ## WORKSPACE.PROJECT.001
 
