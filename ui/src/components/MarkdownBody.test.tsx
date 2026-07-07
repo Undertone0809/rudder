@@ -6,7 +6,7 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ThemeProvider } from "../context/ThemeContext";
-import { __clearWebsiteMetadataIconCacheForTests, MarkdownBody } from "./MarkdownBody";
+import { __clearWebsiteMetadataIconCacheForTests, MarkdownBody, WebsiteLinkIcon } from "./MarkdownBody";
 import type { MentionOption } from "./MarkdownEditor";
 import {
   __clearRudderEntityPreviewCachesForTests,
@@ -1818,6 +1818,32 @@ describe("MarkdownBody", () => {
     expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("aria-hidden")).toBe("true");
     expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(link?.textContent).toBe("tweet");
+  });
+
+  it("reuses one metadata request when the same website icon appears multiple times", async () => {
+    const url = "https://github.com/Undertone0809/rudder";
+    entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValue({
+      url,
+      siteName: "GitHub",
+      iconUrl: "/api/website-metadata/icon?url=https%3A%2F%2Fgithub.githubassets.com%2Ffavicons%2Ffavicon.png",
+    });
+
+    const container = render(
+      <ThemeProvider>
+        <span>
+          <WebsiteLinkIcon url={new URL(url)} />
+          <WebsiteLinkIcon url={new URL(url)} />
+        </span>
+      </ThemeProvider>,
+    );
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith(url);
+      });
+    });
+
+    expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the generic website icon when website metadata lookup is blocked", async () => {

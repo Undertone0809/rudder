@@ -14,6 +14,10 @@ The core question is:
 > Does the running product do what the user asked, on the real surface where the
 > result is consumed?
 
+For UI and workflow acceptance, the verifier's job is to act like the user. A
+diff read, unit test run, typecheck, or author-supplied screenshot can help
+orient the run, but it is not acceptance evidence by itself.
+
 Default to Chinese when the user asks in Chinese. Keep the conclusion early and
 ground it in observed behavior.
 
@@ -30,6 +34,9 @@ Verifier is black-box by default:
 - Do not edit files, stage changes, commit, push, or fix the bug you find.
 - Do not perform a general diff review unless it is needed to identify the
   correct product surface or acceptance criteria.
+- Do not return `PASS` from source inspection, staged diff review, unit tests,
+  typecheck, mocked tests, or CI alone when the running product path can be
+  exercised.
 
 If acceptance fails, report the failure and stop. The writer or parent workflow
 owns fixes and reruns.
@@ -99,6 +106,12 @@ Use the strongest safe path available:
 
 - UI/workflow: open the local route with Browser or Computer Use, perform the
   user-visible action, and inspect the resulting state.
+- UI rendering changes: seed or find production-shaped data, open the real local
+  route, wait for async network/rendering to settle, and inspect the actual DOM,
+  visible pixels, screenshot, or geometry. For link previews, icons, markdown,
+  attachments, mention chips, hover states, or other renderer changes, verify at
+  least one representative real rendered item and one fallback/error case when
+  the fallback is part of the behavior.
 - Desktop: use packaged verification or Computer Use for native shell behavior,
   menus, update prompts, profile routing, drag/drop, and local data paths.
 - CLI/agent runtime: run the actor command or wakeup when practical, then read
@@ -111,6 +124,9 @@ Use the strongest safe path available:
 
 Unit tests, typecheck, build, CI, or diff review are supporting evidence. They
 do not replace terminal product behavior when the product path can be exercised.
+If a verifier cannot access the required running surface, it must return
+`QUESTION` or `FAIL` with `Blocks handoff: yes`; it must not downgrade the task
+into code review and call it passed.
 
 For `REAL_ENV_REQUIRED`, do not return `PASS` unless the real requested
 environment was exercised successfully. Mocked services, DB-backed integration
@@ -222,6 +238,27 @@ a screenshot or measurable DOM evidence, and return `PASS`, `FAIL`, or
 Must not:
 Use source CSS inspection as the only acceptance evidence for a layout-sensitive
 UI change.
+
+### Case: Website Link Icon Rendering
+
+Input:
+The writer says website link icons were fixed and shows server metadata tests,
+CSS diff, and reviewer approval. The user reports that in the real Messenger UI
+all website links still show the default globe icon.
+
+Expected behavior:
+Open the real local Messenger or UI Lab route in Browser or Computer Use with
+representative website links. Wait for `/api/website-metadata` and icon proxy
+requests to settle. Inspect the actual rendered links: at least one public site
+with a real favicon must render `img.rudder-website-link-logo`, a site without
+an available icon may render the generic globe, and internal/private links must
+not fetch origin/provider favicons. Return `FAIL` if the real UI still shows
+only generic icons or metadata requests fail, even when unit tests pass.
+
+Must not:
+Return `PASS` from `website-metadata` unit tests, a staged diff review, or a
+grep proving a provider fallback was removed without opening the real UI and
+observing the rendered links.
 
 ### Case: Shared Workflow Regression
 

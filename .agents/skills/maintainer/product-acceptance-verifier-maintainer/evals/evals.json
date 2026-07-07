@@ -6,6 +6,12 @@
       "prompt": "A writer says they fixed the Feishu /stop regression and shows DB-backed runtime tests plus reviewer approval. The user says: 我在真实飞书里测了还是不行，你的 verifier 没有跑真实的本地 Feishu 环境，不应该算验收通过. Verify the change.",
       "expected_output": "The verifier must mark the target REAL_ENV_REQUIRED for real local/live Feishu long-connection chat. If real Feishu was not exercised, it must not return PASS; it should return FAIL or QUESTION with substituted DB-backed evidence and Blocks handoff: yes.",
       "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "A writer says they fixed website link favicon rendering and shows server tests, CSS diff, and reviewer approval. The user opens the real Messenger page and says: 全部网站都是默认 ico，verifier 不应该只看 diff/test，必须像用户一样端到端验收. Verify the change.",
+      "expected_output": "The verifier must open the real local UI route with representative website links, wait for metadata/icon requests, inspect actual rendered DOM or screenshot evidence, and return FAIL if public links still render only generic icons. It must not return PASS from diff review, unit tests, grep, or mocked E2E alone.",
+      "files": []
     }
   ]
 }
