@@ -106,6 +106,9 @@ Product model:
   `org-name-2`.
 - Operators and agents can list, read, create, update, delete, rename, and link
   allowed files.
+- In Desktop shells, operators can launch the organization workspace in detected
+  local IDE, terminal, or folder targets, and can open individual files in the
+  system default app or detected IDE targets.
 - Protected roots such as agent instruction, skills, and managed directories
   are excluded from normal mentionable Library surfaces unless an explicit
   management flow owns them.
@@ -122,6 +125,9 @@ Flow:
 4. Library entry cache/reference id is created or reused.
 5. Markdown/reference rendering can turn the Library file into a stable link.
 6. Project resources can attach eligible Library files as curated run context.
+7. In Desktop shells, Rudder asks the Desktop bridge for available launcher
+   targets and sends workspace/file open requests through that bridge rather
+   than through the server file API.
 
 Invariants:
 
@@ -133,6 +139,12 @@ Invariants:
   must stop before creating an empty replacement and tell the operator to
   restore the mapped folder name/path or restore from a workspace backup.
 - Protected paths are not ordinary Library content.
+- Desktop launchers are operator-local conveniences. They must not bypass
+  Library path validation, expose protected paths as ordinary entries, or imply
+  that browser/server deployments can open files on the operator machine.
+- File launcher menus should expose file-safe targets only. Workspace-level
+  terminal or folder launch targets remain workspace launch actions, not
+  per-file open actions.
 
 Evidence:
 
@@ -141,6 +153,8 @@ Evidence:
   folder fail-fast behavior.
 - Library path markdown tests cover reference generation.
 - Organization workspace browser tests cover path safety and browser behavior.
+- Desktop launcher unit and E2E coverage checks detected workspace targets,
+  default-app/file target behavior, and Library sidebar launcher placement.
 
 ## WORKSPACE.PROJECT.001
 

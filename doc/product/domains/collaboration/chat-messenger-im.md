@@ -104,6 +104,9 @@ Product model:
   payloads, and optional run attribution.
 - Chat-native assistant turns that invoke runtimes are Agent Runs under
   `RUN.CHAT.AGENT.001`.
+- A completed assistant answer may be refreshed as another variant of the same
+  chat turn. The visible branch controls let the operator compare prior and
+  refreshed variants without creating a new conversation.
 - Assistant message bodies contain user-visible assistant output only. Runtime
   transcript evidence such as thinking/reasoning entries, scratchpad text, tool
   logs, and incomplete adapter summaries remain run evidence, not chat bubble
@@ -123,6 +126,9 @@ Flow:
    when the operator asks for that conversion/proposal path. The assistant must
    not emit an issue proposal merely because the work is large, durable,
    assignable, or issue-shaped.
+6. When the operator refreshes a completed assistant answer, Rudder reuses the
+   original turn context, creates a new turn variant, and surfaces branch
+   controls for moving between variants.
 
 Invariants:
 
@@ -136,6 +142,11 @@ Invariants:
   already streamed user-visible assistant text as a partial reply. It must not
   fill the bubble from provider reasoning/thinking events or incomplete runtime
   summaries.
+- Refreshing an assistant answer is allowed only for completed assistant
+  messages in locally mutable chats. External-bound conversations that require a
+  fork-to-continue path must not expose direct refresh.
+- Refresh variants must remain scoped to the original chat turn. They must not
+  erase the earlier answer or make the prior variant unreachable.
 - Agent attribution is visible enough to navigate from message to run/agent.
 
 Evidence:
@@ -145,6 +156,8 @@ Evidence:
 - Chat assistant tests cover runtime-backed turns.
 - Chat assistant tests cover stopped runtime turns that keep reasoning out of
   partial assistant bodies.
+- Chat refresh E2E covers refreshing a completed assistant answer as a second
+  turn variant and navigating back to the first variant.
 
 ## CHAT.TITLE.GENERATION.001
 
@@ -425,6 +438,9 @@ Product model:
 - If the source conversation is bound to an external IM provider such as
   Feishu, the fork keeps Rudder lineage but does not inherit the provider chat
   binding. The child is a normal Rudder chat that can be continued locally.
+- Refreshing a completed assistant answer is not a conversation fork. It creates
+  another variant inside the same chat turn, while `Fork` / `Fork from here`
+  create separate conversations with lineage.
 
 Flow:
 
@@ -451,6 +467,8 @@ Invariants:
   conversation is truncated at that response.
 - Forked conversations must not share mutable runtime context with the source
   conversation.
+- Turn variants created by assistant-answer refresh must not be treated as
+  forked conversations and must not create fork-family Messenger groups.
 - Forked conversations must not inherit external provider bindings from the
   source conversation. A fork from a Feishu-bound conversation is locally
   mutable in Rudder and must not send its future messages back to Feishu.
@@ -473,6 +491,8 @@ Evidence:
 - Chat fork E2E covers the visible fork workflow and copied-message boundary.
 - Feishu source badge E2E covers that a fork from a Feishu-bound conversation
   returns a normal Rudder chat with no Feishu outbound rows.
+- Chat refresh E2E covers that a refreshed assistant answer appears as a chat
+  branch/variant rather than as a forked conversation.
 
 ## CHAT.RICH.REFERENCE.RENDERING.001
 
@@ -610,8 +630,8 @@ Product model:
   replacing the current route on ordinary clicks. Modifier-click and unsupported
   links preserve normal navigation behavior.
 - Side Panel targets are typed objects: issue, automation, Library file,
-  Library directory, chat, browser placeholder, and explicit placeholders for
-  target classes that need a link/search before loading a concrete object.
+  Library directory, chat, browser tab, and explicit placeholders for target
+  classes that need a link/search before loading a concrete object.
 - The panel owns tab state, active target, add-tab affordances, empty-state
   choices, width/resizer behavior, and close/focus behavior. It does not become
   the owning domain for issue workflow, automation dispatch, Library path safety,
@@ -620,8 +640,10 @@ Product model:
   not automatically open a target-type menu; target choice belongs in the picker
   page so the operator can choose Browser, Library, Issue, or another supported
   target from the panel body.
-- The Browser target is a placeholder/tab target unless a secure embedded
-  browser surface exists; it must not perform unsafe remote fetches by itself.
+- When a secure embedded browser surface is available, the Browser target can
+  load typed URLs and search queries inside the Side Panel. When that surface is
+  unavailable, Browser remains an empty tab/picker target and must not perform
+  unsafe remote fetches by itself.
 
 Flow:
 
@@ -643,6 +665,9 @@ Flow:
    in the panel instead of silently ignoring failures.
 8. Closing a tab focuses a neighboring tab or returns the panel to the empty
    picker state.
+9. Browser tabs normalize address-bar input into either a URL or search-query
+   navigation, keep back/forward/reload state scoped to the embedded browser,
+   and can open the current page externally as a secondary action.
 
 Invariants:
 
@@ -658,6 +683,10 @@ Invariants:
 - Side Panel chat views must preserve chat lifecycle and Messenger attention
   semantics; opening a chat target in the panel is not a read-state or routing
   rewrite unless the owning Messenger/chat code performs that action.
+- Side Panel Browser navigation must not grant file, organization, or
+  application privileges beyond the embedded browser shell. Local board URLs are
+  navigable through the browser surface, but organization-scoped data still
+  relies on the normal board/API authorization model.
 - On desktop and web shells, the Side Panel docks directly against the main
   workspace with only a narrow resize affordance between them. It must not leave
   a broad blank gutter that visually separates the panel from the current work
@@ -679,6 +708,8 @@ Evidence:
   without replacing the Chat route; editing an issue inside the panel; browsing
   a Library directory tree; opening the global empty panel from Dashboard; and
   keeping the desktop/web panel gutter compact against the main workspace.
+- Desktop smoke covers the Side Panel Browser loading a local `/api/health` URL
+  and normalizing a plain search query into browser navigation.
 
 ## MESSENGER.ATTENTION.001
 

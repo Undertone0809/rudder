@@ -534,10 +534,15 @@ contracts:
       - server/src/services/library-entries.ts
       - server/src/services/organization-workspace-browser.ts
       - ui/src/pages/OrganizationResources.tsx
+      - ui/src/pages/OrganizationWorkspaces.tsx
+      - desktop/src/ide-opener.ts
     related_tests:
       - server/src/__tests__/home-paths.test.ts
       - server/src/__tests__/library-path-markdown.test.ts
       - server/src/__tests__/organization-workspace-browser.test.ts
+      - desktop/src/ide-opener.test.ts
+      - ui/src/pages/OrganizationWorkspaces.scrollbars.test.tsx
+      - tests/e2e/organization-workspaces-launcher.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-06-30-org-library-folder-and-backup-zip.md
@@ -669,9 +674,11 @@ contracts:
       - server/src/services/chat-assistant.ts
       - server/src/services/chat-assistant.helpers.ts
       - ui/src/pages/Chat.tsx
+      - ui/src/pages/Chat.messages.tsx
     related_tests:
       - server/src/__tests__/chat-routes.test.ts
       - server/src/__tests__/chat-assistant.test.ts
+      - tests/e2e/chat-error-toast.spec.ts
       - tests/e2e/chat-rich-references.spec.ts
       - tests/e2e/chat-streaming.spec.ts
     related_plans:
@@ -724,6 +731,7 @@ contracts:
       - ui/src/pages/Chat.messages.test.tsx
       - ui/src/pages/Chat.attachment-preview.test.tsx
       - ui/src/components/MessengerContextSidebar.actions.test.tsx
+      - tests/e2e/chat-error-toast.spec.ts
       - tests/e2e/chat-fork.spec.ts
       - tests/e2e/feishu-source-badges.spec.ts
     related_plans:
@@ -780,6 +788,7 @@ contracts:
       - ui/src/components/Layout.tsx
       - ui/src/pages/Chat.side-panel.tsx
       - ui/src/pages/Chat.tsx
+      - desktop/scripts/smoke.mjs
     related_tests:
       - ui/src/lib/side-panel-targets.test.ts
       - ui/src/components/Layout.test.ts
