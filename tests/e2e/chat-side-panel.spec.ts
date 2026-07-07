@@ -359,6 +359,18 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toHaveAttribute("aria-selected", "true");
     await expect(sidePanel).toContainText("Panel target B body.");
 
+    await page.getByTestId(`messenger-thread-chat-${otherChat.id}`).click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${otherChat.id}$`));
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+    await page.getByTestId(`messenger-thread-chat-${hostChat.id}`).click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${hostChat.id}$`));
+    await expect(sidePanel).toBeVisible();
+    const restoredTabs = sidePanel.getByTestId("chat-side-panel-tabs");
+    await expect(restoredTabs.getByRole("tab", { name: "Panel target A" })).toBeVisible();
+    await expect(restoredTabs.getByRole("tab", { name: "Panel target B" })).toBeVisible();
+    await expect(restoredTabs.getByRole("tab", { name: "Panel target B" })).toHaveAttribute("aria-selected", "true");
+    await expect(sidePanel).toContainText("Panel target B body.");
+
     await sidePanel.getByTestId("chat-side-panel-collapse").click();
     await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
     const chatSidePanelTrigger = () => page.getByTestId("workspace-main-card").getByTestId("chat-side-panel-trigger");
@@ -386,10 +398,14 @@ test.describe("Chat Side Panel", () => {
 
     await page.getByTestId(`messenger-thread-chat-${hostChat.id}`).click();
     await expect(page).toHaveURL(new RegExp(`/messenger/chat/${hostChat.id}$`));
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+
+    await chatSidePanelTrigger().click();
     await expect(sidePanel).toBeVisible();
-    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
-    await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toContainText("Panel target B");
-    await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toHaveAttribute("aria-selected", "true");
+    const restoredTabsAfterEmptyPanel = sidePanel.getByTestId("chat-side-panel-tabs");
+    await expect(restoredTabsAfterEmptyPanel.getByRole("tab", { name: "Panel target A" })).toBeVisible();
+    await expect(restoredTabsAfterEmptyPanel.getByRole("tab", { name: "Panel target B" })).toBeVisible();
+    await expect(restoredTabsAfterEmptyPanel.getByRole("tab", { name: "Panel target B" })).toHaveAttribute("aria-selected", "true");
     await expect(sidePanel).toContainText("Panel target B body.");
 
     await page.getByTestId(`messenger-thread-chat-${thirdChat.id}`).click();

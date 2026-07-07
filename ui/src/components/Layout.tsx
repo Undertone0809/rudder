@@ -4,7 +4,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { CalendarWorkspaceProvider } from "@/context/CalendarWorkspaceContext";
 import { useI18n } from "@/context/I18nContext";
 import { MarkdownMentionsProvider } from "@/context/MarkdownMentionsContext";
-import { SidePanelProvider, useSidePanel } from "@/context/SidePanelContext";
+import { useSidePanel } from "@/context/SidePanelContext";
 import { Link, Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BookOpen, PanelLeftOpen, PanelRightOpen, Settings, X } from "lucide-react";
@@ -1033,7 +1033,6 @@ export function Layout() {
       <WorktreeBanner />
       <DevRestartBanner devServer={health?.devServer} />
       <MarkdownMentionsProvider>
-      <SidePanelProvider>
       <SidePanelRouteContextBinder relativePath={relativeBoardPath} />
       <CalendarWorkspaceProvider>
       <div className={cn("min-h-0 flex-1", isMobile ? "w-full" : "flex overflow-hidden")}>
@@ -1303,7 +1302,6 @@ export function Layout() {
       <NewAgentDialog />
       {isMobile ? <ChatSidePanel selectedOrganizationId={selectedOrganizationId} /> : null}
       </CalendarWorkspaceProvider>
-      </SidePanelProvider>
       </MarkdownMentionsProvider>
     </div>
     </NavigationBackProvider>

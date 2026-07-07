@@ -18,6 +18,7 @@ import { BreadcrumbProvider } from "./context/BreadcrumbContext";
 import { useDialog } from "./context/DialogContext";
 import { useI18n } from "./context/I18nContext";
 import { useOrganization } from "./context/OrganizationContext";
+import { SidePanelProvider } from "./context/SidePanelContext";
 import { useViewedOrganization } from "./hooks/useViewedOrganization";
 import {
   normalizeRememberedInstanceSettingsPath,
@@ -537,6 +538,7 @@ export function App() {
 
   return (
     <>
+      <SidePanelProvider>
       <Routes location={showDesktopSettingsOverlay ? settingsOverlayBackgroundPath! : location}>
         <Route path="auth" element={<AuthPage />} />
         <Route path="board-claim/:token" element={<BoardClaimPage />} />
@@ -606,6 +608,7 @@ export function App() {
           <Route path="*" element={<NotFoundPage scope="global" />} />
         </Route>
       </Routes>
+      </SidePanelProvider>
       {showDesktopSettingsOverlay ? (
         <Routes>
           <Route element={<CloudAccessGate />}>

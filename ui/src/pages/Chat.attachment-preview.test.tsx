@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
-import { SidePanelProvider } from "@/context/SidePanelContext";
+import { SidePanelProvider, useSidePanel } from "@/context/SidePanelContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { readChatAskUserDraft } from "@/lib/chat-draft-storage";
 import {
@@ -11,7 +11,7 @@ import {
 } from "@/lib/chat-pending-attachments";
 import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, type Agent, type AutomationDetail, type AutomationRunSummary, type ChatConversation, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type Goal, type Issue, type IssueComment, type IssueLabel, type OrganizationWorkspaceFileEntry, type Project } from "@rudderhq/shared";
 import type { ReactNode } from "react";
-import { act } from "react";
+import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Chat } from "./Chat";
@@ -908,6 +908,7 @@ function renderChat() {
     targetRoot.render(
       <ThemeProvider>
         <SidePanelProvider>
+          <SidePanelTestContextBinder />
           <Chat />
           <ChatSidePanel
             selectedOrganizationId="org-1"
@@ -929,6 +930,17 @@ function renderChat() {
     toggleSidePanelExpanded,
     rerender: () => act(() => render(root)),
   };
+}
+
+function SidePanelTestContextBinder() {
+  const { setContextKey } = useSidePanel();
+  const contextKey = mockState.conversationId ? `chat:${mockState.conversationId}` : null;
+
+  useLayoutEffect(() => {
+    setContextKey(contextKey);
+  }, [contextKey, setContextKey]);
+
+  return null;
 }
 
 function dispatchPasteFiles(target: Element, files: File[], options: { clipboardFiles?: File[] } = {}) {
