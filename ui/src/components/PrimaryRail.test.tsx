@@ -412,7 +412,8 @@ describe("PrimaryRail active motion indicator", () => {
   it("applies rail motion styling to the create menu", async () => {
     await renderPrimaryRail();
 
-    expect(document.querySelector(".rail-create-menu-content")).not.toBeNull();
+    expect(document.querySelector(".rail-create-menu-trigger")).not.toBeNull();
+    expect(document.querySelector(".rail-create-menu-content.morph-popover.morph-popover--from-left")).not.toBeNull();
   });
 
   it("dismisses Messenger unreads from the rail context menu and refreshes Messenger caches", async () => {

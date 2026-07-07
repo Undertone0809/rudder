@@ -1250,7 +1250,7 @@ function MessengerThreadSectionHeader({
             <ListFilter className="h-3.5 w-3.5" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="surface-overlay w-48 text-foreground">
+        <DropdownMenuContent align="end" className="morph-popover morph-popover--from-right surface-overlay w-48 text-foreground">
           <DropdownMenuLabel className="text-xs text-muted-foreground">View</DropdownMenuLabel>
           <DropdownMenuCheckboxItem
             checked={compact}
@@ -1531,7 +1531,7 @@ function ChatThreadRow({
                 <MoreHorizontal className="h-3.5 w-3.5" />
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="surface-overlay text-foreground">
+            <DropdownMenuContent align="end" className="messenger-thread-actions-menu morph-popover morph-popover--from-right surface-overlay text-foreground">
               {onStartRename ? (
                 <DropdownMenuItem onClick={onStartRename}>
                   <PencilLine className="h-4 w-4" />
@@ -1594,7 +1594,7 @@ function ChatThreadRow({
                       <FolderInput className="h-4 w-4" />
                       Move to group
                     </DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent className="surface-overlay text-foreground">
+                    <DropdownMenuSubContent className="morph-popover morph-popover--from-left surface-overlay text-foreground">
                       {customGroupId ? (
                         <DropdownMenuItem onClick={onRemoveFromCustomGroup}>
                           <Folder className="h-4 w-4" />
@@ -1827,7 +1827,7 @@ function ThreadRow({
               <MoreHorizontal className="h-3.5 w-3.5" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="surface-overlay text-foreground">
+          <DropdownMenuContent align="end" className="messenger-thread-actions-menu morph-popover morph-popover--from-right surface-overlay text-foreground">
             {canTogglePin ? (
               <DropdownMenuItem onClick={onTogglePin}>
                 {thread.isPinned ? (
@@ -1861,7 +1861,7 @@ function ThreadRow({
                     <FolderInput className="h-4 w-4" />
                     Move to group
                   </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="surface-overlay text-foreground">
+                  <DropdownMenuSubContent className="morph-popover morph-popover--from-left surface-overlay text-foreground">
                     {customGroupId ? (
                       <DropdownMenuItem onClick={onRemoveFromCustomGroup}>
                         <Folder className="h-4 w-4" />
@@ -3800,7 +3800,7 @@ export function MessengerContextSidebar() {
                   <MoreHorizontal className="h-3.5 w-3.5" />
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="surface-overlay text-foreground">
+              <DropdownMenuContent align="end" className="messenger-thread-actions-menu morph-popover morph-popover--from-right surface-overlay text-foreground">
                 <DropdownMenuItem onClick={() => handleRenameCustomGroup(customGroup)}>
                   <PencilLine className="h-4 w-4" />
                   Rename...
@@ -3840,7 +3840,7 @@ export function MessengerContextSidebar() {
                     Change icon
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent
-                    className="surface-overlay w-auto p-2 text-foreground"
+                    className="morph-popover morph-popover--from-left surface-overlay w-auto p-2 text-foreground"
                     style={customGroupProjectColorCssVars(customGroupColorFor({
                       id: customGroup.id,
                       icon: pendingCustomGroupIcons[customGroup.id] ?? customGroup.icon,
@@ -3859,7 +3859,7 @@ export function MessengerContextSidebar() {
                     <Palette className="h-4 w-4" />
                     Pick color
                   </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="surface-overlay text-foreground">
+                  <DropdownMenuSubContent className="morph-popover morph-popover--from-left surface-overlay text-foreground">
                     {CUSTOM_GROUP_COLOR_OPTIONS.map((option) => {
                       const tone = CUSTOM_GROUP_TONES[option];
                       return (

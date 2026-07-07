@@ -366,6 +366,29 @@ describe("index.css motion rules", () => {
     expect(reducedMotion).toContain(".automation-trigger-menu-content[data-state=\"open\"]");
   });
 
+  it("morphs popover menus from the trigger footprint", () => {
+    const rootTokens = cssBlock(":root");
+    const morphPopover = cssBlock(".morph-popover.morph-popover");
+    const leftOrigin = cssBlock(".morph-popover.morph-popover--from-left");
+    const rightOrigin = cssBlock(".morph-popover.morph-popover--from-right");
+    const morphOpen = cssBlock("@keyframes morph-popover-open");
+    const morphClose = cssBlock("@keyframes morph-popover-close");
+    const reducedMotion = indexCss.match(/@media \(prefers-reduced-motion: reduce\) \{[^}]+morph-popover\[data-state="closed"\][^}]+}/s)?.[0] ?? "";
+
+    expect(rootTokens).toContain("--morph-popover-open-dur: 350ms");
+    expect(rootTokens).toContain("--morph-popover-closed-size: 40px");
+    expect(morphPopover).toContain("--morph-popover-clip-closed");
+    expect(morphPopover).toContain("clip-path: var(--morph-popover-clip-open)");
+    expect(morphPopover).toContain("transform-origin: var(--morph-popover-origin-x) var(--morph-popover-origin-y) !important");
+    expect(morphPopover).toContain("will-change: clip-path, opacity, transform, filter");
+    expect(leftOrigin).toContain("--morph-popover-origin-x: 0");
+    expect(rightOrigin).toContain("--morph-popover-origin-x: 100%");
+    expect(morphOpen).toContain("clip-path: var(--morph-popover-clip-closed)");
+    expect(morphOpen).toContain("clip-path: var(--morph-popover-clip-open)");
+    expect(morphClose).toContain("border-radius: var(--morph-popover-radius-closed)");
+    expect(reducedMotion).toContain(".morph-popover[data-state=\"open\"]");
+  });
+
   it("keeps the macOS desktop shell translucent in light mode", () => {
     const lightDesktopBackdrop = cssBlock("html.desktop-shell-macos .app-shell-backdrop");
 
