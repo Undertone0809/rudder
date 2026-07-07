@@ -4276,6 +4276,22 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
   margin-top: 1.1em;
 }
 
+.rudder-milkdown-content.rudder-issue-description-markdown .ProseMirror > p:has(> br.ProseMirror-trailingBreak:only-child) {
+  display: none;
+  margin: 0;
+}
+
+.rudder-milkdown-content.rudder-issue-description-markdown .ProseMirror > p:has(> span[data-type="html"][data-value^="<!--"][data-value$="-->"]:first-child):has(> br.ProseMirror-trailingBreak:last-child) {
+  height: 1lh;
+  line-height: inherit;
+  overflow: hidden;
+}
+
+.rudder-milkdown-content.rudder-issue-description-markdown .ProseMirror > p:has(> br.ProseMirror-trailingBreak:only-child) + p,
+.rudder-milkdown-content.rudder-issue-description-markdown .ProseMirror > p:has(> span[data-type="html"][data-value^="<!--"][data-value$="-->"]:first-child):has(> br.ProseMirror-trailingBreak:last-child) + p {
+  margin-top: 0;
+}
+
 .rudder-markdown.rudder-issue-description-markdown :where(ul, ol),
 .rudder-milkdown-content.rudder-issue-description-markdown :where(ul, ol) {
   margin: 0.6em 0;

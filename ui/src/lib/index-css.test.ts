@@ -517,6 +517,20 @@ describe("index.css motion rules", () => {
     expect(indexCss).not.toContain(".rudder-markdown a.rudder-website-link:hover {");
   });
 
+  it("hides issue description editor filler paragraphs that read-mode markdown ignores", () => {
+    const emptyBreakParagraph = cssBlock(".rudder-milkdown-content.rudder-issue-description-markdown .ProseMirror > p:has(> br.ProseMirror-trailingBreak:only-child)");
+    const htmlCommentParagraph = cssBlock('.rudder-milkdown-content.rudder-issue-description-markdown .ProseMirror > p:has(> span[data-type="html"][data-value^="<!--"][data-value$="-->"]:first-child):has(> br.ProseMirror-trailingBreak:last-child)');
+    const nextAfterEmptyBreakParagraph = cssBlock(".rudder-milkdown-content.rudder-issue-description-markdown .ProseMirror > p:has(> br.ProseMirror-trailingBreak:only-child) + p,");
+    const nextAfterHtmlCommentParagraph = cssBlock('.rudder-milkdown-content.rudder-issue-description-markdown .ProseMirror > p:has(> span[data-type="html"][data-value^="<!--"][data-value$="-->"]:first-child):has(> br.ProseMirror-trailingBreak:last-child) + p');
+
+    expect(emptyBreakParagraph).toContain("display: none");
+    expect(emptyBreakParagraph).toContain("margin: 0");
+    expect(htmlCommentParagraph).toContain("height: 1lh");
+    expect(htmlCommentParagraph).toContain("overflow: hidden");
+    expect(nextAfterEmptyBreakParagraph).toContain("margin-top: 0");
+    expect(nextAfterHtmlCommentParagraph).toContain("margin-top: 0");
+  });
+
   it("scopes Library file-tab window dragging to the macOS desktop shell", () => {
     const tabStripSpacer = cssBlock("html.desktop-shell-macos .rudder-doc-editor-tab-drag-spacer");
     const fileTab = cssBlock("html.desktop-shell-macos .rudder-doc-editor-tab--desktop-no-drag");
