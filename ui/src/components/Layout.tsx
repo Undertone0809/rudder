@@ -8,7 +8,7 @@ import { SidePanelProvider, useSidePanel } from "@/context/SidePanelContext";
 import { Link, Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BookOpen, PanelLeftOpen, PanelRightOpen, Settings, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import { accessApi } from "../api/access";
 import { chatsApi } from "../api/chats";
 import { healthApi } from "../api/health";
@@ -308,8 +308,10 @@ function readRememberedSidePanelWidth(): number {
 }
 
 function DesktopSidePanelSlot({
+  onExpandedChange,
   selectedOrganizationId,
 }: {
+  onExpandedChange?: (expanded: boolean) => void;
   selectedOrganizationId: string | null | undefined;
 }) {
   const sidePanel = useSidePanel();
@@ -319,6 +321,11 @@ function DesktopSidePanelSlot({
   const [resizingSidePanel, setResizingSidePanel] = useState(false);
   const expandedSidePanelWidth = clampSidePanelWidth(SIDE_PANEL_EXPANDED_WIDTH, viewportWidth);
   const sidePanelExpanded = sidePanelWidth >= expandedSidePanelWidth - 1;
+
+  useLayoutEffect(() => {
+    onExpandedChange?.(sidePanel.open && sidePanelExpanded);
+    return () => onExpandedChange?.(false);
+  }, [onExpandedChange, sidePanel.open, sidePanelExpanded]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -540,6 +547,7 @@ export function Layout() {
   );
   const contextColumnWidthRatioRef = useRef(widthRatio(contextColumnWidth));
   const [resizingColumn, setResizingColumn] = useState(false);
+  const [desktopSidePanelExpanded, setDesktopSidePanelExpanded] = useState(false);
   const mainScrollRef = useScrollbarActivityRef(`workspace-main:${relativeBoardPath}`);
   const { data: currentBoardAccess } = useQuery({
     queryKey: queryKeys.access.currentBoardAccess,
@@ -1182,10 +1190,13 @@ export function Layout() {
                       <div
                         data-testid="workspace-main-card"
                         data-tour-target="workspace-main"
+                        aria-hidden={desktopSidePanelExpanded || undefined}
+                        inert={desktopSidePanelExpanded ? true : undefined}
                         className={cn(
                           "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
                           "workspace-main-card",
                           useFramelessWorkspaceMain && "workspace-main-card--frameless",
+                          desktopSidePanelExpanded && "pointer-events-none invisible",
                         )}
                       >
                         {!useFramelessWorkspaceMain ? (
@@ -1217,7 +1228,10 @@ export function Layout() {
                           )}
                         </main>
                       </div>
-                      <DesktopSidePanelSlot selectedOrganizationId={selectedOrganizationId} />
+                      <DesktopSidePanelSlot
+                        selectedOrganizationId={selectedOrganizationId}
+                        onExpandedChange={setDesktopSidePanelExpanded}
+                      />
                     </div>
                   </div>
                 ) : (

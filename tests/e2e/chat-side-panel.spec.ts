@@ -413,6 +413,58 @@ test.describe("Chat Side Panel", () => {
     await expect(page.getByTestId("global-side-panel-trigger")).toBeVisible();
   });
 
+  test("hides the main workspace while the Side Panel is expanded", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Global-Side-Panel-Expanded-${Date.now()}` },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await page.getByTestId("side-panel-hover-edge").hover();
+    await page.getByTestId("global-side-panel-trigger").click();
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await expect(sidePanel).toContainText("Open a panel");
+    await expect(page.getByTestId("workspace-main-card")).toBeVisible();
+
+    await sidePanel.getByLabel("Expand Side Panel").click();
+    await expect(page.getByTestId("side-panel-expanded-overlay")).toBeVisible();
+    await expect(sidePanel.getByLabel("Restore Side Panel width")).toBeVisible();
+    await expect(page.getByTestId("side-panel-resizer")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-main-card")).not.toBeVisible();
+    await expect(page.getByTestId("workspace-main-card")).toHaveAttribute("aria-hidden", "true");
+    await expect(page.getByTestId("workspace-main-card")).toHaveAttribute("inert", "");
+
+    const workspaceStackBox = await page.getByTestId("workspace-main-panel-stack").boundingBox();
+    const expandedSidePanelBox = await sidePanel.boundingBox();
+    expect(workspaceStackBox).not.toBeNull();
+    expect(expandedSidePanelBox).not.toBeNull();
+    expect(Math.abs(Math.round(expandedSidePanelBox!.x - workspaceStackBox!.x))).toBeLessThanOrEqual(2);
+    expect(Math.abs(Math.round((workspaceStackBox!.x + workspaceStackBox!.width) - (expandedSidePanelBox!.x + expandedSidePanelBox!.width)))).toBeLessThanOrEqual(2);
+
+    await sidePanel.getByLabel("Restore Side Panel width").click();
+    await expect(page.getByTestId("side-panel-expanded-overlay")).toHaveCount(0);
+    await expect(page.getByTestId("side-panel-resizer")).toBeVisible();
+    await expect(page.getByTestId("workspace-main-card")).toBeVisible();
+    await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("aria-hidden", "true");
+    await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("inert", "");
+
+    await sidePanel.getByLabel("Expand Side Panel").click();
+    await expect(page.getByTestId("side-panel-expanded-overlay")).toBeVisible();
+    await sidePanel.getByLabel("Close Side Panel").click();
+    await expect(sidePanel).toHaveCount(0);
+    await expect(page.getByTestId("workspace-main-card")).toBeVisible();
+    await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("aria-hidden", "true");
+    await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("inert", "");
+  });
+
   test("opens a Browser side panel tab with URL navigation controls", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Global-Side-Panel-Browser-${Date.now()}` },
