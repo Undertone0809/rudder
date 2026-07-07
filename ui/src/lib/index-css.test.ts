@@ -483,11 +483,22 @@ describe("index.css motion rules", () => {
 
   it("lets website links keep their rendered treatment outside markdown bodies", () => {
     const websiteLink = cssBlock("a.rudder-website-link");
+    const websiteIcon = cssBlock(".rudder-website-link-icon");
+    const websiteLogo = cssBlock(".rudder-website-link-logo");
+    const websiteGeneric = cssBlock(".rudder-website-link-generic");
     const websiteLinkHover = cssBlock("a.rudder-website-link:hover");
 
-    expect(websiteLink).toContain("display: inline");
+    expect(websiteLink).toContain("display: inline-flex");
+    expect(websiteLink).toContain("align-items: baseline");
+    expect(websiteLink).toContain("max-width: 100%");
     expect(websiteLink).toContain("color: var(--rudder-doc-link)");
     expect(websiteLink).toContain("overflow-wrap: anywhere");
+    expect(websiteIcon).toContain("display: inline-flex");
+    expect(websiteLogo).toContain("display: block");
+    expect(websiteLogo).toContain("width: 100%");
+    expect(websiteLogo).toContain("height: 100%");
+    expect(websiteGeneric).toContain("width: 100%");
+    expect(websiteGeneric).toContain("height: 100%");
     expect(websiteLinkHover).toContain("color: var(--rudder-doc-link-hover)");
     expect(indexCss).not.toContain(".rudder-markdown a.rudder-website-link {");
     expect(indexCss).not.toContain(".rudder-markdown a.rudder-website-link:hover {");

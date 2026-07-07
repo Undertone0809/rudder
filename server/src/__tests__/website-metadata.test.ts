@@ -1,7 +1,14 @@
 import { createServer } from "node:http";
 import { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
-import { fetchWebsiteIcon, resolveWebsiteMetadata } from "../services/website-metadata.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { __clearWebsiteMetadataCacheForTests, fetchWebsiteIcon, resolveWebsiteMetadata } from "../services/website-metadata.js";
+
+vi.mock("node:dns/promises", () => ({
+  lookup: vi.fn(),
+}));
+
+const dnsPromises = await import("node:dns/promises");
+const lookupMock = vi.mocked(dnsPromises.lookup);
 
 async function startFixtureServer(handler: Parameters<typeof createServer>[0]) {
   const server = createServer(handler);
@@ -21,6 +28,9 @@ describe("resolveWebsiteMetadata", () => {
   afterEach(async () => {
     await Promise.all(servers.map((server) => server.close()));
     servers = [];
+    __clearWebsiteMetadataCacheForTests();
+    lookupMock.mockReset();
+    vi.restoreAllMocks();
   });
 
   it("returns the page-declared favicon as the website icon", async () => {
@@ -99,6 +109,47 @@ describe("resolveWebsiteMetadata", () => {
   it("rejects private-network targets by default", async () => {
     await expect(resolveWebsiteMetadata("http://127.0.0.1:12345")).rejects.toThrow("Private network URLs");
     await expect(resolveWebsiteMetadata("http://localhost:12345")).rejects.toThrow("Private network URLs");
+    await expect(resolveWebsiteMetadata("http://198.18.0.42/post")).rejects.toThrow("Private network URLs");
+  });
+
+  it("allows public hostnames that resolve through local 198.18/15 proxy addresses", async () => {
+    lookupMock.mockResolvedValue([{ address: "198.18.0.42", family: 4 }]);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const href = url instanceof URL ? url.href : String(url);
+      if (href === "https://example.com/favicon.ico") {
+        return new Response(Buffer.from("ico"), {
+          status: 200,
+          headers: { "content-type": "image/x-icon" },
+        });
+      }
+      return new Response(`
+        <!doctype html>
+        <title>Proxy Mapped Site</title>
+        <link rel="icon" href="/favicon.ico">
+      `, {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    });
+
+    await expect(resolveWebsiteMetadata("https://example.com/post")).resolves.toMatchObject({
+      siteName: "Proxy Mapped Site",
+      iconUrl: "https://example.com/favicon.ico",
+    });
+  });
+
+  it.each([
+    "https://service.internal/post",
+    "https://app.local/post",
+    "https://dashboard.corp/post",
+    "https://portal.intranet/post",
+    "https://intranet/post",
+  ])("rejects non-public hostnames that resolve through local 198.18/15 proxy addresses: %s", async (url) => {
+    lookupMock.mockResolvedValue([{ address: "198.18.0.42", family: 4 }]);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("fetch should not be called"));
+
+    await expect(resolveWebsiteMetadata(url)).rejects.toThrow("Private network URLs");
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("rejects redirects to private-network metadata targets", async () => {

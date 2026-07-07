@@ -30,6 +30,19 @@ const IMAGE_CONTENT_TYPES = new Set([
   "image/x-icon",
 ]);
 
+function isBenchmarkNetworkIpAddress(value: string) {
+  const normalized = value.replace(/^\[|\]$/gu, "").toLowerCase();
+  const ipv4Mapped = normalized.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/u);
+  if (ipv4Mapped) return isBenchmarkNetworkIpAddress(ipv4Mapped[1]);
+
+  const parts = normalized.split(".");
+  if (parts.length !== 4) return false;
+  const octets = parts.map((part) => Number(part));
+  if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return false;
+  const [a, b] = octets;
+  return a === 198 && (b === 18 || b === 19);
+}
+
 function isPrivateIpAddress(value: string) {
   const normalized = value.replace(/^\[|\]$/gu, "").toLowerCase();
   const ipv4Mapped = normalized.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/u);
@@ -47,8 +60,12 @@ function isPrivateIpAddress(value: string) {
   if (a === 172 && b >= 16 && b <= 31) return true;
   if (a === 192 && b === 0) return true;
   if (a === 192 && b === 168) return true;
-  if (a === 198 && (b === 18 || b === 19)) return true;
+  if (isBenchmarkNetworkIpAddress(normalized)) return true;
   return false;
+}
+
+function isBlockedResolvedIpAddress(value: string) {
+  return isPrivateIpAddress(value) && !isBenchmarkNetworkIpAddress(value);
 }
 
 function isPrivateHostname(hostname: string) {
@@ -56,6 +73,22 @@ function isPrivateHostname(hostname: string) {
   if (normalized === "localhost" || normalized.endsWith(".localhost")) return true;
   if (isIP(normalized)) return isPrivateIpAddress(normalized);
   return false;
+}
+
+function isPublicDnsHostname(hostname: string) {
+  const normalized = hostname.replace(/^\[|\]$/gu, "").toLowerCase();
+  if (normalized === "localhost" || normalized.endsWith(".localhost")) return false;
+  if (
+    normalized.endsWith(".local") ||
+    normalized.endsWith(".lan") ||
+    normalized.endsWith(".home") ||
+    normalized.endsWith(".internal") ||
+    normalized.endsWith(".corp") ||
+    normalized.endsWith(".intranet")
+  ) return false;
+  if (!normalized.includes(".")) return false;
+  if (isIP(normalized)) return false;
+  return true;
 }
 
 export function parsePublicHttpUrl(value: string, options: WebsiteMetadataOptions = {}) {
@@ -73,7 +106,8 @@ export function parsePublicHttpUrl(value: string, options: WebsiteMetadataOption
 async function assertPublicResolvedHost(url: URL, options: WebsiteMetadataOptions) {
   if (options.allowPrivateHosts || options.fetchImpl || isIP(url.hostname.replace(/^\[|\]$/gu, ""))) return;
   const addresses = await lookup(url.hostname, { all: true, verbatim: true });
-  if (addresses.some((address) => isPrivateIpAddress(address.address))) {
+  const allowBenchmarkNetworkResolution = isPublicDnsHostname(url.hostname);
+  if (addresses.some((address) => isPrivateIpAddress(address.address) && (!allowBenchmarkNetworkResolution || !isBenchmarkNetworkIpAddress(address.address)))) {
     throw new Error("Private network URLs cannot be inspected");
   }
 }

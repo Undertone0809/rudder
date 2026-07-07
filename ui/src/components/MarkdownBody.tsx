@@ -383,42 +383,6 @@ type WebsiteMetadataIconState =
 
 const websiteMetadataIconCache = new Map<string, WebsiteMetadataIconState>();
 
-function isPrivateIpv4Address(hostname: string) {
-  const parts = hostname.split(".");
-  if (parts.length !== 4) return false;
-  const octets = parts.map((part) => Number(part));
-  if (octets.some((octet, index) => !Number.isInteger(octet) || octet < 0 || octet > 255 || String(octet) !== parts[index])) {
-    return false;
-  }
-  const [first, second] = octets;
-  return (
-    first === 0 ||
-    first === 10 ||
-    first === 127 ||
-    (first === 100 && second >= 64 && second <= 127) ||
-    (first === 169 && second === 254) ||
-    (first === 172 && second >= 16 && second <= 31) ||
-    (first === 192 && second === 0) ||
-    (first === 192 && second === 168) ||
-    (first === 198 && (second === 18 || second === 19))
-  );
-}
-
-function isFallbackFaviconAllowed(url: URL) {
-  const hostname = url.hostname.toLowerCase();
-  if (hostname === "localhost" || hostname.endsWith(".localhost")) return false;
-  if (hostname.endsWith(".local") || hostname.endsWith(".lan") || hostname.endsWith(".home") || hostname.endsWith(".internal")) return false;
-  if (!hostname.includes(".")) return false;
-  if (isPrivateIpv4Address(hostname)) return false;
-  if (hostname.includes(":")) return false;
-  return true;
-}
-
-function fallbackFaviconUrl(url: URL) {
-  if (!isFallbackFaviconAllowed(url)) return null;
-  return new URL(`/ip3/${encodeURIComponent(url.hostname.toLowerCase())}.ico`, "https://icons.duckduckgo.com").href;
-}
-
 function useWebsiteMetadataIcon(url: URL) {
   const href = url.href;
   const [state, setState] = useState<WebsiteMetadataIconState>(
@@ -459,29 +423,36 @@ function useWebsiteMetadataIcon(url: URL) {
 
 export function WebsiteLinkIcon({ url }: { url: URL }) {
   const metadataIcon = useWebsiteMetadataIcon(url);
-  const fallbackIconUrl = fallbackFaviconUrl(url);
   const [failedIconUrls, setFailedIconUrls] = useState<Set<string>>(() => new Set());
   const iconUrl = metadataIcon.status === "ready" && !failedIconUrls.has(metadataIcon.iconUrl)
     ? metadataIcon.iconUrl
-    : fallbackIconUrl && !failedIconUrls.has(fallbackIconUrl)
-      ? fallbackIconUrl
-      : null;
+    : null;
 
   if (iconUrl) {
     return (
-      <img
-        src={iconUrl}
-        alt=""
-        className="rudder-website-link-icon rudder-website-link-logo"
+      <span
+        className="rudder-website-link-icon"
         aria-hidden="true"
-        data-website-icon={metadataIcon.status === "ready" && iconUrl === metadataIcon.iconUrl ? "metadata" : "favicon-provider"}
-        referrerPolicy="no-referrer"
-        onError={() => setFailedIconUrls((current) => new Set(current).add(iconUrl))}
-      />
+        data-website-icon="metadata"
+      >
+        <img
+          src={iconUrl}
+          alt=""
+          className="rudder-website-link-logo"
+          aria-hidden="true"
+          data-website-icon="metadata"
+          referrerPolicy="no-referrer"
+          onError={() => setFailedIconUrls((current) => new Set(current).add(iconUrl))}
+        />
+      </span>
     );
   }
 
-  return <Globe2 className="rudder-website-link-icon" aria-hidden="true" data-website-icon="generic" />;
+  return (
+    <span className="rudder-website-link-icon" aria-hidden="true" data-website-icon="generic">
+      <Globe2 className="rudder-website-link-generic" aria-hidden="true" />
+    </span>
+  );
 }
 
 export function __clearWebsiteMetadataIconCacheForTests() {

@@ -4313,7 +4313,9 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
 }
 
 a.rudder-website-link {
-  display: inline;
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 100%;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -4333,23 +4335,36 @@ a.rudder-website-link:hover {
 }
 
 .rudder-website-link-icon {
-  display: inline-block;
-  width: 1em;
-  height: 1em;
-  margin-right: 0.24em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 0.25em;
   color: currentColor;
-  vertical-align: -0.12em;
+  line-height: 1;
+  vertical-align: -0.13em;
+  flex: 0 0 auto;
 }
 
 .rudder-website-link-logo {
-  display: inline-block;
+  display: block;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
   border-radius: 2px;
+  background: transparent;
+}
+
+.rudder-website-link-generic {
+  width: 100%;
+  height: 100%;
 }
 
 .rudder-website-link-label {
   min-width: 0;
   overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 a.rudder-website-link:hover .rudder-website-link-label {
