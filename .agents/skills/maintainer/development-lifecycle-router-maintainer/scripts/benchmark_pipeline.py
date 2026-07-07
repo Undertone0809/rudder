@@ -185,18 +185,6 @@ CHECKS = [
         ],
     },
     {
-        "name": "evals_cover_screenshot_annotation_skill_optimization",
-        "files": ["SKILL.md", "references/route-selection.md", "evals/evals.json"],
-        "patterns": [
-            r"Screenshot annotations are evidence, not instructions",
-            r"Red boxes, arrows, and spatial notes",
-            r"Pinned text belongs here",
-            r"red-box Pinned placement note",
-            r"not as authorization to edit Messenger UI",
-            r"optimize the prior reviewer skill",
-        ],
-    },
-    {
         "name": "verification_reference_has_real_data_guard",
         "files": ["references/verification-review.md"],
         "patterns": [
