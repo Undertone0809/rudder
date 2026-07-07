@@ -75,6 +75,22 @@ function isPrivateHostname(hostname: string) {
   return false;
 }
 
+function isPublicDnsHostname(hostname: string) {
+  const normalized = hostname.replace(/^\[|\]$/gu, "").toLowerCase();
+  if (normalized === "localhost" || normalized.endsWith(".localhost")) return false;
+  if (
+    normalized.endsWith(".local") ||
+    normalized.endsWith(".lan") ||
+    normalized.endsWith(".home") ||
+    normalized.endsWith(".internal") ||
+    normalized.endsWith(".corp") ||
+    normalized.endsWith(".intranet")
+  ) return false;
+  if (!normalized.includes(".")) return false;
+  if (isIP(normalized)) return false;
+  return true;
+}
+
 export function parsePublicHttpUrl(value: string, options: WebsiteMetadataOptions = {}) {
   const parsed = new URL(value);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
@@ -90,7 +106,8 @@ export function parsePublicHttpUrl(value: string, options: WebsiteMetadataOption
 async function assertPublicResolvedHost(url: URL, options: WebsiteMetadataOptions) {
   if (options.allowPrivateHosts || options.fetchImpl || isIP(url.hostname.replace(/^\[|\]$/gu, ""))) return;
   const addresses = await lookup(url.hostname, { all: true, verbatim: true });
-  if (addresses.some((address) => isBlockedResolvedIpAddress(address.address))) {
+  const allowBenchmarkNetworkResolution = isPublicDnsHostname(url.hostname);
+  if (addresses.some((address) => isPrivateIpAddress(address.address) && (!allowBenchmarkNetworkResolution || !isBenchmarkNetworkIpAddress(address.address)))) {
     throw new Error("Private network URLs cannot be inspected");
   }
 }

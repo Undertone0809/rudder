@@ -430,19 +430,29 @@ export function WebsiteLinkIcon({ url }: { url: URL }) {
 
   if (iconUrl) {
     return (
-      <img
-        src={iconUrl}
-        alt=""
-        className="rudder-website-link-icon rudder-website-link-logo"
+      <span
+        className="rudder-website-link-icon"
         aria-hidden="true"
         data-website-icon="metadata"
-        referrerPolicy="no-referrer"
-        onError={() => setFailedIconUrls((current) => new Set(current).add(iconUrl))}
-      />
+      >
+        <img
+          src={iconUrl}
+          alt=""
+          className="rudder-website-link-logo"
+          aria-hidden="true"
+          data-website-icon="metadata"
+          referrerPolicy="no-referrer"
+          onError={() => setFailedIconUrls((current) => new Set(current).add(iconUrl))}
+        />
+      </span>
     );
   }
 
-  return <Globe2 className="rudder-website-link-icon" aria-hidden="true" data-website-icon="generic" />;
+  return (
+    <span className="rudder-website-link-icon" aria-hidden="true" data-website-icon="generic">
+      <Globe2 className="rudder-website-link-generic" aria-hidden="true" />
+    </span>
+  );
 }
 
 export function __clearWebsiteMetadataIconCacheForTests() {

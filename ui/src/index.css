@@ -4368,7 +4368,9 @@ a.rudder-website-link:hover {
 }
 
 .rudder-website-link-icon {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 0.95em;
   height: 0.95em;
   margin-right: 0.25em;
@@ -4379,10 +4381,17 @@ a.rudder-website-link:hover {
 }
 
 .rudder-website-link-logo {
-  display: inline-block;
+  display: block;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
   border-radius: 2px;
   background: transparent;
+}
+
+.rudder-website-link-generic {
+  width: 100%;
+  height: 100%;
 }
 
 .rudder-website-link-label {

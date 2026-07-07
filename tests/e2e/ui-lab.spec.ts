@@ -170,6 +170,7 @@ test.describe("UI Lab", () => {
     const render = await websiteLink.evaluate((link) => {
       const style = window.getComputedStyle(link);
       const icon = link.querySelector(".rudder-website-link-icon");
+      const logo = link.querySelector("img.rudder-website-link-logo");
       const iconStyle = icon ? window.getComputedStyle(icon) : null;
       return {
         backgroundImage: style.backgroundImage,
@@ -179,6 +180,7 @@ test.describe("UI Lab", () => {
         iconDisplay: iconStyle?.display,
         iconHeight: icon ? icon.getBoundingClientRect().height : null,
         iconWidth: icon ? icon.getBoundingClientRect().width : null,
+        logoExists: Boolean(logo),
         paddingInlineEnd: style.paddingInlineEnd,
         paddingInlineStart: style.paddingInlineStart,
       };
@@ -188,7 +190,8 @@ test.describe("UI Lab", () => {
       borderTopWidth: "0px",
       borderRadius: "0px",
       display: "inline-flex",
-      iconDisplay: "inline-block",
+      iconDisplay: "flex",
+      logoExists: true,
       paddingInlineEnd: "0px",
       paddingInlineStart: "0px",
     });

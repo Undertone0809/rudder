@@ -138,6 +138,20 @@ describe("resolveWebsiteMetadata", () => {
     });
   });
 
+  it.each([
+    "https://service.internal/post",
+    "https://app.local/post",
+    "https://dashboard.corp/post",
+    "https://portal.intranet/post",
+    "https://intranet/post",
+  ])("rejects non-public hostnames that resolve through local 198.18/15 proxy addresses: %s", async (url) => {
+    lookupMock.mockResolvedValue([{ address: "198.18.0.42", family: 4 }]);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("fetch should not be called"));
+
+    await expect(resolveWebsiteMetadata(url)).rejects.toThrow("Private network URLs");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("rejects redirects to private-network metadata targets", async () => {
     const fetchImpl = async () => new Response(null, {
       status: 302,
