@@ -2203,8 +2203,11 @@ export function ChatMessageItem({
   const isUser = message.role === "user";
   const statusLabel = !isUser ? assistantStateLabel(message.status) : null;
   const canContinueInterrupted = Boolean(onContinueInterruptedMessage) && canContinueInterruptedChatMessage(message);
-  const canRetryFailed = Boolean(onRetryFailedMessage) && canRetryFailedChatMessage(message);
   const recoverableFailure = message.status === "failed" ? recoverableFailureFromMessage(message) : null;
+  const canRetryFailed = Boolean(onRetryFailedMessage) && canRetryFailedChatMessage(message);
+  const failedMessageTitle = recoverableFailure?.phase === "runtime_boot" || recoverableFailure?.action === "repair_runtime"
+    ? "Runtime unavailable"
+    : "Response failed";
   const isEmptyStreamingAssistant = !isUser && message.status === "streaming" && message.body.trim().length === 0;
   const isInlineEditing = isUser && Boolean(inlineEdit);
 
@@ -2239,7 +2242,7 @@ export function ChatMessageItem({
             >
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
               <div className="min-w-0 flex-1" role="alert" aria-live="assertive">
-                <div className="text-sm font-semibold leading-5">Response failed</div>
+                <div className="text-sm font-semibold leading-5">{failedMessageTitle}</div>
                 <div className="mt-0.5 text-xs leading-5 text-destructive/85">
                   {recoverableFailure?.message ?? "This assistant response failed before it completed."}
                 </div>

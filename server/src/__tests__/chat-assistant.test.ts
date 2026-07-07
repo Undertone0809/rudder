@@ -2260,6 +2260,48 @@ describe("chatAssistantService operator profile prompt injection", () => {
     );
   });
 
+  it("classifies adapter exits before model output as non-retryable runtime boot failures", async () => {
+    const svc = chatAssistantService({} as any);
+
+    mockAdapter.execute.mockImplementationOnce(async () => ({
+      summary: "",
+      resultJson: { stdout: "", stderr: "Killed: 9" },
+      timedOut: false,
+      exitCode: 137,
+      signal: "SIGKILL",
+      errorMessage: "Codex exited with code 137",
+    }));
+
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+    })).rejects.toMatchObject({
+      message: "Codex exited with code 137",
+      errorCode: "chat_runtime_boot_failed",
+      userMessage: "The assistant runtime did not start successfully. Fix the runtime command or environment, then run again.",
+      partialBody: "",
+      partialBodyUserVisible: false,
+      retryable: false,
+      failurePhase: "runtime_boot",
+      action: "repair_runtime",
+    });
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith(
+      "chat-run-1",
+      expect.objectContaining({
+        status: "failed",
+        errorCode: "chat_runtime_boot_failed",
+        resultJson: expect.objectContaining({
+          recoverable: false,
+          fallbackEnvelope: true,
+          retryable: false,
+          failurePhase: "runtime_boot",
+          action: "repair_runtime",
+        }),
+      }),
+    );
+  });
+
   it("keeps a completed result body visible when the runtime fails after emitting the result envelope", async () => {
     const svc = chatAssistantService({} as any);
 
@@ -2283,7 +2325,23 @@ describe("chatAssistantService operator profile prompt injection", () => {
       errorCode: "chat_adapter_failed",
       partialBody: "I have enough to answer.",
       partialBodyUserVisible: true,
+      retryable: true,
+      failurePhase: "model_generation",
+      action: "retry",
     });
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith(
+      "chat-run-1",
+      expect.objectContaining({
+        status: "failed",
+        errorCode: "chat_adapter_failed",
+        resultJson: expect.objectContaining({
+          recoverable: true,
+          retryable: true,
+          failurePhase: "model_generation",
+          action: "retry",
+        }),
+      }),
+    );
   });
 
   it("classifies chat timeouts as recoverable failed chat results", async () => {

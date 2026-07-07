@@ -1085,8 +1085,10 @@ export function canContinueInterruptedChatMessage(message: Pick<ChatMessage, "ro
   return message.role === "assistant" && message.status === "interrupted";
 }
 
-export function canRetryFailedChatMessage(message: Pick<ChatMessage, "role" | "kind" | "status" | "chatTurnId">) {
-  return message.role === "assistant"
+export function canRetryFailedChatMessage(message: Pick<ChatMessage, "role" | "kind" | "status" | "chatTurnId" | "structuredPayload" | "runId">) {
+  const failure = recoverableFailureFromMessage(message);
+  return failure?.retryable !== false
+    && message.role === "assistant"
     && message.kind === "message"
     && message.status === "failed"
     && Boolean(message.chatTurnId);
@@ -1131,7 +1133,18 @@ export function recoverableFailureFromMessage(
   const runId = typeof candidate.runId === "string" && candidate.runId.trim()
     ? candidate.runId.trim()
     : message.runId ?? null;
-  return { code, message: detailMessage, runId };
+  const retryable = typeof candidate.retryable === "boolean"
+    ? candidate.retryable
+    : typeof candidate.recoverable === "boolean"
+      ? candidate.recoverable
+      : true;
+  const phase = typeof candidate.phase === "string" && candidate.phase.trim()
+    ? candidate.phase.trim()
+    : null;
+  const action = typeof candidate.action === "string" && candidate.action.trim()
+    ? candidate.action.trim()
+    : null;
+  return { code, message: detailMessage, runId, retryable, phase, action };
 }
 
 export function findRetrySourceUserMessage(

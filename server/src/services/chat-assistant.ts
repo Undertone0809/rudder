@@ -622,15 +622,27 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         );
       }
       if ((result.exitCode ?? 0) !== 0 || result.errorMessage) {
-        const errorCode = "chat_adapter_failed";
+        const hasModelOutputEvidence = Boolean(
+          finalPartialBody
+          || partialBody
+          || rawResultText
+          || rawAssistantText,
+        );
+        const errorCode: ChatRecoverableFailureCode = hasModelOutputEvidence
+          ? "chat_adapter_failed"
+          : "chat_runtime_boot_failed";
+        const retryable = errorCode !== "chat_runtime_boot_failed";
         await finalizeChatRun({
           status: "failed",
           error: result.errorMessage ?? "Chat adapter execution failed",
           errorCode,
           resultJson: {
             outcome: "failed",
-            recoverable: true,
+            recoverable: retryable,
             fallbackEnvelope: true,
+            retryable,
+            failurePhase: errorCode === "chat_runtime_boot_failed" ? "runtime_boot" : "model_generation",
+            action: errorCode === "chat_runtime_boot_failed" ? "repair_runtime" : "retry",
             exitCode: result.exitCode ?? null,
             partialBody: finalPartialBody,
           },
@@ -642,6 +654,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           {
             errorCode,
             partialBodyUserVisible: Boolean(finalPartialBody),
+            retryable,
+            failurePhase: errorCode === "chat_runtime_boot_failed" ? "runtime_boot" : "model_generation",
+            action: errorCode === "chat_runtime_boot_failed" ? "repair_runtime" : "retry",
           },
         );
       }
