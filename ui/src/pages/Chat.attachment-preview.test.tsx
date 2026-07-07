@@ -1682,18 +1682,8 @@ describe("Chat Side Panel link handling", () => {
     expect(sidePanel).not.toBeNull();
     expect(sidePanel?.textContent).toContain("Open a panel");
 
-    const issueOption = Array.from(sidePanel!.querySelectorAll<HTMLButtonElement>("button")).find(
-      (candidate) => candidate.textContent?.includes("Issue"),
-    );
-    expect(issueOption).not.toBeUndefined();
-    await act(async () => {
-      issueOption?.click();
-      await Promise.resolve();
-    });
-
-    sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
-    expect(sidePanel?.textContent).toContain("Open an issue link");
-    expect(sidePanel?.querySelector<HTMLAnchorElement>('a[href="/issues"]')).toBeNull();
+    expect(sidePanel?.querySelector("[data-testid='chat-side-panel-empty-issue-target']")).toBeNull();
+    expect(sidePanel?.textContent).not.toContain("Pin an issue workspace");
 
     const addTabButton = sidePanel!.querySelector<HTMLButtonElement>('[data-testid="chat-side-panel-add-tab"]');
     expect(addTabButton).not.toBeNull();
@@ -1716,7 +1706,7 @@ describe("Chat Side Panel link handling", () => {
 
     sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     expect(sidePanel?.textContent).toContain("Library root");
-    expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(2);
+    expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(1);
   });
 
   it("opens an interactive browser target from the empty Side Panel picker", async () => {

@@ -188,12 +188,6 @@ function SidePanelEmptyState({
       icon: Folder,
       target: { kind: "library_directory", directoryPath: "", label: "Library" },
     },
-    {
-      label: "Issue",
-      description: "Pin an issue workspace and edit task fields here.",
-      icon: Circle,
-      target: { kind: "placeholder", targetKind: "issue", label: "Issue" },
-    },
   ];
 
   return (
