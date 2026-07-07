@@ -74,7 +74,7 @@ describe("InlineEditor", () => {
     expect(html).not.toContain("text-foreground");
   });
 
-  it("keeps always-edit multiline markdown display-first until focused", () => {
+  it("renders always-edit multiline markdown directly as an editor", () => {
     const html = renderToStaticMarkup(
       <InlineEditor
         value="Issue context"
@@ -85,12 +85,12 @@ describe("InlineEditor", () => {
     );
 
     expect(html).toContain("Issue context");
-    expect(html).toContain("data-testid=\"markdown-body\"");
-    expect(html).not.toContain("data-testid=\"markdown-editor\"");
+    expect(html).toContain("data-testid=\"markdown-editor\"");
+    expect(html).not.toContain("data-testid=\"markdown-body\"");
     expect(html).not.toContain("hover:bg-accent/50");
   });
 
-  it("opens the multiline markdown editor after click", async () => {
+  it("keeps always-edit multiline markdown in edit mode after blur", async () => {
     const host = document.createElement("div");
     document.body.appendChild(host);
     const root = createRoot(host);
@@ -105,11 +105,11 @@ describe("InlineEditor", () => {
       );
     });
 
-    expect(host.querySelector("[data-testid='markdown-body']")).toBeTruthy();
-    expect(host.querySelector("[data-testid='markdown-editor']")).toBeNull();
-    const display = host.querySelector(".rudder-inline-markdown-surface");
+    expect(host.querySelector("[data-testid='markdown-body']")).toBeNull();
+    expect(host.querySelector("[data-testid='markdown-editor']")).toBeTruthy();
+    const surface = host.querySelector(".rudder-inline-markdown-surface");
     await act(async () => {
-      display!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      surface!.dispatchEvent(new FocusEvent("blur", { bubbles: true, relatedTarget: null }));
     });
 
     expect(host.querySelector("[data-testid='markdown-editor']")).toBeTruthy();

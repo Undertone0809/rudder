@@ -175,21 +175,72 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Reference issue target");
     await expect(sidePanel).toContainText("Issue details should stay beside the active chat.");
     await expect(sidePanel).toContainText("Existing side panel comment should stay visible.");
-    await expect(sidePanel.getByLabel("Edit issue")).toBeVisible();
+    await expect(sidePanel.getByLabel("Edit issue")).toHaveCount(0);
+    await expect(sidePanel.getByRole("region", { name: "Issue properties" })).toBeVisible();
+    await expect(sidePanel.getByText("Properties", { exact: true })).toBeVisible();
+    await expect(sidePanel.getByText("Reference Automation Agent", { exact: true })).toBeVisible();
+    await expect(sidePanel.getByText("engineer", { exact: true })).toBeVisible();
     await expect(sidePanel.getByLabel("Close Side Panel")).toBeVisible();
     await expect(sidePanel.getByLabel("Expand Side Panel")).toBeVisible();
     await expect(sidePanel.getByRole("link", { name: "Full page" })).toHaveCount(0);
 
-    await sidePanel.locator('button:has([data-slot="issue-status-icon"])').first().click();
+    const propertiesPanel = sidePanel.getByRole("region", { name: "Issue properties" });
+    await propertiesPanel.locator('button:has([data-slot="issue-status-icon"])').first().click();
     await page.getByRole("menuitemradio", { name: "Done" }).click();
     await expect(sidePanel).toContainText("done");
 
-    await sidePanel.getByLabel("Edit issue").click();
-    await sidePanel.getByLabel("Issue title").fill("Reference issue target edited");
-    await sidePanel.getByLabel("Issue description").fill("Edited from the chat detail panel.");
-    await sidePanel.getByRole("button", { name: "Save" }).click();
+    const reassigneeRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Side Panel Reviewer",
+        role: "pm",
+        title: "Review Lead",
+      },
+    });
+    expect(reassigneeRes.ok(), await reassigneeRes.text()).toBe(true);
+    const reassignee = await reassigneeRes.json() as { id: string };
+
+    await propertiesPanel.getByText("Reference Automation Agent", { exact: true }).click();
+    await page.getByPlaceholder("Search assignees...").fill("Side Panel Reviewer");
+    const assigneePatchResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "PATCH"
+        && url.pathname.endsWith(`/api/issues/${issue.id}`);
+    });
+    await page.getByRole("button", { name: /Side Panel Reviewer/ }).click();
+    const assigneePatchRes = await assigneePatchResponse;
+    expect(assigneePatchRes.ok(), await assigneePatchRes.text()).toBe(true);
+    await expect(propertiesPanel.getByText("Side Panel Reviewer", { exact: true })).toBeVisible();
+    await expect(propertiesPanel.getByText("Review Lead", { exact: true })).toBeVisible();
+
+    await sidePanel.getByRole("heading", { name: "Reference issue target" }).click();
+    const titlePatchResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "PATCH"
+        && url.pathname.endsWith(`/api/issues/${issue.id}`);
+    });
+    await sidePanel.locator("textarea").first().fill("Reference issue target edited");
+    await page.keyboard.press("Enter");
+    const titlePatchRes = await titlePatchResponse;
+    expect(titlePatchRes.ok(), await titlePatchRes.text()).toBe(true);
+
+    const descriptionPatchResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "PATCH"
+        && url.pathname.endsWith(`/api/issues/${issue.id}`);
+    });
+    const descriptionEditor = sidePanel.locator(".rudder-inline-markdown-surface .rudder-milkdown-content [contenteditable='true']").first();
+    await expect(descriptionEditor).toBeVisible({ timeout: 15_000 });
+    await descriptionEditor.fill("Edited from the chat detail panel.");
+    await propertiesPanel.click();
+    const descriptionPatchRes = await descriptionPatchResponse;
+    expect(descriptionPatchRes.ok(), await descriptionPatchRes.text()).toBe(true);
     await expect(sidePanel).toContainText("Reference issue target edited");
     await expect(sidePanel).toContainText("Edited from the chat detail panel.");
+
+    await sidePanel.getByLabel("Expand Side Panel").click();
+    await expect(sidePanel).toContainText("Sub-issues");
+    await expect(sidePanel).toContainText("Activity");
+    await expect(propertiesPanel).toBeVisible();
 
     const commentComposer = sidePanel.locator(".chat-composer .rudder-milkdown-content [contenteditable='true']").last();
     await expect(commentComposer).toBeVisible({ timeout: 15_000 });
@@ -211,6 +262,7 @@ test.describe("Chat Side Panel", () => {
     expect(updatedIssue.status).toBe("done");
     expect(updatedIssue.title).toBe("Reference issue target edited");
     expect(updatedIssue.description).toBe("Edited from the chat detail panel.");
+    expect((updatedIssue as { assigneeAgentId?: string | null }).assigneeAgentId).toBe(reassignee.id);
 
     const commentsRes = await page.request.get(`/api/issues/${issue.id}/comments`);
     expect(commentsRes.ok(), await commentsRes.text()).toBe(true);

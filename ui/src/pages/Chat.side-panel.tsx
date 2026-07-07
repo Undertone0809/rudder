@@ -6,13 +6,13 @@ import { issuesApi } from "@/api/issues";
 import { organizationsApi } from "@/api/orgs";
 import { AgentIcon } from "@/components/AgentIconPicker";
 import { CommentThread } from "@/components/CommentThread";
+import { InlineEditor } from "@/components/InlineEditor";
+import { IssueProperties } from "@/components/IssueProperties";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { PriorityIcon } from "@/components/PriorityIcon";
 import { StatusBadge } from "@/components/StatusBadge";
-import { StatusIcon } from "@/components/StatusIcon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { useSidePanel } from "@/context/SidePanelContext";
 import { useOperatorDisplayName } from "@/hooks/useOperatorDisplayName";
 import { queryKeys } from "@/lib/queryKeys";
@@ -44,7 +44,6 @@ import {
   Minimize2,
   PackageOpen,
   PanelRightClose,
-  Pencil,
   Play,
   Plus,
   RotateCw,
@@ -286,6 +285,7 @@ function ChatIssueSidePanelView({
   currentUserId,
   agentMap,
   operatorDisplayName,
+  expanded = false,
 }: {
   issue: Issue;
   comments: IssueComment[];
@@ -297,45 +297,11 @@ function ChatIssueSidePanelView({
   currentUserId: string | null;
   agentMap: Map<string, Agent>;
   operatorDisplayName: string | null;
+  expanded?: boolean;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [titleDraft, setTitleDraft] = useState(issue.title);
-  const [descriptionDraft, setDescriptionDraft] = useState(issue.description ?? "");
   const [error, setError] = useState<string | null>(null);
   const issueRef = issue.identifier ?? issue.id.slice(0, 8);
   const projectName = issue.project?.name ?? null;
-  const assigneeLabel = issue.assigneeAgentId ?? issue.assigneeUserId ?? "Unassigned";
-  const reviewerLabel = issue.reviewerAgentId ?? issue.reviewerUserId ?? "No reviewer";
-  const titleChanged = titleDraft.trim() !== issue.title;
-  const descriptionChanged = descriptionDraft !== (issue.description ?? "");
-  const canSave = titleDraft.trim().length > 0 && (titleChanged || descriptionChanged);
-
-  useEffect(() => {
-    if (editing) return;
-    setTitleDraft(issue.title);
-    setDescriptionDraft(issue.description ?? "");
-  }, [editing, issue.description, issue.title]);
-
-  const saveDraft = async () => {
-    if (!canSave) return;
-    const patch: Record<string, unknown> = {};
-    if (titleChanged) patch.title = titleDraft.trim();
-    if (descriptionChanged) patch.description = descriptionDraft.trim() || null;
-    setError(null);
-    try {
-      await onUpdate(patch);
-      setEditing(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not update this issue.");
-    }
-  };
-
-  const cancelDraft = () => {
-    setTitleDraft(issue.title);
-    setDescriptionDraft(issue.description ?? "");
-    setError(null);
-    setEditing(false);
-  };
 
   const updateIssueField = async (data: Record<string, unknown>) => {
     setError(null);
@@ -348,128 +314,115 @@ function ChatIssueSidePanelView({
 
   return (
     <div className="flex min-h-full flex-col" data-testid="chat-side-panel-issue-view">
-      <div className="space-y-4 border-b border-[color:var(--border-soft)] pb-4">
-        <div className="flex items-start justify-between gap-3">
-          {editing ? (
-            <Input
-              aria-label="Issue title"
-              value={titleDraft}
-              onChange={(event) => setTitleDraft(event.currentTarget.value)}
-              className="h-9 text-base font-semibold"
-              disabled={updating}
+      <div className={cn(
+        "grid min-h-0 flex-1 gap-6",
+        expanded && "xl:grid-cols-[minmax(0,1fr)_280px] xl:items-start",
+      )}>
+        <div className="min-w-0 space-y-5">
+          <div className="space-y-3 border-b border-[color:var(--border-soft)] pb-4">
+            <div className="flex items-start justify-between gap-3">
+              <InlineEditor
+                value={issue.title}
+                onSave={(title) => updateIssueField({ title })}
+                as="h2"
+                className="min-w-0 flex-1 text-xl font-bold leading-7 text-foreground"
+                placeholder="Add a title..."
+              />
+              <span className="mt-1 shrink-0 rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] px-2 py-0.5 text-xs text-muted-foreground">
+                {issueRef}
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusBadge status={issue.status} />
+              <span className="inline-flex items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-2.5 py-1 text-xs font-medium text-muted-foreground shadow-[var(--shadow-sm)]">
+                <PriorityIcon priority={issue.priority} showLabel />
+              </span>
+              {projectName ? (
+                <span className="rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-2.5 py-1 text-xs font-medium text-muted-foreground shadow-[var(--shadow-sm)]">{projectName}</span>
+              ) : null}
+            </div>
+            <InlineEditor
+              value={issue.description ?? ""}
+              onSave={(description) => updateIssueField({ description: description.trim() || null })}
+              as="p"
+              className="text-[15px] leading-7 text-foreground"
+              placeholder="Add a description..."
+              multiline
+              editorEngine="milkdown"
+              alwaysEdit
+              variant="issue-description"
             />
-          ) : (
-            <h3 className="min-w-0 flex-1 text-lg font-semibold leading-7 text-foreground">{issue.title}</h3>
-          )}
-          <span className="shrink-0 rounded-full border border-[color:var(--border-soft)] px-2 py-0.5 text-xs text-muted-foreground">
-            {issueRef}
-          </span>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge status={issue.status} />
-            <span className="inline-flex items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-2.5 py-1 text-xs font-medium text-muted-foreground shadow-[var(--shadow-sm)]">
-              <PriorityIcon priority={issue.priority} showLabel />
-            </span>
-            {projectName ? (
-              <span className="rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-2.5 py-1 text-xs font-medium text-muted-foreground shadow-[var(--shadow-sm)]">{projectName}</span>
+            {error ? (
+              <div role="alert" className="rounded-[var(--radius-md)] border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {error}
+              </div>
             ) : null}
           </div>
-          <span className="inline-flex items-center gap-2">
-            <StatusIcon status={issue.status} onChange={(status) => void updateIssueField({ status })} />
-            <PriorityIcon priority={issue.priority} onChange={(priority) => void updateIssueField({ priority })} />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              aria-label={editing ? "Cancel issue edit" : "Edit issue"}
-              onClick={editing ? cancelDraft : () => setEditing(true)}
-              disabled={updating}
-            >
-              {editing ? <X className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
-            </Button>
-          </span>
-        </div>
-        {error ? (
-          <div role="alert" className="rounded-[var(--radius-md)] border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {error}
-          </div>
-        ) : null}
-      </div>
 
-      <div className="space-y-2 border-b border-[color:var(--border-soft)] py-4">
-        <SidePanelDetailRow label="Owner">
-          <span className="truncate">{assigneeLabel}</span>
-        </SidePanelDetailRow>
-        <SidePanelDetailRow label="Reviewer">
-          <span className="truncate">{reviewerLabel}</span>
-        </SidePanelDetailRow>
-        <SidePanelDetailRow label="Project">
-          <span className="truncate">{projectName ?? "No project"}</span>
-        </SidePanelDetailRow>
-        <SidePanelDetailRow label="Updated">
-          <span className="truncate">{sidePanelDate(issue.updatedAt)}</span>
-        </SidePanelDetailRow>
-      </div>
-
-      <section className="space-y-2 border-b border-[color:var(--border-soft)] py-4">
-        <div className="flex items-center justify-between gap-2">
-          <h4 className="text-sm font-semibold text-foreground">Details</h4>
-          {editing ? (
-            <div className="flex items-center gap-2">
-              <Button type="button" variant="ghost" size="sm" onClick={cancelDraft} disabled={updating}>
-                Cancel
-              </Button>
-              <Button type="button" size="sm" onClick={() => void saveDraft()} disabled={!canSave || updating}>
-                {updating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                Save
-              </Button>
+          <section className="space-y-3 border-b border-[color:var(--border-soft)] pb-5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm">
+                <div className="flex items-center gap-1.5 font-medium text-foreground">
+                  <Boxes className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span>Sub-issues</span>
+                </div>
+                <span className="rounded-sm border border-[color:var(--border-soft)] px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                  0
+                </span>
+              </div>
             </div>
-          ) : null}
-        </div>
-        {editing ? (
-          <Textarea
-            aria-label="Issue description"
-            value={descriptionDraft}
-            onChange={(event) => setDescriptionDraft(event.currentTarget.value)}
-            className="min-h-36 resize-y text-sm leading-6"
-            disabled={updating}
-          />
-        ) : issue.description ? (
-          <p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{issue.description}</p>
-        ) : (
-          <p className="text-sm text-muted-foreground">No description.</p>
-        )}
-      </section>
+            <p className="text-xs text-muted-foreground">No sub-issues.</p>
+          </section>
 
-      <section className="flex min-h-[10rem] flex-1 flex-col py-4">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <h4 className="text-sm font-semibold text-foreground">Comment</h4>
-          <span className="text-xs text-muted-foreground">
-            {addingComment ? "Posting..." : `${comments.filter((comment) => !comment.deletedAt).length}`}
-          </span>
-        </div>
-        <div className="mb-3 space-y-3 text-sm text-muted-foreground">
-          {commentId ? (
-            <div className="rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-2">
-              Target comment: <span className="font-mono text-foreground">{commentId}</span>
+          <section className="flex min-h-[10rem] flex-col py-1">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h4 className="text-sm font-semibold text-foreground">Activity</h4>
+              <span className="text-xs text-muted-foreground">
+                {addingComment ? "Posting..." : `${comments.filter((comment) => !comment.deletedAt).length}`}
+              </span>
             </div>
-          ) : null}
+            <div className="mb-3 space-y-3 text-sm text-muted-foreground">
+              {commentId ? (
+                <div className="rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-2">
+                  Target comment: <span className="font-mono text-foreground">{commentId}</span>
+                </div>
+              ) : null}
+            </div>
+            <CommentThread
+              comments={comments}
+              orgId={issue.orgId}
+              projectId={issue.projectId}
+              issueStatus={issue.status}
+              agentMap={agentMap}
+              currentUserId={currentUserId}
+              operatorDisplayName={operatorDisplayName}
+              hideHeading
+              emptyMessage="No comments yet."
+              draftKey={`rudder:side-panel-issue-comment-draft:${issue.id}`}
+              onAdd={onAddComment}
+            />
+          </section>
         </div>
-        <CommentThread
-          comments={comments}
-          orgId={issue.orgId}
-          projectId={issue.projectId}
-          issueStatus={issue.status}
-          agentMap={agentMap}
-          currentUserId={currentUserId}
-          operatorDisplayName={operatorDisplayName}
-          hideHeading
-          emptyMessage="No comments yet."
-          draftKey={`rudder:side-panel-issue-comment-draft:${issue.id}`}
-          onAdd={onAddComment}
-        />
-      </section>
+
+        <aside className={cn("space-y-3", expanded && "xl:sticky xl:top-0")}>
+          <section aria-label="Issue properties" className="rounded-lg border border-border bg-background/80 p-3">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <p className="text-[11px] font-medium text-muted-foreground">Properties</p>
+            </div>
+            <IssueProperties issue={issue} onUpdate={(data) => void updateIssueField(data)} />
+          </section>
+          <section className="rounded-lg border border-border bg-background/80 p-3">
+            <div className="space-y-2 text-sm">
+              <SidePanelDetailRow label="Created">
+                <span className="truncate">{sidePanelDate(issue.createdAt)}</span>
+              </SidePanelDetailRow>
+              <SidePanelDetailRow label="Updated">
+                <span className="truncate">{sidePanelDate(issue.updatedAt)}</span>
+              </SidePanelDetailRow>
+            </div>
+          </section>
+        </aside>
+      </div>
     </div>
   );
 }
@@ -1173,11 +1126,12 @@ export function ChatSidePanel({
   const sidePanel = useSidePanel();
   const queryClient = useQueryClient();
   const operatorDisplayName = useOperatorDisplayName();
+  const { openTarget } = sidePanel;
 
   useEffect(() => {
     if (!target) return;
-    sidePanel.openTarget(target);
-  }, [sidePanel, target]);
+    openTarget(target);
+  }, [openTarget, target]);
 
   const visibleTabs = sidePanel.tabs;
   const activeTarget = useMemo(() => {
@@ -1452,6 +1406,7 @@ export function ChatSidePanel({
               currentUserId={currentUserId}
               agentMap={agentMap}
               operatorDisplayName={operatorDisplayName}
+              expanded={expanded}
               onUpdate={(data) => updateIssueMutation.mutateAsync({ issueId: issue.id, data })}
               onAddComment={async (body, reopen) => {
                 await addIssueCommentMutation.mutateAsync({
