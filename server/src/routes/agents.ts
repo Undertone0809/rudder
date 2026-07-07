@@ -51,6 +51,7 @@ import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import { redactEventPayload } from "../redaction.js";
+import { listAgentRuntimeAvailability } from "../services/agent-runtime-availability.js";
 import { assetService } from "../services/assets.js";
 import {
   loadDefaultAgentInstructionsBundle,
@@ -1120,6 +1121,13 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     const type = req.params.type as string;
     const models = await listAgentRuntimeModels(type);
     res.json(models);
+  });
+
+  router.get("/orgs/:orgId/adapters/availability", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    await assertCanReadConfigurations(req, orgId);
+    const availability = await listAgentRuntimeAvailability();
+    res.json(availability);
   });
 
   router.post(

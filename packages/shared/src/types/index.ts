@@ -33,7 +33,7 @@ export type {
 export type {
   Agent,
   AgentAccessState,
-  AgentChainOfCommandEntry, AgentConfigRevision, AgentDetail, AgentInstructionsBundle, AgentInstructionsBundleMode, AgentInstructionsFileDetail, AgentInstructionsFileSummary, AgentKeyCreated, AgentPermissions, AgentRuntimeEnvironmentCheck, AgentRuntimeEnvironmentCheckLevel, AgentRuntimeEnvironmentTestResult, AgentRuntimeEnvironmentTestStatus
+  AgentChainOfCommandEntry, AgentConfigRevision, AgentDetail, AgentInstructionsBundle, AgentInstructionsBundleMode, AgentInstructionsFileDetail, AgentInstructionsFileSummary, AgentKeyCreated, AgentPermissions, AgentRuntimeAvailability, AgentRuntimeAvailabilityStatus, AgentRuntimeEnvironmentCheck, AgentRuntimeEnvironmentCheckLevel, AgentRuntimeEnvironmentTestResult, AgentRuntimeEnvironmentTestStatus
 } from "./agent.js";
 export type { Approval, ApprovalComment, IssueLinkedApproval } from "./approval.js";
 export type { AssetImage } from "./asset.js";

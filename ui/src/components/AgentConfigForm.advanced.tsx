@@ -4,6 +4,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import type {
+  AgentRuntimeAvailability,
   EnvBinding,
   OrganizationSecret
 } from "@rudderhq/shared";
@@ -136,6 +137,11 @@ export function RuntimeAdvancedOptions({
 
 export const ENABLED_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "gemini_local", "opencode_local", "pi_local", "cursor"]);
 const HIDDEN_ADAPTER_MENU_TYPES = new Set(["process", "http"]);
+const AVAILABILITY_GROUP_LABELS = {
+  available: "Ready on this machine",
+  unavailable: "Needs setup",
+  unknown: "Other runtimes",
+} as const;
 
 /** Display list includes operator-facing runtime choices plus selected coming-soon entries. */
 export const ADAPTER_DISPLAY_LIST: { value: string; label: string; comingSoon: boolean }[] = [
@@ -150,11 +156,25 @@ export function AdapterTypeDropdown({
   value,
   onChange,
   disabled = false,
+  availability = [],
 }: {
   value: string;
   onChange: (type: string) => void;
   disabled?: boolean;
+  availability?: AgentRuntimeAvailability[];
 }) {
+  const availabilityByType = new Map(availability.map((item) => [item.agentRuntimeType, item]));
+  const groupedItems = (["available", "unavailable", "unknown"] as const)
+    .map((status) => ({
+      status,
+      items: ADAPTER_DISPLAY_LIST.filter((item) => {
+        const entry = availabilityByType.get(item.value);
+        const itemStatus = entry?.status ?? "unknown";
+        return itemStatus === status;
+      }),
+    }))
+    .filter((group) => group.items.length > 0);
+
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -170,29 +190,46 @@ export function AdapterTypeDropdown({
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-1" align="start">
-        {ADAPTER_DISPLAY_LIST.map((item) => (
-          <button
-            key={item.value}
-            disabled={disabled || item.comingSoon}
-            className={cn(
-              "flex items-center justify-between w-full px-2 py-1.5 text-sm rounded",
-              disabled || item.comingSoon
-                ? "opacity-40 cursor-not-allowed"
-                : "hover:bg-accent/50",
-              item.value === value && !item.comingSoon && "bg-accent",
-            )}
-            onClick={() => {
-              if (!item.comingSoon) onChange(item.value);
-            }}
-          >
-            <span className="inline-flex items-center gap-1.5">
-              <RuntimeLogoIcon runtimeType={item.value} />
-              <span>{item.label}</span>
-            </span>
-            {item.comingSoon && (
-              <span className="text-[10px] text-muted-foreground">Coming soon</span>
-            )}
-          </button>
+        {groupedItems.map((group) => (
+          <div key={group.status} className="py-1 first:pt-0 last:pb-0">
+            <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              {AVAILABILITY_GROUP_LABELS[group.status]}
+            </div>
+            {group.items.map((item) => {
+              const entry = availabilityByType.get(item.value);
+              const unavailable = entry?.status === "unavailable";
+              return (
+                <button
+                  key={item.value}
+                  title={entry?.hint ?? entry?.message}
+                  disabled={disabled || item.comingSoon}
+                  className={cn(
+                    "flex items-center justify-between gap-2 w-full px-2 py-1.5 text-sm rounded",
+                    disabled || item.comingSoon
+                      ? "opacity-40 cursor-not-allowed"
+                      : "hover:bg-accent/50",
+                    item.value === value && !item.comingSoon && "bg-accent",
+                    unavailable && "text-muted-foreground",
+                  )}
+                  onClick={() => {
+                    if (!item.comingSoon) onChange(item.value);
+                  }}
+                >
+                  <span className="inline-flex min-w-0 items-center gap-1.5">
+                    <RuntimeLogoIcon runtimeType={item.value} />
+                    <span className="truncate">{item.label}</span>
+                  </span>
+                  {item.comingSoon ? (
+                    <span className="shrink-0 text-[10px] text-muted-foreground">Coming soon</span>
+                  ) : unavailable ? (
+                    <span className="shrink-0 text-[10px] text-amber-700 dark:text-amber-300">Default CLI missing</span>
+                  ) : entry?.status === "available" ? (
+                    <span className="shrink-0 text-[10px] text-green-700 dark:text-green-300">Ready</span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
         ))}
       </PopoverContent>
     </Popover>

@@ -3,6 +3,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
 import type {
+  AgentRuntimeAvailability,
   AgentRuntimeEnvironmentTestResult,
   OrganizationSecret
 } from "@rudderhq/shared";
@@ -148,6 +149,7 @@ export type RuntimeProviderCardProps = {
   runtimeTypeHint?: string;
   createValues?: CreateConfigValues | null;
   createSet?: ((patch: Partial<CreateConfigValues>) => void) | null;
+  adapterAvailability?: AgentRuntimeAvailability[];
   environmentStatus?: RuntimeEnvironmentStatus;
   triggerTestId?: string;
   disabled?: boolean;
@@ -176,6 +178,7 @@ export function RuntimeProviderCard({
   runtimeTypeHint = help.agentRuntimeType,
   createValues,
   createSet,
+  adapterAvailability,
   environmentStatus,
   triggerTestId,
   disabled = false,
@@ -261,7 +264,12 @@ export function RuntimeProviderCard({
       <div className="space-y-3">
         {!hideRuntimeType && (
           <Field label={runtimeTypeLabel} hint={runtimeTypeHint}>
-            <AdapterTypeDropdown value={runtimeType} onChange={onRuntimeTypeChange} disabled={disabled} />
+            <AdapterTypeDropdown
+              value={runtimeType}
+              onChange={onRuntimeTypeChange}
+              disabled={disabled}
+              availability={adapterAvailability}
+            />
           </Field>
         )}
         <ModelDropdown
