@@ -225,6 +225,23 @@ async function createIssue(baseUrl, companyId, assigneeAgentId) {
   return await response.json();
 }
 
+async function createChat(baseUrl, companyId) {
+  console.log("[desktop-smoke] creating chat");
+  const response = await fetch(`${baseUrl}/api/orgs/${companyId}/chats`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: "Desktop browser smoke chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    }),
+  });
+  if (response.status !== 201) {
+    throw new Error(`create chat failed (${response.status}): ${await response.text()}`);
+  }
+  return await response.json();
+}
+
 async function createAgentApiKey(baseUrl, agentId) {
   console.log("[desktop-smoke] creating agent API key");
   const response = await fetch(`${baseUrl}/api/agents/${agentId}/keys`, {
@@ -633,6 +650,43 @@ async function verifyOrganizationWorkspacesNavigation(electronApp, page, company
   return page;
 }
 
+async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix) {
+  console.log("[desktop-smoke] verifying chat Side Panel Browser webview");
+  const chat = await createChat(baseUrl, companyId);
+  const targetPath = `/${issuePrefix}/messenger/chat/${chat.id}`;
+  await page.evaluate(({ nextCompanyId, nextPath }) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", nextCompanyId);
+    window.history.replaceState({}, "", nextPath);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, {
+    nextCompanyId: companyId,
+    nextPath: targetPath,
+  });
+  await page.waitForURL(new RegExp(`/${issuePrefix}/messenger/chat/${chat.id}$`), { timeout: 30_000 });
+  await page.waitForLoadState("networkidle");
+  await page.getByTestId("side-panel-hover-edge").hover();
+  await page.getByTestId("global-side-panel-trigger").click();
+  const sidePanel = page.getByTestId("chat-side-panel");
+  await sidePanel.waitFor({ state: "visible", timeout: 15_000 });
+  await sidePanel.getByRole("button", { name: /Browser/ }).click();
+  await sidePanel.getByTestId("chat-side-panel-browser-view").waitFor({ state: "visible", timeout: 15_000 });
+
+  const healthUrl = `${baseUrl}/api/health`;
+  await sidePanel.getByLabel("Browser URL").fill(healthUrl);
+  await sidePanel.getByLabel("Browser URL").press("Enter");
+  await page.waitForFunction(async ({ expectedUrl }) => {
+    const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview']");
+    if (!webview || typeof webview.getURL !== "function") return false;
+    if (webview.getURL() !== expectedUrl) return false;
+    if (typeof webview.executeJavaScript !== "function") return false;
+    const bodyText = await webview.executeJavaScript("document.body?.innerText ?? ''");
+    return bodyText.includes('"ok"') || bodyText.includes("ok");
+  }, { expectedUrl: healthUrl }, { timeout: 30_000 });
+
+  console.log("[desktop-smoke] chat Side Panel Browser loaded local health URL");
+  return page;
+}
+
 async function assertDesktopServiceWorkersDisabled(page) {
   const state = await page.evaluate(async () => {
     const registrations = "serviceWorker" in navigator
@@ -766,6 +820,7 @@ async function runCleanScenario(mode) {
       company.id,
       company.issuePrefix,
     );
+    firstRun.page = await verifyChatSidePanelBrowser(firstRun.page, firstRun.baseUrl, company.id, company.issuePrefix);
     await verifySettingsOverlayFlow(firstRun.page, company.id, company.issuePrefix);
     console.log("[desktop-smoke] closing first app run");
     await closeDesktop(firstRun.electronApp);
@@ -776,6 +831,21 @@ async function runCleanScenario(mode) {
   } catch (error) {
     console.error("[desktop-smoke] clean scenario failed", error);
     await closeDesktop(firstRun.electronApp).catch(() => {});
+    throw error;
+  }
+}
+
+async function runBrowserScenario(mode) {
+  const scenarioRoot = path.join(tmpRoot, "browser");
+  const ports = await allocateSmokePorts();
+  const run = await launchDesktop(scenarioRoot, mode, ports);
+  try {
+    const company = await createCompany(run.baseUrl);
+    await verifyChatSidePanelBrowser(run.page, run.baseUrl, company.id, company.issuePrefix);
+    await closeDesktop(run.electronApp);
+  } catch (error) {
+    console.error("[desktop-smoke] browser scenario failed", error);
+    await closeDesktop(run.electronApp).catch(() => {});
     throw error;
   }
 }
@@ -805,7 +875,7 @@ function resolveScenarioList(mode, scenario) {
     return mode === "packaged" ? ["clean", "upgrade"] : ["clean"];
   }
   if (scenario === "all") return ["clean", "upgrade"];
-  if (scenario === "clean" || scenario === "upgrade") return [scenario];
+  if (scenario === "clean" || scenario === "upgrade" || scenario === "browser") return [scenario];
   throw new Error(`Unknown smoke scenario: ${scenario}`);
 }
 
@@ -815,6 +885,8 @@ try {
     console.log(`[desktop-smoke] running ${scenario} scenario`);
     if (scenario === "clean") {
       await runCleanScenario(smokeMode);
+    } else if (scenario === "browser") {
+      await runBrowserScenario(smokeMode);
     } else {
       await runUpgradeScenario(smokeMode);
     }

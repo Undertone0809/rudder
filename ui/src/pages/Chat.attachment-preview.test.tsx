@@ -1755,7 +1755,7 @@ describe("Chat Side Panel link handling", () => {
     const urlInput = sidePanel!.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]');
     expect(urlInput).not.toBeNull();
     await act(async () => {
-      urlInput!.value = "example.com";
+      urlInput!.value = "localhost:3100/api/health";
       urlInput!.dispatchEvent(new Event("input", { bubbles: true }));
       urlInput!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
       await Promise.resolve();
@@ -1765,8 +1765,8 @@ describe("Chat Side Panel link handling", () => {
     expect(sidePanel?.querySelector("[data-testid='chat-side-panel-browser-start']")).toBeNull();
     const webview = sidePanel?.querySelector<HTMLElement>("[data-testid='chat-side-panel-browser-webview']");
     expect(webview).not.toBeNull();
-    expect(webview?.getAttribute("src")).toBe("https://example.com");
-    expect(Array.from(sidePanel!.querySelectorAll<HTMLElement>("[data-testid='chat-side-panel-tab']")).at(0)?.textContent).toContain("example.com");
+    expect(webview?.getAttribute("src")).toBe("http://localhost:3100/api/health");
+    expect(Array.from(sidePanel!.querySelectorAll<HTMLElement>("[data-testid='chat-side-panel-tab']")).at(0)?.textContent).toContain("localhost");
 
     const newBrowserTabButton = sidePanel!.querySelector<HTMLButtonElement>('button[aria-label="Open new browser tab"]');
     await act(async () => {

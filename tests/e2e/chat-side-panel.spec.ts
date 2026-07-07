@@ -447,15 +447,14 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel.getByTestId("chat-side-panel-browser-view")).toBeVisible();
     await expect(sidePanel).toContainText("Start browsing");
 
-    const encodedPage = encodeURIComponent("<!doctype html><title>Rudder Browser Proof</title><main>Browser panel proof</main>");
-    const targetUrl = `data:text/html,${encodedPage}`;
-    await sidePanel.getByLabel("Browser URL").fill(targetUrl);
+    const targetUrl = "http://localhost:3100/api/health";
+    await sidePanel.getByLabel("Browser URL").fill("localhost:3100/api/health");
     await sidePanel.getByLabel("Browser URL").press("Enter");
 
     const webview = sidePanel.getByTestId("chat-side-panel-browser-webview");
     await expect(webview).toHaveAttribute("src", targetUrl);
     await expect(sidePanel.getByTestId("chat-side-panel-browser-start")).toHaveCount(0);
-    await expect(sidePanel.getByTestId("chat-side-panel-tab").first()).toContainText("Data URL");
+    await expect(sidePanel.getByTestId("chat-side-panel-tab").first()).toContainText("localhost");
 
     await sidePanel.getByLabel("Open new browser tab").click();
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);

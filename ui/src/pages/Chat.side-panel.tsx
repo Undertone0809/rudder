@@ -126,7 +126,10 @@ function normalizeChatSidePanelBrowserUrl(value: string) {
   if (!trimmed) return CHAT_SIDE_PANEL_BROWSER_BLANK_URL;
   if (/^(about|data|file|https?):/i.test(trimmed)) return trimmed;
   if (/\s/.test(trimmed)) return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
-  if (/^(localhost|\d{1,3}(?:\.\d{1,3}){3})(:\d+)?(\/.*)?$/i.test(trimmed) || trimmed.includes(".")) {
+  if (/^(localhost|\d{1,3}(?:\.\d{1,3}){3})(:\d+)?(\/.*)?$/i.test(trimmed)) {
+    return `http://${trimmed}`;
+  }
+  if (trimmed.includes(".")) {
     return `https://${trimmed}`;
   }
   return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
