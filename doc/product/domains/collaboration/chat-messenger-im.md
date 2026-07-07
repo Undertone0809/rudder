@@ -40,6 +40,7 @@ related_code:
   - ui/src/lib/source-badge.ts
   - ui/src/lib/side-panel-targets.ts
   - ui/src/context/SidePanelContext.tsx
+  - ui/src/context/ChatGenerationContext.tsx
   - ui/src/components/Layout.tsx
   - ui/src/components/MilkdownMarkdownEditor.tsx
   - ui/src/components/MessengerContextSidebar.tsx
@@ -69,11 +70,15 @@ related_tests:
   - ui/src/lib/side-panel-targets.test.ts
   - ui/src/components/Layout.test.ts
   - ui/src/pages/AgentDetail.runs.test.ts
+  - ui/src/pages/Chat.test.tsx
+  - ui/src/context/ChatGenerationContext.test.tsx
+  - ui/src/lib/chat-stream-state.test.ts
   - ui/src/pages/Chat.attachment-preview.test.tsx
   - ui/src/pages/Chat.messages.test.tsx
   - server/src/__tests__/website-metadata.test.ts
   - server/src/__tests__/website-metadata-routes.test.ts
   - tests/e2e/messenger-contract.spec.ts
+  - tests/e2e/chat-edit-stream-layout.spec.ts
   - tests/e2e/chat-fork.spec.ts
   - tests/e2e/chat-rich-references.spec.ts
   - tests/e2e/chat-side-panel.spec.ts
@@ -107,6 +112,10 @@ Product model:
 - A completed assistant answer may be refreshed as another variant of the same
   chat turn. The visible branch controls let the operator compare prior and
   refreshed variants without creating a new conversation.
+- If a newer turn variant is actively streaming, existing branch controls for
+  that turn remain visible and clickable. Branch navigation during streaming is
+  a local transcript preview only; it must not stop, restart, or mutate the
+  active generation.
 - Assistant message bodies contain user-visible assistant output only. Runtime
   transcript evidence such as thinking/reasoning entries, scratchpad text, tool
   logs, and incomplete adapter summaries remain run evidence, not chat bubble
@@ -129,6 +138,11 @@ Flow:
 6. When the operator refreshes a completed assistant answer, Rudder reuses the
    original turn context, creates a new turn variant, and surfaces branch
    controls for moving between variants.
+7. While the refreshed or edited variant is still streaming, the operator may
+   switch the visible turn branch back to an earlier variant to inspect prior
+   user and assistant content. The current stream continues in the background,
+   generation controls remain available, and returning to the active/latest
+   variant shows the live stream draft again.
 
 Invariants:
 
@@ -147,6 +161,13 @@ Invariants:
   fork-to-continue path must not expose direct refresh.
 - Refresh variants must remain scoped to the original chat turn. They must not
   erase the earlier answer or make the prior variant unreachable.
+- Branch preview during an active stream must be display-only. It must not abort
+  the active stream, alter the active draft's persisted turn variant, or switch
+  the runtime context used by the in-flight assistant turn.
+- When an operator previews an older branch of the same turn during an active
+  stream, Rudder hides the newer active stream draft from the visible
+  transcript until the operator returns to the active/latest branch. The stop
+  control for the active generation remains available.
 - Agent attribution is visible enough to navigate from message to run/agent.
 
 Evidence:
@@ -158,6 +179,9 @@ Evidence:
   partial assistant bodies.
 - Chat refresh E2E covers refreshing a completed assistant answer as a second
   turn variant and navigating back to the first variant.
+- Chat edit streaming E2E covers switching between prior and active turn
+  branches while the replacement branch is still streaming, with the active
+  generation still stoppable.
 
 ## CHAT.TITLE.GENERATION.001
 
