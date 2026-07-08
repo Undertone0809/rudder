@@ -262,8 +262,8 @@ function TooltipMetricRow({
   );
 }
 
-function TooltipMetricDividerGroup({ children }: { children: React.ReactNode }) {
-  return <div className="divide-y divide-background/12 [&>*]:py-1.5 [&>*:first-child]:pt-0 [&>*:last-child]:pb-0">{children}</div>;
+function TooltipMetricSummaryGroup({ children }: { children: React.ReactNode }) {
+  return <div className="space-y-1.5">{children}</div>;
 }
 
 function TooltipMetricColorGroup({ children }: { children: React.ReactNode }) {
@@ -871,11 +871,11 @@ export function TokenUsageChart({
                 ariaTitle={total > 0 ? `${formatTokens(total)} tokens, ${cacheRatioLabel}` : undefined}
                 details={
                   <div className="space-y-2">
-                    <TooltipMetricDividerGroup>
+                    <TooltipMetricSummaryGroup>
                       <TooltipMetricRow label="Total tokens" value={formatTokens(total)} />
                       <TooltipMetricRow label="Cache ratio" value={cacheRatio} />
                       <TooltipMetricRow label="Events" value={row.eventCount} />
-                    </TooltipMetricDividerGroup>
+                    </TooltipMetricSummaryGroup>
                     <TooltipMetricColorGroup>
                       <TooltipMetricRow color="#3b82f6" label="Uncached input" value={formatTokens(usage.uncachedInputTokens)} />
                       <TooltipMetricRow color="#06b6d4" label="Cached input" value={formatTokens(usage.cachedInputTokens)} />
