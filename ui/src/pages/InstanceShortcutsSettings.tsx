@@ -16,7 +16,6 @@ import {
   getDefaultShortcutBindings,
   isReservedShortcut,
   KEYBOARD_SHORTCUT_REGISTRY,
-  normalizeShortcutBinding,
   resolveKeyboardShortcutBindings,
   setShortcutPreference,
   shortcutEventToBinding,
@@ -266,16 +265,6 @@ export function InstanceShortcutsSettings() {
               const customized = preference !== null && preference !== undefined;
               const bindings = actionId ? resolvedBindings[actionId] ?? [] : getDefaultShortcutBindings(entry);
               const editing = actionId !== null && editingActionId === actionId;
-              const hasSingleKeyCreateIssueBinding = actionId === "issue.create"
-                && bindings.some((binding) => {
-                  const normalized = normalizeShortcutBinding(binding);
-                  return normalized.key === "c" &&
-                    !normalized.metaKey &&
-                    !normalized.ctrlKey &&
-                    !normalized.altKey &&
-                    !normalized.shiftKey;
-                });
-
               return (
                 <div
                   key={entry.actionId}
@@ -332,28 +321,6 @@ export function InstanceShortcutsSettings() {
                   <div className="flex min-w-0 items-center gap-1 sm:justify-end">
                     {actionId ? (
                       <>
-                        {hasSingleKeyCreateIssueBinding ? (
-                          <IconTooltipButton
-                            label="Disable C"
-                            onClick={() => {
-                              const nextBindings = bindings.filter((binding) => {
-                                const normalized = normalizeShortcutBinding(binding);
-                                return !(
-                                  normalized.key === "c" &&
-                                  !normalized.metaKey &&
-                                  !normalized.ctrlKey &&
-                                  !normalized.altKey &&
-                                  !normalized.shiftKey
-                                );
-                              });
-                              setDraft((current) => setShortcutPreference(current, actionId, { bindings: nextBindings }));
-                              if (editingActionId === actionId) setEditingActionId(null);
-                              setCaptureError(null);
-                            }}
-                          >
-                            <X className="h-4 w-4" />
-                          </IconTooltipButton>
-                        ) : null}
                         <IconTooltipButton
                           label={editing ? "Cancel shortcut capture" : `Edit ${entry.label}`}
                           onClick={() => {

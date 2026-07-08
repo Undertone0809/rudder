@@ -25,7 +25,8 @@ describe("keyboard shortcuts", () => {
   });
 
   it("falls back to default bindings when settings are missing", () => {
-    expect(eventMatchesShortcutAction(keydown("c"), "issue.create", null)).toBe(true);
+    expect(eventMatchesShortcutAction(keydown("c"), "issue.create", null)).toBe(false);
+    expect(eventMatchesShortcutAction(keydown("s", { metaKey: true, altKey: true }), "chat.create", null, "mac")).toBe(true);
     expect(eventMatchesShortcutAction(keydown("k", { metaKey: true }), "commandPalette.open", null, "mac")).toBe(true);
     expect(eventMatchesShortcutAction(keydown("k", { metaKey: true }), "commandPalette.open", undefined)).toBe(false);
   });
@@ -49,10 +50,13 @@ describe("keyboard shortcuts", () => {
     ]);
     expect(resolveKeyboardShortcutBindings(null, "nonMac")["issue.create"]).toEqual([
       { key: "n", ctrlKey: true },
-      { key: "c" },
+    ]);
+    expect(resolveKeyboardShortcutBindings(null, "mac")["chat.create"]).toEqual([
+      { key: "s", metaKey: true, altKey: true },
     ]);
     expect(eventMatchesShortcutAction(keydown("n", { ctrlKey: true }), "issue.create", null, "nonMac")).toBe(true);
     expect(eventMatchesShortcutAction(keydown("n", { metaKey: true }), "issue.create", null, "nonMac")).toBe(false);
+    expect(eventMatchesShortcutAction(keydown("s", { ctrlKey: true, altKey: true }), "chat.create", null, "nonMac")).toBe(true);
   });
 
   it("disables actions from preferences", () => {
@@ -61,7 +65,7 @@ describe("keyboard shortcuts", () => {
     };
 
     expect(resolveKeyboardShortcutBindings(settings)["issue.create"]).toEqual([]);
-    expect(eventMatchesShortcutAction(keydown("c"), "issue.create", settings)).toBe(false);
+    expect(eventMatchesShortcutAction(keydown("n", { metaKey: true }), "issue.create", settings, "mac")).toBe(false);
   });
 
   it("uses custom bindings instead of defaults", () => {

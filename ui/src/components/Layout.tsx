@@ -19,6 +19,7 @@ import { NavigationBackProvider } from "../context/NavigationBackContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { usePanel } from "../context/PanelContext";
 import { useSidebar } from "../context/SidebarContext";
+import { useToast } from "../context/ToastContext";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useOrganizationPageMemory } from "../hooks/useOrganizationPageMemory";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
@@ -543,6 +544,7 @@ export function Layout() {
     selectionSource,
     setSelectedOrganizationId,
   } = useOrganization();
+  const { pushToast } = useToast();
   const { orgPrefix } = useParams<{ orgPrefix: string }>();
   const navigate = useNavigate();
   const location = useLocation();
@@ -983,6 +985,35 @@ export function Layout() {
     return true;
   }, [navigate]);
 
+  const createAndOpenChat = useCallback(async () => {
+    if (!selectedOrganizationId) {
+      pushToast({
+        title: "Select an organization first",
+        body: "A new chat must belong to an organization.",
+        tone: "error",
+      });
+      return;
+    }
+
+    try {
+      const chat = await chatsApi.create(selectedOrganizationId, {});
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(selectedOrganizationId, "active") }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.chats.listPreview(selectedOrganizationId, "active", 40) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPages(selectedOrganizationId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(selectedOrganizationId) }),
+      ]);
+      navigate(`/messenger/chat/${chat.id}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to create chat.";
+      pushToast({
+        title: "Failed to create chat",
+        body: message,
+        tone: "error",
+      });
+    }
+  }, [navigate, pushToast, queryClient, selectedOrganizationId]);
+
   const shortcutSettingsQuery = useQuery({
     queryKey: queryKeys.instance.shortcutSettings,
     queryFn: () => instanceSettingsApi.getShortcuts(),
@@ -994,6 +1025,7 @@ export function Layout() {
   const shortcutSettingsReady = shortcutSettings !== undefined;
 
   useKeyboardShortcuts({
+    onNewChat: () => { void createAndOpenChat(); },
     onNewIssue: () => openNewIssue(),
     onToggleSidebar: toggleSidebar,
     onTogglePanel: togglePanel,

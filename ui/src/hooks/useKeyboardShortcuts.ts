@@ -7,6 +7,7 @@ import type { KeyboardShortcutSettings } from "@rudderhq/shared";
 import { useEffect } from "react";
 
 interface ShortcutHandlers {
+  onNewChat?: () => void;
   onNewIssue?: () => void;
   onToggleSidebar?: () => void;
   onTogglePanel?: () => void;
@@ -16,6 +17,7 @@ interface ShortcutHandlers {
 }
 
 export function useKeyboardShortcuts({
+  onNewChat,
   onNewIssue,
   onToggleSidebar,
   onTogglePanel,
@@ -38,6 +40,12 @@ export function useKeyboardShortcuts({
 
       // Don't fire shortcuts when typing in inputs
       if (isEditableShortcutTarget(e.target)) {
+        return;
+      }
+
+      if (eventMatchesShortcutAction(e, "chat.create", shortcutSettings)) {
+        e.preventDefault();
+        onNewChat?.();
         return;
       }
 
@@ -67,5 +75,5 @@ export function useKeyboardShortcuts({
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onNewIssue, onToggleSidebar, onTogglePanel, onOpenSettings, onNavigateBack, shortcutSettings]);
+  }, [onNewChat, onNewIssue, onToggleSidebar, onTogglePanel, onOpenSettings, onNavigateBack, shortcutSettings]);
 }

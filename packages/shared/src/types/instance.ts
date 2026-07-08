@@ -31,6 +31,7 @@ export interface OperatorProfileSettings {
 export type KeyboardShortcutActionId =
   | "commandPalette.open"
   | "settings.open"
+  | "chat.create"
   | "issue.create"
   | "sidebar.toggle"
   | "panel.toggle";

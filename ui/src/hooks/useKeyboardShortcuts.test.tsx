@@ -16,19 +16,22 @@ let container: HTMLDivElement | null = null;
 
 function ShortcutHarness({
   onNavigateBack,
+  onNewChat,
   onNewIssue,
   shortcutSettings,
 }: {
   onNavigateBack?: () => boolean;
+  onNewChat?: () => void;
   onNewIssue?: () => void;
   shortcutSettings?: KeyboardShortcutSettings | null;
 }) {
-  useKeyboardShortcuts({ onNavigateBack, onNewIssue, shortcutSettings });
+  useKeyboardShortcuts({ onNavigateBack, onNewChat, onNewIssue, shortcutSettings });
   return <div />;
 }
 
 async function renderShortcutHarness(handlers: {
   onNavigateBack?: () => boolean;
+  onNewChat?: () => void;
   onNewIssue?: () => void;
   shortcutSettings?: KeyboardShortcutSettings | null;
 }) {
@@ -162,6 +165,16 @@ describe("useKeyboardShortcuts", () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
+  it("creates a new chat on the platform default modifier+Alt+S and suppresses the browser shortcut", async () => {
+    const onNewChat = vi.fn();
+    await renderShortcutHarness({ onNewChat, shortcutSettings: null });
+
+    const event = dispatchKey("s", getKeyboardShortcutPlatform() === "mac" ? { metaKey: true, altKey: true } : { ctrlKey: true, altKey: true });
+
+    expect(onNewChat).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
   it("does not open a new issue from editable fields", async () => {
     const onNewIssue = vi.fn();
     await renderShortcutHarness({ onNewIssue });
@@ -171,6 +184,18 @@ describe("useKeyboardShortcuts", () => {
     const event = dispatchKey("n", { metaKey: true }, input);
 
     expect(onNewIssue).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("does not create a new chat from editable fields", async () => {
+    const onNewChat = vi.fn();
+    await renderShortcutHarness({ onNewChat });
+    const input = document.createElement("input");
+    document.body.append(input);
+
+    const event = dispatchKey("s", { metaKey: true, altKey: true }, input);
+
+    expect(onNewChat).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
   });
 

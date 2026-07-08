@@ -54,6 +54,22 @@ export const KEYBOARD_SHORTCUT_REGISTRY: KeyboardShortcutRegistryEntry[] = [
     disableable: true,
   },
   {
+    actionId: "chat.create",
+    label: "Create new chat",
+    description: "Create a new chat and open it.",
+    scope: "Global",
+    defaultBindings: [
+      { key: "s", metaKey: true, altKey: true },
+      { key: "s", ctrlKey: true, altKey: true },
+    ],
+    defaultBindingsByPlatform: {
+      mac: [{ key: "s", metaKey: true, altKey: true }],
+      nonMac: [{ key: "s", ctrlKey: true, altKey: true }],
+    },
+    configurable: true,
+    disableable: true,
+  },
+  {
     actionId: "issue.create",
     label: "Create issue",
     description: "Open the new issue dialog.",
@@ -61,17 +77,10 @@ export const KEYBOARD_SHORTCUT_REGISTRY: KeyboardShortcutRegistryEntry[] = [
     defaultBindings: [
       { key: "n", metaKey: true },
       { key: "n", ctrlKey: true },
-      { key: "c" },
     ],
     defaultBindingsByPlatform: {
-      mac: [
-        { key: "n", metaKey: true },
-        { key: "c" },
-      ],
-      nonMac: [
-        { key: "n", ctrlKey: true },
-        { key: "c" },
-      ],
+      mac: [{ key: "n", metaKey: true }],
+      nonMac: [{ key: "n", ctrlKey: true }],
     },
     configurable: true,
     disableable: true,

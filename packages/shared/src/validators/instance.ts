@@ -50,6 +50,7 @@ export const patchOperatorProfileSettingsSchema = operatorProfileSettingsSchema.
 export const KEYBOARD_SHORTCUT_ACTION_IDS = [
   "commandPalette.open",
   "settings.open",
+  "chat.create",
   "issue.create",
   "sidebar.toggle",
   "panel.toggle",
