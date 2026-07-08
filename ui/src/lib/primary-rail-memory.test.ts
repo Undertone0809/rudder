@@ -41,6 +41,7 @@ describe("primary rail memory", () => {
     expect(resolvePrimaryRailSection("/agents/wesley/runs/run-1")).toBe("agents");
     expect(resolvePrimaryRailSection("/dashboard/calendar")).toBe("organization");
     expect(resolvePrimaryRailSection("/projects/rudder/issues")).toBe("organization");
+    expect(resolvePrimaryRailSection("/skills/skill-123/files/SKILL.md")).toBeNull();
     expect(resolvePrimaryRailSection("/automations/weekly-ci")).toBe("automations");
     expect(resolvePrimaryRailSection("/organization/settings")).toBeNull();
   });
@@ -77,5 +78,13 @@ describe("primary rail memory", () => {
 
     expect(readRememberedPrimaryRailPath("org-1", "organization", "/dashboard")).toBe("/dashboard");
     expect(readRememberedPrimaryRailPath(null, "issues", "/issues")).toBe("/issues");
+  });
+
+  it("does not remember legacy skills routes as the Organization rail destination", () => {
+    rememberPrimaryRailPath("org-1", "/dashboard");
+    rememberPrimaryRailPath("org-1", "/skills/skill-123/files/SKILL.md");
+
+    expect(readRememberedPrimaryRailPath("org-1", "organization", "/dashboard")).toBe("/dashboard");
+    expect(readRememberedPrimaryRailPath("org-1", "library", "/library")).toBe("/library");
   });
 });

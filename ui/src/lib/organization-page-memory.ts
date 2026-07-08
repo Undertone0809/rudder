@@ -7,6 +7,7 @@ import {
 } from "./organization-routes";
 
 const GLOBAL_SEGMENTS = new Set(["auth", "invite", "board-claim", "cli-auth", "docs"]);
+const NON_RESTORABLE_BOARD_SEGMENTS = new Set(["skills"]);
 
 export function isRememberableOrganizationPath(path: string): boolean {
   const pathname = path.split("?")[0] ?? "";
@@ -14,6 +15,7 @@ export function isRememberableOrganizationPath(path: string): boolean {
   if (segments.length === 0) return true;
   const [root] = segments;
   if (GLOBAL_SEGMENTS.has(root!)) return false;
+  if (NON_RESTORABLE_BOARD_SEGMENTS.has(root!)) return false;
   return true;
 }
 

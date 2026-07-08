@@ -36,3 +36,34 @@ test("organization skill links land in Library instead of the legacy Skills deta
   await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?directory=skills$`));
   await expect(page.getByTestId("org-workspaces-files-scroll")).toContainText("skills");
 });
+
+test("legacy skill visits do not hijack the Organization rail destination", async ({ page }) => {
+  const organization = await createOrganization(page, "Skill-Organization-Rail");
+  const skillsRes = await page.request.get(`/api/orgs/${organization.id}/skills`);
+  expect(skillsRes.ok()).toBe(true);
+  const skills = await skillsRes.json() as Array<{
+    id: string;
+    name: string;
+    sourceBadge: string;
+  }>;
+  const bundledSkill = skills.find((skill) => skill.sourceBadge === "rudder") ?? skills[0];
+  expect(bundledSkill).toBeTruthy();
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+
+  await page.goto(`/${organization.issuePrefix}/dashboard`);
+  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+
+  await page.goto(`/${organization.issuePrefix}/skills/${bundledSkill!.id}`);
+  await expect(page).toHaveURL(
+    new RegExp(`/${organization.issuePrefix}/library\\?skill=${bundledSkill!.id}&skillFile=SKILL\\.md$`),
+  );
+  await expect(page.getByTestId("org-workspaces-virtual-skill-readonly")).toContainText("Read-only skill");
+
+  await page.getByTestId("primary-rail").getByRole("link", { name: "Organization" }).click();
+  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/dashboard$`));
+  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+});

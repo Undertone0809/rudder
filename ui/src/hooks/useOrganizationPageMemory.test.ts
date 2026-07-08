@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getRememberedPathOwnerOrganizationId,
+  isRememberableOrganizationPath,
   sanitizeRememberedPathForOrganization,
 } from "../lib/organization-page-memory";
 
@@ -61,6 +62,12 @@ describe("getRememberedPathOwnerOrganizationId", () => {
   });
 });
 
+describe("isRememberableOrganizationPath", () => {
+  it("does not restore legacy skills routes as organization pages", () => {
+    expect(isRememberableOrganizationPath("/skills/skill-123/files/SKILL.md")).toBe(false);
+  });
+});
+
 describe("sanitizeRememberedPathForOrganization", () => {
   it("keeps remembered issue paths that belong to the target organization", () => {
     expect(
@@ -89,12 +96,12 @@ describe("sanitizeRememberedPathForOrganization", () => {
     ).toBe("/messenger");
   });
 
-  it("keeps remembered skills paths intact for the target organization", () => {
+  it("falls back for remembered legacy skills paths", () => {
     expect(
       sanitizeRememberedPathForOrganization({
         path: "/skills/skill-123/files/SKILL.md",
         organizationPrefix: "PAP",
       }),
-    ).toBe("/skills/skill-123/files/SKILL.md");
+    ).toBe("/messenger");
   });
 });
