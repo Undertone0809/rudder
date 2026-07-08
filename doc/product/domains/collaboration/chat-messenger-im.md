@@ -662,6 +662,10 @@ Product model:
   status, priority, labels, assignee, reviewer, project, goal, and parent issue
   use the same readable/editable issue-property controls as Issue Detail where
   the panel has enough context to expose them.
+- When an issue Side Panel tab is expanded beyond the default docked width, it
+  renders the Issue Detail content body inside the panel. The Issue Detail page
+  header is omitted because the Side Panel shell already owns panel-level
+  navigation, tab, resize, and close controls.
 - The panel owns tab state, active target, add-tab affordances, empty-state
   choices, width/resizer behavior, and close/focus behavior. It does not become
   the owning domain for issue workflow, automation dispatch, Library path safety,
@@ -695,27 +699,30 @@ Flow:
    duplicating it.
 4. The target view loads through the existing organization-scoped API for that
    domain.
-5. The panel renders the object in a compact workbench view and keeps the
-   current board route stable.
-6. When the operator clicks the add-tab affordance while a target is already
+5. The panel renders the object in a compact workbench view at the default
+   docked width and keeps the current board route stable.
+6. If an issue target is expanded to the wide Side Panel state, Rudder swaps the
+   compact issue workbench for the embedded Issue Detail body so the operator
+   can use the same issue content sections without leaving the current route.
+7. When the operator clicks the add-tab affordance while a target is already
    open, Rudder keeps existing tabs available but sets the active panel content
    to the empty `Open a panel` picker instead of showing a dropdown menu.
-7. Lightweight mutations exposed in the panel, such as issue title,
+8. Lightweight mutations exposed in the panel, such as issue title,
    description, status, priority, assignee, reviewer, project, goal, parent, or
    automation status edits, call the same domain APIs and show errors in the
    panel instead of silently ignoring failures.
-8. Closing a tab focuses a neighboring tab or returns the panel to the empty
+9. Closing a tab focuses a neighboring tab or returns the panel to the empty
    picker state.
-9. When the operator hides the panel and reopens it in the same Messenger chat
+10. When the operator hides the panel and reopens it in the same Messenger chat
    or issue context, Rudder restores that context's tabs and active tab.
-10. When the operator switches from one Messenger item to another, Rudder
+11. When the operator switches from one Messenger item to another, Rudder
    switches the Side Panel to the destination item's session state. If that
    destination has no session state, the panel stays or becomes closed by
    default.
-11. App restart may clear all Side Panel tab/session state; this contract does
+12. App restart may clear all Side Panel tab/session state; this contract does
    not require server persistence, cross-device sync, or localStorage recovery
    for tabs.
-12. Browser tabs normalize address-bar input into either a URL or search-query
+13. Browser tabs normalize address-bar input into either a URL or search-query
    navigation, keep back/forward/reload state scoped to the embedded browser,
    and can open the current page externally as a secondary action.
 
@@ -730,6 +737,12 @@ Invariants:
   may use a wider two-column issue-detail layout when the panel is expanded,
   but the default docked view must not let viewport breakpoints squeeze the
   issue title, description, activity, or properties into unreadable columns.
+- Expanded Side Panel issue views must match the Issue Detail page body rather
+  than maintaining a separate issue-detail variant. The embedded body should
+  expose the same issue content sections, such as editable title and
+  description, sub-issues, attachments, activity, and issue properties, while
+  omitting only the Issue Detail page header and route-level effects that belong
+  to the standalone page.
 - Issue title and description editing must be direct and discoverable in the
   rendered issue view. The panel must not require a generic `Edit issue` button
   before those fields can be changed.
@@ -771,6 +784,9 @@ Evidence:
   status, and assignee inside the panel; browsing a Library directory tree;
   opening the global empty panel from Dashboard; and keeping the desktop/web
   panel gutter compact against the main workspace.
+- Side Panel E2E covers expanding an issue target and rendering the embedded
+  Issue Detail body, including issue content sections such as attachments,
+  activity, and properties, without navigating away from Chat.
 - Desktop smoke covers the Side Panel Browser loading a local `/api/health` URL
   and normalizing a plain search query into browser navigation.
 

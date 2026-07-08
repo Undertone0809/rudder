@@ -814,6 +814,7 @@ contracts:
       - ui/src/components/Layout.tsx
       - ui/src/pages/Chat.side-panel.tsx
       - ui/src/pages/Chat.tsx
+      - ui/src/pages/IssueDetail.tsx
       - desktop/scripts/smoke.mjs
     related_tests:
       - ui/src/lib/side-panel-targets.test.ts
