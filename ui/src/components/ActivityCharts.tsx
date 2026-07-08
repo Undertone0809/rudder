@@ -262,6 +262,14 @@ function TooltipMetricRow({
   );
 }
 
+function TooltipMetricDividerGroup({ children }: { children: React.ReactNode }) {
+  return <div className="divide-y divide-background/12 [&>*]:py-1.5 [&>*:first-child]:pt-0 [&>*:last-child]:pb-0">{children}</div>;
+}
+
+function TooltipMetricColorGroup({ children }: { children: React.ReactNode }) {
+  return <div className="space-y-1.5 border-t border-background/15 pt-2">{children}</div>;
+}
+
 function formatSkillUseCount(count: number): string {
   return `${count} skill use${count === 1 ? "" : "s"}`;
 }
@@ -862,14 +870,18 @@ export function TokenUsageChart({
                 title={total > 0 ? `${formatTokens(total)} tokens` : "No token usage"}
                 ariaTitle={total > 0 ? `${formatTokens(total)} tokens, ${cacheRatioLabel}` : undefined}
                 details={
-                  <>
-                    <TooltipMetricRow label="Total tokens" value={formatTokens(total)} />
-                    <TooltipMetricRow color="#3b82f6" label="Uncached input" value={formatTokens(usage.uncachedInputTokens)} />
-                    <TooltipMetricRow color="#06b6d4" label="Cached input" value={formatTokens(usage.cachedInputTokens)} />
-                    <TooltipMetricRow label="Cache ratio" value={cacheRatio} />
-                    <TooltipMetricRow color="#10b981" label="Output" value={formatTokens(usage.outputTokens)} />
-                    <TooltipMetricRow label="Events" value={row.eventCount} />
-                  </>
+                  <div className="space-y-2">
+                    <TooltipMetricDividerGroup>
+                      <TooltipMetricRow label="Total tokens" value={formatTokens(total)} />
+                      <TooltipMetricRow label="Cache ratio" value={cacheRatio} />
+                      <TooltipMetricRow label="Events" value={row.eventCount} />
+                    </TooltipMetricDividerGroup>
+                    <TooltipMetricColorGroup>
+                      <TooltipMetricRow color="#3b82f6" label="Uncached input" value={formatTokens(usage.uncachedInputTokens)} />
+                      <TooltipMetricRow color="#06b6d4" label="Cached input" value={formatTokens(usage.cachedInputTokens)} />
+                      <TooltipMetricRow color="#10b981" label="Output" value={formatTokens(usage.outputTokens)} />
+                    </TooltipMetricColorGroup>
+                  </div>
                 }
                 empty={total === 0}
                 trigger={
