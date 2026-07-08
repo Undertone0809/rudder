@@ -311,7 +311,13 @@ function ChatIssueSidePanelView({
       setError(err instanceof Error ? err.message : "Could not update this issue.");
     }
   };
-  const issueProperties = <IssueProperties issue={issue} onUpdate={(data) => void updateIssueField(data)} />;
+  const issueProperties = (
+    <IssueProperties
+      issue={issue}
+      onUpdate={(data) => void updateIssueField(data)}
+      showAuditSeparator={false}
+    />
+  );
 
   return (
     <div className="flex min-h-full flex-col" data-testid="chat-side-panel-issue-view">
@@ -319,8 +325,8 @@ function ChatIssueSidePanelView({
         "grid min-h-0 flex-1 gap-6",
         expanded && "xl:grid-cols-[minmax(0,1fr)_280px] xl:items-start",
       )}>
-        <div className="min-w-0 space-y-5">
-          <div className="space-y-3 border-b border-[color:var(--border-soft)] pb-4">
+        <div className="flex min-h-0 min-w-0 flex-col gap-5">
+          <div className="shrink-0 space-y-3 pb-4">
             <div className="flex items-start justify-between gap-3">
               <InlineEditor
                 value={issue.title}
@@ -345,7 +351,7 @@ function ChatIssueSidePanelView({
               </div>
             ) : null}
             {!expanded ? (
-              <section aria-label="Issue properties" className="border-y border-[color:var(--border-soft)] py-3">
+              <section aria-label="Issue properties" className="py-3">
                 <IssueProperties issue={issue} onUpdate={(data) => void updateIssueField(data)} showAuditFields={false} />
               </section>
             ) : null}
@@ -367,7 +373,7 @@ function ChatIssueSidePanelView({
             ) : null}
           </div>
 
-          <section className="space-y-3 border-b border-[color:var(--border-soft)] pb-5">
+          <section className="shrink-0 space-y-3 pb-5">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-sm">
                 <div className="flex items-center gap-1.5 font-medium text-foreground">
@@ -382,7 +388,7 @@ function ChatIssueSidePanelView({
             <p className="text-xs text-muted-foreground">No sub-issues.</p>
           </section>
 
-          <section className="flex min-h-[10rem] flex-col py-1">
+          <section aria-label="Activity" className="flex min-h-0 flex-1 flex-col py-1">
             <div className="mb-3 flex items-center justify-between gap-2">
               <h4 className="text-sm font-semibold text-foreground">Activity</h4>
               <span className="text-xs text-muted-foreground">
@@ -396,19 +402,24 @@ function ChatIssueSidePanelView({
                 </div>
               ) : null}
             </div>
-            <CommentThread
-              comments={comments}
-              orgId={issue.orgId}
-              projectId={issue.projectId}
-              issueStatus={issue.status}
-              agentMap={agentMap}
-              currentUserId={currentUserId}
-              operatorDisplayName={operatorDisplayName}
-              hideHeading
-              emptyMessage="No comments yet."
-              draftKey={`rudder:side-panel-issue-comment-draft:${issue.id}`}
-              onAdd={onAddComment}
-            />
+            <div
+              className="min-h-0 flex-1 overflow-y-auto pr-1"
+              data-testid="chat-side-panel-issue-activity-scroll"
+            >
+              <CommentThread
+                comments={comments}
+                orgId={issue.orgId}
+                projectId={issue.projectId}
+                issueStatus={issue.status}
+                agentMap={agentMap}
+                currentUserId={currentUserId}
+                operatorDisplayName={operatorDisplayName}
+                hideHeading
+                emptyMessage="No comments yet."
+                draftKey={`rudder:side-panel-issue-comment-draft:${issue.id}`}
+                onAdd={onAddComment}
+              />
+            </div>
           </section>
         </div>
 
@@ -419,16 +430,6 @@ function ChatIssueSidePanelView({
                 <p className="text-[11px] font-medium text-muted-foreground">Properties</p>
               </div>
               {issueProperties}
-            </section>
-            <section className="rounded-lg border border-border bg-background/80 p-3">
-              <div className="space-y-2 text-sm">
-                <SidePanelDetailRow label="Created">
-                  <span className="truncate">{sidePanelDate(issue.createdAt)}</span>
-                </SidePanelDetailRow>
-                <SidePanelDetailRow label="Updated">
-                  <span className="truncate">{sidePanelDate(issue.updatedAt)}</span>
-                </SidePanelDetailRow>
-              </div>
             </section>
           </aside>
         ) : null}
@@ -1399,7 +1400,7 @@ export function ChatSidePanel({
         <div className={cn(
           "scrollbar-auto-hide min-h-0 flex-1",
           browserTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
-        )}>
+        )} data-testid="chat-side-panel-scroll-body">
           {!activeTarget ? (
             <SidePanelEmptyState onOpenTarget={openSidePanelTarget} />
           ) : loading ? (

@@ -50,6 +50,7 @@ interface IssuePropertiesProps {
   inline?: boolean;
   childIssues?: Issue[];
   showAuditFields?: boolean;
+  showAuditSeparator?: boolean;
 }
 
 function PropertyRow({
@@ -145,6 +146,7 @@ export function IssueProperties({
   inline,
   childIssues,
   showAuditFields = true,
+  showAuditSeparator = true,
 }: IssuePropertiesProps) {
   const { selectedOrganizationId } = useOrganization();
   const { openNewIssue } = useDialog();
@@ -1132,7 +1134,7 @@ export function IssueProperties({
 
       {showAuditFields ? (
         <>
-          <Separator />
+          {showAuditSeparator ? <Separator /> : null}
 
           <div className="space-y-1">
             {(issue.createdByAgentId || issue.createdByUserId) && (

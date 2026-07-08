@@ -53,6 +53,14 @@ test.describe("Chat Side Panel", () => {
       },
     });
     expect(existingCommentRes.ok(), await existingCommentRes.text()).toBe(true);
+    for (let index = 1; index <= 12; index += 1) {
+      const scrollCommentRes = await page.request.post(`/api/issues/${issue.id}/comments`, {
+        data: {
+          body: `Scrollable side panel activity comment ${index}. This keeps the issue activity long enough to verify narrow panel scrolling.`,
+        },
+      });
+      expect(scrollCommentRes.ok(), await scrollCommentRes.text()).toBe(true);
+    }
 
     const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
       data: {
@@ -94,8 +102,8 @@ test.describe("Chat Side Panel", () => {
       },
     });
     expect(libraryFileRes.ok(), await libraryFileRes.text()).toBe(true);
-    const libraryFileName = libraryFilePath.split("/").at(-1) ?? libraryFilePath;
     const libraryFile = await libraryFileRes.json() as { markdownLink: string };
+    const libraryFileName = libraryFilePath.split("/").at(-1) ?? libraryFilePath;
 
     const referencedChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
@@ -233,6 +241,31 @@ test.describe("Chat Side Panel", () => {
     expect(descriptionPatchRes.ok(), await descriptionPatchRes.text()).toBe(true);
     await expect(sidePanel).toContainText("Reference issue target edited");
     await expect(sidePanel).toContainText("Edited from the chat detail panel.");
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(sidePanel).toBeVisible();
+    const activityRegion = sidePanel.getByRole("region", { name: "Activity" });
+    const scrollBody = sidePanel.locator("[data-testid='chat-side-panel-scroll-body']");
+    const activityScroller = sidePanel.locator("[data-testid='chat-side-panel-issue-activity-scroll']");
+    await expect(activityRegion).toBeVisible();
+    await expect(scrollBody).toBeVisible();
+    await expect(activityScroller).toBeVisible();
+    await expect(sidePanel.getByText("Assignee", { exact: true })).toBeVisible();
+    await expect(sidePanel.getByText("Edited from the chat detail panel.")).toBeVisible();
+    await expect(activityRegion).toContainText("Existing side panel comment should stay visible.");
+    await expect(activityRegion).toContainText("Scrollable side panel activity comment 12.");
+    const scrollBodyMetrics = await scrollBody.evaluate((element) => ({
+      className: element.className,
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }));
+    expect(scrollBodyMetrics.className).toContain("overflow-y-auto");
+    expect(scrollBodyMetrics.scrollHeight).toBeGreaterThan(scrollBodyMetrics.clientHeight);
+    await scrollBody.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect.poll(async () => scrollBody.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    await expect(activityRegion.getByText("Scrollable side panel activity comment 12.")).toBeInViewport();
 
     await sidePanel.getByLabel("Expand Side Panel").click();
     await expect(sidePanel).toContainText("Sub-issues");

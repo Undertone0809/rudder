@@ -1363,6 +1363,7 @@ describe("Chat Side Panel link handling", () => {
     expect(sidePanel.textContent).toContain("Created by");
     expect(sidePanel.textContent).toContain("Updated");
     expect(sidePanel.textContent.indexOf("Activity")).toBeLessThan(sidePanel.textContent.indexOf("Properties"));
+    expect(sidePanel.textContent).not.toContain("CreatedUpdated");
 
     const issueView = sidePanel.querySelector<HTMLElement>("[data-testid='chat-side-panel-issue-view']");
     const propertiesRegion = sidePanel.querySelector<HTMLElement>("[aria-label='Issue properties']");
@@ -2135,6 +2136,69 @@ describe("Chat Side Panel link handling", () => {
     expect(container.querySelector("[data-testid='chat-side-panel']")).toBeNull();
     expect(sidePanelTrigger?.getAttribute("aria-pressed")).toBe("false");
     expect(container.querySelector("textarea[aria-label='Composer draft']")).not.toBeNull();
+  });
+
+  it("keeps editable issue fields above a dedicated activity scroller in a narrow Side Panel", async () => {
+    vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
+      matches: query.includes("max-width: 767px"),
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })));
+    mockState.issues["issue-1"] = issue();
+    mockState.issueComments["issue-1"] = [
+      issueComment({ id: "comment-1", body: "Existing side panel comment." }),
+      issueComment({ id: "comment-2", body: "Follow-up activity should scroll below the task body." }),
+      issueComment({ id: "comment-3", body: "Keep editable fields near the top." }),
+    ];
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: "assistant-mobile-issue-side-panel",
+          role: "assistant",
+          body: `Review [RUD-42](${buildIssueMentionHref("issue-1", "RUD-42", "comment-1", "in_progress")}) next.`,
+          replyingAgentId: "agent-1",
+          createdAt: new Date("2026-05-12T09:06:00.000Z"),
+          updatedAt: new Date("2026-05-12T09:06:00.000Z"),
+        }),
+      ],
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const issueReference = container.querySelector<HTMLAnchorElement>('a[data-mention-kind="issue"]');
+    await act(async () => {
+      issueReference?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+
+    const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    const issueView = sidePanel?.querySelector<HTMLElement>("[data-testid='chat-side-panel-issue-view']");
+    const activityScroller = sidePanel?.querySelector<HTMLElement>("[data-testid='chat-side-panel-issue-activity-scroll']");
+    const sidePanelScrollBody = sidePanel?.querySelector<HTMLElement>("[data-testid='chat-side-panel-scroll-body']");
+    expect(sidePanel).not.toBeNull();
+    expect(issueView).not.toBeNull();
+    expect(activityScroller).not.toBeNull();
+    expect(activityScroller?.className).toContain("overflow-y-auto");
+    expect(sidePanelScrollBody?.className).toContain("overflow-y-auto");
+    expect(sidePanelScrollBody?.className).not.toContain("overflow-hidden");
+    expect(sidePanel?.className).toContain("fixed");
+    expect(sidePanel?.textContent?.indexOf("Assignee")).toBeLessThan(
+      sidePanel?.textContent?.indexOf("Existing side panel comment.") ?? Number.POSITIVE_INFINITY,
+    );
+    expect(sidePanel?.textContent?.indexOf("Make the issue reference read like a task detail panel.")).toBeLessThan(
+      sidePanel?.textContent?.indexOf("Existing side panel comment.") ?? Number.POSITIVE_INFINITY,
+    );
+    expect(activityScroller?.textContent).toContain("Existing side panel comment.");
+    expect(activityScroller?.textContent).toContain("Follow-up activity should scroll below the task body.");
+    expect(activityScroller?.textContent).toContain("Keep editable fields near the top.");
   });
 });
 
