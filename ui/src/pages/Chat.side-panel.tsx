@@ -1119,15 +1119,19 @@ function ChatSidePanelBrowserView({
 export function ChatSidePanel({
   desktopWidth,
   expanded = false,
+  exiting = false,
   onClose,
   onToggleExpanded,
+  resizing = false,
   target,
   selectedOrganizationId,
 }: {
   desktopWidth?: number;
   expanded?: boolean;
+  exiting?: boolean;
   onClose?: () => void;
   onToggleExpanded?: () => void;
+  resizing?: boolean;
   target?: SidePanelTarget | null;
   selectedOrganizationId: string | null | undefined;
 }) {
@@ -1259,7 +1263,7 @@ export function ChatSidePanel({
     enabled: !!selectedOrganizationId && !!libraryDirectoryTarget,
   });
 
-  if (!sidePanel.open) return null;
+  if (!sidePanel.open && !exiting) return null;
 
   const loading = Boolean(
     (issueTarget && issueQuery.isPending)
@@ -1301,8 +1305,10 @@ export function ChatSidePanel({
         isMobile
           ? "fixed inset-x-3 bottom-3 top-[4.75rem] z-40"
           : expanded
-            ? "md:w-full"
-            : "md:w-[min(420px,36vw)]",
+            ? "md:w-full transition-[width,opacity,transform] duration-300 ease-out motion-reduce:transition-none"
+            : "md:w-[min(420px,36vw)] transition-[width,opacity,transform] duration-300 ease-out motion-reduce:transition-none",
+        exiting && "translate-x-4 scale-[0.985] opacity-0",
+        resizing && "transition-none",
       )}
       style={desktopPanelStyle}
       aria-label="Side Panel"

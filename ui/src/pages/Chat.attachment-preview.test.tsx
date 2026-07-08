@@ -2014,6 +2014,8 @@ describe("Chat Side Panel link handling", () => {
     sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     expect(sidePanel?.textContent).toContain("Start browsing");
     expect(sidePanel?.querySelector("[data-testid='chat-side-panel-browser-view']")).not.toBeNull();
+    expect(sidePanel?.className).toContain("motion-chat-side-panel");
+    expect(sidePanel?.className).toContain("transition-[width,opacity,transform]");
     expect(container.querySelector('[data-testid="chat-side-panel-trigger"]')).toBeNull();
     expect(sidePanel?.querySelector('[data-testid="chat-side-panel-collapse"]')).not.toBeNull();
     expect(sidePanel?.querySelector('[data-testid="chat-side-panel-expand-toggle"]')).not.toBeNull();
@@ -2177,6 +2179,9 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
 
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 220));
+    });
     expect(container.querySelector("[data-testid='chat-side-panel']")).toBeNull();
     expect(sidePanelTrigger?.getAttribute("aria-pressed")).toBe("false");
     expect(container.querySelector("textarea[aria-label='Composer draft']")).not.toBeNull();

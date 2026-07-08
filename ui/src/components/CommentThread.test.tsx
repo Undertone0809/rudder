@@ -701,7 +701,8 @@ describe("CommentThread", () => {
     expect(html).toContain('data-testid="comment-thread-timeline-scroll"');
     expect(html).toContain("scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1");
     expect(html).toContain('data-testid="comment-thread-fixed-composer"');
-    expect(html).toContain("sticky bottom-0 z-20 shrink-0");
+    expect(html).toContain("sticky bottom-0 z-20");
+    expect(html).toContain("bg-[color:var(--desktop-content-surface-light)]");
     expect(html).not.toContain("xl:overflow-y-auto");
   });
 

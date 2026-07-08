@@ -695,17 +695,17 @@
   0% {
     opacity: 0;
     filter: blur(3px);
-    transform: none;
+    transform: translateX(18px) scale(0.982);
   }
   58% {
     opacity: 1;
     filter: blur(0);
-    transform: none;
+    transform: translateX(-2px) scale(1.004);
   }
   100% {
     opacity: 1;
     filter: blur(0);
-    transform: none;
+    transform: translateX(0) scale(1);
   }
 }
 

@@ -904,6 +904,44 @@ test.describe("Chat Side Panel", () => {
     await expect(page.getByTestId("global-side-panel-trigger")).toBeVisible();
   });
 
+  test("animates the Side Panel shell and auto-collapses during narrow resize", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Side-Panel-Motion-Resize-${Date.now()}` },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await page.getByTestId("side-panel-hover-edge").hover();
+    await page.getByTestId("global-side-panel-trigger").click();
+
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await expect(sidePanel).toHaveClass(/motion-chat-side-panel/);
+    await expect(sidePanel).toHaveClass(/transition-\[width,opacity,transform\]/);
+    await expect(page.getByTestId("side-panel-resizer")).toHaveClass(/transition-\[width,opacity,transform\]/);
+
+    const collapseStart = await page.getByTestId("side-panel-resizer").boundingBox();
+    expect(collapseStart).not.toBeNull();
+    await page.mouse.move(collapseStart!.x + collapseStart!.width / 2, collapseStart!.y + collapseStart!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(page.viewportSize()!.width - 16, collapseStart!.y + collapseStart!.height / 2, { steps: 8 });
+    await expect(sidePanel).toHaveCount(0);
+    await page.mouse.up();
+
+    await page.getByTestId("side-panel-hover-edge").hover();
+    await page.getByTestId("global-side-panel-trigger").click();
+    const reopenedBox = await sidePanel.boundingBox();
+    expect(reopenedBox).not.toBeNull();
+    expect(reopenedBox!.width).toBeGreaterThanOrEqual(390);
+  });
+
   test("hides the main workspace while the Side Panel is expanded", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Global-Side-Panel-Expanded-${Date.now()}` },

@@ -341,6 +341,8 @@ function DesktopSidePanelSlot({
   const [sidePanelWidth, setSidePanelWidth] = useState(readRememberedSidePanelWidth);
   const sidePanelWidthRatioRef = useRef(widthRatio(sidePanelWidth));
   const [resizingSidePanel, setResizingSidePanel] = useState(false);
+  const [renderSidePanel, setRenderSidePanel] = useState(sidePanel.open);
+  const [sidePanelExiting, setSidePanelExiting] = useState(false);
   const expandedSidePanelWidth = clampSidePanelWidth(SIDE_PANEL_EXPANDED_WIDTH, viewportWidth);
   const sidePanelExpanded = sidePanelWidth >= expandedSidePanelWidth - 1;
 
@@ -357,6 +359,21 @@ function DesktopSidePanelSlot({
       // Ignore storage failures; width falls back to the default next time.
     }
   }, [sidePanelWidth]);
+
+  useEffect(() => {
+    if (sidePanel.open) {
+      setRenderSidePanel(true);
+      setSidePanelExiting(false);
+      return;
+    }
+    if (!renderSidePanel) return;
+    setSidePanelExiting(true);
+    const timer = window.setTimeout(() => {
+      setRenderSidePanel(false);
+      setSidePanelExiting(false);
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [renderSidePanel, sidePanel.open]);
 
   useEffect(() => {
     if (viewportWidth === null || !Number.isFinite(viewportWidth)) return;
@@ -381,6 +398,7 @@ function DesktopSidePanelSlot({
     const startX = event.clientX;
     const startWidth = sidePanelWidth;
     let latestWidth = startWidth;
+    let collapsedByDrag = false;
     const cleanupStyle = {
       cursor: document.body.style.cursor,
       userSelect: document.body.style.userSelect,
@@ -393,6 +411,13 @@ function DesktopSidePanelSlot({
     const onPointerMove = (moveEvent: PointerEvent) => {
       const deltaX = moveEvent.clientX - startX;
       latestWidth = startWidth - deltaX;
+      if (latestWidth <= SIDE_PANEL_COLLAPSE_WIDTH) {
+        collapsedByDrag = true;
+        stopResizing();
+        sidePanel.hidePanel();
+        setProportionalSidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH);
+        return;
+      }
       setProportionalSidePanelWidth(latestWidth);
     };
 
@@ -402,8 +427,9 @@ function DesktopSidePanelSlot({
       setResizingSidePanel(false);
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", stopResizing);
-      if (latestWidth <= SIDE_PANEL_COLLAPSE_WIDTH) {
+      if (!collapsedByDrag && latestWidth <= SIDE_PANEL_COLLAPSE_WIDTH) {
         sidePanel.hidePanel();
+        setProportionalSidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH);
       }
     };
 
@@ -411,7 +437,7 @@ function DesktopSidePanelSlot({
     window.addEventListener("pointerup", stopResizing, { once: true });
   }, [setProportionalSidePanelWidth, sidePanel, sidePanelWidth]);
 
-  if (!sidePanel.open) {
+  if (!renderSidePanel) {
     return (
       <div className="group absolute inset-y-1 right-0 z-20 w-7" data-testid="side-panel-hover-edge">
         <Button
@@ -444,6 +470,7 @@ function DesktopSidePanelSlot({
             sidePanel.hidePanel();
           }}
           onToggleExpanded={() => setProportionalSidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH)}
+          exiting={sidePanelExiting}
         />
       </div>
     );
@@ -454,8 +481,8 @@ function DesktopSidePanelSlot({
       <div
         data-testid="side-panel-resizer"
         className={cn(
-          "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center transition-[width,opacity] duration-200 ease-out motion-reduce:transition-none",
-          "opacity-100",
+          "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center transition-[width,opacity,transform] duration-200 ease-out motion-reduce:transition-none",
+          sidePanelExiting ? "translate-x-2 opacity-0" : "translate-x-0 opacity-100",
           resizingSidePanel && "is-resizing",
         )}
         style={{ flexBasis: 4, maxWidth: 4, minWidth: 4, width: 4 }}
@@ -470,6 +497,8 @@ function DesktopSidePanelSlot({
         selectedOrganizationId={selectedOrganizationId}
         desktopWidth={sidePanelWidth}
         expanded={sidePanelExpanded}
+        exiting={sidePanelExiting}
+        resizing={resizingSidePanel}
         onClose={sidePanel.hidePanel}
         onToggleExpanded={() => {
           setProportionalSidePanelWidth(
