@@ -2209,6 +2209,7 @@ export function ChatMessageItem({
     ? "Runtime unavailable"
     : "Response failed";
   const isEmptyStreamingAssistant = !isUser && message.status === "streaming" && message.body.trim().length === 0;
+  const canShowAssistantMessageActions = !isUser && message.status !== "stopped";
   const isInlineEditing = isUser && Boolean(inlineEdit);
 
   if (!isUser) {
@@ -2295,8 +2296,10 @@ export function ChatMessageItem({
                 label={relativeTime(message.createdAt)}
                 className="text-[11px] tracking-normal"
               />
-              <CopyMessageButton onClick={() => void onCopyMessageText(message.body)} />
-              {onRefreshAssistantMessage && canRefreshAssistantMessage ? (
+              {canShowAssistantMessageActions ? (
+                <CopyMessageButton onClick={() => void onCopyMessageText(message.body)} />
+              ) : null}
+              {canShowAssistantMessageActions && onRefreshAssistantMessage && canRefreshAssistantMessage ? (
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -2315,7 +2318,7 @@ export function ChatMessageItem({
                   </Tooltip>
                 </TooltipProvider>
               ) : null}
-              {onForkMessage && message.status !== "streaming" ? (
+              {canShowAssistantMessageActions && onForkMessage && message.status !== "streaming" ? (
                 <button
                   type="button"
                   className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"

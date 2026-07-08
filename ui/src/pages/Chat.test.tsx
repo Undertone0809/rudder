@@ -402,6 +402,22 @@ describe("ChatMessageItem", () => {
     expect(html).not.toContain('aria-label="Refresh answer"');
   });
 
+  it("hides message action buttons for stopped assistant placeholders", () => {
+    const html = renderChatMessageItem(message({
+      role: "assistant",
+      kind: "message",
+      status: "stopped",
+      body: "",
+      chatTurnId: "turn-1",
+      replyingAgentId: "agent-1",
+    }), { canRefreshAssistantMessage: true });
+
+    expect(html).toContain(">Stopped</span>");
+    expect(html).not.toContain('aria-label="Copy message"');
+    expect(html).not.toContain('aria-label="Refresh answer"');
+    expect(html).not.toContain('aria-label="Fork from here"');
+  });
+
   it("renders a refresh action for completed assistant messages in a turn", () => {
     const html = renderChatMessageItem(message({
       role: "assistant",
