@@ -83,24 +83,48 @@ Product model:
   parser, and quota/cost metadata.
 - Runtime execution must pass a bounded Rudder context to the adapter and then
   persist normalized result evidence back into Rudder.
+- Agent configuration exposes only operator-facing runtime choices in the
+  runtime selector. Low-level adapter types such as generic process and HTTP
+  remain internal/advanced plumbing and must not appear as ordinary runtime
+  picker options unless they become intentionally supported product choices.
+- Rudder may probe local runtime CLI availability for operator-facing local
+  adapters. Availability is advisory setup guidance, not execution authority:
+  available means the default CLI command resolved on the server PATH,
+  unavailable means the default command was not found, and unknown means the
+  adapter does not use a local CLI command probe.
 
 Flow:
 
-1. Agent config selects a runtime type and config payload.
-2. Registry resolves the adapter and capability surface.
-3. Runtime config is prepared, secrets are resolved, skills/context are loaded,
+1. Agent config loads the operator-facing runtime choices and, when available,
+   their server-side CLI probe status.
+2. The runtime selector groups choices by setup state so the operator can see
+   ready local runtimes, runtimes needing setup, and non-probed runtimes before
+   choosing.
+3. Agent config selects a runtime type and config payload.
+4. Registry resolves the adapter and capability surface.
+5. Runtime config is prepared, secrets are resolved, skills/context are loaded,
    and execution workspace is realized.
-4. Adapter executes and returns provider-specific result/transcript/session
+6. Adapter executes and returns provider-specific result/transcript/session
    evidence.
-5. Rudder normalizes and stores the result under `RUN.RESULT.001`.
+7. Rudder normalizes and stores the result under `RUN.RESULT.001`.
 
 Invariants:
 
 - Adapter-specific affordances must not be assumed for all providers.
 - Provider parity claims require runtime-specific evidence or a documented
   blocked/substituted proof.
+- Runtime availability groups must not silently disable a supported adapter.
+  Missing default CLI commands should be shown with setup guidance while still
+  allowing custom command configuration and runtime-chain testing where the
+  adapter supports it.
+- Runtime picker grouping must not expose internal generic process/HTTP adapter
+  types as first-class operator choices.
 
 Evidence:
 
 - Runtime registry is the source of adapter capabilities.
 - Runtime execution tests prove context assembly and result persistence.
+- Runtime availability tests cover default CLI command probing, non-probed
+  adapter status, and hiding internal process/HTTP adapter choices.
+- Agent configuration E2E covers runtime choices grouped by readiness, missing
+  default CLI labels, and hidden process/HTTP entries.

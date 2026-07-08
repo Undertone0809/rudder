@@ -163,15 +163,26 @@ Flow:
 5. When repair succeeds, Rudder persists the repaired assistant message as the
    successful chat result, combines primary and repair usage, and records repair
    evidence on the run result.
-6. When repair is not attempted or fails, Rudder records a recoverable failed
-   chat result with any safe partial body.
-7. If the operator stops an in-flight chat run before completion, Rudder marks
+6. When repair is not attempted or fails, Rudder records a failed chat result
+   with any safe partial body and structured failure metadata.
+7. If the adapter exits before Rudder observes any model-output evidence,
+   Rudder classifies the failed chat result as a runtime boot failure:
+   `chat_runtime_boot_failed`, `phase: "runtime_boot"`,
+   `action: "repair_runtime"`, and `retryable: false`. Messenger shows this as
+   a runtime-unavailable failure and does not offer an immediate Retry action,
+   because the operator needs to fix the runtime command or environment first.
+8. If the adapter fails after Rudder observes model-output evidence but before a
+   successful final chat result, Rudder classifies the failed chat result as a
+   model-generation failure: `chat_adapter_failed`,
+   `phase: "model_generation"`, `action: "retry"`, and retryable by default.
+   Messenger may show a Retry action for that failed assistant response.
+9. If the operator stops an in-flight chat run before completion, Rudder marks
    the run cancelled and may return only the assistant text that was already
    streamed as user-visible content. Provider reasoning, scratchpad/thinking
    events, and incomplete adapter result summaries must not be used as the
    stopped chat bubble body.
-8. The assistant message stores a reverse link to the run.
-9. Agent Detail Run context and Messenger can navigate between run evidence and
+10. The assistant message stores a reverse link to the run.
+11. Agent Detail Run context and Messenger can navigate between run evidence and
    chat transcript.
 
 Invariants:
@@ -189,28 +200,48 @@ Invariants:
 - Repaired successful runs must preserve evidence that repair occurred, including
   `sentinelRepairAttempted`, `sentinelRepairSucceeded`, and
   `repairReason: "missing_result_sentinel"`.
+- Runtime boot failures are not recoverable by chat retry alone. They must
+  preserve `recoverable: false`, `retryable: false`, `phase: "runtime_boot"`,
+  and `action: "repair_runtime"` in the failed assistant message payload and
+  run result evidence.
+- Model-generation failures after visible model output remain retryable failed
+  chat outcomes and must preserve `phase: "model_generation"` and
+  `action: "retry"` when Rudder can classify that phase.
 
 Evidence:
 
 - Chat assistant messages expose run attribution.
 - Agent Detail Run context can open the source conversation.
 - Chat assistant tests cover missing-result-sentinel repair, persisted repair
-  metadata, stopped-run partial body filtering, and primary/repair usage
+  metadata, stopped-run partial body filtering, runtime boot failure
+  classification, retryable model-generation failures, and primary/repair usage
   aggregation.
+- Chat route tests cover persisted non-retryable runtime boot failure payloads.
+- Chat UI tests cover runtime-unavailable failed messages without Retry actions.
 - Chat streaming E2E covers a missing-result-sentinel turn recovering into a
   succeeded assistant message without exposing the internal protocol failure.
+- Chat runtime boot failure E2E covers the real Messenger UI, failed assistant
+  payload, runtime-unavailable label, and absent Retry action.
 
 Related code:
 
 - `server/src/services/chat-agent-runs.ts`
 - `server/src/services/chat-assistant.ts`
+- `server/src/services/chat-assistant.helpers.ts`
+- `server/src/routes/chats.ts`
+- `server/src/routes/chats.stream-routes.ts`
 - `ui/src/pages/AgentDetail.chat-context.tsx`
+- `ui/src/pages/Chat.parts.tsx`
+- `ui/src/pages/Chat.messages.tsx`
 
 Related tests:
 
 - `server/src/__tests__/chat-agent-runs.test.ts`
 - `server/src/__tests__/chat-assistant.test.ts`
+- `server/src/__tests__/chat-routes.test.ts`
 - `tests/e2e/agent-detail-chat-run-context.spec.ts`
+- `tests/e2e/chat-error-toast.spec.ts`
+- `tests/e2e/chat-runtime-boot-failure.spec.ts`
 - `tests/e2e/chat-streaming.spec.ts`
 
 ## RUN.EXECUTION.001

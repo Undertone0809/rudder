@@ -313,11 +313,19 @@ contracts:
     related_code:
       - server/src/services/chat-agent-runs.ts
       - server/src/services/chat-assistant.ts
+      - server/src/services/chat-assistant.helpers.ts
+      - server/src/routes/chats.ts
+      - server/src/routes/chats.stream-routes.ts
       - ui/src/pages/AgentDetail.chat-context.tsx
+      - ui/src/pages/Chat.parts.tsx
+      - ui/src/pages/Chat.messages.tsx
     related_tests:
       - server/src/__tests__/chat-agent-runs.test.ts
       - server/src/__tests__/chat-assistant.test.ts
+      - server/src/__tests__/chat-routes.test.ts
       - tests/e2e/agent-detail-chat-run-context.spec.ts
+      - tests/e2e/chat-error-toast.spec.ts
+      - tests/e2e/chat-runtime-boot-failure.spec.ts
       - tests/e2e/chat-streaming.spec.ts
     related_plans:
       - doc/plans/2026-06-20-agent-run-unification-completion.md
@@ -344,11 +352,20 @@ contracts:
     docs:
       - doc/product/domains/agents/identity-config.md
     related_code:
+      - packages/shared/src/types/agent.ts
       - server/src/agent-runtimes/registry.ts
+      - server/src/routes/agents.ts
+      - server/src/services/agent-runtime-availability.ts
       - server/src/services/runtime-kernel/heartbeat.execute.ts
+      - ui/src/api/agents.ts
+      - ui/src/components/AgentConfigForm.advanced.tsx
+      - ui/src/components/AgentConfigForm.tsx
     related_tests:
+      - server/src/__tests__/agent-runtime-availability.test.ts
       - server/src/__tests__/agent-run-context.test.ts
       - server/src/__tests__/heartbeat-process-recovery.test.ts
+      - ui/src/components/AgentConfigForm.advanced.test.tsx
+      - tests/e2e/agent-config-advanced-options.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
   AGENT.RUNTIME.PERMISSIONS.001:
