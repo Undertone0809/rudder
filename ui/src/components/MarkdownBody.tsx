@@ -382,6 +382,7 @@ type WebsiteMetadataIconState =
   | { status: "ready"; iconUrl: string };
 
 const websiteMetadataIconCache = new Map<string, WebsiteMetadataIconState>();
+const websiteMetadataIconInflight = new Map<string, Promise<WebsiteMetadataIconState>>();
 
 function useWebsiteMetadataIcon(url: URL) {
   const href = url.href;
@@ -396,21 +397,29 @@ function useWebsiteMetadataIcon(url: URL) {
       return;
     }
 
-    let cancelled = false;
     const loadingState: WebsiteMetadataIconState = { status: "loading", iconUrl: null };
     websiteMetadataIconCache.set(href, loadingState);
 
-    Promise.resolve(websiteMetadataApi.get(href))
+    let cancelled = false;
+    const request = websiteMetadataIconInflight.get(href) ?? Promise.resolve(websiteMetadataApi.get(href))
       .then((metadata) => {
         const nextState: WebsiteMetadataIconState = metadata?.iconUrl
           ? { status: "ready", iconUrl: metadata.iconUrl }
           : { status: "none", iconUrl: null };
-        websiteMetadataIconCache.set(href, nextState);
-        if (!cancelled && nextState.status === "ready") setState(nextState);
+        return nextState;
       })
-      .catch(() => {
-        const nextState: WebsiteMetadataIconState = { status: "error", iconUrl: null };
+      .catch((): WebsiteMetadataIconState => {
+        return { status: "error", iconUrl: null };
+      })
+      .finally(() => {
+        websiteMetadataIconInflight.delete(href);
+      });
+    websiteMetadataIconInflight.set(href, request);
+
+    request
+      .then((nextState) => {
         websiteMetadataIconCache.set(href, nextState);
+        if (!cancelled) setState(nextState);
       });
 
     return () => {
@@ -457,6 +466,7 @@ export function WebsiteLinkIcon({ url }: { url: URL }) {
 
 export function __clearWebsiteMetadataIconCacheForTests() {
   websiteMetadataIconCache.clear();
+  websiteMetadataIconInflight.clear();
 }
 
 function extractMermaidSource(children: ReactNode): string | null {

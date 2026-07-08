@@ -19,6 +19,7 @@ const FETCH_TIMEOUT_MS = 5_000;
 const MAX_REDIRECTS = 5;
 const SUCCESS_CACHE_TTL_MS = 30 * 60_000;
 const FAILURE_CACHE_TTL_MS = 5 * 60_000;
+const FALLBACK_FAVICON_SIZE = "64";
 const IMAGE_CONTENT_TYPES = new Set([
   "image/gif",
   "image/jpeg",
@@ -157,7 +158,7 @@ function metadataCacheKey(url: URL) {
 const metadataCache = new Map<string, { expiresAt: number; value: WebsiteMetadata }>();
 const metadataInflight = new Map<string, Promise<WebsiteMetadata>>();
 
-async function readLimitedBuffer(response: Response, maxBytes: number) {
+async function readLimitedBuffer(response: Response, maxBytes: number, options: { truncate?: boolean } = {}) {
   const body = response.body;
   if (!body) return Buffer.alloc(0);
 
@@ -171,6 +172,12 @@ async function readLimitedBuffer(response: Response, maxBytes: number) {
       if (!value) continue;
       total += value.byteLength;
       if (total > maxBytes) {
+        if (options.truncate) {
+          const remainingBytes = maxBytes - (total - value.byteLength);
+          if (remainingBytes > 0) chunks.push(Buffer.from(value.slice(0, remainingBytes)));
+          await reader.cancel();
+          break;
+        }
         throw new Error("Response exceeds metadata size limit");
       }
       chunks.push(Buffer.from(value));
@@ -183,6 +190,13 @@ async function readLimitedBuffer(response: Response, maxBytes: number) {
 
 function contentTypeBase(value: string | null) {
   return value?.split(";")[0]?.trim().toLowerCase() ?? "";
+}
+
+function isInspectableUrlFailure(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  return error.message === "Only http and https URLs can be inspected"
+    || error.message === "Private network URLs cannot be inspected"
+    || error.message === "Website metadata redirect limit exceeded";
 }
 
 function absolutizeHref(href: string | null | undefined, baseUrl: URL, options: WebsiteMetadataOptions) {
@@ -264,9 +278,30 @@ async function findImplicitFavicon(baseUrl: URL, options: WebsiteMetadataOptions
   return validateIconUrl(faviconUrl.href, options);
 }
 
+function fallbackFaviconProviderUrl(pageUrl: URL, options: WebsiteMetadataOptions) {
+  if (options.allowPrivateHosts) return null;
+  if (!isPublicDnsHostname(pageUrl.hostname)) return null;
+  const providerUrl = new URL("/s2/favicons", "https://www.google.com");
+  providerUrl.searchParams.set("domain_url", pageUrl.origin);
+  providerUrl.searchParams.set("sz", FALLBACK_FAVICON_SIZE);
+  return providerUrl.href;
+}
+
+async function findProviderFavicon(pageUrl: URL, options: WebsiteMetadataOptions) {
+  const providerUrl = fallbackFaviconProviderUrl(pageUrl, options);
+  return providerUrl ? validateIconUrl(providerUrl, options) : null;
+}
+
 async function resolveWebsiteMetadataUncached(value: string, options: WebsiteMetadataOptions): Promise<WebsiteMetadata> {
   const pageUrl = parsePublicHttpUrl(value, options);
-  const { response, url: finalPageUrl } = await fetchWithTimeout(pageUrl, options);
+  let pageResult: FetchResult;
+  try {
+    pageResult = await fetchWithTimeout(pageUrl, options);
+  } catch (error) {
+    if (isInspectableUrlFailure(error)) throw error;
+    return { url: pageUrl.href, siteName: null, iconUrl: null };
+  }
+  const { response, url: finalPageUrl } = pageResult;
   if (!response.ok) {
     return { url: finalPageUrl.href, siteName: null, iconUrl: null };
   }
@@ -276,7 +311,7 @@ async function resolveWebsiteMetadataUncached(value: string, options: WebsiteMet
     return { url: finalPageUrl.href, siteName: null, iconUrl: null };
   }
 
-  const html = (await readLimitedBuffer(response, MAX_HTML_BYTES)).toString("utf8");
+  const html = (await readLimitedBuffer(response, MAX_HTML_BYTES, { truncate: true })).toString("utf8");
   const dom = new JSDOM(html, { url: finalPageUrl.href });
   try {
     const document = dom.window.document;
@@ -284,7 +319,9 @@ async function resolveWebsiteMetadataUncached(value: string, options: WebsiteMet
     return {
       url: finalPageUrl.href,
       siteName: readSiteName(document),
-      iconUrl: (declaredIcon ? await validateIconUrl(declaredIcon, options) : null) ?? await findImplicitFavicon(finalPageUrl, options),
+      iconUrl: (declaredIcon ? await validateIconUrl(declaredIcon, options) : null)
+        ?? await findImplicitFavicon(finalPageUrl, options)
+        ?? await findProviderFavicon(finalPageUrl, options),
     };
   } finally {
     dom.window.close();

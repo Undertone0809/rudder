@@ -222,6 +222,14 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     enabled: Boolean(!isCreate && selectedOrganizationId),
   });
 
+  const { data: adapterAvailability = [] } = useQuery({
+    queryKey: selectedOrganizationId
+      ? queryKeys.agents.adapterAvailability(selectedOrganizationId)
+      : ["agents", "none", "adapter-availability"],
+    queryFn: () => agentsApi.adapterAvailability(selectedOrganizationId!),
+    enabled: Boolean(selectedOrganizationId),
+  });
+
   /** Props passed to adapter-specific config field components */
   const adapterFieldProps = {
     mode,
@@ -589,6 +597,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                         hideInstructionsFile={hideInstructionsFile}
                         createValues={isCreate ? val! : null}
                         createSet={isCreate ? set : null}
+                        adapterAvailability={adapterAvailability}
                         onRuntimeTypeChange={(nextRuntimeType) => {
                           if (isCreate) {
                             set!(createValuesForRuntime(nextRuntimeType));
@@ -650,6 +659,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                       availableSecrets={availableSecrets}
                       onCreateSecret={(name, value) => createSecret.mutateAsync({ name, value })}
                       hideInstructionsFile={hideInstructionsFile}
+                      adapterAvailability={adapterAvailability}
                       onRemove={() =>
                         updateFallbackModels(currentFallbackModels.filter((_, itemIndex) => itemIndex !== fallbackIndex))
                       }

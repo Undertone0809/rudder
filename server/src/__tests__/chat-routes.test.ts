@@ -157,12 +157,29 @@ vi.mock("../services/chat-assistant.js", () => ({
     partialBody: string;
     partialBodyUserVisible: boolean;
     generatedAttachments: unknown[];
+    errorCode: string;
+    userMessage: string;
+    retryable?: boolean;
+    failurePhase?: string;
+    action?: string;
 
-    constructor(message: string, partialBody = "", generatedAttachments: unknown[] = [], options: { partialBodyUserVisible?: boolean } = {}) {
+    constructor(message: string, partialBody = "", generatedAttachments: unknown[] = [], options: {
+      partialBodyUserVisible?: boolean;
+      errorCode?: string;
+      userMessage?: string;
+      retryable?: boolean;
+      failurePhase?: string;
+      action?: string;
+    } = {}) {
       super(message);
       this.partialBody = partialBody;
       this.partialBodyUserVisible = options.partialBodyUserVisible === true;
       this.generatedAttachments = generatedAttachments;
+      this.errorCode = options.errorCode ?? "chat_runtime_exception";
+      this.userMessage = options.userMessage ?? "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.";
+      this.retryable = options.retryable;
+      this.failurePhase = options.failurePhase;
+      this.action = options.action;
     }
   },
   chatAssistantService: () => mockChatAssistantService,
@@ -2554,6 +2571,67 @@ describe("chat routes", () => {
         output: "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.",
         level: "ERROR",
         statusMessage: "failed",
+      }),
+    );
+  });
+
+  it("persists runtime boot failures as non-retryable chat messages", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need help");
+    const failurePayload = {
+      recoverableFailure: {
+        recoverable: false,
+        retryable: false,
+        phase: "runtime_boot",
+        action: "repair_runtime",
+        code: "chat_runtime_boot_failed",
+        message: "The assistant runtime did not start successfully. Fix the runtime command or environment, then run again.",
+        runId: null,
+      },
+    };
+    const failedMessage = {
+      ...createMessage("message-assistant", "assistant", "message", failurePayload.recoverableFailure.message),
+      status: "failed",
+      structuredPayload: failurePayload,
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(failedMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockImplementation(async () => {
+      const { ChatAssistantStreamError } = await import("../services/chat-assistant.js");
+      throw new ChatAssistantStreamError("Codex exited with code 137", "", [], {
+        errorCode: "chat_runtime_boot_failed",
+        userMessage: failurePayload.recoverableFailure.message,
+        retryable: false,
+        failurePhase: "runtime_boot",
+        action: "repair_runtime",
+      });
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "Need help" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.messages).toEqual([
+      expect.objectContaining({ id: userMessage.id, role: "user", body: "Need help" }),
+      expect.objectContaining({
+        id: failedMessage.id,
+        role: "assistant",
+        status: "failed",
+        body: failurePayload.recoverableFailure.message,
+        structuredPayload: failurePayload,
+      }),
+    ]);
+    expect(mockChatService.addMessage).toHaveBeenCalledWith(
+      "chat-1",
+      expect.objectContaining({
+        role: "assistant",
+        status: "failed",
+        body: failurePayload.recoverableFailure.message,
+        structuredPayload: failurePayload,
       }),
     );
   });

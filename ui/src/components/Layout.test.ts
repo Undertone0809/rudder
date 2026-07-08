@@ -4,6 +4,7 @@ import {
   getWorkspaceColumnMaxWidth,
   resolveProportionalSidePanelWidth,
   resolveProportionalWorkspaceColumnWidth,
+  resolveSidePanelContextKey,
   shouldUseFramelessWorkspaceMain,
 } from "./Layout";
 
@@ -48,6 +49,25 @@ describe("workspace context column sizing", () => {
 
     expect(resolveProportionalSidePanelWidth(ratio, 1000)).toBe(340);
     expect(resolveProportionalSidePanelWidth(720 / 1440, 1440)).toBe(604);
+  });
+});
+
+describe("side panel route context", () => {
+  it("scopes side panel state to Messenger chats and issues", () => {
+    expect(resolveSidePanelContextKey("/messenger/chat/chat-1")).toBe("chat:chat-1");
+    expect(resolveSidePanelContextKey("/messenger/issues/RUD-42")).toBe("issue:RUD-42");
+    expect(resolveSidePanelContextKey("/chat/chat-2")).toBe("chat:chat-2");
+  });
+
+  it("does not create side panel context for Messenger aggregate routes", () => {
+    expect(resolveSidePanelContextKey("/messenger")).toBeNull();
+    expect(resolveSidePanelContextKey("/messenger/chat")).toBeNull();
+    expect(resolveSidePanelContextKey("/messenger/issues")).toBeNull();
+    expect(resolveSidePanelContextKey("/messenger/approvals")).toBeNull();
+  });
+
+  it("keeps malformed route segments from crashing layout context resolution", () => {
+    expect(resolveSidePanelContextKey("/messenger/chat/%E0%A4%A")).toBe("chat:%E0%A4%A");
   });
 });
 

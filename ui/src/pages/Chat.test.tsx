@@ -454,6 +454,33 @@ describe("ChatMessageItem", () => {
     expect(html).toContain("Run 12345678");
     expect(html).toContain("Retry");
   });
+
+  it("renders non-retryable runtime boot failures without a retry action", () => {
+    const html = renderChatMessageItem(message({
+      role: "assistant",
+      kind: "message",
+      status: "failed",
+      body: "The assistant runtime did not start successfully. Fix the runtime command or environment, then run again.",
+      chatTurnId: "turn-1",
+      runId: "12345678-1234-1234-1234-123456789abc",
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: false,
+          retryable: false,
+          phase: "runtime_boot",
+          action: "repair_runtime",
+          code: "chat_runtime_boot_failed",
+          message: "The assistant runtime did not start successfully. Fix the runtime command or environment, then run again.",
+          runId: "12345678-1234-1234-1234-123456789abc",
+        },
+      },
+    }));
+
+    expect(html).toContain("Runtime unavailable");
+    expect(html).toContain("Fix the runtime command or environment");
+    expect(html).toContain("Code chat_runtime_boot_failed");
+    expect(html).not.toContain("Retry");
+  });
 });
 
 describe("Chat Side Panel targets", () => {
@@ -1179,6 +1206,24 @@ describe("failed chat retry", () => {
       kind: "message",
       status: "failed",
       chatTurnId: "turn-1",
+    }))).toBe(false);
+  });
+
+  it("does not offer retry for failed messages marked non-retryable", () => {
+    expect(canRetryFailedChatMessage(message({
+      role: "assistant",
+      kind: "message",
+      status: "failed",
+      chatTurnId: "turn-1",
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: false,
+          retryable: false,
+          phase: "runtime_boot",
+          code: "chat_runtime_boot_failed",
+          message: "Fix runtime setup first.",
+        },
+      },
     }))).toBe(false);
   });
 

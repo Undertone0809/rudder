@@ -8,6 +8,7 @@ import type {
   AgentIntegrationSetupUrl,
   AgentIntegrationSummary,
   AgentKeyCreated,
+  AgentRuntimeAvailability,
   AgentRuntimeEnvironmentTestResult,
   AgentRuntimeState,
   AgentSkillAnalytics,
@@ -244,6 +245,10 @@ export const agentsApi = {
   adapterModels: (orgId: string, type: string) =>
     api.get<AgentRuntimeModel[]>(
       `/orgs/${encodeURIComponent(orgId)}/adapters/${encodeURIComponent(type)}/models`,
+    ),
+  adapterAvailability: (orgId: string) =>
+    api.get<AgentRuntimeAvailability[]>(
+      `/orgs/${encodeURIComponent(orgId)}/adapters/availability`,
     ),
   testEnvironment: (
     orgId: string,

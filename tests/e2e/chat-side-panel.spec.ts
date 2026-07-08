@@ -24,15 +24,93 @@ function buildAutomationMentionHref(automationId: string, title?: string | null)
   return query ? `automation://${automationId}?${query}` : `automation://${automationId}`;
 }
 
-function buildLibraryFileMentionHref(filePath: string) {
-  return `library-file://file?p=${encodeURIComponent(filePath)}`;
-}
-
 function buildLibraryDirectoryMentionHref(directoryPath: string) {
   return `library-directory://directory?p=${encodeURIComponent(directoryPath)}`;
 }
 
 test.describe("Chat Side Panel", () => {
+  test("renders the full issue detail body when an issue Side Panel tab is expanded", async ({ page }, testInfo) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Chat-Side-Panel-Expanded-Issue-${Date.now()}` },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Expanded detail parity issue",
+        description: "Expanded Side Panel should render the same issue detail body.",
+        status: "todo",
+        priority: "high",
+      },
+    });
+    expect(issueRes.ok(), await issueRes.text()).toBe(true);
+    const issue = await issueRes.json() as { id: string; identifier: string | null };
+    const issueRef = issue.identifier ?? issue.id;
+    const commentRes = await page.request.post(`/api/issues/${issue.id}/comments`, {
+      data: { body: "Expanded detail activity should be visible." },
+    });
+    expect(commentRes.ok(), await commentRes.text()).toBe(true);
+
+    const hostChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Expanded issue side panel host chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(hostChatRes.ok(), await hostChatRes.text()).toBe(true);
+    const hostChat = await hostChatRes.json() as { id: string };
+
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: hostChat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: `Open [${issueRef}](${buildIssueMentionHref(issue.id, issueRef)}) beside this chat.`,
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${hostChat.id}`);
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(assistantMessage).toContainText("Open", { timeout: 15_000 });
+
+    await assistantMessage.locator('a[data-mention-kind="issue"]').filter({ hasText: issueRef }).click();
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await expect(sidePanel.getByTestId("chat-side-panel-issue-view")).toBeVisible();
+
+    await sidePanel.getByLabel("Expand Side Panel").click();
+    await expect(sidePanel.getByTestId("embedded-issue-detail")).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-issue-view")).toHaveCount(0);
+    await expect(sidePanel).toContainText("Expanded detail parity issue");
+    await expect(sidePanel).toContainText("Expanded Side Panel should render the same issue detail body.");
+    await expect(sidePanel.getByText("Properties", { exact: true })).toBeVisible();
+    await expect(sidePanel.getByRole("region", { name: "Issue properties" })).toBeVisible();
+    await expect(sidePanel).toContainText("Sub-issues");
+    await expect(sidePanel).toContainText("Add sub-issue");
+    await expect(sidePanel).toContainText("Attach");
+    await expect(sidePanel).toContainText("Activity");
+    await expect(sidePanel).toContainText("Expanded detail activity should be visible.");
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${hostChat.id}$`));
+
+    await page.screenshot({
+      path: testInfo.outputPath("chat-side-panel-expanded-issue-detail.png"),
+      fullPage: true,
+    });
+  });
+
   test("opens issue, automation, library, and chat references in the Side Panel without replacing the Chat route", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Chat-Side-Panel-${Date.now()}` },
@@ -57,6 +135,14 @@ test.describe("Chat Side Panel", () => {
       },
     });
     expect(existingCommentRes.ok(), await existingCommentRes.text()).toBe(true);
+    for (let index = 1; index <= 12; index += 1) {
+      const scrollCommentRes = await page.request.post(`/api/issues/${issue.id}/comments`, {
+        data: {
+          body: `Scrollable side panel activity comment ${index}. This keeps the issue activity long enough to verify narrow panel scrolling.`,
+        },
+      });
+      expect(scrollCommentRes.ok(), await scrollCommentRes.text()).toBe(true);
+    }
 
     const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
       data: {
@@ -98,6 +184,7 @@ test.describe("Chat Side Panel", () => {
       },
     });
     expect(libraryFileRes.ok(), await libraryFileRes.text()).toBe(true);
+    const libraryFile = await libraryFileRes.json() as { markdownLink: string };
     const libraryFileName = libraryFilePath.split("/").at(-1) ?? libraryFilePath;
 
     const referencedChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
@@ -144,7 +231,7 @@ test.describe("Chat Side Panel", () => {
       body: [
         `Open [${issueRef}](${buildIssueMentionHref(issue.id, issueRef)}) beside this chat.`,
         `Inspect [${automation.title}](${buildAutomationMentionHref(automation.id, automation.title)}) beside this chat.`,
-        `Read [${libraryFileName}](${buildLibraryFileMentionHref(libraryFilePath)}) beside this chat.`,
+        `Read ${libraryFile.markdownLink} beside this chat.`,
         `Compare [Referenced detail chat](${buildChatMentionHref(referencedChat.id)}) beside this chat.`,
       ].join("\n\n"),
       structuredPayload: null,
@@ -175,21 +262,97 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Reference issue target");
     await expect(sidePanel).toContainText("Issue details should stay beside the active chat.");
     await expect(sidePanel).toContainText("Existing side panel comment should stay visible.");
-    await expect(sidePanel.getByLabel("Edit issue")).toBeVisible();
+    await expect(sidePanel.getByLabel("Edit issue")).toHaveCount(0);
+    await expect(sidePanel.getByRole("region", { name: "Issue properties" })).toBeVisible();
+    await expect(sidePanel.getByText("Properties", { exact: true })).toBeVisible();
+    await expect(sidePanel.getByText("Reference Automation Agent", { exact: true })).toBeVisible();
+    await expect(sidePanel.getByText("engineer", { exact: true })).toBeVisible();
     await expect(sidePanel.getByLabel("Close Side Panel")).toBeVisible();
     await expect(sidePanel.getByLabel("Expand Side Panel")).toBeVisible();
     await expect(sidePanel.getByRole("link", { name: "Full page" })).toHaveCount(0);
 
-    await sidePanel.locator('button:has([data-slot="issue-status-icon"])').first().click();
+    const propertiesPanel = sidePanel.getByRole("region", { name: "Issue properties" });
+    await propertiesPanel.locator('button:has([data-slot="issue-status-icon"])').first().click();
     await page.getByRole("menuitemradio", { name: "Done" }).click();
     await expect(sidePanel).toContainText("done");
 
-    await sidePanel.getByLabel("Edit issue").click();
-    await sidePanel.getByLabel("Issue title").fill("Reference issue target edited");
-    await sidePanel.getByLabel("Issue description").fill("Edited from the chat detail panel.");
-    await sidePanel.getByRole("button", { name: "Save" }).click();
+    const reassigneeRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Side Panel Reviewer",
+        role: "pm",
+        title: "Review Lead",
+      },
+    });
+    expect(reassigneeRes.ok(), await reassigneeRes.text()).toBe(true);
+    const reassignee = await reassigneeRes.json() as { id: string };
+
+    await propertiesPanel.getByText("Reference Automation Agent", { exact: true }).click();
+    await page.getByPlaceholder("Search assignees...").fill("Side Panel Reviewer");
+    const assigneePatchResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "PATCH"
+        && url.pathname.endsWith(`/api/issues/${issue.id}`);
+    });
+    await page.getByRole("button", { name: /Side Panel Reviewer/ }).click();
+    const assigneePatchRes = await assigneePatchResponse;
+    expect(assigneePatchRes.ok(), await assigneePatchRes.text()).toBe(true);
+    await expect(propertiesPanel.getByText("Side Panel Reviewer", { exact: true })).toBeVisible();
+    await expect(propertiesPanel.getByText("Review Lead", { exact: true })).toBeVisible();
+
+    await sidePanel.getByRole("heading", { name: "Reference issue target" }).click();
+    const titlePatchResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "PATCH"
+        && url.pathname.endsWith(`/api/issues/${issue.id}`);
+    });
+    await sidePanel.locator("textarea").first().fill("Reference issue target edited");
+    await page.keyboard.press("Enter");
+    const titlePatchRes = await titlePatchResponse;
+    expect(titlePatchRes.ok(), await titlePatchRes.text()).toBe(true);
+
+    const descriptionPatchResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "PATCH"
+        && url.pathname.endsWith(`/api/issues/${issue.id}`);
+    });
+    const descriptionEditor = sidePanel.locator(".rudder-inline-markdown-surface .rudder-milkdown-content [contenteditable='true']").first();
+    await expect(descriptionEditor).toBeVisible({ timeout: 15_000 });
+    await descriptionEditor.fill("Edited from the chat detail panel.");
+    await propertiesPanel.click();
+    const descriptionPatchRes = await descriptionPatchResponse;
+    expect(descriptionPatchRes.ok(), await descriptionPatchRes.text()).toBe(true);
     await expect(sidePanel).toContainText("Reference issue target edited");
     await expect(sidePanel).toContainText("Edited from the chat detail panel.");
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(sidePanel).toBeVisible();
+    const activityRegion = sidePanel.getByRole("region", { name: "Activity" });
+    const scrollBody = sidePanel.locator("[data-testid='chat-side-panel-scroll-body']");
+    const activityScroller = sidePanel.locator("[data-testid='chat-side-panel-issue-activity-scroll']");
+    await expect(activityRegion).toBeVisible();
+    await expect(scrollBody).toBeVisible();
+    await expect(activityScroller).toBeVisible();
+    await expect(sidePanel.getByText("Assignee", { exact: true })).toBeVisible();
+    await expect(sidePanel.getByText("Edited from the chat detail panel.")).toBeVisible();
+    await expect(activityRegion).toContainText("Existing side panel comment should stay visible.");
+    await expect(activityRegion).toContainText("Scrollable side panel activity comment 12.");
+    const scrollBodyMetrics = await scrollBody.evaluate((element) => ({
+      className: element.className,
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }));
+    expect(scrollBodyMetrics.className).toContain("overflow-y-auto");
+    expect(scrollBodyMetrics.scrollHeight).toBeGreaterThan(scrollBodyMetrics.clientHeight);
+    await scrollBody.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect.poll(async () => scrollBody.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    await expect(activityRegion.getByText("Scrollable side panel activity comment 12.")).toBeInViewport();
+
+    await sidePanel.getByLabel("Expand Side Panel").click();
+    await expect(sidePanel).toContainText("Sub-issues");
+    await expect(sidePanel).toContainText("Activity");
+    await expect(propertiesPanel).toBeVisible();
 
     const commentComposer = sidePanel.locator(".chat-composer .rudder-milkdown-content [contenteditable='true']").last();
     await expect(commentComposer).toBeVisible({ timeout: 15_000 });
@@ -211,6 +374,7 @@ test.describe("Chat Side Panel", () => {
     expect(updatedIssue.status).toBe("done");
     expect(updatedIssue.title).toBe("Reference issue target edited");
     expect(updatedIssue.description).toBe("Edited from the chat detail panel.");
+    expect((updatedIssue as { assigneeAgentId?: string | null }).assigneeAgentId).toBe(reassignee.id);
 
     const commentsRes = await page.request.get(`/api/issues/${issue.id}/comments`);
     expect(commentsRes.ok(), await commentsRes.text()).toBe(true);
@@ -242,6 +406,217 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Referenced detail chat");
     await expect(sidePanel).toContainText("Referenced chat body should render beside the active chat.");
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(4);
+  });
+
+  test("keeps hidden Side Panel tabs scoped to the active Messenger chat", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Chat-Side-Panel-Session-State-${Date.now()}` },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    async function createChat(title: string, body?: string) {
+      const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+        data: {
+          title,
+          issueCreationMode: "manual_approval",
+          planMode: false,
+        },
+      });
+      expect(chatRes.ok(), await chatRes.text()).toBe(true);
+      const chat = await chatRes.json() as { id: string; title: string };
+      if (body) {
+        await e2eDb.insert(chatMessages).values({
+          id: randomUUID(),
+          orgId: organization.id,
+          conversationId: chat.id,
+          role: "assistant",
+          kind: "message",
+          status: "completed",
+          body,
+          structuredPayload: null,
+          replyingAgentId: null,
+          chatTurnId: randomUUID(),
+          turnVariant: 0,
+        });
+      }
+      return chat;
+    }
+
+    const panelTargetA = await createChat("Panel target A", "Panel target A body.");
+    const panelTargetB = await createChat("Panel target B", "Panel target B body.");
+    const otherChat = await createChat("Other chat without panel history", "Other chat has no panel history.");
+    const thirdChat = await createChat("Third chat without panel history", "Third chat has no panel history.");
+    const hostChat = await createChat("Session state host chat", [
+      `Compare [Panel target A](${buildChatMentionHref(panelTargetA.id)}) beside this chat.`,
+      `Compare [Panel target B](${buildChatMentionHref(panelTargetB.id)}) beside this chat.`,
+    ].join("\n\n"));
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${hostChat.id}`);
+
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(assistantMessage).toContainText("Panel target A", { timeout: 15_000 });
+
+    await assistantMessage.locator('a[data-mention-kind="chat"]').filter({ hasText: "Panel target A" }).click();
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await expect(sidePanel).toContainText("Panel target A body.");
+
+    await assistantMessage.locator('a[data-mention-kind="chat"]').filter({ hasText: "Panel target B" }).click();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
+    await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toContainText("Panel target B");
+    await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toHaveAttribute("aria-selected", "true");
+    await expect(sidePanel).toContainText("Panel target B body.");
+
+    await page.getByTestId(`messenger-thread-chat-${otherChat.id}`).click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${otherChat.id}$`));
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+    await page.getByTestId(`messenger-thread-chat-${hostChat.id}`).click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${hostChat.id}$`));
+    await expect(sidePanel).toBeVisible();
+    const restoredTabs = sidePanel.getByTestId("chat-side-panel-tabs");
+    await expect(restoredTabs.getByRole("tab", { name: "Panel target A" })).toBeVisible();
+    await expect(restoredTabs.getByRole("tab", { name: "Panel target B" })).toBeVisible();
+    await expect(restoredTabs.getByRole("tab", { name: "Panel target B" })).toHaveAttribute("aria-selected", "true");
+    await expect(sidePanel).toContainText("Panel target B body.");
+
+    await sidePanel.getByTestId("chat-side-panel-collapse").click();
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+    const chatSidePanelTrigger = () => page.getByTestId("workspace-main-card").getByTestId("chat-side-panel-trigger");
+    await expect(chatSidePanelTrigger()).toHaveAttribute("aria-pressed", "false");
+
+    await chatSidePanelTrigger().click();
+    await expect(sidePanel).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
+    await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toContainText("Panel target B");
+    await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toHaveAttribute("aria-selected", "true");
+    await expect(sidePanel).toContainText("Panel target B body.");
+
+    await sidePanel.getByTestId("chat-side-panel-collapse").click();
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+    await page.getByTestId(`messenger-thread-chat-${otherChat.id}`).click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${otherChat.id}$`));
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+
+    await chatSidePanelTrigger().click();
+    await expect(sidePanel).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-empty-state")).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(0);
+    await expect(sidePanel).not.toContainText("Panel target A body.");
+    await expect(sidePanel).not.toContainText("Panel target B body.");
+
+    await page.getByTestId(`messenger-thread-chat-${hostChat.id}`).click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${hostChat.id}$`));
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+
+    await chatSidePanelTrigger().click();
+    await expect(sidePanel).toBeVisible();
+    const restoredTabsAfterEmptyPanel = sidePanel.getByTestId("chat-side-panel-tabs");
+    await expect(restoredTabsAfterEmptyPanel.getByRole("tab", { name: "Panel target A" })).toBeVisible();
+    await expect(restoredTabsAfterEmptyPanel.getByRole("tab", { name: "Panel target B" })).toBeVisible();
+    await expect(restoredTabsAfterEmptyPanel.getByRole("tab", { name: "Panel target B" })).toHaveAttribute("aria-selected", "true");
+    await expect(sidePanel).toContainText("Panel target B body.");
+
+    await page.getByTestId(`messenger-thread-chat-${thirdChat.id}`).click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${thirdChat.id}$`));
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+  });
+
+  test("keeps Side Panel tabs scoped to a concrete Messenger issue", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Chat-Side-Panel-Issue-Session-State-${Date.now()}` },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Issue panel session target",
+        description: "Issue route should keep its own side panel state.",
+        status: "todo",
+        priority: "medium",
+      },
+    });
+    expect(issueRes.ok(), await issueRes.text()).toBe(true);
+    const issue = await issueRes.json() as { id: string; identifier: string | null; title: string };
+    const issueRef = issue.identifier ?? issue.id;
+    const followRes = await page.request.post(`/api/issues/${issue.id}/follow`);
+    expect(followRes.ok(), await followRes.text()).toBe(true);
+
+    const otherChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Issue context no-history chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(otherChatRes.ok(), await otherChatRes.text()).toBe(true);
+    const otherChat = await otherChatRes.json() as { id: string };
+
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: otherChat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "No side panel history belongs to this chat.",
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.messengerSplitIssueNotificationsByOrg", JSON.stringify({ [orgId]: true }));
+    }, organization.id);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/issues/${issueRef}`, { waitUntil: "commit" });
+    await expect(page).toHaveURL(new RegExp(`/messenger/issues/${issueRef}$`));
+    await expect(page.locator("#main-content").getByRole("heading", { name: "Issue panel session target" })).toBeVisible({ timeout: 15_000 });
+
+    const globalSidePanelTrigger = page.getByTestId("global-side-panel-trigger");
+    await globalSidePanelTrigger.click({ force: true });
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await expect(sidePanel.getByTestId("chat-side-panel-empty-state")).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(0);
+    await sidePanel.getByTestId("chat-side-panel-empty-library-target").click();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(1);
+    await expect(sidePanel.getByTestId("chat-side-panel-tab").first()).toContainText("Library");
+    await expect(sidePanel.getByTestId("chat-side-panel-library-directory-view")).toBeVisible();
+
+    await sidePanel.getByTestId("chat-side-panel-collapse").click();
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+    await globalSidePanelTrigger.click({ force: true });
+    await expect(sidePanel).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(1);
+    await expect(sidePanel.getByTestId("chat-side-panel-tab").first()).toContainText("Library");
+    await expect(sidePanel.getByTestId("chat-side-panel-library-directory-view")).toBeVisible();
+
+    await page.getByTestId(`messenger-thread-chat-${otherChat.id}`).click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${otherChat.id}$`));
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+    await page.getByTestId("workspace-main-card").getByTestId("chat-side-panel-trigger").click();
+    await expect(sidePanel).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-empty-state")).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(0);
+
+    await page.getByTestId(`messenger-thread-issue-${issue.id}`).click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/issues/${issueRef}$`));
+    await expect(sidePanel).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(1);
+    await expect(sidePanel.getByTestId("chat-side-panel-tab").first()).toContainText("Library");
+    await expect(sidePanel.getByTestId("chat-side-panel-library-directory-view")).toBeVisible();
   });
 
   test("opens a Library directory in the Side Panel with the Library file-tree UI", async ({ page }) => {
@@ -411,6 +786,58 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toHaveCount(0);
     await page.getByTestId("side-panel-hover-edge").hover();
     await expect(page.getByTestId("global-side-panel-trigger")).toBeVisible();
+  });
+
+  test("hides the main workspace while the Side Panel is expanded", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Global-Side-Panel-Expanded-${Date.now()}` },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await page.getByTestId("side-panel-hover-edge").hover();
+    await page.getByTestId("global-side-panel-trigger").click();
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await expect(sidePanel).toContainText("Open a panel");
+    await expect(page.getByTestId("workspace-main-card")).toBeVisible();
+
+    await sidePanel.getByLabel("Expand Side Panel").click();
+    await expect(page.getByTestId("side-panel-expanded-overlay")).toBeVisible();
+    await expect(sidePanel.getByLabel("Restore Side Panel width")).toBeVisible();
+    await expect(page.getByTestId("side-panel-resizer")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-main-card")).not.toBeVisible();
+    await expect(page.getByTestId("workspace-main-card")).toHaveAttribute("aria-hidden", "true");
+    await expect(page.getByTestId("workspace-main-card")).toHaveAttribute("inert", "");
+
+    const workspaceStackBox = await page.getByTestId("workspace-main-panel-stack").boundingBox();
+    const expandedSidePanelBox = await sidePanel.boundingBox();
+    expect(workspaceStackBox).not.toBeNull();
+    expect(expandedSidePanelBox).not.toBeNull();
+    expect(Math.abs(Math.round(expandedSidePanelBox!.x - workspaceStackBox!.x))).toBeLessThanOrEqual(2);
+    expect(Math.abs(Math.round((workspaceStackBox!.x + workspaceStackBox!.width) - (expandedSidePanelBox!.x + expandedSidePanelBox!.width)))).toBeLessThanOrEqual(2);
+
+    await sidePanel.getByLabel("Restore Side Panel width").click();
+    await expect(page.getByTestId("side-panel-expanded-overlay")).toHaveCount(0);
+    await expect(page.getByTestId("side-panel-resizer")).toBeVisible();
+    await expect(page.getByTestId("workspace-main-card")).toBeVisible();
+    await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("aria-hidden", "true");
+    await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("inert", "");
+
+    await sidePanel.getByLabel("Expand Side Panel").click();
+    await expect(page.getByTestId("side-panel-expanded-overlay")).toBeVisible();
+    await sidePanel.getByLabel("Close Side Panel").click();
+    await expect(sidePanel).toHaveCount(0);
+    await expect(page.getByTestId("workspace-main-card")).toBeVisible();
+    await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("aria-hidden", "true");
+    await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("inert", "");
   });
 
   test("opens a Browser side panel tab with URL navigation controls", async ({ page }) => {

@@ -44,7 +44,7 @@ export function InlineEditor({
   alwaysEdit = false,
   variant = "default",
 }: InlineEditorProps) {
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(alwaysEdit);
   const [multilineFocused, setMultilineFocused] = useState(false);
   const [draft, setDraft] = useState(value);
   const inputRef = useRef<HTMLTextAreaElement>(null);

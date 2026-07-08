@@ -1124,13 +1124,18 @@ export function chatRoutes(db: Db, storage: StorageService) {
     if (!(error instanceof ChatAssistantStreamError)) return null;
     const code = error.errorCode ?? "chat_runtime_exception";
     const message = error.userMessage ?? CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE;
+    const retryable = error.retryable !== false;
+    const failure: Record<string, unknown> = {
+      recoverable: retryable,
+      code,
+      message,
+      runId: runId ?? null,
+    };
+    if (!retryable) failure.retryable = false;
+    if (error.failurePhase) failure.phase = error.failurePhase;
+    if (error.action) failure.action = error.action;
     return {
-      recoverableFailure: {
-        recoverable: true,
-        code,
-        message,
-        runId: runId ?? null,
-      },
+      recoverableFailure: failure,
     };
   }
 

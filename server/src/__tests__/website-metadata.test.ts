@@ -79,6 +79,37 @@ describe("resolveWebsiteMetadata", () => {
     });
   });
 
+  it("falls back to a server-side favicon provider for public pages without discoverable origin icons", async () => {
+    lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const href = url instanceof URL ? url.href : String(url);
+      if (href === "https://example.com/post") {
+        return new Response("<!doctype html><title>No Origin Icon</title>", {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        });
+      }
+      if (href === "https://example.com/favicon.ico") {
+        return new Response("not found", {
+          status: 404,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        });
+      }
+      if (href === "https://www.google.com/s2/favicons?domain_url=https%3A%2F%2Fexample.com&sz=64") {
+        return new Response(Buffer.from("png"), {
+          status: 200,
+          headers: { "content-type": "image/png" },
+        });
+      }
+      throw new Error(`Unexpected fetch ${href}`);
+    });
+
+    await expect(resolveWebsiteMetadata("https://example.com/post")).resolves.toMatchObject({
+      siteName: "No Origin Icon",
+      iconUrl: "https://www.google.com/s2/favicons?domain_url=https%3A%2F%2Fexample.com&sz=64",
+    });
+  });
+
   it("falls back to the implicit favicon when a declared icon is not a valid image", async () => {
     const fixture = await startFixtureServer((req, res) => {
       if (req.url === "/bad.ico") {
@@ -103,6 +134,41 @@ describe("resolveWebsiteMetadata", () => {
     await expect(resolveWebsiteMetadata(fixture.origin, { allowPrivateHosts: true })).resolves.toMatchObject({
       siteName: "Fallback Icon",
       iconUrl: `${fixture.origin}/favicon.ico`,
+    });
+  });
+
+  it("extracts declared icons from large pages without failing the metadata request", async () => {
+    const fixture = await startFixtureServer((req, res) => {
+      if (req.url === "/favicon.svg") {
+        res.setHeader("content-type", "image/svg+xml");
+        res.end("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><rect width=\"16\" height=\"16\"/></svg>");
+        return;
+      }
+      res.setHeader("content-type", "text/html; charset=utf-8");
+      res.end(`
+        <!doctype html>
+        <title>Large Metadata Page</title>
+        <link rel="icon" href="/favicon.svg">
+        ${"x".repeat(300 * 1024)}
+      `);
+    });
+    servers.push(fixture);
+
+    await expect(resolveWebsiteMetadata(`${fixture.origin}/large`, { allowPrivateHosts: true })).resolves.toMatchObject({
+      siteName: "Large Metadata Page",
+      iconUrl: `${fixture.origin}/favicon.svg`,
+    });
+  });
+
+  it("returns empty metadata instead of failing when a public page fetch fails", async () => {
+    const fetchImpl = async () => {
+      throw new TypeError("fetch failed");
+    };
+
+    await expect(resolveWebsiteMetadata("https://example.com/post", { fetchImpl })).resolves.toEqual({
+      url: "https://example.com/post",
+      siteName: null,
+      iconUrl: null,
     });
   });
 

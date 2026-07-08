@@ -77,4 +77,9 @@ describe("RuntimeLogoIcon", () => {
   it("uses a display label for pi_local instead of the raw key", () => {
     expect(ADAPTER_DISPLAY_LIST.find((item) => item.value === "pi_local")?.label).toBe("Pi (local)");
   });
+
+  it("omits low-level process and HTTP adapters from the runtime selector", () => {
+    expect(ADAPTER_DISPLAY_LIST.map((item) => item.value)).not.toContain("process");
+    expect(ADAPTER_DISPLAY_LIST.map((item) => item.value)).not.toContain("http");
+  });
 });

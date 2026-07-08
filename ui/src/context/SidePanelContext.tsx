@@ -1,97 +1,189 @@
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
+
+type SidePanelContextState = {
+  activeKey: string | null;
+  hasPanelState: boolean;
+  open: boolean;
+  tabs: SidePanelTarget[];
+};
 
 type SidePanelContextValue = {
   activeKey: string | null;
   open: boolean;
   tabs: SidePanelTarget[];
+  contextKey: string;
+  clearCurrentContext: () => void;
+  hidePanel: () => void;
   openTarget: (target: SidePanelTarget) => void;
+  openTargetForContext: (contextKey: string | null, target: SidePanelTarget) => void;
+  showPanel: () => void;
+  showPanelForContext: (contextKey: string | null) => void;
   openEmpty: () => void;
-  toggleEmpty: () => void;
   closePanel: () => void;
   closeTarget: (key: string) => void;
   replaceTarget: (key: string, target: SidePanelTarget) => void;
   setActiveKey: (key: string | null) => void;
+  setContextKey: (contextKey: string | null) => void;
 };
 
 const SidePanelContext = createContext<SidePanelContextValue | null>(null);
+const DEFAULT_SIDE_PANEL_CONTEXT_KEY = "global";
+
+function normalizeContextKey(contextKey: string | null | undefined): string {
+  return contextKey?.trim() || DEFAULT_SIDE_PANEL_CONTEXT_KEY;
+}
+
+function emptyContextState(): SidePanelContextState {
+  return { activeKey: null, hasPanelState: false, open: false, tabs: [] };
+}
+
+function contextHasPanelState(state: SidePanelContextState | undefined) {
+  return Boolean(state && (state.hasPanelState || state.tabs.length > 0 || state.activeKey !== null));
+}
 
 export function SidePanelProvider({ children }: { children: ReactNode }) {
-  const [tabs, setTabs] = useState<SidePanelTarget[]>([]);
-  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const contextStatesRef = useRef<Record<string, SidePanelContextState>>({
+    [DEFAULT_SIDE_PANEL_CONTEXT_KEY]: emptyContextState(),
+  });
+  const currentContextKeyRef = useRef(DEFAULT_SIDE_PANEL_CONTEXT_KEY);
+  const [contextKey, setCurrentContextKey] = useState(DEFAULT_SIDE_PANEL_CONTEXT_KEY);
+  const [currentContextState, setCurrentContextState] = useState<SidePanelContextState>(() => emptyContextState());
   const [open, setOpen] = useState(false);
+
+  const writeContextState = useCallback((key: string, updater: (state: SidePanelContextState) => SidePanelContextState) => {
+    const current = contextStatesRef.current[key] ?? emptyContextState();
+    const next = updater(current);
+    contextStatesRef.current = {
+      ...contextStatesRef.current,
+      [key]: next,
+    };
+    if (key === currentContextKeyRef.current) setCurrentContextState(next);
+    return next;
+  }, []);
+
+  const setContextKey = useCallback((nextContextKey: string | null) => {
+    const normalizedKey = normalizeContextKey(nextContextKey);
+    if (currentContextKeyRef.current === normalizedKey) return;
+    const nextState = contextStatesRef.current[normalizedKey] ?? emptyContextState();
+    currentContextKeyRef.current = normalizedKey;
+    setCurrentContextState(nextState);
+    setOpen(contextHasPanelState(nextState) && nextState.open);
+    setCurrentContextKey((previousKey) => (previousKey === normalizedKey ? previousKey : normalizedKey));
+  }, []);
 
   const openTarget = useCallback((target: SidePanelTarget) => {
     const nextKey = sidePanelTargetKey(target);
-    setTabs((current) => {
-      if (current.some((candidate) => sidePanelTargetKey(candidate) === nextKey)) {
-        return current.map((candidate) => (sidePanelTargetKey(candidate) === nextKey ? target : candidate));
-      }
-      return [...current, target];
+    writeContextState(contextKey, (current) => {
+      const tabs = current.tabs.some((candidate) => sidePanelTargetKey(candidate) === nextKey)
+        ? current.tabs.map((candidate) => (sidePanelTargetKey(candidate) === nextKey ? target : candidate))
+        : [...current.tabs, target];
+      return { activeKey: nextKey, hasPanelState: true, open: true, tabs };
     });
-    setActiveKey(nextKey);
+    setOpen(true);
+  }, [contextKey, writeContextState]);
+
+  const openTargetForContext = useCallback((nextContextKey: string | null, target: SidePanelTarget) => {
+    const normalizedKey = normalizeContextKey(nextContextKey);
+    const nextKey = sidePanelTargetKey(target);
+    const nextState = writeContextState(normalizedKey, (current) => {
+      const tabs = current.tabs.some((candidate) => sidePanelTargetKey(candidate) === nextKey)
+        ? current.tabs.map((candidate) => (sidePanelTargetKey(candidate) === nextKey ? target : candidate))
+        : [...current.tabs, target];
+      return { activeKey: nextKey, hasPanelState: true, open: true, tabs };
+    });
+    if (normalizedKey === currentContextKeyRef.current) {
+      setCurrentContextState(nextState);
+      setOpen(true);
+    }
+  }, [writeContextState]);
+
+  const showPanel = useCallback(() => {
+    writeContextState(contextKey, (current) => ({ ...current, hasPanelState: true, open: true }));
+    setOpen(true);
+  }, [contextKey, writeContextState]);
+
+  const showPanelForContext = useCallback((nextContextKey: string | null) => {
+    const normalizedKey = normalizeContextKey(nextContextKey);
+    const current = contextStatesRef.current[normalizedKey] ?? emptyContextState();
+    const nextState = { ...current, hasPanelState: true, open: true };
+    contextStatesRef.current = {
+      ...contextStatesRef.current,
+      [normalizedKey]: nextState,
+    };
+    currentContextKeyRef.current = normalizedKey;
+    setCurrentContextKey(normalizedKey);
+    setCurrentContextState(nextState);
     setOpen(true);
   }, []);
 
   const openEmpty = useCallback(() => {
     setOpen(true);
-    setActiveKey(null);
-  }, []);
+    writeContextState(contextKey, (current) => ({ ...current, activeKey: null, hasPanelState: true, open: true }));
+  }, [contextKey, writeContextState]);
 
-  const toggleEmpty = useCallback(() => {
-    setOpen((current) => {
-      if (current) {
-        setActiveKey(null);
-        setTabs([]);
-        return false;
-      }
-      setActiveKey(null);
-      return true;
-    });
-  }, []);
-
-  const closePanel = useCallback(() => {
+  const hidePanel = useCallback(() => {
+    writeContextState(contextKey, (current) => (
+      contextHasPanelState(current)
+        ? { ...current, open: false }
+        : current
+    ));
     setOpen(false);
-    setActiveKey(null);
-    setTabs([]);
-  }, []);
+  }, [contextKey, writeContextState]);
+
+  const clearCurrentContext = useCallback(() => {
+    writeContextState(contextKey, () => emptyContextState());
+    setOpen(false);
+  }, [contextKey, writeContextState]);
+
+  const closePanel = hidePanel;
 
   const closeTarget = useCallback((key: string) => {
-    setTabs((current) => {
-      const closingIndex = current.findIndex((candidate) => sidePanelTargetKey(candidate) === key);
-      const nextTabs = current.filter((candidate) => sidePanelTargetKey(candidate) !== key);
+    writeContextState(contextKey, (current) => {
+      const closingIndex = current.tabs.findIndex((candidate) => sidePanelTargetKey(candidate) === key);
+      const nextTabs = current.tabs.filter((candidate) => sidePanelTargetKey(candidate) !== key);
       if (nextTabs.length === 0) {
         setOpen(false);
-        setActiveKey(null);
-        return [];
+        return emptyContextState();
       }
-      setActiveKey((currentActiveKey) => {
-        if (currentActiveKey !== key) return currentActiveKey;
-        const fallbackTarget = nextTabs[Math.min(Math.max(closingIndex, 0), nextTabs.length - 1)] ?? nextTabs.at(-1) ?? null;
-        return fallbackTarget ? sidePanelTargetKey(fallbackTarget) : null;
-      });
-      return nextTabs;
+      if (current.activeKey !== key) return { ...current, tabs: nextTabs };
+      const fallbackTarget = nextTabs[Math.min(Math.max(closingIndex, 0), nextTabs.length - 1)] ?? nextTabs.at(-1) ?? null;
+      return { activeKey: fallbackTarget ? sidePanelTargetKey(fallbackTarget) : null, hasPanelState: true, open: true, tabs: nextTabs };
     });
-  }, []);
+  }, [contextKey, writeContextState]);
 
   const replaceTarget = useCallback((key: string, target: SidePanelTarget) => {
     const nextKey = sidePanelTargetKey(target);
-    setTabs((current) => current.map((candidate) => (sidePanelTargetKey(candidate) === key ? target : candidate)));
-    setActiveKey((currentActiveKey) => (currentActiveKey === key ? nextKey : currentActiveKey));
-  }, []);
+    writeContextState(contextKey, (current) => ({
+      activeKey: current.activeKey === key ? nextKey : current.activeKey,
+      hasPanelState: true,
+      open: true,
+      tabs: current.tabs.map((candidate) => (sidePanelTargetKey(candidate) === key ? target : candidate)),
+    }));
+  }, [contextKey, writeContextState]);
+
+  const setActiveKey = useCallback((key: string | null) => {
+    writeContextState(contextKey, (current) => ({ ...current, activeKey: key, hasPanelState: true, open: true }));
+  }, [contextKey, writeContextState]);
 
   const value = useMemo<SidePanelContextValue>(() => ({
-    activeKey,
+    activeKey: currentContextState.activeKey,
+    clearCurrentContext,
     closePanel,
     closeTarget,
+    contextKey,
+    hidePanel,
     open,
     openEmpty,
     openTarget,
+    openTargetForContext,
     replaceTarget,
     setActiveKey,
-    tabs,
-    toggleEmpty,
-  }), [activeKey, closePanel, closeTarget, open, openEmpty, openTarget, replaceTarget, tabs, toggleEmpty]);
+    setContextKey,
+    showPanel,
+    showPanelForContext,
+    tabs: currentContextState.tabs,
+  }), [clearCurrentContext, closePanel, closeTarget, contextKey, currentContextState.activeKey, currentContextState.tabs, hidePanel, open, openEmpty, openTarget, openTargetForContext, replaceTarget, setActiveKey, setContextKey, showPanel, showPanelForContext]);
 
   return <SidePanelContext.Provider value={value}>{children}</SidePanelContext.Provider>;
 }

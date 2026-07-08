@@ -157,3 +157,87 @@ test("does not fetch provider or origin favicons for internal website markdown l
   expect(requestedUrls.some((requestUrl) => requestUrl.startsWith("https://icons.duckduckgo.com/"))).toBe(false);
   expect(requestedUrls.some((requestUrl) => requestUrl.startsWith("http://127.0.0.1:8080/"))).toBe(false);
 });
+
+test("resolves real website icons through the running metadata service", async ({ page }) => {
+  const requestedUrls: string[] = [];
+  page.on("request", (request) => {
+    requestedUrls.push(request.url());
+  });
+
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Markdown-Real-Website-Icons-${Date.now()}` },
+  });
+  expect(orgRes.ok(), await orgRes.text()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+  const links = {
+    github: "https://github.com/Undertone0809/rudder",
+    nist: "https://www.nist.gov/itl/ai-risk-management-framework",
+    hbr: "https://hbr.org/2007/09/performing-a-project-premortem",
+    pdf: "https://home.army.mil/wood/6115/8222/0759/RedTeamHB.pdf",
+    internal: "http://127.0.0.1:8080/post",
+  };
+
+  const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Real website icon rendering",
+      description: [
+        `GitHub ${links.github}`,
+        `NIST ${links.nist}`,
+        `HBR ${links.hbr}`,
+        `PDF ${links.pdf}`,
+        `Internal ${links.internal}`,
+      ].join("\n\n"),
+      status: "todo",
+      priority: "medium",
+    },
+  });
+  expect(issueRes.ok(), await issueRes.text()).toBe(true);
+  const issue = await issueRes.json() as { id: string; identifier?: string | null };
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
+
+  for (const url of [links.github, links.nist, links.hbr]) {
+    const link = page.locator("a.rudder-website-link").filter({ hasText: url }).first();
+    await expect(link).toBeVisible();
+    await expect(link.locator("img.rudder-website-link-logo")).toBeVisible({ timeout: 15_000 });
+    await expect(link.locator(".rudder-website-link-icon")).toHaveAttribute("data-website-icon", "metadata");
+  }
+
+  const internalLink = page.locator("a.rudder-website-link").filter({ hasText: links.internal }).first();
+  await expect(internalLink).toBeVisible();
+  await expect(internalLink.locator("img.rudder-website-link-logo")).toHaveCount(0);
+  await expect(internalLink.locator('[data-website-icon="generic"]')).toBeVisible();
+
+  const pdfLink = page.locator("a.rudder-website-link").filter({ hasText: links.pdf }).first();
+  await expect(pdfLink).toBeVisible();
+
+  const render = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll("a.rudder-website-link")).map((link) => {
+      const icon = link.querySelector(".rudder-website-link-icon");
+      const img = link.querySelector("img.rudder-website-link-logo");
+      const label = link.querySelector(".rudder-website-link-label");
+      const iconRect = icon?.getBoundingClientRect();
+      const labelRect = label?.getBoundingClientRect();
+      return {
+        href: link.getAttribute("href"),
+        iconKind: icon?.getAttribute("data-website-icon") ?? null,
+        imgSrc: img?.getAttribute("src") ?? null,
+        centerDelta: iconRect && labelRect
+          ? Math.abs((iconRect.top + iconRect.height / 2) - (labelRect.top + labelRect.height / 2))
+          : null,
+      };
+    });
+  });
+
+  const publicIconRows = render.filter((row) => [links.github, links.nist, links.hbr].includes(row.href ?? ""));
+  expect(publicIconRows).toHaveLength(3);
+  expect(publicIconRows.every((row) => row.iconKind === "metadata" && row.imgSrc?.startsWith("/api/website-metadata/icon?"))).toBe(true);
+  expect(publicIconRows.every((row) => row.centerDelta !== null && row.centerDelta <= 3)).toBe(true);
+  expect(requestedUrls.some((requestUrl) => requestUrl.startsWith("https://icons.duckduckgo.com/"))).toBe(false);
+  expect(requestedUrls.some((requestUrl) => requestUrl.startsWith(links.internal))).toBe(false);
+});

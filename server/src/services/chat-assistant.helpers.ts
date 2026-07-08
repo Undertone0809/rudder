@@ -39,7 +39,18 @@ export type ChatRecoverableFailureCode =
   | "chat_result_malformed_json"
   | "chat_timed_out"
   | "chat_adapter_failed"
+  | "chat_runtime_boot_failed"
   | "chat_runtime_exception";
+
+export type ChatFailurePhase =
+  | "runtime_boot"
+  | "model_generation"
+  | "protocol_finalization";
+
+export type ChatFailureAction =
+  | "retry"
+  | "repair_runtime"
+  | "inspect_run";
 
 export interface ChatAttachmentPromptReference {
   localPath?: string;
@@ -114,6 +125,9 @@ export class ChatAssistantStreamError extends Error {
   generatedAttachments: ChatGeneratedAttachment[];
   errorCode: ChatRecoverableFailureCode;
   userMessage: string;
+  retryable?: boolean;
+  failurePhase?: ChatFailurePhase;
+  action?: ChatFailureAction;
 
   constructor(
     message: string,
@@ -123,6 +137,9 @@ export class ChatAssistantStreamError extends Error {
       partialBodyUserVisible?: boolean;
       errorCode?: ChatRecoverableFailureCode;
       userMessage?: string;
+      retryable?: boolean;
+      failurePhase?: ChatFailurePhase;
+      action?: ChatFailureAction;
     } = {},
   ) {
     super(message);
@@ -132,6 +149,9 @@ export class ChatAssistantStreamError extends Error {
     this.generatedAttachments = generatedAttachments;
     this.errorCode = options.errorCode ?? "chat_runtime_exception";
     this.userMessage = options.userMessage ?? recoverableFailureMessage(this.errorCode);
+    this.retryable = options.retryable;
+    this.failurePhase = options.failurePhase;
+    this.action = options.action;
   }
 }
 
@@ -147,6 +167,9 @@ export function recoverableFailureMessage(code: ChatRecoverableFailureCode) {
   }
   if (code === "chat_adapter_failed") {
     return "The assistant runtime failed before finishing. Rudder saved the attempt for diagnostics; retry when ready.";
+  }
+  if (code === "chat_runtime_boot_failed") {
+    return "The assistant runtime did not start successfully. Fix the runtime command or environment, then run again.";
   }
   return CHAT_ASSISTANT_RECOVERABLE_FAILURE_MESSAGE;
 }

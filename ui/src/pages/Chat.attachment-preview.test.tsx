@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
-import { SidePanelProvider } from "@/context/SidePanelContext";
+import { SidePanelProvider, useSidePanel } from "@/context/SidePanelContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { readChatAskUserDraft } from "@/lib/chat-draft-storage";
 import {
@@ -9,9 +9,9 @@ import {
   resolveChatPendingAttachmentScopeKey,
   updateChatPendingAttachmentsForScope,
 } from "@/lib/chat-pending-attachments";
-import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, type AutomationDetail, type AutomationRunSummary, type ChatConversation, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type Issue, type IssueComment, type OrganizationWorkspaceFileEntry, type Project } from "@rudderhq/shared";
+import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, type Agent, type AutomationDetail, type AutomationRunSummary, type ChatConversation, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type Goal, type Issue, type IssueComment, type IssueLabel, type OrganizationWorkspaceFileEntry, type Project } from "@rudderhq/shared";
 import type { ReactNode } from "react";
-import { act } from "react";
+import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Chat } from "./Chat";
@@ -31,6 +31,9 @@ const mockState = vi.hoisted(() => ({
   pendingChatDetailIds: new Set<string>(),
   issues: {} as Record<string, Issue>,
   issueComments: {} as Record<string, IssueComment[]>,
+  agents: [] as Agent[],
+  goals: [] as Goal[],
+  labels: [] as IssueLabel[],
   automations: {} as Record<string, AutomationDetail>,
   automationRuns: {} as Record<string, AutomationRunSummary[]>,
   projects: [] as Project[],
@@ -112,6 +115,40 @@ vi.mock("@tanstack/react-query", () => ({
         error: null,
       };
     }
+    if (queryKey[0] === "issues" && queryKey[1] === "activity") {
+      return { data: [], isPending: false, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "issues" && queryKey[1] === "runs") {
+      return { data: [], isPending: false, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "issues" && queryKey[1] === "attachments") {
+      return { data: [], isPending: false, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "issues" && queryKey[1] === "live-runs") {
+      return { data: [], isPending: false, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "issues" && queryKey[1] === "active-run") {
+      return { data: null, isPending: false, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "issues" && queryKey[2] === "labels") {
+      return {
+        data: mockState.labels,
+        isPending: false,
+        isLoading: false,
+        error: null,
+      };
+    }
+    if (queryKey[0] === "issues" && queryKey[1] === "children") {
+      return { data: [], isPending: false, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "issues" && queryKey.length === 2 && queryKey[1] === "org-1") {
+      return {
+        data: Object.values(mockState.issues),
+        isPending: false,
+        isLoading: false,
+        error: null,
+      };
+    }
     if (queryKey[0] === "automations" && queryKey[1] === "detail") {
       return {
         data: mockState.automations[String(queryKey[2])] ?? null,
@@ -146,9 +183,21 @@ vi.mock("@tanstack/react-query", () => ({
         error: null,
       };
     }
+    if (queryKey[0] === "organizations" && queryKey[2] === "library-documents") {
+      return { data: [], isPending: false, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "organizations" && queryKey[2] === "workspace-mention-files") {
+      return { data: { entries: [] }, isPending: false, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "organization-skills") {
+      return { data: [], isPending: false, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "access") {
+      return { data: { user: { id: "local-board" }, userId: "local-board" }, isPending: false, isLoading: false, error: null };
+    }
     if (queryKey[0] === "agents") {
       return {
-        data: [{ id: "agent-1", name: "Wesley", role: "engineer", title: "Founding Engineer", status: "active", icon: null }],
+        data: mockState.agents,
         isPending: false,
         isLoading: false,
         error: null,
@@ -156,6 +205,17 @@ vi.mock("@tanstack/react-query", () => ({
     }
     if (queryKey[0] === "projects") {
       return { data: mockState.projects, isPending: false, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "goals") {
+      return { data: mockState.goals, isPending: false, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "auth" && queryKey[1] === "session") {
+      return {
+        data: { user: { id: "local-board", name: "Me" }, session: { userId: "local-board" } },
+        isPending: false,
+        isLoading: false,
+        error: null,
+      };
     }
     if (queryKey[0] === "instance") {
       return { data: { nickname: "" }, isPending: false, isLoading: false, error: null };
@@ -228,7 +288,7 @@ vi.mock("@/context/ToastContext", () => ({
 }));
 
 vi.mock("@/context/DialogContext", () => ({
-  useDialog: () => ({ confirm: vi.fn(async () => true) }),
+  useDialog: () => ({ confirm: vi.fn(async () => true), openNewIssue: vi.fn() }),
 }));
 
 vi.mock("@/context/SidebarContext", () => ({
@@ -237,6 +297,16 @@ vi.mock("@/context/SidebarContext", () => ({
 
 vi.mock("@/context/I18nContext", () => ({
   useI18n: () => ({ t: (key: string, values?: Record<string, string>) => values?.name ?? key }),
+}));
+
+vi.mock("@/plugins/slots", () => ({
+  PluginSlotMount: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  PluginSlotOutlet: () => null,
+  usePluginSlots: () => ({ slots: [] }),
+}));
+
+vi.mock("@/plugins/launchers", () => ({
+  PluginLauncherOutlet: () => null,
 }));
 
 vi.mock("@/context/ChatGenerationContext", () => ({
@@ -419,6 +489,37 @@ function project(overrides: Partial<Project> = {}): Project {
     workspaces: [],
     primaryWorkspace: null,
     archivedAt: null,
+    createdAt: new Date("2026-05-12T09:00:00.000Z"),
+    updatedAt: new Date("2026-05-12T09:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+function agent(overrides: Partial<Agent> = {}): Agent {
+  return {
+    id: "agent-1",
+    orgId: "org-1",
+    name: "Wesley",
+    urlKey: "wesley",
+    role: "engineer",
+    title: "Founding Engineer",
+    icon: "robot",
+    status: "active",
+    reportsTo: null,
+    capabilities: null,
+    agentRuntimeType: "codex_local",
+    agentRuntimeConfig: {},
+    runtimeConfig: {},
+    budgetMonthlyCents: 0,
+    spentMonthlyCents: 0,
+    pauseReason: null,
+    pausedAt: null,
+    permissions: {
+      canCreateAgents: false,
+      canManageSkills: false,
+    },
+    lastHeartbeatAt: null,
+    metadata: null,
     createdAt: new Date("2026-05-12T09:00:00.000Z"),
     updatedAt: new Date("2026-05-12T09:00:00.000Z"),
     ...overrides,
@@ -831,7 +932,7 @@ function installLocalStorageMock() {
   });
 }
 
-function renderChat() {
+function renderChat({ expanded = false }: { expanded?: boolean } = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -847,11 +948,12 @@ function renderChat() {
     targetRoot.render(
       <ThemeProvider>
         <SidePanelProvider>
+          <SidePanelTestContextBinder />
           <Chat />
           <ChatSidePanel
             selectedOrganizationId="org-1"
             desktopWidth={420}
-            expanded={false}
+            expanded={expanded}
             onToggleExpanded={toggleSidePanelExpanded}
           />
         </SidePanelProvider>
@@ -868,6 +970,17 @@ function renderChat() {
     toggleSidePanelExpanded,
     rerender: () => act(() => render(root)),
   };
+}
+
+function SidePanelTestContextBinder() {
+  const { setContextKey } = useSidePanel();
+  const contextKey = mockState.conversationId ? `chat:${mockState.conversationId}` : null;
+
+  useLayoutEffect(() => {
+    setContextKey(contextKey);
+  }, [contextKey, setContextKey]);
+
+  return null;
 }
 
 function dispatchPasteFiles(target: Element, files: File[], options: { clipboardFiles?: File[] } = {}) {
@@ -941,6 +1054,9 @@ beforeEach(() => {
   mockState.workspaceFiles = {};
   mockState.issues = {};
   mockState.issueComments = {};
+  mockState.agents = [agent()];
+  mockState.goals = [];
+  mockState.labels = [];
   mockState.automations = {};
   mockState.automationRuns = {};
   mockState.messagesByChatId = {
@@ -1046,6 +1162,24 @@ describe("Chat mention sources", () => {
 });
 
 describe("Chat Side Panel link handling", () => {
+  async function openIssueReferenceSidePanel(container: HTMLElement) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const issueReference = container.querySelector<HTMLAnchorElement>('a[data-mention-kind="issue"]');
+    expect(issueReference).not.toBeNull();
+
+    await act(async () => {
+      issueReference?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+
+    const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel).not.toBeNull();
+    return sidePanel!;
+  }
+
   it("opens a supported chat reference in the Side Panel without leaving the current chat", async () => {
     mockState.messagesByChatId = {
       "chat-1": [
@@ -1227,34 +1361,61 @@ describe("Chat Side Panel link handling", () => {
     };
 
     const { container } = renderChat();
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    const issueReference = container.querySelector<HTMLAnchorElement>('a[data-mention-kind="issue"]');
-    expect(issueReference).not.toBeNull();
-
-    await act(async () => {
-      issueReference?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
-      await Promise.resolve();
-    });
-
-    const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
-    expect(sidePanel).not.toBeNull();
+    const sidePanel = await openIssueReferenceSidePanel(container);
     expect(sidePanel?.textContent).toContain("Polish side panel layout");
     expect(sidePanel?.textContent).toContain("RUD-42");
-    expect(sidePanel?.textContent).toContain("in progress");
+    expect(sidePanel?.textContent).toContain("In Progress");
     expect(sidePanel?.textContent).toContain("High");
-    expect(sidePanel?.textContent).toContain("Owner");
+    expect(sidePanel?.textContent).toContain("Assignee");
+    expect(sidePanel?.textContent).toContain("Wesley");
+    expect(sidePanel?.textContent).toContain("Founding Engineer");
     expect(sidePanel?.textContent).toContain("Reviewer");
     expect(sidePanel?.textContent).toContain("Project");
-    expect(sidePanel?.textContent).toContain("Updated");
     expect(sidePanel?.textContent).toContain("Make the issue reference read like a task detail panel.");
-    expect(sidePanel?.textContent).toContain("Comment");
+    expect(sidePanel?.textContent).toContain("Activity");
     expect(sidePanel?.textContent).toContain("comment-1");
+    expect(container.querySelector('button[aria-label="Edit issue"]')).toBeNull();
+    expect(sidePanel?.textContent?.indexOf("Assignee")).toBeLessThan(
+      sidePanel?.textContent?.indexOf("Make the issue reference read like a task detail panel.") ?? Number.POSITIVE_INFINITY,
+    );
+    expect(sidePanel?.textContent?.indexOf("Updated")).toBe(-1);
   });
 
-  it("lets the operator edit issue title and description from the Side Panel", async () => {
+  it("keeps the issue detail properties card on the right when the Side Panel is expanded", async () => {
+    mockState.issues["issue-1"] = issue();
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: "assistant-expanded-issue-side-panel",
+          role: "assistant",
+          body: `Review [RUD-42](${buildIssueMentionHref("issue-1", "RUD-42", "comment-1", "in_progress")}) next.`,
+          replyingAgentId: "agent-1",
+          createdAt: new Date("2026-05-12T09:06:00.000Z"),
+          updatedAt: new Date("2026-05-12T09:06:00.000Z"),
+        }),
+      ],
+    };
+
+    const { container } = renderChat({ expanded: true });
+    const sidePanel = await openIssueReferenceSidePanel(container);
+
+    const embeddedIssueDetail = sidePanel.querySelector<HTMLElement>("[data-testid='embedded-issue-detail']");
+    expect(embeddedIssueDetail).not.toBeNull();
+    expect(sidePanel.textContent).toContain("Properties");
+    expect(sidePanel.textContent).toContain("Sub-issues");
+    expect(sidePanel.textContent).toContain("Add sub-issue");
+    expect(sidePanel.textContent).toContain("Attach");
+    expect(sidePanel.textContent).toContain("Created by");
+    expect(sidePanel.textContent).toContain("Updated");
+    expect(sidePanel.textContent.indexOf("Activity")).toBeLessThan(sidePanel.textContent.indexOf("Properties"));
+    expect(sidePanel.textContent).not.toContain("CreatedUpdated");
+
+    const propertiesRegion = sidePanel.querySelector<HTMLElement>("[aria-label='Issue properties']");
+    expect(sidePanel.querySelector("[data-testid='chat-side-panel-issue-view']")).toBeNull();
+    expect(propertiesRegion).not.toBeNull();
+  });
+
+  it("lets the operator directly edit issue title and description from the Side Panel", async () => {
     mockState.issues["issue-1"] = issue();
     mockState.messagesByChatId = {
       "chat-1": [
@@ -1280,36 +1441,36 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
 
-    const editButton = container.querySelector<HTMLButtonElement>('button[aria-label="Edit issue"]');
-    expect(editButton).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Edit issue"]')).toBeNull();
+    const titleDisplay = Array.from(container.querySelectorAll<HTMLElement>("[data-testid='chat-side-panel'] h2")).find(
+      (candidate) => candidate.textContent?.includes("Polish side panel layout"),
+    );
+    expect(titleDisplay).not.toBeUndefined();
     await act(async () => {
-      editButton?.click();
+      titleDisplay?.click();
       await Promise.resolve();
     });
 
-    const titleInput = container.querySelector<HTMLInputElement>('input[aria-label="Issue title"]');
-    const descriptionInput = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Issue description"]');
+    const titleInput = container.querySelector<HTMLTextAreaElement>("[data-testid='chat-side-panel'] textarea:not([data-testid])");
+    const descriptionInput = Array.from(container.querySelectorAll<HTMLTextAreaElement>("[data-testid='mock-markdown-editor']")).find(
+      (candidate) => candidate.placeholder === "Add a description...",
+    );
     expect(titleInput).not.toBeNull();
     expect(descriptionInput).not.toBeNull();
 
     await act(async () => {
-      const inputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
-      const textareaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
-      inputValueSetter?.call(titleInput, "Polish editable side panel");
+      Object.getOwnPropertyDescriptor(Object.getPrototypeOf(titleInput), "value")?.set?.call(
+        titleInput,
+        "Polish editable side panel",
+      );
       titleInput!.dispatchEvent(new Event("input", { bubbles: true }));
-      textareaValueSetter?.call(descriptionInput, "Updated from the chat side panel.");
+      titleInput!.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+      Object.getOwnPropertyDescriptor(Object.getPrototypeOf(descriptionInput), "value")?.set?.call(
+        descriptionInput,
+        "Updated from the chat side panel.",
+      );
       descriptionInput!.dispatchEvent(new Event("input", { bubbles: true }));
-      await Promise.resolve();
-    });
-
-    const saveButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
-      (candidate) => candidate.textContent?.includes("Save"),
-    );
-    expect(saveButton).not.toBeUndefined();
-    expect(saveButton?.disabled).toBe(false);
-
-    await act(async () => {
-      saveButton?.click();
+      descriptionInput!.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
       await Promise.resolve();
     });
     rerender();
@@ -1318,6 +1479,11 @@ describe("Chat Side Panel link handling", () => {
       issueId: "issue-1",
       data: {
         title: "Polish editable side panel",
+      },
+    });
+    expect(mockState.mutations).toContainEqual({
+      issueId: "issue-1",
+      data: {
         description: "Updated from the chat side panel.",
       },
     });
@@ -1409,6 +1575,70 @@ describe("Chat Side Panel link handling", () => {
       reopen: true,
     });
     expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Posted without leaving Messenger.");
+  });
+
+  it("lets the operator edit side panel issue assignee through rendered agent metadata", async () => {
+    mockState.agents = [
+      agent({ id: "agent-1", name: "Wesley", title: "Founding Engineer", icon: "robot" }),
+      agent({ id: "agent-2", name: "Ada", title: "Review Lead", icon: "sparkles", role: "pm" }),
+    ];
+    mockState.issues["issue-1"] = issue();
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: "assistant-assignee-issue-side-panel",
+          role: "assistant",
+          body: `Review [RUD-42](${buildIssueMentionHref("issue-1", "RUD-42", null, "in_progress")}) next.`,
+          replyingAgentId: "agent-1",
+          createdAt: new Date("2026-05-12T09:06:00.000Z"),
+          updatedAt: new Date("2026-05-12T09:06:00.000Z"),
+        }),
+      ],
+    };
+
+    const { container, rerender } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const issueReference = container.querySelector<HTMLAnchorElement>('a[data-mention-kind="issue"]');
+    await act(async () => {
+      issueReference?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+
+    const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel?.textContent).toContain("Wesley");
+    expect(sidePanel?.textContent).toContain("Founding Engineer");
+
+    const assigneeButton = Array.from(sidePanel?.querySelectorAll<HTMLButtonElement>("button") ?? []).find(
+      (candidate) => candidate.textContent?.includes("Wesley") && candidate.textContent?.includes("Founding Engineer"),
+    );
+    expect(assigneeButton).not.toBeUndefined();
+    await act(async () => {
+      assigneeButton?.click();
+      await Promise.resolve();
+    });
+
+    const adaOption = Array.from(document.body.querySelectorAll<HTMLButtonElement>("button")).find(
+      (candidate) => candidate.textContent?.includes("Ada") && candidate.textContent?.includes("Review Lead"),
+    );
+    expect(adaOption).not.toBeUndefined();
+    await act(async () => {
+      adaOption?.click();
+      await Promise.resolve();
+    });
+    rerender();
+
+    expect(mockState.mutations).toContainEqual({
+      issueId: "issue-1",
+      data: {
+        assigneeAgentId: "agent-2",
+        assigneeUserId: null,
+      },
+    });
+    expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Ada");
+    expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Review Lead");
   });
 
   it("keeps multiple Side Panel chat targets as deduplicated focusable tabs", async () => {
@@ -1655,6 +1885,49 @@ describe("Chat Side Panel link handling", () => {
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(2);
   });
 
+  it("renders a stable Library entry target as an inline file preview", async () => {
+    mockState.workspaceFiles = {
+      "reports/activity.md": {
+        filePath: "reports/activity.md",
+        content: "# Activity report\n\nStable Library entry links should render inline.",
+        contentType: "text/markdown",
+        previewKind: "text",
+        contentPath: null,
+        truncated: false,
+      },
+    };
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <ThemeProvider>
+          <SidePanelProvider>
+            <ChatSidePanel
+              selectedOrganizationId="org-1"
+              target={{
+                kind: "library_entry",
+                entryId: "entry-activity",
+                path: "reports/activity.md",
+                label: "activity.md",
+              }}
+            />
+          </SidePanelProvider>
+        </ThemeProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel).not.toBeNull();
+    expect(sidePanel?.textContent).toContain("reports/activity.md");
+    expect(sidePanel?.textContent).toContain("Activity report");
+    expect(sidePanel?.textContent).toContain("Stable Library entry links should render inline.");
+    expect(sidePanel?.textContent).not.toContain("Open this target in the full page for details.");
+  });
+
   it("opens the empty Side Panel picker from the add-tab button without a menu", async () => {
     mockState.workspaceDirectories = {
       "": {
@@ -1682,18 +1955,8 @@ describe("Chat Side Panel link handling", () => {
     expect(sidePanel).not.toBeNull();
     expect(sidePanel?.textContent).toContain("Open a panel");
 
-    const issueOption = Array.from(sidePanel!.querySelectorAll<HTMLButtonElement>("button")).find(
-      (candidate) => candidate.textContent?.includes("Issue"),
-    );
-    expect(issueOption).not.toBeUndefined();
-    await act(async () => {
-      issueOption?.click();
-      await Promise.resolve();
-    });
-
-    sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
-    expect(sidePanel?.textContent).toContain("Open an issue link");
-    expect(sidePanel?.querySelector<HTMLAnchorElement>('a[href="/issues"]')).toBeNull();
+    expect(sidePanel?.querySelector("[data-testid='chat-side-panel-empty-issue-target']")).toBeNull();
+    expect(sidePanel?.textContent).not.toContain("Pin an issue workspace");
 
     const addTabButton = sidePanel!.querySelector<HTMLButtonElement>('[data-testid="chat-side-panel-add-tab"]');
     expect(addTabButton).not.toBeNull();
@@ -1716,7 +1979,7 @@ describe("Chat Side Panel link handling", () => {
 
     sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     expect(sidePanel?.textContent).toContain("Library root");
-    expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(2);
+    expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(1);
   });
 
   it("opens an interactive browser target from the empty Side Panel picker", async () => {
@@ -1917,6 +2180,69 @@ describe("Chat Side Panel link handling", () => {
     expect(container.querySelector("[data-testid='chat-side-panel']")).toBeNull();
     expect(sidePanelTrigger?.getAttribute("aria-pressed")).toBe("false");
     expect(container.querySelector("textarea[aria-label='Composer draft']")).not.toBeNull();
+  });
+
+  it("keeps editable issue fields above a dedicated activity scroller in a narrow Side Panel", async () => {
+    vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
+      matches: query.includes("max-width: 767px"),
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })));
+    mockState.issues["issue-1"] = issue();
+    mockState.issueComments["issue-1"] = [
+      issueComment({ id: "comment-1", body: "Existing side panel comment." }),
+      issueComment({ id: "comment-2", body: "Follow-up activity should scroll below the task body." }),
+      issueComment({ id: "comment-3", body: "Keep editable fields near the top." }),
+    ];
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: "assistant-mobile-issue-side-panel",
+          role: "assistant",
+          body: `Review [RUD-42](${buildIssueMentionHref("issue-1", "RUD-42", "comment-1", "in_progress")}) next.`,
+          replyingAgentId: "agent-1",
+          createdAt: new Date("2026-05-12T09:06:00.000Z"),
+          updatedAt: new Date("2026-05-12T09:06:00.000Z"),
+        }),
+      ],
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const issueReference = container.querySelector<HTMLAnchorElement>('a[data-mention-kind="issue"]');
+    await act(async () => {
+      issueReference?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+
+    const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    const issueView = sidePanel?.querySelector<HTMLElement>("[data-testid='chat-side-panel-issue-view']");
+    const activityScroller = sidePanel?.querySelector<HTMLElement>("[data-testid='chat-side-panel-issue-activity-scroll']");
+    const sidePanelScrollBody = sidePanel?.querySelector<HTMLElement>("[data-testid='chat-side-panel-scroll-body']");
+    expect(sidePanel).not.toBeNull();
+    expect(issueView).not.toBeNull();
+    expect(activityScroller).not.toBeNull();
+    expect(activityScroller?.className).toContain("overflow-y-auto");
+    expect(sidePanelScrollBody?.className).toContain("overflow-y-auto");
+    expect(sidePanelScrollBody?.className).not.toContain("overflow-hidden");
+    expect(sidePanel?.className).toContain("fixed");
+    expect(sidePanel?.textContent?.indexOf("Assignee")).toBeLessThan(
+      sidePanel?.textContent?.indexOf("Existing side panel comment.") ?? Number.POSITIVE_INFINITY,
+    );
+    expect(sidePanel?.textContent?.indexOf("Make the issue reference read like a task detail panel.")).toBeLessThan(
+      sidePanel?.textContent?.indexOf("Existing side panel comment.") ?? Number.POSITIVE_INFINITY,
+    );
+    expect(activityScroller?.textContent).toContain("Existing side panel comment.");
+    expect(activityScroller?.textContent).toContain("Follow-up activity should scroll below the task body.");
+    expect(activityScroller?.textContent).toContain("Keep editable fields near the top.");
   });
 });
 

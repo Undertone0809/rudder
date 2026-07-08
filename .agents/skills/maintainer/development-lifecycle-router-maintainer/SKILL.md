@@ -3,9 +3,6 @@ name: development-lifecycle-router-maintainer
 description: "Use when a Rudder development request has an unclear lifecycle stage or owner: requirements, advisor analysis, UI design, implementation, verification, review, release, recovery, runtime contracts, performance, component lab, handoff, or named-skill optimization."
 ---
 
-name: development-lifecycle-router-maintainer
-description: "Use when a Rudder development request has an unclear lifecycle stage or owner: requirements, advisor/product analysis, UI design, implementation, verification, review, release, recovery, runtime contracts, performance, component lab, handoff, or named-skill optimization. Do not trigger for review-only verdicts or when a narrow maintainer clearly owns the next artifact."
-
 # Development Lifecycle Router Maintainer
 
 Use this skill as a routing layer: choose the current lifecycle stage, name the

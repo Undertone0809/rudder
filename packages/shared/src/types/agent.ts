@@ -118,6 +118,7 @@ export interface AgentConfigRevision {
 
 export type AgentRuntimeEnvironmentCheckLevel = "info" | "warn" | "error";
 export type AgentRuntimeEnvironmentTestStatus = "pass" | "warn" | "fail";
+export type AgentRuntimeAvailabilityStatus = "available" | "unavailable" | "unknown";
 
 export interface AgentRuntimeEnvironmentCheck {
   code: string;
@@ -132,4 +133,14 @@ export interface AgentRuntimeEnvironmentTestResult {
   status: AgentRuntimeEnvironmentTestStatus;
   checks: AgentRuntimeEnvironmentCheck[];
   testedAt: string;
+}
+
+export interface AgentRuntimeAvailability {
+  agentRuntimeType: string;
+  status: AgentRuntimeAvailabilityStatus;
+  command: string | null;
+  resolvedCommand: string | null;
+  message: string;
+  hint?: string | null;
+  checkedAt: string;
 }
