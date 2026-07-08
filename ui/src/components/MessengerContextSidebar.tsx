@@ -897,6 +897,14 @@ interface UnreadThreadTarget {
   entryIndex: number | null;
 }
 
+function flattenThreadSectionEntries(sections: OrganizedThreadSection[] | undefined): OrganizedThreadEntry[] {
+  if (!sections?.length) return [];
+  return sections.flatMap((section) => [
+    ...section.entries,
+    ...flattenThreadSectionEntries(section.childSections),
+  ]);
+}
+
 type ProjectOrderUpdatedDetail = {
   storageKey: string;
   orderedIds: string[];
@@ -2831,7 +2839,7 @@ export function MessengerContextSidebar() {
     }
     if (effectiveThreadOrganizationRule === "custom") {
       for (const section of organizedThreadSections) {
-        for (const entry of section.entries) {
+        for (const entry of flattenThreadSectionEntries([section])) {
           if (entry.customGroupId === null) map.set(entry.thread.threadKey, null);
         }
       }
@@ -3196,7 +3204,7 @@ export function MessengerContextSidebar() {
         .map((section) => section.key);
       const pinnedThreadKeys = organizedThreadSections
         .find((section) => section.key === "custom:pinned")
-        ?.entries.map((entry) => entry.thread.threadKey) ?? [];
+        ?.childSections?.flatMap((childSection) => childSection.entries.map((entry) => entry.thread.threadKey)) ?? [];
       const persistTopLevelOrder = (sectionKeys: string[], oldIndex: number, newIndex: number) => {
         if (!defaultThreadOrderStorageKey) return;
         const nextOrderKeys = nextDefaultThreadOrderKeysAfterMove(sectionKeys, defaultThreadOrderKeys, oldIndex, newIndex);
@@ -3663,8 +3671,9 @@ export function MessengerContextSidebar() {
     const showCollapseControl = !collapsed && isManagedSection && visibleCount > MANAGED_GROUP_INITIAL_VISIBLE_COUNT;
     const sectionContentTestId = isManagedSection ? `messenger-thread-section-${sanitizeThreadKey(section.key)}-content` : undefined;
     const isPinnedCustomSection = effectiveThreadOrganizationRule === "custom" && section.key === "custom:pinned";
+    const isLoosePinnedCustomSection = effectiveThreadOrganizationRule === "custom" && section.key === "custom:pinned:loose";
     const canSortCustomEntries = effectiveThreadOrganizationRule === "custom"
-      && (Boolean(customGroup) || isPinnedCustomSection)
+      && (Boolean(customGroup) || isPinnedCustomSection || isLoosePinnedCustomSection)
       && visibleEntries.length > 0;
     const canDragStandaloneCustomEntry = effectiveThreadOrganizationRule === "custom"
       && !customGroup

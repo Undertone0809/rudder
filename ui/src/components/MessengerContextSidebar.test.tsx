@@ -776,11 +776,14 @@ describe("MessengerContextSidebar", () => {
     expect(regularClass).toContain("group/custom-group");
     expect(pinnedClass).toContain("mx-0.5");
     expect(regularClass).toContain("mx-0.5");
-    expect(html.indexOf('data-testid="messenger-thread-section-custom-group-pinned-group"')).toBeLessThan(
-      html.indexOf('data-testid="messenger-thread-section-custom-pinned"'),
-    );
     expect(html.indexOf('data-testid="messenger-thread-section-custom-pinned"')).toBeLessThan(
       html.indexOf('data-testid="messenger-thread-section-custom-group-regular-group"'),
+    );
+    expect(html.indexOf('data-testid="messenger-thread-section-custom-group-pinned-group"')).toBeGreaterThan(
+      html.indexOf('data-testid="messenger-thread-section-custom-pinned"'),
+    );
+    expect(html.indexOf('data-testid="messenger-thread-section-custom-group-pinned-group"')).toBeLessThan(
+      html.indexOf('data-messenger-thread-key="chat:loose-pinned"'),
     );
   });
 
