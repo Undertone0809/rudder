@@ -82,6 +82,7 @@ interface CommentThreadProps {
   hideHeading?: boolean;
   emptyMessage?: string;
   escapeBackWhenEmpty?: boolean;
+  fixedComposer?: boolean;
 }
 
 export function shouldOfferReopen(issueStatus?: string) {
@@ -1034,6 +1035,7 @@ export function CommentThread({
   hideHeading = false,
   emptyMessage = "No comments or runs yet.",
   escapeBackWhenEmpty = false,
+  fixedComposer = false,
 }: CommentThreadProps) {
   const [body, setBody] = useState(() => draftKey ? loadDraft(draftKey) : "");
   const canReopen = shouldOfferReopen(issueStatus);
@@ -1248,6 +1250,34 @@ export function CommentThread({
       return true;
     }
 
+    const sameIssueCommentId = (() => {
+      try {
+        const target = new URL(href, window.location.href);
+        if (target.origin !== window.location.origin) return null;
+        if (target.hash === location.hash) return null;
+        const targetCommentId = commentIdFromIssueCommentHash(target.hash);
+        if (!targetCommentId) return null;
+        const targetIssueRef = extractIssueRouteRefFromPathname(target.pathname);
+        if (!targetIssueRef) return null;
+        const currentIssueRef = extractIssueRouteRef(location);
+        if (currentIssueRef && targetIssueRef === currentIssueRef) return targetCommentId;
+        if (currentIssueId && targetIssueRef === currentIssueId) return targetCommentId;
+        return null;
+      } catch {
+        return null;
+      }
+    })();
+    if (sameIssueCommentId) {
+      event.preventDefault();
+      event.stopPropagation();
+      navigate({
+        pathname: location.pathname,
+        search: location.search,
+        hash: `#comment-${encodeURIComponent(sameIssueCommentId)}`,
+      });
+      return true;
+    }
+
     const route = resolveInternalMarkdownRoute({
       href,
       baseHref: window.location.href,
@@ -1367,95 +1397,127 @@ export function CommentThread({
     editorRef.current?.focus();
   };
 
+  const timelineNode = (
+    <TimelineList
+      timeline={timeline}
+      agentMap={agentMap}
+      orgId={orgId}
+      projectId={projectId}
+      highlightCommentId={highlightCommentId}
+      runTranscriptById={transcriptByRun}
+      runHasOutput={hasOutputForRun}
+      operatorDisplayName={operatorDisplayName}
+      agentMentions={agentMentions}
+      skillReferences={skillReferences}
+      emptyMessage={emptyMessage}
+      currentUserId={currentUserId}
+      onUpdate={onUpdate}
+      onDelete={onDelete}
+      imageUploadHandler={imageUploadHandler}
+      onMarkdownLinkClick={handleMarkdownLinkClick}
+      reserveHashScrollEndSpace={reserveHashScrollEndSpace}
+    />
+  );
+
+  const composerNode = (
+    <div
+      ref={composerSurfaceRef}
+      className="chat-composer rounded-[var(--radius-lg)] p-3"
+      data-issue-detail-escape-back={escapeBackWhenEmpty ? (body.trim() ? "dirty" : "empty") : undefined}
+      onMouseDown={focusComposerEditor}
+    >
+      <MarkdownEditor
+        ref={editorRef}
+        engine="milkdown"
+        value={body}
+        onChange={updateBody}
+        placeholder="Leave a comment..."
+        mentions={mentions}
+        agentMentionIntent="wake"
+        onMentionQueryChange={onMentionQueryChange}
+        mentionMenuAnchorRef={composerSurfaceRef}
+        mentionMenuPlacement="container"
+        onSubmit={handleSubmit}
+        imageUploadHandler={imageUploadHandler}
+        className="rounded-[var(--radius-md)] bg-transparent"
+        contentClassName="min-h-[64px] bg-transparent text-sm leading-6 text-foreground"
+        bordered={false}
+      />
+      <div className="mt-3 flex items-center justify-end gap-3">
+        {(imageUploadHandler || onAttachImage) && (
+          <div className="mr-auto flex items-center gap-3">
+            <input
+              ref={attachInputRef}
+              type="file"
+              accept={COMMENT_ATTACHMENT_ACCEPT}
+              multiple
+              className="hidden"
+              onChange={handleAttachFile}
+            />
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => attachInputRef.current?.click()}
+              disabled={attaching}
+              title="Attach file"
+            >
+              <Paperclip className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
+        {canReopen ? (
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={reopen}
+              onChange={(e) => setReopen(e.target.checked)}
+              className="rounded border-border"
+            />
+            Re-open
+          </label>
+        ) : null}
+        <Button size="sm" disabled={!canSubmit} onClick={handleSubmit}>
+          {submitting ? "Posting..." : "Comment"}
+        </Button>
+      </div>
+    </div>
+  );
+
+  if (fixedComposer) {
+    return (
+      <div className="space-y-4 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col xl:gap-4 xl:space-y-0">
+        {!hideHeading && (
+          <div className="shrink-0">
+            {heading ?? <h3 className="text-sm font-semibold">Comments &amp; Runs ({timeline.length})</h3>}
+          </div>
+        )}
+
+        <div
+          className="xl:scrollbar-auto-hide xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:overscroll-contain xl:pr-1"
+          data-testid="comment-thread-timeline-scroll"
+        >
+          {timelineNode}
+          {liveRunSlot ? <div className="mt-4">{liveRunSlot}</div> : null}
+        </div>
+
+        <div className="xl:shrink-0">
+          {composerNode}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       {!hideHeading && (
         heading ?? <h3 className="text-sm font-semibold">Comments &amp; Runs ({timeline.length})</h3>
       )}
 
-      <TimelineList
-        timeline={timeline}
-        agentMap={agentMap}
-        orgId={orgId}
-        projectId={projectId}
-        highlightCommentId={highlightCommentId}
-        runTranscriptById={transcriptByRun}
-        runHasOutput={hasOutputForRun}
-        operatorDisplayName={operatorDisplayName}
-        agentMentions={agentMentions}
-        skillReferences={skillReferences}
-        emptyMessage={emptyMessage}
-        currentUserId={currentUserId}
-        onUpdate={onUpdate}
-        onDelete={onDelete}
-        imageUploadHandler={imageUploadHandler}
-        onMarkdownLinkClick={handleMarkdownLinkClick}
-        reserveHashScrollEndSpace={reserveHashScrollEndSpace}
-      />
+      {timelineNode}
 
       {liveRunSlot}
 
-      <div
-        ref={composerSurfaceRef}
-        className="chat-composer rounded-[var(--radius-lg)] p-3"
-        data-issue-detail-escape-back={escapeBackWhenEmpty ? (body.trim() ? "dirty" : "empty") : undefined}
-        onMouseDown={focusComposerEditor}
-      >
-        <MarkdownEditor
-          ref={editorRef}
-          engine="milkdown"
-          value={body}
-          onChange={updateBody}
-          placeholder="Leave a comment..."
-          mentions={mentions}
-          agentMentionIntent="wake"
-          onMentionQueryChange={onMentionQueryChange}
-          mentionMenuAnchorRef={composerSurfaceRef}
-          mentionMenuPlacement="container"
-          onSubmit={handleSubmit}
-          imageUploadHandler={imageUploadHandler}
-          className="rounded-[var(--radius-md)] bg-transparent"
-          contentClassName="min-h-[64px] bg-transparent text-sm leading-6 text-foreground"
-          bordered={false}
-        />
-        <div className="mt-3 flex items-center justify-end gap-3">
-          {(imageUploadHandler || onAttachImage) && (
-            <div className="mr-auto flex items-center gap-3">
-              <input
-                ref={attachInputRef}
-                type="file"
-                accept={COMMENT_ATTACHMENT_ACCEPT}
-                multiple
-                className="hidden"
-                onChange={handleAttachFile}
-              />
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={() => attachInputRef.current?.click()}
-                disabled={attaching}
-                title="Attach file"
-              >
-                <Paperclip className="h-4 w-4" />
-              </Button>
-            </div>
-          )}
-          {canReopen ? (
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={reopen}
-                onChange={(e) => setReopen(e.target.checked)}
-                className="rounded border-border"
-              />
-              Re-open
-            </label>
-          ) : null}
-          <Button size="sm" disabled={!canSubmit} onClick={handleSubmit}>
-            {submitting ? "Posting..." : "Comment"}
-          </Button>
-        </div>
-      </div>
+      {composerNode}
     </div>
   );
 }

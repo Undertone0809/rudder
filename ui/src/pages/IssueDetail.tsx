@@ -2052,10 +2052,14 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     <div
       ref={issueFindRootRef}
       data-testid={embedded ? "embedded-issue-detail" : undefined}
-      className="mx-auto max-w-6xl xl:grid xl:grid-cols-[minmax(0,1fr)_280px] xl:items-start xl:gap-6"
+      className="mx-auto flex h-full min-h-0 max-w-6xl flex-col xl:grid xl:grid-cols-[minmax(0,1fr)_280px] xl:items-stretch xl:gap-6"
     >
       <IssueDetailFind rootRef={issueFindRootRef} refreshKey={issueFindRefreshKey} />
-      <div className="min-w-0 space-y-6">
+      <div className="min-w-0 space-y-6 xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:gap-4 xl:space-y-0">
+        <div
+          className="scrollbar-auto-hide min-w-0 space-y-6 xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:pr-1"
+          data-testid="issue-detail-primary-scroll"
+        >
         <div className="space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-2 min-w-0 flex-wrap">
@@ -2516,7 +2520,9 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
 
       <Separator />
 
-      <section aria-label="Activity" className="space-y-3">
+        </div>
+
+      <section aria-label="Activity" className="flex flex-col space-y-3 xl:min-h-0 xl:flex-[1.15]">
         <div className="flex items-center gap-2 text-sm font-semibold">
           <ActivityIcon className="h-3.5 w-3.5 text-muted-foreground" />
           <span>Activity</span>
@@ -2537,6 +2543,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           hideHeading
           emptyMessage="No activity yet."
           escapeBackWhenEmpty
+          fixedComposer
           onAdd={async (body, reopen) => {
             await addComment.mutateAsync({ body, reopen });
           }}
@@ -2598,7 +2605,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
       </Sheet>
       <ScrollToBottom />
       </div>
-      <aside className="mt-6 xl:sticky xl:top-4 xl:mt-0">
+      <aside className="mt-6 xl:mt-0 xl:min-h-0 xl:overflow-y-auto">
         <div className="space-y-3">
           <div className="hidden xl:flex justify-end">
             {renderDesktopIssueActions({
