@@ -175,6 +175,57 @@ describe("useKeyboardShortcuts", () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
+  it("creates a new chat even when the target stops keydown propagation", async () => {
+    const onNewChat = vi.fn();
+    await renderShortcutHarness({ onNewChat, shortcutSettings: null });
+    const target = document.createElement("button");
+    target.addEventListener("keydown", (event) => event.stopPropagation());
+    document.body.append(target);
+
+    const event = dispatchKey("s", getKeyboardShortcutPlatform() === "mac" ? { metaKey: true, altKey: true } : { ctrlKey: true, altKey: true }, target);
+
+    expect(onNewChat).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("uses the current create-chat default when legacy chat defaults are persisted", async () => {
+    const onNewChat = vi.fn();
+    const shortcut = getKeyboardShortcutPlatform() === "mac"
+      ? { metaKey: true, altKey: true }
+      : { ctrlKey: true, altKey: true };
+    await renderShortcutHarness({
+      onNewChat,
+      shortcutSettings: {
+        shortcuts: [
+          {
+            actionId: "chat.create",
+            bindings: [
+              { key: "n", metaKey: true },
+              { key: "o", metaKey: true, shiftKey: true },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(dispatchKey("n", { metaKey: true }).defaultPrevented).toBe(false);
+    expect(dispatchKey("s", shortcut).defaultPrevented).toBe(true);
+    expect(onNewChat).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not create a new chat while a dialog layer is open", async () => {
+    const onNewChat = vi.fn();
+    await renderShortcutHarness({ onNewChat, shortcutSettings: null });
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    document.body.append(dialog);
+
+    const event = dispatchKey("s", getKeyboardShortcutPlatform() === "mac" ? { metaKey: true, altKey: true } : { ctrlKey: true, altKey: true });
+
+    expect(onNewChat).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
   it("does not open a new issue from editable fields", async () => {
     const onNewIssue = vi.fn();
     await renderShortcutHarness({ onNewIssue });
@@ -197,6 +248,26 @@ describe("useKeyboardShortcuts", () => {
 
     expect(onNewChat).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("creates a new chat when focus remains inside a hidden command input remnant", async () => {
+    const onNewChat = vi.fn();
+    await renderShortcutHarness({ onNewChat, shortcutSettings: null });
+    const hiddenShell = document.createElement("div");
+    hiddenShell.setAttribute("aria-hidden", "true");
+    const input = document.createElement("input");
+    hiddenShell.append(input);
+    document.body.append(hiddenShell);
+
+    const event = dispatchKey("s", {
+      code: "KeyS",
+      metaKey: getKeyboardShortcutPlatform() === "mac",
+      ctrlKey: getKeyboardShortcutPlatform() !== "mac",
+      altKey: true,
+    }, input);
+
+    expect(onNewChat).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(true);
   });
 
   it("uses configured shortcut bindings and respects disabled actions", async () => {

@@ -34,7 +34,7 @@ async function gotoDashboardReady(page: Page, issuePrefix: string) {
 
 async function dispatchShortcut(
   page: Page,
-  shortcut: { key: string; init: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; shiftKey?: boolean } },
+  shortcut: { key: string; init: KeyboardEventInit },
 ) {
   return await page.evaluate(({ key, init }) => {
     const event = new KeyboardEvent("keydown", {
@@ -50,19 +50,19 @@ async function dispatchShortcut(
 
 function getCandidateNewIssueShortcuts() {
   return [
-    { key: "n", init: { metaKey: true } },
-    { key: "n", init: { ctrlKey: true } },
+    { key: "n", init: { code: "KeyN", metaKey: true } },
+    { key: "n", init: { code: "KeyN", ctrlKey: true } },
   ];
 }
 
 function getCandidateNewChatShortcuts() {
   return [
-    { key: "s", init: { metaKey: true, altKey: true } },
-    { key: "s", init: { ctrlKey: true, altKey: true } },
+    { key: "s", init: { code: "KeyS", metaKey: true, altKey: true } },
+    { key: "s", init: { code: "KeyS", ctrlKey: true, altKey: true } },
   ];
 }
 
-async function dispatchFirstHandledShortcut<T extends { key: string; init: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; shiftKey?: boolean } }>(
+async function dispatchFirstHandledShortcut<T extends { key: string; init: KeyboardEventInit }>(
   page: Page,
   shortcuts: T[],
 ) {
@@ -145,5 +145,43 @@ test.describe("Global create shortcuts", () => {
       "href",
       new RegExp(`/${organization.issuePrefix}/messenger/chat/${chat.id}$`),
     );
+  });
+
+  test("creates a new chat with modifier+Alt+S when legacy chat shortcuts are persisted", async ({ page }) => {
+    const legacyRes = await page.request.patch("/api/instance/settings/shortcuts", {
+      data: {
+        shortcuts: [
+          {
+            actionId: "chat.create",
+            bindings: [
+              { key: "n", metaKey: true },
+              { key: "o", metaKey: true, shiftKey: true },
+            ],
+          },
+        ],
+      },
+    });
+    expect(legacyRes.ok()).toBe(true);
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Legacy New Chat Shortcut ${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { issuePrefix: string };
+
+    await gotoDashboardReady(page, organization.issuePrefix);
+    const createChatResponse = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && response.url().includes("/api/orgs/")
+      && response.url().includes("/chats")
+      && response.ok(),
+    );
+
+    const shortcut = await dispatchFirstHandledShortcut(page, getCandidateNewChatShortcuts());
+    expect(shortcut).not.toBeNull();
+    const chat = await (await createChatResponse).json() as { id: string };
+
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/${chat.id}$`));
   });
 });

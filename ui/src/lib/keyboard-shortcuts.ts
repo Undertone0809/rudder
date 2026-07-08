@@ -27,12 +27,12 @@ export const KEYBOARD_SHORTCUT_REGISTRY: KeyboardShortcutRegistryEntry[] = [
     description: "Search and jump across Rudder.",
     scope: "Global",
     defaultBindings: [
-      { key: "k", metaKey: true },
-      { key: "k", ctrlKey: true },
+      { key: "k", code: "KeyK", metaKey: true },
+      { key: "k", code: "KeyK", ctrlKey: true },
     ],
     defaultBindingsByPlatform: {
-      mac: [{ key: "k", metaKey: true }],
-      nonMac: [{ key: "k", ctrlKey: true }],
+      mac: [{ key: "k", code: "KeyK", metaKey: true }],
+      nonMac: [{ key: "k", code: "KeyK", ctrlKey: true }],
     },
     configurable: true,
     disableable: true,
@@ -59,12 +59,12 @@ export const KEYBOARD_SHORTCUT_REGISTRY: KeyboardShortcutRegistryEntry[] = [
     description: "Create a new chat and open it.",
     scope: "Global",
     defaultBindings: [
-      { key: "s", metaKey: true, altKey: true },
-      { key: "s", ctrlKey: true, altKey: true },
+      { key: "s", code: "KeyS", metaKey: true, altKey: true },
+      { key: "s", code: "KeyS", ctrlKey: true, altKey: true },
     ],
     defaultBindingsByPlatform: {
-      mac: [{ key: "s", metaKey: true, altKey: true }],
-      nonMac: [{ key: "s", ctrlKey: true, altKey: true }],
+      mac: [{ key: "s", code: "KeyS", metaKey: true, altKey: true }],
+      nonMac: [{ key: "s", code: "KeyS", ctrlKey: true, altKey: true }],
     },
     configurable: true,
     disableable: true,
@@ -75,12 +75,12 @@ export const KEYBOARD_SHORTCUT_REGISTRY: KeyboardShortcutRegistryEntry[] = [
     description: "Open the new issue dialog.",
     scope: "Global",
     defaultBindings: [
-      { key: "n", metaKey: true },
-      { key: "n", ctrlKey: true },
+      { key: "n", code: "KeyN", metaKey: true },
+      { key: "n", code: "KeyN", ctrlKey: true },
     ],
     defaultBindingsByPlatform: {
-      mac: [{ key: "n", metaKey: true }],
-      nonMac: [{ key: "n", ctrlKey: true }],
+      mac: [{ key: "n", code: "KeyN", metaKey: true }],
+      nonMac: [{ key: "n", code: "KeyN", ctrlKey: true }],
     },
     configurable: true,
     disableable: true,
@@ -121,6 +121,7 @@ const CONFIGURABLE_ACTION_IDS = new Set<ShortcutRegistryActionId>(
 );
 
 const MODIFIER_KEYS = new Set(["Alt", "Control", "Meta", "Shift"]);
+const LEGACY_CHAT_CREATE_DEFAULT_SIGNATURES = new Set(["meta+n", "meta+shift+o"]);
 
 export function getKeyboardShortcutPlatform(): KeyboardShortcutPlatform {
   if (typeof navigator === "undefined") return "nonMac";
@@ -164,6 +165,7 @@ export function bindingSignature(binding: KeyboardShortcutBinding) {
 
 export function isEditableShortcutTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
+  if (isHiddenShortcutElement(target)) return false;
 
   const tagName = target.tagName;
   return tagName === "INPUT"
@@ -171,6 +173,17 @@ export function isEditableShortcutTarget(target: EventTarget | null): boolean {
     || tagName === "SELECT"
     || target.isContentEditable
     || Boolean(target.closest('[contenteditable="true"], [contenteditable="plaintext-only"]'));
+}
+
+function isHiddenShortcutElement(element: HTMLElement) {
+  let current: HTMLElement | null = element;
+  while (current) {
+    if (current.hidden || current.getAttribute("aria-hidden") === "true") return true;
+    const style = window.getComputedStyle(current);
+    if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return true;
+    current = current.parentElement;
+  }
+  return false;
 }
 
 export function shortcutEventToBinding(event: KeyboardEvent): KeyboardShortcutBinding | null {
@@ -187,7 +200,10 @@ export function shortcutEventToBinding(event: KeyboardEvent): KeyboardShortcutBi
 
 export function matchesShortcutBinding(event: KeyboardEvent, binding: KeyboardShortcutBinding) {
   const normalized = normalizeShortcutBinding(binding);
-  return normalizeShortcutKey(event.key) === normalized.key
+  const keyMatches = normalized.code && event.code
+    ? event.code === normalized.code
+    : normalizeShortcutKey(event.key) === normalized.key;
+  return keyMatches
     && event.metaKey === Boolean(normalized.metaKey)
     && event.ctrlKey === Boolean(normalized.ctrlKey)
     && event.altKey === Boolean(normalized.altKey)
@@ -212,11 +228,23 @@ export function resolveKeyboardShortcutBindings(
       continue;
     }
     if (preference.bindings && preference.bindings.length > 0) {
-      resolved[preference.actionId] = preference.bindings.map(normalizeShortcutBinding);
+      const bindings = preference.bindings.map(normalizeShortcutBinding);
+      if (isLegacyChatCreateDefault(preference.actionId, bindings)) continue;
+      resolved[preference.actionId] = bindings;
     }
   }
 
   return resolved;
+}
+
+function isLegacyChatCreateDefault(
+  actionId: KeyboardShortcutActionId,
+  bindings: KeyboardShortcutBinding[],
+) {
+  if (actionId !== "chat.create" || bindings.length !== LEGACY_CHAT_CREATE_DEFAULT_SIGNATURES.size) {
+    return false;
+  }
+  return bindings.every((binding) => LEGACY_CHAT_CREATE_DEFAULT_SIGNATURES.has(bindingSignature(binding)));
 }
 
 export function eventMatchesShortcutAction(
@@ -236,12 +264,12 @@ export function formatShortcutBinding(
 ) {
   const normalized = normalizeShortcutBinding(binding);
   const parts: string[] = [];
-  if (normalized.metaKey) parts.push(platform === "mac" ? "Cmd" : "Meta");
-  if (normalized.ctrlKey) parts.push("Ctrl");
-  if (normalized.altKey) parts.push(platform === "mac" ? "Opt" : "Alt");
-  if (normalized.shiftKey) parts.push("Shift");
+  if (normalized.ctrlKey) parts.push(platform === "mac" ? "⌃" : "Ctrl");
+  if (normalized.altKey) parts.push(platform === "mac" ? "⌥" : "Alt");
+  if (normalized.shiftKey) parts.push(platform === "mac" ? "⇧" : "Shift");
+  if (normalized.metaKey) parts.push(platform === "mac" ? "⌘" : "Meta");
   parts.push(formatShortcutKey(normalized.key));
-  return parts.join("+");
+  return platform === "mac" ? parts.join("") : parts.join("+");
 }
 
 function formatShortcutKey(key: string) {
