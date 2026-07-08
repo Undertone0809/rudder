@@ -1,5 +1,5 @@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { summarizeTokenUsage, type AgentSkillAnalytics, type CostTrendPoint, type HeartbeatRun } from "@rudderhq/shared";
+import { summarizeTokenUsage, tokenUsageCacheRatio, type AgentSkillAnalytics, type CostTrendPoint, type HeartbeatRun } from "@rudderhq/shared";
 import type { CSSProperties } from "react";
 import { formatPriorityLabel } from "../lib/priorities";
 import { describeRunReason } from "../lib/run-reason";
@@ -269,12 +269,14 @@ function formatSkillUseCount(count: number): string {
 function ChartColumnTooltip({
   day,
   title,
+  ariaTitle,
   trigger,
   details,
   empty = false,
 }: {
   day: string;
   title: string;
+  ariaTitle?: string;
   trigger: React.ReactNode;
   details?: React.ReactNode;
   empty?: boolean;
@@ -284,7 +286,7 @@ function ChartColumnTooltip({
       <TooltipTrigger asChild>
         <button
           type="button"
-          aria-label={`${formatDayTitle(day)}: ${title}`}
+          aria-label={`${formatDayTitle(day)}: ${ariaTitle ?? title}`}
           className="flex-1 h-full appearance-none rounded-[4px] bg-transparent p-0 text-left transition-colors hover:bg-black/3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         >
           {trigger}
@@ -375,6 +377,12 @@ function formatPercent(value: number, total: number): string {
   const percent = (value / total) * 100;
   if (percent >= 10 || percent === 100) return `${Math.round(percent)}%`;
   return `${percent.toFixed(1)}%`;
+}
+
+function formatTokenCacheRatio(parts: CostTrendPoint): string {
+  const ratio = tokenUsageCacheRatio(parts);
+  if (ratio == null) return "—";
+  return `${Math.round(ratio * 100)}%`;
 }
 
 function buildTooltipSegments(
@@ -845,16 +853,20 @@ export function TokenUsageChart({
             const usage = summarizeTokenUsage(row);
             const total = usage.totalTokens;
             const heightPct = (total / maxValue) * 100;
+            const cacheRatio = formatTokenCacheRatio(row);
+            const cacheRatioLabel = cacheRatio === "—" ? "no cache ratio" : `${cacheRatio} cache ratio`;
             return (
               <ChartColumnTooltip
                 key={row.date}
                 day={row.date}
                 title={total > 0 ? `${formatTokens(total)} tokens` : "No token usage"}
+                ariaTitle={total > 0 ? `${formatTokens(total)} tokens, ${cacheRatioLabel}` : undefined}
                 details={
                   <>
                     <TooltipMetricRow label="Total tokens" value={formatTokens(total)} />
                     <TooltipMetricRow color="#3b82f6" label="Uncached input" value={formatTokens(usage.uncachedInputTokens)} />
                     <TooltipMetricRow color="#06b6d4" label="Cached input" value={formatTokens(usage.cachedInputTokens)} />
+                    <TooltipMetricRow label="Cache ratio" value={cacheRatio} />
                     <TooltipMetricRow color="#10b981" label="Output" value={formatTokens(usage.outputTokens)} />
                     <TooltipMetricRow label="Events" value={row.eventCount} />
                   </>

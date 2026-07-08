@@ -113,24 +113,28 @@ test.describe("Dashboard date filter", () => {
     await expect(mainContent.getByRole("link", { name: /^Older dashboard task DAS-/ })).toHaveCount(0);
     await expect(mainContent.getByText("Last 7 days · relative daily run volume · hover for details")).toBeVisible();
     await expect(mainContent.getByText("Tokens Used")).toBeVisible();
-    await expect(mainContent.getByText("Input 1.2k · Output 300")).toBeVisible();
+    await expect(mainContent.getByText("Input 1.0k · Cached 200 · Output 300")).toBeVisible();
+    const recentTokenColumn = mainContent.getByRole("button", { name: /1\.3k tokens, 20% cache ratio/ });
+    await expect(recentTokenColumn).toBeVisible();
+    await recentTokenColumn.hover();
+    await expect(page.getByRole("tooltip", { name: /Cache ratio 20%/ })).toBeVisible();
 
     await mainContent.getByRole("button", { name: "1M" }).click();
     await expect(mainContent.getByRole("link", { name: /^Older dashboard task DAS-/ })).toBeVisible();
     await expect(mainContent.getByText("Last 30 days · relative daily run volume · hover for details")).toBeVisible();
-    await expect(mainContent.getByText("Input 1.9k · Output 600")).toBeVisible();
-    await expect(mainContent.locator('.metric-value-motion[aria-label="2.5k"][data-animated="true"]')).toBeVisible();
+    await expect(mainContent.getByText("Input 1.7k · Cached 200 · Output 600")).toBeVisible();
+    await expect(mainContent.locator('.metric-value-motion[aria-label="2.3k"][data-animated="true"]')).toBeVisible();
     await expect(mainContent.locator(".dashboard-chart-motion").first()).toBeVisible();
     await expect(mainContent.locator(".dashboard-chart-bar").first()).toBeVisible();
 
     await mainContent.getByRole("button", { name: /Custom/ }).click();
-    const fromInput = page.getByLabel("From");
-    const toInput = page.getByLabel("To");
+    const fromInput = page.getByLabel("From", { exact: true });
+    const toInput = page.getByLabel("To", { exact: true });
     await fromInput.fill(formatInput(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 20)));
     await toInput.fill(formatInput(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 14)));
 
     await expect(mainContent.getByRole("link", { name: /^Older dashboard task DAS-/ })).toBeVisible();
     await expect(mainContent.getByRole("link", { name: /^Recent dashboard task DAS-/ })).toHaveCount(0);
-    await expect(mainContent.getByText("Input 700 · Output 300")).toBeVisible();
+    await expect(mainContent.getByText("Input 700 · Cached 0 · Output 300")).toBeVisible();
   });
 });

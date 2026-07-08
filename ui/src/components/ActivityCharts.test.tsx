@@ -297,6 +297,7 @@ describe("TokenUsageChart", () => {
     expect(container.textContent).toContain("Cached");
     expect(container.textContent).toContain("Output");
     expect(trigger?.getAttribute("aria-label")).toContain("1.5M tokens");
+    expect(trigger?.getAttribute("aria-label")).toContain("17% cache ratio");
     expect(container.textContent).not.toContain("80%+");
   });
 
