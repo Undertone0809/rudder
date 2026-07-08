@@ -290,12 +290,19 @@ describe("index.css motion rules", () => {
       indexCss.match(/\n\.chat-composer \.rudder-mdxeditor-content \.rudder-skill-token,[\s\S]*?\.chat-composer \.rudder-milkdown-content \.rudder-skill-token \{[\s\S]*?\n\}/)?.[0] ?? "";
 
     for (const tokenBlock of [composerMentionTokenBlock, composerSkillTokenBlock]) {
-      expect(tokenBlock).toContain("display: inline-block");
+      if (tokenBlock === composerMentionTokenBlock) {
+        expect(tokenBlock).toContain("display: inline-flex");
+        expect(tokenBlock).toContain("align-items: center");
+        expect(tokenBlock).toContain("line-height: 1");
+        expect(tokenBlock).toContain("vertical-align: -0.1em");
+      } else {
+        expect(tokenBlock).toContain("display: inline-block");
+        expect(tokenBlock).toContain("vertical-align: -0.14em");
+      }
       expect(tokenBlock).toContain("min-width: 0");
       expect(tokenBlock).toContain("max-width: calc(100% - 1rem)");
       expect(tokenBlock).toContain("overflow: hidden");
       expect(tokenBlock).toContain("text-overflow: ellipsis");
-      expect(tokenBlock).toContain("vertical-align: -0.14em");
       expect(tokenBlock).toContain("white-space: nowrap");
     }
 
@@ -307,10 +314,10 @@ describe("index.css motion rules", () => {
       indexCss.match(/\n\.chat-composer \.rudder-mdxeditor-content \.rudder-mention-chip\[data-mention-kind="automation"]::before,[\s\S]*?\.chat-composer \.rudder-milkdown-content \.rudder-mention-chip\[data-mention-kind="automation"]::before \{[\s\S]*?\n\}/)?.[0] ?? "";
 
     expect(composerMentionIconBlock).toContain("margin-right: 0.28em");
-    expect(composerMentionIconBlock).toContain("transform: translateY(0.1em)");
+    expect(composerMentionIconBlock).toContain("transform: none");
     expect(composerSkillIconBlock).toContain("margin-right: 0.28em");
     expect(composerSkillIconBlock).toContain("transform: translateY(0.1em)");
-    expect(composerAutomationIconBlock).toContain("transform: translateY(0.18em)");
+    expect(composerAutomationIconBlock).toContain("transform: none");
     expect(composerAutomationIconBlock).not.toContain("a.rudder-mention-chip");
   });
 

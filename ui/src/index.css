@@ -5245,7 +5245,7 @@ a.rudder-mention-chip[data-mention-kind="project"]::before {
 .chat-composer .rudder-milkdown-content .rudder-mention-chip::before,
 .chat-composer .rudder-milkdown-content .rudder-project-mention-chip::before {
   margin-right: 0.28em;
-  transform: translateY(0.1em);
+  transform: none;
   width: 1.28em;
   height: 1.28em;
 }
@@ -5279,7 +5279,7 @@ a.rudder-mention-chip[data-mention-kind="automation"]::before {
 
 .chat-composer .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="automation"]::before,
 .chat-composer .rudder-milkdown-content .rudder-mention-chip[data-mention-kind="automation"]::before {
-  transform: translateY(0.18em);
+  transform: none;
 }
 
 .rudder-mdxeditor-content .rudder-mention-chip--with-status-icon[data-mention-kind="issue"]::before,
@@ -5465,12 +5465,14 @@ a.rudder-mention-chip[data-mention-kind="library_directory"]::before {
 .chat-composer .rudder-mdxeditor-content .rudder-project-mention-chip,
 .chat-composer .rudder-milkdown-content .rudder-mention-chip,
 .chat-composer .rudder-milkdown-content .rudder-project-mention-chip {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   min-width: 0;
   max-width: calc(100% - 1rem);
   overflow: hidden;
   text-overflow: ellipsis;
-  vertical-align: -0.14em;
+  line-height: 1;
+  vertical-align: -0.1em;
   white-space: nowrap;
 }
 

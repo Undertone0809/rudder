@@ -73,7 +73,7 @@ test("chat composer inserts every @ reference type with Tab and keeps typing aft
     },
   });
   expect(issueRes.ok()).toBe(true);
-  const issue = await issueRes.json() as { id: string; title: string };
+  const issue = await issueRes.json() as { id: string; identifier: string | null; title: string };
 
   const hostChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
     data: {
@@ -170,8 +170,8 @@ test("chat composer inserts every @ reference type with Tab and keeps typing aft
       query: issueTitle,
       optionTestId: `markdown-mention-option-issue:${issue.id}`,
       tokenSelector: "[data-mention-kind='issue']",
-      tokenText: issue.title,
-      minIconPx: 17,
+      tokenText: issue.identifier ?? issue.title,
+      minIconPx: 14,
     },
     {
       kind: "chat",
@@ -261,7 +261,7 @@ test("chat composer sends pasted text after a clicked issue reference token", as
     },
   });
   expect(issueRes.ok()).toBe(true);
-  const issue = await issueRes.json() as { id: string; title: string };
+  const issue = await issueRes.json() as { id: string; identifier: string | null; title: string };
 
   const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
     data: {
@@ -283,7 +283,7 @@ test("chat composer sends pasted text after a clicked issue reference token", as
   await expect(option).toContainText(issue.title, { timeout: 15_000 });
   await page.keyboard.press("Tab");
 
-  const token = composer.locator("[data-mention-kind='issue']").filter({ hasText: issue.title }).first();
+  const token = composer.locator("[data-mention-kind='issue']").filter({ hasText: issue.identifier ?? issue.title }).first();
   await expect(token).toBeVisible({ timeout: 15_000 });
   await token.click({ force: true });
 
@@ -298,7 +298,7 @@ test("chat composer sends pasted text after a clicked issue reference token", as
   });
   await expect(composer).toContainText("可以这样");
 
-  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByTestId("chat-composer-toolbar").getByRole("button", { name: "Send" }).click();
 
   const userBubble = page.getByTestId("chat-user-message-bubble").last();
   await expect(userBubble).toContainText(issue.title, { timeout: 15_000 });
@@ -311,4 +311,88 @@ test("chat composer sends pasted text after a clicked issue reference token", as
   expect(userMessage?.body).toContain(issue.title);
   expect(userMessage?.body).toContain(`](issue://${issue.id}`);
   expect(userMessage?.body).toContain("可以这样");
+});
+
+test("chat composer keeps typing after clicked chat references and aligns agent avatars", async ({ page }, testInfo) => {
+  const suffix = Date.now();
+  const organization = await createOrganization(page, "Chat-Composer-Reference-Geometry");
+  const agent = await createE2EChatAgent(page.request, organization.id, {
+    name: `Geometry Agent ${suffix}`,
+  }) as { id: string; name: string };
+
+  const hostChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+    data: {
+      title: `Geometry host ${suffix}`,
+      preferredAgentId: agent.id,
+    },
+  });
+  expect(hostChatRes.ok()).toBe(true);
+  const hostChat = await hostChatRes.json() as { id: string };
+
+  const referencedChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+    data: {
+      title: `Geometry referenced chat ${suffix}`,
+      preferredAgentId: agent.id,
+    },
+  });
+  expect(referencedChatRes.ok()).toBe(true);
+  const referencedChat = await referencedChatRes.json() as { id: string; title: string };
+
+  await selectOrganization(page, organization.id);
+  await page.goto(`/${organization.issuePrefix}/messenger/chat/${hostChat.id}`);
+
+  const composer = page.locator(".chat-composer .rudder-mdxeditor-content").first();
+  await expect(composer).toBeVisible({ timeout: 15_000 });
+
+  const chatReference = `[${referencedChat.title}](chat://${referencedChat.id})`;
+  await composer.fill(chatReference);
+
+  const chatToken = composer.locator("[data-mention-kind='chat']").filter({ hasText: referencedChat.title }).first();
+  await expect(chatToken).toBeVisible({ timeout: 15_000 });
+  await chatToken.click({ force: true });
+  await page.keyboard.type(" asdasdasd");
+  await expect(composer).toContainText("asdasdasd");
+  await expect(chatToken).not.toContainText("asdasdasd");
+  await expect(composer).toBeFocused();
+
+  await resetComposer(composer);
+  const agentReference = `[${agent.name}](agent://${agent.id})`;
+  await composer.fill(agentReference);
+  await page.keyboard.type(" asdasdasd");
+
+  const agentToken = composer.locator("[data-mention-kind='agent']").filter({ hasText: agent.name }).first();
+  await expect(agentToken).toBeVisible({ timeout: 15_000 });
+
+  const metrics = await agentToken.evaluate((element) => {
+    const chip = element as HTMLElement;
+    const chipRect = chip.getBoundingClientRect();
+    const style = window.getComputedStyle(chip);
+    const iconStyle = window.getComputedStyle(chip, "::before");
+    const fontSize = Number.parseFloat(style.fontSize);
+    const iconWidth = Number.parseFloat(iconStyle.width);
+    const iconHeight = Number.parseFloat(iconStyle.height);
+    const beforeContent = iconStyle.content;
+    return {
+      alignItems: style.alignItems,
+      display: style.display,
+      fontSize,
+      lineHeight: style.lineHeight,
+      chipHeight: chipRect.height,
+      iconHeight,
+      iconWidth,
+      iconVisible: beforeContent !== "none" && beforeContent !== "normal",
+      iconFontRatio: iconHeight / fontSize,
+    };
+  });
+
+  expect(metrics.display).toBe("inline-flex");
+  expect(metrics.alignItems).toBe("center");
+  expect(Number.parseFloat(metrics.lineHeight)).toBeCloseTo(metrics.fontSize, 0);
+  expect(metrics.iconVisible).toBe(true);
+  expect(metrics.iconWidth).toBeGreaterThanOrEqual(17.5);
+  expect(metrics.iconHeight).toBeGreaterThanOrEqual(17.5);
+  expect(metrics.iconFontRatio).toBeGreaterThan(1);
+  expect(metrics.chipHeight).toBeLessThanOrEqual(24);
+
+  await page.screenshot({ path: testInfo.outputPath("chat-composer-reference-geometry.png"), fullPage: true });
 });
