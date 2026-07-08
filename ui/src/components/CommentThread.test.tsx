@@ -687,6 +687,24 @@ describe("CommentThread", () => {
     expect(html).not.toContain("Assignee");
   });
 
+  it("pins the fixed composer below an independently scrollable timeline", () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <CommentThread
+          comments={[]}
+          onAdd={async () => undefined}
+          fixedComposer
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('data-testid="comment-thread-timeline-scroll"');
+    expect(html).toContain("scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1");
+    expect(html).toContain('data-testid="comment-thread-fixed-composer"');
+    expect(html).toContain("sticky bottom-0 z-20 shrink-0");
+    expect(html).not.toContain("xl:overflow-y-auto");
+  });
+
   it("attaches every selected comment file to the draft body", async () => {
     const onAdd = vi.fn().mockResolvedValue(undefined);
     const upload = vi.fn(async (file: File) => `/api/attachments/${file.name}/content`);

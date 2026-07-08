@@ -2225,14 +2225,16 @@ describe("Chat Side Panel link handling", () => {
 
     const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     const issueView = sidePanel?.querySelector<HTMLElement>("[data-testid='chat-side-panel-issue-view']");
-    const activityScroller = sidePanel?.querySelector<HTMLElement>("[data-testid='chat-side-panel-issue-activity-scroll']");
+    const activityScroller = sidePanel?.querySelector<HTMLElement>("[data-testid='comment-thread-timeline-scroll']");
+    const fixedComposer = sidePanel?.querySelector<HTMLElement>("[data-testid='comment-thread-fixed-composer']");
     const sidePanelScrollBody = sidePanel?.querySelector<HTMLElement>("[data-testid='chat-side-panel-scroll-body']");
     expect(sidePanel).not.toBeNull();
     expect(issueView).not.toBeNull();
     expect(activityScroller).not.toBeNull();
+    expect(fixedComposer).not.toBeNull();
     expect(activityScroller?.className).toContain("overflow-y-auto");
-    expect(sidePanelScrollBody?.className).toContain("overflow-y-auto");
-    expect(sidePanelScrollBody?.className).not.toContain("overflow-hidden");
+    expect(fixedComposer?.className).toContain("sticky bottom-0");
+    expect(sidePanelScrollBody?.className).toContain("overflow-hidden");
     expect(sidePanel?.className).toContain("fixed");
     expect(sidePanel?.textContent?.indexOf("Assignee")).toBeLessThan(
       sidePanel?.textContent?.indexOf("Existing side panel comment.") ?? Number.POSITIVE_INFINITY,

@@ -321,13 +321,13 @@ function ChatIssueSidePanelView({
   );
 
   return (
-    <div className="flex min-h-full flex-col" data-testid="chat-side-panel-issue-view">
+    <div className="flex h-full min-h-0 flex-col" data-testid="chat-side-panel-issue-view">
       <div className={cn(
-        "grid min-h-0 flex-1 gap-6",
+        "grid h-full min-h-0 flex-1 gap-6",
         expanded && "xl:grid-cols-[minmax(0,1fr)_280px] xl:items-start",
       )}>
         <div className="flex min-h-0 min-w-0 flex-col gap-5">
-          <div className="shrink-0 space-y-3 pb-4">
+          <div className="scrollbar-auto-hide max-h-[45%] shrink-0 space-y-3 overflow-y-auto overscroll-contain pb-4 pr-1">
             <div className="flex items-start justify-between gap-3">
               <InlineEditor
                 value={issue.title}
@@ -374,7 +374,7 @@ function ChatIssueSidePanelView({
             ) : null}
           </div>
 
-          <section className="shrink-0 space-y-3 pb-5">
+          <section className="shrink-0 space-y-3 pb-3">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-sm">
                 <div className="flex items-center gap-1.5 font-medium text-foreground">
@@ -403,24 +403,20 @@ function ChatIssueSidePanelView({
                 </div>
               ) : null}
             </div>
-            <div
-              className="min-h-0 flex-1 overflow-y-auto pr-1"
-              data-testid="chat-side-panel-issue-activity-scroll"
-            >
-              <CommentThread
-                comments={comments}
-                orgId={issue.orgId}
-                projectId={issue.projectId}
-                issueStatus={issue.status}
-                agentMap={agentMap}
-                currentUserId={currentUserId}
-                operatorDisplayName={operatorDisplayName}
-                hideHeading
-                emptyMessage="No comments yet."
-                draftKey={`rudder:side-panel-issue-comment-draft:${issue.id}`}
-                onAdd={onAddComment}
-              />
-            </div>
+            <CommentThread
+              comments={comments}
+              orgId={issue.orgId}
+              projectId={issue.projectId}
+              issueStatus={issue.status}
+              agentMap={agentMap}
+              currentUserId={currentUserId}
+              operatorDisplayName={operatorDisplayName}
+              hideHeading
+              emptyMessage="No comments yet."
+              draftKey={`rudder:side-panel-issue-comment-draft:${issue.id}`}
+              fixedComposer
+              onAdd={onAddComment}
+            />
           </section>
         </div>
 
@@ -1400,7 +1396,8 @@ export function ChatSidePanel({
       <div className="workspace-main-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]">
         <div className={cn(
           "scrollbar-auto-hide min-h-0 flex-1",
-          browserTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
+          browserTarget || issueTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
+          issueTarget && !browserTarget && "px-4 py-4",
         )} data-testid="chat-side-panel-scroll-body">
           {!activeTarget ? (
             <SidePanelEmptyState onOpenTarget={openSidePanelTarget} />

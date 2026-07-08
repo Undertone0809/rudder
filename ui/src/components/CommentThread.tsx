@@ -1485,7 +1485,7 @@ export function CommentThread({
 
   if (fixedComposer) {
     return (
-      <div className="space-y-4 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col xl:gap-4 xl:space-y-0">
+      <div className="flex min-h-0 flex-1 flex-col gap-4">
         {!hideHeading && (
           <div className="shrink-0">
             {heading ?? <h3 className="text-sm font-semibold">Comments &amp; Runs ({timeline.length})</h3>}
@@ -1493,14 +1493,17 @@ export function CommentThread({
         )}
 
         <div
-          className="xl:scrollbar-auto-hide xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:overscroll-contain xl:pr-1"
+          className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1"
           data-testid="comment-thread-timeline-scroll"
         >
           {timelineNode}
           {liveRunSlot ? <div className="mt-4">{liveRunSlot}</div> : null}
         </div>
 
-        <div className="xl:shrink-0">
+        <div
+          className="sticky bottom-0 z-20 shrink-0 bg-background/95 pb-[env(safe-area-inset-bottom)]"
+          data-testid="comment-thread-fixed-composer"
+        >
           {composerNode}
         </div>
       </div>

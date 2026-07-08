@@ -328,10 +328,12 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toBeVisible();
     const activityRegion = sidePanel.getByRole("region", { name: "Activity" });
     const scrollBody = sidePanel.locator("[data-testid='chat-side-panel-scroll-body']");
-    const activityScroller = sidePanel.locator("[data-testid='chat-side-panel-issue-activity-scroll']");
+    const activityScroller = sidePanel.locator("[data-testid='comment-thread-timeline-scroll']");
+    const fixedComposer = sidePanel.locator("[data-testid='comment-thread-fixed-composer']");
     await expect(activityRegion).toBeVisible();
     await expect(scrollBody).toBeVisible();
     await expect(activityScroller).toBeVisible();
+    await expect(fixedComposer).toBeVisible();
     await expect(sidePanel.getByText("Assignee", { exact: true })).toBeVisible();
     await expect(sidePanel.getByText("Edited from the chat detail panel.")).toBeVisible();
     await expect(activityRegion).toContainText("Existing side panel comment should stay visible.");
@@ -341,12 +343,17 @@ test.describe("Chat Side Panel", () => {
       clientHeight: element.clientHeight,
       scrollHeight: element.scrollHeight,
     }));
-    expect(scrollBodyMetrics.className).toContain("overflow-y-auto");
-    expect(scrollBodyMetrics.scrollHeight).toBeGreaterThan(scrollBodyMetrics.clientHeight);
-    await scrollBody.evaluate((element) => {
+    expect(scrollBodyMetrics.className).toContain("overflow-hidden");
+    await expect(activityScroller).toHaveClass(/overflow-y-auto/);
+    const activityScrollerMetrics = await activityScroller.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }));
+    expect(activityScrollerMetrics.scrollHeight).toBeGreaterThan(activityScrollerMetrics.clientHeight);
+    await activityScroller.evaluate((element) => {
       element.scrollTop = element.scrollHeight;
     });
-    await expect.poll(async () => scrollBody.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    await expect.poll(async () => activityScroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
     await expect(activityRegion.getByText("Scrollable side panel activity comment 12.")).toBeInViewport();
 
     await sidePanel.getByLabel("Expand Side Panel").click();
@@ -406,6 +413,115 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Referenced detail chat");
     await expect(sidePanel).toContainText("Referenced chat body should render beside the active chat.");
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(4);
+  });
+
+  test("keeps the issue Side Panel comment composer pinned while activity scrolls", async ({ page }, testInfo) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Chat-Side-Panel-Pinned-Composer-${Date.now()}` },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Side panel composer should stay pinned",
+        description: "Activity should scroll without pushing the comment composer below the visible panel.",
+        status: "todo",
+        priority: "medium",
+      },
+    });
+    expect(issueRes.ok(), await issueRes.text()).toBe(true);
+    const issue = await issueRes.json() as { id: string; identifier: string | null };
+    const issueRef = issue.identifier ?? issue.id;
+
+    for (let index = 0; index < 18; index += 1) {
+      const commentRes = await page.request.post(`/api/issues/${issue.id}/comments`, {
+        data: {
+          body: `Side panel scroll comment ${index + 1}\n\n${"This comment gives the narrow side panel activity timeline realistic vertical weight. ".repeat(6)}`,
+        },
+      });
+      expect(commentRes.ok(), await commentRes.text()).toBe(true);
+    }
+
+    const hostChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Pinned composer host chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(hostChatRes.ok(), await hostChatRes.text()).toBe(true);
+    const hostChat = await hostChatRes.json() as { id: string };
+
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: hostChat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: `Open [${issueRef}](${buildIssueMentionHref(issue.id, issueRef)}) beside this chat.`,
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${hostChat.id}`);
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(assistantMessage).toContainText("Open", { timeout: 15_000 });
+    await assistantMessage.locator('a[data-mention-kind="issue"]').filter({ hasText: issueRef }).click();
+
+    const sidePanel = page.getByTestId("chat-side-panel");
+    const activityScroller = sidePanel.locator("[data-testid='comment-thread-timeline-scroll']");
+    const fixedComposer = sidePanel.locator("[data-testid='comment-thread-fixed-composer']");
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await expect(sidePanel.getByRole("region", { name: "Activity" })).toBeVisible();
+    await expect(activityScroller).toBeVisible();
+    await expect(fixedComposer).toBeVisible();
+
+    const metrics = await page.evaluate(async () => {
+      const panel = document.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+      const timeline = document.querySelector<HTMLElement>("[data-testid='comment-thread-timeline-scroll']");
+      const composer = document.querySelector<HTMLElement>("[data-testid='comment-thread-fixed-composer']");
+      if (!panel || !timeline || !composer) return null;
+
+      timeline.scrollTop = 0;
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const before = composer.getBoundingClientRect();
+      timeline.scrollTop = Math.floor(timeline.scrollHeight / 2);
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const after = composer.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      const timelineRect = timeline.getBoundingClientRect();
+
+      return {
+        timelineCanScroll: timeline.scrollHeight > timeline.clientHeight + 120,
+        composerTopDelta: Math.round(Math.abs(after.top - before.top)),
+        composerBottomGap: Math.round(panelRect.bottom - after.bottom),
+        timelineToComposerGap: Math.round(after.top - timelineRect.bottom),
+        composerVisibleInPanel: after.bottom <= panelRect.bottom + 1 && after.top >= panelRect.top - 1,
+      };
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(metrics!.timelineCanScroll).toBe(true);
+    expect(metrics!.composerTopDelta).toBeLessThanOrEqual(2);
+    expect(metrics!.composerBottomGap).toBeGreaterThanOrEqual(0);
+    expect(metrics!.composerBottomGap).toBeLessThanOrEqual(28);
+    expect(metrics!.timelineToComposerGap).toBeGreaterThanOrEqual(-2);
+    expect(metrics!.composerVisibleInPanel).toBe(true);
+
+    await page.screenshot({
+      path: testInfo.outputPath("chat-side-panel-issue-composer-pinned.png"),
+      fullPage: false,
+    });
   });
 
   test("keeps hidden Side Panel tabs scoped to the active Messenger chat", async ({ page }) => {
