@@ -321,6 +321,8 @@ vi.mock("../components/CommentThread", () => ({
   CommentThread: (props: {
     mentions?: Array<Record<string, unknown>>;
     activityItems?: Array<{ id: string; createdAt: Date | string; node: ReactNode }>;
+    fixedComposer?: boolean;
+    fixedComposerTimelineScroll?: boolean;
   }) => {
     const { mentions, activityItems = [] } = props;
     capturedMentions = mentions ?? [];
@@ -692,13 +694,19 @@ describe("IssueDetail", () => {
     expect(html).toContain('href="/library?path=docs%2Fproduct-brief.md"');
   });
 
-  it("keeps the desktop issue detail columns independently scrollable", () => {
+  it("keeps issue body and activity in one desktop scroll flow", () => {
     const html = renderToStaticMarkup(<IssueDetail />);
 
     expect(html).toContain("mx-auto flex h-full min-h-0 max-w-6xl flex-col xl:grid");
-    expect(html).toContain('class="min-w-0 space-y-6 xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:gap-4 xl:space-y-0"');
-    expect(html).toContain('class="scrollbar-auto-hide min-w-0 space-y-6 xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:pr-1" data-testid="issue-detail-primary-scroll"');
-    expect(html).toContain('aria-label="Activity" class="flex flex-col space-y-3 xl:min-h-0 xl:flex-[1.15]"');
+    expect(html).toContain('class="scrollbar-auto-hide min-w-0 space-y-6 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:pr-1" data-testid="issue-detail-main-scroll"');
+    expect(html).toContain('class="min-w-0 space-y-6" data-testid="issue-detail-primary-content"');
+    expect(html).toContain('aria-label="Activity" class="flex flex-col space-y-2"');
+    expect(capturedCommentThreadProps).toMatchObject({
+      fixedComposer: true,
+      fixedComposerTimelineScroll: false,
+    });
+    expect(html).not.toContain('data-testid="issue-detail-primary-scroll"');
+    expect(html).not.toContain('data-testid="comment-thread-timeline-scroll"');
     expect(html).toContain('<aside class="mt-6 xl:mt-0 xl:min-h-0 xl:overflow-y-auto">');
     expect(html).not.toContain('class="space-y-3 xl:sticky xl:top-4"');
   });

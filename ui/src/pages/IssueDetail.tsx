@@ -79,6 +79,7 @@ import { useToast } from "../context/ToastContext";
 import { useIssueFollows } from "../hooks/useIssueFollows";
 import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
 import { useProjectOrder } from "../hooks/useProjectOrder";
+import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { resolveBoardActorLabel } from "../lib/activity-actors";
 import { formatChatAgentLabel } from "../lib/agent-labels";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
@@ -1107,6 +1108,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   const [workspaceAttachOpen, setWorkspaceAttachOpen] = useState(false);
   const [issuePinPending, setIssuePinPending] = useState(false);
   const issueFindRootRef = useRef<HTMLDivElement | null>(null);
+  const issueDetailScrollRef = useScrollbarActivityRef("rudder:issue-detail-main");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
 
@@ -2055,10 +2057,14 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
       className="mx-auto flex h-full min-h-0 max-w-6xl flex-col xl:grid xl:grid-cols-[minmax(0,1fr)_280px] xl:items-stretch xl:gap-6"
     >
       <IssueDetailFind rootRef={issueFindRootRef} refreshKey={issueFindRefreshKey} />
-      <div className="min-w-0 space-y-6 xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:gap-4 xl:space-y-0">
+      <div
+        ref={issueDetailScrollRef}
+        className="scrollbar-auto-hide min-w-0 space-y-6 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:pr-1"
+        data-testid="issue-detail-main-scroll"
+      >
         <div
-          className="scrollbar-auto-hide min-w-0 space-y-6 xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:pr-1"
-          data-testid="issue-detail-primary-scroll"
+          className="min-w-0 space-y-6"
+          data-testid="issue-detail-primary-content"
         >
         <div className="space-y-3">
           <div className="flex items-start justify-between gap-3">
@@ -2522,7 +2528,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
 
         </div>
 
-      <section aria-label="Activity" className="flex flex-col space-y-3 xl:min-h-0 xl:flex-[1.15]">
+      <section aria-label="Activity" className="flex flex-col space-y-2">
         <div className="flex items-center gap-2 text-sm font-semibold">
           <ActivityIcon className="h-3.5 w-3.5 text-muted-foreground" />
           <span>Activity</span>
@@ -2544,6 +2550,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           emptyMessage="No activity yet."
           escapeBackWhenEmpty
           fixedComposer
+          fixedComposerTimelineScroll={false}
           onAdd={async (body, reopen) => {
             await addComment.mutateAsync({ body, reopen });
           }}

@@ -706,6 +706,26 @@ describe("CommentThread", () => {
     expect(html).not.toContain("xl:overflow-y-auto");
   });
 
+  it("can keep the fixed composer in a single page scroll flow", () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <CommentThread
+          comments={[]}
+          onAdd={async () => undefined}
+          fixedComposer
+          fixedComposerTimelineScroll={false}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('data-testid="comment-thread-timeline-flow"');
+    expect(html).toContain('data-testid="comment-thread-fixed-composer"');
+    expect(html).toContain("sticky bottom-0 z-20");
+    expect(html).toContain("pt-1");
+    expect(html).not.toContain('data-testid="comment-thread-timeline-scroll"');
+    expect(html).not.toContain("flex-1 overflow-y-auto overscroll-contain");
+  });
+
   it("attaches every selected comment file to the draft body", async () => {
     const onAdd = vi.fn().mockResolvedValue(undefined);
     const upload = vi.fn(async (file: File) => `/api/attachments/${file.name}/content`);

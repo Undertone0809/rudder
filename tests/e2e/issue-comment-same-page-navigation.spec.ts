@@ -113,24 +113,28 @@ test("comment hash spacer is removed after positioning the last comment", async 
   const metrics = await page.evaluate((commentId) => {
     const comment = document.getElementById(`comment-${commentId}`);
     const composer = Array.from(document.querySelectorAll(".chat-composer")).at(-1);
-    const timeline = document.querySelector<HTMLElement>("[data-testid='comment-thread-timeline-scroll']");
-    if (!comment || !composer || !timeline) return null;
+    const mainScroll = document.querySelector<HTMLElement>("[data-testid='issue-detail-main-scroll']");
+    const timelineFlow = document.querySelector<HTMLElement>("[data-testid='comment-thread-timeline-flow']");
+    if (!comment || !composer || !mainScroll || !timelineFlow) return null;
     const commentBox = comment.getBoundingClientRect();
     const composerBox = composer.getBoundingClientRect();
-    const timelineBox = timeline.getBoundingClientRect();
+    const mainScrollBox = mainScroll.getBoundingClientRect();
     return {
       gap: Math.round(composerBox.top - commentBox.bottom),
-      timelineBottomGap: Math.round(composerBox.top - timelineBox.bottom),
-      commentInTimeline: commentBox.bottom <= timelineBox.bottom + 1,
+      composerTopPadding: Math.round(composerBox.top - timelineFlow.getBoundingClientRect().bottom),
+      commentInMainScroll: commentBox.bottom <= mainScrollBox.bottom + 1,
+      hasInternalTimelineScroll: Boolean(document.querySelector("[data-testid='comment-thread-timeline-scroll']")),
       spacerCount: document.querySelectorAll("[data-testid='comment-hash-scroll-end-space']").length,
     };
   }, comment.id);
 
   expect(metrics).not.toBeNull();
   expect(metrics!.spacerCount).toBe(0);
-  expect(metrics!.gap).toBeGreaterThanOrEqual(12);
-  expect(metrics!.commentInTimeline).toBe(true);
-  expect(Math.abs(metrics!.timelineBottomGap)).toBeLessThanOrEqual(20);
+  expect(metrics!.hasInternalTimelineScroll).toBe(false);
+  expect(metrics!.gap).toBeGreaterThanOrEqual(6);
+  expect(metrics!.commentInMainScroll).toBe(true);
+  expect(metrics!.composerTopPadding).toBeGreaterThanOrEqual(0);
+  expect(metrics!.composerTopPadding).toBeLessThanOrEqual(10);
 
   await page.screenshot({
     path: testInfo.outputPath("comment-hash-spacer-removed.png"),
@@ -138,7 +142,7 @@ test("comment hash spacer is removed after positioning the last comment", async 
   });
 });
 
-test("issue comment composer stays pinned while the activity timeline scrolls", async ({ page }, testInfo) => {
+test("issue detail body and activity move through one scroll flow", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto("/");
 
@@ -150,8 +154,8 @@ test("issue comment composer stays pinned while the activity timeline scrolls", 
 
   const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
     data: {
-      title: "Comment composer should stay pinned",
-      description: "The issue timeline is long enough that the comment composer must remain visible while comments scroll.",
+      title: "Issue detail should scroll as one page",
+      description: "The issue timeline is long enough that the description, activity, and composer should move as one page instead of creating a split scroll region.",
       status: "done",
       priority: "medium",
     },
@@ -175,41 +179,72 @@ test("issue comment composer stays pinned while the activity timeline scrolls", 
 
   await page.goto(`/${organization.issuePrefix}/messenger/issues/${routeRef}`);
   await expect(page.locator(".chat-composer").last()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("issue-detail-main-scroll")).toBeVisible();
+  await expect(page.getByTestId("comment-thread-timeline-flow")).toBeVisible();
+  await expect(page.getByTestId("comment-thread-timeline-scroll")).toHaveCount(0);
 
   const metrics = await page.evaluate(async () => {
-    const timeline = document.querySelector<HTMLElement>("[data-testid='comment-thread-timeline-scroll']");
+    const mainScroll = document.querySelector<HTMLElement>("[data-testid='issue-detail-main-scroll']");
+    const timelineFlow = document.querySelector<HTMLElement>("[data-testid='comment-thread-timeline-flow']");
     const composer = Array.from(document.querySelectorAll<HTMLElement>(".chat-composer")).at(-1);
     const activity = document.querySelector<HTMLElement>("section[aria-label='Activity']");
-    if (!timeline || !composer || !activity) return null;
+    if (!mainScroll || !timelineFlow || !composer || !activity) return null;
 
-    const before = composer.getBoundingClientRect();
-    timeline.scrollTop = 0;
+    const before = {
+      activityTop: activity.getBoundingClientRect().top,
+      composerTop: composer.getBoundingClientRect().top,
+      firstCommentTop: timelineFlow.querySelector<HTMLElement>("[id^='comment-']")?.getBoundingClientRect().top ?? null,
+    };
+    mainScroll.scrollTop = 0;
     await new Promise((resolve) => requestAnimationFrame(resolve));
-    const afterTopScroll = composer.getBoundingClientRect();
-    timeline.scrollTop = Math.floor(timeline.scrollHeight / 2);
+    const afterTopScroll = {
+      activityTop: activity.getBoundingClientRect().top,
+      composerTop: composer.getBoundingClientRect().top,
+      firstCommentTop: timelineFlow.querySelector<HTMLElement>("[id^='comment-']")?.getBoundingClientRect().top ?? null,
+    };
+    mainScroll.scrollTop = Math.floor(mainScroll.scrollHeight / 2);
     await new Promise((resolve) => requestAnimationFrame(resolve));
-    const afterMiddleScroll = composer.getBoundingClientRect();
-    const activityRect = activity.getBoundingClientRect();
+    const afterMiddleScroll = {
+      activityTop: activity.getBoundingClientRect().top,
+      composerBox: composer.getBoundingClientRect(),
+      firstCommentTop: timelineFlow.querySelector<HTMLElement>("[id^='comment-']")?.getBoundingClientRect().top ?? null,
+    };
+    const mainScrollRect = mainScroll.getBoundingClientRect();
+    const timelineFlowRect = timelineFlow.getBoundingClientRect();
 
     return {
-      timelineCanScroll: timeline.scrollHeight > timeline.clientHeight + 120,
-      topDelta: Math.round(Math.abs(afterTopScroll.top - afterMiddleScroll.top)),
-      bottomGap: Math.round(activityRect.bottom - afterMiddleScroll.bottom),
-      composerHeight: Math.round(afterMiddleScroll.height),
-      beforeTop: Math.round(before.top),
-      afterTop: Math.round(afterMiddleScroll.top),
+      mainCanScroll: mainScroll.scrollHeight > mainScroll.clientHeight + 120,
+      activityMovesWithMainScroll: Math.round(afterTopScroll.activityTop - afterMiddleScroll.activityTop),
+      firstCommentMovesWithMainScroll: afterTopScroll.firstCommentTop === null || afterMiddleScroll.firstCommentTop === null
+        ? null
+        : Math.round(afterTopScroll.firstCommentTop - afterMiddleScroll.firstCommentTop),
+      stickyComposerDelta: Math.round(Math.abs(afterTopScroll.composerTop - afterMiddleScroll.composerBox.top)),
+      stickyBottomGap: Math.round(mainScrollRect.bottom - afterMiddleScroll.composerBox.bottom),
+      timelineFlowTop: Math.round(timelineFlowRect.top),
+      timelineFlowBottom: Math.round(timelineFlowRect.bottom),
+      composerTop: Math.round(afterMiddleScroll.composerBox.top),
+      composerHeight: Math.round(afterMiddleScroll.composerBox.height),
+      beforeActivityTop: Math.round(before.activityTop),
+      beforeComposerTop: Math.round(before.composerTop),
+      hasInternalTimelineScroll: Boolean(document.querySelector("[data-testid='comment-thread-timeline-scroll']")),
     };
   });
 
   expect(metrics).not.toBeNull();
-  expect(metrics!.timelineCanScroll).toBe(true);
-  expect(metrics!.topDelta).toBeLessThanOrEqual(2);
-  expect(metrics!.bottomGap).toBeGreaterThanOrEqual(0);
-  expect(metrics!.bottomGap).toBeLessThanOrEqual(28);
+  expect(metrics!.mainCanScroll).toBe(true);
+  expect(metrics!.hasInternalTimelineScroll).toBe(false);
+  expect(metrics!.activityMovesWithMainScroll).toBeGreaterThan(120);
+  expect(metrics!.firstCommentMovesWithMainScroll).not.toBeNull();
+  expect(metrics!.firstCommentMovesWithMainScroll!).toBeGreaterThan(120);
+  expect(metrics!.stickyComposerDelta).toBeLessThanOrEqual(2);
+  expect(metrics!.stickyBottomGap).toBeGreaterThanOrEqual(0);
+  expect(metrics!.stickyBottomGap).toBeLessThanOrEqual(28);
+  expect(metrics!.timelineFlowTop).toBeLessThan(metrics!.composerTop);
+  expect(metrics!.timelineFlowBottom).toBeGreaterThan(metrics!.composerTop);
   expect(metrics!.composerHeight).toBeGreaterThan(80);
 
   await page.screenshot({
-    path: testInfo.outputPath("issue-comment-composer-pinned.png"),
+    path: testInfo.outputPath("issue-detail-single-scroll-flow.png"),
     fullPage: false,
   });
 });
@@ -291,7 +326,7 @@ test("messenger issue notifications open directly on the source comment", async 
   await expect(targetCommentBlock).toHaveClass(/bg-primary\/5/);
 
   await expect.poll(async () => page.evaluate((commentId) => {
-    const container = document.querySelector<HTMLElement>("[data-testid='comment-thread-timeline-scroll']");
+    const container = document.querySelector<HTMLElement>("[data-testid='issue-detail-main-scroll']");
     const comment = document.getElementById(`comment-${commentId}`);
     if (!container || !comment) return Number.POSITIVE_INFINITY;
 

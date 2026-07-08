@@ -83,6 +83,7 @@ interface CommentThreadProps {
   emptyMessage?: string;
   escapeBackWhenEmpty?: boolean;
   fixedComposer?: boolean;
+  fixedComposerTimelineScroll?: boolean;
 }
 
 export function shouldOfferReopen(issueStatus?: string) {
@@ -1036,6 +1037,7 @@ export function CommentThread({
   emptyMessage = "No comments or runs yet.",
   escapeBackWhenEmpty = false,
   fixedComposer = false,
+  fixedComposerTimelineScroll = true,
 }: CommentThreadProps) {
   const [body, setBody] = useState(() => draftKey ? loadDraft(draftKey) : "");
   const canReopen = shouldOfferReopen(issueStatus);
@@ -1484,6 +1486,30 @@ export function CommentThread({
   );
 
   if (fixedComposer) {
+    if (!fixedComposerTimelineScroll) {
+      return (
+        <div className="flex min-h-0 flex-col gap-1">
+          {!hideHeading && (
+            <div className="shrink-0">
+              {heading ?? <h3 className="text-sm font-semibold">Comments &amp; Runs ({timeline.length})</h3>}
+            </div>
+          )}
+
+          <div data-testid="comment-thread-timeline-flow">
+            {timelineNode}
+            {liveRunSlot ? <div className="mt-3">{liveRunSlot}</div> : null}
+          </div>
+
+          <div
+            className="sticky bottom-0 z-20 -mx-4 -mb-4 shrink-0 bg-[color:var(--desktop-content-surface-light)] px-4 pb-4 pt-1 dark:bg-[color:var(--desktop-content-surface-dark)]"
+            data-testid="comment-thread-fixed-composer"
+          >
+            {composerNode}
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-4">
         {!hideHeading && (
