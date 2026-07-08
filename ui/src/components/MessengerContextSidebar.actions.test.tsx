@@ -2357,13 +2357,11 @@ describe("MessengerContextSidebar chat actions", () => {
     renderSidebar();
 
     const pinnedSection = document.querySelector('[data-testid="messenger-thread-section-custom-pinned"]');
-    const pinnedSectionContent = document.querySelector('[data-testid="messenger-thread-section-custom-pinned-content"]');
-    expect(pinnedSection?.textContent).toContain("Pinned");
-    expect(pinnedSectionContent?.textContent).toContain("Pinned group above loose pin");
-    expect(pinnedSectionContent?.textContent).toContain("Loose pinned thread");
+    expect(pinnedSection?.textContent).toContain("Pinned group above loose pin");
+    expect(pinnedSection?.textContent).toContain("Loose pinned thread");
 
     const text = document.body.textContent ?? "";
-    expect(text.indexOf("Pinned")).toBeLessThan(text.indexOf("Pinned group above loose pin"));
+    expect(text).not.toContain("PinnedPinned group above loose pin");
     expect(text.indexOf("Pinned group above loose pin")).toBeLessThan(text.indexOf("Loose pinned thread"));
     expect(text.indexOf("Loose pinned thread")).toBeLessThan(text.indexOf("Regular group below pins"));
   });

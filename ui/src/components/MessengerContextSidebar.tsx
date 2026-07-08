@@ -3672,6 +3672,7 @@ export function MessengerContextSidebar() {
     const sectionContentTestId = isManagedSection ? `messenger-thread-section-${sanitizeThreadKey(section.key)}-content` : undefined;
     const isPinnedCustomSection = effectiveThreadOrganizationRule === "custom" && section.key === "custom:pinned";
     const isLoosePinnedCustomSection = effectiveThreadOrganizationRule === "custom" && section.key === "custom:pinned:loose";
+    const hideSectionHeading = isPinnedCustomSection;
     const canSortCustomEntries = effectiveThreadOrganizationRule === "custom"
       && (Boolean(customGroup) || isPinnedCustomSection || isLoosePinnedCustomSection)
       && visibleEntries.length > 0;
@@ -3945,7 +3946,7 @@ export function MessengerContextSidebar() {
 
     return (
       <>
-        {section.label ? (
+        {section.label && !hideSectionHeading ? (
           isManagedSection ? (() => {
             const attentionCount = sectionAttentionCount(section);
             return (
@@ -3985,10 +3986,10 @@ export function MessengerContextSidebar() {
           )
         ) : null}
         <div
-          data-testid={sectionContentTestId}
+          data-testid={hideSectionHeading ? `messenger-thread-section-${sanitizeThreadKey(section.key)}` : sectionContentTestId}
           className={cn(
             "grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out",
-            collapsed ? "mt-0 grid-rows-[0fr] opacity-0" : "mt-1 grid-rows-[1fr] opacity-100",
+            collapsed ? "mt-0 grid-rows-[0fr] opacity-0" : hideSectionHeading ? "mt-0 grid-rows-[1fr] opacity-100" : "mt-1 grid-rows-[1fr] opacity-100",
           )}
           aria-hidden={collapsed ? "true" : undefined}
           inert={collapsed ? true : undefined}

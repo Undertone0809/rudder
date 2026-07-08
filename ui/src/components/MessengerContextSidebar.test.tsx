@@ -439,7 +439,7 @@ describe("MessengerContextSidebar", () => {
 
     expect(html.indexOf("Pinned older chat")).toBeLessThan(html.indexOf("Recent unpinned chat"));
     expect(html.indexOf("Pinned older chat")).toBeLessThan(html.indexOf("Issues"));
-    expect(html).toContain("Pinned");
+    expect(html).not.toContain(">Pinned</");
     expect(html).not.toContain("Default");
     expect(queryOptions).toContainEqual(expect.objectContaining({
       queryKey: ["chats", "org-1", "all", "preview", 80],
@@ -893,7 +893,7 @@ describe("MessengerContextSidebar", () => {
     expect(html.indexOf('data-testid="messenger-thread-issue-issue-1"')).toBeLessThan(
       html.indexOf('data-testid="messenger-thread-chat-chat-2"'),
     );
-    expect(html).toContain("Pinned");
+    expect(html).not.toContain(">Pinned</");
     expect(html).not.toContain("Default");
     expect(html).toContain('aria-label="Thread actions"');
     expect(html).toContain('data-slot="status-progress-arc"');
