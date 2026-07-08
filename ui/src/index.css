@@ -4371,6 +4371,8 @@ a.rudder-website-link:hover {
 
 .rudder-website-link-icon {
   display: inline-flex;
+  position: relative;
+  top: 0.06em;
   align-items: center;
   justify-content: center;
   width: 0.95em;
@@ -4378,7 +4380,6 @@ a.rudder-website-link:hover {
   margin-right: 0.25em;
   color: currentColor;
   line-height: 1;
-  vertical-align: -0.13em;
   flex: 0 0 auto;
 }
 

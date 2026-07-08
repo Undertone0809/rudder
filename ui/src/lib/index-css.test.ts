@@ -522,6 +522,9 @@ describe("index.css motion rules", () => {
     expect(websiteLink).toContain("color: var(--rudder-doc-link)");
     expect(websiteLink).toContain("overflow-wrap: anywhere");
     expect(websiteIcon).toContain("display: inline-flex");
+    expect(websiteIcon).toContain("position: relative");
+    expect(websiteIcon).toContain("top: 0.06em");
+    expect(websiteIcon).not.toContain("vertical-align");
     expect(websiteLogo).toContain("display: block");
     expect(websiteLogo).toContain("width: 100%");
     expect(websiteLogo).toContain("height: 100%");

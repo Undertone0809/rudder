@@ -66,6 +66,7 @@ test("renders website markdown links as inline icon-leading text that wraps", as
     const markdown = element.closest(".rudder-markdown") ?? element.parentElement;
     const style = window.getComputedStyle(element);
     const icon = element.querySelector(".rudder-website-link-icon");
+    const iconStyle = icon ? window.getComputedStyle(icon) : null;
     const labelStyle = label ? window.getComputedStyle(label) : null;
     const firstTextNode = label?.firstChild && label.firstChild.nodeType === Node.TEXT_NODE
       ? label.firstChild
@@ -93,6 +94,7 @@ test("renders website markdown links as inline icon-leading text that wraps", as
       overflowsMarkdown: markdownRect ? maxLineRight > markdownRect.right + 1 : true,
       paddingInlineEnd: style.paddingInlineEnd,
       paddingInlineStart: style.paddingInlineStart,
+      iconTopPx: iconStyle ? Number.parseFloat(iconStyle.top) : null,
       labelOverflowWrap: labelStyle?.overflowWrap,
       iconHeight: iconRect?.height,
       iconVerticalCenterDelta: iconRect && firstTextLineRect
@@ -113,6 +115,9 @@ test("renders website markdown links as inline icon-leading text that wraps", as
   });
   expect(render.iconHeight).toBeGreaterThan(10);
   expect(render.iconHeight).toBeLessThan(18);
+  expect(render.iconTopPx).not.toBeNull();
+  expect(render.iconTopPx).toBeGreaterThan(0);
+  expect(render.iconTopPx).toBeLessThan(1.2);
   expect(render.iconVerticalCenterDelta).not.toBeNull();
   expect(render.iconVerticalCenterDelta).toBeLessThanOrEqual(3);
   expect(render.lineCount).toBeGreaterThan(1);
