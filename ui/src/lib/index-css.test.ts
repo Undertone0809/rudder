@@ -494,6 +494,21 @@ describe("index.css motion rules", () => {
     expect(previewHeadings).toContain("letter-spacing: 0");
   });
 
+  it("styles chat jump highlights on the message block instead of an outer pseudo wrapper", () => {
+    const jumpHighlight = cssBlock(".chat-message-jump-highlight");
+    const reducedMotion = indexCss.match(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.chat-message-jump-highlight \{[\s\S]*?\n\s*\}/)?.[0] ?? "";
+
+    expect(jumpHighlight).toContain("border-width: 1px");
+    expect(jumpHighlight).toContain("border-style: solid");
+    expect(jumpHighlight).toContain("border-color:");
+    expect(jumpHighlight).toContain("background:");
+    expect(jumpHighlight).toContain("box-shadow:");
+    expect(jumpHighlight).toContain("animation: chat-message-jump-highlight 1800ms ease-out");
+    expect(indexCss).not.toContain(".chat-message-jump-highlight::before");
+    expect(reducedMotion).toContain(".chat-message-jump-highlight");
+    expect(reducedMotion).toContain("animation: none");
+  });
+
   it("lets website links keep their rendered treatment outside markdown bodies", () => {
     const websiteLink = cssBlock("a.rudder-website-link");
     const websiteIcon = cssBlock(".rudder-website-link-icon");

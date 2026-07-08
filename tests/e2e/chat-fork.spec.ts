@@ -58,24 +58,29 @@ async function expectMessageInScrollViewport(page: Page, messageId: string) {
   expect(isVisibleInScrollViewport).toBe(true);
 }
 
-async function expectMessageJumpHighlightFramesMessageRow(page: Page, messageId: string) {
-  const highlightInsets = await page.evaluate((targetMessageId) => {
+async function expectMessageJumpHighlightStylesTargetBlock(page: Page, messageId: string) {
+  const highlightStyle = await page.evaluate((targetMessageId) => {
     const message = Array.from(document.querySelectorAll<HTMLElement>("[data-message-id]"))
       .find((element) => element.dataset.messageId === targetMessageId);
-    if (!message) return null;
-    const highlight = window.getComputedStyle(message, "::before");
+    const target = message?.querySelector<HTMLElement>("[data-message-highlight-target='true']") ?? message;
+    if (!target) return null;
+    const highlight = window.getComputedStyle(target);
+    const pseudo = window.getComputedStyle(target, "::before");
     return {
-      left: highlight.left,
-      right: highlight.right,
-      position: highlight.position,
+      backgroundColor: highlight.backgroundColor,
+      borderStyle: highlight.borderStyle,
+      borderWidth: highlight.borderTopWidth,
+      boxShadow: highlight.boxShadow,
+      pseudoContent: pseudo.content,
     };
   }, messageId);
 
-  expect(highlightInsets).toEqual({
-    left: "-12px",
-    position: "absolute",
-    right: "-12px",
-  });
+  expect(highlightStyle).not.toBeNull();
+  expect(highlightStyle?.borderStyle).toBe("solid");
+  expect(highlightStyle?.borderWidth).toBe("1px");
+  expect(highlightStyle?.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+  expect(highlightStyle?.boxShadow).not.toBe("none");
+  expect(highlightStyle?.pseudoContent).toBe("none");
 }
 
 async function seedForkableChatSource(page: Page, input: {
@@ -311,7 +316,7 @@ test("forks a chat from a selected message and groups the fork family in Messeng
   await expect(sourceAssistant).toContainText("Middle branch point");
   await expect(sourceAssistant).toHaveClass(/chat-message-jump-highlight/);
   await expectMessageInScrollViewport(page, sourceMessageIds[1]!);
-  await expectMessageJumpHighlightFramesMessageRow(page, sourceMessageIds[1]!);
+  await expectMessageJumpHighlightStylesTargetBlock(page, sourceMessageIds[1]!);
   await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/${sourceConversationId}$`));
 
   await page.goto(`/${organization.issuePrefix}/messenger`);

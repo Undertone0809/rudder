@@ -2484,46 +2484,32 @@
   }
 
   .chat-message-jump-highlight {
-    --chat-message-jump-highlight-outset: 0.75rem;
     position: relative;
-    overflow: visible;
-    border-radius: var(--radius-xl);
-  }
-
-  .chat-message-jump-highlight::before {
-    content: "";
-    position: absolute;
-    top: -0.5rem;
-    right: calc(-1 * var(--chat-message-jump-highlight-outset));
-    bottom: -0.5rem;
-    left: calc(-1 * var(--chat-message-jump-highlight-outset));
-    z-index: 0;
-    border: 1px solid color-mix(in oklab, var(--accent-base) 30%, transparent);
-    border-radius: calc(var(--radius-xl) + 0.625rem);
-    background: color-mix(in oklab, var(--accent-base) 14%, transparent);
-    box-shadow: 0 10px 24px color-mix(in oklab, var(--accent-base) 9%, transparent);
-    pointer-events: none;
+    border-width: 1px;
+    border-style: solid;
+    border-color: color-mix(in oklab, var(--accent-base) 46%, var(--border-soft));
+    background: color-mix(in oklab, var(--accent-base) 18%, var(--surface-elevated));
+    box-shadow: var(--shadow-sm), inset 0 0 0 1px color-mix(in oklab, var(--accent-base) 16%, transparent);
     animation: chat-message-jump-highlight 1800ms ease-out;
-  }
-
-  .chat-message-jump-highlight > * {
-    position: relative;
-    z-index: 1;
   }
 
   @keyframes chat-message-jump-highlight {
     0%,
     52% {
-      opacity: 1;
+      border-color: color-mix(in oklab, var(--accent-base) 54%, var(--border-soft));
+      background: color-mix(in oklab, var(--accent-base) 22%, var(--surface-elevated));
+      box-shadow: var(--shadow-sm), inset 0 0 0 1px color-mix(in oklab, var(--accent-base) 20%, transparent);
     }
 
     100% {
-      opacity: 0;
+      border-color: color-mix(in oklab, var(--border-soft) 86%, var(--surface-shell));
+      background: color-mix(in oklab, var(--surface-elevated) 92%, var(--surface-shell));
+      box-shadow: var(--shadow-sm);
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .chat-message-jump-highlight::before {
+    .chat-message-jump-highlight {
       animation: none;
     }
   }

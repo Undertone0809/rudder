@@ -161,6 +161,26 @@ test.describe("Chat message scroll map", () => {
     const targetMessageRow = page.locator(`[data-message-id="${targetMessage.id}"]`);
     await expect(targetMessageRow).not.toHaveClass(/chat-message-jump-highlight/);
     await expect(targetMessageRow.getByTestId("chat-user-message-bubble")).toHaveClass(/chat-message-jump-highlight/);
+    const jumpHighlightStyle = await page.evaluate((targetMessageId) => {
+      const bubble = document
+        .querySelector<HTMLElement>(`[data-message-id="${targetMessageId}"] [data-testid="chat-user-message-bubble"]`);
+      if (!bubble) return null;
+      const style = window.getComputedStyle(bubble);
+      const pseudo = window.getComputedStyle(bubble, "::before");
+      return {
+        backgroundColor: style.backgroundColor,
+        borderStyle: style.borderStyle,
+        borderWidth: style.borderTopWidth,
+        boxShadow: style.boxShadow,
+        pseudoContent: pseudo.content,
+      };
+    }, targetMessage.id);
+    expect(jumpHighlightStyle).not.toBeNull();
+    expect(jumpHighlightStyle?.borderStyle).toBe("solid");
+    expect(jumpHighlightStyle?.borderWidth).toBe("1px");
+    expect(jumpHighlightStyle?.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+    expect(jumpHighlightStyle?.boxShadow).not.toBe("none");
+    expect(jumpHighlightStyle?.pseudoContent).toBe("none");
     await expectMessageInScrollViewport(page, targetMessage.id);
     await expect(scrollMap).toBeVisible();
     await page.screenshot({ path: "/tmp/rudder-chat-scroll-map-jump.png", fullPage: true });
