@@ -53,6 +53,7 @@ import {
 import { createElement, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { formatAutomationTimestamp, runSourceLabel, runStatusTitle, summarizeTrigger } from "./AutomationDetail.parts";
 import { conversationDisplayTitle } from "./Chat.parts";
+import { IssueDetail } from "./IssueDetail";
 
 const CHAT_SIDE_PANEL_IMAGE_FILE_EXTENSIONS = new Set([
   ".avif",
@@ -1410,25 +1411,29 @@ export function ChatSidePanel({
               {error instanceof Error ? error.message : "Could not load this Side Panel target."}
             </div>
           ) : issueTarget && issue ? (
-            <ChatIssueSidePanelView
-              issue={issue}
-              comments={issueComments}
-              commentId={issueTarget.commentId}
-              updating={updateIssueMutation.isPending}
-              addingComment={addIssueCommentMutation.isPending}
-              currentUserId={currentUserId}
-              agentMap={agentMap}
-              operatorDisplayName={operatorDisplayName}
-              expanded={expanded}
-              onUpdate={(data) => updateIssueMutation.mutateAsync({ issueId: issue.id, data })}
-              onAddComment={async (body, reopen) => {
-                await addIssueCommentMutation.mutateAsync({
-                  issueId: issue.id,
-                  body,
-                  ...(reopen === undefined ? {} : { reopen }),
-                });
-              }}
-            />
+            expanded ? (
+              <IssueDetail embedded embeddedIssueId={issue.id} />
+            ) : (
+              <ChatIssueSidePanelView
+                issue={issue}
+                comments={issueComments}
+                commentId={issueTarget.commentId}
+                updating={updateIssueMutation.isPending}
+                addingComment={addIssueCommentMutation.isPending}
+                currentUserId={currentUserId}
+                agentMap={agentMap}
+                operatorDisplayName={operatorDisplayName}
+                expanded={expanded}
+                onUpdate={(data) => updateIssueMutation.mutateAsync({ issueId: issue.id, data })}
+                onAddComment={async (body, reopen) => {
+                  await addIssueCommentMutation.mutateAsync({
+                    issueId: issue.id,
+                    body,
+                    ...(reopen === undefined ? {} : { reopen }),
+                  });
+                }}
+              />
+            )
           ) : automationTarget && automation ? (
             <ChatAutomationSidePanelView
               automation={automation}

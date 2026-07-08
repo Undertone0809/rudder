@@ -1071,8 +1071,14 @@ function IssueCostSummaryPanel({ summary }: { summary: IssueCostSummaryData }) {
   );
 }
 
-export function IssueDetail() {
-  const { issueId } = useParams<{ issueId: string }>();
+type IssueDetailProps = {
+  embeddedIssueId?: string | null;
+  embedded?: boolean;
+};
+
+export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueDetailProps = {}) {
+  const params = useParams<{ issueId: string }>();
+  const issueId = embeddedIssueId ?? params.issueId;
   const { organizations, selectedOrganizationId, selectedOrganization } = useOrganization();
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
@@ -1254,7 +1260,7 @@ export function IssueDetail() {
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
   const currentBoardUserId = currentBoardAccess?.user?.id ?? currentBoardAccess?.userId ?? currentUserId;
-  const currentOrganization = organizations.find((organization) => organization.id === resolvedCompanyId) ?? selectedOrganization;
+  const currentOrganization = (organizations ?? []).find((organization) => organization.id === resolvedCompanyId) ?? selectedOrganization;
   const { orderedProjects } = useProjectOrder({
     projects: projects ?? [],
     orgId: resolvedCompanyId,
@@ -1803,20 +1809,23 @@ export function IssueDetail() {
   });
 
   useEffect(() => {
+    if (embedded) return;
     setBreadcrumbs(issueHeaderBreadcrumbs.map((crumb, index) => (
       hasLiveRuns && index === issueHeaderBreadcrumbs.length - 1
         ? { ...crumb, label: `● ${crumb.label}` }
         : crumb
     )));
-  }, [setBreadcrumbs, issueHeaderBreadcrumbs, hasLiveRuns]);
+  }, [embedded, setBreadcrumbs, issueHeaderBreadcrumbs, hasLiveRuns]);
 
   useEffect(() => {
+    if (embedded) return;
     if (issue?.identifier && issueId !== issue.identifier) {
       navigate(`${issueRouteBasePath}/${issue.identifier}`, { replace: true, state: location.state });
     }
-  }, [issue, issueId, issueRouteBasePath, navigate, location.state]);
+  }, [embedded, issue, issueId, issueRouteBasePath, navigate, location.state]);
 
   useLayoutEffect(() => {
+    if (embedded) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!shouldHandleIssueDetailEscape(event)) return;
       event.preventDefault();
@@ -1830,14 +1839,15 @@ export function IssueDetail() {
 
     document.addEventListener("keydown", handleKeyDown, true);
     return () => document.removeEventListener("keydown", handleKeyDown, true);
-  }, [navigate, navigateBack, sourceBreadcrumb.href]);
+  }, [embedded, navigate, navigateBack, sourceBreadcrumb.href]);
 
   useEffect(() => {
+    if (embedded) return;
     if (!issue?.id) return;
     if (lastMarkedReadIssueIdRef.current === issue.id) return;
     lastMarkedReadIssueIdRef.current = issue.id;
     markIssueRead.mutate(issue.id);
-  }, [issue?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [embedded, issue?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const copyIssueIdToClipboard = async () => {
     if (!issue) return;
@@ -2041,6 +2051,7 @@ export function IssueDetail() {
   return (
     <div
       ref={issueFindRootRef}
+      data-testid={embedded ? "embedded-issue-detail" : undefined}
       className="mx-auto max-w-6xl xl:grid xl:grid-cols-[minmax(0,1fr)_280px] xl:items-start xl:gap-6"
     >
       <IssueDetailFind rootRef={issueFindRootRef} refreshKey={issueFindRefreshKey} />

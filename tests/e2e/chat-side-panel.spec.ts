@@ -29,6 +29,88 @@ function buildLibraryDirectoryMentionHref(directoryPath: string) {
 }
 
 test.describe("Chat Side Panel", () => {
+  test("renders the full issue detail body when an issue Side Panel tab is expanded", async ({ page }, testInfo) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Chat-Side-Panel-Expanded-Issue-${Date.now()}` },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Expanded detail parity issue",
+        description: "Expanded Side Panel should render the same issue detail body.",
+        status: "todo",
+        priority: "high",
+      },
+    });
+    expect(issueRes.ok(), await issueRes.text()).toBe(true);
+    const issue = await issueRes.json() as { id: string; identifier: string | null };
+    const issueRef = issue.identifier ?? issue.id;
+    const commentRes = await page.request.post(`/api/issues/${issue.id}/comments`, {
+      data: { body: "Expanded detail activity should be visible." },
+    });
+    expect(commentRes.ok(), await commentRes.text()).toBe(true);
+
+    const hostChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Expanded issue side panel host chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(hostChatRes.ok(), await hostChatRes.text()).toBe(true);
+    const hostChat = await hostChatRes.json() as { id: string };
+
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: hostChat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: `Open [${issueRef}](${buildIssueMentionHref(issue.id, issueRef)}) beside this chat.`,
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${hostChat.id}`);
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(assistantMessage).toContainText("Open", { timeout: 15_000 });
+
+    await assistantMessage.locator('a[data-mention-kind="issue"]').filter({ hasText: issueRef }).click();
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await expect(sidePanel.getByTestId("chat-side-panel-issue-view")).toBeVisible();
+
+    await sidePanel.getByLabel("Expand Side Panel").click();
+    await expect(sidePanel.getByTestId("embedded-issue-detail")).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-issue-view")).toHaveCount(0);
+    await expect(sidePanel).toContainText("Expanded detail parity issue");
+    await expect(sidePanel).toContainText("Expanded Side Panel should render the same issue detail body.");
+    await expect(sidePanel.getByText("Properties", { exact: true })).toBeVisible();
+    await expect(sidePanel.getByRole("region", { name: "Issue properties" })).toBeVisible();
+    await expect(sidePanel).toContainText("Sub-issues");
+    await expect(sidePanel).toContainText("Add sub-issue");
+    await expect(sidePanel).toContainText("Attach");
+    await expect(sidePanel).toContainText("Activity");
+    await expect(sidePanel).toContainText("Expanded detail activity should be visible.");
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${hostChat.id}$`));
+
+    await page.screenshot({
+      path: testInfo.outputPath("chat-side-panel-expanded-issue-detail.png"),
+      fullPage: true,
+    });
+  });
+
   test("opens issue, automation, library, and chat references in the Side Panel without replacing the Chat route", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Chat-Side-Panel-${Date.now()}` },

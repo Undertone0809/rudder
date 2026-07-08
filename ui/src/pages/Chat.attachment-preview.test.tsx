@@ -115,6 +115,21 @@ vi.mock("@tanstack/react-query", () => ({
         error: null,
       };
     }
+    if (queryKey[0] === "issues" && queryKey[1] === "activity") {
+      return { data: [], isPending: false, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "issues" && queryKey[1] === "runs") {
+      return { data: [], isPending: false, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "issues" && queryKey[1] === "attachments") {
+      return { data: [], isPending: false, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "issues" && queryKey[1] === "live-runs") {
+      return { data: [], isPending: false, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "issues" && queryKey[1] === "active-run") {
+      return { data: null, isPending: false, isLoading: false, error: null };
+    }
     if (queryKey[0] === "issues" && queryKey[2] === "labels") {
       return {
         data: mockState.labels,
@@ -122,6 +137,9 @@ vi.mock("@tanstack/react-query", () => ({
         isLoading: false,
         error: null,
       };
+    }
+    if (queryKey[0] === "issues" && queryKey[1] === "children") {
+      return { data: [], isPending: false, isLoading: false, error: null };
     }
     if (queryKey[0] === "issues" && queryKey.length === 2 && queryKey[1] === "org-1") {
       return {
@@ -164,6 +182,18 @@ vi.mock("@tanstack/react-query", () => ({
         isLoading: false,
         error: null,
       };
+    }
+    if (queryKey[0] === "organizations" && queryKey[2] === "library-documents") {
+      return { data: [], isPending: false, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "organizations" && queryKey[2] === "workspace-mention-files") {
+      return { data: { entries: [] }, isPending: false, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "organization-skills") {
+      return { data: [], isPending: false, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "access") {
+      return { data: { user: { id: "local-board" }, userId: "local-board" }, isPending: false, isLoading: false, error: null };
     }
     if (queryKey[0] === "agents") {
       return {
@@ -267,6 +297,16 @@ vi.mock("@/context/SidebarContext", () => ({
 
 vi.mock("@/context/I18nContext", () => ({
   useI18n: () => ({ t: (key: string, values?: Record<string, string>) => values?.name ?? key }),
+}));
+
+vi.mock("@/plugins/slots", () => ({
+  PluginSlotMount: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  PluginSlotOutlet: () => null,
+  usePluginSlots: () => ({ slots: [] }),
+}));
+
+vi.mock("@/plugins/launchers", () => ({
+  PluginLauncherOutlet: () => null,
 }));
 
 vi.mock("@/context/ChatGenerationContext", () => ({
@@ -1359,15 +1399,19 @@ describe("Chat Side Panel link handling", () => {
     const { container } = renderChat({ expanded: true });
     const sidePanel = await openIssueReferenceSidePanel(container);
 
+    const embeddedIssueDetail = sidePanel.querySelector<HTMLElement>("[data-testid='embedded-issue-detail']");
+    expect(embeddedIssueDetail).not.toBeNull();
     expect(sidePanel.textContent).toContain("Properties");
+    expect(sidePanel.textContent).toContain("Sub-issues");
+    expect(sidePanel.textContent).toContain("Add sub-issue");
+    expect(sidePanel.textContent).toContain("Attach");
     expect(sidePanel.textContent).toContain("Created by");
     expect(sidePanel.textContent).toContain("Updated");
     expect(sidePanel.textContent.indexOf("Activity")).toBeLessThan(sidePanel.textContent.indexOf("Properties"));
     expect(sidePanel.textContent).not.toContain("CreatedUpdated");
 
-    const issueView = sidePanel.querySelector<HTMLElement>("[data-testid='chat-side-panel-issue-view']");
     const propertiesRegion = sidePanel.querySelector<HTMLElement>("[aria-label='Issue properties']");
-    expect(issueView).not.toBeNull();
+    expect(sidePanel.querySelector("[data-testid='chat-side-panel-issue-view']")).toBeNull();
     expect(propertiesRegion).not.toBeNull();
   });
 
