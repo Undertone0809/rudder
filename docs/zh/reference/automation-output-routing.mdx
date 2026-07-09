@@ -1,0 +1,55 @@
+---
+title: "Automation output routing"
+description: "选择 Rudder automation 应该创建 tracked issue，还是把输出发到 Chat。"
+icon: "route"
+keywords:
+  - "automation output routing"
+  - "Rudder automation issue output"
+  - "Rudder automation chat output"
+canonical: "https://docs.rudderhq.dev/zh/reference/automation-output-routing"
+"og:url": "https://docs.rudderhq.dev/zh/reference/automation-output-routing"
+
+---
+
+Automation output routing 决定人在哪里检查结果。
+
+## 选择 issue output
+
+结果需要这些东西时，用 issue output：
+
+- assignment
+- status tracking
+- review
+- artifacts 或 files
+- follow-up work
+- durable close-out evidence
+
+Issue output 会进入正常 issue lifecycle。影响 decisions、customers、releases 或 team commitments 的工作，通常应该用它。
+
+## 选择 chat output
+
+结果较轻、不需要 tracked issue 时，用 chat output。
+
+适合的例子：
+
+- routine summaries
+- quick status checks
+- low-risk informational replies
+- 不需要 review 的短分析
+
+Chat output 把 audit trail 留在 automation run 和 chat transcript 上。
+
+## 不确定时
+
+如果结果可能需要 review、assign、approve 或 follow up，选 issue output。如果结果主要只是读一下，选 chat output。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="创建自动化" icon="workflow" href="/zh/how-to/create-automation">
+    配置 automation。
+  </Card>
+  <Card title="Issue statuses" icon="list-checks" href="/zh/reference/issue-statuses">
+    理解 tracked issue path。
+  </Card>
+</CardGroup>

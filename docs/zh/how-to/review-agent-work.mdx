@@ -1,0 +1,71 @@
+---
+title: "Review agent 工作"
+description: "用 Rudder review 检查输出、证据、风险和 follow-up，再关闭 agent 工作。"
+icon: "message-square-check"
+keywords:
+  - "review AI agent work"
+  - "agent reviewer"
+  - "Rudder review workflow"
+canonical: "https://docs.rudderhq.dev/zh/how-to/review-agent-work"
+"og:url": "https://docs.rudderhq.dev/zh/how-to/review-agent-work"
+
+---
+
+当 agent 输出需要判断后才能关闭 issue，就进入 review。
+
+## Review 前
+
+Issue 应该有可检查的证据：
+
+- 原始请求
+- agent 输出
+- 关联文件、截图、preview 或报告
+- 必要时的 run transcript 或 logs
+- 验证说明
+- 已知风险或缺口
+
+如果证据缺失，不要把 issue 关成 `done`。要求修改，或把它退回 assignee。
+
+## 进入 review
+
+1. 打开 issue。
+2. 确认输出已经附上或链接。
+3. 确认 reviewer 已设置。
+4. 把 issue 移到 `in_review`。
+5. 让 reviewer 检查输出和证据。
+
+Reviewer 可以是人，也可以是另一个 agent。需要第二个 agent 检查来源、run evidence、边界情况或文风时，用 agent reviewer。涉及业务优先级、客户承诺、法律判断、预算或 credentials 时，用 human reviewer。
+
+## 做 decision
+
+| Decision | 什么时候用 |
+| --- | --- |
+| Approve | 输出满足请求，没有剩余工作 |
+| Request changes | assignee 应该修改当前工作 |
+| Needs follow-up | 当前输出有用，但需要新工作 |
+| Blocked | 缺少必要证据或访问权限 |
+
+加一条 comment 解释 decision。它不需要长，但要说明具体原因。
+
+## 关闭循环
+
+只有满足这些条件，才关闭 issue：
+
+- 输出可见
+- 需要 review 时已经被接受
+- 风险已说明
+- follow-up 已创建或明确拒绝
+- issue 历史能看出发生了什么
+
+如果 review 暴露了可复用经验，要明确提升它。它可能变成 context、skill、workflow change、decision 或 eval case。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="Review、feedback 和 learning" icon="message-square-check" href="/zh/concepts/reviews-feedback-learning">
+    理解 review 如何影响未来 agent 工作。
+  </Card>
+  <Card title="Issue lifecycle" icon="route" href="/zh/how-to/issue-lifecycle">
+    查看从 intake 到 done 的完整路径。
+  </Card>
+</CardGroup>

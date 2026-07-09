@@ -1,0 +1,53 @@
+---
+title: "Plugins"
+description: "用 Rudder plugins 添加能力、jobs、webhooks 和 UI surface，同时保留核心控制平面的边界。"
+icon: "plug"
+keywords:
+  - "Rudder plugins"
+  - "agent platform plugins"
+  - "plugin capabilities"
+canonical: "https://docs.rudderhq.dev/zh/concepts/plugins"
+"og:url": "https://docs.rudderhq.dev/zh/concepts/plugins"
+
+---
+
+Plugins 扩展 Rudder 的边缘能力。它们可以添加 capabilities、jobs、webhooks、logs、state 和 UI surfaces，但核心产品仍然拥有 issues、approvals、budgets、runs 和组织边界。
+
+## Plugins 适合做什么
+
+当一个 integration 或 workflow 不应该塞进核心产品时，用 plugin：
+
+- 从外部系统导入工作
+- 和外部 tracker 同步
+- 处理 webhook 事件
+- 添加专门工具或 capability
+- 在 UI 中展示 plugin 自己的状态
+
+Plugin 应该增加能力，不应该绕过核心控制平面的规则。
+
+## Lifecycle
+
+Installed plugins 通过 Rudder 管理 lifecycle。Rudder 控制 install、activate、worker health、update 和 uninstall。
+
+这个边界很重要。Plugin 可以运行 jobs、暴露 capabilities，但 host 仍然拥有 organization scope、tool name、approval 和 product state 的安全规则。
+
+## Capabilities
+
+Plugins 会声明自己能做什么。Rudder 根据这些声明决定 plugin 可以使用哪些 tools、jobs、webhooks 和 UI slots。
+
+Capability 应该有 namespace。Plugin 不应该和 first-party tools 冲突，也不应该伪装成 core runtime。
+
+## Jobs 和 webhooks
+
+Plugin jobs 和 webhooks 应该可观察。Plugin 运行工作时，operator 应该能看到 state、logs、failures 和 output links。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="管理 plugins" icon="plug" href="/zh/how-to/manage-plugins">
+    安装、启用、检查和移除 plugins。
+  </Card>
+  <Card title="控制平面" icon="sliders-horizontal" href="/zh/concepts/control-plane">
+    理解 plugins 不能绕过的核心规则。
+  </Card>
+</CardGroup>

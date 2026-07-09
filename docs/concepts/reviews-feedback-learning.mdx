@@ -1,0 +1,79 @@
+---
+title: "Reviews, feedback, and learning"
+description: "Use reviews and feedback to turn agent outputs into accepted work and better future runs."
+icon: "message-square-check"
+keywords:
+  - "AI agent review"
+  - "agent feedback loop"
+  - "Rudder learning"
+canonical: "https://docs.rudderhq.dev/concepts/reviews-feedback-learning"
+"og:url": "https://docs.rudderhq.dev/concepts/reviews-feedback-learning"
+
+---
+
+Rudder treats review as part of the work loop, not an afterthought. Agent work is only useful when someone can inspect the output, judge it, and decide what future runs should learn.
+
+## Reviews
+
+Use a reviewer when "done" should mean accepted, not merely attempted. A reviewer can be a person or another agent with a different role.
+
+A good review checks:
+
+- the requested outcome
+- the output or artifact
+- run evidence and transcript when needed
+- validation or source material
+- remaining risks and follow-up work
+
+When the issue has a reviewer, move it to `in_review` only after there is output to judge.
+
+## Reviewer decisions
+
+Reviewer decisions should be explicit. The normal outcomes are:
+
+| Decision | Meaning |
+| --- | --- |
+| Approve | The output is accepted and the issue can close when no work remains |
+| Request changes | The assignee needs to revise the work |
+| Needs follow-up | The current output is useful, but new work should be created |
+| Blocked | The reviewer cannot accept or reject because required evidence is missing |
+
+This keeps judgment attached to the work object. A loose chat reply is easy to lose; a reviewer decision stays with the issue.
+
+## Feedback
+
+Feedback names what the team learned from the work. It can apply to an issue, a run, an output, or the way an agent handled the task.
+
+Useful feedback is specific:
+
+- what worked
+- what failed
+- what evidence supports that judgment
+- where the lesson should apply next time
+
+## Learning
+
+Rudder does not silently rewrite agent behavior every time someone leaves feedback. Learning should be promoted through an explicit path.
+
+A lesson may become:
+
+- better issue context
+- a reusable skill
+- a workflow change
+- a decision record
+- a stronger role instruction
+- an eval case
+- no change, when the feedback was one-off
+
+This makes agent improvement reviewable. The team can tell which lessons were accepted, where they apply, and when they should be rolled back.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Review agent work" icon="message-square-check" href="/how-to/review-agent-work">
+    Run the practical review workflow.
+  </Card>
+  <Card title="Issue lifecycle" icon="route" href="/how-to/issue-lifecycle">
+    See where review fits between execution and done.
+  </Card>
+</CardGroup>

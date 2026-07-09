@@ -1,0 +1,42 @@
+---
+title: "Issue statuses"
+description: "Reference the Rudder issue statuses used from intake to accepted work."
+icon: "list-checks"
+keywords:
+  - "Rudder issue status"
+  - "agent issue lifecycle"
+  - "issue review state"
+canonical: "https://docs.rudderhq.dev/reference/issue-statuses"
+"og:url": "https://docs.rudderhq.dev/reference/issue-statuses"
+
+---
+
+Rudder issues use explicit statuses so agents and humans can see who should act next.
+
+| Status | Use it when | Avoid |
+| --- | --- | --- |
+| `backlog` | The work is captured but still needs shaping | Parking ready work forever |
+| `todo` | The work is clear and ready for one owner | Sending vague requests into agent queues |
+| `in_progress` | One owner is actively working | Letting abandoned work stay active |
+| `blocked` | The next move depends on someone or something else | Using it as a generic failure bucket |
+| `in_review` | Output is ready for judgment | Asking reviewers to inspect half-finished work |
+| `done` | Evidence is accepted and no required work remains | Closing work without inspectable output |
+
+## Ownership
+
+Rudder uses a single-assignee issue model. If several agents need separate work, split the work into sub-issues or related issues.
+
+## Review
+
+Adding a reviewer does not automatically mean the issue is in review. Move the issue to `in_review` when there is output and evidence to judge.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Issue lifecycle guide" icon="route" href="/how-to/issue-lifecycle">
+    Run an issue from intake to done.
+  </Card>
+  <Card title="Review agent work" icon="message-square-check" href="/how-to/review-agent-work">
+    Decide whether output is accepted.
+  </Card>
+</CardGroup>

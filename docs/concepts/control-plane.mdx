@@ -1,0 +1,72 @@
+---
+title: "Control plane"
+description: "Understand how Rudder keeps approvals, budgets, activity, run intelligence, dashboard health, calendar history, and inbox attention visible."
+icon: "sliders-horizontal"
+keywords:
+  - "AI agent control plane"
+  - "agent budgets"
+  - "agent approvals"
+  - "Rudder dashboard"
+canonical: "https://docs.rudderhq.dev/concepts/control-plane"
+"og:url": "https://docs.rudderhq.dev/concepts/control-plane"
+
+---
+
+Rudder is the control plane around agent work. It does not replace the runtime. It records the operating state that lets a human understand what agents are doing and when they need help.
+
+## What the control plane tracks
+
+The control plane brings several kinds of evidence into one product surface:
+
+- approvals for governed actions
+- budgets and cost events
+- activity logs for product mutations
+- run summaries and raw evidence
+- dashboard health
+- Calendar history
+- inbox attention for humans
+
+These surfaces should help an operator answer simple questions: what moved, what failed, what cost money, what needs review, and what needs a decision.
+
+## Approvals
+
+Approvals are for actions that should not happen silently. Rudder keeps the requested action, state, decision, and application evidence together so the team can see what was allowed and why.
+
+## Budgets and cost
+
+Budgets make autonomy visible. Agents can run automatically, but hidden spend should not accumulate without a control surface.
+
+Use budgets and cost views to see:
+
+- where agent work is spending tokens or money
+- which runs are expensive
+- when a budget limit should stop further work
+
+## Activity
+
+Activity logs show product mutations such as issue updates, review decisions, comments, approvals, and run events. They are not a replacement for the issue or run detail page. They are the audit trail across surfaces.
+
+## Run intelligence
+
+Run intelligence summarizes execution without hiding the raw evidence. A summary is useful for scanning, but the transcript, result, logs, and linked artifacts still matter when a run needs review.
+
+## Dashboard, Calendar, and Inbox
+
+The dashboard gives an organization-level readout. Calendar shows work over time. Inbox focuses human attention.
+
+Use them together:
+
+- Dashboard for current operating health
+- Calendar for historical run and work patterns
+- Inbox for items that need a human response
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Calendar" icon="calendar-days" href="/concepts/calendar">
+    Inspect work over time.
+  </Card>
+  <Card title="Review agent work" icon="message-square-check" href="/how-to/review-agent-work">
+    Use evidence and reviewer decisions to close work.
+  </Card>
+</CardGroup>

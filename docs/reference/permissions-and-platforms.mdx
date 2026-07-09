@@ -1,0 +1,45 @@
+---
+title: "Permissions and platforms"
+description: "Understand local runtime file, credential, and platform boundaries for Rudder agents."
+icon: "shield-check"
+keywords:
+  - "Rudder runtime permissions"
+  - "agent credentials"
+  - "local runtime platform"
+canonical: "https://docs.rudderhq.dev/reference/permissions-and-platforms"
+"og:url": "https://docs.rudderhq.dev/reference/permissions-and-platforms"
+
+---
+
+Local runtimes need access to files, credentials, skills, and tools. Rudder should make those boundaries visible rather than hiding them inside a prompt or shell command.
+
+## Managed runtime homes
+
+Agents use managed homes for runtime state, instructions, skills, and local files that belong to that agent. This keeps agent-private state separate from shared Library files and project workspaces.
+
+## Operator home bridges
+
+Some local tools need access to credentials or config already present on the operator's machine. Use those bridges deliberately. They are useful for local trusted development, but they should not be treated as shared organization data.
+
+## Skills and credentials
+
+Skills are reusable operating instructions. Credentials are sensitive local or remote access material. Do not mix them.
+
+When a runtime needs credentials, prefer the configured runtime path or local provider setup that already owns those credentials. Avoid copying secrets into docs, prompts, Library files, or issue comments.
+
+## Platform differences
+
+File behavior differs across macOS, Linux, and Windows. A runtime setup that works through symlinks or Unix permissions on one platform may need a safe copy or another fallback on another platform.
+
+When runtime setup fails, check the visible runtime readiness state and error message first. Then inspect whether the problem is missing CLI, missing permissions, missing credentials, unwritable workspace, or a platform-specific file operation.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configure your agent runtime" icon="terminal" href="/how-to/configure-agent-runtime">
+    Configure and test runtime readiness.
+  </Card>
+  <Card title="Runtime types" icon="terminal" href="/reference/runtime-types">
+    Compare runtime shapes.
+  </Card>
+</CardGroup>

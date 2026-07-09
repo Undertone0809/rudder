@@ -28,6 +28,9 @@ Rudder 把目标、issue、agent run、review 和 feedback 串成 agent team 的
 | 按时间检查工作 | Calendar |
 | 复用操作知识 | 技能 |
 | 让文件和输出可查找 | 工作区 |
+| 运行重复工作 | 自动化 |
+| 管理预算、approval 和注意力 | 控制平面 |
+| 在边缘扩展产品 | Plugins |
 | 保存未来 run 应该学习的东西 | Feedback 和 lessons |
 
 ## 组织
@@ -64,6 +67,18 @@ Calendar 显示 agent runs、issue 工作和人类检查点如何占据时间。
 
 技能为 agent 提供可复用的操作说明，用来稳定执行重复工作流。
 
+## 自动化
+
+自动化从 schedule、manual dispatch、API 或 webhook 运行重复 agent 工作。每次 run 都保留 dispatch state、result state，以及 issue 或 chat output 的链接。
+
+## 控制平面
+
+控制平面让 approvals、budgets、activity、run intelligence、dashboard health、Calendar history 和 Inbox attention 可见。
+
+## Plugins
+
+Plugins 添加 capabilities、jobs、webhooks 和 UI surfaces，但不接管 organization scope、issues、approvals、budgets 或 runs 等核心规则。
+
 ## 治理
 
 Rudder 通过 issue 分配、预算追踪、活动日志、reviewer 交接、feedback 和显式学习路径，让自治工作可见、可管理。
@@ -87,5 +102,17 @@ Rudder 通过 issue 分配、预算追踪、活动日志、reviewer 交接、fee
   </Card>
   <Card title="工作区" icon="folder-tree" href="/zh/concepts/workspaces">
     把项目资源和持久输出放在可预测的位置。
+  </Card>
+  <Card title="自动化" icon="workflow" href="/zh/concepts/automations">
+    用明确 trigger 和 output routing 运行重复工作。
+  </Card>
+  <Card title="Review、feedback 和 learning" icon="message-square-check" href="/zh/concepts/reviews-feedback-learning">
+    把已接受工作变成未来 run 的改进。
+  </Card>
+  <Card title="控制平面" icon="sliders-horizontal" href="/zh/concepts/control-plane">
+    查看 approvals、budgets、activity、runs、Calendar 和 Inbox。
+  </Card>
+  <Card title="Plugins" icon="plug" href="/zh/concepts/plugins">
+    在不削弱核心边界的前提下扩展 Rudder。
   </Card>
 </CardGroup>

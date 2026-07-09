@@ -56,7 +56,11 @@
               "concepts/chat-messenger",
               "concepts/calendar",
               "concepts/workspaces",
-              "concepts/skills"
+              "concepts/skills",
+              "concepts/automations",
+              "concepts/reviews-feedback-learning",
+              "concepts/control-plane",
+              "concepts/plugins"
             ]
           },
           {
@@ -65,8 +69,24 @@
             "pages": [
               "how-to/issue-lifecycle",
               "how-to/create-agent",
+              "how-to/create-automation",
+              "how-to/review-agent-work",
+              "how-to/manage-workspaces-and-library",
+              "how-to/export-import-organization",
+              "how-to/manage-plugins",
               "how-to/configure-feishu-integration",
               "how-to/configure-agent-runtime"
+            ]
+          },
+          {
+            "group": "Reference",
+            "icon": "list-checks",
+            "pages": [
+              "reference/issue-statuses",
+              "reference/runtime-types",
+              "reference/workspace-boundaries",
+              "reference/automation-output-routing",
+              "reference/permissions-and-platforms"
             ]
           },
           {
@@ -103,7 +123,11 @@
               "zh/concepts/chat-messenger",
               "zh/concepts/calendar",
               "zh/concepts/workspaces",
-              "zh/concepts/skills"
+              "zh/concepts/skills",
+              "zh/concepts/automations",
+              "zh/concepts/reviews-feedback-learning",
+              "zh/concepts/control-plane",
+              "zh/concepts/plugins"
             ]
           },
           {
@@ -112,8 +136,24 @@
             "pages": [
               "zh/how-to/issue-lifecycle",
               "zh/how-to/create-agent",
+              "zh/how-to/create-automation",
+              "zh/how-to/review-agent-work",
+              "zh/how-to/manage-workspaces-and-library",
+              "zh/how-to/export-import-organization",
+              "zh/how-to/manage-plugins",
               "zh/how-to/configure-feishu-integration",
               "zh/how-to/configure-agent-runtime"
+            ]
+          },
+          {
+            "group": "参考",
+            "icon": "list-checks",
+            "pages": [
+              "zh/reference/issue-statuses",
+              "zh/reference/runtime-types",
+              "zh/reference/workspace-boundaries",
+              "zh/reference/automation-output-routing",
+              "zh/reference/permissions-and-platforms"
             ]
           },
           {

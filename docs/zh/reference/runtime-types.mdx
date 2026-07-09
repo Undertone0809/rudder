@@ -1,0 +1,51 @@
+---
+title: "Runtime types"
+description: "查看 Rudder 可以调用和检查的 agent runtime 类型。"
+icon: "terminal"
+keywords:
+  - "Rudder runtime types"
+  - "agent runtime"
+  - "Codex Claude shell webhook"
+canonical: "https://docs.rudderhq.dev/zh/reference/runtime-types"
+"og:url": "https://docs.rudderhq.dev/zh/reference/runtime-types"
+
+---
+
+Rudder 协调 agent 工作。Runtime 执行实际工作。
+
+## 支持的形态
+
+| Runtime shape | 适合 |
+| --- | --- |
+| Local CLI | Codex、Claude Code、Cursor、Gemini、OpenCode 等本地 coding agents |
+| Shell process | 可以作为 agent process 运行的自定义本地命令 |
+| HTTP webhook | 接收请求并回传结果的外部服务 |
+| Gateway runtime | 由本地 app 外部管理的 gateway-backed agent systems |
+
+你在 app 里看到的具体 runtime options，取决于已安装 packages、provider config 和本机设置。
+
+## Runtime configuration 控制什么
+
+Runtime configuration 控制 Rudder 如何调用 agent：
+
+- command 或 endpoint
+- working directory
+- model 或 provider options
+- environment variables
+- instruction 和 context loading
+- result parsing 和 reporting
+
+## Readiness
+
+依赖某个 runtime 前，先在 agent configuration 里测试。Ready runtime 应该能被调用、能收到预期 context，并能回传 Rudder 可检查的 result。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="配置 agent runtime" icon="terminal" href="/zh/how-to/configure-agent-runtime">
+    为 agent 设置 runtime。
+  </Card>
+  <Card title="Permissions and platforms" icon="shield-check" href="/zh/reference/permissions-and-platforms">
+    理解本地 runtime 的文件和 credential 边界。
+  </Card>
+</CardGroup>

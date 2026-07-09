@@ -1,0 +1,64 @@
+---
+title: "自动化"
+description: "用 Rudder 自动化从定时任务、手动触发、API 或 webhook 运行可重复的 agent 工作。"
+icon: "workflow"
+keywords:
+  - "AI agent 自动化"
+  - "Rudder automations"
+  - "agent 定时任务"
+canonical: "https://docs.rudderhq.dev/zh/concepts/automations"
+"og:url": "https://docs.rudderhq.dev/zh/concepts/automations"
+
+---
+
+自动化把可重复的工作变成 Rudder 里的一个明确对象。它在运行前就确定 owner、触发方式、运行上下文和输出位置。
+
+当同一个 agent 任务需要按计划运行、由人手动触发、通过 API 触发，或由 webhook 事件触发时，用自动化。
+
+## 自动化包含什么
+
+一个自动化会保存这些信息：
+
+- 所属组织和 owner
+- 执行工作的 agent 或 runtime
+- 触发一次 run 的方式
+- prompt 或任务定义
+- 输出模式
+- run 历史、状态和失败信息
+
+每次自动化运行都会留下单独记录。这样你能看到它为什么被触发、有没有跑完、产出了什么，以及结果去了哪里。
+
+## 触发方式
+
+| 触发方式 | 适合 |
+| --- | --- |
+| 定时 | 周报、例行检查、维护任务、周期性分析 |
+| 手动触发 | 由 operator 决定何时运行的重复工作 |
+| API | 由另一个系统明确请求的工作 |
+| Webhook | 由外部事件启动的工作 |
+
+触发方式决定什么时候派发工作。自动化定义决定具体跑什么。
+
+## 输出模式
+
+自动化可以把结果送到 tracked issue，也可以发回 Chat：
+
+- 需要分配、review、状态、产物或 follow-up 时，用 issue output。
+- 结果比较轻，automation run 记录和 chat transcript 足够时，用 chat output。
+
+输出路径会影响人在哪里检查结果。Issue output 进入正常 issue 工作流。Chat output 把审计记录留在 automation run 和 chat conversation 上。
+
+## 什么时候不该用自动化
+
+如果工作还没想清楚，不要先做自动化。结果、owner、数据源或 review 路径不明确时，先建 issue 或用 Chat 澄清。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="创建自动化" icon="workflow" href="/zh/how-to/create-automation">
+    配置可重复的 agent 工作和输出路径。
+  </Card>
+  <Card title="自动化输出路由" icon="route" href="/zh/reference/automation-output-routing">
+    比较 issue output 和 chat output。
+  </Card>
+</CardGroup>

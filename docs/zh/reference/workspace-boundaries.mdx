@@ -1,0 +1,43 @@
+---
+title: "Workspace boundaries"
+description: "查看 Rudder agents 应该在哪里读写项目文件、Library files、私有状态和临时产物。"
+icon: "folder-tree"
+keywords:
+  - "Rudder workspace boundaries"
+  - "agent files"
+  - "Library files"
+canonical: "https://docs.rudderhq.dev/zh/reference/workspace-boundaries"
+"og:url": "https://docs.rudderhq.dev/zh/reference/workspace-boundaries"
+
+---
+
+Workspace boundaries 让 agent 工作可恢复。持久文件要放在未来 run 和 reviewer 找得到的位置。
+
+| 文件或状态 | 正确位置 |
+| --- | --- |
+| 项目仓库工作 | Project workspace |
+| 持久项目输出 | Library 里的项目文件夹 |
+| 共享组织参考 | Library |
+| 精选 run context | Project Context resources |
+| Agent 私有 instructions、memory 和 local state | Agent home |
+| Runtime scratch files | `/tmp` 或系统临时目录 |
+| 非最终产物的验证截图 | `/tmp` 或系统临时目录 |
+
+## Protected paths
+
+Agents 应该使用 Rudder-managed paths 和 Library references，不要随手创建本地目录。这样能保持 organization boundaries 清楚，也能避免把 private runtime state 和 shared project output 混在一起。
+
+## Backups
+
+Workspace backups 用于 operator recovery 和 inspection。Restore 前先 browse。需要外部副本时 download。不再有恢复价值的 backups 可以删除。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="管理 Workspaces 和 Library" icon="folder-tree" href="/zh/how-to/manage-workspaces-and-library">
+    在日常工作中应用这些边界。
+  </Card>
+  <Card title="工作区" icon="folder-tree" href="/zh/concepts/workspaces">
+    理解 workspace model。
+  </Card>
+</CardGroup>

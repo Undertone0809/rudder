@@ -27,6 +27,9 @@ Rudder turns goals, issues, agent runs, reviews, and feedback into a work loop f
 | Inspect work over time | Calendar |
 | Reuse operating knowledge | Skills |
 | Keep files and outputs findable | Workspaces |
+| Run repeated work | Automations |
+| Govern spend, approvals, and attention | Control plane |
+| Extend the product at the edges | Plugins |
 | Preserve what future runs should learn | Feedback and lessons |
 
 ## Organization
@@ -63,6 +66,18 @@ Workspaces are the filesystem areas where agents read project resources and prod
 
 Skills give agents reusable operating instructions for repeated workflows.
 
+## Automations
+
+Automations run repeated agent work from schedules, manual dispatch, APIs, or webhooks. Each run keeps dispatch state, result state, and a link to issue or chat output.
+
+## Control plane
+
+The control plane keeps approvals, budgets, activity, run intelligence, dashboard health, Calendar history, and Inbox attention visible.
+
+## Plugins
+
+Plugins add capabilities, jobs, webhooks, and UI surfaces without taking ownership of core Rudder invariants such as organization scope, issues, approvals, budgets, or runs.
+
 ## Governance
 
 Rudder makes autonomy visible and governable through issue assignments, budget tracking, activity logs, reviewer decisions, feedback, and explicit learning paths.
@@ -86,5 +101,17 @@ Rudder makes autonomy visible and governable through issue assignments, budget t
   </Card>
   <Card title="Workspaces" icon="folder-tree" href="/concepts/workspaces">
     Keep project resources and durable outputs in predictable places.
+  </Card>
+  <Card title="Automations" icon="workflow" href="/concepts/automations">
+    Run repeatable work with explicit triggers and output routing.
+  </Card>
+  <Card title="Reviews, Feedback, And Learning" icon="message-square-check" href="/concepts/reviews-feedback-learning">
+    Turn accepted work into better future runs.
+  </Card>
+  <Card title="Control Plane" icon="sliders-horizontal" href="/concepts/control-plane">
+    Track approvals, budgets, activity, runs, Calendar, and Inbox.
+  </Card>
+  <Card title="Plugins" icon="plug" href="/concepts/plugins">
+    Extend Rudder without weakening core boundaries.
   </Card>
 </CardGroup>

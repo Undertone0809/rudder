@@ -1,0 +1,65 @@
+---
+title: "控制平面"
+description: "理解 Rudder 如何让 approvals、预算、activity、run intelligence、dashboard、Calendar 和 Inbox 可见。"
+icon: "sliders-horizontal"
+keywords:
+  - "AI agent control plane"
+  - "Rudder 控制平面"
+  - "agent 预算"
+canonical: "https://docs.rudderhq.dev/zh/concepts/control-plane"
+"og:url": "https://docs.rudderhq.dev/zh/concepts/control-plane"
+
+---
+
+Rudder 是 agent 工作外层的控制平面。它不替代 runtime，而是记录人需要看见的运行状态。
+
+## 控制平面记录什么
+
+控制平面把几类证据放在同一个产品里：
+
+- governed action 的 approval
+- 预算和 cost events
+- 产品变更的 activity log
+- run summary 和原始 evidence
+- dashboard health
+- Calendar history
+- 面向人的 inbox attention
+
+这些 surface 帮 operator 回答几个直接问题：什么推进了，什么失败了，什么花了钱，什么需要 review，什么需要人做决定。
+
+## Approvals
+
+Approval 用于不应该静默发生的动作。Rudder 会保存请求动作、状态、decision 和应用证据，让团队知道什么被允许了，以及为什么。
+
+## 预算和成本
+
+预算让自治可见。Agent 可以自动运行，但隐藏成本不应该在没人知道的情况下累积。
+
+用 budget 和 cost 视图查看：
+
+- agent 工作在哪里消耗 token 或费用
+- 哪些 run 成本高
+- 预算限制什么时候应该停止继续运行
+
+## Activity
+
+Activity log 显示 issue 更新、review decision、comment、approval 和 run events 等产品变更。它不是 issue 或 run 详情页的替代品，而是跨 surface 的审计线索。
+
+## Run intelligence
+
+Run intelligence 用 summary 帮人快速扫描执行情况，但不隐藏原始 evidence。需要 review 时，transcript、result、logs 和 artifacts 仍然重要。
+
+## Dashboard、Calendar 和 Inbox
+
+Dashboard 看组织当前状态。Calendar 看时间线。Inbox 聚焦人的注意力。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="Calendar" icon="calendar-days" href="/zh/concepts/calendar">
+    按时间检查 agent 工作。
+  </Card>
+  <Card title="Review agent 工作" icon="message-square-check" href="/zh/how-to/review-agent-work">
+    用证据和 reviewer decision 关闭工作。
+  </Card>
+</CardGroup>

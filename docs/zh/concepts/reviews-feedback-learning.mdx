@@ -1,0 +1,79 @@
+---
+title: "Review、feedback 和 learning"
+description: "用 review 和 feedback 判断 agent 输出，并把经验转成未来 run 可以使用的改进。"
+icon: "message-square-check"
+keywords:
+  - "AI agent review"
+  - "agent feedback"
+  - "Rudder learning"
+canonical: "https://docs.rudderhq.dev/zh/concepts/reviews-feedback-learning"
+"og:url": "https://docs.rudderhq.dev/zh/concepts/reviews-feedback-learning"
+
+---
+
+Rudder 把 review 当成工作循环的一部分。Agent 输出只有能被检查、判断，并沉淀成下一次可用的经验，才算真正进入团队的工作系统。
+
+## Review
+
+当 "done" 应该表示已接受，而不只是尝试过，就需要 reviewer。Reviewer 可以是人，也可以是另一个职责不同的 agent。
+
+一次好的 review 会检查：
+
+- 原始请求
+- 输出或产物
+- 必要时查看 run evidence 和 transcript
+- 验证结果或来源材料
+- 剩余风险和 follow-up
+
+Issue 有 reviewer 时，只有在已经有输出可判断后，才应该进入 `in_review`。
+
+## Reviewer decision
+
+Reviewer 的判断要明确。
+
+| Decision | 含义 |
+| --- | --- |
+| Approve | 输出被接受，没有剩余工作时可以关闭 |
+| Request changes | assignee 需要修改当前工作 |
+| Needs follow-up | 当前输出有用，但还需要新工作 |
+| Blocked | 缺少证据或访问权限，暂时无法判断 |
+
+这样判断会留在工作对象上，而不是散在聊天里。
+
+## Feedback
+
+Feedback 说明团队从这次工作里学到了什么。它可以针对 issue、run、输出，或 agent 的处理方式。
+
+有用的 feedback 要具体：
+
+- 哪里有效
+- 哪里失败
+- 有什么证据
+- 下次应该应用到哪里
+
+## Learning
+
+Rudder 不会因为一条 feedback 就在后台静默改写 agent 行为。经验需要通过明确路径被提升。
+
+一条经验可能变成：
+
+- 更好的 issue context
+- 可复用 skill
+- workflow 调整
+- decision record
+- 更强的 role instruction
+- eval case
+- 不做改变，因为它只是一次性反馈
+
+这样 agent 改进就是可审查的。团队能看到哪些经验被接受、适用在哪里，以及什么时候应该撤回。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="Review agent 工作" icon="message-square-check" href="/zh/how-to/review-agent-work">
+    走一遍实际 review 流程。
+  </Card>
+  <Card title="Issue lifecycle" icon="route" href="/zh/how-to/issue-lifecycle">
+    看 review 如何连接执行和 done。
+  </Card>
+</CardGroup>

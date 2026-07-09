@@ -1,0 +1,66 @@
+---
+title: "导出和导入组织"
+description: "用可预览、范围明确的 export/import 移动 Rudder organization knowledge。"
+icon: "package-open"
+keywords:
+  - "Rudder export"
+  - "Rudder import"
+  - "organization portability"
+canonical: "https://docs.rudderhq.dev/zh/how-to/export-import-organization"
+"og:url": "https://docs.rudderhq.dev/zh/how-to/export-import-organization"
+
+---
+
+当你需要在 Rudder instances 之间移动组织知识，或保留一份 operating record 时，使用 export 和 import。
+
+## Export 适合什么
+
+Export 用于 organization portability。它应该保留以后理解这个组织所需的知识和结构。
+
+根据当前产品 surface，export 可能包含 organization settings、goals、projects、agents、issues、resources、Library metadata 和相关 records。把它当作 organization data，不要当成整台机器的备份。
+
+## Export 前
+
+检查：
+
+- 当前组织就是你要移动的组织
+- 重要工作已经关闭，或明确标记为 in progress
+- 持久文件放在 Library 或 project workspaces
+- 分享 archive 前理解里面是否有敏感数据
+
+## 安全 import
+
+Import 应该可预览、范围明确。应用 import 前，先检查它会创建或更新什么。
+
+用 preview 检查：
+
+- target organization
+- object counts
+- conflicts 或 missing references
+- 可能改变行为的 settings
+- 需要 follow-up 的 resources 或 files
+
+如果 preview 和预期组织不一致，不要 apply。
+
+## Import 后
+
+打开导入后的组织，检查：
+
+- goals 和 projects
+- agents 和 runtime settings
+- issues 和 review state
+- Library files 和 resources
+- 可能需要重新配置 credentials 的 automations 或 integrations
+
+外部 credentials 和本地 runtime paths 可能需要在目标机器上重新配置。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="核心概念" icon="book-open" href="/zh/concepts/overview">
+    回看 organization model。
+  </Card>
+  <Card title="管理 Workspaces 和 Library" icon="folder-tree" href="/zh/how-to/manage-workspaces-and-library">
+    Export 前检查持久文件。
+  </Card>
+</CardGroup>

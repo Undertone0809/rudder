@@ -1,0 +1,72 @@
+---
+title: "Automations"
+description: "Use Rudder automations to run repeatable agent work from schedules, manual dispatch, APIs, or webhooks."
+icon: "workflow"
+keywords:
+  - "AI agent automation"
+  - "scheduled agent work"
+  - "Rudder automations"
+canonical: "https://docs.rudderhq.dev/concepts/automations"
+"og:url": "https://docs.rudderhq.dev/concepts/automations"
+
+---
+
+Automations turn repeatable work into a defined Rudder object. They name the owner, trigger, runtime context, and output path before the run starts.
+
+Use an automation when the same agent task should run on a schedule, from a manual button, through an API call, or from a webhook.
+
+## What an automation contains
+
+An automation keeps the repeatable part of the work together:
+
+- the organization and owner
+- the agent or runtime that should execute the work
+- the trigger that starts a run
+- the input prompt or job definition
+- the output mode
+- run history, status, and failures
+
+Automation runs are separate records. That lets Rudder show what was dispatched, whether it ran, what it produced, and where the output went.
+
+## Triggers
+
+Rudder supports four trigger shapes:
+
+| Trigger | Use it for |
+| --- | --- |
+| Schedule | Reports, recurring checks, maintenance tasks, and routine analysis |
+| Manual dispatch | Operator-started repeatable work |
+| API | Work started from another system with an explicit request |
+| Webhook | Work started by an external event |
+
+The trigger decides when work is dispatched. The automation definition decides what work should run.
+
+## Output modes
+
+Automations can route output into tracked work or back into chat:
+
+- Use issue output when the result needs assignment, review, status, artifacts, or follow-up work.
+- Use chat output when the run is lightweight and the transcript plus automation run record are enough.
+
+The output path matters because it changes where people review the result. Issue output enters the normal issue workflow. Chat output keeps the audit trail on the automation run and the chat conversation.
+
+## Run history
+
+Each automation run should leave inspectable evidence: dispatch source, current state, timestamps, result, failure reason when it fails, and linked issue or chat output when one exists.
+
+This is useful for routine work. A weekly report should not be a mystery prompt. It should show when it ran, what agent handled it, what the result was, and whether a person needs to review anything.
+
+## When not to use automation
+
+Do not use an automation for work that still needs shaping. Create an issue or use Chat first when the outcome, owner, data source, or review path is unclear.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Create an automation" icon="workflow" href="/how-to/create-automation">
+    Configure repeatable agent work and choose an output path.
+  </Card>
+  <Card title="Automation output routing" icon="route" href="/reference/automation-output-routing">
+    Compare issue output and chat output.
+  </Card>
+</CardGroup>

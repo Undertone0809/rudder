@@ -36,6 +36,9 @@ Rudder 把这些协作习惯做成产品里的基础对象：目标、项目、i
 | 理解 agent 如何执行 | [Agents](/zh/concepts/agents) 和 [任务](/zh/concepts/issues) |
 | 澄清请求并处理注意力 | [Chat 和 Messenger](/zh/concepts/chat-messenger) |
 | 看 agent 一周实际做了什么 | [Calendar](/zh/concepts/calendar) |
+| 运行重复 agent 工作 | [自动化](/zh/concepts/automations) |
+| Review 输出并沉淀经验 | [Review、feedback 和 learning](/zh/concepts/reviews-feedback-learning) |
+| 在边缘扩展 Rudder | [Plugins](/zh/concepts/plugins) |
 
 ## 你可以做什么
 
@@ -45,6 +48,9 @@ Rudder 把这些协作习惯做成产品里的基础对象：目标、项目、i
 - 通过本地或外部运行时触发 agent heartbeat，保留 transcript 和运行证据。
 - 使用 Chat 和 Messenger 澄清请求，并集中处理回复、阻塞、失败运行和决策请求。
 - 用 Calendar 查看 agent 实际运行了多久、做了哪些 issue、人的检查点在哪里。
+- 用 Automations 运行有明确 trigger 和 output path 的重复工作。
+- 用 review 和 feedback 把已接受输出变成未来 run 的改进。
+- 用 plugins 添加集成和专门能力，同时保留核心控制平面边界。
 - 从 issue 看板跟踪预算、阻塞、输出和运行状态。
 
 ## 典型流程
@@ -73,7 +79,13 @@ Rudder 把这些协作习惯做成产品里的基础对象：目标、项目、i
   <Card title="任务生命周期指南" icon="route" href="/zh/how-to/issue-lifecycle">
     学会什么时候分配、评审、阻塞和关闭 agent 工作。
   </Card>
+  <Card title="自动化" icon="workflow" href="/zh/concepts/automations">
+    用明确 trigger 和 output path 运行重复 agent 工作。
+  </Card>
   <Card title="创建 Agent" icon="bot" href="/zh/how-to/create-agent">
     需要新角色时，添加职责和能力边界清楚的 agent。
+  </Card>
+  <Card title="控制平面" icon="sliders-horizontal" href="/zh/concepts/control-plane">
+    理解 approvals、budgets、activity、run intelligence、Calendar 和 Inbox。
   </Card>
 </CardGroup>

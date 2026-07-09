@@ -1,0 +1,68 @@
+---
+title: "Manage plugins"
+description: "Install, activate, inspect, update, and remove Rudder plugins while keeping core control-plane boundaries intact."
+icon: "plug"
+keywords:
+  - "manage Rudder plugins"
+  - "Rudder plugin install"
+  - "plugin capabilities"
+canonical: "https://docs.rudderhq.dev/how-to/manage-plugins"
+"og:url": "https://docs.rudderhq.dev/how-to/manage-plugins"
+
+---
+
+Use plugins to add capabilities outside the core Rudder control plane.
+
+## Before installing
+
+Check what the plugin declares:
+
+- capabilities
+- jobs
+- webhooks
+- UI slots
+- configuration fields
+- external services it needs
+
+Only install plugins from sources you trust. A plugin can add useful integration behavior, but it should not replace core Rudder rules for organizations, issues, approvals, budgets, or runs.
+
+## Install and activate
+
+1. Open the plugin manager.
+2. Choose the plugin package or source.
+3. Review the declared capabilities.
+4. Provide required configuration.
+5. Install the plugin.
+6. Activate it when configuration is complete.
+
+After activation, inspect worker health and logs before relying on the plugin for real work.
+
+## Inspect plugin behavior
+
+Check the plugin's state when something changes:
+
+- worker status
+- recent jobs
+- webhook delivery
+- logs
+- output links
+- plugin-owned UI surfaces
+
+If a plugin starts work from a webhook or scheduled job, make sure the resulting work is still visible in Rudder.
+
+## Update or remove
+
+Before updating, check whether the plugin changes capabilities or configuration. Before removing, check whether active jobs, webhooks, or UI surfaces depend on it.
+
+Removing a plugin should not delete core Rudder records such as issues, approvals, budgets, or run history.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Plugins" icon="plug" href="/concepts/plugins">
+    Understand plugin boundaries.
+  </Card>
+  <Card title="Control plane" icon="sliders-horizontal" href="/concepts/control-plane">
+    See which rules stay in core Rudder.
+  </Card>
+</CardGroup>

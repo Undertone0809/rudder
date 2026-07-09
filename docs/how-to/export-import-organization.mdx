@@ -1,0 +1,66 @@
+---
+title: "Export and import an organization"
+description: "Move Rudder organization knowledge with previewable, scoped export and import steps."
+icon: "package-open"
+keywords:
+  - "Rudder export"
+  - "Rudder import"
+  - "organization portability"
+canonical: "https://docs.rudderhq.dev/how-to/export-import-organization"
+"og:url": "https://docs.rudderhq.dev/how-to/export-import-organization"
+
+---
+
+Use export and import when you need to move organization knowledge between Rudder instances or preserve a copy of the operating record.
+
+## What export is for
+
+Export is for organization portability. It should preserve the knowledge and structure needed to understand the organization later.
+
+Depending on the current product surface, an export may include organization settings, goals, projects, agents, issues, resources, Library metadata, and related records. Treat it as organization data, not as a full machine backup.
+
+## Before export
+
+Check:
+
+- the organization is the one you intend to move
+- important work is closed or named as in progress
+- durable files are in Library or project workspaces
+- sensitive data is understood before sharing the archive
+
+## Import safely
+
+Import should be previewable and scoped. Before applying an import, inspect what it will create or update.
+
+Use the preview to check:
+
+- target organization
+- object counts
+- conflicts or missing references
+- settings that may change behavior
+- resources or files that need follow-up
+
+Do not apply an import if the preview does not match the organization you expect.
+
+## After import
+
+Open the imported organization and inspect:
+
+- goals and projects
+- agents and runtime settings
+- issues and review state
+- Library files and resources
+- automations or integrations that may need credentials
+
+External credentials and local runtime paths may need to be configured again on the target machine.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Core Concepts" icon="book-open" href="/concepts/overview">
+    Review the organization model.
+  </Card>
+  <Card title="Manage Workspaces and Library" icon="folder-tree" href="/how-to/manage-workspaces-and-library">
+    Check durable files before export.
+  </Card>
+</CardGroup>

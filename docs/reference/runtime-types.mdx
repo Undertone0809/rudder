@@ -1,0 +1,51 @@
+---
+title: "Runtime types"
+description: "Reference the agent runtime shapes Rudder can invoke and inspect."
+icon: "terminal"
+keywords:
+  - "Rudder runtime types"
+  - "agent runtime"
+  - "Codex Claude shell webhook"
+canonical: "https://docs.rudderhq.dev/reference/runtime-types"
+"og:url": "https://docs.rudderhq.dev/reference/runtime-types"
+
+---
+
+Rudder coordinates agent work. Runtimes do the work.
+
+## Supported shapes
+
+| Runtime shape | Use it for |
+| --- | --- |
+| Local CLI | Local coding agents such as Codex, Claude Code, Cursor, Gemini, OpenCode, or similar tools |
+| Shell process | Custom local commands that can run as an agent process |
+| HTTP webhook | External services that receive a request and report back |
+| Gateway runtime | Gateway-backed agent systems managed outside the local app |
+
+The exact runtime options available in your app depend on installed packages, configured providers, and local machine setup.
+
+## What runtime configuration controls
+
+Runtime configuration controls how Rudder invokes the agent:
+
+- command or endpoint
+- working directory
+- model or provider options
+- environment variables
+- instruction and context loading
+- result parsing and reporting
+
+## Readiness
+
+Before relying on a runtime, test it from the agent configuration screen. A ready runtime should be invokable, able to receive the intended context, and able to report a result that Rudder can inspect.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configure your agent runtime" icon="terminal" href="/how-to/configure-agent-runtime">
+    Set up a runtime for an agent.
+  </Card>
+  <Card title="Permissions and platforms" icon="shield-check" href="/reference/permissions-and-platforms">
+    Understand local runtime file and credential boundaries.
+  </Card>
+</CardGroup>

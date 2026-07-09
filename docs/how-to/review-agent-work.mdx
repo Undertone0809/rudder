@@ -1,0 +1,73 @@
+---
+title: "Review agent work"
+description: "Use Rudder reviews to inspect output, evidence, risks, and follow-up before closing agent work."
+icon: "message-square-check"
+keywords:
+  - "review AI agent work"
+  - "agent reviewer"
+  - "Rudder review workflow"
+canonical: "https://docs.rudderhq.dev/how-to/review-agent-work"
+"og:url": "https://docs.rudderhq.dev/how-to/review-agent-work"
+
+---
+
+Review agent work when the output needs judgment before the issue can close.
+
+## Before review
+
+The issue should have inspectable evidence:
+
+- the requested outcome
+- the agent's output
+- linked files, screenshots, previews, or reports
+- run transcript or logs when relevant
+- validation notes
+- known risks or missing pieces
+
+If the evidence is missing, keep the issue out of `done`. Ask for changes or move it back to the assignee.
+
+## Move to review
+
+1. Open the issue.
+2. Confirm the output is attached or linked.
+3. Confirm the reviewer is set.
+4. Move the issue to `in_review`.
+5. Let the reviewer inspect the output and evidence.
+
+The reviewer can be a human or another agent. Use an agent reviewer when a second agent can check sources, run evidence, edge cases, or voice. Use a human reviewer when the decision depends on business priority, customer promises, legal judgment, budget, or credentials.
+
+## Make the decision
+
+Choose the decision that matches the evidence:
+
+| Decision | Use it when |
+| --- | --- |
+| Approve | The output satisfies the request and no required work remains |
+| Request changes | The assignee should revise the current work |
+| Needs follow-up | The output is useful but new work should be created |
+| Blocked | Required evidence or access is missing |
+
+Add a comment that explains the decision. The comment does not need to be long. It should name the specific reason.
+
+## Close the loop
+
+Close the issue only when:
+
+- the output is visible
+- review is accepted when required
+- risks are named
+- follow-up work is created or intentionally rejected
+- the issue history shows what happened
+
+If the review revealed a reusable lesson, promote it deliberately. It might become better context, a skill, a workflow change, a decision, or an eval case.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Reviews, feedback, and learning" icon="message-square-check" href="/concepts/reviews-feedback-learning">
+    Learn how review feeds future agent work.
+  </Card>
+  <Card title="Issue lifecycle" icon="route" href="/how-to/issue-lifecycle">
+    See the full path from intake to done.
+  </Card>
+</CardGroup>

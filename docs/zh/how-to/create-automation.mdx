@@ -1,0 +1,73 @@
+---
+title: "创建自动化"
+description: "创建带触发方式、owner、runtime context 和输出路径的可重复 Rudder agent 工作。"
+icon: "workflow"
+keywords:
+  - "创建 Rudder 自动化"
+  - "AI agent 定时任务"
+  - "automation output"
+canonical: "https://docs.rudderhq.dev/zh/how-to/create-automation"
+"og:url": "https://docs.rudderhq.dev/zh/how-to/create-automation"
+
+---
+
+当一个任务会重复运行，并且 owner、触发方式和输出路径稳定时，把它做成自动化。
+
+## 开始前
+
+先确定四件事：
+
+| 问题 | 为什么重要 |
+| --- | --- |
+| 要跑什么 | 自动化需要稳定任务，不是开放讨论 |
+| 谁负责 | owner 决定谁检查失败和结果 |
+| 什么触发它 | 选择 schedule、manual、API 或 webhook |
+| 输出去哪里 | 选择 tracked issue output 或 chat output |
+
+如果这些答案还不清楚，先建 issue 把工作整理好。
+
+## 创建自动化
+
+1. 打开 Automations。
+2. 新建 automation。
+3. 用普通语言命名这个重复任务。
+4. 选择 owner 和执行它的 agent 或 runtime。
+5. 写 prompt 或 job definition。
+6. 选择 trigger。
+7. 选择 output mode。
+8. 保存 automation。
+
+名称应该描述实际工作，例如 "Prepare weekly agent work report" 或 "Check failed run backlog"。
+
+## 选择 trigger
+
+例行工作用 schedule。需要 operator 决定什么时候跑，用 manual dispatch。由其他系统启动时，用 API 或 webhook。
+
+## 选择输出模式
+
+需要分配、状态、review、artifacts 或 follow-up 时，用 issue output。
+
+结果比较轻，automation run record 和 chat transcript 足够时，用 chat output。
+
+## 测试自动化
+
+正式依赖前先跑一次。
+
+检查：
+
+- run 是否由预期 trigger 启动
+- agent 或 runtime 是否收到正确 context
+- 结果是否出现在预期 issue 或 chat
+- 失败是否能在 run history 里看到
+- owner 是否知道以后在哪里检查结果
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="自动化" icon="workflow" href="/zh/concepts/automations">
+    理解 automation model。
+  </Card>
+  <Card title="自动化输出路由" icon="route" href="/zh/reference/automation-output-routing">
+    选择 issue output 或 chat output。
+  </Card>
+</CardGroup>

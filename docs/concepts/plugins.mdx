@@ -1,0 +1,53 @@
+---
+title: "Plugins"
+description: "Use Rudder plugins to add capabilities, jobs, webhooks, and UI surfaces without changing the core control plane."
+icon: "plug"
+keywords:
+  - "Rudder plugins"
+  - "agent platform plugins"
+  - "plugin capabilities"
+canonical: "https://docs.rudderhq.dev/concepts/plugins"
+"og:url": "https://docs.rudderhq.dev/concepts/plugins"
+
+---
+
+Plugins extend Rudder at the edges. They can add capabilities, jobs, webhooks, logs, state, and UI surfaces while the core product keeps ownership of issues, approvals, budgets, runs, and organization boundaries.
+
+## What plugins are for
+
+Use a plugin when an integration or workflow should live outside the core product:
+
+- importing work from another system
+- syncing with an external tracker
+- handling webhook events
+- adding a specialized tool or capability
+- showing plugin-owned state in the UI
+
+The plugin should add capability. It should not override core control-plane invariants.
+
+## Lifecycle
+
+Installed plugins move through host-managed lifecycle states. Rudder controls installation, activation, worker health, updates, and uninstall behavior.
+
+That boundary matters. A plugin can run jobs and expose capabilities, but the host still owns the safety rules around organization scope, tool names, approvals, and product state.
+
+## Capabilities
+
+Plugins declare what they can do. Rudder uses those declarations to decide which tools, jobs, webhooks, and UI slots the plugin can use.
+
+Capabilities should be namespaced. A plugin should not collide with first-party tools or pretend to be part of the core runtime.
+
+## Jobs and webhooks
+
+Plugin jobs and webhooks should be observable. When a plugin runs work, the operator should be able to see state, logs, failures, and output links.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Manage plugins" icon="plug" href="/how-to/manage-plugins">
+    Install, activate, inspect, and remove plugins.
+  </Card>
+  <Card title="Control plane" icon="sliders-horizontal" href="/concepts/control-plane">
+    Understand the core invariants plugins must not bypass.
+  </Card>
+</CardGroup>

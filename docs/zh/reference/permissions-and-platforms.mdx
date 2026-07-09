@@ -1,0 +1,45 @@
+---
+title: "Permissions and platforms"
+description: "理解 Rudder agents 的本地 runtime 文件、credentials 和平台边界。"
+icon: "shield-check"
+keywords:
+  - "Rudder runtime permissions"
+  - "agent credentials"
+  - "local runtime platform"
+canonical: "https://docs.rudderhq.dev/zh/reference/permissions-and-platforms"
+"og:url": "https://docs.rudderhq.dev/zh/reference/permissions-and-platforms"
+
+---
+
+本地 runtimes 需要访问文件、credentials、skills 和 tools。Rudder 应该让这些边界可见，而不是把它们藏在 prompt 或 shell command 里。
+
+## Managed runtime homes
+
+Agents 使用 managed homes 保存 runtime state、instructions、skills 和属于该 agent 的本地文件。这样 agent-private state 不会和 shared Library files 或 project workspaces 混在一起。
+
+## Operator home bridges
+
+有些本地工具需要访问 operator 机器上已有的 credentials 或 config。这类 bridge 要谨慎使用。它们适合 local trusted development，但不应该被当作 shared organization data。
+
+## Skills 和 credentials
+
+Skills 是可复用操作说明。Credentials 是敏感访问材料。不要混在一起。
+
+当 runtime 需要 credentials 时，优先使用已经拥有这些 credentials 的 runtime config 或本地 provider setup。不要把 secrets 复制到 docs、prompts、Library files 或 issue comments 里。
+
+## 平台差异
+
+macOS、Linux 和 Windows 的文件行为不同。一个依赖 symlinks 或 Unix permissions 的 runtime setup，在另一个平台上可能需要 safe copy 或其他 fallback。
+
+Runtime setup 失败时，先看 visible runtime readiness state 和 error message。再判断问题是 missing CLI、missing permissions、missing credentials、unwritable workspace，还是平台相关的 file operation。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="配置 agent runtime" icon="terminal" href="/zh/how-to/configure-agent-runtime">
+    配置并测试 runtime readiness。
+  </Card>
+  <Card title="Runtime types" icon="terminal" href="/zh/reference/runtime-types">
+    比较 runtime shapes。
+  </Card>
+</CardGroup>

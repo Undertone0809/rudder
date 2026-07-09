@@ -1,0 +1,72 @@
+---
+title: "Manage Workspaces and Library"
+description: "Keep project resources, Library files, durable outputs, backups, and run workspaces in the right Rudder locations."
+icon: "folder-tree"
+keywords:
+  - "Rudder Library"
+  - "agent workspace management"
+  - "project resources"
+canonical: "https://docs.rudderhq.dev/how-to/manage-workspaces-and-library"
+"og:url": "https://docs.rudderhq.dev/how-to/manage-workspaces-and-library"
+
+---
+
+Use Workspaces and Library to keep agent context and outputs findable. The goal is simple: a future run should know where to look, and a human should know which files are durable.
+
+## Choose the right location
+
+| Content | Put it here |
+| --- | --- |
+| Project repository work | Project workspace |
+| Durable reports, plans, screenshots, and handoffs | Project folder in Library |
+| Shared references | Library files |
+| Curated run context | Project Context resources |
+| Agent-private memory and skills | Agent home |
+| Scratch files | `/tmp` or the system temp directory |
+
+## Add Library files
+
+Use Library for files that should remain part of the organization record. Library files can be referenced from issues, resources, and agent context.
+
+Good Library files include:
+
+- research briefs
+- decision notes
+- source documents
+- reusable checklists
+- project reports
+- handoff packets
+
+Avoid putting temporary screenshots, local caches, or generated scratch files in Library unless they are part of the final evidence.
+
+## Attach project resources
+
+Project Context resources are the curated starting context for project-linked runs. Attach the files, URLs, repositories, or connector objects the agent should see by default.
+
+Do not attach every organization resource. Keep the default context small enough that the agent can use it.
+
+## Use project folders for durable output
+
+Rudder creates a Library folder for each project. Put durable project work there. Agents may add natural subfolders such as `research/`, `screenshots/`, `handoff/`, or `evals/`.
+
+Use issue comments or review notes to point reviewers to the relevant file.
+
+## Use backups deliberately
+
+Workspace backups help recover organization workspace state. Treat them as operator tools:
+
+- browse backup versions before restoring
+- restore only when you understand what will change
+- delete old backups when they are no longer useful
+- download a backup when you need to inspect or preserve it outside Rudder
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Workspaces" icon="folder-tree" href="/concepts/workspaces">
+    Understand workspace boundaries.
+  </Card>
+  <Card title="Workspace boundaries" icon="list-checks" href="/reference/workspace-boundaries">
+    Check where files should live.
+  </Card>
+</CardGroup>

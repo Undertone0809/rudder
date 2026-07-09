@@ -1,0 +1,55 @@
+---
+title: "Automation output routing"
+description: "Choose whether a Rudder automation should create tracked issue work or send output to chat."
+icon: "route"
+keywords:
+  - "automation output routing"
+  - "Rudder automation issue output"
+  - "Rudder automation chat output"
+canonical: "https://docs.rudderhq.dev/reference/automation-output-routing"
+"og:url": "https://docs.rudderhq.dev/reference/automation-output-routing"
+
+---
+
+Automation output routing decides where people inspect the result.
+
+## Choose issue output
+
+Use issue output when the result needs:
+
+- assignment
+- status tracking
+- review
+- artifacts or files
+- follow-up work
+- durable close-out evidence
+
+Issue output enters the normal issue lifecycle. This is the safer choice for work that affects decisions, customers, releases, or team commitments.
+
+## Choose chat output
+
+Use chat output when the result is lightweight and does not need a tracked issue.
+
+Good examples:
+
+- routine summaries
+- quick status checks
+- low-risk informational replies
+- short analysis that will not need review
+
+Chat output keeps the audit trail on the automation run and the chat transcript.
+
+## If unsure
+
+Choose issue output when a person may need to review, assign, approve, or follow up on the result. Choose chat output when the result is mainly for reading.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Create an automation" icon="workflow" href="/how-to/create-automation">
+    Configure the automation.
+  </Card>
+  <Card title="Issue statuses" icon="list-checks" href="/reference/issue-statuses">
+    Understand the tracked issue path.
+  </Card>
+</CardGroup>

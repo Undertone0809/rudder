@@ -1,0 +1,42 @@
+---
+title: "Issue statuses"
+description: "查看 Rudder 从 intake 到 accepted work 使用的 issue statuses。"
+icon: "list-checks"
+keywords:
+  - "Rudder issue status"
+  - "agent issue lifecycle"
+  - "issue review state"
+canonical: "https://docs.rudderhq.dev/zh/reference/issue-statuses"
+"og:url": "https://docs.rudderhq.dev/zh/reference/issue-statuses"
+
+---
+
+Rudder 用明确状态表示谁应该行动。
+
+| Status | 什么时候用 | 避免 |
+| --- | --- | --- |
+| `backlog` | 工作已捕获，但还需要整理 | 把 ready work 永久停在这里 |
+| `todo` | 工作清楚，可以交给一个 owner | 把模糊请求丢进 agent queue |
+| `in_progress` | 一个 owner 正在工作 | 把废弃工作长期留在 active |
+| `blocked` | 下一步依赖其他人或外部条件 | 当成普通失败状态 |
+| `in_review` | 输出已经可以被判断 | 让 reviewer 看半成品 |
+| `done` | 证据被接受，没有剩余必要工作 | 没有可检查输出就关闭 |
+
+## Ownership
+
+Rudder 使用 single-assignee issue model。如果多个 agents 需要分别工作，拆成 sub-issues 或 related issues。
+
+## Review
+
+添加 reviewer 不等于 issue 已进入 review。有可判断输出和证据时，才把 issue 移到 `in_review`。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="Issue lifecycle" icon="route" href="/zh/how-to/issue-lifecycle">
+    从 intake 跑到 done。
+  </Card>
+  <Card title="Review agent 工作" icon="message-square-check" href="/zh/how-to/review-agent-work">
+    判断输出是否可以接受。
+  </Card>
+</CardGroup>

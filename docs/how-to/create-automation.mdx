@@ -1,0 +1,73 @@
+---
+title: "Create an automation"
+description: "Create repeatable Rudder agent work with a trigger, owner, runtime context, and output path."
+icon: "workflow"
+keywords:
+  - "create Rudder automation"
+  - "AI agent scheduled task"
+  - "automation output"
+canonical: "https://docs.rudderhq.dev/how-to/create-automation"
+"og:url": "https://docs.rudderhq.dev/how-to/create-automation"
+
+---
+
+Use an automation when a task should run more than once with the same owner, trigger, and output path.
+
+## Before you start
+
+Decide four things:
+
+| Question | Why it matters |
+| --- | --- |
+| What should run? | The automation needs a stable task, not an open-ended discussion |
+| Who owns it? | Ownership decides who should inspect failures and results |
+| What starts it? | Choose schedule, manual dispatch, API, or webhook |
+| Where should output go? | Choose tracked issue output or chat output |
+
+If those answers are unclear, create an issue first and shape the work there.
+
+## Create the automation
+
+1. Open Automations.
+2. Create a new automation.
+3. Name the repeated job in plain language.
+4. Choose the owner and agent or runtime that should execute it.
+5. Write the prompt or job definition.
+6. Choose a trigger.
+7. Choose the output mode.
+8. Save the automation.
+
+Use a name that describes the actual work, such as "Prepare weekly agent work report" or "Check failed run backlog."
+
+## Choose a trigger
+
+Use a schedule for routine work. Use manual dispatch when an operator should decide when the task runs. Use API or webhook triggers when another system starts the work.
+
+## Choose the output mode
+
+Use issue output when the result needs assignment, status, review, artifacts, or follow-up work.
+
+Use chat output when the result is lightweight and the automation run record plus chat transcript are enough.
+
+## Test the automation
+
+Run the automation once before relying on it.
+
+Check:
+
+- the run starts from the expected trigger
+- the selected agent or runtime receives the right context
+- the result appears in the expected issue or chat
+- failures are visible from the automation run history
+- the owner knows where to inspect future runs
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Automations" icon="workflow" href="/concepts/automations">
+    Understand the automation model.
+  </Card>
+  <Card title="Automation output routing" icon="route" href="/reference/automation-output-routing">
+    Pick issue output or chat output.
+  </Card>
+</CardGroup>

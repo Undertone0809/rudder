@@ -1,0 +1,72 @@
+---
+title: "管理 Workspaces 和 Library"
+description: "把项目资源、Library files、持久输出、backups 和 run workspaces 放在正确位置。"
+icon: "folder-tree"
+keywords:
+  - "Rudder Library"
+  - "agent workspace"
+  - "project resources"
+canonical: "https://docs.rudderhq.dev/zh/how-to/manage-workspaces-and-library"
+"og:url": "https://docs.rudderhq.dev/zh/how-to/manage-workspaces-and-library"
+
+---
+
+Workspaces 和 Library 的作用是让 agent context 和输出可查找。未来的 run 应该知道去哪里读，人也应该知道哪些文件是持久产物。
+
+## 选择正确位置
+
+| 内容 | 放到这里 |
+| --- | --- |
+| 项目仓库工作 | Project workspace |
+| 持久报告、计划、截图、handoff | Library 里的项目文件夹 |
+| 共享参考资料 | Library files |
+| 精选 run context | Project Context resources |
+| Agent 私有 memory 和 skills | Agent home |
+| 临时文件 | `/tmp` 或系统临时目录 |
+
+## 添加 Library files
+
+Library 适合保存应该留在组织记录里的文件。Library files 可以被 issues、resources 和 agent context 引用。
+
+适合放进 Library 的文件包括：
+
+- research brief
+- decision note
+- source document
+- reusable checklist
+- project report
+- handoff packet
+
+临时截图、local cache 或 scratch files 不要放进 Library，除非它们是最终 evidence 的一部分。
+
+## 绑定 project resources
+
+Project Context resources 是 project-linked runs 的起始上下文。把 agent 默认应该看到的 files、URLs、repositories 或 connector objects 绑定进去。
+
+不要把所有 organization resources 都绑定进去。默认 context 应该小到 agent 能真正使用。
+
+## 用 project folder 保存持久输出
+
+Rudder 会为每个 project 创建 Library folder。持久项目文件放在那里。Agent 可以自然增加 `research/`、`screenshots/`、`handoff/` 或 `evals/` 等子目录。
+
+用 issue comments 或 review notes 指向 reviewer 需要看的文件。
+
+## 谨慎使用 backups
+
+Workspace backups 是 operator 的恢复和检查工具：
+
+- restore 前先浏览 backup versions
+- 只有理解会改变什么时才 restore
+- 旧 backup 没用了就删除
+- 需要在 Rudder 外检查或保存时再 download
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="工作区" icon="folder-tree" href="/zh/concepts/workspaces">
+    理解 workspace boundaries。
+  </Card>
+  <Card title="Workspace boundaries" icon="list-checks" href="/zh/reference/workspace-boundaries">
+    检查文件应该放在哪里。
+  </Card>
+</CardGroup>

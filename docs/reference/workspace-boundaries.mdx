@@ -1,0 +1,43 @@
+---
+title: "Workspace boundaries"
+description: "Reference where Rudder agents should read and write project files, Library files, private state, and scratch artifacts."
+icon: "folder-tree"
+keywords:
+  - "Rudder workspace boundaries"
+  - "agent files"
+  - "Library files"
+canonical: "https://docs.rudderhq.dev/reference/workspace-boundaries"
+"og:url": "https://docs.rudderhq.dev/reference/workspace-boundaries"
+
+---
+
+Workspace boundaries keep agent work recoverable. Put durable files where future runs and reviewers can find them.
+
+| File or state | Correct location |
+| --- | --- |
+| Project repository work | Project workspace |
+| Durable project output | Project folder in Library |
+| Shared organization reference | Library |
+| Curated run context | Project Context resources |
+| Agent-private instructions, memory, and local state | Agent home |
+| Runtime scratch files | `/tmp` or system temp |
+| Verification screenshots that are not final artifacts | `/tmp` or system temp |
+
+## Protected paths
+
+Agents should use Rudder-managed paths and Library references instead of inventing new local folders. This keeps organization boundaries clear and avoids mixing private runtime state with shared project output.
+
+## Backups
+
+Workspace backups are for operator recovery and inspection. Browse before restoring. Download when you need an external copy. Delete backups that no longer serve a recovery purpose.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Manage Workspaces and Library" icon="folder-tree" href="/how-to/manage-workspaces-and-library">
+    Apply these boundaries in daily work.
+  </Card>
+  <Card title="Workspaces" icon="folder-tree" href="/concepts/workspaces">
+    Understand the workspace model.
+  </Card>
+</CardGroup>
