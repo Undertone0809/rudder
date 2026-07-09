@@ -108,7 +108,8 @@ jobs:
         run: |
           corepack enable
           corepack prepare pnpm@9.15.4 --activate
-          npm install --global npm@latest
+          npm install --global npm@10.9.8
+          npm --version
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
@@ -180,7 +181,8 @@ jobs:
         run: |
           corepack enable
           corepack prepare pnpm@9.15.4 --activate
-          npm install --global npm@latest
+          npm install --global npm@10.9.8
+          npm --version
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
@@ -215,7 +217,8 @@ jobs:
         run: |
           corepack enable
           corepack prepare pnpm@9.15.4 --activate
-          npm install --global npm@latest
+          npm install --global npm@10.9.8
+          npm --version
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
