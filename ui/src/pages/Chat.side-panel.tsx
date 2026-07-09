@@ -324,10 +324,12 @@ function ChatIssueSidePanelView({
     <div className="flex h-full min-h-0 flex-col" data-testid="chat-side-panel-issue-view">
       <div className={cn(
         "grid h-full min-h-0 flex-1 gap-6",
-        expanded && "xl:grid-cols-[minmax(0,1fr)_280px] xl:items-start",
-      )}>
+        expanded
+          ? "xl:grid-cols-[minmax(0,1fr)_280px] xl:items-start"
+          : "scrollbar-auto-hide overflow-y-auto overscroll-contain pr-1",
+      )} data-testid="chat-side-panel-issue-scroll">
         <div className="flex min-h-0 min-w-0 flex-col gap-5">
-          <div className="scrollbar-auto-hide max-h-[45%] shrink-0 space-y-3 overflow-y-auto overscroll-contain pb-4 pr-1">
+          <div className="shrink-0 space-y-3 pb-1">
             <div className="flex items-start justify-between gap-3">
               <InlineEditor
                 value={issue.title}
@@ -389,7 +391,7 @@ function ChatIssueSidePanelView({
             <p className="text-xs text-muted-foreground">No sub-issues.</p>
           </section>
 
-          <section aria-label="Activity" className="flex min-h-0 flex-1 flex-col py-1">
+          <section aria-label="Activity" className="space-y-2 py-1">
             <div className="mb-3 flex items-center justify-between gap-2">
               <h4 className="text-sm font-semibold text-foreground">Activity</h4>
               <span className="text-xs text-muted-foreground">
@@ -415,6 +417,7 @@ function ChatIssueSidePanelView({
               emptyMessage="No comments yet."
               draftKey={`rudder:side-panel-issue-comment-draft:${issue.id}`}
               fixedComposer
+              fixedComposerTimelineScroll={false}
               onAdd={onAddComment}
             />
           </section>

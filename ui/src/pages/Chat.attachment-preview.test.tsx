@@ -2187,7 +2187,7 @@ describe("Chat Side Panel link handling", () => {
     expect(container.querySelector("textarea[aria-label='Composer draft']")).not.toBeNull();
   });
 
-  it("keeps editable issue fields above a dedicated activity scroller in a narrow Side Panel", async () => {
+  it("keeps editable issue fields and activity in one narrow Side Panel scroll flow", async () => {
     vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
       matches: query.includes("max-width: 767px"),
       media: query,
@@ -2230,14 +2230,18 @@ describe("Chat Side Panel link handling", () => {
 
     const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     const issueView = sidePanel?.querySelector<HTMLElement>("[data-testid='chat-side-panel-issue-view']");
+    const issueScroller = sidePanel?.querySelector<HTMLElement>("[data-testid='chat-side-panel-issue-scroll']");
+    const timelineFlow = sidePanel?.querySelector<HTMLElement>("[data-testid='comment-thread-timeline-flow']");
     const activityScroller = sidePanel?.querySelector<HTMLElement>("[data-testid='comment-thread-timeline-scroll']");
     const fixedComposer = sidePanel?.querySelector<HTMLElement>("[data-testid='comment-thread-fixed-composer']");
     const sidePanelScrollBody = sidePanel?.querySelector<HTMLElement>("[data-testid='chat-side-panel-scroll-body']");
     expect(sidePanel).not.toBeNull();
     expect(issueView).not.toBeNull();
-    expect(activityScroller).not.toBeNull();
+    expect(issueScroller).not.toBeNull();
+    expect(timelineFlow).not.toBeNull();
+    expect(activityScroller).toBeNull();
     expect(fixedComposer).not.toBeNull();
-    expect(activityScroller?.className).toContain("overflow-y-auto");
+    expect(issueScroller?.className).toContain("overflow-y-auto");
     expect(fixedComposer?.className).toContain("sticky bottom-0");
     expect(sidePanelScrollBody?.className).toContain("overflow-hidden");
     expect(sidePanel?.className).toContain("fixed");
@@ -2247,9 +2251,9 @@ describe("Chat Side Panel link handling", () => {
     expect(sidePanel?.textContent?.indexOf("Make the issue reference read like a task detail panel.")).toBeLessThan(
       sidePanel?.textContent?.indexOf("Existing side panel comment.") ?? Number.POSITIVE_INFINITY,
     );
-    expect(activityScroller?.textContent).toContain("Existing side panel comment.");
-    expect(activityScroller?.textContent).toContain("Follow-up activity should scroll below the task body.");
-    expect(activityScroller?.textContent).toContain("Keep editable fields near the top.");
+    expect(timelineFlow?.textContent).toContain("Existing side panel comment.");
+    expect(timelineFlow?.textContent).toContain("Follow-up activity should scroll below the task body.");
+    expect(timelineFlow?.textContent).toContain("Keep editable fields near the top.");
   });
 });
 

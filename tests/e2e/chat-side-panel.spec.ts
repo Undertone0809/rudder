@@ -328,11 +328,15 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toBeVisible();
     const activityRegion = sidePanel.getByRole("region", { name: "Activity" });
     const scrollBody = sidePanel.locator("[data-testid='chat-side-panel-scroll-body']");
+    const issueScroller = sidePanel.locator("[data-testid='chat-side-panel-issue-scroll']");
+    const timelineFlow = sidePanel.locator("[data-testid='comment-thread-timeline-flow']");
     const activityScroller = sidePanel.locator("[data-testid='comment-thread-timeline-scroll']");
     const fixedComposer = sidePanel.locator("[data-testid='comment-thread-fixed-composer']");
     await expect(activityRegion).toBeVisible();
     await expect(scrollBody).toBeVisible();
-    await expect(activityScroller).toBeVisible();
+    await expect(issueScroller).toBeVisible();
+    await expect(timelineFlow).toBeVisible();
+    await expect(activityScroller).toHaveCount(0);
     await expect(fixedComposer).toBeVisible();
     await expect(sidePanel.getByText("Assignee", { exact: true })).toBeVisible();
     await expect(sidePanel.getByText("Edited from the chat detail panel.")).toBeVisible();
@@ -344,16 +348,16 @@ test.describe("Chat Side Panel", () => {
       scrollHeight: element.scrollHeight,
     }));
     expect(scrollBodyMetrics.className).toContain("overflow-hidden");
-    await expect(activityScroller).toHaveClass(/overflow-y-auto/);
-    const activityScrollerMetrics = await activityScroller.evaluate((element) => ({
+    await expect(issueScroller).toHaveClass(/overflow-y-auto/);
+    const issueScrollerMetrics = await issueScroller.evaluate((element) => ({
       clientHeight: element.clientHeight,
       scrollHeight: element.scrollHeight,
     }));
-    expect(activityScrollerMetrics.scrollHeight).toBeGreaterThan(activityScrollerMetrics.clientHeight);
-    await activityScroller.evaluate((element) => {
+    expect(issueScrollerMetrics.scrollHeight).toBeGreaterThan(issueScrollerMetrics.clientHeight);
+    await issueScroller.evaluate((element) => {
       element.scrollTop = element.scrollHeight;
     });
-    await expect.poll(async () => activityScroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    await expect.poll(async () => issueScroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
     await expect(activityRegion.getByText("Scrollable side panel activity comment 12.")).toBeInViewport();
 
     await sidePanel.getByLabel("Expand Side Panel").click();
@@ -415,7 +419,7 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(4);
   });
 
-  test("keeps the issue Side Panel comment composer pinned while activity scrolls", async ({ page }, testInfo) => {
+  test("keeps the issue Side Panel in one scroll flow with a pinned composer", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Chat-Side-Panel-Pinned-Composer-${Date.now()}` },
     });
@@ -424,8 +428,8 @@ test.describe("Chat Side Panel", () => {
 
     const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {
-        title: "Side panel composer should stay pinned",
-        description: "Activity should scroll without pushing the comment composer below the visible panel.",
+        title: "Side panel issue detail should scroll as one page",
+        description: "Activity should scroll together with issue details without splitting the side panel into two independent scroll regions.",
         status: "todo",
         priority: "medium",
       },
@@ -479,47 +483,67 @@ test.describe("Chat Side Panel", () => {
     await assistantMessage.locator('a[data-mention-kind="issue"]').filter({ hasText: issueRef }).click();
 
     const sidePanel = page.getByTestId("chat-side-panel");
+    const issueScroller = sidePanel.locator("[data-testid='chat-side-panel-issue-scroll']");
+    const timelineFlow = sidePanel.locator("[data-testid='comment-thread-timeline-flow']");
     const activityScroller = sidePanel.locator("[data-testid='comment-thread-timeline-scroll']");
     const fixedComposer = sidePanel.locator("[data-testid='comment-thread-fixed-composer']");
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
     await expect(sidePanel.getByRole("region", { name: "Activity" })).toBeVisible();
-    await expect(activityScroller).toBeVisible();
+    await expect(issueScroller).toBeVisible();
+    await expect(timelineFlow).toBeVisible();
+    await expect(activityScroller).toHaveCount(0);
     await expect(fixedComposer).toBeVisible();
 
     const metrics = await page.evaluate(async () => {
       const panel = document.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
-      const timeline = document.querySelector<HTMLElement>("[data-testid='comment-thread-timeline-scroll']");
+      const issueScroll = document.querySelector<HTMLElement>("[data-testid='chat-side-panel-issue-scroll']");
+      const timeline = document.querySelector<HTMLElement>("[data-testid='comment-thread-timeline-flow']");
       const composer = document.querySelector<HTMLElement>("[data-testid='comment-thread-fixed-composer']");
-      if (!panel || !timeline || !composer) return null;
+      const activity = document.querySelector<HTMLElement>("section[aria-label='Activity']");
+      const properties = document.querySelector<HTMLElement>("section[aria-label='Issue properties']");
+      if (!panel || !issueScroll || !timeline || !composer || !activity || !properties) return null;
 
-      timeline.scrollTop = 0;
+      issueScroll.scrollTop = 0;
       await new Promise((resolve) => requestAnimationFrame(resolve));
-      const before = composer.getBoundingClientRect();
-      timeline.scrollTop = Math.floor(timeline.scrollHeight / 2);
+      const before = {
+        activityTop: activity.getBoundingClientRect().top,
+        propertiesTop: properties.getBoundingClientRect().top,
+      };
+      issueScroll.scrollTop = Math.floor(issueScroll.scrollHeight / 2);
       await new Promise((resolve) => requestAnimationFrame(resolve));
       const after = composer.getBoundingClientRect();
+      const afterActivityTop = activity.getBoundingClientRect().top;
+      const afterPropertiesTop = properties.getBoundingClientRect().top;
       const panelRect = panel.getBoundingClientRect();
+      const issueScrollRect = issueScroll.getBoundingClientRect();
       const timelineRect = timeline.getBoundingClientRect();
 
       return {
-        timelineCanScroll: timeline.scrollHeight > timeline.clientHeight + 120,
-        composerTopDelta: Math.round(Math.abs(after.top - before.top)),
-        composerBottomGap: Math.round(panelRect.bottom - after.bottom),
-        timelineToComposerGap: Math.round(after.top - timelineRect.bottom),
+        issueScrollerCanScroll: issueScroll.scrollHeight > issueScroll.clientHeight + 120,
+        hasInternalTimelineScroll: Boolean(document.querySelector("[data-testid='comment-thread-timeline-scroll']")),
+        activityMovesWithIssueScroll: Math.round(before.activityTop - afterActivityTop),
+        propertiesMovesWithIssueScroll: Math.round(before.propertiesTop - afterPropertiesTop),
+        composerBottomGap: Math.round(issueScrollRect.bottom - after.bottom),
+        timelineTop: Math.round(timelineRect.top),
+        timelineBottom: Math.round(timelineRect.bottom),
+        composerTop: Math.round(after.top),
         composerVisibleInPanel: after.bottom <= panelRect.bottom + 1 && after.top >= panelRect.top - 1,
       };
     });
 
     expect(metrics).not.toBeNull();
-    expect(metrics!.timelineCanScroll).toBe(true);
-    expect(metrics!.composerTopDelta).toBeLessThanOrEqual(2);
+    expect(metrics!.issueScrollerCanScroll).toBe(true);
+    expect(metrics!.hasInternalTimelineScroll).toBe(false);
+    expect(metrics!.activityMovesWithIssueScroll).toBeGreaterThan(120);
+    expect(metrics!.propertiesMovesWithIssueScroll).toBeGreaterThan(120);
     expect(metrics!.composerBottomGap).toBeGreaterThanOrEqual(0);
     expect(metrics!.composerBottomGap).toBeLessThanOrEqual(28);
-    expect(metrics!.timelineToComposerGap).toBeGreaterThanOrEqual(-2);
+    expect(metrics!.timelineTop).toBeLessThan(metrics!.composerTop);
+    expect(metrics!.timelineBottom).toBeGreaterThan(metrics!.composerTop);
     expect(metrics!.composerVisibleInPanel).toBe(true);
 
     await page.screenshot({
-      path: testInfo.outputPath("chat-side-panel-issue-composer-pinned.png"),
+      path: testInfo.outputPath("chat-side-panel-issue-single-scroll-flow.png"),
       fullPage: false,
     });
   });
