@@ -3498,7 +3498,7 @@ export function MessengerContextSidebar() {
     const preserveUnreadEmphasis = selectedReadEmphasisKey === thread.threadKey;
     if (thread.kind === "chat" && conversation) {
       const agentId = resolveChatAgentId(conversation);
-      const localTitleMutationAllowed = !isFeishuBackedConversation(conversation);
+      const archiveDeleteAllowed = !isFeishuBackedConversation(conversation);
       return (
         <ChatThreadRow
           key={thread.threadKey}
@@ -3514,11 +3514,11 @@ export function MessengerContextSidebar() {
           renameDraft={renameDraft}
           onRenameDraftChange={setRenameDraft}
           onCommitRename={submitRename}
-          onStartRename={localTitleMutationAllowed ? () => {
+          onStartRename={() => {
             setRenamingConversationId(conversation.id);
             setRenameDraft(conversation.title);
-          } : undefined}
-          onRegenerateTitle={canRegenerateChatTitles && localTitleMutationAllowed ? () => regenerateTitleMutation.mutate(conversation.id) : undefined}
+          }}
+          onRegenerateTitle={canRegenerateChatTitles ? () => regenerateTitleMutation.mutate(conversation.id) : undefined}
           titleGenerating={generatingChatTitleIds.has(conversation.id)}
           onFork={() => forkConversationMutation.mutate(conversation.id)}
           onArchive={() => {
@@ -3543,7 +3543,7 @@ export function MessengerContextSidebar() {
               generating: isChatGenerationActive(conversation.id),
             });
           }}
-          archiveDeleteAllowed={localTitleMutationAllowed}
+          archiveDeleteAllowed={archiveDeleteAllowed}
           onTogglePin={() => {
             if (model.selectedOrganizationId) {
               markMessengerChatPinnedInCache(queryClient, model.selectedOrganizationId, conversation.id, !conversation.isPinned);

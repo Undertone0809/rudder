@@ -620,7 +620,7 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(thread?.textContent).toContain("Feishu");
   });
 
-  it("hides local title and archive actions for Feishu-bound chat threads", () => {
+  it("keeps Feishu-bound chat threads send-locked while allowing title actions", async () => {
     chatList = [baseConversation({
       mutability: "external_bound_chat",
       sourceMetadata: { source: "agent_integration", provider: "feishu" },
@@ -648,10 +648,37 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(actionLabels).toContain("Mark as Unread");
     expect(actionLabels).toContain("Copy Chat Link");
     expect(actionLabels).toContain("Fork");
-    expect(actionLabels).not.toContain("Rename");
-    expect(actionLabels.some((label) => label?.includes("Regenerate title"))).toBe(false);
+    expect(actionLabels).toContain("Rename");
+    expect(actionLabels.some((label) => label?.includes("Regenerate title"))).toBe(true);
     expect(actionLabels).not.toContain("Archive");
     expect(actionLabels).not.toContain("Delete");
+
+    const rename = Array.from(thread?.querySelectorAll("button") ?? [])
+      .find((button) => button.textContent?.trim() === "Rename") as HTMLButtonElement | undefined;
+    await act(async () => {
+      rename?.click();
+      await Promise.resolve();
+    });
+    const input = thread?.querySelector("input");
+    expect(input?.value).toBe("hi");
+    const valueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+    await act(async () => {
+      valueSetter?.call(input!, "Renamed Feishu Chat");
+      input?.dispatchEvent(new Event("input", { bubbles: true }));
+      input?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(mockUpdateConversation).toHaveBeenCalledWith("chat-1", { title: "Renamed Feishu Chat" });
+
+    const regenerate = Array.from(thread?.querySelectorAll("button") ?? [])
+      .find((button) => button.textContent?.includes("Regenerate title")) as HTMLButtonElement | undefined;
+    await act(async () => {
+      regenerate?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockRegenerateTitle).toHaveBeenCalledWith("chat-1");
   });
 
   it("optimistically removes an archived chat from active Messenger caches before the update request resolves", async () => {

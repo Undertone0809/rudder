@@ -1,5 +1,20 @@
 import { expect, test, type Page } from "@playwright/test";
-import { E2E_CODEX_STUB } from "./support/e2e-env";
+import { randomUUID } from "node:crypto";
+import {
+  agentIntegrationChatBindings,
+  agentIntegrations,
+  chatConversations,
+  chatMessages,
+  createDb,
+  organizationSecrets,
+} from "../../packages/db/src/index.ts";
+import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
+
+const e2eDb = createDb(E2E_DATABASE_URL);
+
+test.afterAll(async () => {
+  await (e2eDb as unknown as { $client?: { end: () => Promise<void> } }).$client?.end();
+});
 
 async function createOrganization(page: Page, name: string) {
   const orgRes = await page.request.post("/api/orgs", {
@@ -148,5 +163,109 @@ test.describe("Messenger chat title regeneration", () => {
     expect((await regenerateResponse).ok()).toBe(true);
 
     await expect(threadRow).toContainText("Generated sidebar title", { timeout: 15_000 });
+  });
+
+  test("supports Feishu-bound chat title actions while keeping destructive local actions hidden", async ({ page }) => {
+    const organization = await createOrganization(page, `Feishu-Title-Regenerate-${Date.now()}`);
+    const agent = await createChatAgent(page, organization.id);
+    await configureFastTitleProfile(page, organization.id, "Generated Feishu sidebar title");
+
+    const conversationId = randomUUID();
+    const integrationId = randomUUID();
+    const secretId = randomUUID();
+    const externalChatId = `oc_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+
+    await e2eDb.insert(organizationSecrets).values({
+      id: secretId,
+      orgId: organization.id,
+      name: `Feishu credentials ${secretId}`,
+      provider: "local_encrypted",
+    });
+    await e2eDb.insert(agentIntegrations).values({
+      id: integrationId,
+      orgId: organization.id,
+      agentId: agent.id,
+      provider: "feishu",
+      status: "active",
+      transport: "long_connection",
+      providerRegion: "feishu_cn",
+      appCredentialSecretId: secretId,
+      externalAppId: `cli_${randomUUID().replace(/-/g, "")}`,
+      externalBotOpenId: "ou_feishu_title_bot",
+    });
+    await e2eDb.insert(chatConversations).values({
+      id: conversationId,
+      orgId: organization.id,
+      title: "hi",
+      summary: "A Feishu-origin chat that should be locally read-only except for Rudder title generation.",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      preferredAgentId: agent.id,
+      lastMessageAt: new Date("2026-07-09T08:30:00.000Z"),
+      createdAt: new Date("2026-07-09T08:00:00.000Z"),
+      updatedAt: new Date("2026-07-09T08:30:00.000Z"),
+    });
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "hi, what skill do you have?",
+      createdAt: new Date("2026-07-09T08:30:00.000Z"),
+      updatedAt: new Date("2026-07-09T08:30:00.000Z"),
+    });
+    await e2eDb.insert(agentIntegrationChatBindings).values({
+      orgId: organization.id,
+      integrationId,
+      conversationId,
+      externalChatId,
+      externalChatType: "p2p",
+    });
+
+    await page.addInitScript((orgId: string) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${conversationId}`, { waitUntil: "domcontentloaded" });
+    const threadRow = page.getByTestId(`messenger-thread-chat-${conversationId}`);
+    await expect(threadRow).toContainText("hi", { timeout: 15_000 });
+    await expect(threadRow.getByTestId(`messenger-source-badge-chat-${conversationId}`)).toHaveText("Feishu");
+
+    await threadRow.hover();
+    await threadRow.getByRole("button", { name: "Chat actions" }).click();
+    await expect(page.getByRole("menuitem", { name: "Rename" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Archive" })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
+    const renameResponse = page.waitForResponse((response) =>
+      response.url().includes(`/api/chats/${conversationId}`)
+        && !response.url().includes("/title/regenerate")
+        && response.request().method() === "PATCH",
+    );
+    await page.getByRole("menuitem", { name: "Rename" }).click();
+    const renameInput = threadRow.locator("input");
+    await expect(renameInput).toBeVisible();
+    await renameInput.fill("Renamed Feishu sidebar title");
+    await renameInput.press("Enter");
+    expect((await renameResponse).ok()).toBe(true);
+    await expect(threadRow).toContainText("Renamed Feishu sidebar title", { timeout: 15_000 });
+
+    await threadRow.hover();
+    await threadRow.getByRole("button", { name: "Chat actions" }).click();
+    const regenerateResponse = page.waitForResponse((response) =>
+      response.url().includes(`/api/chats/${conversationId}/title/regenerate`)
+        && response.request().method() === "POST",
+    );
+    await page.getByRole("menuitem", { name: "Regenerate title" }).click();
+    expect((await regenerateResponse).ok()).toBe(true);
+
+    await expect(threadRow).toContainText("Generated Feishu sidebar title", { timeout: 15_000 });
+    const chatRes = await page.request.get(`/api/chats/${conversationId}`);
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json() as { title: string; mutability: string; sourceMetadata: unknown | null };
+    expect(chat.title).toBe("Generated Feishu sidebar title");
+    expect(chat.mutability).toBe("external_bound_chat");
+    expect(chat.sourceMetadata).toMatchObject({ source: "agent_integration", provider: "feishu" });
   });
 });

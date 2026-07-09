@@ -58,6 +58,7 @@ const mockState = vi.hoisted(() => ({
   setBreadcrumbs: vi.fn(),
   stopMessageStream: vi.fn(),
   streamDrafts: {} as Record<string, ChatStreamDraft>,
+  intelligenceProfiles: [] as Array<{ id: string; orgId: string; purpose: string; status: string }>,
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -188,6 +189,9 @@ vi.mock("@tanstack/react-query", () => ({
     }
     if (queryKey[0] === "organizations" && queryKey[2] === "workspace-mention-files") {
       return { data: { entries: [] }, isPending: false, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "organizations" && queryKey[2] === "intelligence-profiles") {
+      return { data: mockState.intelligenceProfiles, isPending: false, isLoading: false, error: null };
     }
     if (queryKey[0] === "organization-skills") {
       return { data: [], isPending: false, isLoading: false, error: null };
@@ -327,6 +331,10 @@ vi.mock("@/api/chats", () => ({
     update: vi.fn(async (_chatId: string, patch: Partial<ChatConversation>) => ({
       ...mockState.conversations[0],
       ...patch,
+    })),
+    regenerateTitle: vi.fn(async (chatId: string) => ({
+      ...mockState.conversations.find((conversation) => conversation.id === chatId),
+      title: "Regenerated Feishu title",
     })),
     stopMessageStream: mockState.stopMessageStream,
     sendMessageStream: mockState.sendMessageStream,
@@ -2716,7 +2724,10 @@ describe("Feishu-backed chat controls", () => {
     expect(container.querySelector("textarea[aria-label='Composer draft']")).not.toBeNull();
   });
 
-  it("hides local mutation actions for Feishu-backed chats", async () => {
+  it("keeps Feishu-backed chats send-locked while allowing title actions", async () => {
+    mockState.intelligenceProfiles = [
+      { id: "profile-lightweight", orgId: "org-1", purpose: "lightweight", status: "configured" },
+    ];
     mockState.conversations = [feishuChat()];
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "plain-user-message", body: "Message from Feishu" })],
@@ -2758,9 +2769,9 @@ describe("Feishu-backed chat controls", () => {
 
     expect(document.body.textContent).toContain("Pin");
     expect(document.body.textContent).toContain("Fork");
+    expect(document.body.textContent).toContain("Rename");
+    expect(document.body.textContent).toContain("Regenerate title");
     expect(document.body.textContent).not.toContain("Open Side Panel");
-    expect(document.body.textContent).not.toContain("Rename");
-    expect(document.body.textContent).not.toContain("Regenerate title");
     expect(document.body.textContent).not.toContain("Delete");
     expect(document.body.textContent).not.toContain("Archive");
   });

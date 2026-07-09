@@ -1219,7 +1219,7 @@ describe("chat routes", () => {
       }],
     });
     mockChatService.getById.mockResolvedValue(conversation);
-    mockChatService.listMessages.mockResolvedValue([]);
+    mockChatService.listMessages.mockResolvedValueOnce([]);
     mockProjectService.getById.mockResolvedValue({
       id: "10000000-0000-4000-8000-000000000010",
       orgId: "organization-1",
@@ -1272,7 +1272,7 @@ describe("chat routes", () => {
     const conversation = createConversation();
     const updatedConversation = createConversation({ contextLinks: [] });
     mockChatService.getById.mockResolvedValue(conversation);
-    mockChatService.listMessages.mockResolvedValue([]);
+    mockChatService.listMessages.mockResolvedValueOnce([]);
     mockChatService.setProjectContextLink.mockResolvedValue(updatedConversation);
 
     const res = await request(createApp())
@@ -2347,18 +2347,38 @@ describe("chat routes", () => {
     expect(mockChatService.update).not.toHaveBeenCalled();
   });
 
-  it("rejects regenerating titles for Feishu-bound chat conversations", async () => {
+  it("regenerates titles for Feishu-bound chat conversations without enabling local chat mutation", async () => {
     mockChatService.getById.mockResolvedValue(createFeishuBackedConversation());
+    mockChatService.listMessages.mockResolvedValue([
+      createMessage("message-user", "user", "message", "hi, what skill do you have?"),
+      createMessage("message-assistant", "assistant", "message", "flomo-local-api skill-creator"),
+    ]);
+    mockProductIntelligenceService.execute.mockResolvedValueOnce({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: "Available Skills Inquiry",
+    });
+    mockChatService.update.mockResolvedValueOnce(createFeishuBackedConversation({ title: "Available Skills Inquiry" }));
 
     const res = await request(createApp())
       .post("/api/chats/chat-1/title/regenerate")
       .send();
 
-    expect(res.status).toBe(409);
-    expect(res.body).toEqual({ error: "Fork this Feishu chat to continue in Rudder" });
-    expect(mockChatService.listMessages).not.toHaveBeenCalled();
-    expect(mockProductIntelligenceService.execute).not.toHaveBeenCalled();
-    expect(mockChatService.update).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(mockChatService.listMessages).toHaveBeenCalledWith("chat-1", { includeTranscript: false });
+    expect(mockProductIntelligenceService.execute).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: "organization-1",
+      purpose: "lightweight",
+      feature: "chat_title",
+      prompt: expect.stringContaining("hi, what skill do you have?"),
+    }));
+    expect(mockChatService.update).toHaveBeenCalledWith("chat-1", { title: "Available Skills Inquiry" });
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "chat.title_regenerated",
+      entityId: "chat-1",
+      details: expect.objectContaining({ title: "Available Skills Inquiry" }),
+    }));
   });
 
   it("rejects archiving Feishu-bound chat conversations", async () => {
@@ -2367,6 +2387,47 @@ describe("chat routes", () => {
     const res = await request(createApp())
       .patch("/api/chats/chat-1")
       .send({ status: "archived" });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("Fork this Feishu chat to continue in Rudder");
+    expect(mockChatService.update).not.toHaveBeenCalled();
+  });
+
+  it("renames Feishu-bound chat conversations without enabling other local mutation fields", async () => {
+    mockChatService.getById.mockResolvedValue(createFeishuBackedConversation());
+    mockChatService.update.mockResolvedValueOnce(createFeishuBackedConversation({ title: "Renamed Feishu Chat" }));
+
+    const res = await request(createApp())
+      .patch("/api/chats/chat-1")
+      .send({ title: "Renamed Feishu Chat" });
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.update).toHaveBeenCalledWith("chat-1", { title: "Renamed Feishu Chat" });
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "chat.updated",
+      entityId: "chat-1",
+      details: { title: "Renamed Feishu Chat" },
+    }));
+  });
+
+  it.each([
+    ["summary", { title: "Renamed Feishu Chat", summary: "Local summary update" }],
+    ["preferred agent", { title: "Renamed Feishu Chat", preferredAgentId: "10000000-0000-4000-8000-000000000001" }],
+    ["primary issue", { title: "Renamed Feishu Chat", primaryIssueId: "10000000-0000-4000-8000-000000000002" }],
+    ["routed agent", { title: "Renamed Feishu Chat", routedAgentId: "10000000-0000-4000-8000-000000000003" }],
+    ["issue creation mode", { title: "Renamed Feishu Chat", issueCreationMode: "auto_create" }],
+    ["plan mode", { title: "Renamed Feishu Chat", planMode: true }],
+    ["context links", {
+      title: "Renamed Feishu Chat",
+      contextLinks: [{ entityType: "issue", entityId: "10000000-0000-4000-8000-000000000004" }],
+    }],
+    ["status", { title: "Renamed Feishu Chat", status: "archived" }],
+  ])("rejects mixed title and %s patches for Feishu-bound chat conversations", async (_label, payload) => {
+    mockChatService.getById.mockResolvedValue(createFeishuBackedConversation());
+
+    const res = await request(createApp())
+      .patch("/api/chats/chat-1")
+      .send(payload);
 
     expect(res.status).toBe(409);
     expect(res.body.error).toBe("Fork this Feishu chat to continue in Rudder");

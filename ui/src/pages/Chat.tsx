@@ -1256,7 +1256,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     if (agentSelectionLocked) {
       setAgentMenuOpen(false); } }, [agentSelectionLocked]);
   const loadError = conversationsQuery.error ?? conversationQuery.error ?? messagesQuery.error ?? agentsError ?? organizationSkillsError ?? activeAgentSkillsError ?? projectsError ?? issuesError;
-  const loadErrorMessage = loadError instanceof Error ? loadError.message : loadError ? "Failed to load chat data." : null; const startActiveConversationRename = () => { if (!selectedConversation || selectedConversationExternalBound) return; setRenamingConversationId(selectedConversation.id); setRenameDraft(selectedConversation.title); }; const submitActiveConversationRename = () => { if (!selectedConversation || selectedConversationExternalBound || renamingConversationId !== selectedConversation.id) return; const trimmed = renameDraft.trim(); setRenamingConversationId(null); if (!trimmed || trimmed === selectedConversation.title) return; renameConversationMutation.mutate({ chatId: selectedConversation.id, title: trimmed }); }; const copyActiveConversationLink = async () => { if (!selectedConversation) return;
+  const loadErrorMessage = loadError instanceof Error ? loadError.message : loadError ? "Failed to load chat data." : null; const startActiveConversationRename = () => { if (!selectedConversation) return; setRenamingConversationId(selectedConversation.id); setRenameDraft(selectedConversation.title); }; const submitActiveConversationRename = () => { if (!selectedConversation || renamingConversationId !== selectedConversation.id) return; const trimmed = renameDraft.trim(); setRenamingConversationId(null); if (!trimmed || trimmed === selectedConversation.title) return; renameConversationMutation.mutate({ chatId: selectedConversation.id, title: trimmed }); }; const copyActiveConversationLink = async () => { if (!selectedConversation) return;
     try {
       await navigator.clipboard.writeText(chatReferenceMarkdown(selectedConversation));
       pushToast({ title: "Copied chat link", tone: "success" });
@@ -1991,13 +1991,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="surface-overlay text-foreground">
-                    {!selectedConversationExternalBound ? (
-                      <DropdownMenuItem onClick={startActiveConversationRename}>
-                        <PencilLine className="h-4 w-4" />
-                        Rename
-                      </DropdownMenuItem>
-                    ) : null}
-                    {canRegenerateChatTitles && !selectedConversationExternalBound ? (
+                    <DropdownMenuItem onClick={startActiveConversationRename}>
+                      <PencilLine className="h-4 w-4" />
+                      Rename
+                    </DropdownMenuItem>
+                    {canRegenerateChatTitles ? (
                       <DropdownMenuItem
                         disabled={selectedConversationTitleGenerating || regenerateTitleMutation.isPending}
                         onClick={() => regenerateTitleMutation.mutate(selectedConversation.id)}

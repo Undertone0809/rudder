@@ -181,6 +181,11 @@ export function chatRoutes(db: Db, storage: StorageService) {
     }
   }
 
+  function isTitleOnlyChatUpdate(body: Record<string, unknown>) {
+    const keys = Object.keys(body);
+    return keys.length === 1 && keys[0] === "title";
+  }
+
   const startChatTitleGeneration = chatTitles.startAutomaticGeneration;
 
   async function generateChatTitle(orgId: string, prompt: string) {
@@ -1253,7 +1258,9 @@ export function chatRoutes(db: Db, storage: StorageService) {
       res.status(404).json({ error: "Chat conversation not found" });
       return;
     }
-    assertChatLocalMutationAllowed(existing as ChatConversation);
+    if ((existing as ChatConversation).mutability === "external_bound_chat" && !isTitleOnlyChatUpdate(req.body)) {
+      assertChatLocalMutationAllowed(existing as ChatConversation);
+    }
     if (req.body.primaryIssueId) {
       const issue = await issuesSvc.getById(req.body.primaryIssueId);
       if (!issue || issue.orgId !== existing.orgId) {
@@ -1301,8 +1308,6 @@ export function chatRoutes(db: Db, storage: StorageService) {
       res.status(404).json({ error: "Chat conversation not found" });
       return;
     }
-    assertChatLocalMutationAllowed(existing as ChatConversation);
-
     const messages = await svc.listMessages(existing.id, { includeTranscript: false });
     const prompt = buildChatTitlePromptFromMessages(messages as ChatMessage[]);
     if (!prompt) {
