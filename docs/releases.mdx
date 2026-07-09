@@ -18,6 +18,30 @@ npx @rudderhq/cli@latest start
 
 This changelog tracks stable releases only. Canary builds are published more frequently for validation and Desktop asset testing; use [GitHub Releases](https://github.com/Undertone0809/rudder/releases) when you need prerelease history.
 
+## v0.4.4
+
+Released: 2026-07-09
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.4.4)
+
+### New Features
+
+- Added a global side panel workbench that can open chat references, Library entries, local pages, and issue context without forcing operators out of the active conversation.
+- Added first-party Rudder Agent MCP tools and managed runtime injection so local agent runtimes can use scoped Rudder control-plane actions from their normal work sessions.
+- Added organization workspace and Library improvements, including friendly workspace folders, backup zip support, Library copy actions, hidden-section reveal controls, and a default app file opener.
+
+### Improvements
+
+- Improved Messenger and issue-detail workflows with editable expanded issue panels, steadier pinned groups, better composer reference tokens, more reliable scrolling, and the global new-chat shortcut.
+- Improved Codex, Claude, OpenCode, and Pi runtime behavior around startup memory filenames, cleanup-warning filtering, runtime availability reporting, boot-failure classification, and active update handoff.
+- Improved dashboard, navigation, and release polish with token cache ratio metrics, website favicon alignment, safer legacy-route rails, and expanded release/product contract documentation.
+
+### Bug Fixes
+
+- Fixed side panel browser readiness, local URL loading, chat branch switching during streams, stopped-reply leakage, and several side panel layout regressions.
+- Fixed website metadata icons, markdown card previews, issue mention status icons, Library tabs, and pinned Messenger row alignment.
+- Fixed CI health checks, heartbeat fallback preflight stability, Feishu markdown card handling, Feishu stop-reply wait coverage, and workspace map write serialization.
+
 ## v0.4.2
 
 Released: 2026-06-30

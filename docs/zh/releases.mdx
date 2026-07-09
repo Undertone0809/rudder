@@ -18,6 +18,30 @@ npx @rudderhq/cli@latest start
 
 这个页面只记录稳定版本。Canary 会更频繁地用于验证和 Desktop 资产测试；如果需要查看预发布历史，可以看 [GitHub Releases](https://github.com/Undertone0809/rudder/releases)。
 
+## v0.4.4
+
+发布时间：2026-07-09
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.4.4)
+
+### New Features
+
+- 增加全局 side panel workbench，可以在不离开当前 conversation 的情况下打开 chat references、Library entries、local pages 和 issue context。
+- 增加 first-party Rudder Agent MCP tools 和 managed runtime injection，让 local agent runtimes 可以在正常 work session 中使用 scoped Rudder control-plane actions。
+- 增加 organization workspace 和 Library 改进，包括 friendly workspace folders、backup zip support、Library copy actions、hidden-section reveal controls 和 default app file opener。
+
+### Improvements
+
+- 改善 Messenger 和 issue-detail workflows，包括可编辑的 expanded issue panels、更稳定的 pinned groups、更好的 composer reference tokens、更可靠的 scrolling，以及 global new-chat shortcut。
+- 改善 Codex、Claude、OpenCode 和 Pi runtime behavior，覆盖 startup memory filenames、cleanup-warning filtering、runtime availability reporting、boot-failure classification 和 active update handoff。
+- 改善 dashboard、navigation 和 release polish，包括 token cache ratio metrics、website favicon alignment、更安全的 legacy-route rails，以及扩展后的 release/product contract documentation。
+
+### Bug Fixes
+
+- 修复 side panel browser readiness、local URL loading、stream 期间的 chat branch switching、stopped-reply leakage，以及多个 side panel layout regressions。
+- 修复 website metadata icons、markdown card previews、issue mention status icons、Library tabs 和 pinned Messenger row alignment。
+- 修复 CI health checks、heartbeat fallback preflight stability、Feishu markdown card handling、Feishu stop-reply wait coverage 和 workspace map write serialization。
+
 ## v0.4.2
 
 发布时间：2026-06-30
