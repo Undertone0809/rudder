@@ -270,7 +270,15 @@ if [ "$dry_run" = true ]; then
     [ -z "$pkg_dir" ] && continue
     release_info "  --- $pkg_dir ---"
     cd "$REPO_ROOT/$pkg_dir"
-    npm publish --dry-run --tag "$DIST_TAG" --access public --no-git-checks 2>&1 | tail -3
+    npm_dry_run_output="$(mktemp)"
+    if npm publish --dry-run --tag "$DIST_TAG" --access public --no-git-checks >"$npm_dry_run_output" 2>&1; then
+      tail -3 "$npm_dry_run_output"
+    else
+      cat "$npm_dry_run_output" >&2
+      rm -f "$npm_dry_run_output"
+      release_fail "npm dry-run failed for $pkg_dir"
+    fi
+    rm -f "$npm_dry_run_output"
   done <<< "$VERSIONED_PACKAGE_INFO"
   release_info "  [dry-run] Would create git tag $tag_name on $CURRENT_SHA"
 else
