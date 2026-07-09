@@ -1,4 +1,4 @@
-import { index, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
 import { organizationSecrets } from "./organization_secrets.js";
 import { organizations } from "./organizations.js";
@@ -21,6 +21,7 @@ export const agentIntegrations = pgTable(
     externalTenantKey: text("external_tenant_key"),
     installerUserId: text("installer_user_id"),
     manageUrl: text("manage_url"),
+    settings: jsonb("settings").$type<Record<string, unknown>>().notNull().default({}),
     installedAt: timestamp("installed_at", { withTimezone: true }).notNull().defaultNow(),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

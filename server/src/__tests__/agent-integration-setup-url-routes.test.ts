@@ -16,6 +16,7 @@ const mockAgentIntegrationService = vi.hoisted(() => ({
   listForAgent: vi.fn(),
   markErrorForAgent: vi.fn(),
   revokeForAgent: vi.fn(),
+  updateSettingsForAgent: vi.fn(),
 }));
 const mockSecretService = vi.hoisted(() => ({
   create: vi.fn(),
@@ -143,6 +144,32 @@ describe("agent integration setup URL routes", () => {
       externalTenantKey: null,
       installerUserId: "ou_installer",
       manageUrl: "https://open.feishu.cn/app/cli_registered",
+      installedAt: new Date("2026-06-21T00:00:00.000Z"),
+      revokedAt: null,
+      createdAt: new Date("2026-06-21T00:00:00.000Z"),
+      updatedAt: new Date("2026-06-21T00:00:00.000Z"),
+    });
+    mockAgentIntegrationService.updateSettingsForAgent.mockResolvedValue({
+      id: "integration-1",
+      orgId,
+      agentId,
+      provider: "feishu",
+      status: "active",
+      transport: "long_connection",
+      providerRegion: "feishu_cn",
+      appCredentialSecretId: "44444444-4444-4444-8444-444444444444",
+      externalAppId: "cli_registered",
+      externalBotOpenId: null,
+      externalTenantKey: null,
+      installerUserId: "ou_installer",
+      manageUrl: "https://open.feishu.cn/app/cli_registered",
+      settings: {
+        feishu: {
+          dailySessionRolloverEnabled: true,
+          dailySessionRolloverHours: 24,
+          dailySessionRolloverNotifyFeishu: false,
+        },
+      },
       installedAt: new Date("2026-06-21T00:00:00.000Z"),
       revokedAt: null,
       createdAt: new Date("2026-06-21T00:00:00.000Z"),
@@ -287,6 +314,49 @@ describe("agent integration setup URL routes", () => {
       setupUrl: "https://open.feishu.cn/page/launcher?from=sdk&name=Builder+-+Rudder",
       status: "waiting_for_authorization",
       integration: null,
+    });
+  });
+
+  it("updates Feishu daily session notification settings for board users", async () => {
+    const res = await request(createApp({
+      type: "board",
+      userId: "user-1",
+      orgIds: [orgId],
+      source: "session",
+      isInstanceAdmin: false,
+    }))
+      .patch(`/api/agents/${agentId}/integrations/integration-1/settings`)
+      .send({
+        settings: {
+          feishu: {
+            dailySessionRolloverEnabled: true,
+            dailySessionRolloverHours: 24,
+            dailySessionRolloverNotifyFeishu: false,
+          },
+        },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockAgentIntegrationService.updateSettingsForAgent).toHaveBeenCalledWith(
+      orgId,
+      agentId,
+      "integration-1",
+      {
+        feishu: {
+          dailySessionRolloverEnabled: true,
+          dailySessionRolloverHours: 24,
+          dailySessionRolloverNotifyFeishu: false,
+        },
+      },
+    );
+    expect(res.body).toMatchObject({
+      id: "integration-1",
+      hasCredentialSecret: true,
+      settings: {
+        feishu: {
+          dailySessionRolloverNotifyFeishu: false,
+        },
+      },
     });
   });
 

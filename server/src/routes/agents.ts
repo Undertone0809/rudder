@@ -30,6 +30,7 @@ import {
   RUDDER_AGENT_V1_MCP_SERVER_NAME,
   RUDDER_AGENT_V1_MCP_TOOL_NAMES,
   testAgentRuntimeEnvironmentSchema,
+  updateAgentIntegrationSettingsSchema,
   updateCustomIntegrationBindingSchema,
   type AgentControlPlaneIntegrationSummary,
   type AgentIntegrationProviderRegion,
@@ -1716,6 +1717,32 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     });
     res.status(201).json(summarizeAgentIntegration(integration));
   });
+
+  router.patch(
+    "/agents/:id/integrations/:integrationId/settings",
+    validate(updateAgentIntegrationSettingsSchema),
+    async (req, res) => {
+      const id = req.params.id as string;
+      const integrationId = req.params.integrationId as string;
+      const agent = await svc.getById(id);
+      if (!agent) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+      await assertCanUpdateAgent(req, agent);
+      const updated = await integrationsSvc.updateSettingsForAgent(
+        agent.orgId,
+        agent.id,
+        integrationId,
+        req.body.settings,
+      );
+      if (!updated) {
+        res.status(404).json({ error: "Integration not found" });
+        return;
+      }
+      res.json(summarizeAgentIntegration(updated));
+    },
+  );
 
   router.delete("/agents/:id/integrations/:integrationId", async (req, res) => {
     const id = req.params.id as string;

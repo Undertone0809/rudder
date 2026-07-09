@@ -36,6 +36,22 @@ export const connectAgentIntegrationSchema = createAgentIntegrationSchema.omit({
 
 export type ConnectAgentIntegration = z.infer<typeof connectAgentIntegrationSchema>;
 
+export const feishuIntegrationSettingsSchema = z.object({
+  dailySessionRolloverEnabled: z.boolean().default(true),
+  dailySessionRolloverHours: z.number().int().min(1).max(168).default(24),
+  dailySessionRolloverNotifyFeishu: z.boolean().default(true),
+});
+
+export const agentIntegrationSettingsSchema = z.object({
+  feishu: feishuIntegrationSettingsSchema.optional(),
+}).default({});
+
+export const updateAgentIntegrationSettingsSchema = z.object({
+  settings: agentIntegrationSettingsSchema,
+});
+
+export type UpdateAgentIntegrationSettings = z.infer<typeof updateAgentIntegrationSettingsSchema>;
+
 const feishuEventHeaderSchema = z.object({
   event_id: z.string().min(1).optional(),
   app_id: z.string().min(1).optional(),

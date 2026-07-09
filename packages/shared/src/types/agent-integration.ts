@@ -22,10 +22,21 @@ export interface AgentIntegration {
   externalTenantKey: string | null;
   installerUserId: string | null;
   manageUrl: string | null;
+  settings: AgentIntegrationSettings;
   installedAt: Date;
   revokedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface AgentIntegrationSettings {
+  feishu?: FeishuIntegrationSettings;
+}
+
+export interface FeishuIntegrationSettings {
+  dailySessionRolloverEnabled: boolean;
+  dailySessionRolloverHours: number;
+  dailySessionRolloverNotifyFeishu: boolean;
 }
 
 export type AgentIntegrationSummary = Omit<AgentIntegration, "appCredentialSecretId"> & {

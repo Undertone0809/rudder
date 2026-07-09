@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -336,6 +337,30 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
       });
     },
   });
+  const updateIntegrationSettings = useMutation({
+    mutationFn: (input: { integrationId: string; notifyFeishu: boolean }) =>
+      agentsApi.updateIntegrationSettings(agent.id, input.integrationId, {
+        settings: {
+          feishu: {
+            dailySessionRolloverEnabled: true,
+            dailySessionRolloverHours: 24,
+            dailySessionRolloverNotifyFeishu: input.notifyFeishu,
+          },
+        },
+      }, orgId),
+    onSuccess: async () => {
+      pushToast({ title: "Feishu settings updated", tone: "success" });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.agents.integrations(agent.id) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agent.id) });
+    },
+    onError: (error) => {
+      pushToast({
+        title: "Failed to update Feishu settings",
+        body: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
+    },
+  });
   const createCustomIntegration = useMutation({
     mutationFn: (form: CustomIntegrationFormState) => {
       const credentialValue = form.credentialValue.trim();
@@ -577,7 +602,16 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
                 {feishuIntegration ? <IntegrationMetadata integration={feishuIntegration} /> : null}
               </>
             ) : feishuIntegration ? (
-              <IntegrationMetadata integration={feishuIntegration} />
+              <IntegrationMetadata
+                integration={feishuIntegration}
+                settingsPending={updateIntegrationSettings.isPending}
+                onDailySessionNotifyChange={(notifyFeishu) => {
+                  updateIntegrationSettings.mutate({
+                    integrationId: feishuIntegration.id,
+                    notifyFeishu,
+                  });
+                }}
+              />
             ) : null}
             <div className="flex flex-wrap justify-end gap-2">
               <Button
@@ -1180,7 +1214,20 @@ function IntegrationMeta({ label, value }: { label: string; value: string }) {
   );
 }
 
-function IntegrationMetadata({ integration }: { integration: AgentIntegrationSummary }) {
+function IntegrationMetadata({
+  integration,
+  settingsPending = false,
+  onDailySessionNotifyChange,
+}: {
+  integration: AgentIntegrationSummary;
+  settingsPending?: boolean;
+  onDailySessionNotifyChange?: (notifyFeishu: boolean) => void;
+}) {
+  const feishuSettings = integration.settings.feishu ?? {
+    dailySessionRolloverEnabled: true,
+    dailySessionRolloverHours: 24,
+    dailySessionRolloverNotifyFeishu: true,
+  };
   return (
     <div className="space-y-3">
       <dl className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
@@ -1194,6 +1241,24 @@ function IntegrationMetadata({ integration }: { integration: AgentIntegrationSum
           value={integration.hasCredentialSecret ? "Credential stored" : "Missing credential"}
         />
       </dl>
+      {integration.provider === "feishu" && onDailySessionNotifyChange ? (
+        <div className="rounded-md border border-border bg-muted/25 px-3 py-2 text-xs text-muted-foreground">
+          <label className="flex items-start gap-2">
+            <Checkbox
+              className="mt-0.5"
+              checked={feishuSettings.dailySessionRolloverNotifyFeishu}
+              disabled={settingsPending}
+              onCheckedChange={(checked) => onDailySessionNotifyChange(checked === true)}
+            />
+            <span>
+              <span className="block font-medium text-foreground">Notify Feishu when a daily session starts</span>
+              <span className="mt-1 block">
+                Send "New daily session started." when Rudder opens the next 24-hour Feishu session.
+              </span>
+            </span>
+          </label>
+        </div>
+      ) : null}
       <FeishuQuickCommandSetupNote providerName={setupProviderName(integration.providerRegion)} />
     </div>
   );

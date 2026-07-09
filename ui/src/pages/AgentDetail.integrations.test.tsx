@@ -79,6 +79,7 @@ vi.mock("../api/agents", () => ({
     }),
     listIntegrations: vi.fn(),
     revokeIntegration: vi.fn(),
+    updateIntegrationSettings: vi.fn(),
     listCustomIntegrations: vi.fn(),
     createCustomIntegration: vi.fn(),
     revokeCustomIntegration: vi.fn(),
@@ -119,6 +120,20 @@ function render(element: ReactNode) {
     root.render(element);
   });
   return container;
+}
+
+async function waitForAssertion(assertion: () => void | Promise<void>) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      await assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
+  throw lastError;
 }
 
 function agent(overrides: Partial<AgentDetail> = {}): AgentDetail {
@@ -186,6 +201,13 @@ function integration(overrides: Partial<AgentIntegrationSummary> = {}): AgentInt
     externalTenantKey: null,
     installerUserId: null,
     manageUrl: "https://open.feishu.cn/app/cli_a_app",
+    settings: {
+      feishu: {
+        dailySessionRolloverEnabled: true,
+        dailySessionRolloverHours: 24,
+        dailySessionRolloverNotifyFeishu: true,
+      },
+    },
     installedAt: new Date("2026-06-18T01:00:00.000Z"),
     revokedAt: null,
     createdAt: new Date("2026-06-18T01:00:00.000Z"),
@@ -576,6 +598,47 @@ describe("AgentIntegrationsTab", () => {
     expect(withCustom.textContent).toContain("This agent only");
     expect(withCustom.textContent).toContain("custom.linear-mcp.search_issues");
     expect(withCustom.textContent).toContain("Credential stored");
+  });
+
+  it("updates the Feishu daily session notification setting from the manage dialog", async () => {
+    const activeIntegration = integration();
+    vi.mocked(agentsApi.updateIntegrationSettings).mockResolvedValueOnce(
+      integration({
+        settings: {
+          feishu: {
+            dailySessionRolloverEnabled: true,
+            dailySessionRolloverHours: 24,
+            dailySessionRolloverNotifyFeishu: false,
+          },
+        },
+      }),
+    );
+    const rendered = render(<AgentIntegrationsTab agent={agent({ integrations: [activeIntegration] })} orgId="org-1" />);
+    const manageButtons = [...rendered.querySelectorAll("button")]
+      .filter((button) => button.textContent === "Manage");
+    const configureButton = manageButtons.at(-1);
+
+    act(() => {
+      configureButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(document.body.textContent).toContain("Notify Feishu when a daily session starts");
+    const checkbox = document.body.querySelector('[role="checkbox"]')!;
+    act(() => {
+      checkbox.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    await waitForAssertion(() => {
+      expect(agentsApi.updateIntegrationSettings).toHaveBeenCalledWith("agent-1", "integration-1", {
+        settings: {
+          feishu: {
+            dailySessionRolloverEnabled: true,
+            dailySessionRolloverHours: 24,
+            dailySessionRolloverNotifyFeishu: false,
+          },
+        },
+      }, "org-1");
+    });
   });
 });
 

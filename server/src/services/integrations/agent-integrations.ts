@@ -1,7 +1,7 @@
 import type { Db } from "@rudderhq/db";
 import { agentIntegrations, agents } from "@rudderhq/db";
 import type { AgentIntegrationSummary, CreateAgentIntegration } from "@rudderhq/shared";
-import { createAgentIntegrationSchema } from "@rudderhq/shared";
+import { agentIntegrationSettingsSchema, createAgentIntegrationSchema } from "@rudderhq/shared";
 import { and, desc, eq } from "drizzle-orm";
 import { conflict, notFound, unprocessable } from "../../errors.js";
 import { secretService } from "../secrets.js";
@@ -14,6 +14,7 @@ export function summarizeAgentIntegration(row: typeof agentIntegrations.$inferSe
     status: rest.status as AgentIntegrationSummary["status"],
     transport: rest.transport as AgentIntegrationSummary["transport"],
     providerRegion: rest.providerRegion as AgentIntegrationSummary["providerRegion"],
+    settings: agentIntegrationSettingsSchema.parse(rest.settings ?? {}),
     hasCredentialSecret: Boolean(_appCredentialSecretId),
   };
 }
@@ -169,5 +170,29 @@ export function agentIntegrationService(db: Db) {
         )
         .returning()
         .then((rows) => rows[0] ?? null),
+
+    updateSettingsForAgent: async (
+      orgId: string,
+      agentId: string,
+      integrationId: string,
+      settings: unknown,
+    ) => {
+      const parsed = agentIntegrationSettingsSchema.parse(settings ?? {});
+      return db
+        .update(agentIntegrations)
+        .set({
+          settings: parsed,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(agentIntegrations.orgId, orgId),
+            eq(agentIntegrations.agentId, agentId),
+            eq(agentIntegrations.id, integrationId),
+          ),
+        )
+        .returning()
+        .then((rows) => rows[0] ?? null);
+    },
   };
 }

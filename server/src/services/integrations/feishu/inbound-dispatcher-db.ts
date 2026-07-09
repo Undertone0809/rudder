@@ -7,6 +7,7 @@ import {
   agentIntegrationOutboundMessages,
   agentIntegrationUserBindings,
   agentIntegrations,
+  agents,
   chatContextLinks,
   chatConversations,
   chatGenerations,
@@ -14,14 +15,18 @@ import {
   organizationMemberships,
 } from "@rudderhq/db";
 import { formatMessengerTitle } from "@rudderhq/shared";
-import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
-import { createHash, randomBytes } from "node:crypto";
+import { and, asc, desc, eq, inArray, isNull, or } from "drizzle-orm";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { findServerAdapter } from "../../../agent-runtimes/registry.js";
 import { chatAgentRunService } from "../../chat-agent-runs.js";
 import { cancelActiveChatGeneration, getActiveChatGeneration } from "../../chat-generation-locks.js";
 import { chatTitleGenerationService } from "../../chat-title-generation.js";
 import { chatService } from "../../chats.js";
 import { issueService } from "../../issues.js";
 import { productIntelligenceService, type ProductIntelligenceExecuteInput } from "../../product-intelligence.js";
+import { executeAdapterWithModelFallbacks } from "../../runtime-kernel/model-fallback.js";
+import { secretService } from "../../secrets.js";
+import { runtimeResultText } from "../../title-generation.js";
 import type {
   AgentIntegrationInboundDispatcherDeps,
   FeishuInboundMessage,
@@ -29,6 +34,8 @@ import type {
 } from "./inbound-dispatcher.js";
 
 const BINDING_TOKEN_TTL_MS = 15 * 60 * 1000;
+const DEFAULT_DAILY_SESSION_ROLLOVER_HOURS = 24;
+const DAILY_SESSION_STARTED_TEXT = "New daily session started.";
 
 function isUniqueViolation(error: unknown) {
   return (error as { code?: unknown }).code === "23505";
@@ -66,6 +73,285 @@ function feishuQuickCommandMessage(command: "new" | "stop", event: FeishuInbound
     externalParentMessageId: event.parentMessageId ?? null,
     ...details,
   };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function readBoolean(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function readPositiveNumber(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function feishuSettings(integration: { settings?: unknown }) {
+  const settings = asRecord(integration.settings);
+  const feishu = asRecord(settings.feishu);
+  return {
+    dailySessionRolloverEnabled: readBoolean(feishu.dailySessionRolloverEnabled, true),
+    dailySessionRolloverHours: Math.min(168, Math.max(1, Math.floor(readPositiveNumber(
+      feishu.dailySessionRolloverHours,
+      DEFAULT_DAILY_SESSION_ROLLOVER_HOURS,
+    )))),
+    dailySessionRolloverNotifyFeishu: readBoolean(feishu.dailySessionRolloverNotifyFeishu, true),
+  };
+}
+
+function hasActiveGeneration(conversationId: string) {
+  return Boolean(getActiveChatGeneration(conversationId));
+}
+
+async function hasPersistedActiveGeneration(db: Db, conversationId: string) {
+  if (hasActiveGeneration(conversationId)) return true;
+  const row = await db
+    .select({ id: chatGenerations.id })
+    .from(chatGenerations)
+    .where(
+      and(
+        eq(chatGenerations.conversationId, conversationId),
+        inArray(chatGenerations.status, ["active", "tool_busy", "closing"]),
+      ),
+    )
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+  return Boolean(row);
+}
+
+async function buildDeterministicSessionSummary(db: Db, conversationId: string) {
+  const messages = await db
+    .select({
+      role: chatMessages.role,
+      body: chatMessages.body,
+      createdAt: chatMessages.createdAt,
+    })
+    .from(chatMessages)
+    .where(eq(chatMessages.conversationId, conversationId))
+    .orderBy(asc(chatMessages.createdAt))
+    .limit(8);
+  const userMessages = messages.filter((message) => message.role === "user");
+  const first = userMessages[0]?.body?.trim() || messages[0]?.body?.trim() || null;
+  const latest = userMessages.at(-1)?.body?.trim() || messages.at(-1)?.body?.trim() || null;
+  return {
+    source: "deterministic",
+    messageCount: messages.length,
+    summary: first && latest && first !== latest
+      ? `Previous Feishu session started with: ${first}\nLatest user message: ${latest}`
+      : first
+        ? `Previous Feishu session: ${first}`
+        : null,
+  };
+}
+
+async function buildSmartSessionSummary(input: {
+  db: Db;
+  productIntelligence: { execute(input: ProductIntelligenceExecuteInput): Promise<unknown> };
+  orgId: string;
+  conversationId: string;
+}) {
+  const messages = await input.db
+    .select({
+      role: chatMessages.role,
+      body: chatMessages.body,
+    })
+    .from(chatMessages)
+    .where(eq(chatMessages.conversationId, input.conversationId))
+    .orderBy(asc(chatMessages.createdAt))
+    .limit(40);
+  const transcript = messages
+    .filter((message) => message.role === "user" || message.role === "assistant")
+    .map((message) => `${message.role}: ${message.body}`)
+    .join("\n\n")
+    .trim();
+  if (!transcript) return null;
+  const result = await input.productIntelligence.execute({
+    orgId: input.orgId,
+    purpose: "reasoning",
+    feature: "feishu_daily_session_summary",
+    prompt: [
+      "Summarize this previous Feishu work session for the next Rudder session.",
+      "Return 3-6 concise bullets. Preserve decisions, open loops, and user preferences.",
+      "Do not invent facts.",
+      "",
+      transcript,
+    ].join("\n"),
+  });
+  const summary = runtimeResultText(result).trim();
+  return summary ? { source: "smart_intelligence", messageCount: messages.length, summary } : null;
+}
+
+async function buildAgentRuntimeSessionSummary(input: {
+  db: Db;
+  orgId: string;
+  agentId: string;
+  conversationId: string;
+}) {
+  const agent = await input.db
+    .select()
+    .from(agents)
+    .where(and(eq(agents.orgId, input.orgId), eq(agents.id, input.agentId)))
+    .then((rows) => rows[0] ?? null);
+  if (!agent) return null;
+  const adapter = findServerAdapter(agent.agentRuntimeType);
+  if (!adapter) return null;
+  const messages = await input.db
+    .select({
+      role: chatMessages.role,
+      body: chatMessages.body,
+    })
+    .from(chatMessages)
+    .where(eq(chatMessages.conversationId, input.conversationId))
+    .orderBy(asc(chatMessages.createdAt))
+    .limit(40);
+  const transcript = messages
+    .filter((message) => message.role === "user" || message.role === "assistant")
+    .map((message) => `${message.role}: ${message.body}`)
+    .join("\n\n")
+    .trim();
+  if (!transcript) return null;
+  const secrets = secretService(input.db);
+  const { config } = await secrets.resolveAdapterConfigForRuntime(input.orgId, agent.agentRuntimeConfig ?? {});
+  const prompt = [
+    "Summarize this previous Feishu work session for the next Rudder session.",
+    "Return 3-6 concise bullets. Preserve decisions, open loops, and user preferences.",
+    "Do not invent facts.",
+    "",
+    transcript,
+  ].join("\n");
+  const result = await executeAdapterWithModelFallbacks(adapter, {
+    runId: `feishu-session-summary-${randomUUID()}`,
+    agent: {
+      id: agent.id,
+      orgId: input.orgId,
+      name: agent.name,
+      agentRuntimeType: agent.agentRuntimeType,
+      agentRuntimeConfig: config,
+    },
+    runtime: {
+      sessionId: null,
+      sessionParams: null,
+      sessionDisplayId: null,
+      taskKey: null,
+    },
+    config: {
+      ...config,
+      promptTemplate: prompt,
+    },
+    context: {
+      chatPrompt: prompt,
+      rudderScene: "feishu_daily_session_summary",
+      chatConversationId: input.conversationId,
+    },
+    onLog: async () => {},
+  }, {
+    resolveAdapter: findServerAdapter,
+  });
+  const summary = runtimeResultText(result).trim();
+  return summary ? { source: "agent_runtime", messageCount: messages.length, summary } : null;
+}
+
+async function switchFeishuSession(input: {
+  db: Db;
+  integration: ResolvedAgentIntegration & { settings?: unknown };
+  userId: string | null;
+  event: FeishuInboundMessage;
+  previousConversationId: string;
+  reason: "manual_new" | "daily_rollover";
+  notifyFeishu: boolean;
+  includeSummary: boolean;
+  productIntelligence: { execute(input: ProductIntelligenceExecuteInput): Promise<unknown> };
+}) {
+  let summary = null;
+  if (input.includeSummary) {
+    try {
+      summary = await buildSmartSessionSummary({
+        db: input.db,
+        productIntelligence: input.productIntelligence,
+        orgId: input.integration.orgId,
+        conversationId: input.previousConversationId,
+      });
+    } catch {
+      summary = null;
+    }
+    if (!summary) {
+      try {
+        summary = await buildAgentRuntimeSessionSummary({
+          db: input.db,
+          orgId: input.integration.orgId,
+          agentId: input.integration.agentId,
+          conversationId: input.previousConversationId,
+        });
+      } catch {
+        summary = null;
+      }
+    }
+    summary ??= await buildDeterministicSessionSummary(input.db, input.previousConversationId);
+  }
+  const nextConversation = await input.db.transaction(async (tx) => {
+    const now = new Date();
+    const [lockedBinding] = await tx
+      .update(agentIntegrationChatBindings)
+      .set({ updatedAt: now })
+      .where(
+        and(
+          eq(agentIntegrationChatBindings.orgId, input.integration.orgId),
+          eq(agentIntegrationChatBindings.integrationId, input.integration.id),
+          eq(agentIntegrationChatBindings.externalChatId, input.event.chatId),
+        ),
+      )
+      .returning({
+        id: agentIntegrationChatBindings.id,
+        conversationId: agentIntegrationChatBindings.conversationId,
+      });
+    if (!lockedBinding) throw new Error("Failed to lock Feishu chat binding for session switch");
+    if (lockedBinding.conversationId !== input.previousConversationId) {
+      return { id: lockedBinding.conversationId, raced: true };
+    }
+
+    const conversation = await createFeishuChatConversation(tx, {
+      orgId: input.integration.orgId,
+      agentId: input.integration.agentId,
+      userId: input.userId,
+      provider: input.integration.provider,
+    });
+
+    await tx.insert(chatMessages).values({
+      orgId: input.integration.orgId,
+      conversationId: input.previousConversationId,
+      role: "system",
+      kind: "system_event",
+      body: input.reason === "daily_rollover" ? DAILY_SESSION_STARTED_TEXT : "New Feishu session started.",
+      structuredPayload: feishuQuickCommandMessage("new", input.event, {
+        integrationId: input.integration.id,
+        previousConversationId: input.previousConversationId,
+        nextConversationId: conversation.id,
+        reason: input.reason,
+        notifyFeishu: input.notifyFeishu,
+        summary,
+      }),
+    });
+
+    const [updatedBinding] = await tx
+      .update(agentIntegrationChatBindings)
+      .set({
+        conversationId: conversation.id,
+        externalChatType: input.event.chatType,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(agentIntegrationChatBindings.orgId, input.integration.orgId),
+          eq(agentIntegrationChatBindings.id, lockedBinding.id),
+          eq(agentIntegrationChatBindings.conversationId, input.previousConversationId),
+        ),
+      )
+      .returning({ conversationId: agentIntegrationChatBindings.conversationId });
+    if (!updatedBinding) throw new Error("Failed to switch Feishu chat binding");
+    return conversation;
+  });
+  return nextConversation;
 }
 
 async function createFeishuChatConversation(
@@ -126,6 +412,7 @@ export function createFeishuInboundDispatcherDbDeps(
     chats,
     productIntelligence: options.productIntelligence ?? productIntelligenceService(db),
   });
+  const productIntelligence = options.productIntelligence ?? productIntelligenceService(db);
 
   const deps: AgentIntegrationInboundDispatcherDeps = {
     resolveActiveIntegration: async (event) => {
@@ -159,6 +446,7 @@ export function createFeishuInboundDispatcherDbDeps(
         agentId: row.agentId,
         provider: row.provider as ResolvedAgentIntegration["provider"],
         status: integrationStatus(row.status),
+        settings: row.settings ?? {},
       };
     },
 
@@ -252,8 +540,12 @@ export function createFeishuInboundDispatcherDbDeps(
 
     ensureChatBinding: async (integration, binding, event) => {
       const existing = await db
-        .select({ conversationId: agentIntegrationChatBindings.conversationId })
+        .select({
+          conversationId: agentIntegrationChatBindings.conversationId,
+          createdAt: chatConversations.createdAt,
+        })
         .from(agentIntegrationChatBindings)
+        .innerJoin(chatConversations, eq(agentIntegrationChatBindings.conversationId, chatConversations.id))
         .where(
           and(
             eq(agentIntegrationChatBindings.integrationId, integration.id),
@@ -261,7 +553,38 @@ export function createFeishuInboundDispatcherDbDeps(
           ),
         )
         .then((rows) => rows[0] ?? null);
-      if (existing) return existing;
+      if (existing) {
+        const settings = feishuSettings(integration);
+        const receivedAt = event.receivedAt ?? new Date();
+        const ageMs = receivedAt.getTime() - existing.createdAt.getTime();
+        const shouldRollover = settings.dailySessionRolloverEnabled
+          && ageMs >= settings.dailySessionRolloverHours * 60 * 60 * 1000;
+        const replyInProgress = await hasPersistedActiveGeneration(db, existing.conversationId);
+        if (replyInProgress) {
+          return { ...existing, replyInProgress: true };
+        }
+        if (!shouldRollover) {
+          return existing;
+        }
+        const next = await switchFeishuSession({
+          db,
+          integration,
+          userId: binding.userId,
+          event,
+          previousConversationId: existing.conversationId,
+          reason: "daily_rollover",
+          notifyFeishu: settings.dailySessionRolloverNotifyFeishu,
+          includeSummary: true,
+          productIntelligence,
+        });
+        return {
+          conversationId: next.id,
+          created: true,
+          dailySessionStarted: true,
+          notifyFeishu: settings.dailySessionRolloverNotifyFeishu,
+          initialTitle: "New chat",
+        };
+      }
 
       const initialTitle = chatTitle(event);
       const conversation = await chats.create(integration.orgId, {
@@ -299,8 +622,12 @@ export function createFeishuInboundDispatcherDbDeps(
       }
 
       const raced = await db
-        .select({ conversationId: agentIntegrationChatBindings.conversationId })
+        .select({
+          conversationId: agentIntegrationChatBindings.conversationId,
+          createdAt: chatConversations.createdAt,
+        })
         .from(agentIntegrationChatBindings)
+        .innerJoin(chatConversations, eq(agentIntegrationChatBindings.conversationId, chatConversations.id))
         .where(
           and(
             eq(agentIntegrationChatBindings.integrationId, integration.id),
@@ -314,61 +641,16 @@ export function createFeishuInboundDispatcherDbDeps(
 
     handleQuickCommand: async (integration, binding, chat, command, event) => {
       if (command.kind === "new") {
-        const nextConversation = await db.transaction(async (tx) => {
-          const now = new Date();
-          const [lockedBinding] = await tx
-            .update(agentIntegrationChatBindings)
-            .set({ updatedAt: now })
-            .where(
-              and(
-                eq(agentIntegrationChatBindings.orgId, integration.orgId),
-                eq(agentIntegrationChatBindings.integrationId, integration.id),
-                eq(agentIntegrationChatBindings.externalChatId, event.chatId),
-              ),
-            )
-            .returning({
-              id: agentIntegrationChatBindings.id,
-              conversationId: agentIntegrationChatBindings.conversationId,
-            });
-          if (!lockedBinding) throw new Error("Failed to lock Feishu chat binding for /new quick command");
-          const previousConversationId = lockedBinding.conversationId;
-
-          await tx.insert(chatMessages).values({
-            orgId: integration.orgId,
-            conversationId: previousConversationId,
-            role: "system",
-            kind: "system_event",
-            body: "New Feishu session started.",
-            structuredPayload: feishuQuickCommandMessage("new", event, {
-              integrationId: integration.id,
-              previousConversationId,
-            }),
-          });
-
-          const conversation = await createFeishuChatConversation(tx, {
-            orgId: integration.orgId,
-            agentId: integration.agentId,
-            userId: binding.userId,
-            provider: integration.provider,
-          });
-
-          const [updatedBinding] = await tx
-            .update(agentIntegrationChatBindings)
-            .set({
-              conversationId: conversation.id,
-              externalChatType: event.chatType,
-              updatedAt: new Date(),
-            })
-            .where(
-              and(
-                eq(agentIntegrationChatBindings.orgId, integration.orgId),
-                eq(agentIntegrationChatBindings.id, lockedBinding.id),
-                eq(agentIntegrationChatBindings.conversationId, previousConversationId),
-              ),
-            )
-            .returning({ conversationId: agentIntegrationChatBindings.conversationId });
-          if (!updatedBinding) throw new Error("Failed to switch Feishu chat binding for /new quick command");
-          return conversation;
+        const nextConversation = await switchFeishuSession({
+          db,
+          integration,
+          userId: binding.userId,
+          event,
+          previousConversationId: chat.conversationId,
+          reason: "manual_new",
+          notifyFeishu: true,
+          includeSummary: false,
+          productIntelligence,
         });
         return {
           command: "new",

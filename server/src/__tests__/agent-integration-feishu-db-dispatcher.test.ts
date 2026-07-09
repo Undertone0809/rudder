@@ -30,7 +30,7 @@ import {
   organizations,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import express from "express";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -244,7 +244,14 @@ describe("Feishu inbound dispatcher DB deps", () => {
     }
   });
 
-  async function seedIntegration(options: { bindUser?: boolean; member?: boolean; credentialValue?: string } = {}) {
+  async function seedIntegration(options: {
+    bindUser?: boolean;
+    member?: boolean;
+    credentialValue?: string;
+    agentRuntimeConfig?: Record<string, unknown>;
+    agentRuntimeType?: string;
+    settings?: Record<string, unknown>;
+  } = {}) {
     const orgId = randomUUID();
     const agentId = randomUUID();
     const secretId = randomUUID();
@@ -268,8 +275,8 @@ describe("Feishu inbound dispatcher DB deps", () => {
       name: "Feishu Agent",
       role: "engineer",
       status: "active",
-      agentRuntimeType: "codex_local",
-      agentRuntimeConfig: {},
+      agentRuntimeType: options.agentRuntimeType ?? "codex_local",
+      agentRuntimeConfig: options.agentRuntimeConfig ?? {},
       runtimeConfig: {},
       permissions: {},
     });
@@ -296,6 +303,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
       appCredentialSecretId: secretId,
       externalAppId: "cli_a_feishu_app",
       externalBotOpenId: "ou_bot",
+      settings: options.settings ?? {},
     });
     if (options.member ?? true) {
       await db.insert(organizationMemberships).values({
@@ -569,7 +577,12 @@ describe("Feishu inbound dispatcher DB deps", () => {
 
   it("handles the Feishu /new quick command by switching the external chat to a fresh Rudder conversation", async () => {
     const seeded = await seedIntegration();
-    const deps = createFeishuInboundDispatcherDbDeps(db, { startTitleGeneration: false });
+    const deps = createFeishuInboundDispatcherDbDeps(db, {
+      startTitleGeneration: false,
+      productIntelligence: {
+        execute: vi.fn().mockResolvedValue({ exitCode: 0, signal: null, stdout: "Previous session summary." }),
+      },
+    });
     const first = await dispatchFeishuInboundMessage(
       inboundEvent({
         messageId: "om_before_new",
@@ -645,7 +658,313 @@ describe("Feishu inbound dispatcher DB deps", () => {
     expect(nextConversation?.title).toBe("New chat");
   });
 
-  it("serializes concurrent Feishu /new quick commands without orphaning acknowledged sessions", async () => {
+  it("lazily starts a new Feishu-bound Rudder conversation after the 24 hour session window", async () => {
+    const seeded = await seedIntegration();
+    const deps = createFeishuInboundDispatcherDbDeps(db, {
+      startTitleGeneration: false,
+      productIntelligence: {
+        execute: vi.fn().mockResolvedValue({ exitCode: 0, signal: null, stdout: "Yesterday focused on release triage." }),
+      },
+    });
+    const first = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_daily_seed",
+        eventId: "event_daily_seed",
+        body: "yesterday work",
+        receivedAt: new Date("2026-06-18T08:00:00.000Z"),
+      }),
+      deps,
+    );
+    expect(first.status).toBe("accepted");
+    if (first.status !== "accepted") throw new Error("Expected first message to be accepted");
+    await db
+      .update(chatConversations)
+      .set({ createdAt: sql`'2026-06-18T08:00:00.000Z'::timestamptz` })
+      .where(eq(chatConversations.id, first.conversationId));
+
+    const next = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_daily_next",
+        eventId: "event_daily_next",
+        body: "today work",
+        receivedAt: new Date("2026-06-19T08:00:01.000Z"),
+      }),
+      deps,
+    );
+
+    expect(next.status).toBe("accepted");
+    if (next.status !== "accepted") throw new Error("Expected next message to be accepted");
+    expect(next.conversationId).not.toBe(first.conversationId);
+    expect(next.outbound.text).toContain("New daily session started.");
+    const [binding] = await db.select().from(agentIntegrationChatBindings);
+    expect(binding).toMatchObject({
+      integrationId: seeded.integrationId,
+      conversationId: next.conversationId,
+      externalChatId: "oc_chat",
+    });
+    const messages = await db.select().from(chatMessages);
+    expect(messages.map((message) => ({
+      conversationId: message.conversationId,
+      role: message.role,
+      kind: message.kind,
+      body: message.body,
+    }))).toEqual([
+      {
+        conversationId: first.conversationId,
+        role: "user",
+        kind: "message",
+        body: "yesterday work",
+      },
+      {
+        conversationId: first.conversationId,
+        role: "system",
+        kind: "system_event",
+        body: "New daily session started.",
+      },
+      {
+        conversationId: next.conversationId,
+        role: "user",
+        kind: "message",
+        body: "today work",
+      },
+    ]);
+    const rolloverEvent = messages.find((message) => message.kind === "system_event");
+    expect(rolloverEvent?.structuredPayload).toMatchObject({
+      reason: "daily_rollover",
+      previousConversationId: first.conversationId,
+      nextConversationId: next.conversationId,
+      notifyFeishu: true,
+      summary: {
+        source: "smart_intelligence",
+        summary: "Yesterday focused on release triage.",
+      },
+    });
+  });
+
+  it("does not include the Feishu daily session notification when the integration setting is disabled", async () => {
+    const seeded = await seedIntegration({
+      settings: {
+        feishu: {
+          dailySessionRolloverEnabled: true,
+          dailySessionRolloverHours: 24,
+          dailySessionRolloverNotifyFeishu: false,
+        },
+      },
+    });
+    const deps = createFeishuInboundDispatcherDbDeps(db, {
+      startTitleGeneration: false,
+      productIntelligence: {
+        execute: vi.fn().mockResolvedValue({ exitCode: 0, signal: null, stdout: "Previous session summary." }),
+      },
+    });
+    const first = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_daily_silent_seed",
+        eventId: "event_daily_silent_seed",
+        body: "yesterday work",
+        receivedAt: new Date("2026-06-18T08:00:00.000Z"),
+      }),
+      deps,
+    );
+    expect(first.status).toBe("accepted");
+    if (first.status !== "accepted") throw new Error("Expected first message to be accepted");
+    await db
+      .update(chatConversations)
+      .set({ createdAt: sql`'2026-06-18T08:00:00.000Z'::timestamptz` })
+      .where(eq(chatConversations.id, first.conversationId));
+
+    const next = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_daily_silent_next",
+        eventId: "event_daily_silent_next",
+        body: "today work",
+        receivedAt: new Date("2026-06-19T08:00:01.000Z"),
+      }),
+      deps,
+    );
+
+    expect(next.status).toBe("accepted");
+    if (next.status !== "accepted") throw new Error("Expected next message to be accepted");
+    expect(next.conversationId).not.toBe(first.conversationId);
+    expect(next.outbound.text).not.toContain("New daily session started.");
+    const [binding] = await db.select().from(agentIntegrationChatBindings);
+    expect(binding).toMatchObject({
+      integrationId: seeded.integrationId,
+      conversationId: next.conversationId,
+    });
+    const rolloverEvent = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.kind, "system_event"))
+      .then((rows) => rows[0]);
+    expect(rolloverEvent).toMatchObject({
+      conversationId: first.conversationId,
+      body: "New daily session started.",
+    });
+    expect(rolloverEvent?.structuredPayload).toMatchObject({
+      reason: "daily_rollover",
+      notifyFeishu: false,
+    });
+  });
+
+  it("falls back to the agent runtime when Smart Intelligence cannot summarize a daily Feishu session", async () => {
+    const seeded = await seedIntegration({
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {
+        command: process.execPath,
+        args: ["-e", "process.stdout.write('Agent runtime session summary')"],
+        timeoutSec: 5,
+      },
+    });
+    const deps = createFeishuInboundDispatcherDbDeps(db, {
+      startTitleGeneration: false,
+      productIntelligence: {
+        execute: vi.fn().mockRejectedValue(new Error("Smart summary unavailable")),
+      },
+    });
+    const first = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_daily_runtime_seed",
+        eventId: "event_daily_runtime_seed",
+        body: "yesterday runtime work",
+        receivedAt: new Date("2026-06-18T08:00:00.000Z"),
+      }),
+      deps,
+    );
+    expect(first.status).toBe("accepted");
+    if (first.status !== "accepted") throw new Error("Expected first message to be accepted");
+    await db
+      .update(chatConversations)
+      .set({ createdAt: sql`'2026-06-18T08:00:00.000Z'::timestamptz` })
+      .where(eq(chatConversations.id, first.conversationId));
+
+    const next = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_daily_runtime_next",
+        eventId: "event_daily_runtime_next",
+        body: "today runtime work",
+        receivedAt: new Date("2026-06-19T08:00:01.000Z"),
+      }),
+      deps,
+    );
+
+    expect(next.status).toBe("accepted");
+    if (next.status !== "accepted") throw new Error("Expected next message to be accepted");
+    const rolloverEvent = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.kind, "system_event"))
+      .then((rows) => rows[0]);
+    expect(rolloverEvent?.structuredPayload).toMatchObject({
+      reason: "daily_rollover",
+      summary: {
+        source: "agent_runtime",
+        summary: "Agent runtime session summary",
+      },
+    });
+    expect(seeded.agentId).toEqual(expect.any(String));
+  });
+
+  it("uses a deterministic summary when Smart Intelligence and agent runtime summaries are unavailable", async () => {
+    await seedIntegration({
+      agentRuntimeType: "missing_runtime_for_test",
+    });
+    const deps = createFeishuInboundDispatcherDbDeps(db, {
+      startTitleGeneration: false,
+      productIntelligence: {
+        execute: vi.fn().mockRejectedValue(new Error("Smart summary unavailable")),
+      },
+    });
+    const first = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_daily_deterministic_seed",
+        eventId: "event_daily_deterministic_seed",
+        body: "yesterday deterministic work",
+        receivedAt: new Date("2026-06-18T08:00:00.000Z"),
+      }),
+      deps,
+    );
+    expect(first.status).toBe("accepted");
+    if (first.status !== "accepted") throw new Error("Expected first message to be accepted");
+    await db
+      .update(chatConversations)
+      .set({ createdAt: sql`'2026-06-18T08:00:00.000Z'::timestamptz` })
+      .where(eq(chatConversations.id, first.conversationId));
+
+    const next = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_daily_deterministic_next",
+        eventId: "event_daily_deterministic_next",
+        body: "today deterministic work",
+        receivedAt: new Date("2026-06-19T08:00:01.000Z"),
+      }),
+      deps,
+    );
+
+    expect(next.status).toBe("accepted");
+    if (next.status !== "accepted") throw new Error("Expected next message to be accepted");
+    const rolloverEvent = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.kind, "system_event"))
+      .then((rows) => rows[0]);
+    expect(rolloverEvent?.structuredPayload).toMatchObject({
+      reason: "daily_rollover",
+      summary: {
+        source: "deterministic",
+        summary: "Previous Feishu session: yesterday deterministic work",
+      },
+    });
+  });
+
+  it("keeps an expired Feishu session active while a reply generation is still running", async () => {
+    const seeded = await seedIntegration();
+    const deps = createFeishuInboundDispatcherDbDeps(db, { startTitleGeneration: false });
+    const first = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_active_seed",
+        eventId: "event_active_seed",
+        body: "start long reply",
+        receivedAt: new Date("2026-06-18T08:00:00.000Z"),
+      }),
+      deps,
+    );
+    expect(first.status).toBe("accepted");
+    if (first.status !== "accepted") throw new Error("Expected first message to be accepted");
+    await db
+      .update(chatConversations)
+      .set({ createdAt: sql`'2026-06-18T08:00:00.000Z'::timestamptz` })
+      .where(eq(chatConversations.id, first.conversationId));
+    await chatService(db).createGeneration(seeded.orgId, first.conversationId);
+
+    const next = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_active_next",
+        eventId: "event_active_next",
+        body: "arrives during active reply",
+        receivedAt: new Date("2026-06-19T09:00:00.000Z"),
+      }),
+      deps,
+    );
+
+    expect(next.status).toBe("accepted");
+    if (next.status !== "accepted") throw new Error("Expected accepted result");
+    expect(next.conversationId).toBe(first.conversationId);
+    const [binding] = await db.select().from(agentIntegrationChatBindings);
+    expect(binding).toMatchObject({
+      integrationId: seeded.integrationId,
+      conversationId: first.conversationId,
+    });
+    const conversations = await db.select().from(chatConversations);
+    expect(conversations).toHaveLength(1);
+    const messages = await db.select().from(chatMessages);
+    expect(messages.map((message) => message.body)).toEqual([
+      "start long reply",
+      "arrives during active reply",
+    ]);
+  });
+
+  it("coalesces concurrent Feishu /new quick commands without orphaning acknowledged sessions", async () => {
     const seeded = await seedIntegration();
     const deps = createFeishuInboundDispatcherDbDeps(db, { startTitleGeneration: false });
     const first = await dispatchFeishuInboundMessage(
@@ -689,14 +1008,14 @@ describe("Feishu inbound dispatcher DB deps", () => {
     expect(newTwo.command).toBe("new");
     expect(newOne.conversationId).not.toBe(first.conversationId);
     expect(newTwo.conversationId).not.toBe(first.conversationId);
-    expect(newOne.conversationId).not.toBe(newTwo.conversationId);
+    expect(newOne.conversationId).toBe(newTwo.conversationId);
 
     const [binding] = await db.select().from(agentIntegrationChatBindings);
     expect(binding).toMatchObject({
       integrationId: seeded.integrationId,
       externalChatId: "oc_chat",
+      conversationId: newOne.conversationId,
     });
-    expect([newOne.conversationId, newTwo.conversationId]).toContain(binding?.conversationId);
 
     const messages = await db.select().from(chatMessages);
     expect(messages.filter((message) => message.role === "user").map((message) => message.body)).toEqual([
@@ -704,13 +1023,11 @@ describe("Feishu inbound dispatcher DB deps", () => {
     ]);
     expect(messages.filter((message) => message.kind === "system_event").map((message) => message.body)).toEqual([
       "New Feishu session started.",
-      "New Feishu session started.",
     ]);
     const conversations = await db.select().from(chatConversations);
     expect(conversations.map((conversation) => conversation.id).sort()).toEqual([
       first.conversationId,
       newOne.conversationId,
-      newTwo.conversationId,
     ].sort());
   });
 
@@ -1116,6 +1433,109 @@ describe("Feishu inbound dispatcher DB deps", () => {
       { role: "user", body: "hello from sdk channel" },
       { role: "assistant", body: "Rudder Feishu reply" },
     ]);
+  });
+
+  it("keeps an expired Feishu long-connection session active without starting a second runtime reply", async () => {
+    const seeded = await seedIntegration({
+      credentialValue: JSON.stringify({ appId: "cli_a_feishu_app", appSecret: "feishu-app-secret" }),
+    });
+    const sent: Array<{ chatId: string; text: string }> = [];
+    const sender: FeishuOutboundSender = {
+      sendText: async (input) => {
+        sent.push({ chatId: input.chatId, text: input.text });
+        return { messageId: `om_runtime_active_${sent.length}` };
+      },
+    };
+    const streamChatAssistantReply = vi.fn(async () => ({
+      outcome: "completed" as const,
+      partialBody: "first runtime reply",
+      replyingAgentId: seeded.agentId,
+      reply: {
+        kind: "message" as const,
+        body: "first runtime reply",
+        structuredPayload: null,
+        replyingAgentId: seeded.agentId,
+      },
+    }));
+    const runtime = feishuIntegrationRuntimeService(db, {
+      sender,
+      assistant: { streamChatAssistantReply },
+    });
+
+    const first = await runtime.handleEvent(
+      {
+        id: seeded.integrationId,
+        orgId: seeded.orgId,
+        agentId: seeded.agentId,
+        providerRegion: "feishu_cn",
+        appCredentialSecretId: seeded.secretId,
+        externalAppId: "cli_a_feishu_app",
+        externalBotOpenId: "ou_bot",
+      },
+      { appSecret: "feishu-app-secret" },
+      {
+        appId: "cli_a_feishu_app",
+        botOpenId: "ou_bot",
+        eventId: "event_runtime_active_seed",
+        messageId: "om_runtime_active_seed",
+        chatId: "oc_runtime_active",
+        chatType: "p2p",
+        senderOpenId: "ou_sender",
+        senderUnionId: "on_sender",
+        body: "start a long runtime reply",
+      },
+    );
+    expect(first.status).toBe("accepted");
+    if (first.status !== "accepted") throw new Error("Expected accepted result");
+    await db
+      .update(chatConversations)
+      .set({ createdAt: sql`'2026-06-18T08:00:00.000Z'::timestamptz` })
+      .where(eq(chatConversations.id, first.conversationId));
+    await chatService(db).createGeneration(seeded.orgId, first.conversationId);
+
+    const next = await runtime.handleEvent(
+      {
+        id: seeded.integrationId,
+        orgId: seeded.orgId,
+        agentId: seeded.agentId,
+        providerRegion: "feishu_cn",
+        appCredentialSecretId: seeded.secretId,
+        externalAppId: "cli_a_feishu_app",
+        externalBotOpenId: "ou_bot",
+      },
+      { appSecret: "feishu-app-secret" },
+      {
+        appId: "cli_a_feishu_app",
+        botOpenId: "ou_bot",
+        eventId: "event_runtime_active_next",
+        messageId: "om_runtime_active_next",
+        chatId: "oc_runtime_active",
+        chatType: "p2p",
+        senderOpenId: "ou_sender",
+        senderUnionId: "on_sender",
+        body: "arrives while runtime reply is active",
+        receivedAt: "2026-06-19T09:00:00.000Z",
+      },
+    );
+
+    expect(next.status).toBe("accepted");
+    if (next.status !== "accepted") throw new Error("Expected accepted result");
+    expect(next.conversationId).toBe(first.conversationId);
+    expect(next.replyInProgress).toBe(true);
+    expect(streamChatAssistantReply).toHaveBeenCalledTimes(1);
+    expect(sent).toEqual([{ chatId: "oc_runtime_active", text: "first runtime reply" }]);
+    const conversations = await db.select().from(chatConversations);
+    expect(conversations).toHaveLength(1);
+    const messages = await db
+      .select()
+      .from(chatMessages)
+      .orderBy(chatMessages.createdAt);
+    expect(messages.map((message) => ({ role: message.role, body: message.body }))).toEqual([
+      { role: "user", body: "start a long runtime reply" },
+      { role: "assistant", body: "first runtime reply" },
+      { role: "user", body: "arrives while runtime reply is active" },
+    ]);
+    await expect(db.select().from(chatGenerations).where(eq(chatGenerations.status, "active"))).resolves.toHaveLength(1);
   });
 
   it("responds to Feishu quick commands without invoking the assistant runtime", async () => {

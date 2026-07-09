@@ -21,6 +21,7 @@ import type {
   CustomIntegrationSummary,
   HeartbeatRun,
   OrganizationSkillCreateRequest,
+  UpdateAgentIntegrationSettings,
   UpdateCustomIntegrationBinding,
 } from "@rudderhq/shared";
 import { isUuidLike, normalizeAgentUrlKey } from "@rudderhq/shared";
@@ -145,6 +146,16 @@ export const agentsApi = {
   revokeIntegration: (id: string, integrationId: string, orgId?: string) =>
     api.delete<AgentIntegrationSummary>(
       agentPath(id, orgId, `/integrations/${encodeURIComponent(integrationId)}`),
+    ),
+  updateIntegrationSettings: (
+    id: string,
+    integrationId: string,
+    data: UpdateAgentIntegrationSettings,
+    orgId?: string,
+  ) =>
+    api.patch<AgentIntegrationSummary>(
+      agentPath(id, orgId, `/integrations/${encodeURIComponent(integrationId)}/settings`),
+      data,
     ),
   listCustomIntegrations: (id: string, orgId?: string) =>
     api.get<CustomIntegrationSummary[]>(agentPath(id, orgId, "/custom-integrations")),

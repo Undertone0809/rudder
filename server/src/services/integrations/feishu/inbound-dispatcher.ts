@@ -28,6 +28,7 @@ export interface ResolvedAgentIntegration {
   agentId: string;
   provider: AgentIntegrationProvider;
   status: "active" | "revoked" | "error";
+  settings?: Record<string, unknown>;
 }
 
 export interface ResolvedIntegrationUserBinding {
@@ -39,6 +40,9 @@ export interface ResolvedIntegrationChatBinding {
   conversationId: string;
   created?: boolean;
   initialTitle?: string | null;
+  dailySessionStarted?: boolean;
+  notifyFeishu?: boolean;
+  replyInProgress?: boolean;
 }
 
 export interface AppendedIntegrationMessage {
@@ -168,6 +172,7 @@ export type AgentIntegrationInboundDispatchResult =
     chatMessageId: string;
     issueId: string | null;
     runId: string | null;
+    replyInProgress?: boolean;
     outbound: FeishuOutboundResponse;
   };
 
@@ -272,7 +277,7 @@ export async function dispatchFeishuInboundMessage(
   const issue = command && deps.createIssueFromCommand
     ? await deps.createIssueFromCommand(integration, binding, chat, message, command, event)
     : null;
-  const run = deps.enqueueAgentRun
+  const run = deps.enqueueAgentRun && !chat.replyInProgress
     ? await deps.enqueueAgentRun(integration, binding, chat, message, event, issue)
     : null;
 
@@ -286,7 +291,8 @@ export async function dispatchFeishuInboundMessage(
     chatMessageId: message.chatMessageId,
     issueId: issue?.issueId ?? null,
     runId: run?.runId ?? null,
-    outbound: createAcceptedResponse(event, issue, run),
+    replyInProgress: chat.replyInProgress,
+    outbound: createAcceptedResponse(event, issue, run, chat),
   };
 }
 
@@ -310,18 +316,22 @@ function createAcceptedResponse(
   event: FeishuInboundMessage,
   issue: CreatedIntegrationIssue | null,
   run: StartedIntegrationRun | null,
+  chat?: ResolvedIntegrationChatBinding,
 ): FeishuOutboundResponse {
   const details = [
     issue ? `issue=${issue.issueId}` : null,
     run ? `run=${run.runId}` : null,
   ].filter(Boolean);
+  const prefix = chat?.dailySessionStarted && chat.notifyFeishu
+    ? "New daily session started.\n"
+    : "";
   return {
     provider: event.provider,
     externalChatId: event.chatId,
     externalMessageId: null,
-    text: details.length > 0
+    text: prefix + (details.length > 0
       ? `已写入 Rudder Messenger，并开始处理（${details.join(", ")}）。`
-      : "已写入 Rudder Messenger，并开始处理。",
+      : "已写入 Rudder Messenger，并开始处理。"),
   };
 }
 

@@ -84,14 +84,18 @@ export {
   agentIntegrationOutboundStatusSchema,
   agentIntegrationProviderRegionSchema,
   agentIntegrationProviderSchema,
+  agentIntegrationSettingsSchema,
   agentIntegrationStatusSchema,
   agentIntegrationTransportSchema,
   connectAgentIntegrationSchema,
   createAgentIntegrationSchema,
+  feishuIntegrationSettingsSchema,
   mockFeishuInboundEventSchema,
+  updateAgentIntegrationSettingsSchema,
   type ConnectAgentIntegration,
   type CreateAgentIntegration,
-  type MockFeishuInboundEvent
+  type MockFeishuInboundEvent,
+  type UpdateAgentIntegrationSettings
 } from "./agent-integration.js";
 
 export {

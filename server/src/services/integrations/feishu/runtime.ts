@@ -806,6 +806,20 @@ export function feishuIntegrationRuntimeService(
       return result;
     }
     if (result.status === "accepted") {
+      if (result.outbound.text.startsWith("New daily session started.")) {
+        await sendAndRecord({
+          integration,
+          credential,
+          chatId: event.chatId,
+          text: "New daily session started.",
+          conversationId: result.conversationId,
+          chatMessageId: null,
+          runId: null,
+        });
+      }
+      if (result.replyInProgress) {
+        return result;
+      }
       const conversation = await chats.getById(result.conversationId) as ChatConversation | null;
       if (!conversation) {
         throw new Error("Feishu accepted inbound message is missing its Rudder chat conversation");

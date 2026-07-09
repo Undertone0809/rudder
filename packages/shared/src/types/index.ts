@@ -24,11 +24,13 @@ export type {
   AgentIntegrationChatBinding,
   AgentIntegrationInboundAudit,
   AgentIntegrationOutboundMessage,
+  AgentIntegrationSettings,
   AgentIntegrationSetupSession,
   AgentIntegrationSetupSessionStatus,
   AgentIntegrationSetupUrl,
   AgentIntegrationSummary,
-  AgentIntegrationUserBinding
+  AgentIntegrationUserBinding,
+  FeishuIntegrationSettings
 } from "./agent-integration.js";
 export type {
   Agent,
