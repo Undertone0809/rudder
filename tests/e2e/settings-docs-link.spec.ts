@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const RUDDER_DOCS_URL = "https://doc.rudder.zeeland.studio";
+const RUDDER_DOCS_URL = "https://docs.rudderhq.dev";
 
 test.describe("Settings docs link", () => {
   test("shows a docs item in settings that points to the official docs", async ({ page }) => {

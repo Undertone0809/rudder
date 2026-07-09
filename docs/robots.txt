@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://doc.rudder.zeeland.studio/sitemap.xml
+Sitemap: https://docs.rudderhq.dev/sitemap.xml

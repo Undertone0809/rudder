@@ -144,8 +144,8 @@ test.describe("UI Lab", () => {
         contentType: "application/json",
         body: JSON.stringify({
           url: targetUrl,
-          siteName: targetUrl?.includes("doc.rudder") ? "Rudder docs" : null,
-          iconUrl: targetUrl?.includes("doc.rudder") ? "/rudder-logo.png" : null,
+          siteName: targetUrl?.includes("docs.rudderhq") ? "Rudder docs" : null,
+          iconUrl: targetUrl?.includes("docs.rudderhq") ? "/rudder-logo.png" : null,
         }),
       });
     });
@@ -157,7 +157,7 @@ test.describe("UI Lab", () => {
     const fallbackLink = page.locator("a.rudder-website-link").filter({ hasText: "reference guide" });
     await expect(websiteLink).toBeVisible();
     await expect(fallbackLink).toBeVisible();
-    await expect(websiteLink).toHaveAttribute("href", "https://doc.rudder.zeeland.studio");
+    await expect(websiteLink).toHaveAttribute("href", "https://docs.rudderhq.dev");
     await expect(websiteLink).toHaveAttribute("target", "_blank");
     await expect(websiteLink.locator("img.rudder-website-link-logo")).toHaveAttribute("src", "/rudder-logo.png");
     await expect(websiteLink.locator(".rudder-website-link-label")).toHaveText("Rudder docs");

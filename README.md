@@ -4,7 +4,7 @@
 
 Agents that think, build, play, and learn from real work.
 
-[Website](https://rudder.zeeland.studio) | [Docs](https://doc.rudder.zeeland.studio)
+[Website](https://rudderhq.dev) | [Docs](https://docs.rudderhq.dev)
 
 Rudder turns goals, issues, agent runs, reviews, and feedback into a work loop for agent teams. It gives humans and agents a shared operating structure for assigning work, running agents, reviewing outputs, controlling spend, and preserving the lessons that should make the next run better.
 

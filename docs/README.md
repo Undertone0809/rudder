@@ -30,9 +30,9 @@ need to check only one deployment channel.
 
 The docs site has two Vercel-backed channels:
 
-- `staging.doc.rudder.zeeland.studio`: automatically updated from `main` by
+- `staging.docs.rudderhq.dev`: automatically updated from `main` by
   `.github/workflows/docs-staging.yml`.
-- `doc.rudder.zeeland.studio`: manually published by
+- `docs.rudderhq.dev`: manually published by
   `.github/workflows/docs-production.yml`.
 
 Both workflows validate the Mintlify project, export the static site, deploy it
@@ -42,7 +42,7 @@ such as `/about`, `/contact`, `/home`, `/robots.txt`, `/sitemap.xml`, `/zh`,
 Production publishes also bind the public Vercel project aliases to the same
 deployment and create a `docs/vYYYY.MM.DD` git tag for the source commit.
 Those aliases are intentionally production-facing public entry points; the
-staging channel uses `staging.doc.rudder.zeeland.studio` only. Staging pages are
+staging channel uses `staging.docs.rudderhq.dev` only. Staging pages are
 still expected to emit production canonical URLs so preview traffic does not
 compete with the canonical docs host in search indexes.
 

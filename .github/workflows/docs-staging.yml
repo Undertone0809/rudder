@@ -25,7 +25,7 @@ env:
   VERCEL_ORG_ID: team_eu3qF8T1G0150GL2tqHOrG6Q
   VERCEL_PROJECT_ID: prj_ppjxvoIGcoV3jGTeq8vBhzObXaJV
   VERCEL_SCOPE: zeelands-projects
-  DOCS_STAGING_DOMAIN: staging.doc.rudder.zeeland.studio
+  DOCS_STAGING_DOMAIN: staging.docs.rudderhq.dev
 
 jobs:
   deploy:

@@ -1,6 +1,6 @@
 (function () {
   var measurementId = "__RUDDER_GA_MEASUREMENT_ID__";
-  var productionHosts = ["doc.rudder.zeeland.studio"];
+  var productionHosts = ["docs.rudderhq.dev", "doc.rudder.zeeland.studio"];
 
   if (!measurementId || measurementId.indexOf("__") === 0 || !productionHosts.includes(window.location.hostname)) {
     return;

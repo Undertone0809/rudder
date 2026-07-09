@@ -27,8 +27,8 @@ env:
   VERCEL_ORG_ID: team_eu3qF8T1G0150GL2tqHOrG6Q
   VERCEL_PROJECT_ID: prj_ppjxvoIGcoV3jGTeq8vBhzObXaJV
   VERCEL_SCOPE: zeelands-projects
-  DOCS_PRODUCTION_DOMAIN: doc.rudder.zeeland.studio
-  DOCS_PRODUCTION_ALIASES: rudder-docs.vercel.app,rudder-docs-zeelands-projects.vercel.app
+  DOCS_PRODUCTION_DOMAIN: docs.rudderhq.dev
+  DOCS_PRODUCTION_ALIASES: doc.rudder.zeeland.studio,rudder-docs.vercel.app,rudder-docs-zeelands-projects.vercel.app
 
 jobs:
   publish:

@@ -7,11 +7,12 @@ import { fileURLToPath } from "node:url";
 const DOCS_DIR = fileURLToPath(new URL("../docs/", import.meta.url));
 const LUCIDE_CDN_BASE = "https://d3gk2c5xim1je2.cloudfront.net/lucide/v1.16.0";
 const DEFAULT_HOSTS = [
+  "docs.rudderhq.dev",
   "doc.rudder.zeeland.studio",
   "rudder-docs.vercel.app",
   "rudder-docs-zeelands-projects.vercel.app",
 ];
-const CANONICAL_ORIGIN = "https://doc.rudder.zeeland.studio";
+const CANONICAL_ORIGIN = "https://docs.rudderhq.dev";
 const REQUIRED_PATHS = [
   { path: "/", status: 200, bodyIncludes: ["Rudder"], canonical: CANONICAL_ORIGIN },
   { path: "/about", status: 200, bodyIncludes: ["Rudder", "control plane"], canonical: `${CANONICAL_ORIGIN}/about` },
