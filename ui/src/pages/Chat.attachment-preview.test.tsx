@@ -2808,6 +2808,42 @@ describe("Chat streaming controls", () => {
     expect(queueItem?.textContent).not.toContain("Steer");
   });
 
+  it("does not expose steering for retained queued follow-ups after a reply is no longer running", () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    mockState.queueSnapshot = {
+      activeGenerationId: null,
+      items: [
+        queuedMessage({
+          status: "queued",
+          lastDeliveryReason: "closing",
+          payload: {
+            body: "Continue from the interrupted chat run.",
+            attachmentIds: [],
+            projectId: null,
+            skillRefs: [],
+            accessMode: null,
+            model: null,
+            effort: null,
+            metadata: null,
+          },
+        }),
+      ],
+    };
+
+    const { container } = renderChat();
+    const queueItem = container.querySelector("[data-testid='chat-running-queue-item']");
+
+    expect(container.querySelector("[data-testid='chat-running-queue']")?.textContent).toContain("Queued follow-ups retained");
+    expect(queueItem?.textContent).toContain("Still queued");
+    expect(queueItem?.textContent).toContain("Continue from the interrupted chat run.");
+    expect(queueItem?.textContent).not.toContain("Steer");
+    expect(queueItem?.querySelector("button[aria-label='Edit queued message']")).not.toBeNull();
+    expect(queueItem?.querySelector("button[aria-label='Delete queued message']")).not.toBeNull();
+    expect(mockState.steerQueuedMessage).not.toHaveBeenCalled();
+  });
+
   it("hides queued follow-ups after the queued message is delivered", () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],

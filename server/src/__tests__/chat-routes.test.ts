@@ -1044,11 +1044,11 @@ describe("chat routes", () => {
     }));
   });
 
-  it("uses the persisted active generation when queue snapshots have no in-memory generation", async () => {
+  it("does not expose a persisted active generation when no reply is running in memory", async () => {
     const conversation = createConversation();
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.getQueueSnapshot.mockResolvedValueOnce({
-      activeGenerationId: "10000000-0000-4000-8000-000000000001",
+      activeGenerationId: null,
       items: [],
     });
 
@@ -1057,7 +1057,7 @@ describe("chat routes", () => {
 
     expect(res.status).toBe(200);
     expect(mockChatService.getQueueSnapshot).toHaveBeenCalledWith("chat-1", null);
-    expect(res.body).toEqual({ activeGenerationId: "10000000-0000-4000-8000-000000000001", items: [] });
+    expect(res.body).toEqual({ activeGenerationId: null, items: [] });
   });
 
   it("passes the in-memory generation to queue snapshots while a reply is active", async () => {
@@ -1173,6 +1173,19 @@ describe("chat routes", () => {
     expect(mockChatService.releaseQueuedMessageClaim).not.toHaveBeenCalled();
     expect(mockChatService.updateQueuedMessage).not.toHaveBeenCalled();
     expect(mockChatService.cancelQueuedMessage).not.toHaveBeenCalled();
+    expect(mockChatService.markQueuedMessageSteerFallback).not.toHaveBeenCalled();
+  });
+
+  it("rejects steering queued follow-ups when no reply is running in memory", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/queue/queued-1/steer")
+      .send({ expectedActiveGenerationId: "10000000-0000-4000-8000-000000000001" });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: "Cannot steer queued follow-ups because no reply is in progress" });
     expect(mockChatService.markQueuedMessageSteerFallback).not.toHaveBeenCalled();
   });
 

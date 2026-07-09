@@ -212,6 +212,7 @@ test("keeps queued follow-ups parked after stopping the running reply", async ({
   await expect(page.getByTestId("chat-running-queue")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("chat-running-queue")).toContainText("Queued follow-ups retained");
   await expect(page.getByTestId("chat-running-queue-item").first()).toContainText("This should stay parked after stop");
+  await expect(page.getByTestId("chat-running-queue").getByRole("button", { name: "Steer" })).toHaveCount(0);
   await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "This should stay parked after stop" })).toHaveCount(0);
 
   await composer.fill("Fresh message after stop should send now");
@@ -225,6 +226,10 @@ test("keeps queued follow-ups parked after stopping the running reply", async ({
   expect(queue.items[0].payload.body).toBe("This should stay parked after stop");
   expect(queue.items[1].payload.body).toBe("Second parked follow-up");
   expect(queue.items[2].payload.body).toBe("Third parked follow-up");
+  const staleSteerRes = await page.request.post(`/api/chats/${chatId}/queue/${queue.items[0].id}/steer`, {
+    data: { expectedActiveGenerationId: queue.items[0].expectedGenerationId },
+  });
+  expect(staleSteerRes.status()).toBe(409);
 
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Fresh message after stop should send now" })).toBeVisible({

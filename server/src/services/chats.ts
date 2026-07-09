@@ -740,9 +740,11 @@ export function chatService(db: Db) {
   }
 
   async function getQueueSnapshot(conversationId: string, activeGenerationId?: string | null) {
-    const activeGeneration = activeGenerationId
-      ? { id: activeGenerationId }
-      : await getLatestActiveGeneration(conversationId);
+    const activeGeneration = activeGenerationId === undefined
+      ? await getLatestActiveGeneration(conversationId)
+      : activeGenerationId
+        ? { id: activeGenerationId }
+        : null;
     return {
       activeGenerationId: activeGeneration?.id ?? null,
       items: await listQueuedMessages(conversationId),

@@ -1537,6 +1537,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const sendButtonMode: SendButtonMode = newConversationSendInFlight || (activeSendInFlight && !activeStream) ? "sending" : canQueueDraft ? "queue" : activeSendInFlight ? "stop" : "send";
   const selectedConversationExternalBound = isExternalBoundConversation(selectedConversation);
   const sendButtonDisabled = selectedConversationExternalBound || composerUnavailable || sendButtonMode === "sending" || ((sendButtonMode === "send" || sendButtonMode === "queue") && draft.trim().length === 0);
+  const canSteerQueuedFollowUps = Boolean(queueQuery.data?.activeGenerationId);
   const canStopSelectedConversationReply = Boolean(selectedConversation && (activeSendInFlight || queueQuery.data?.activeGenerationId));
   const composerStreaming = Boolean(activeStream) || activeSendInFlight || newConversationSendInFlight;
   useEffect(() => {
@@ -1757,7 +1758,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                       ) : null}
                       {itemEditable ? (
                         <>
-                          <button type="button" disabled={!queueQuery.data?.activeGenerationId} className="shrink-0 rounded-full px-2 py-1 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-45 dark:text-emerald-300" onClick={() => steerQueuedMessage(item.id)}>Steer</button>
+                          {canSteerQueuedFollowUps ? (
+                            <button type="button" className="shrink-0 rounded-full px-2 py-1 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/10 dark:text-emerald-300" onClick={() => steerQueuedMessage(item.id)}>Steer</button>
+                          ) : null}
                           <button type="button" aria-label="Edit queued message" className="shrink-0 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" onClick={() => editQueuedMessage(item.id, item.payload.body)}><Pencil className="h-3.5 w-3.5" /></button>
                           <button type="button" aria-label="Delete queued message" className="shrink-0 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" onClick={() => deleteQueuedMessage(item.id)}><Trash2 className="h-3.5 w-3.5" /></button>
                         </>

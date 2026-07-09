@@ -1565,10 +1565,11 @@ export function chatRoutes(db: Db, storage: StorageService) {
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
     const active = getActiveChatGeneration(conversation.id);
+    if (!active?.generationId) {
+      throw conflict("Cannot steer queued follow-ups because no reply is in progress");
+    }
     const expected = req.body.expectedActiveGenerationId ?? null;
-    const result = !active?.generationId
-      ? "closing"
-      : expected && expected !== active.generationId
+    const result = expected && expected !== active.generationId
         ? "stale_generation"
         : "unsupported";
     const item = await svc.markQueuedMessageSteerFallback({

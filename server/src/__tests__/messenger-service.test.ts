@@ -217,7 +217,7 @@ describe("messengerService and issue follows", () => {
 
     const snapshot = await chatSvc.getQueueSnapshot(conversationId, null);
 
-    expect(snapshot.activeGenerationId).toBe(generationId);
+    expect(snapshot.activeGenerationId).toBeNull();
     expect(snapshot.items).toHaveLength(1);
     expect(snapshot.items[0]?.id).toBe(queuedMessageId);
     expect(snapshot.items[0]?.payload.body).toBe("Run this after recovery");
