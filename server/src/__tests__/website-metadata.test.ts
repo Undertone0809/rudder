@@ -48,7 +48,24 @@ describe("resolveWebsiteMetadata", () => {
     await expect(resolveWebsiteMetadata("https://x.com/my_knn_totoro/status/2068910037238772102")).resolves.toMatchObject({
       url: "https://x.com/my_knn_totoro/status/2068910037238772102",
       siteName: "X",
-      iconUrl: expect.stringContaining("data:image/svg+xml"),
+      iconUrl: expect.stringMatching(/^data:image\/(?:x-icon|png|svg\+xml);base64,/u),
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(lookupMock).not.toHaveBeenCalled();
+  });
+
+  it("returns Feishu and Rudder embedded website icons without fetching the public page", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("fetch should not be called"));
+
+    await expect(resolveWebsiteMetadata("https://docs.feishu.cn/docx/example")).resolves.toMatchObject({
+      url: "https://docs.feishu.cn/docx/example",
+      siteName: "Feishu",
+      iconUrl: expect.stringMatching(/^data:image\/svg\+xml;base64,/u),
+    });
+    await expect(resolveWebsiteMetadata("https://rudder.zeeland.studio/issues/RUD-1")).resolves.toMatchObject({
+      url: "https://rudder.zeeland.studio/issues/RUD-1",
+      siteName: "Rudder",
+      iconUrl: expect.stringMatching(/^data:image\/png;base64,/u),
     });
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(lookupMock).not.toHaveBeenCalled();

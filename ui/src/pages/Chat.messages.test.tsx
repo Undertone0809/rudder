@@ -256,7 +256,7 @@ describe("user chat message rendering", () => {
   });
 
   it("renders known website icons before following CJK text in user messages", () => {
-    const url = "https://x.com/my_knn_totoro/status/2068910037238772102";
+    const url = "https://app.rudder.zeeland.studio/issues/RUD-1";
     const container = renderChatMessageItem(message({
       role: "user",
       kind: "message",
@@ -270,7 +270,7 @@ describe("user chat message rendering", () => {
     expect(link?.textContent).toBe(url);
     expect(link?.getAttribute("target")).toBe("_blank");
     expect(link?.classList.contains("rudder-website-link")).toBe(true);
-    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("src")).toContain("data:image/svg+xml");
+    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("src")).toMatch(/^data:image\/(?:x-icon|png|svg\+xml);base64,/u);
     expect(link?.querySelector("[data-website-icon='generic']")).toBeNull();
     expect(websiteMetadataApiMock.get).not.toHaveBeenCalled();
     expect(bubble?.textContent).toContain("你觉得这个我怎么回复比较好?");

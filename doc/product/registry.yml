@@ -785,6 +785,7 @@ contracts:
     docs:
       - doc/product/domains/collaboration/chat-messenger-im.md
     related_code:
+      - packages/shared/src/website-icons.ts
       - server/src/routes/website-metadata.ts
       - server/src/services/website-metadata.ts
       - ui/src/api/websiteMetadata.ts
@@ -792,6 +793,7 @@ contracts:
       - ui/src/index.css
       - ui/src/pages/Chat.messages.tsx
     related_tests:
+      - packages/shared/src/website-icons.test.ts
       - server/src/__tests__/website-metadata.test.ts
       - server/src/__tests__/website-metadata-routes.test.ts
       - ui/src/components/MarkdownBody.test.tsx

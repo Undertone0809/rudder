@@ -136,11 +136,15 @@ test("renders known website icons without fetching metadata", async ({ page }) =
   expect(orgRes.ok(), await orgRes.text()).toBe(true);
   const organization = await orgRes.json() as { id: string; issuePrefix: string };
 
-  const url = "https://x.com/my_knn_totoro/status/2068910037238772102";
+  const urls = [
+    "https://x.com/my_knn_totoro/status/2068910037238772102",
+    "https://docs.feishu.cn/docx/example",
+    "https://rudderhq.dev/docs",
+  ];
   const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
     data: {
       title: "Known website icon render",
-      description: `Track ${url}`,
+      description: urls.map((url) => `Track ${url}`).join("\n\n"),
       status: "todo",
       priority: "medium",
     },
@@ -154,13 +158,16 @@ test("renders known website icons without fetching metadata", async ({ page }) =
   }, organization.id);
   await page.goto(`/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
 
-  const link = page.locator("a.rudder-website-link").filter({ hasText: url }).first();
-  await expect(link).toBeVisible();
-  const icon = link.locator("img.rudder-website-link-logo").first();
-  await expect(icon).toBeVisible();
-  await expect(icon).toHaveAttribute("data-website-icon", "metadata");
-  await expect(icon).toHaveAttribute("src", /data:image\/svg\+xml/);
-  await expect(link.locator('[data-website-icon="generic"]')).toHaveCount(0);
+  for (const url of urls) {
+    const link = page.locator("a.rudder-website-link").filter({ hasText: url }).first();
+    await expect(link).toBeVisible();
+    const icon = link.locator("img.rudder-website-link-logo").first();
+    await expect(icon).toBeVisible();
+    await expect(icon).toHaveAttribute("data-website-icon", "metadata");
+    await expect(icon).toHaveAttribute("src", /^data:image\/(?:x-icon|png|svg\+xml);base64,/u);
+    await expect(icon).not.toHaveAttribute("src", /^data:image\/svg\+xml,/u);
+    await expect(link.locator('[data-website-icon="generic"]')).toHaveCount(0);
+  }
 
   expect(requestedUrls.some((requestUrl) => requestUrl.includes("/api/website-metadata?"))).toBe(false);
   expect(requestedUrls.some((requestUrl) => requestUrl.startsWith("https://icons.duckduckgo.com/"))).toBe(false);
@@ -248,14 +255,14 @@ test("resolves real website icons through the running metadata service", async (
   }, organization.id);
   await page.goto(`/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
 
-  for (const url of [links.github, links.hbr]) {
+  for (const url of [links.github, links.nist]) {
     const link = page.locator("a.rudder-website-link").filter({ hasText: url }).first();
     await expect(link).toBeVisible();
     await expect(link.locator("img.rudder-website-link-logo")).toBeVisible({ timeout: 15_000 });
     await expect(link.locator(".rudder-website-link-icon")).toHaveAttribute("data-website-icon", "metadata");
   }
 
-  await expect(page.locator("a.rudder-website-link").filter({ hasText: links.nist }).first()).toBeVisible();
+  await expect(page.locator("a.rudder-website-link").filter({ hasText: links.hbr }).first()).toBeVisible();
 
   const internalLink = page.locator("a.rudder-website-link").filter({ hasText: links.internal }).first();
   await expect(internalLink).toBeVisible();
@@ -283,10 +290,11 @@ test("resolves real website icons through the running metadata service", async (
     });
   });
 
-  const publicIconRows = render.filter((row) => [links.github, links.hbr].includes(row.href ?? ""));
+  const publicIconRows = render.filter((row) => [links.github, links.nist].includes(row.href ?? ""));
   expect(publicIconRows).toHaveLength(2);
   expect(publicIconRows.every((row) => row.iconKind === "metadata")).toBe(true);
-  expect(publicIconRows.find((row) => row.href === links.github)?.imgSrc?.startsWith("data:image/svg+xml")).toBe(true);
+  expect(publicIconRows.find((row) => row.href === links.github)?.imgSrc).toMatch(/^data:image\/(?:x-icon|png|svg\+xml);base64,/u);
+  expect(publicIconRows.find((row) => row.href === links.github)?.imgSrc).not.toMatch(/^data:image\/svg\+xml,/u);
   expect(publicIconRows
     .filter((row) => row.href !== links.github)
     .every((row) => row.imgSrc?.startsWith("/api/website-metadata/icon?"))).toBe(true);

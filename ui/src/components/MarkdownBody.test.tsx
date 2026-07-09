@@ -1756,28 +1756,28 @@ describe("MarkdownBody", () => {
 
   it("keeps the generic website icon when metadata has no site icon", async () => {
     entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValueOnce({
-      url: "https://openai.com/policies/terms-of-use/",
-      siteName: "OpenAI",
+      url: "https://policy.example.test/terms-of-use/",
+      siteName: "Policy Example",
       iconUrl: null,
     });
 
     const container = render(
       <ThemeProvider>
         <MarkdownBody>
-          {"Reference [Terms of Use](https://openai.com/policies/terms-of-use/)"}
+          {"Reference [Terms of Use](https://policy.example.test/terms-of-use/)"}
         </MarkdownBody>
       </ThemeProvider>,
     );
 
     const link = container.querySelector("a");
-    expect(link?.getAttribute("href")).toBe("https://openai.com/policies/terms-of-use/");
+    expect(link?.getAttribute("href")).toBe("https://policy.example.test/terms-of-use/");
     expect(link?.classList.contains("rudder-link-chip--website")).toBe(false);
     expect(link?.textContent).toBe("Terms of Use");
     expect(link?.querySelector("img.rudder-website-link-logo")).toBeNull();
     expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
     await act(async () => {
       await vi.waitFor(() => {
-        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith("https://openai.com/policies/terms-of-use/");
+        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith("https://policy.example.test/terms-of-use/");
       });
     });
 
@@ -1789,23 +1789,31 @@ describe("MarkdownBody", () => {
     const container = render(
       <ThemeProvider>
         <MarkdownBody>
-          {"Read [tweet](https://x.com/my_knn_totoro/status/2068910037238772102)"}
+          {"Read [tweet](https://x.com/my_knn_totoro/status/2068910037238772102), [Feishu](https://docs.feishu.cn/docx/example), and [Rudder](https://rudderhq.dev/docs)"}
         </MarkdownBody>
       </ThemeProvider>,
     );
 
-    const link = container.querySelector("a");
-    const logo = link?.querySelector("img.rudder-website-link-logo");
+    const links = Array.from(container.querySelectorAll("a"));
+    const logos = links.map((link) => link.querySelector("img.rudder-website-link-logo"));
     expect(entityPreviewApiMocks.getWebsiteMetadata).not.toHaveBeenCalled();
-    expect(logo?.getAttribute("src")).toContain("data:image/svg+xml");
-    expect(logo?.getAttribute("data-website-icon")).toBe("metadata");
-    expect(link?.querySelector("[data-website-icon='generic']")).toBeNull();
-    expect(link?.textContent).toBe("tweet");
+    expect(links).toHaveLength(3);
+    expect(logos.map((logo) => logo?.getAttribute("src"))).toEqual([
+      expect.stringMatching(/^data:image\/(?:x-icon|png|svg\+xml);base64,/u),
+      expect.stringMatching(/^data:image\/svg\+xml;base64,/u),
+      expect.stringMatching(/^data:image\/png;base64,/u),
+    ]);
+    for (const link of links) {
+      expect(link.querySelector("img.rudder-website-link-logo")?.getAttribute("data-website-icon")).toBe("metadata");
+      expect(link.querySelector("[data-website-icon='generic']")).toBeNull();
+    }
+    expect(links.map((link) => link.textContent)).toEqual(["tweet", "Feishu", "Rudder"]);
   });
 
   it("replaces the generic website icon only with fetched metadata icons", async () => {
+    const url = "https://metadata-icon.example.test/post";
     entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValue({
-      url: "https://example.com/post",
+      url,
       siteName: "Example",
       iconUrl: "https://static.example.com/favicon.ico",
     });
@@ -1813,7 +1821,7 @@ describe("MarkdownBody", () => {
     const container = render(
       <ThemeProvider>
         <MarkdownBody>
-          {"Read [post](https://example.com/post)"}
+          {"Read [post](https://metadata-icon.example.test/post)"}
         </MarkdownBody>
       </ThemeProvider>,
     );
@@ -1824,7 +1832,7 @@ describe("MarkdownBody", () => {
 
     await act(async () => {
       await vi.waitFor(() => {
-        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith("https://example.com/post");
+        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith(url);
       });
     });
     await act(async () => {
