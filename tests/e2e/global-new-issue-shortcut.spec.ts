@@ -32,6 +32,16 @@ async function gotoDashboardReady(page: Page, issuePrefix: string) {
   await expect(page.locator('[data-shortcut-settings-ready="true"]')).toBeVisible();
 }
 
+async function expectNoChatConversations(page: Page, orgId: string) {
+  const chatsRes = await page.request.get(`/api/orgs/${orgId}/chats?status=active&limit=40`);
+  expect(chatsRes.ok()).toBe(true);
+  expect(await chatsRes.json()).toEqual([]);
+
+  const allChatsRes = await page.request.get(`/api/orgs/${orgId}/chats?status=all&limit=40`);
+  expect(allChatsRes.ok()).toBe(true);
+  expect(await allChatsRes.json()).toEqual([]);
+}
+
 async function dispatchShortcut(
   page: Page,
   shortcut: { key: string; init: KeyboardEventInit },
@@ -116,7 +126,7 @@ test.describe("Global create shortcuts", () => {
     await expect(dialog).toBeVisible();
   });
 
-  test("creates and opens a new chat with the platform default modifier+Alt+S", async ({ page }) => {
+  test("opens the new chat composer with the platform default modifier+Alt+S without creating a chat", async ({ page }) => {
     await resetShortcutSettings(page);
     const orgRes = await page.request.post("/api/orgs", {
       data: {
@@ -124,30 +134,36 @@ test.describe("Global create shortcuts", () => {
       },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { issuePrefix: string };
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
 
     await gotoDashboardReady(page, organization.issuePrefix);
-    const createChatResponse = page.waitForResponse((response) =>
-      response.request().method() === "POST"
-      && response.url().includes("/api/orgs/")
-      && response.url().includes("/chats")
-      && response.ok(),
-    );
+    const chatCreateRequests: string[] = [];
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST"
+        && request.url().includes("/api/orgs/")
+        && request.url().includes("/chats")
+      ) {
+        chatCreateRequests.push(request.url());
+      }
+    });
 
     const shortcut = await dispatchFirstHandledShortcut(page, getCandidateNewChatShortcuts());
     expect(shortcut).not.toBeNull();
-    const chat = await (await createChatResponse).json() as { id: string; title: string };
 
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/${chat.id}$`));
-    await expect(page.getByText("No messages yet. Start by describing the work and Rudder will clarify it first.")).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat$`));
+    await expect(page.getByRole("heading", { name: /What can I help with/i })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "editable markdown" })).toBeVisible();
-    await expect(page.getByRole("link", { name: /New chat just now/ })).toHaveAttribute(
+    await expect(page.getByRole("link", { name: "New chat" })).toHaveAttribute(
       "href",
-      new RegExp(`/${organization.issuePrefix}/messenger/chat/${chat.id}$`),
+      new RegExp(`/${organization.issuePrefix}/messenger/chat$`),
     );
+    await page.waitForTimeout(250);
+    expect(chatCreateRequests).toEqual([]);
+    await expectNoChatConversations(page, organization.id);
   });
 
-  test("creates a new chat with modifier+Alt+S when legacy chat shortcuts are persisted", async ({ page }) => {
+  test("opens the new chat composer with modifier+Alt+S when legacy chat shortcuts are persisted", async ({ page }) => {
     const legacyRes = await page.request.patch("/api/instance/settings/shortcuts", {
       data: {
         shortcuts: [
@@ -168,20 +184,27 @@ test.describe("Global create shortcuts", () => {
       },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { issuePrefix: string };
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
 
     await gotoDashboardReady(page, organization.issuePrefix);
-    const createChatResponse = page.waitForResponse((response) =>
-      response.request().method() === "POST"
-      && response.url().includes("/api/orgs/")
-      && response.url().includes("/chats")
-      && response.ok(),
-    );
+    const chatCreateRequests: string[] = [];
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST"
+        && request.url().includes("/api/orgs/")
+        && request.url().includes("/chats")
+      ) {
+        chatCreateRequests.push(request.url());
+      }
+    });
 
     const shortcut = await dispatchFirstHandledShortcut(page, getCandidateNewChatShortcuts());
     expect(shortcut).not.toBeNull();
-    const chat = await (await createChatResponse).json() as { id: string };
 
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/${chat.id}$`));
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat$`));
+    await expect(page.getByRole("textbox", { name: "editable markdown" })).toBeVisible();
+    await page.waitForTimeout(250);
+    expect(chatCreateRequests).toEqual([]);
+    await expectNoChatConversations(page, organization.id);
   });
 });

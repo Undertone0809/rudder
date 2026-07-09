@@ -985,7 +985,7 @@ export function Layout() {
     return true;
   }, [navigate]);
 
-  const createAndOpenChat = useCallback(async () => {
+  const openNewChatComposer = useCallback(() => {
     if (!selectedOrganizationId) {
       pushToast({
         title: "Select an organization first",
@@ -995,24 +995,8 @@ export function Layout() {
       return;
     }
 
-    try {
-      const chat = await chatsApi.create(selectedOrganizationId, {});
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(selectedOrganizationId, "active") }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.chats.listPreview(selectedOrganizationId, "active", 40) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPages(selectedOrganizationId) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(selectedOrganizationId) }),
-      ]);
-      navigate(`/messenger/chat/${chat.id}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to create chat.";
-      pushToast({
-        title: "Failed to create chat",
-        body: message,
-        tone: "error",
-      });
-    }
-  }, [navigate, pushToast, queryClient, selectedOrganizationId]);
+    navigate("/messenger/chat");
+  }, [navigate, pushToast, selectedOrganizationId]);
 
   const shortcutSettingsQuery = useQuery({
     queryKey: queryKeys.instance.shortcutSettings,
@@ -1025,7 +1009,7 @@ export function Layout() {
   const shortcutSettingsReady = shortcutSettings !== undefined;
 
   useKeyboardShortcuts({
-    onNewChat: () => { void createAndOpenChat(); },
+    onNewChat: openNewChatComposer,
     onNewIssue: () => openNewIssue(),
     onToggleSidebar: toggleSidebar,
     onTogglePanel: togglePanel,

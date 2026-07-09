@@ -55,8 +55,8 @@ export const KEYBOARD_SHORTCUT_REGISTRY: KeyboardShortcutRegistryEntry[] = [
   },
   {
     actionId: "chat.create",
-    label: "Create new chat",
-    description: "Create a new chat and open it.",
+    label: "New chat",
+    description: "Open the new chat composer.",
     scope: "Global",
     defaultBindings: [
       { key: "s", code: "KeyS", metaKey: true, altKey: true },
