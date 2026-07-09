@@ -2,7 +2,7 @@
 title: Feishu Daily Session Rollover
 date: 2026-07-09
 kind: proposal
-status: in_progress
+status: completed
 area: chat
 entities:
   - messenger_chat
@@ -23,7 +23,8 @@ related_code:
   - ui/src/pages/AgentDetail.integrations.tsx
   - server/src/__tests__/agent-integration-feishu-db-dispatcher.test.ts
   - ui/src/pages/AgentDetail.integrations.test.tsx
-commit_refs: []
+commit_refs:
+  - decfb8f45
 updated_at: 2026-07-09
 ---
 
@@ -247,12 +248,22 @@ persists the operator notification setting.
 
 ### Expected Results
 
-All focused server and UI tests pass. The proposal remains in `in_progress`
-until implementation, verifier, and review gates finish.
+All focused server and UI tests pass. The implementation landed in
+`decfb8f45`, and the proposal is complete after implementation, verifier, and
+review gates finished.
 
 ### Pass / Fail
 
-Pending implementation verification.
+Passed for the shipped slice:
+
+- focused server and UI tests passed
+- DB-backed Feishu dispatcher/runtime tests passed against a disposable local
+  Postgres database
+- TypeScript checks passed for `@rudderhq/db`, `@rudderhq/shared`,
+  `@rudderhq/server`, and `@rudderhq/ui`
+- `pnpm lint:changed` passed
+- browser proof confirmed the Feishu/Lark manage modal exposes
+  `Notify Feishu when a daily session starts` enabled by default
 
 ## Documentation Changes
 
