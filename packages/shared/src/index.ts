@@ -31,6 +31,7 @@ export {
   WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS, WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS, WORKSPACE_BACKUP_OFFLINE_INTERVAL_HOURS,
   WORKSPACE_BACKUP_RUNNING_INTERVAL_HOURS
 } from "./types/workspace-backup.js";
+export { KNOWN_WEBSITE_ICONS, resolveKnownWebsiteIcon, type KnownWebsiteIcon } from "./website-icons.js";
 
 export type {
   AgentCustomIntegrationBinding,

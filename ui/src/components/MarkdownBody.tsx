@@ -1,4 +1,4 @@
-import { buildAgentMentionHref } from "@rudderhq/shared";
+import { buildAgentMentionHref, resolveKnownWebsiteIcon } from "@rudderhq/shared";
 import { Check, Copy, Globe2 } from "lucide-react";
 import { isValidElement, useCallback, useEffect, useId, useRef, useState, type ClipboardEvent, type MouseEvent, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
@@ -386,11 +386,21 @@ const websiteMetadataIconInflight = new Map<string, Promise<WebsiteMetadataIconS
 
 function useWebsiteMetadataIcon(url: URL) {
   const href = url.href;
+  const knownIcon = resolveKnownWebsiteIcon(url);
   const [state, setState] = useState<WebsiteMetadataIconState>(
-    () => websiteMetadataIconCache.get(href) ?? { status: "idle", iconUrl: null },
+    () => knownIcon
+      ? { status: "ready", iconUrl: knownIcon.iconDataUrl }
+      : websiteMetadataIconCache.get(href) ?? { status: "idle", iconUrl: null },
   );
 
   useEffect(() => {
+    if (knownIcon) {
+      const nextState: WebsiteMetadataIconState = { status: "ready", iconUrl: knownIcon.iconDataUrl };
+      websiteMetadataIconCache.set(href, nextState);
+      setState(nextState);
+      return;
+    }
+
     const cached = websiteMetadataIconCache.get(href);
     if (cached && cached.status !== "loading") {
       setState(cached);
@@ -425,7 +435,7 @@ function useWebsiteMetadataIcon(url: URL) {
     return () => {
       cancelled = true;
     };
-  }, [href]);
+  }, [href, knownIcon]);
 
   return state;
 }

@@ -41,6 +41,26 @@ describe("website metadata routes", () => {
     });
   });
 
+  it("returns local data-url icons without wrapping them in the icon proxy", async () => {
+    const resolveWebsiteMetadata = vi.fn().mockResolvedValue({
+      url: "https://x.com/example/status/1",
+      siteName: "X",
+      iconUrl: "data:image/svg+xml,%3Csvg%2F%3E",
+    });
+    const app = createApp({ resolveWebsiteMetadata });
+
+    const metadataRes = await request(app)
+      .get("/api/website-metadata")
+      .query({ url: "https://x.com/example/status/1" });
+
+    expect(metadataRes.status).toBe(200);
+    expect(metadataRes.body).toMatchObject({
+      url: "https://x.com/example/status/1",
+      siteName: "X",
+      iconUrl: "data:image/svg+xml,%3Csvg%2F%3E",
+    });
+  });
+
   it("proxies fetched website icon bytes", async () => {
     const fetchWebsiteIcon = vi.fn().mockResolvedValue({
       contentType: "image/x-icon",

@@ -1,6 +1,11 @@
+import { resolveKnownWebsiteIcon } from "@rudderhq/shared";
 import { JSDOM } from "jsdom";
+import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
+import path from "node:path";
+import { resolveRudderInstanceRoot } from "../home-paths.js";
 
 export interface WebsiteMetadata {
   url: string;
@@ -19,6 +24,7 @@ const FETCH_TIMEOUT_MS = 5_000;
 const MAX_REDIRECTS = 5;
 const SUCCESS_CACHE_TTL_MS = 30 * 60_000;
 const FAILURE_CACHE_TTL_MS = 5 * 60_000;
+const ICON_DISK_CACHE_TTL_MS = 7 * 24 * 60 * 60_000;
 const FALLBACK_FAVICON_SIZE = "64";
 const IMAGE_CONTENT_TYPES = new Set([
   "image/gif",
@@ -102,6 +108,10 @@ export function parsePublicHttpUrl(value: string, options: WebsiteMetadataOption
   }
   parsed.hash = "";
   return parsed;
+}
+
+function resolveWebsiteIconCacheDir() {
+  return path.resolve(resolveRudderInstanceRoot(), "data", "website-icons");
 }
 
 async function assertPublicResolvedHost(url: URL, options: WebsiteMetadataOptions) {
@@ -294,6 +304,11 @@ async function findProviderFavicon(pageUrl: URL, options: WebsiteMetadataOptions
 
 async function resolveWebsiteMetadataUncached(value: string, options: WebsiteMetadataOptions): Promise<WebsiteMetadata> {
   const pageUrl = parsePublicHttpUrl(value, options);
+  const knownIcon = resolveKnownWebsiteIcon(pageUrl);
+  if (knownIcon) {
+    return { url: pageUrl.href, siteName: knownIcon.siteName, iconUrl: knownIcon.iconDataUrl };
+  }
+
   let pageResult: FetchResult;
   try {
     pageResult = await fetchWithTimeout(pageUrl, options);
@@ -357,13 +372,67 @@ export async function resolveWebsiteMetadata(value: string, options: WebsiteMeta
 
 export async function fetchWebsiteIcon(value: string, options: WebsiteMetadataOptions = {}) {
   const iconUrl = parsePublicHttpUrl(value, options);
+  if (!options.allowPrivateHosts && !options.fetchImpl) {
+    const cached = await readCachedWebsiteIcon(iconUrl.href);
+    if (cached) return cached;
+  }
   const { response } = await fetchWithTimeout(iconUrl, options);
   if (!response.ok) return null;
   const contentType = contentTypeBase(response.headers.get("content-type"));
   if (!IMAGE_CONTENT_TYPES.has(contentType)) return null;
   const body = await readLimitedBuffer(response, MAX_ICON_BYTES);
   if (body.length <= 0) return null;
-  return { contentType, body };
+  const icon = { contentType, body };
+  if (!options.allowPrivateHosts && !options.fetchImpl) {
+    await writeCachedWebsiteIcon(iconUrl.href, icon).catch(() => undefined);
+  }
+  return icon;
+}
+
+interface CachedWebsiteIcon {
+  contentType: string;
+  body: Buffer;
+}
+
+function cachedWebsiteIconBasename(iconUrl: string) {
+  return createHash("sha256").update(iconUrl).digest("hex");
+}
+
+function cachedWebsiteIconPaths(iconUrl: string) {
+  const basename = cachedWebsiteIconBasename(iconUrl);
+  const dir = resolveWebsiteIconCacheDir();
+  return {
+    metadataPath: path.join(dir, `${basename}.json`),
+    bodyPath: path.join(dir, `${basename}.bin`),
+  };
+}
+
+async function readCachedWebsiteIcon(iconUrl: string): Promise<CachedWebsiteIcon | null> {
+  const { metadataPath, bodyPath } = cachedWebsiteIconPaths(iconUrl);
+  try {
+    const [rawMetadata, bodyStats] = await Promise.all([
+      readFile(metadataPath, "utf8"),
+      stat(bodyPath),
+    ]);
+    if (Date.now() - bodyStats.mtimeMs > ICON_DISK_CACHE_TTL_MS) return null;
+    const metadata = JSON.parse(rawMetadata) as { contentType?: unknown; url?: unknown };
+    if (metadata.url !== iconUrl || typeof metadata.contentType !== "string") return null;
+    if (!IMAGE_CONTENT_TYPES.has(metadata.contentType)) return null;
+    const body = await readFile(bodyPath);
+    if (body.length <= 0 || body.length > MAX_ICON_BYTES) return null;
+    return { contentType: metadata.contentType, body };
+  } catch {
+    return null;
+  }
+}
+
+async function writeCachedWebsiteIcon(iconUrl: string, icon: CachedWebsiteIcon) {
+  const { metadataPath, bodyPath } = cachedWebsiteIconPaths(iconUrl);
+  await mkdir(path.dirname(bodyPath), { recursive: true });
+  await Promise.all([
+    writeFile(bodyPath, icon.body),
+    writeFile(metadataPath, `${JSON.stringify({ url: iconUrl, contentType: icon.contentType })}\n`, "utf8"),
+  ]);
 }
 
 export function __clearWebsiteMetadataCacheForTests() {

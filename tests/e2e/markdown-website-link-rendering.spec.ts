@@ -7,7 +7,7 @@ test("renders website markdown links as inline icon-leading text that wraps", as
   expect(orgRes.ok(), await orgRes.text()).toBe(true);
   const organization = await orgRes.json() as { id: string; issuePrefix: string };
 
-  const url = "https://github.com/Undertone0809/rudder/releases?page=5";
+  const url = "https://example.org/teams/platform/release-notes/very-long-regression-report?page=5&section=metadata-icon-rendering";
   const requestedUrls: string[] = [];
   page.on("request", (request) => {
     requestedUrls.push(request.url());
@@ -20,8 +20,8 @@ test("renders website markdown links as inline icon-leading text that wraps", as
       contentType: "application/json",
       body: JSON.stringify({
         url,
-        siteName: "GitHub",
-        iconUrl: "/api/website-metadata/icon?url=https%3A%2F%2Fgithub.githubassets.com%2Ffavicons%2Ffavicon.png",
+        siteName: "Example",
+        iconUrl: "/api/website-metadata/icon?url=https%3A%2F%2Fstatic.example.org%2Ffavicons%2Ffavicon.png",
       }),
     });
   });
@@ -58,7 +58,7 @@ test("renders website markdown links as inline icon-leading text that wraps", as
   const icon = link.locator("img.rudder-website-link-logo").first();
   await expect(icon).toBeVisible();
   await expect(icon).toHaveAttribute("data-website-icon", "metadata");
-  await expect(icon).toHaveAttribute("src", "/api/website-metadata/icon?url=https%3A%2F%2Fgithub.githubassets.com%2Ffavicons%2Ffavicon.png");
+  await expect(icon).toHaveAttribute("src", "/api/website-metadata/icon?url=https%3A%2F%2Fstatic.example.org%2Ffavicons%2Ffavicon.png");
   await expect(link.locator(".rudder-link-chip-domain")).toHaveCount(0);
 
   const render = await link.evaluate((element) => {
@@ -121,6 +121,48 @@ test("renders website markdown links as inline icon-leading text that wraps", as
   expect(render.iconVerticalCenterDelta).not.toBeNull();
   expect(render.iconVerticalCenterDelta).toBeLessThanOrEqual(3);
   expect(render.lineCount).toBeGreaterThan(1);
+  expect(requestedUrls.some((requestUrl) => requestUrl.startsWith("https://icons.duckduckgo.com/"))).toBe(false);
+});
+
+test("renders known website icons without fetching metadata", async ({ page }) => {
+  const requestedUrls: string[] = [];
+  page.on("request", (request) => {
+    requestedUrls.push(request.url());
+  });
+
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Markdown-Known-Website-Icon-${Date.now()}` },
+  });
+  expect(orgRes.ok(), await orgRes.text()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+  const url = "https://x.com/my_knn_totoro/status/2068910037238772102";
+  const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Known website icon render",
+      description: `Track ${url}`,
+      status: "todo",
+      priority: "medium",
+    },
+  });
+  expect(issueRes.ok(), await issueRes.text()).toBe(true);
+  const issue = await issueRes.json() as { id: string; identifier?: string | null };
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
+
+  const link = page.locator("a.rudder-website-link").filter({ hasText: url }).first();
+  await expect(link).toBeVisible();
+  const icon = link.locator("img.rudder-website-link-logo").first();
+  await expect(icon).toBeVisible();
+  await expect(icon).toHaveAttribute("data-website-icon", "metadata");
+  await expect(icon).toHaveAttribute("src", /data:image\/svg\+xml/);
+  await expect(link.locator('[data-website-icon="generic"]')).toHaveCount(0);
+
+  expect(requestedUrls.some((requestUrl) => requestUrl.includes("/api/website-metadata?"))).toBe(false);
   expect(requestedUrls.some((requestUrl) => requestUrl.startsWith("https://icons.duckduckgo.com/"))).toBe(false);
 });
 
@@ -206,12 +248,14 @@ test("resolves real website icons through the running metadata service", async (
   }, organization.id);
   await page.goto(`/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
 
-  for (const url of [links.github, links.nist, links.hbr]) {
+  for (const url of [links.github, links.hbr]) {
     const link = page.locator("a.rudder-website-link").filter({ hasText: url }).first();
     await expect(link).toBeVisible();
     await expect(link.locator("img.rudder-website-link-logo")).toBeVisible({ timeout: 15_000 });
     await expect(link.locator(".rudder-website-link-icon")).toHaveAttribute("data-website-icon", "metadata");
   }
+
+  await expect(page.locator("a.rudder-website-link").filter({ hasText: links.nist }).first()).toBeVisible();
 
   const internalLink = page.locator("a.rudder-website-link").filter({ hasText: links.internal }).first();
   await expect(internalLink).toBeVisible();
@@ -239,9 +283,13 @@ test("resolves real website icons through the running metadata service", async (
     });
   });
 
-  const publicIconRows = render.filter((row) => [links.github, links.nist, links.hbr].includes(row.href ?? ""));
-  expect(publicIconRows).toHaveLength(3);
-  expect(publicIconRows.every((row) => row.iconKind === "metadata" && row.imgSrc?.startsWith("/api/website-metadata/icon?"))).toBe(true);
+  const publicIconRows = render.filter((row) => [links.github, links.hbr].includes(row.href ?? ""));
+  expect(publicIconRows).toHaveLength(2);
+  expect(publicIconRows.every((row) => row.iconKind === "metadata")).toBe(true);
+  expect(publicIconRows.find((row) => row.href === links.github)?.imgSrc?.startsWith("data:image/svg+xml")).toBe(true);
+  expect(publicIconRows
+    .filter((row) => row.href !== links.github)
+    .every((row) => row.imgSrc?.startsWith("/api/website-metadata/icon?"))).toBe(true);
   expect(publicIconRows.every((row) => row.centerDelta !== null && row.centerDelta <= 3)).toBe(true);
   expect(requestedUrls.some((requestUrl) => requestUrl.startsWith("https://icons.duckduckgo.com/"))).toBe(false);
   expect(requestedUrls.some((requestUrl) => requestUrl.startsWith(links.internal))).toBe(false);

@@ -34,6 +34,12 @@ function isInspectableUrlError(error: unknown) {
     || error.message === "Website metadata redirect limit exceeded";
 }
 
+function proxiedWebsiteIconUrl(iconUrl: string | null) {
+  if (!iconUrl) return null;
+  if (iconUrl.startsWith("data:image/")) return iconUrl;
+  return `/api/website-metadata/icon?url=${encodeURIComponent(iconUrl)}`;
+}
+
 export function websiteMetadataRoutes(options: WebsiteMetadataRouteOptions = {}) {
   const router = Router();
   const resolveMetadata = options.resolveWebsiteMetadata ?? ((url: string) => resolveWebsiteMetadata(url, options.urlOptions));
@@ -49,10 +55,7 @@ export function websiteMetadataRoutes(options: WebsiteMetadataRouteOptions = {})
       if (isInspectableUrlError(error)) throw badRequest((error as Error).message);
       throw error;
     }
-    const iconUrl = metadata.iconUrl
-      ? `/api/website-metadata/icon?url=${encodeURIComponent(metadata.iconUrl)}`
-      : null;
-    res.json({ ...metadata, iconUrl });
+    res.json({ ...metadata, iconUrl: proxiedWebsiteIconUrl(metadata.iconUrl) });
   });
 
   router.get("/website-metadata/icon", async (req, res) => {

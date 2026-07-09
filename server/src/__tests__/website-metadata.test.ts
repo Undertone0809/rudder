@@ -1,5 +1,8 @@
+import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { AddressInfo } from "node:net";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { __clearWebsiteMetadataCacheForTests, fetchWebsiteIcon, resolveWebsiteMetadata } from "../services/website-metadata.js";
 
@@ -24,6 +27,8 @@ async function startFixtureServer(handler: Parameters<typeof createServer>[0]) {
 
 describe("resolveWebsiteMetadata", () => {
   let servers: Array<{ close: () => Promise<void> }> = [];
+  const originalRudderHome = process.env.RUDDER_HOME;
+  const originalRudderInstanceId = process.env.RUDDER_INSTANCE_ID;
 
   afterEach(async () => {
     await Promise.all(servers.map((server) => server.close()));
@@ -31,6 +36,22 @@ describe("resolveWebsiteMetadata", () => {
     __clearWebsiteMetadataCacheForTests();
     lookupMock.mockReset();
     vi.restoreAllMocks();
+    if (originalRudderHome === undefined) delete process.env.RUDDER_HOME;
+    else process.env.RUDDER_HOME = originalRudderHome;
+    if (originalRudderInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
+    else process.env.RUDDER_INSTANCE_ID = originalRudderInstanceId;
+  });
+
+  it("returns known website icons without fetching the public page", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("fetch should not be called"));
+
+    await expect(resolveWebsiteMetadata("https://x.com/my_knn_totoro/status/2068910037238772102")).resolves.toMatchObject({
+      url: "https://x.com/my_knn_totoro/status/2068910037238772102",
+      siteName: "X",
+      iconUrl: expect.stringContaining("data:image/svg+xml"),
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(lookupMock).not.toHaveBeenCalled();
   });
 
   it("returns the page-declared favicon as the website icon", async () => {
@@ -234,5 +255,30 @@ describe("resolveWebsiteMetadata", () => {
     });
 
     await expect(fetchWebsiteIcon("https://example.com/favicon.ico", { fetchImpl })).rejects.toThrow("Private network URLs");
+  });
+
+  it("reuses fetched website icons from the instance disk cache", async () => {
+    const tempHome = await mkdtemp(path.join(os.tmpdir(), "rudder-website-icon-cache-"));
+    process.env.RUDDER_HOME = tempHome;
+    process.env.RUDDER_INSTANCE_ID = "test";
+    lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(Buffer.from("ico"), {
+      status: 200,
+      headers: { "content-type": "image/x-icon" },
+    }));
+
+    try {
+      await expect(fetchWebsiteIcon("https://static.example.com/favicon.ico")).resolves.toMatchObject({
+        contentType: "image/x-icon",
+        body: Buffer.from("ico"),
+      });
+      await expect(fetchWebsiteIcon("https://static.example.com/favicon.ico")).resolves.toMatchObject({
+        contentType: "image/x-icon",
+        body: Buffer.from("ico"),
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      await rm(tempHome, { recursive: true, force: true });
+    }
   });
 });

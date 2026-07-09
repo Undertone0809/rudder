@@ -1785,17 +1785,35 @@ describe("MarkdownBody", () => {
     expect(link?.querySelector("img.rudder-website-link-logo")).toBeNull();
   });
 
+  it("uses known website icons without fetching metadata", () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {"Read [tweet](https://x.com/my_knn_totoro/status/2068910037238772102)"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const link = container.querySelector("a");
+    const logo = link?.querySelector("img.rudder-website-link-logo");
+    expect(entityPreviewApiMocks.getWebsiteMetadata).not.toHaveBeenCalled();
+    expect(logo?.getAttribute("src")).toContain("data:image/svg+xml");
+    expect(logo?.getAttribute("data-website-icon")).toBe("metadata");
+    expect(link?.querySelector("[data-website-icon='generic']")).toBeNull();
+    expect(link?.textContent).toBe("tweet");
+  });
+
   it("replaces the generic website icon only with fetched metadata icons", async () => {
     entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValue({
-      url: "https://x.com/my_knn_totoro/status/2068910037238772102",
-      siteName: "X",
-      iconUrl: "https://x.com/favicon.ico",
+      url: "https://example.com/post",
+      siteName: "Example",
+      iconUrl: "https://static.example.com/favicon.ico",
     });
 
     const container = render(
       <ThemeProvider>
         <MarkdownBody>
-          {"Read [tweet](https://x.com/my_knn_totoro/status/2068910037238772102)"}
+          {"Read [post](https://example.com/post)"}
         </MarkdownBody>
       </ThemeProvider>,
     );
@@ -1806,26 +1824,26 @@ describe("MarkdownBody", () => {
 
     await act(async () => {
       await vi.waitFor(() => {
-        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith("https://x.com/my_knn_totoro/status/2068910037238772102");
+        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith("https://example.com/post");
       });
     });
     await act(async () => {
       await vi.waitFor(() => {
-        expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("src")).toBe("https://x.com/favicon.ico");
+        expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("src")).toBe("https://static.example.com/favicon.ico");
       });
     });
     expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("data-website-icon")).toBe("metadata");
     expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("aria-hidden")).toBe("true");
     expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("referrerpolicy")).toBe("no-referrer");
-    expect(link?.textContent).toBe("tweet");
+    expect(link?.textContent).toBe("post");
   });
 
   it("reuses one metadata request when the same website icon appears multiple times", async () => {
-    const url = "https://github.com/Undertone0809/rudder";
+    const url = "https://example.com/docs";
     entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValue({
       url,
-      siteName: "GitHub",
-      iconUrl: "/api/website-metadata/icon?url=https%3A%2F%2Fgithub.githubassets.com%2Ffavicons%2Ffavicon.png",
+      siteName: "Example",
+      iconUrl: "/api/website-metadata/icon?url=https%3A%2F%2Fstatic.example.com%2Ffavicon.png",
     });
 
     const container = render(
@@ -1906,11 +1924,11 @@ describe("MarkdownBody", () => {
   });
 
   it("falls back directly to the generic icon when a fetched metadata icon fails to load", async () => {
-    const url = "https://example.com/post/";
+    const url = "https://broken-icon.example.org/post/";
     entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValue({
       url,
-      siteName: "Example",
-      iconUrl: "/api/website-metadata/icon?url=https%3A%2F%2Fexample.com%2Fbroken.ico",
+      siteName: "Broken Icon",
+      iconUrl: "/api/website-metadata/icon?url=https%3A%2F%2Fbroken-icon.example.org%2Fbroken.ico",
     });
 
     const container = render(
