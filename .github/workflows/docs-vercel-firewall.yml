@@ -27,9 +27,6 @@ jobs:
         with:
           node-version: 24
 
-      - name: Install Vercel SDK
-        run: npm install --no-save --no-package-lock @vercel/sdk@latest
-
       - name: Apply common docs 404 probe block
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}

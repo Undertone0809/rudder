@@ -17,7 +17,7 @@ const RULE_VALUE = {
           op: "re",
           neg: false,
           value:
-            "^/(?:wp-admin(?:/.*)?|wp-login\\.php|wordpress(?:/.*)?|wp(?:/.*)?|admin(?:/.*)?|login(?:/.*)?|\\.git(?:/.*)?|\\.env)$",
+            "^/(?:socket\\.io(?:/.*)?|wp-admin(?:/.*)?|wp-login\\.php|wordpress(?:/.*)?|wp(?:/.*)?|admin(?:/.*)?|login(?:/.*)?|\\.git(?:/.*)?|\\.env)$",
         },
       ],
     },
@@ -83,6 +83,24 @@ function findRuleByName(value, name) {
   return null;
 }
 
+async function vercelRequest(path, options) {
+  const response = await fetch(`https://api.vercel.com${path}`, {
+    ...options,
+    headers: {
+      authorization: `Bearer ${options.token}`,
+      "content-type": "application/json",
+      ...options.headers,
+    },
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    const error = new Error(`${response.status} ${response.statusText}: ${text}`);
+    error.statusCode = response.status;
+    throw error;
+  }
+  return text ? JSON.parse(text) : null;
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const token = process.env.VERCEL_TOKEN;
@@ -100,15 +118,14 @@ async function main() {
     return;
   }
 
-  const { Vercel } = await import("@vercel/sdk");
-  const vercel = new Vercel({ bearerToken: token });
   let config = null;
   try {
-    config = await vercel.security.getFirewallConfig({
-      configVersion: "active",
-      projectId: options.projectId,
-      teamId: options.teamId,
-    });
+    config = await vercelRequest(
+      `/v1/security/firewall/config/active?projectId=${encodeURIComponent(
+        options.projectId,
+      )}&teamId=${encodeURIComponent(options.teamId)}`,
+      { token },
+    );
   } catch (error) {
     if (error?.statusCode !== 404) {
       throw error;
@@ -119,28 +136,38 @@ async function main() {
 
   if (existingRule) {
     const id = existingRule.id || existingRule.uid;
-    await vercel.security.updateFirewallConfig({
-      projectId: options.projectId,
-      requestBody: {
-        action: "rules.update",
-        id,
-        value: RULE_VALUE,
+    await vercelRequest(
+      `/v1/security/firewall/config?projectId=${encodeURIComponent(
+        options.projectId,
+      )}&teamId=${encodeURIComponent(options.teamId)}`,
+      {
+        body: JSON.stringify({
+          action: "rules.update",
+          id,
+          value: RULE_VALUE,
+        }),
+        method: "PATCH",
+        token,
       },
-      teamId: options.teamId,
-    });
+    );
     console.log(`Updated existing firewall rule ${id}.`);
     return;
   }
 
-  await vercel.security.updateFirewallConfig({
-    projectId: options.projectId,
-    requestBody: {
-      action: "rules.insert",
-      id: null,
-      value: RULE_VALUE,
+  await vercelRequest(
+    `/v1/security/firewall/config?projectId=${encodeURIComponent(
+      options.projectId,
+    )}&teamId=${encodeURIComponent(options.teamId)}`,
+    {
+      body: JSON.stringify({
+        action: "rules.insert",
+        id: null,
+        value: RULE_VALUE,
+      }),
+      method: "PATCH",
+      token,
     },
-    teamId: options.teamId,
-  });
+  );
   console.log("Inserted firewall rule.");
 }
 
