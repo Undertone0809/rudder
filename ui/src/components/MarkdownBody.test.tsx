@@ -1801,7 +1801,7 @@ describe("MarkdownBody", () => {
     expect(logos.map((logo) => logo?.getAttribute("src"))).toEqual([
       expect.stringMatching(/^data:image\/(?:x-icon|png|svg\+xml);base64,/u),
       expect.stringMatching(/^data:image\/svg\+xml;base64,/u),
-      expect.stringMatching(/^data:image\/png;base64,/u),
+      expect.stringMatching(/^data:image\/x-icon;base64,/u),
     ]);
     for (const link of links) {
       expect(link.querySelector("img.rudder-website-link-logo")?.getAttribute("data-website-icon")).toBe("metadata");

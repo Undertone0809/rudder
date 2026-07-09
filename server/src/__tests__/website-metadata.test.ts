@@ -65,7 +65,7 @@ describe("resolveWebsiteMetadata", () => {
     await expect(resolveWebsiteMetadata("https://rudder.zeeland.studio/issues/RUD-1")).resolves.toMatchObject({
       url: "https://rudder.zeeland.studio/issues/RUD-1",
       siteName: "Rudder",
-      iconUrl: expect.stringMatching(/^data:image\/png;base64,/u),
+      iconUrl: expect.stringMatching(/^data:image\/x-icon;base64,/u),
     });
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(lookupMock).not.toHaveBeenCalled();

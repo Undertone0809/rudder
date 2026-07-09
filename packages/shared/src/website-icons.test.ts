@@ -56,4 +56,15 @@ describe("resolveKnownWebsiteIcon", () => {
       expectImageSignature(icon, bytes);
     }
   });
+
+  it("uses the default Rudder favicon.ico for Rudder-owned domains", async () => {
+    const icon = resolveKnownWebsiteIcon("https://rudderhq.dev/docs");
+    expect(icon?.siteName).toBe("Rudder");
+    expect(icon?.iconDataUrl).toMatch(/^data:image\/x-icon;base64,/u);
+
+    const [, base64 = ""] = icon?.iconDataUrl.split(",", 2) ?? [];
+    const bytes = Buffer.from(base64, "base64");
+    const favicon = await import("node:fs/promises").then((fs) => fs.readFile("ui/public/favicon.ico"));
+    expect(bytes).toEqual(favicon);
+  });
 });
