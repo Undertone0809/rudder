@@ -1501,7 +1501,7 @@ export function CommentThread({
           </div>
 
           <div
-            className="sticky bottom-0 z-20 -mx-4 -mb-4 shrink-0 bg-[color:var(--desktop-content-surface-light)] px-4 pb-4 pt-1 dark:bg-[color:var(--desktop-content-surface-dark)]"
+            className="sticky bottom-0 z-20 -mx-4 shrink-0 bg-[color:var(--desktop-content-surface-light)] px-4 pb-4 pt-1 dark:bg-[color:var(--desktop-content-surface-dark)]"
             data-testid="comment-thread-fixed-composer"
           >
             {composerNode}

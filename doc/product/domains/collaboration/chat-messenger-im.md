@@ -737,6 +737,15 @@ Invariants:
   may use a wider two-column issue-detail layout when the panel is expanded,
   but the default docked view must not let viewport breakpoints squeeze the
   issue title, description, activity, or properties into unreadable columns.
+- At the default docked width, an issue Side Panel tab must keep issue
+  properties, description, sub-issues, and Activity in one issue-level scroll
+  flow. It must not split the workbench into separate upper/lower scrolling
+  panes.
+- The issue Activity comment composer in that single-scroll flow must remain
+  pinned to the bottom of the issue panel's scroll viewport with enough bottom
+  padding to remain fully visible. It must not be pushed to the end of long
+  issue content, hidden below the visible panel edge, or require a second
+  timeline scroller to stay usable.
 - Expanded Side Panel issue views must match the Issue Detail page body rather
   than maintaining a separate issue-detail variant. The embedded body should
   expose the same issue content sections, such as editable title and

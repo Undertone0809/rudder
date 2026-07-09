@@ -524,10 +524,12 @@ test.describe("Chat Side Panel", () => {
         activityMovesWithIssueScroll: Math.round(before.activityTop - afterActivityTop),
         propertiesMovesWithIssueScroll: Math.round(before.propertiesTop - afterPropertiesTop),
         composerBottomGap: Math.round(issueScrollRect.bottom - after.bottom),
+        composerHeight: Math.round(after.height),
         timelineTop: Math.round(timelineRect.top),
         timelineBottom: Math.round(timelineRect.bottom),
         composerTop: Math.round(after.top),
         composerVisibleInPanel: after.bottom <= panelRect.bottom + 1 && after.top >= panelRect.top - 1,
+        composerVisibleInScroller: after.bottom <= issueScrollRect.bottom + 1 && after.top >= issueScrollRect.top - 1,
       };
     });
 
@@ -538,9 +540,11 @@ test.describe("Chat Side Panel", () => {
     expect(metrics!.propertiesMovesWithIssueScroll).toBeGreaterThan(120);
     expect(metrics!.composerBottomGap).toBeGreaterThanOrEqual(0);
     expect(metrics!.composerBottomGap).toBeLessThanOrEqual(28);
+    expect(metrics!.composerHeight).toBeGreaterThan(80);
     expect(metrics!.timelineTop).toBeLessThan(metrics!.composerTop);
     expect(metrics!.timelineBottom).toBeGreaterThan(metrics!.composerTop);
     expect(metrics!.composerVisibleInPanel).toBe(true);
+    expect(metrics!.composerVisibleInScroller).toBe(true);
 
     await page.screenshot({
       path: testInfo.outputPath("chat-side-panel-issue-single-scroll-flow.png"),

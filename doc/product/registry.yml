@@ -809,6 +809,7 @@ contracts:
     related_code:
       - ui/src/lib/side-panel-targets.ts
       - ui/src/context/SidePanelContext.tsx
+      - ui/src/components/CommentThread.tsx
       - ui/src/components/InlineEditor.tsx
       - ui/src/components/IssueProperties.tsx
       - ui/src/components/Layout.tsx
