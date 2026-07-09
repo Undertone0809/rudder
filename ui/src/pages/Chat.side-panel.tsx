@@ -85,6 +85,26 @@ type BrowserWebviewElement = HTMLElement & {
   reload?: () => void;
 };
 
+type BrowserWebviewInputEvent = Event & {
+  input?: {
+    type?: string;
+    key?: string;
+    code?: string;
+    meta?: boolean;
+    control?: boolean;
+    alt?: boolean;
+    shift?: boolean;
+  };
+};
+
+function isChatSidePanelCloseShortcutInput(input: BrowserWebviewInputEvent["input"]) {
+  if (!input || input.type === "keyUp") return false;
+  const isCloseKey = input.key?.toLowerCase() === "w" || input.code === "KeyW";
+  if (!isCloseKey || input.alt || input.shift) return false;
+  const isMac = navigator.platform.toLowerCase().includes("mac");
+  return isMac ? Boolean(input.meta) && !input.control : Boolean(input.control) && !input.meta;
+}
+
 function LoadingPanelBody() {
   return (
     <div className="space-y-3" data-testid="chat-side-panel-loading">
@@ -874,11 +894,13 @@ function ChatSidePanelBrowserView({
   targetKey,
   onOpenTarget,
   onReplaceTarget,
+  onCloseTarget,
 }: {
   target: Extract<SidePanelTarget, { kind: "browser" }>;
   targetKey: string;
   onOpenTarget: (target: SidePanelTarget) => void;
   onReplaceTarget: (key: string, target: SidePanelTarget) => void;
+  onCloseTarget: (target: SidePanelTarget) => void;
 }) {
   const webviewRef = useRef<BrowserWebviewElement | null>(null);
   const webviewReadyRef = useRef(false);
@@ -975,8 +997,15 @@ function ChatSidePanelBrowserView({
       webviewReadyRef.current = true;
       updateNavigationState();
     };
+    const handleBeforeInput = (event: Event) => {
+      const inputEvent = event as BrowserWebviewInputEvent;
+      if (!isChatSidePanelCloseShortcutInput(inputEvent.input)) return;
+      event.preventDefault();
+      onCloseTarget(target);
+    };
 
     webview.addEventListener("dom-ready", handleDomReady);
+    webview.addEventListener("before-input-event", handleBeforeInput);
     webview.addEventListener("did-start-loading", handleStart);
     webview.addEventListener("did-stop-loading", handleStop);
     webview.addEventListener("did-navigate", handleNavigate);
@@ -987,6 +1016,7 @@ function ChatSidePanelBrowserView({
 
     return () => {
       webview.removeEventListener("dom-ready", handleDomReady);
+      webview.removeEventListener("before-input-event", handleBeforeInput);
       webview.removeEventListener("did-start-loading", handleStart);
       webview.removeEventListener("did-stop-loading", handleStop);
       webview.removeEventListener("did-navigate", handleNavigate);
@@ -994,7 +1024,7 @@ function ChatSidePanelBrowserView({
       webview.removeEventListener("page-title-updated", handleTitle);
       webview.removeEventListener("did-fail-load", handleFail);
     };
-  }, [currentUrl, onReplaceTarget, replaceBrowserTarget, safeCurrentWebviewUrl, target, targetKey, updateNavigationState]);
+  }, [currentUrl, onCloseTarget, onReplaceTarget, replaceBrowserTarget, safeCurrentWebviewUrl, target, targetKey, updateNavigationState]);
 
   const handleWebviewRef = useCallback((node: BrowserWebviewElement | null) => {
     webviewRef.current = node;
@@ -1494,6 +1524,7 @@ export function ChatSidePanel({
               targetKey={activeTargetKey}
               onOpenTarget={openSidePanelTarget}
               onReplaceTarget={replaceSidePanelTarget}
+              onCloseTarget={closeSidePanelTab}
             />
           ) : (
             <p className="text-sm text-muted-foreground">Open this target in the full page for details.</p>

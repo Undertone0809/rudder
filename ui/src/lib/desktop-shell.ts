@@ -183,6 +183,8 @@ export type DesktopShellApi = {
   getUpdateProgress?(): Promise<DesktopUpdateProgressEvent | null>;
   onUpdateProgress?(listener: (event: DesktopUpdateProgressEvent) => void): () => void;
   setDeferredUpdatePromptReady?(ready: boolean): Promise<void>;
+  setSidePanelCloseShortcutActive?(active: boolean): Promise<void>;
+  onCloseSidePanelActiveTab?(listener: () => void): () => void;
   onDeferredUpdatePrompt?(listener: (prompt: DesktopDeferredUpdatePrompt) => void): () => void;
   respondDeferredUpdatePrompt?(promptId: string, decision: DesktopDeferredUpdatePromptDecision): Promise<void>;
   getSystemPermissions?(): Promise<DesktopSystemPermissions>;

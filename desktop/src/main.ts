@@ -1,4 +1,4 @@
-import type { BrowserWindowConstructorOptions, OpenDialogOptions } from "electron";
+import type { BrowserWindowConstructorOptions, OpenDialogOptions, WebContents } from "electron";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, shell, systemPreferences, Tray } from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -66,6 +66,7 @@ import {
   toWorkspaceLaunchTargetPayload,
   type DesktopWorkspaceLaunchTargetPayload,
 } from "./desktop-workspace-launch-payload.js";
+import { isSidePanelCloseShortcutInput } from "./side-panel-close-shortcut.js";
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 type BootState = {
   stage: string;
@@ -363,6 +364,7 @@ const initialPaths = resolveSharedInstancePaths(initialProfile.instanceId);
 
 let mainWindow: BrowserWindow | null = null;
 let residentTray: Tray | null = null;
+let sidePanelCloseShortcutActive = false;
 let residentControlsAvailable = false;
 let desktopWindowIcon: Electron.NativeImage | null = null;
 let latestPostUpdateReloadMarker: PostUpdateReloadMarker | null = null;
@@ -371,6 +373,7 @@ let currentAppearance: DesktopAppearance = resolveAppearanceForThemePreference(
   currentThemePreference,
   nativeTheme.shouldUseDarkColors,
 );
+const sidePanelCloseShortcutWebContents = new WeakSet<WebContents>();
 let currentBootState: BootState = {
   stage: "starting",
   message: "Resolving shared local Rudder instance…",
@@ -761,6 +764,32 @@ function installRendererRecoveryHandlers(window: BrowserWindow, initialUrl: stri
   });
 }
 
+function handleSidePanelCloseShortcutInput(webContents: WebContents, event: Electron.Event, input: Electron.Input): void {
+  if (!sidePanelCloseShortcutActive || !isSidePanelCloseShortcutInput(input)) return;
+  event.preventDefault();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("desktop:close-side-panel-active-tab");
+    return;
+  }
+  webContents.send("desktop:close-side-panel-active-tab");
+}
+
+function installSidePanelCloseShortcutHandler(webContents: WebContents): void {
+  if (sidePanelCloseShortcutWebContents.has(webContents)) return;
+  sidePanelCloseShortcutWebContents.add(webContents);
+  webContents.on("before-input-event", (event, input) => {
+    handleSidePanelCloseShortcutInput(webContents, event, input);
+  });
+}
+
+function installMainWindowSidePanelCloseShortcutHandler(window: BrowserWindow): void {
+  installSidePanelCloseShortcutHandler(window.webContents);
+  window.webContents.on("did-start-navigation", (_event, _targetUrl, isInPlace, isMainFrame) => {
+    if (!isMainFrame || isInPlace) return;
+    sidePanelCloseShortcutActive = false;
+  });
+}
+
 async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
   const preloadPath = path.resolve(MODULE_DIR, "preload.js");
   const macWindowEffects = process.platform === "darwin"
@@ -790,6 +819,7 @@ async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
   });
 
   installRendererRecoveryHandlers(window, initialUrl);
+  installMainWindowSidePanelCloseShortcutHandler(window);
 
   window.on("close", (event) => {
     if (!shouldHideToResidentShell() || isQuitRequested() || isQuitting()) return;
@@ -1378,6 +1408,10 @@ function registerIpc(): void {
     if (!mainWindow || event.sender !== mainWindow.webContents) return;
     deferredUpdatePromptRendererReady = Boolean(ready);
   });
+  ipcMain.handle("desktop:set-side-panel-close-shortcut-active", async (event, active: boolean) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return;
+    sidePanelCloseShortcutActive = Boolean(active);
+  });
   ipcMain.handle("desktop:respond-deferred-update-prompt", async (event, payload: {
     promptId?: string;
     decision?: DeferredUpdatePromptDecision;
@@ -1615,6 +1649,10 @@ if (desktopCliArgv) {
 
     app.on("browser-window-focus", () => {
       refreshDesktopSystemPermissions();
+    });
+
+    app.on("web-contents-created", (_event, contents) => {
+      installSidePanelCloseShortcutHandler(contents);
     });
 
     app.on("window-all-closed", () => {

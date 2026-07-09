@@ -1718,6 +1718,60 @@ describe("Chat Side Panel link handling", () => {
     expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Third chat side panel content");
   });
 
+  it("closes the active Side Panel chat tab with Command+W", async () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    mockState.conversations = [
+      chat({ id: "chat-1", title: "Current chat" }),
+      chat({ id: "chat-2", title: "Other chat", lastMessageAt: new Date("2026-05-12T09:10:00.000Z") }),
+      chat({ id: "chat-3", title: "Third chat", lastMessageAt: new Date("2026-05-12T09:11:00.000Z") }),
+    ];
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: "assistant-side-panel-shortcut",
+          role: "assistant",
+          body: `Compare [Other chat](${buildChatMentionHref("chat-2")}) with [Third chat](${buildChatMentionHref("chat-3")}).`,
+          replyingAgentId: "agent-1",
+          createdAt: new Date("2026-05-12T09:06:00.000Z"),
+          updatedAt: new Date("2026-05-12T09:06:00.000Z"),
+        }),
+      ],
+      "chat-2": [message({ id: "other-message-1", conversationId: "chat-2", body: "Other chat side panel content" })],
+      "chat-3": [message({ id: "third-message-1", conversationId: "chat-3", body: "Third chat side panel content" })],
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const chatReferences = Array.from(container.querySelectorAll<HTMLAnchorElement>('a[data-mention-kind="chat"]'));
+    await act(async () => {
+      chatReferences[0]?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+    const currentChatReferences = Array.from(container.querySelectorAll<HTMLAnchorElement>('a[data-mention-kind="chat"]'));
+    await act(async () => {
+      currentChatReferences[1]?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(2);
+    expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Third chat side panel content");
+
+    const shortcut = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "w", metaKey: true });
+    await act(async () => {
+      document.dispatchEvent(shortcut);
+      await Promise.resolve();
+    });
+
+    const tabs = Array.from(container.querySelectorAll<HTMLElement>("[data-testid='chat-side-panel-tab']"));
+    expect(shortcut.defaultPrevented).toBe(true);
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]?.textContent).toContain("Other chat");
+    expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Other chat side panel content");
+  });
+
   it("opens the Library browser from the plus menu with a file-count summary and file drill-in", async () => {
     mockState.workspaceDirectories = {
       "": {
@@ -1891,6 +1945,74 @@ describe("Chat Side Panel link handling", () => {
     expect(markdownPreview?.querySelector("li")?.textContent).toBe("Keep markdown rendered");
     expect(markdownPreview?.textContent).not.toContain("# Side Panel notes");
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(2);
+  });
+
+  it("closes the active Library preview tab with Command+W", async () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    mockState.workspaceDirectories = {
+      "": {
+        directoryPath: "",
+        entries: [{ name: "notes.md", path: "notes.md", isDirectory: false }],
+      },
+    };
+    mockState.workspaceFiles = {
+      "notes.md": {
+        filePath: "notes.md",
+        content: "# Side Panel notes\n\n- Keep markdown rendered",
+        contentType: "text/markdown",
+        previewKind: "text",
+        contentPath: null,
+        truncated: false,
+      },
+    };
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "library-shortcut-message", body: "Open the library browser." })],
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const plusTrigger = container.querySelector<HTMLButtonElement>('button[aria-label="Add files and options"]');
+    await act(async () => {
+      plusTrigger?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+
+    const openLibraryOption = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (candidate) => candidate.textContent?.includes("Open Library in Side Panel"),
+    );
+    await act(async () => {
+      openLibraryOption?.click();
+      await Promise.resolve();
+    });
+
+    let sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    const notesButton = Array.from(sidePanel!.querySelectorAll<HTMLButtonElement>("button")).find(
+      (candidate) => candidate.textContent?.includes("notes.md"),
+    );
+    await act(async () => {
+      notesButton?.click();
+      await Promise.resolve();
+    });
+
+    sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel?.querySelector("[data-testid='chat-side-panel-library-markdown-preview']")).not.toBeNull();
+    expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(2);
+
+    const shortcut = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "w", metaKey: true });
+    await act(async () => {
+      document.dispatchEvent(shortcut);
+      await Promise.resolve();
+    });
+
+    const tabs = Array.from(container.querySelectorAll<HTMLElement>("[data-testid='chat-side-panel-tab']"));
+    expect(shortcut.defaultPrevented).toBe(true);
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]?.textContent).toContain("Library");
+    expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Library root");
+    expect(container.querySelector("[data-testid='chat-side-panel-library-markdown-preview']")).toBeNull();
   });
 
   it("renders a stable Library entry target as an inline file preview", async () => {
@@ -2139,6 +2261,59 @@ describe("Chat Side Panel link handling", () => {
 
     expect(readyUrl).toHaveBeenCalled();
     expect(container.querySelector("[data-testid='chat-side-panel-browser-view']")).not.toBeNull();
+  });
+
+  it("closes the active Browser side panel tab when the webview receives Command+W", async () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "browser-side-panel-shortcut-message", body: "Open the browser panel." })],
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const chatSidePanelButton = container.querySelector<HTMLButtonElement>('button[aria-label="Open Side Panel"]');
+    await act(async () => {
+      chatSidePanelButton?.click();
+      await Promise.resolve();
+    });
+
+    let sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    const browserOption = Array.from(sidePanel!.querySelectorAll<HTMLButtonElement>("button")).find(
+      (candidate) => candidate.textContent?.includes("Browser"),
+    );
+    await act(async () => {
+      browserOption?.click();
+      await Promise.resolve();
+    });
+
+    sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    const urlInput = sidePanel!.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]');
+    await act(async () => {
+      urlInput!.value = "localhost:3100/api/health";
+      urlInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      urlInput!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    const webview = container.querySelector<HTMLElement>("[data-testid='chat-side-panel-browser-webview']");
+    expect(webview).not.toBeNull();
+    expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(1);
+
+    const shortcut = new Event("before-input-event", { bubbles: true, cancelable: true }) as Event & {
+      input?: { key: string; meta: boolean };
+    };
+    shortcut.input = { key: "w", meta: true };
+    await act(async () => {
+      webview!.dispatchEvent(shortcut);
+      await Promise.resolve();
+    });
+
+    expect(shortcut.defaultPrevented).toBe(true);
+    expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(0);
+    expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Open a panel");
   });
 
   it("uses a mobile overlay Side Panel without removing the Chat composer", async () => {

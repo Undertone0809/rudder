@@ -1,5 +1,7 @@
+import { readDesktopShell } from "@/lib/desktop-shell";
+import { getKeyboardShortcutPlatform } from "@/lib/keyboard-shortcuts";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 type SidePanelContextState = {
   activeKey: string | null;
@@ -143,14 +145,56 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
       const closingIndex = current.tabs.findIndex((candidate) => sidePanelTargetKey(candidate) === key);
       const nextTabs = current.tabs.filter((candidate) => sidePanelTargetKey(candidate) !== key);
       if (nextTabs.length === 0) {
-        setOpen(false);
-        return emptyContextState();
+        setOpen(true);
+        return { activeKey: null, hasPanelState: true, open: true, tabs: [] };
       }
       if (current.activeKey !== key) return { ...current, tabs: nextTabs };
       const fallbackTarget = nextTabs[Math.min(Math.max(closingIndex, 0), nextTabs.length - 1)] ?? nextTabs.at(-1) ?? null;
       return { activeKey: fallbackTarget ? sidePanelTargetKey(fallbackTarget) : null, hasPanelState: true, open: true, tabs: nextTabs };
     });
   }, [contextKey, writeContextState]);
+
+  const hasActiveClosableTab = open && Boolean(currentContextState.activeKey);
+
+  useEffect(() => {
+    const desktopShell = readDesktopShell();
+    if (!desktopShell?.setSidePanelCloseShortcutActive) return;
+    void desktopShell.setSidePanelCloseShortcutActive(hasActiveClosableTab).catch(() => undefined);
+  }, [hasActiveClosableTab]);
+
+  useEffect(() => {
+    const desktopShell = readDesktopShell();
+    const setSidePanelCloseShortcutActive = desktopShell?.setSidePanelCloseShortcutActive;
+    if (!setSidePanelCloseShortcutActive) return undefined;
+    return () => {
+      void setSidePanelCloseShortcutActive(false).catch(() => undefined);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hasActiveClosableTab) return undefined;
+    const desktopShell = readDesktopShell();
+    if (!desktopShell?.onCloseSidePanelActiveTab) return undefined;
+    return desktopShell.onCloseSidePanelActiveTab(() => {
+      const activeKey = currentContextState.activeKey;
+      if (activeKey) closeTarget(activeKey);
+    });
+  }, [closeTarget, currentContextState.activeKey, hasActiveClosableTab]);
+
+  useEffect(() => {
+    if (!open || !currentContextState.activeKey) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== "w") return;
+      const platform = getKeyboardShortcutPlatform();
+      if (platform === "mac" ? !event.metaKey || event.ctrlKey : !event.ctrlKey || event.metaKey) return;
+      if (event.altKey || event.shiftKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeTarget(currentContextState.activeKey!);
+    };
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
+  }, [closeTarget, currentContextState.activeKey, open]);
 
   const replaceTarget = useCallback((key: string, target: SidePanelTarget) => {
     const nextKey = sidePanelTargetKey(target);

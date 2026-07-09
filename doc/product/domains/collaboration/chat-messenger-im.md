@@ -688,6 +688,11 @@ Product model:
   until the app session ends.
 - Hiding the Side Panel is a visibility action, not a tab-destruction action.
   The operator must explicitly close a tab to remove it from the current item.
+- When the Side Panel has an active tab, the close-tab keyboard shortcut
+  (`Command+W` on macOS, `Ctrl+W` on non-macOS shells) closes that active tab
+  before the shell or browser can treat the shortcut as a window/tab close. The
+  shortcut must not close the whole Desktop window, replace the main route, or
+  merely hide the panel while leaving the active tab intact.
 - Switching Messenger to another item with no Side Panel history must not carry
   over the prior item's tabs. If the panel is open and the next item has no
   saved session panel state, Rudder closes the panel by default instead of
@@ -725,16 +730,19 @@ Flow:
    panel instead of silently ignoring failures.
 9. Closing a tab focuses a neighboring tab or returns the panel to the empty
    picker state.
-10. When the operator hides the panel and reopens it in the same Messenger chat
+10. Pressing the close-tab keyboard shortcut while an active Side Panel tab is
+   present follows the same close behavior as the tab's close button and
+   prevents the host window from handling that shortcut.
+11. When the operator hides the panel and reopens it in the same Messenger chat
    or issue context, Rudder restores that context's tabs and active tab.
-11. When the operator switches from one Messenger item to another, Rudder
+12. When the operator switches from one Messenger item to another, Rudder
    switches the Side Panel to the destination item's session state. If that
    destination has no session state, the panel stays or becomes closed by
    default.
-12. App restart may clear all Side Panel tab/session state; this contract does
+13. App restart may clear all Side Panel tab/session state; this contract does
    not require server persistence, cross-device sync, or localStorage recovery
    for tabs.
-13. Browser tabs normalize address-bar input into either a URL or search-query
+14. Browser tabs normalize address-bar input into either a URL or search-query
    navigation, keep back/forward/reload state scoped to the embedded browser,
    and can open the current page externally as a secondary action.
 
@@ -794,8 +802,8 @@ Evidence:
 - Chat attachment/side-panel tests cover tab behavior, empty state, add-tab
   actions that return to the empty picker without opening a dropdown menu,
   directly editable issue title/description fields, rendered/editable issue
-  assignee metadata, issue and automation compact views, Library previews, and
-  browser placeholder behavior.
+  assignee metadata, issue and automation compact views, Library previews,
+  close-tab keyboard shortcuts, and browser placeholder behavior.
 - Layout tests cover Side Panel context keys for Messenger chat and issue
   routes, and Side Panel E2E covers hiding/reopening tabs in one Messenger item,
   switching to an item with no panel history without inheriting tabs, and
