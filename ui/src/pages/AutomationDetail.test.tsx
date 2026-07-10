@@ -128,10 +128,20 @@ const automation = {
   },
 };
 
+const automationDetailQueryState: {
+  data: typeof automation | undefined;
+  isLoading: boolean;
+  error: Error | null;
+} = {
+  data: automation,
+  isLoading: false,
+  error: null,
+};
+
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
     if (queryKey[0] === "automations" && queryKey[1] === "detail") {
-      return { data: automation, isLoading: false, error: null };
+      return automationDetailQueryState;
     }
     if (queryKey[0] === "automations" && queryKey[1] === "runs") {
       return { data: automation.recentRuns, isLoading: false, error: null };
@@ -387,6 +397,9 @@ vi.mock("../components/LiveRunWidget", () => ({
 let cleanupFn: (() => void) | null = null;
 
 beforeEach(() => {
+  automationDetailQueryState.data = automation;
+  automationDetailQueryState.isLoading = false;
+  automationDetailQueryState.error = null;
   automation.outputMode = "track_issue";
   automation.chatConversationId = null;
   automation.chatConversation = null;
@@ -404,7 +417,11 @@ afterEach(() => {
   mockConfirm.mockResolvedValue(true);
 });
 
-function renderPage() {
+function renderPage(props: {
+  automationId?: string;
+  embedded?: boolean;
+  onClose?: () => void;
+} = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -419,7 +436,7 @@ function renderPage() {
   act(() => {
     root.render(
       <I18nProvider>
-        <AutomationDetail />
+        <AutomationDetail {...props} />
       </I18nProvider>,
     );
   });
@@ -428,6 +445,54 @@ function renderPage() {
 }
 
 describe("AutomationDetail", () => {
+  it("keeps an embedded error inside a closable inspector", async () => {
+    const onClose = vi.fn();
+    automationDetailQueryState.data = undefined;
+    automationDetailQueryState.error = new Error("Automation not found");
+    const container = renderPage({ automationId: "missing", embedded: true, onClose });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="automation-detail-panel-header"]')).toBeTruthy();
+    expect(container.textContent).toContain("Automation not found");
+
+    await act(async () => {
+      container.querySelector('button[aria-label="Close automation detail"]')
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the Codex-style embedded inspector hierarchy and owns its panel actions", async () => {
+    const onClose = vi.fn();
+    const container = renderPage({ automationId: "auto-1", embedded: true, onClose });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="automation-detail-panel-header"]')).toBeTruthy();
+    expect(container.textContent).toContain("Details");
+    expect(container.textContent).toContain("Frequency");
+    expect(container.textContent).toContain("Previous runs");
+    expect(container.textContent).not.toContain("Configuration");
+    expect(container.textContent).not.toContain("Run status");
+    expect(container.querySelector('section[aria-label="Previous runs"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="automation-overview-strip"]')?.className).toContain("hidden");
+    expect(container.querySelector('button[aria-label="Pause automation"]')).toBeTruthy();
+
+    await act(async () => {
+      container.querySelector('button[aria-label="Close automation detail"]')
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(mockSetHeaderActions.mock.calls.some(([actions]) => actions !== null)).toBe(false);
+  });
+
   it("keeps run state compact and moves high-frequency fields into the configuration rail", async () => {
     const container = renderPage();
 

@@ -17,7 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
-import { useNavigate } from "@/lib/router";
+import { useNavigate, useParams } from "@/lib/router";
 import type { InstanceLocale } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -68,6 +68,7 @@ import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
 import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { cn, formatDateTimeSeconds } from "../lib/utils";
+import { AutomationDetail } from "./AutomationDetail";
 
 const concurrencyPolicies = ["coalesce_if_active", "always_enqueue", "skip_if_active"];
 const catchUpPolicies = ["skip_missed", "enqueue_missed_with_cap"];
@@ -285,6 +286,7 @@ function nextAutomationStatus(enabled: boolean) {
 }
 
 export function Automations() {
+  const { automationId } = useParams<{ automationId: string }>();
   const { selectedOrganizationId, selectedOrganization } = useOrganization();
   const { setBreadcrumbs, setHeaderActions } = useBreadcrumbs();
   const queryClient = useQueryClient();
@@ -565,7 +567,7 @@ export function Automations() {
   }
 
   return (
-    <div data-testid="automations-page-content" className="mx-auto w-full max-w-[1120px] space-y-6 px-1 py-4 sm:px-2 md:py-6">
+    <div data-testid="automations-page-content" className="h-full min-h-0 w-full">
       <Dialog
         open={composerOpen}
         onOpenChange={(open) => {
@@ -874,15 +876,23 @@ export function Automations() {
         </DialogContent>
       </Dialog>
 
-      {error ? (
-        <Card>
-          <CardContent className="pt-6 text-sm text-destructive">
-            {error instanceof Error ? error.message : "Failed to load automations"}
-          </CardContent>
-        </Card>
-      ) : null}
+      <div data-testid="automations-master-detail" className="flex h-full min-h-0 min-w-0 overflow-hidden">
+      <section
+        data-testid="automations-list-pane"
+        className={cn(
+          "scrollbar-auto-hide min-h-0 min-w-0 flex-1 overflow-y-auto px-1 py-4 sm:px-2 md:py-6",
+          automationId && "hidden min-[1100px]:block",
+        )}
+      >
+        {error ? (
+          <Card>
+            <CardContent className="pt-6 text-sm text-destructive">
+              {error instanceof Error ? error.message : "Failed to load automations"}
+            </CardContent>
+          </Card>
+        ) : null}
 
-      <div>
+      <div className="mx-auto w-full max-w-[1120px]">
         {(automations ?? []).length === 0 ? (
           <div className="mx-auto flex min-h-[min(620px,calc(100vh-14rem))] max-w-4xl flex-col items-center justify-center px-4 py-16 text-center md:py-20">
             <h1 className="text-xl font-semibold">No automations yet</h1>
@@ -918,8 +928,8 @@ export function Automations() {
               <thead>
                 <tr className="text-left text-xs text-muted-foreground border-b border-border">
                   <th className="px-3 py-2 font-medium">Name</th>
-                  <th className="px-3 py-2 font-medium">Project</th>
-                  <th className="px-3 py-2 font-medium">Assignee</th>
+                  <th className={cn("px-3 py-2 font-medium", automationId && "hidden 2xl:table-cell")}>Project</th>
+                  <th className={cn("px-3 py-2 font-medium", automationId && "hidden 2xl:table-cell")}>Assignee</th>
                   <th className="px-3 py-2 font-medium">Last run</th>
                   <th className="px-3 py-2 font-medium">Enabled</th>
                   <th className="w-12 px-3 py-2" />
@@ -930,10 +940,16 @@ export function Automations() {
                   const enabled = automation.status === "active";
                   const isStatusPending = statusMutationAutomationId === automation.id;
                   const lastRunDisplay = automation.lastRun ? getAutomationRunDisplay(automation.lastRun, locale) : null;
+                  const isSelected = automationId === automation.id;
                   return (
                     <tr
                       key={automation.id}
-                      className="align-middle border-b border-border transition-colors hover:bg-accent/50 last:border-b-0 cursor-pointer"
+                      aria-current={isSelected ? "page" : undefined}
+                      data-selected={isSelected ? "true" : undefined}
+                      className={cn(
+                        "cursor-pointer align-middle border-b border-border transition-colors hover:bg-accent/50 last:border-b-0",
+                        isSelected && "bg-accent/70 hover:bg-accent/70",
+                      )}
                       onClick={() => navigate(`/automations/${automation.id}`)}
                     >
                       <td className="px-3 py-2.5">
@@ -948,7 +964,7 @@ export function Automations() {
                           )}
                         </div>
                       </td>
-                      <td className="px-3 py-2.5">
+                      <td className={cn("px-3 py-2.5", automationId && "hidden 2xl:table-cell")}>
                         {automation.projectId ? (
                           <div className="flex items-center gap-2 text-sm text-muted-foreground">
                             <ProjectIcon
@@ -962,7 +978,7 @@ export function Automations() {
                           <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </td>
-                      <td className="px-3 py-2.5">
+                      <td className={cn("px-3 py-2.5", automationId && "hidden 2xl:table-cell")}>
                         {automation.assigneeAgentId ? (() => {
                           const agent = agentById.get(automation.assigneeAgentId);
                           return agent ? (
@@ -979,7 +995,7 @@ export function Automations() {
                       </td>
                       <td className="px-3 py-2.5">
                         {automation.lastRun && lastRunDisplay ? (
-                          <div className="min-w-[260px] max-w-[380px] space-y-1">
+                          <div className={cn("space-y-1", automationId ? "min-w-[170px] max-w-[260px]" : "min-w-[260px] max-w-[380px]")}>
                             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                               <span className={cn(
                                 "inline-flex shrink-0 items-center rounded-md border px-1.5 py-0.5 text-[11px] font-medium leading-none",
@@ -1084,6 +1100,23 @@ export function Automations() {
             </table>
           </div>
         )}
+      </div>
+      </section>
+
+      {automationId ? (
+        <aside
+          data-testid="automation-detail-pane"
+          aria-label="Automation detail"
+          className="min-h-0 min-w-0 flex-1 overflow-hidden bg-background/30 min-[1100px]:w-[48%] min-[1100px]:min-w-[500px] min-[1100px]:max-w-[720px] min-[1100px]:shrink-0 min-[1100px]:border-l min-[1100px]:border-border/70"
+        >
+          <AutomationDetail
+            key={automationId}
+            automationId={automationId}
+            embedded
+            onClose={() => navigate("/automations")}
+          />
+        </aside>
+      ) : null}
       </div>
     </div>
   );
