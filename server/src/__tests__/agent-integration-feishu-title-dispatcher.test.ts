@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockDb = vi.hoisted(() => ({
-  existingBinding: null as { conversationId: string } | null,
+  existingBinding: null as { conversationId: string; createdAt: Date } | null,
   select: vi.fn(),
   insert: vi.fn(),
 }));
@@ -28,13 +28,22 @@ vi.mock("@rudderhq/db", () => ({
   agentIntegrationOutboundMessages: {},
   agentIntegrationUserBindings: {},
   agentIntegrations: {},
-  chatConversations: {},
+  chatConversations: {
+    id: "id",
+    createdAt: "created_at",
+  },
+  chatGenerations: {
+    id: "id",
+    conversationId: "conversation_id",
+    status: "status",
+  },
   organizationMemberships: {},
 }));
 
 vi.mock("drizzle-orm", () => ({
   and: vi.fn(() => ({})),
   eq: vi.fn(() => ({})),
+  inArray: vi.fn(() => ({})),
   isNull: vi.fn(() => ({})),
   or: vi.fn(() => ({})),
 }));
@@ -68,12 +77,23 @@ const insertNewBinding = {
   values: vi.fn(() => returningNewBinding),
 };
 
-function selectExistingBinding() {
-  return {
-    from: vi.fn(() => ({
-      where: vi.fn(async () => (mockDb.existingBinding ? [mockDb.existingBinding] : [])),
-    })),
+function selectRows(rows: unknown[]) {
+  const query = {
+    from: vi.fn(() => query),
+    innerJoin: vi.fn(() => query),
+    where: vi.fn(() => query),
+    limit: vi.fn(() => query),
+    then: (
+      resolve: (value: unknown[]) => unknown,
+      reject: (reason: unknown) => unknown,
+    ) => Promise.resolve(rows).then(resolve, reject),
   };
+  return query;
+}
+
+function selectExistingBinding(fields: Record<string, unknown>) {
+  const isBindingLookup = Object.prototype.hasOwnProperty.call(fields, "conversationId");
+  return selectRows(isBindingLookup && mockDb.existingBinding ? [mockDb.existingBinding] : []);
 }
 
 function integration() {
@@ -166,7 +186,7 @@ describe("Feishu DB dispatcher chat title generation", () => {
     const { createFeishuInboundDispatcherDbDeps } = await import(
       "../services/integrations/feishu/inbound-dispatcher-db.js"
     );
-    mockDb.existingBinding = { conversationId: "conversation-1" };
+    mockDb.existingBinding = { conversationId: "conversation-1", createdAt: new Date() };
     const deps = createFeishuInboundDispatcherDbDeps(mockDb as never, {
       enqueueAgentRun: false,
       createOutboundPlaceholder: false,
@@ -180,7 +200,7 @@ describe("Feishu DB dispatcher chat title generation", () => {
       commandBody: "and what else?",
     }));
 
-    expect(chat).toEqual({ conversationId: "conversation-1" });
+    expect(chat).toMatchObject({ conversationId: "conversation-1" });
     expect(mockStartAutomaticGeneration).toHaveBeenCalledWith(
       expect.objectContaining({ id: "conversation-1" }),
       expect.objectContaining({ id: "message-row-1" }),

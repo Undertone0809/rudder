@@ -109,12 +109,18 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
 
   function assertCanRunBoardFullImport(
     req: Request,
-    input: { include?: { agents?: boolean; projects?: boolean; issues?: boolean } },
+    input: {
+      include?: { agents?: boolean; projects?: boolean; issues?: boolean };
+      collisionStrategy?: string;
+    },
   ) {
     const importsAgents = input.include?.agents ?? true;
     const importsProjects = input.include?.projects ?? false;
     const importsIssues = input.include?.issues ?? false;
-    if (importsAgents || importsProjects || importsIssues) assertInstanceAdmin(req);
+    const replacesExistingState = input.collisionStrategy === "replace";
+    if (importsAgents || importsProjects || importsIssues || replacesExistingState) {
+      assertInstanceAdmin(req);
+    }
   }
 
   async function assertCanAccessLocalSkillRows(req: Request, orgId: string) {

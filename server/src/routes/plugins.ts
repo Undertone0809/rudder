@@ -49,6 +49,7 @@ import { pluginRegistryService } from "../services/plugin-registry.js";
 import type { PluginStreamBus } from "../services/plugin-stream-bus.js";
 import type { PluginToolDispatcher } from "../services/plugin-tool-dispatcher.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
+import { isPostgresError } from "../services/postgres-errors.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import { registerPluginOperationsRoutes } from "./plugins.operations-routes.js";
 
@@ -196,12 +197,8 @@ async function resolvePlugin(
     const byId = await registry.getById(pluginId);
     if (byId) return byId;
   } catch (error) {
-    const maybeCode =
-      typeof error === "object" && error !== null && "code" in error
-        ? (error as { code?: unknown }).code
-        : undefined;
     // Ignore invalid UUID cast errors and continue with key lookup.
-    if (maybeCode !== "22P02") {
+    if (!isPostgresError(error, "22P02")) {
       throw error;
     }
   }

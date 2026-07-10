@@ -52,6 +52,7 @@ import { and, count, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { notFound, unprocessable } from "../errors.js";
 import { ensureOrganizationWorkspaceLayout, removeOrganizationStorage } from "../home-paths.js";
 import { logger } from "../middleware/logger.js";
+import { isPostgresError } from "./postgres-errors.js";
 
 export function organizationService(db: Db) {
   const ISSUE_PREFIX_FALLBACK = "CMP";
@@ -155,16 +156,7 @@ export function organizationService(db: Db) {
   }
 
   function isUniqueConstraintConflict(error: unknown, constraintName: string) {
-    const constraint = typeof error === "object" && error !== null && "constraint" in error
-      ? (error as { constraint?: string }).constraint
-      : typeof error === "object" && error !== null && "constraint_name" in error
-        ? (error as { constraint_name?: string }).constraint_name
-        : undefined;
-    return typeof error === "object"
-      && error !== null
-      && "code" in error
-      && (error as { code?: string }).code === "23505"
-      && constraint === constraintName;
+    return isPostgresError(error, "23505", constraintName);
   }
 
   async function createCompanyWithUniqueKeys(

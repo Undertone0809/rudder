@@ -445,4 +445,31 @@ describe("organization portability routes", () => {
     expect(res.status).toBe(403);
     expect(mockCompanyPortabilityService.previewImport).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["preview", "/api/orgs/import/preview"],
+    ["apply", "/api/orgs/import"],
+  ])("requires instance-admin authority for organization-and-skill-only replace %s", async (_label, route) => {
+    const app = await createApp({
+      type: "board",
+      userId: "organization-member",
+      orgIds: ["11111111-1111-4111-8111-111111111111"],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+
+    const res = await request(app)
+      .post(route)
+      .send({
+        source: { type: "inline", files: { "ORGANIZATION.md": "---\nname: Test\n---\n" } },
+        include: { organization: true, agents: false, projects: false, issues: false, skills: true },
+        target: { mode: "existing_organization", orgId: "11111111-1111-4111-8111-111111111111" },
+        collisionStrategy: "replace",
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("Instance admin access required");
+    expect(mockCompanyPortabilityService.previewImport).not.toHaveBeenCalled();
+    expect(mockCompanyPortabilityService.importBundle).not.toHaveBeenCalled();
+  });
 });

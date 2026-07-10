@@ -1548,25 +1548,37 @@ describe("agent CLI e2e", () => {
     expect(blockAttachments[0]?.usage).toBe("comment_inline");
   });
 
-  it("runs the CLI-only organization skill path", { timeout: 60_000 }, async () => {
-    const env = {
+  it("keeps CLI organization host-skill operations behind instance-admin access", { timeout: 60_000 }, async () => {
+    const agentEnv = {
       RUDDER_API_KEY: agentKey,
       RUDDER_ORG_ID: orgId,
       RUDDER_AGENT_ID: agentId,
       RUDDER_RUN_ID: runId,
     };
+    const boardEnv = {
+      RUDDER_ORG_ID: orgId,
+    };
+
+    await expect(runCliJson<OrganizationSkillLocalScanResult>(
+      ["skill", "scan-local", "--roots", localSkillRoot],
+      {
+        apiBase,
+        configPath,
+        env: agentEnv,
+      },
+    )).rejects.toThrow("Board access required");
 
     const scan = await runCliJson<OrganizationSkillLocalScanResult>(
       ["skill", "scan-local", "--roots", localSkillRoot],
       {
         apiBase,
         configPath,
-        env,
+        env: boardEnv,
       },
     );
     expect(scan.imported).toHaveLength(1);
 
-    const privateSkill = await runCliJson<{
+    await expect(runCliJson<{
       created: AgentSkillEntry;
       enabledSnapshot: AgentSkillSnapshot | null;
     }>(
@@ -1585,7 +1597,31 @@ describe("agent CLI e2e", () => {
       {
         apiBase,
         configPath,
-        env,
+        env: agentEnv,
+      },
+    )).rejects.toThrow("Board access required");
+
+    const privateSkill = await runCliJson<{
+      created: AgentSkillEntry;
+      enabledSnapshot: AgentSkillSnapshot | null;
+    }>(
+      [
+        "agent",
+        "skills",
+        "create",
+        agentId,
+        "--name",
+        "CLI Private Skill",
+        "--slug",
+        "cli-private-skill",
+        "--description",
+        "Private skill created by the agent CLI e2e regression.",
+        "--enable",
+      ],
+      {
+        apiBase,
+        configPath,
+        env: boardEnv,
       },
     );
     expect(privateSkill.created.selectionKey).toBe("agent:cli-private-skill");
@@ -1595,7 +1631,7 @@ describe("agent CLI e2e", () => {
     const skills = await runCliJson<OrganizationSkillListItem[]>(["skill", "list"], {
       apiBase,
       configPath,
-      env,
+      env: boardEnv,
     });
     const importedSkill = skills.find((entry) => entry.slug === "cli-e2e-skill");
     expect(importedSkill).toBeTruthy();
@@ -1603,7 +1639,7 @@ describe("agent CLI e2e", () => {
     const detail = await runCliJson<OrganizationSkillDetail>(["skill", "get", importedSkill!.id], {
       apiBase,
       configPath,
-      env,
+      env: boardEnv,
     });
     expect(detail.id).toBe(importedSkill!.id);
     expect(detail.key).toBe(importedSkill!.key);
@@ -1611,16 +1647,25 @@ describe("agent CLI e2e", () => {
     const skillFile = await runCliJson<OrganizationSkillFileDetail>(["skill", "file", importedSkill!.id], {
       apiBase,
       configPath,
-      env,
+      env: boardEnv,
     });
     expect(skillFile.content).toContain("# CLI E2E Skill");
+
+    await expect(runCliJson<AgentSkillSnapshot>(
+      ["agent", "skills", "sync", agentId, "--desired-skills", importedSkill!.key],
+      {
+        apiBase,
+        configPath,
+        env: agentEnv,
+      },
+    )).rejects.toThrow("Board access required");
 
     const snapshot = await runCliJson<AgentSkillSnapshot>(
       ["agent", "skills", "sync", agentId, "--desired-skills", importedSkill!.key],
       {
         apiBase,
         configPath,
-        env,
+        env: boardEnv,
       },
     );
     expect(snapshot.desiredSkills).toHaveLength(1);
@@ -1641,7 +1686,7 @@ describe("agent CLI e2e", () => {
       {
         apiBase,
         configPath,
-        env,
+        env: boardEnv,
       },
     );
     expect(additiveSnapshot.desiredSkills).toEqual(snapshot.desiredSkills);
@@ -1679,8 +1724,9 @@ describe("agent CLI e2e", () => {
       },
     );
 
-    expect(hire.approval).toBeNull();
-    expect(hire.agent.status).toBe("idle");
+    expect(hire.approval?.type).toBe("hire_agent");
+    expect(hire.approval?.status).toBe("pending");
+    expect(hire.agent.status).toBe("pending_approval");
 
     const created = await runCliJson<AgentDetail>(["agent", "get", hire.agent.id], {
       apiBase,
@@ -1826,8 +1872,9 @@ describe("agent CLI e2e", () => {
         env,
       },
     );
-    expect(directHire.approval).toBeNull();
-    expect(directHire.agent.status).toBe("idle");
+    expect(directHire.approval?.type).toBe("hire_agent");
+    expect(directHire.approval?.status).toBe("pending");
+    expect(directHire.agent.status).toBe("pending_approval");
 
     const db = createDb(connectionString);
     await db.update(organizations).set({ requireBoardApprovalForNewAgents: true }).where(eq(organizations.id, orgId));

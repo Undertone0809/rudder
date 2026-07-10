@@ -10,6 +10,7 @@ import {
   renderCompanyImportResult,
   resolveCompanyImportApiPath,
   resolveCompanyImportApplyConfirmationMode,
+  resolveCompanyImportMode,
 } from "../commands/client/company.js";
 
 describe("resolveCompanyImportApiPath", () => {
@@ -31,6 +32,26 @@ describe("resolveCompanyImportApiPath", () => {
         orgId: "company-123",
       }),
     ).toBe("/api/orgs/company-123/imports/apply");
+  });
+
+  it("uses global admin routes for board-full existing-organization imports", () => {
+    expect(
+      resolveCompanyImportApiPath({
+        dryRun: true,
+        targetMode: "existing_organization",
+        orgId: "company-123",
+        importMode: "board_full",
+      }),
+    ).toBe("/api/orgs/import/preview");
+
+    expect(
+      resolveCompanyImportApiPath({
+        dryRun: false,
+        targetMode: "existing_organization",
+        orgId: "company-123",
+        importMode: "board_full",
+      }),
+    ).toBe("/api/orgs/import");
   });
 
   it("keeps global routes for new-organization imports", () => {
@@ -57,6 +78,30 @@ describe("resolveCompanyImportApiPath", () => {
         orgId: " ",
       })
     ).toThrow(/require an orgId/i);
+  });
+});
+
+describe("resolveCompanyImportMode", () => {
+  it.each([
+    ["agents", { organization: true, agents: true, projects: false, issues: false, skills: false }],
+    ["projects", { organization: true, agents: false, projects: true, issues: false, skills: false }],
+    ["issues", { organization: true, agents: false, projects: false, issues: true, skills: false }],
+  ] as const)("uses board-full mode when importing %s", (_label, include) => {
+    expect(resolveCompanyImportMode({ include, collisionStrategy: "rename" })).toBe("board_full");
+  });
+
+  it("uses board-full mode for replace imports", () => {
+    expect(resolveCompanyImportMode({
+      include: { organization: true, agents: false, projects: false, issues: false, skills: true },
+      collisionStrategy: "replace",
+    })).toBe("board_full");
+  });
+
+  it("keeps organization-and-skill-only imports on the CEO-safe route", () => {
+    expect(resolveCompanyImportMode({
+      include: { organization: true, agents: false, projects: false, issues: false, skills: true },
+      collisionStrategy: "rename",
+    })).toBe("agent_safe");
   });
 });
 

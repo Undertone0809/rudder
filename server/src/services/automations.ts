@@ -64,6 +64,7 @@ import { heartbeatService } from "./heartbeat.js";
 import { queueIssueAssignmentWakeup, type IssueAssignmentWakeupDeps } from "./issue-assignment-wakeup.js";
 import { issueService } from "./issues.js";
 import { publishLiveEvent } from "./live-events.js";
+import { isPostgresError } from "./postgres-errors.js";
 import { secretService } from "./secrets.js";
 
 type Actor = { agentId?: string | null; userId?: string | null };
@@ -1390,13 +1391,11 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
             originRunId: createdRun.id,
           });
         } catch (error) {
-          const isOpenExecutionConflict =
-            !!error &&
-            typeof error === "object" &&
-            "code" in error &&
-            (error as { code?: string }).code === "23505" &&
-            "constraint" in error &&
-            (error as { constraint?: string }).constraint === "issues_open_automation_execution_uq";
+          const isOpenExecutionConflict = isPostgresError(
+            error,
+            "23505",
+            "issues_open_automation_execution_uq",
+          );
           if (!isOpenExecutionConflict || input.automation.concurrencyPolicy === "always_enqueue") {
             throw error;
           }

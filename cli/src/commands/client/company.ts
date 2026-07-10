@@ -727,18 +727,36 @@ export function resolveCompanyImportApiPath(input: {
   dryRun: boolean;
   targetMode: "new_organization" | "existing_organization";
   orgId?: string | null;
+  importMode?: "agent_safe" | "board_full";
 }): string {
   if (input.targetMode === "existing_organization") {
     const orgId = input.orgId?.trim();
     if (!orgId) {
       throw new Error("Existing-organization imports require an orgId to resolve the API route.");
     }
-    return input.dryRun
-      ? `/api/orgs/${orgId}/imports/preview`
-      : `/api/orgs/${orgId}/imports/apply`;
+    if (input.importMode !== "board_full") {
+      return input.dryRun
+        ? `/api/orgs/${orgId}/imports/preview`
+        : `/api/orgs/${orgId}/imports/apply`;
+    }
   }
 
   return input.dryRun ? "/api/orgs/import/preview" : "/api/orgs/import";
+}
+
+export function resolveCompanyImportMode(input: {
+  include: OrganizationPortabilityInclude;
+  collisionStrategy: CompanyCollisionMode;
+}): "agent_safe" | "board_full" {
+  const importsAgents = input.include.agents ?? true;
+  const importsProjects = input.include.projects ?? false;
+  const importsIssues = input.include.issues ?? false;
+  return importsAgents
+    || importsProjects
+    || importsIssues
+    || input.collisionStrategy === "replace"
+    ? "board_full"
+    : "agent_safe";
 }
 
 export function buildCompanyDashboardUrl(apiBase: string, issuePrefix: string): string {
@@ -1217,6 +1235,15 @@ export function registerCompanyCommands(program: Command): void {
             throw new Error("Target existing organization requires --org-id (or context default orgId).");
           }
 
+          // Agents, projects, and issues may carry execution configuration,
+          // while replace imports can overwrite existing trusted state. Keep
+          // those operations on the board-full route so its instance-admin
+          // checks apply; the scoped route remains the CEO-safe path.
+          const importMode = resolveCompanyImportMode({
+            include,
+            collisionStrategy: collision,
+          });
+
           let sourcePayload:
             | { type: "inline"; rootPath?: string | null; files: Record<string, OrganizationPortabilityFileEntry> }
             | { type: "github"; url: string };
@@ -1250,6 +1277,7 @@ export function registerCompanyCommands(program: Command): void {
             dryRun: true,
             targetMode: targetPayload.mode,
             orgId: targetPayload.mode === "existing_organization" ? targetPayload.orgId : null,
+            importMode,
           });
 
           let selectedFiles: string[] | undefined;
@@ -1331,6 +1359,7 @@ export function registerCompanyCommands(program: Command): void {
             dryRun: false,
             targetMode: targetPayload.mode,
             orgId: targetPayload.mode === "existing_organization" ? targetPayload.orgId : null,
+            importMode,
           });
           const imported = await ctx.api.post<OrganizationPortabilityImportResult>(importApiPath, {
             ...previewPayload,
