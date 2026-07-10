@@ -120,6 +120,16 @@ Product model:
   transcript evidence such as thinking/reasoning entries, scratchpad text, tool
   logs, and incomplete adapter summaries remain run evidence, not chat bubble
   body content.
+- When a user sends a local chat follow-up while that conversation already has
+  an active assistant generation, Rudder parks the follow-up in a visible
+  running queue instead of starting a second concurrent reply in the same chat.
+- Queued follow-ups preserve the queued body and composer context until they are
+  delivered. Operators can edit or delete queued follow-ups while they remain
+  queued, and Rudder can claim the next queued follow-up only after the current
+  reply reaches a completed state.
+- The current runtime does not accept mid-run steering for queued follow-ups.
+  A steering attempt records a fallback reason and leaves the follow-up queued
+  for normal delivery.
 - Durable tracked work remains issue-centric unless the configured flow is
   explicitly chat-native, such as automation `chat_output`.
 
@@ -143,6 +153,19 @@ Flow:
    user and assistant content. The current stream continues in the background,
    generation controls remain available, and returning to the active/latest
    variant shows the live stream draft again.
+8. If the operator sends another local follow-up while the selected chat has an
+   active generation, Rudder creates a queued follow-up with the current draft,
+   attachments, selected project, skills, model/effort, access mode, and
+   expected active generation id.
+9. The queue renders beside the composer with stable ordering. The first queued
+   item is marked as next, later items show their queue position, and editable
+   queued items expose edit/delete controls.
+10. When the current reply completes, Rudder claims the next queued follow-up,
+   sends it as the next chat turn, and hides the queued row after it is linked
+   to the delivered user message.
+11. If the current reply is stopped, fails, or is otherwise not completed,
+   queued follow-ups stay parked. The operator can edit/delete them, but Rudder
+   does not auto-deliver them as if the interrupted reply had completed.
 
 Invariants:
 
@@ -168,6 +191,24 @@ Invariants:
   stream, Rudder hides the newer active stream draft from the visible
   transcript until the operator returns to the active/latest branch. The stop
   control for the active generation remains available.
+- Queued follow-ups must remain scoped to one conversation and organization.
+  Queue creation, editing, cancellation, claiming, release, and steering
+  endpoints must enforce the same conversation access and local mutation rules
+  as normal chat sends.
+- Queue ordering must be deterministic by stored position and creation time.
+  Idempotency keys must not allow the same queued item id to be reused with a
+  different payload.
+- A queued follow-up must not become a visible user message until it is claimed
+  and delivered through the normal chat send path. Delivered or running queued
+  rows are hidden from the running-queue UI once linked to a user message.
+- Stopped or failed replies leave queued follow-ups parked. Rudder must not
+  silently flush old queued work after an interrupted run.
+- Steering controls are visible only while a matching active generation exists.
+  Stale-generation or unsupported steering attempts keep the follow-up queued
+  and record the fallback reason instead of dropping the user input.
+- External-bound Feishu conversations are read-only locally. They must reject
+  queued follow-up mutations through the same fork-to-continue boundary as
+  normal local chat mutation APIs.
 - Agent attribution is visible enough to navigate from message to run/agent.
 
 Evidence:
@@ -182,6 +223,12 @@ Evidence:
 - Chat edit streaming E2E covers switching between prior and active turn
   branches while the replacement branch is still streaming, with the active
   generation still stoppable.
+- Chat concurrent-streaming E2E covers queueing a follow-up during an active
+  stream, editing the queued body, steering fallback, delivery after the active
+  reply completes, and parked queued follow-ups after a stopped reply.
+- Chat route and UI tests cover queue snapshots, active-generation reporting,
+  queued follow-up editing/cancellation/claiming, hidden delivered rows,
+  retained parked rows, and Feishu-bound queue mutation rejection.
 
 ## CHAT.TITLE.GENERATION.001
 
@@ -1020,6 +1067,20 @@ Product model:
 - Feishu-bound conversations are read-only from Rudder's local chat surface.
   Operators must fork them to continue locally. The fork keeps chat lineage but
   is not bound to the Feishu conversation.
+- Feishu integrations include daily session settings. Daily session rollover is
+  enabled by default with a 24-hour window and an operator-controlled setting
+  for whether Feishu receives a short rollover notice.
+- The external Feishu chat remains stable, but the active Rudder conversation
+  bound to that external chat can roll over lazily when the next inbound message
+  arrives after the configured session window.
+- Daily rollover is not a background scheduler. Rudder does not create empty
+  future sessions when no Feishu inbound message arrives.
+- When rollover creates the next Rudder conversation, the previous conversation
+  receives a system event with the previous/next conversation ids, rollover
+  reason, notification setting, and best-effort previous-session summary.
+- Previous-session summaries prefer the organization's Smart Intelligence path,
+  then the configured agent runtime, then deterministic transcript metadata.
+  Summary failure must not block the inbound Feishu message.
 
 Setup flow:
 
@@ -1044,11 +1105,32 @@ Inbound flow:
 4. Sender binding is checked; if missing, Rudder returns/sends binding-token
    instructions.
 5. External chat is bound to a Rudder Messenger conversation.
-6. Inbound text is appended to chat and, when command/routing rules apply,
+6. If the active Rudder conversation for that external chat has reached the
+   configured daily session age and no reply generation is active or closing,
+   Rudder creates the next Feishu-bound Rudder conversation, moves the binding,
+   and records the rollover system event on the previous conversation.
+7. If a reply generation is active or closing, rollover is deferred and the
+   inbound message remains in the current session.
+8. Inbound text is appended to chat and, when command/routing rules apply,
    issue and run work is created/enqueued.
-7. Messenger summary metadata records that the conversation came from Feishu,
+9. Messenger summary metadata records that the conversation came from Feishu,
    and Feishu-created chat runs persist matching source metadata.
-8. Outbound placeholder/status is recorded and sent to Feishu.
+10. Outbound placeholder/status is recorded and sent to Feishu. When rollover
+   happened and notifications are enabled, the outbound text includes
+   `New daily session started.`.
+
+Session switch flow:
+
+1. `/new` or daily rollover asks Rudder to switch the external Feishu chat
+   binding to a fresh Rudder conversation for the same integration and agent.
+2. Rudder locks the existing binding and aborts the switch if another process
+   already moved the binding.
+3. Rudder creates the next Feishu-bound conversation with the same agent
+   context link and updates the binding to that conversation.
+4. Rudder writes a system event to the previous conversation. Manual `/new`
+   uses `manual_new`; automatic daily rollover uses `daily_rollover`.
+5. The next ordinary inbound message for that external chat appends to the new
+   active Rudder conversation.
 
 Accepted reply flow:
 
@@ -1105,7 +1187,22 @@ Invariants:
 - Dedup must run before chat binding, issue creation, run enqueue, or outbound
   writes.
 - External Feishu chat id maps to exactly one active Rudder conversation per
-  integration binding.
+  integration binding at a time. Manual `/new` and daily rollover may move that
+  binding to a new Rudder conversation while preserving the older conversations
+  as read-only audit history.
+- Daily session rollover must be lazy, inbound-driven, and controlled by
+  integration settings. It must not run as a background job or create empty
+  conversations for quiet external chats.
+- Daily rollover must not interrupt an active or closing assistant generation.
+  Inbound messages received during that state stay in the current session; a
+  later inbound message can roll over after the generation reaches a terminal
+  state.
+- Rollover summaries and Feishu rollover notices are best-effort user
+  conveniences. Failure to summarize or notify Feishu must not drop or delay the
+  inbound user message.
+- The daily rollover notification setting affects only whether the external
+  Feishu reply includes the short notice. The previous-session Rudder system
+  event remains recorded for audit either way.
 - IM messages remain auditable in Rudder even when the external send fails.
 - Feishu rich-card delivery is a rendering optimization, not the canonical
   message source. A provider-declared card rejection must not prevent plain text
@@ -1149,13 +1246,17 @@ Evidence:
   SDK normalized long-connection events, hydrated chat message attachments,
   source metadata propagation, per-event runtime failure containment, background
   accepted-reply handling, stopped reply cleanup, default Markdown card outbound
-  delivery, plain text fallback, no-fallback ambiguous failures, and `OnIt`
-  working reaction add/remove behavior.
+  delivery, plain text fallback, no-fallback ambiguous failures, `OnIt`
+  working reaction add/remove behavior, `/new` session switching, lazy daily
+  rollover, disabled rollover notification, active-generation rollover deferral,
+  and Smart Intelligence, agent runtime, and deterministic summary fallback.
 - Feishu app registration tests cover the permissions requested for message,
   reaction, self-management, bot menu, quick-command, and receive-event flows.
 - Agent Detail Feishu E2E covers setup-session launcher flow, polling,
   persisted integration state, and credential redaction with a mocked Feishu
   app-registration provider.
+- Agent Detail Feishu UI tests cover updating the daily session notification
+  setting from the manage dialog.
 - Feishu source badge E2E covers the visible Messenger row badge and Agent
   Detail run detail badge for Feishu-origin work.
 - Feishu source badge E2E covers the Feishu-bound read-only UI, local mutation

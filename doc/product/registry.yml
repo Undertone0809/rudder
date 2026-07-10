@@ -686,6 +686,9 @@ contracts:
     related_code:
       - packages/db/src/schema/chat_conversations.ts
       - packages/db/src/schema/chat_messages.ts
+      - packages/db/src/schema/chat_queued_messages.ts
+      - packages/shared/src/types/chat.ts
+      - packages/shared/src/validators/chat.ts
       - server/src/routes/chats.ts
       - server/src/services/chats.ts
       - server/src/services/chat-agent-runs.ts
@@ -702,6 +705,7 @@ contracts:
       - ui/src/context/ChatGenerationContext.test.tsx
       - ui/src/lib/chat-stream-state.test.ts
       - tests/e2e/chat-error-toast.spec.ts
+      - tests/e2e/chat-concurrent-streaming.spec.ts
       - tests/e2e/chat-edit-stream-layout.spec.ts
       - tests/e2e/chat-rich-references.spec.ts
       - tests/e2e/chat-streaming.spec.ts
@@ -871,8 +875,11 @@ contracts:
       - doc/product/domains/collaboration/chat-messenger-im.md
     related_code:
       - packages/db/src/schema/agent_integrations.ts
+      - packages/shared/src/types/agent-integration.ts
+      - packages/shared/src/validators/agent-integration.ts
       - packages/shared/src/constants.ts
       - packages/shared/src/types/chat.ts
+      - server/src/routes/agents.ts
       - server/src/routes/chats.ts
       - server/src/routes/chats.stream-routes.ts
       - server/src/routes/integrations.ts
@@ -904,6 +911,7 @@ contracts:
       - server/src/__tests__/messenger-service.test.ts
       - server/src/__tests__/chat-routes.test.ts
       - ui/src/components/MessengerContextSidebar.actions.test.tsx
+      - ui/src/pages/AgentDetail.integrations.test.tsx
       - ui/src/pages/AgentDetail.runs.test.ts
       - ui/src/pages/Chat.attachment-preview.test.tsx
       - ui/src/pages/Chat.messages.test.tsx
@@ -912,6 +920,7 @@ contracts:
       - tests/e2e/feishu-source-badges.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-07-09-feishu-daily-session-rollover.md
   CONTROL.APPROVALS.001:
     owner: product
     domain: control-plane
