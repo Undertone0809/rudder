@@ -4,10 +4,18 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  validatePublicInstallPackageSpec,
+  validatePublicInstallReleaseRepo,
+} from "./public-install-inputs.mjs";
 
 const args = process.argv.slice(2);
-let packageSpec = "@rudderhq/cli@latest";
-let repo = process.env.GITHUB_REPOSITORY || "Undertone0809/rudder";
+let packageSpec =
+  process.env.RUDDER_PUBLIC_INSTALL_PACKAGE_SPEC || "@rudderhq/cli@latest";
+let repo =
+  process.env.RUDDER_PUBLIC_INSTALL_RELEASE_REPO ||
+  process.env.GITHUB_REPOSITORY ||
+  "Undertone0809/rudder";
 let keepTemp = process.env.RUDDER_KEEP_PUBLIC_INSTALL_SMOKE_TEMP === "1";
 let timeoutMs = Number.parseInt(process.env.RUDDER_PUBLIC_INSTALL_SMOKE_TIMEOUT_MS ?? "1800000", 10);
 
@@ -29,7 +37,13 @@ for (let index = 0; index < args.length; index += 1) {
   }
 }
 
-if (!packageSpec || !repo) usage(1);
+try {
+  packageSpec = validatePublicInstallPackageSpec(packageSpec);
+  repo = validatePublicInstallReleaseRepo(repo);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  usage(1);
+}
 if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) timeoutMs = 1800000;
 
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "rudder-public-install-smoke."));

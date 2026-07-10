@@ -333,21 +333,25 @@ export function createHeartbeatExecuteHandlers(context: any) {
     let persistedExecutionWorkspace = null;
     try {
       persistedExecutionWorkspace = shouldReuseExisting && existingExecutionWorkspace
-        ? await executionWorkspacesSvc.update(existingExecutionWorkspace.id, {
-            cwd: executionWorkspace.cwd,
-            repoUrl: executionWorkspace.repoUrl,
-            baseRef: executionWorkspace.repoRef,
-            branchName: executionWorkspace.branchName,
-            providerType: executionWorkspace.strategy === "git_worktree" ? "git_worktree" : "local_fs",
-            providerRef: executionWorkspace.worktreePath,
-            status: "active",
-            lastUsedAt: new Date(),
-            metadata: {
-              ...(existingExecutionWorkspace.metadata ?? {}),
-              source: executionWorkspace.source,
-              createdByRuntime: executionWorkspace.created,
+        ? await executionWorkspacesSvc.update(
+            existingExecutionWorkspace.id,
+            {
+              cwd: executionWorkspace.cwd,
+              repoUrl: executionWorkspace.repoUrl,
+              baseRef: executionWorkspace.repoRef,
+              branchName: executionWorkspace.branchName,
+              providerType: executionWorkspace.strategy === "git_worktree" ? "git_worktree" : "local_fs",
+              providerRef: executionWorkspace.worktreePath,
+              status: "active",
+              lastUsedAt: new Date(),
+              metadata: {
+                ...(existingExecutionWorkspace.metadata ?? {}),
+                source: executionWorkspace.source,
+                createdByRuntime: executionWorkspace.created,
+              },
             },
-          })
+            { allowRuntimeMetadata: true },
+          )
         : resolvedProjectId
           ? await executionWorkspacesSvc.create({
               orgId: agent.orgId,
@@ -385,6 +389,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
           await cleanupExecutionWorkspaceArtifacts({
             workspace: {
               id: existingExecutionWorkspace?.id ?? `transient-${run.id}`,
+              orgId: agent.orgId,
               cwd: executionWorkspace.cwd,
               providerType: executionWorkspace.strategy === "git_worktree" ? "git_worktree" : "local_fs",
               providerRef: executionWorkspace.worktreePath,

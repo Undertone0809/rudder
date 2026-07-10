@@ -8,6 +8,7 @@ import {
   createOrganizationWorkspaceFileSchema,
   createWorkspaceBackupSchema,
   moveOrganizationWorkspaceEntrySchema,
+  normalizeAgentUrlKey,
   organizationIntelligenceProfilePurposeSchema,
   organizationPortabilityExportSchema,
   organizationPortabilityImportSchema,
@@ -24,8 +25,10 @@ import {
 } from "@rudderhq/shared";
 import { Router, type Request } from "express";
 import path from "node:path";
+import { buildContentResponsePolicy, normalizeResponseContentType } from "../content-response-policy.js";
 import { forbidden, unprocessable } from "../errors.js";
 import { validate } from "../middleware/validate.js";
+import { isCanonicalManagedAgentInstructionsConfig } from "../services/agent-instructions.js";
 import {
   accessService,
   agentService,
@@ -45,7 +48,7 @@ import {
 import { libraryEntryService } from "../services/library-entries.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
 import type { StorageService } from "../storage/types.js";
-import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 
 const EMBEDDED_IMAGE_DATA_URL_RE = /data:image\/[a-z0-9.+-]+(?:;[a-z0-9.+_-]+(?:=[a-z0-9.+_-]+)?)*,/i;
 const EMBEDDED_IMAGE_DATA_URL_ERROR =
@@ -102,6 +105,75 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     if (actorAgent.role !== "ceo") {
       throw forbidden(`Only CEO agents can manage organization ${capability}`);
     }
+  }
+
+  function assertCanRunBoardFullImport(
+    req: Request,
+    input: { include?: { agents?: boolean; projects?: boolean; issues?: boolean } },
+  ) {
+    const importsAgents = input.include?.agents ?? true;
+    const importsProjects = input.include?.projects ?? false;
+    const importsIssues = input.include?.issues ?? false;
+    if (importsAgents || importsProjects || importsIssues) assertInstanceAdmin(req);
+  }
+
+  async function assertCanAccessLocalSkillRows(req: Request, orgId: string) {
+    if (await organizationSkills.hasLocalPathSkills(orgId)) {
+      assertInstanceAdmin(req);
+      return true;
+    }
+    return false;
+  }
+
+  async function assertCanExportSelectedInstructions(
+    req: Request,
+    orgId: string,
+    input: {
+      include?: { agents?: boolean; skills?: boolean };
+      agents?: string[];
+      skills?: string[];
+    },
+  ) {
+    let requiresInstanceAdmin = false;
+    const agentSelectors = input.agents ?? [];
+    const includesAgents = agentSelectors.length > 0 || (input.include?.agents ?? true);
+    const includesSkills = (input.skills?.length ?? 0) > 0
+      || (input.include?.skills ?? true)
+      || includesAgents;
+    if (includesSkills) {
+      requiresInstanceAdmin = await assertCanAccessLocalSkillRows(req, orgId);
+    }
+    if (!includesAgents) return requiresInstanceAdmin;
+
+    const liveAgents = (await agents.list(orgId, { includeTerminated: true }))
+      .filter((agent) => agent.status !== "terminated");
+    let selectedAgents = liveAgents;
+    if (agentSelectors.length > 0) {
+      const byReference = new Map<string, typeof liveAgents[number]>();
+      for (const agent of liveAgents) {
+        byReference.set(agent.id, agent);
+        byReference.set(agent.name, agent);
+        const normalizedName = normalizeAgentUrlKey(agent.name);
+        if (normalizedName) byReference.set(normalizedName, agent);
+      }
+      const matched = new Map<string, typeof liveAgents[number]>();
+      for (const selector of agentSelectors) {
+        const trimmed = selector.trim();
+        if (!trimmed) continue;
+        const normalized = normalizeAgentUrlKey(trimmed) ?? trimmed;
+        const agent = byReference.get(trimmed) ?? byReference.get(normalized);
+        if (agent) matched.set(agent.id, agent);
+      }
+      // Mirror the exporter: when no selector resolves, it falls back to all
+      // live agents instead of producing an empty agent set.
+      if (matched.size > 0) selectedAgents = [...matched.values()];
+    }
+
+    if (selectedAgents.some((agent) => !isCanonicalManagedAgentInstructionsConfig(agent))) {
+      assertInstanceAdmin(req);
+      return true;
+    }
+    return requiresInstanceAdmin;
   }
 
   async function assertCanWriteWorkspaceFile(req: Request, orgId: string) {
@@ -376,11 +448,15 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
 
   router.put(
     "/:orgId/intelligence-profiles/:purpose",
+    (req, _res, next) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      assertInstanceAdmin(req);
+      next();
+    },
     validate(upsertOrganizationIntelligenceProfileSchema),
     async (req, res) => {
       const orgId = req.params.orgId as string;
-      assertCompanyAccess(req, orgId);
-      assertBoard(req);
       const purpose = organizationIntelligenceProfilePurposeSchema.safeParse(req.params.purpose);
       if (!purpose.success) {
         res.status(404).json({ error: "Unknown intelligence profile purpose" });
@@ -527,20 +603,25 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     const filePath = typeof req.query.path === "string" ? req.query.path : "";
     assertAgentLibraryProjectPath(req, filePath, "file");
     const workspaceFile = await workspaceBrowser.readAttachmentFile(orgId, filePath);
-    const normalizedContentType = workspaceFile.contentType.toLowerCase();
+    const normalizedContentType = normalizeResponseContentType(workspaceFile.contentType);
     if (!normalizedContentType.startsWith("image/") && normalizedContentType !== "application/pdf") {
       res.status(415).json({ error: "Workspace file is not an inline preview" });
       return;
     }
+    const responsePolicy = buildContentResponsePolicy(
+      normalizedContentType,
+      workspaceFile.originalFilename,
+      "workspace-file",
+    );
 
-    res.setHeader("Content-Type", workspaceFile.contentType);
+    res.setHeader("Content-Type", normalizedContentType);
     res.setHeader("Content-Length", String(workspaceFile.buffer.length));
     res.setHeader("Cache-Control", "private, max-age=60");
     res.setHeader("X-Content-Type-Options", "nosniff");
-    if (workspaceFile.contentType === "image/svg+xml") {
-      res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'");
+    if (responsePolicy.contentSecurityPolicy) {
+      res.setHeader("Content-Security-Policy", responsePolicy.contentSecurityPolicy);
     }
-    res.setHeader("Content-Disposition", `inline; filename="${workspaceFile.originalFilename.replaceAll("\"", "")}"`);
+    res.setHeader("Content-Disposition", responsePolicy.contentDisposition);
     res.send(workspaceFile.buffer);
   });
 
@@ -886,14 +967,17 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
   router.post("/:orgId/export", validate(organizationPortabilityExportSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
+    await assertCanExportSelectedInstructions(req, orgId, req.body);
     const result = await portability.exportBundle(orgId, req.body);
     res.json(result);
   });
 
   router.post("/import/preview", validate(organizationPortabilityPreviewSchema), async (req, res) => {
     assertBoard(req);
+    assertCanRunBoardFullImport(req, req.body);
     if (req.body.target.mode === "existing_organization") {
       assertCompanyAccess(req, req.body.target.orgId);
+      await assertCanAccessLocalSkillRows(req, req.body.target.orgId);
     }
     const preview = await portability.previewImport(req.body);
     res.json(preview);
@@ -901,8 +985,10 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
 
   router.post("/import", validate(organizationPortabilityImportSchema), async (req, res) => {
     assertBoard(req);
+    assertCanRunBoardFullImport(req, req.body);
     if (req.body.target.mode === "existing_organization") {
       assertCompanyAccess(req, req.body.target.orgId);
+      await assertCanAccessLocalSkillRows(req, req.body.target.orgId);
     }
     const actor = getActorInfo(req);
     const result = await portability.importBundle(req.body, req.actor.type === "board" ? req.actor.userId : null);
@@ -928,6 +1014,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
   router.post("/:orgId/exports/preview", validate(organizationPortabilityExportSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     await assertCanManagePortability(req, orgId, "exports");
+    await assertCanExportSelectedInstructions(req, orgId, req.body);
     const preview = await portability.previewExport(orgId, req.body);
     res.json(preview);
   });
@@ -935,8 +1022,11 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
   router.post("/:orgId/exports/jobs", validate(organizationPortabilityExportSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     await assertCanManagePortability(req, orgId, "exports");
-    const job = exportJobs.create(orgId, ({ signal, onProgress }) =>
-      portability.exportBundle(orgId, req.body, { signal, onProgress })
+    const requiresInstanceAdmin = await assertCanExportSelectedInstructions(req, orgId, req.body);
+    const job = exportJobs.create(
+      orgId,
+      ({ signal, onProgress }) => portability.exportBundle(orgId, req.body, { signal, onProgress }),
+      { requiresInstanceAdmin },
     );
     res.status(202).json({ job });
   });
@@ -950,6 +1040,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
       res.status(404).json({ error: "Export job not found" });
       return;
     }
+    if (exportJobs.requiresInstanceAdmin(jobId)) assertInstanceAdmin(req);
     res.json(job);
   });
 
@@ -962,6 +1053,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
       res.status(404).json({ error: "Export job not found" });
       return;
     }
+    if (exportJobs.requiresInstanceAdmin(jobId)) assertInstanceAdmin(req);
     const job = exportJobs.cancel(jobId);
     res.json(job);
   });
@@ -975,6 +1067,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
       res.status(404).json({ error: "Export job not found" });
       return;
     }
+    if (exportJobs.requiresInstanceAdmin(jobId)) assertInstanceAdmin(req);
     if (job.status !== "succeeded") {
       res.status(409).json({ error: "Export job is not ready" });
       return;
@@ -990,6 +1083,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
   router.post("/:orgId/exports", validate(organizationPortabilityExportSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     await assertCanManagePortability(req, orgId, "exports");
+    await assertCanExportSelectedInstructions(req, orgId, req.body);
     const result = await portability.exportBundle(orgId, req.body);
     res.json(result);
   });
@@ -997,6 +1091,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
   router.post("/:orgId/imports/preview", validate(organizationPortabilityPreviewSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     await assertCanManagePortability(req, orgId, "imports");
+    await assertCanAccessLocalSkillRows(req, orgId);
     if (req.body.target.mode === "existing_organization" && req.body.target.orgId !== orgId) {
       throw forbidden("Safe import route can only target the route organization");
     }
@@ -1013,6 +1108,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
   router.post("/:orgId/imports/apply", validate(organizationPortabilityImportSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     await assertCanManagePortability(req, orgId, "imports");
+    await assertCanAccessLocalSkillRows(req, orgId);
     if (req.body.target.mode === "existing_organization" && req.body.target.orgId !== orgId) {
       throw forbidden("Safe import route can only target the route organization");
     }

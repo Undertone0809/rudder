@@ -52,8 +52,11 @@ export function runWorkspaceRoutes(db: Db) {
     }
     assertCompanyAccess(req, existing.orgId);
     const patch: Record<string, unknown> = {
-      ...req.body,
-      ...(req.body.cleanupEligibleAt ? { cleanupEligibleAt: new Date(req.body.cleanupEligibleAt) } : {}),
+      ...(req.body.status !== undefined ? { status: req.body.status } : {}),
+      ...(req.body.cleanupEligibleAt !== undefined
+        ? { cleanupEligibleAt: req.body.cleanupEligibleAt ? new Date(req.body.cleanupEligibleAt) : null }
+        : {}),
+      ...(req.body.cleanupReason !== undefined ? { cleanupReason: req.body.cleanupReason } : {}),
     };
     let workspace = existing;
     let cleanupWarnings: string[] = [];

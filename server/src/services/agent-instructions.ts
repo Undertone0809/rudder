@@ -6,6 +6,7 @@
  * @see doc/product/domains/agents/identity-config.md - durable agent runtime configuration
  * @see doc/engineering/DEVELOPING.md - contributor expectations for local runtime work
  */
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { notFound, unprocessable } from "../errors.js";
@@ -46,7 +47,7 @@ type BundleMode = "managed" | "external";
 type AgentLike = {
   id: string;
   orgId: string;
-  name: string;
+  name?: string | null;
   role?: string | null;
   workspaceKey?: string | null;
   agentRuntimeConfig: unknown;
@@ -169,19 +170,203 @@ function resolveLegacyInstructionsPath(candidatePath: string, config: Record<str
   return path.resolve(cwd, candidatePath);
 }
 
+function isPathWithinRoot(rootPath: string, candidatePath: string) {
+  const relativePath = path.relative(path.resolve(rootPath), path.resolve(candidatePath));
+  return relativePath === ""
+    || (relativePath !== ".." && !relativePath.startsWith(`..${path.sep}`) && !path.isAbsolute(relativePath));
+}
+
+export function isCanonicalManagedAgentInstructionsConfig(
+  agent: AgentLike,
+  candidateConfig: unknown = agent.agentRuntimeConfig,
+) {
+  const config = asRecord(candidateConfig);
+  if (
+    config[MODE_KEY] !== undefined
+    && config[MODE_KEY] !== "managed"
+  ) {
+    return false;
+  }
+
+  const managedRootPath = resolveManagedInstructionsRoot(agent);
+  const configuredRootPath = asString(config[ROOT_KEY]);
+  if (configuredRootPath) {
+    if (
+      !path.isAbsolute(configuredRootPath)
+      && configuredRootPath !== "~"
+      && !configuredRootPath.startsWith("~/")
+    ) {
+      return false;
+    }
+    if (path.resolve(resolveHomeAwarePath(configuredRootPath)) !== path.resolve(managedRootPath)) {
+      return false;
+    }
+  }
+
+  for (const key of [FILE_KEY, "agentsMdPath"]) {
+    const configuredPath = asString(config[key]);
+    if (!configuredPath) continue;
+    let resolvedPath: string;
+    try {
+      resolvedPath = resolveLegacyInstructionsPath(configuredPath, config);
+    } catch {
+      return false;
+    }
+    if (!isPathWithinRoot(managedRootPath, resolvedPath)) return false;
+  }
+
+  return true;
+}
+
 async function statIfExists(targetPath: string) {
   return fs.stat(targetPath).catch(() => null);
+}
+
+async function lstatIfExists(targetPath: string) {
+  try {
+    return await fs.lstat(targetPath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+function symlinkBoundaryError() {
+  return unprocessable(
+    "Instructions file path must stay within the bundle root and cannot traverse symbolic links",
+  );
+}
+
+async function assertSafeBundleRoot(rootPath: string): Promise<string> {
+  const absoluteRoot = path.resolve(rootPath);
+  const rootStat = await lstatIfExists(absoluteRoot);
+  if (!rootStat) throw notFound("Agent instructions bundle is not configured");
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw symlinkBoundaryError();
+  }
+  return absoluteRoot;
+}
+
+async function inspectExistingPathWithinRoot(rootPath: string, relativePath: string) {
+  const normalizedPath = normalizeRelativeFilePath(relativePath);
+  const absoluteRoot = await assertSafeBundleRoot(rootPath);
+  const pathSegments = normalizedPath.split("/");
+  let currentPath = absoluteRoot;
+  let targetStat: Awaited<ReturnType<typeof fs.lstat>> | null = null;
+
+  for (let index = 0; index < pathSegments.length; index += 1) {
+    currentPath = path.join(currentPath, pathSegments[index]!);
+    const currentStat = await lstatIfExists(currentPath);
+    if (!currentStat) return null;
+    if (currentStat.isSymbolicLink()) throw symlinkBoundaryError();
+    if (index < pathSegments.length - 1 && !currentStat.isDirectory()) {
+      throw unprocessable("Instructions file path has a non-directory parent");
+    }
+    targetStat = currentStat;
+  }
+
+  return {
+    absolutePath: resolvePathWithinRoot(absoluteRoot, normalizedPath),
+    normalizedPath,
+    stat: targetStat!,
+  };
+}
+
+async function prepareWritablePathWithinRoot(rootPath: string, relativePath: string) {
+  const normalizedPath = normalizeRelativeFilePath(relativePath);
+  const absoluteRoot = await assertSafeBundleRoot(rootPath);
+  const pathSegments = normalizedPath.split("/");
+  let currentPath = absoluteRoot;
+
+  for (const segment of pathSegments.slice(0, -1)) {
+    currentPath = path.join(currentPath, segment);
+    let currentStat = await lstatIfExists(currentPath);
+    if (!currentStat) {
+      try {
+        await fs.mkdir(currentPath);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      }
+      currentStat = await lstatIfExists(currentPath);
+    }
+    if (!currentStat?.isDirectory() || currentStat.isSymbolicLink()) {
+      throw symlinkBoundaryError();
+    }
+  }
+
+  const absolutePath = resolvePathWithinRoot(absoluteRoot, normalizedPath);
+  const targetStat = await lstatIfExists(absolutePath);
+  if (targetStat?.isSymbolicLink()) throw symlinkBoundaryError();
+  return { absolutePath, normalizedPath };
+}
+
+async function readUtf8FileWithinRoot(rootPath: string, relativePath: string) {
+  const inspected = await inspectExistingPathWithinRoot(rootPath, relativePath);
+  if (!inspected) return null;
+
+  let handle: Awaited<ReturnType<typeof fs.open>>;
+  try {
+    handle = await fs.open(
+      inspected.absolutePath,
+      fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0),
+    );
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ELOOP") throw symlinkBoundaryError();
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) return null;
+    const content = await handle.readFile({ encoding: "utf8" });
+    return { ...inspected, content, stat };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function writeUtf8FileWithinRoot(
+  rootPath: string,
+  relativePath: string,
+  content: string,
+) {
+  const prepared = await prepareWritablePathWithinRoot(rootPath, relativePath);
+  let handle: Awaited<ReturnType<typeof fs.open>>;
+  try {
+    handle = await fs.open(
+      prepared.absolutePath,
+      fsConstants.O_WRONLY
+        | fsConstants.O_CREAT
+        | fsConstants.O_TRUNC
+        | (fsConstants.O_NOFOLLOW ?? 0),
+      0o600,
+    );
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ELOOP") throw symlinkBoundaryError();
+    throw err;
+  }
+  try {
+    await handle.writeFile(content, { encoding: "utf8" });
+  } finally {
+    await handle.close();
+  }
+  return prepared;
 }
 
 async function copyLegacyRootMemoryIntoManagedInstructions(agent: AgentLike): Promise<boolean> {
   const layout = await ensureAgentWorkspaceLayout(agent);
   const sourcePath = path.join(layout.root, MEMORY_FILE_NAME);
   const targetPath = path.join(layout.instructionsDir, MEMORY_FILE_NAME);
-  const targetStat = await statIfExists(targetPath);
+  const targetStat = await lstatIfExists(targetPath);
   if (targetStat?.isFile()) return false;
-  const sourceStat = await statIfExists(sourcePath);
-  if (!sourceStat?.isFile()) return false;
-  await fs.copyFile(sourcePath, targetPath);
+  if (targetStat?.isSymbolicLink()) throw symlinkBoundaryError();
+  const sourceStat = await lstatIfExists(sourcePath);
+  if (!sourceStat?.isFile() || sourceStat.isSymbolicLink()) return false;
+  await writeUtf8FileWithinRoot(
+    layout.instructionsDir,
+    MEMORY_FILE_NAME,
+    await fs.readFile(sourcePath, "utf8"),
+  );
   return true;
 }
 
@@ -201,6 +386,7 @@ function shouldIgnoreInstructionsEntry(entry: { name: string; isDirectory(): boo
 
 async function listFilesRecursive(rootPath: string): Promise<string[]> {
   const output: string[] = [];
+  const safeRootPath = await assertSafeBundleRoot(rootPath);
 
   async function walk(currentPath: string, relativeDir: string) {
     const entries = await fs.readdir(currentPath, { withFileTypes: true }).catch(() => []);
@@ -219,13 +405,14 @@ async function listFilesRecursive(rootPath: string): Promise<string[]> {
     }
   }
 
-  await walk(rootPath, "");
+  await walk(safeRootPath, "");
   return output.sort((left, right) => left.localeCompare(right));
 }
 
 async function readFileSummary(rootPath: string, relativePath: string, entryFile: string): Promise<AgentInstructionsFileSummary> {
-  const absolutePath = resolvePathWithinRoot(rootPath, relativePath);
-  const stat = await fs.stat(absolutePath);
+  const inspected = await inspectExistingPathWithinRoot(rootPath, relativePath);
+  if (!inspected) throw notFound("Instructions file not found");
+  const stat = inspected.stat;
   return {
     path: relativePath,
     size: stat.size,
@@ -504,11 +691,10 @@ async function writeBundleFiles(
 ) {
   for (const [relativePath, content] of Object.entries(files)) {
     const normalizedPath = normalizeRelativeFilePath(relativePath);
-    const absolutePath = resolvePathWithinRoot(rootPath, normalizedPath);
-    const existingStat = await statIfExists(absolutePath);
+    const existing = await inspectExistingPathWithinRoot(rootPath, normalizedPath);
+    const existingStat = existing?.stat ?? null;
     if (existingStat?.isFile() && !options?.overwriteExisting) continue;
-    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-    await fs.writeFile(absolutePath, content, "utf8");
+    await writeUtf8FileWithinRoot(rootPath, normalizedPath, content);
   }
 }
 
@@ -545,6 +731,7 @@ export function agentInstructionsService() {
         warnings: [...state.warnings, `Instructions root does not exist: ${state.rootPath}`],
       }, []);
     }
+    await assertSafeBundleRoot(state.rootPath);
     const files = await listFilesRecursive(state.rootPath);
     const summaries = await Promise.all(files.map((relativePath) => readFileSummary(state.rootPath!, relativePath, state.entryFile)));
     return toBundle(agent, state, summaries);
@@ -592,13 +779,9 @@ export function agentInstructionsService() {
       };
     }
     if (!state.rootPath) throw notFound("Agent instructions bundle is not configured");
-    const absolutePath = resolvePathWithinRoot(state.rootPath, relativePath);
-    const [content, stat] = await Promise.all([
-      fs.readFile(absolutePath, "utf8").catch(() => null),
-      fs.stat(absolutePath).catch(() => null),
-    ]);
-    if (content === null || !stat?.isFile()) throw notFound("Instructions file not found");
-    const normalizedPath = normalizeRelativeFilePath(relativePath);
+    const file = await readUtf8FileWithinRoot(state.rootPath, relativePath);
+    if (!file) throw notFound("Instructions file not found");
+    const { content, stat, normalizedPath } = file;
     return {
       path: normalizedPath,
       size: stat.size,
@@ -639,12 +822,15 @@ export function agentInstructionsService() {
     await ensureAgentWorkspaceLayout(agent);
     await fs.mkdir(managedRoot, { recursive: true });
 
-    const entryPath = resolvePathWithinRoot(managedRoot, entryFile);
-    const entryStat = await statIfExists(entryPath);
+    const existingEntry = await inspectExistingPathWithinRoot(managedRoot, entryFile);
+    const entryStat = existingEntry?.stat ?? null;
     if (!entryStat?.isFile()) {
       const legacyInstructions = await readLegacyInstructions(agent, current.config);
-      await fs.mkdir(path.dirname(entryPath), { recursive: true });
-      await fs.writeFile(entryPath, legacyInstructions.trim().length > 0 ? legacyInstructions : "", "utf8");
+      await writeUtf8FileWithinRoot(
+        managedRoot,
+        entryFile,
+        legacyInstructions.trim().length > 0 ? legacyInstructions : "",
+      );
     }
 
     return {
@@ -677,10 +863,14 @@ export function agentInstructionsService() {
       if (!rootPath) {
         throw unprocessable("External instructions bundles require an absolute rootPath");
       }
-      const resolvedRoot = resolveHomeAwarePath(rootPath);
-      if (!path.isAbsolute(resolvedRoot)) {
+      if (
+        !path.isAbsolute(rootPath)
+        && rootPath !== "~"
+        && !rootPath.startsWith("~/")
+      ) {
         throw unprocessable("External instructions bundles require an absolute rootPath");
       }
+      const resolvedRoot = resolveHomeAwarePath(rootPath);
       nextRootPath = resolvedRoot;
     }
 
@@ -732,9 +922,7 @@ export function agentInstructionsService() {
     }
 
     const prepared = await ensureWritableBundle(agent, options);
-    const absolutePath = resolvePathWithinRoot(prepared.state.rootPath!, relativePath);
-    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-    await fs.writeFile(absolutePath, content, "utf8");
+    await writeUtf8FileWithinRoot(prepared.state.rootPath!, relativePath, content);
     const nextAgent = { ...agent, agentRuntimeConfig: prepared.agentRuntimeConfig };
     const [bundle, file] = await Promise.all([
       getBundle(nextAgent),
@@ -759,8 +947,8 @@ export function agentInstructionsService() {
     if (normalizedPath === state.entryFile) {
       throw unprocessable("Cannot delete the bundle entry file");
     }
-    const absolutePath = resolvePathWithinRoot(state.rootPath, normalizedPath);
-    await fs.rm(absolutePath, { force: true });
+    const inspected = await inspectExistingPathWithinRoot(state.rootPath, normalizedPath);
+    if (inspected) await fs.rm(inspected.absolutePath, { force: true });
     const agentRuntimeConfig = buildPersistedBundleConfig(derived, state);
     const bundle = await getBundle({ ...agent, agentRuntimeConfig });
     return { bundle, agentRuntimeConfig };
@@ -777,9 +965,9 @@ export function agentInstructionsService() {
       if (stat?.isDirectory()) {
         const relativePaths = await listFilesRecursive(state.rootPath);
         const files = Object.fromEntries(await Promise.all(relativePaths.map(async (relativePath) => {
-          const absolutePath = resolvePathWithinRoot(state.rootPath!, relativePath);
-          const content = await fs.readFile(absolutePath, "utf8");
-          return [relativePath, content] as const;
+          const file = await readUtf8FileWithinRoot(state.rootPath!, relativePath);
+          if (!file) throw notFound("Instructions file not found");
+          return [relativePath, file.content] as const;
         })));
         if (Object.keys(files).length > 0) {
           return { files, entryFile: state.entryFile, warnings: state.warnings };
@@ -818,13 +1006,11 @@ export function agentInstructionsService() {
       content,
     ] as const);
     for (const [relativePath, content] of normalizedEntries) {
-      const absolutePath = resolvePathWithinRoot(rootPath, relativePath);
-      await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-      await fs.writeFile(absolutePath, content, "utf8");
+      await writeUtf8FileWithinRoot(rootPath, relativePath, content);
     }
     await copyLegacyRootMemoryIntoManagedInstructions(agent);
     if (!normalizedEntries.some(([relativePath]) => relativePath === entryFile)) {
-      await fs.writeFile(resolvePathWithinRoot(rootPath, entryFile), "", "utf8");
+      await writeUtf8FileWithinRoot(rootPath, entryFile, "");
     }
 
     const agentRuntimeConfig = applyBundleConfig(asRecord(agent.agentRuntimeConfig), {

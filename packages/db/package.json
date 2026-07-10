@@ -44,7 +44,7 @@
   },
   "dependencies": {
     "@rudderhq/shared": "workspace:*",
-    "drizzle-orm": "^0.38.4",
+    "drizzle-orm": "^0.45.2",
     "embedded-postgres": "18.1.0-beta.16",
     "postgres": "^3.4.8"
   },
@@ -53,6 +53,6 @@
     "drizzle-kit": "^0.31.10",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.7"
   }
 }

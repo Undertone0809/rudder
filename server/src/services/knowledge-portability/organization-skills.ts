@@ -45,6 +45,7 @@ import {
   ImportedSkill,
   PackageSkillConflictStrategy,
   RuntimeSkillEntryOptions,
+  SkillCatalogAccessOptions,
   applyDesiredSelectionsToCatalog,
   arraysEqual,
   asString,
@@ -59,6 +60,7 @@ import {
   deriveCanonicalSkillKey,
   deriveSkillSourceInfo,
   enrichSkill,
+  filterRuntimeSafeOrganizationSkills,
   findMissingLocalSkillIds,
   getRequiredBundledSkillKeys,
   getSkillMeta,
@@ -80,6 +82,7 @@ import {
   parseSelectionKey,
   readAdapterSkillCatalogEntries,
   readDiscoveredSkillEntries,
+  readHostSkillCatalogsWhenAllowed,
   resolveConfiguredHomeDir,
   resolveLocalSkillFilePath,
   resolveManagedSkillsRoot,
@@ -351,16 +354,6 @@ export function organizationSkillService(db: Db) {
       const skill = toCompanySkill(row);
       let description = normalizeSkillDescription(parseFrontmatterMarkdown(skill.markdown).frontmatter.description);
 
-      if (!description) {
-        const skillDir = normalizeSkillDirectory(skill);
-        if (skillDir) {
-          const markdown = await fs.readFile(path.join(skillDir, "SKILL.md"), "utf8").catch(() => null);
-          if (markdown) {
-            description = normalizeSkillDescription(parseFrontmatterMarkdown(markdown).frontmatter.description);
-          }
-        }
-      }
-
       if (!description) continue;
 
       await db
@@ -381,7 +374,6 @@ export function organizationSkillService(db: Db) {
       await ensureBundledSkills(orgId);
       await ensureCommunityPresetSkills(orgId);
       await pruneLegacyUserHomeLocalScanSkills(orgId);
-      await pruneMissingLocalPathSkills(orgId);
       await backfillMissingSkillDescriptions(orgId);
     })();
 
@@ -528,10 +520,11 @@ export function organizationSkillService(db: Db) {
     agentRuntimeType: string,
     runtimeConfig: Record<string, unknown>,
     skills: OrganizationSkill[],
+    options: SkillCatalogAccessOptions = {},
   ): Promise<AgentSkillCatalogEntry[]> {
     const entries: AgentSkillCatalogEntry[] = [];
 
-    for (const skill of skills) {
+    for (const skill of filterRuntimeSafeOrganizationSkills(skills, options)) {
       const bundled = isBundledRudderSkillKey(skill.key);
       entries.push({
         key: skill.slug,
@@ -559,33 +552,38 @@ export function organizationSkillService(db: Db) {
       });
     }
 
-    if (agentId) {
-      const agentWorkspace = await getAgentWorkspaceRow(orgId, agentId);
-      entries.push(...await readDiscoveredSkillEntries(
+    // Agent workspace, global HOME, and adapter catalogs all require host
+    // directory enumeration and SKILL.md reads. They are opt-in only.
+    entries.push(...await readHostSkillCatalogsWhenAllowed(options, async () => {
+      const hostEntries: AgentSkillCatalogEntry[] = [];
+      if (agentId) {
+        const agentWorkspace = await getAgentWorkspaceRow(orgId, agentId);
+        hostEntries.push(...await readDiscoveredSkillEntries(
+          orgId,
+          resolveAgentSkillsDir(orgId, agentWorkspace),
+          (slug) => buildAgentSelectionKey(slug),
+          {
+            sourceClass: "agent_home",
+            originLabel: "Agent skill",
+            locationLabel: "AGENT_HOME/skills",
+          },
+        ));
+      }
+
+      const globalRoot = path.join(resolveConfiguredHomeDir(runtimeConfig), ".agents", "skills");
+      hostEntries.push(...await readDiscoveredSkillEntries(
         orgId,
-        resolveAgentSkillsDir(orgId, agentWorkspace),
-        (slug) => buildAgentSelectionKey(slug),
+        globalRoot,
+        (slug) => buildGlobalSelectionKey(slug),
         {
-          sourceClass: "agent_home",
-          originLabel: "Agent skill",
-          locationLabel: "AGENT_HOME/skills",
+          sourceClass: "global",
+          originLabel: "Global skill",
+          locationLabel: "~/.agents/skills",
         },
       ));
-    }
-
-    const globalRoot = path.join(resolveConfiguredHomeDir(runtimeConfig), ".agents", "skills");
-    entries.push(...await readDiscoveredSkillEntries(
-      orgId,
-      globalRoot,
-      (slug) => buildGlobalSelectionKey(slug),
-      {
-        sourceClass: "global",
-        originLabel: "Global skill",
-        locationLabel: "~/.agents/skills",
-      },
-    ));
-
-    entries.push(...await readAdapterSkillCatalogEntries(orgId, runtimeConfig));
+      hostEntries.push(...await readAdapterSkillCatalogEntries(orgId, runtimeConfig));
+      return hostEntries;
+    }));
 
     return entries.sort((left, right) =>
       left.key.localeCompare(right.key) || left.selectionKey.localeCompare(right.selectionKey));
@@ -640,6 +638,7 @@ export function organizationSkillService(db: Db) {
   async function buildAgentSkillSnapshot(
     agent: EnabledSkillsAgentRef,
     runtimeConfig: Record<string, unknown>,
+    options: SkillCatalogAccessOptions = {},
   ): Promise<AgentSkillSnapshot> {
     if (!agent) {
       return {
@@ -652,7 +651,7 @@ export function organizationSkillService(db: Db) {
       };
     }
 
-    const skills = await listFull(agent.orgId);
+    const skills = filterRuntimeSafeOrganizationSkills(await listFull(agent.orgId), options);
     const desiredSkills = await getEnabledSkillSelectionRefsForAgent(agent.orgId, agent, skills);
     const entries = await buildAgentSkillCatalogEntries(
       agent.orgId,
@@ -660,6 +659,7 @@ export function organizationSkillService(db: Db) {
       agent.agentRuntimeType,
       runtimeConfig,
       skills,
+      options,
     );
     const applied = applyDesiredSelectionsToCatalog(entries, desiredSkills, agent.agentRuntimeType);
     return {
@@ -720,17 +720,19 @@ export function organizationSkillService(db: Db) {
     agent: EnabledSkillsAgentRef,
     runtimeConfig: Record<string, unknown>,
     requestedDesiredSkills: string[] | undefined,
+    options: SkillCatalogAccessOptions = {},
   ): Promise<AgentSkillSelectionResolution> {
     if (!agent) {
       return { desiredSkills: [], warnings: [] };
     }
-    const skills = await listFull(agent.orgId);
+    const skills = filterRuntimeSafeOrganizationSkills(await listFull(agent.orgId), options);
     const catalogEntries = await buildAgentSkillCatalogEntries(
       agent.orgId,
       agent.id,
       agent.agentRuntimeType,
       runtimeConfig,
       skills,
+      options,
     );
     const ambiguousRefs = new Set<string>();
     const unresolvedRefs = new Set<string>();
@@ -771,9 +773,19 @@ export function organizationSkillService(db: Db) {
     selectionRefs: string[],
     options: RuntimeSkillEntryOptions = {},
   ): Promise<RudderSkillEntry[]> {
-    const skills = await listFull(orgId);
+    // Runtime preparation is server-internal and carries no user authority.
+    // Existing hostile rows must be excluded unless an upstream caller
+    // explicitly proves host-global authorization.
+    const skills = filterRuntimeSafeOrganizationSkills(await listFull(orgId), options);
     const skillByKey = new Map(skills.map((skill) => [skill.key, skill]));
-    const catalogEntries = await buildAgentSkillCatalogEntries(orgId, agentId, agentRuntimeType, runtimeConfig, skills);
+    const catalogEntries = await buildAgentSkillCatalogEntries(
+      orgId,
+      agentId,
+      agentRuntimeType,
+      runtimeConfig,
+      skills,
+      options,
+    );
     const bySelectionKey = new Map(catalogEntries.map((entry) => [entry.selectionKey, entry]));
     const desiredSet = new Set(selectionRefs);
     const activeEntries = catalogEntries.filter((entry) => entry.alwaysEnabled || desiredSet.has(entry.selectionKey));
@@ -821,6 +833,15 @@ export function organizationSkillService(db: Db) {
       .where(eq(organizationSkills.id, id))
       .then((rows) => rows[0] ?? null);
     return row ? toCompanySkill(row) : null;
+  }
+
+  async function hasLocalPathSkills(orgId: string) {
+    return db
+      .select({ id: organizationSkills.id })
+      .from(organizationSkills)
+      .where(and(eq(organizationSkills.orgId, orgId), eq(organizationSkills.sourceType, "local_path")))
+      .limit(1)
+      .then((rows) => rows.length > 0);
   }
 
   async function getByKey(orgId: string, key: string) {
@@ -1189,7 +1210,7 @@ export function organizationSkillService(db: Db) {
     orgId: string,
     options: RuntimeSkillEntryOptions = {},
   ): Promise<RudderSkillEntry[]> {
-    const skills = await listFull(orgId);
+    const skills = filterRuntimeSafeOrganizationSkills(await listFull(orgId), options);
 
     const out: RudderSkillEntry[] = [];
     for (const skill of skills) {
@@ -1457,6 +1478,7 @@ export function organizationSkillService(db: Db) {
     list,
     listFull,
     getById,
+    hasLocalPathSkills,
     getByKey,
     resolveRequestedSkillKeys: async (orgId: string, requestedReferences: string[]) => {
       const skills = await listFull(orgId);

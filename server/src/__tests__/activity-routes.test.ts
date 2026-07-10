@@ -124,6 +124,36 @@ describe("activity routes", () => {
     });
   });
 
+  it("rejects cross-organization activity creation", async () => {
+    const res = await request(createApp())
+      .post("/api/orgs/organization-2/activity")
+      .send({
+        actorType: "user",
+        actorId: "user-1",
+        action: "project.updated",
+        entityType: "project",
+        entityId: "project-2",
+      });
+
+    expect(res.status).toBe(403);
+    expect(mockActivityService.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects activity actor injection from non-admin organization members", async () => {
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/activity")
+      .send({
+        actorType: "system",
+        actorId: "forged-system",
+        action: "agent.approved",
+        entityType: "agent",
+        entityId: "agent-1",
+      });
+
+    expect(res.status).toBe(403);
+    expect(mockActivityService.create).not.toHaveBeenCalled();
+  });
+
   it("passes user activity ledger filters to the service", async () => {
     mockActivityService.listUserActivityLedger.mockResolvedValue({
       items: [],

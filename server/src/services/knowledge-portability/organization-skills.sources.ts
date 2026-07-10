@@ -6,6 +6,10 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { unprocessable } from "../../errors.js";
+import {
+  fetchPublicHttpText,
+  type PublicHttpTextOptions,
+} from "../website-metadata.js";
 import type {
   ImportedSkill,
   LocalSkillInventoryMode,
@@ -196,24 +200,49 @@ export function parseFrontmatterMarkdown(raw: string): { frontmatter: Record<str
   };
 }
 
-export async function fetchText(url: string) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw unprocessable(`Failed to fetch ${url}: ${response.status}`);
+export async function fetchText(url: string, options: PublicHttpTextOptions = {}) {
+  let response: Awaited<ReturnType<typeof fetchPublicHttpText>>;
+  try {
+    response = await fetchPublicHttpText(url, {
+      maxBytes: 1024 * 1024,
+      timeoutMs: 10_000,
+      ...options,
+    });
+  } catch (error) {
+    throw unprocessable(
+      error instanceof Error ? error.message : "Failed to fetch public skill source",
+    );
   }
-  return response.text();
+  if (!response.ok) {
+    throw unprocessable(`Failed to fetch public skill source: ${response.status}`);
+  }
+  return response.text;
 }
 
-export async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, {
-    headers: {
-      accept: "application/vnd.github+json",
-    },
-  });
-  if (!response.ok) {
-    throw unprocessable(`Failed to fetch ${url}: ${response.status}`);
+export async function fetchJson<T>(url: string, options: PublicHttpTextOptions = {}): Promise<T> {
+  let response: Awaited<ReturnType<typeof fetchPublicHttpText>>;
+  try {
+    response = await fetchPublicHttpText(url, {
+      maxBytes: 8 * 1024 * 1024,
+      timeoutMs: 10_000,
+      headers: {
+        accept: "application/vnd.github+json",
+      },
+      ...options,
+    });
+  } catch (error) {
+    throw unprocessable(
+      error instanceof Error ? error.message : "Failed to fetch public skill source",
+    );
   }
-  return response.json() as Promise<T>;
+  if (!response.ok) {
+    throw unprocessable(`Failed to fetch public skill source: ${response.status}`);
+  }
+  try {
+    return JSON.parse(response.text) as T;
+  } catch {
+    throw unprocessable("Public skill source returned invalid JSON");
+  }
 }
 
 export async function resolveGitHubDefaultBranch(owner: string, repo: string) {

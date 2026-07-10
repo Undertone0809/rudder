@@ -17,19 +17,51 @@ on:
         default: true
 
 permissions:
-  actions: write
-  contents: write
-  id-token: write
+  contents: read
 
 concurrency:
   group: release-${{ github.event_name }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || 'push' }}
   cancel-in-progress: false
 
 jobs:
+  resolve-source:
+    name: Resolve trusted release source
+    if: >-
+      github.repository == 'Undertone0809/rudder' &&
+      (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve source commit from main history
+        id: source
+        env:
+          SOURCE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.sha }}
+        run: |
+          source_sha="$(git rev-parse --verify --end-of-options "${SOURCE_REF}^{commit}")"
+          if ! git merge-base --is-ancestor "$source_sha" origin/main; then
+            echo "Release source must belong to the protected main history: $SOURCE_REF" >&2
+            exit 1
+          fi
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+
   verify:
     name: Verify ${{ matrix.os }}
-    if: (github.event_name == 'push' && github.repository == 'Undertone0809/rudder' && !contains(github.event.head_commit.message, '[skip release]')) || github.event_name == 'workflow_dispatch'
+    needs: resolve-source
+    if: >-
+      (github.event_name == 'push' && !contains(github.event.head_commit.message, '[skip release]')) ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -51,7 +83,8 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.sha }}
+          persist-credentials: false
+          ref: ${{ needs.resolve-source.outputs.sha }}
 
       - uses: actions/setup-node@v6
         with:
@@ -88,6 +121,10 @@ jobs:
     if: github.event_name == 'push' && github.repository == 'Undertone0809/rudder' && !contains(github.event.head_commit.message, '[skip release]')
     runs-on: ubuntu-latest
     environment: npm-canary
+    permissions:
+      actions: write
+      contents: write
+      id-token: write
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
@@ -98,6 +135,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:
@@ -112,7 +150,7 @@ jobs:
           npm --version
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Configure git identity
         run: |
@@ -123,19 +161,22 @@ jobs:
       - name: Publish canary
         id: publish
         env:
+          GH_TOKEN: ${{ github.token }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           version="$(./scripts/release.sh canary --print-version)"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           ./scripts/release.sh canary --skip-verify
-          git push origin "refs/tags/canary/v${version}"
+          auth_header="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic ${auth_header}" \
+            push origin "refs/tags/canary/v${version}"
 
       - name: Start desktop release build
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="canary/v${{ steps.publish.outputs.version }}"
-          gh workflow run desktop-release.yml --ref "$tag" -f release_tag="$tag"
+          gh workflow run desktop-release.yml --ref main -f release_tag="$tag"
 
       - name: Wait for desktop release assets
         env:
@@ -159,9 +200,13 @@ jobs:
 
   stable-dry-run:
     name: Preview stable release
-    needs: verify
+    needs:
+      - resolve-source
+      - verify
     if: github.event_name == 'workflow_dispatch' && inputs.dry_run
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
@@ -170,7 +215,8 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ needs.resolve-source.outputs.sha }}
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:
@@ -185,17 +231,23 @@ jobs:
           npm --version
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Preview stable publish
         run: ./scripts/release.sh stable --dry-run --skip-verify
 
   stable:
     name: Publish stable release
-    needs: verify
+    needs:
+      - resolve-source
+      - verify
     if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.repository == 'Undertone0809/rudder'
     runs-on: ubuntu-latest
     environment: npm-stable
+    permissions:
+      actions: write
+      contents: write
+      id-token: write
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
@@ -206,7 +258,8 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ needs.resolve-source.outputs.sha }}
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:
@@ -221,7 +274,7 @@ jobs:
           npm --version
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Configure git identity
         run: |
@@ -237,13 +290,15 @@ jobs:
           version="$(./scripts/release.sh stable --print-version)"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           ./scripts/release.sh stable --skip-verify
-          git push origin "refs/tags/v${version}"
+          auth_header="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic ${auth_header}" \
+            push origin "refs/tags/v${version}"
           PUBLISH_REMOTE=origin ./scripts/create-github-release.sh "${version}"
 
       - name: Start desktop release build
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run desktop-release.yml --ref "v${{ steps.publish.outputs.version }}" -f release_tag="v${{ steps.publish.outputs.version }}"
+        run: gh workflow run desktop-release.yml --ref main -f release_tag="v${{ steps.publish.outputs.version }}"
 
       - name: Wait for desktop release assets
         env:
@@ -260,6 +315,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          auth_header="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${auth_header}"
           node scripts/cleanup-obsolete-canaries.mjs \
             --repo "$GITHUB_REPOSITORY" \
             --remote origin \

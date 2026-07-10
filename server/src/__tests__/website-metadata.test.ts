@@ -119,8 +119,8 @@ describe("resolveWebsiteMetadata", () => {
 
   it("falls back to a server-side favicon provider for public pages without discoverable origin icons", async () => {
     lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
-      const href = url instanceof URL ? url.href : String(url);
+    const pinnedFetchImpl = vi.fn(async (url: URL) => {
+      const href = url.href;
       if (href === "https://example.com/post") {
         return new Response("<!doctype html><title>No Origin Icon</title>", {
           status: 200,
@@ -142,7 +142,7 @@ describe("resolveWebsiteMetadata", () => {
       throw new Error(`Unexpected fetch ${href}`);
     });
 
-    await expect(resolveWebsiteMetadata("https://example.com/post")).resolves.toMatchObject({
+    await expect(resolveWebsiteMetadata("https://example.com/post", { pinnedFetchImpl })).resolves.toMatchObject({
       siteName: "No Origin Icon",
       iconUrl: "https://www.google.com/s2/favicons?domain_url=https%3A%2F%2Fexample.com&sz=64",
     });
@@ -175,18 +175,27 @@ describe("resolveWebsiteMetadata", () => {
     });
   });
 
+  it("rejects fetched SVG icons", async () => {
+    const fetchImpl = async () => new Response("<svg onload='alert(1)'/>", {
+      status: 200,
+      headers: { "content-type": "image/svg+xml" },
+    });
+
+    await expect(fetchWebsiteIcon("https://static.example.com/favicon.svg", { fetchImpl })).resolves.toBeNull();
+  });
+
   it("extracts declared icons from large pages without failing the metadata request", async () => {
     const fixture = await startFixtureServer((req, res) => {
-      if (req.url === "/favicon.svg") {
-        res.setHeader("content-type", "image/svg+xml");
-        res.end("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><rect width=\"16\" height=\"16\"/></svg>");
+      if (req.url === "/favicon.png") {
+        res.setHeader("content-type", "image/png");
+        res.end(Buffer.from("png"));
         return;
       }
       res.setHeader("content-type", "text/html; charset=utf-8");
       res.end(`
         <!doctype html>
         <title>Large Metadata Page</title>
-        <link rel="icon" href="/favicon.svg">
+        <link rel="icon" href="/favicon.png">
         ${"x".repeat(300 * 1024)}
       `);
     });
@@ -194,7 +203,7 @@ describe("resolveWebsiteMetadata", () => {
 
     await expect(resolveWebsiteMetadata(`${fixture.origin}/large`, { allowPrivateHosts: true })).resolves.toMatchObject({
       siteName: "Large Metadata Page",
-      iconUrl: `${fixture.origin}/favicon.svg`,
+      iconUrl: `${fixture.origin}/favicon.png`,
     });
   });
 
@@ -216,30 +225,96 @@ describe("resolveWebsiteMetadata", () => {
     await expect(resolveWebsiteMetadata("http://198.18.0.42/post")).rejects.toThrow("Private network URLs");
   });
 
-  it("allows public hostnames that resolve through local 198.18/15 proxy addresses", async () => {
+  it.each([
+    "http://224.0.0.1/post",
+    "http://239.255.255.250/post",
+    "http://240.0.0.1/post",
+    "http://255.255.255.255/post",
+    "http://198.51.100.1/post",
+    "http://203.0.113.1/post",
+  ])("rejects non-public IPv4 literal targets: %s", async (url) => {
+    await expect(resolveWebsiteMetadata(url)).rejects.toThrow("Private network URLs");
+  });
+
+  it.each(["224.0.0.1", "240.0.0.1", "255.255.255.255", "198.51.100.1", "203.0.113.1"])(
+    "rejects public hostnames resolving to non-public IPv4 addresses: %s",
+    async (address) => {
+      lookupMock.mockResolvedValue([{ address, family: 4 }]);
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("fetch should not be called"));
+
+      await expect(resolveWebsiteMetadata("https://example.com/post")).rejects.toThrow("Private network URLs");
+      expect(fetchSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    "http://[::]:12345/post",
+    "http://[::1]:12345/post",
+    "http://[::ffff:127.0.0.1]:12345/post",
+    "http://[::ffff:7f00:1]:12345/post",
+    "http://[0:0:0:0:0:ffff:7f00:1]:12345/post",
+    "http://[64:ff9b::7f00:1]:12345/post",
+    "http://[::ffff:0:7f00:1]:12345/post",
+    "http://[fe80::1]:12345/post",
+    "http://[fc00::1]:12345/post",
+    "http://[fd12:3456::1]:12345/post",
+  ])("rejects non-public IPv6 literal targets: %s", async (url) => {
+    await expect(resolveWebsiteMetadata(url)).rejects.toThrow("Private network URLs");
+  });
+
+  it.each([
+    "::ffff:7f00:1",
+    "0:0:0:0:0:ffff:7f00:1",
+    "64:ff9b::7f00:1",
+    "::ffff:0:7f00:1",
+    "fe80::1",
+    "fd12:3456::1",
+  ])(
+    "rejects public hostnames resolving to non-public IPv6 addresses: %s",
+    async (address) => {
+      lookupMock.mockResolvedValue([{ address, family: 6 }]);
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("fetch should not be called"));
+
+      await expect(resolveWebsiteMetadata("https://example.com/post")).rejects.toThrow("Private network URLs");
+      expect(fetchSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects public hostnames that resolve through benchmark-network addresses", async () => {
     lookupMock.mockResolvedValue([{ address: "198.18.0.42", family: 4 }]);
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
-      const href = url instanceof URL ? url.href : String(url);
-      if (href === "https://example.com/favicon.ico") {
-        return new Response(Buffer.from("ico"), {
-          status: 200,
-          headers: { "content-type": "image/x-icon" },
-        });
-      }
-      return new Response(`
-        <!doctype html>
-        <title>Proxy Mapped Site</title>
-        <link rel="icon" href="/favicon.ico">
-      `, {
+    const pinnedFetchImpl = vi.fn();
+
+    await expect(resolveWebsiteMetadata("https://example.com/post", { pinnedFetchImpl }))
+      .rejects.toThrow("Private network URLs");
+    expect(pinnedFetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("pins the validated DNS addresses into the connection transport", async () => {
+    lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+    const pinnedFetchImpl = vi.fn(async (_url: URL, _init: RequestInit, addresses: ReadonlyArray<{ address: string }>) => {
+      expect(addresses).toEqual([{ address: "93.184.216.34", family: 4 }]);
+      return new Response("<!doctype html><title>Pinned Site</title>", {
         status: 200,
-        headers: { "content-type": "text/html; charset=utf-8" },
+        headers: { "content-type": "text/html" },
       });
     });
 
-    await expect(resolveWebsiteMetadata("https://example.com/post")).resolves.toMatchObject({
-      siteName: "Proxy Mapped Site",
-      iconUrl: "https://example.com/favicon.ico",
+    await expect(resolveWebsiteMetadata("https://example.com/post", { pinnedFetchImpl })).resolves.toMatchObject({
+      siteName: "Pinned Site",
     });
+    expect(pinnedFetchImpl).toHaveBeenCalled();
+  });
+
+  it("rejects a hostname when any resolved address is non-public", async () => {
+    lookupMock.mockResolvedValue([
+      { address: "93.184.216.34", family: 4 },
+      { address: "127.0.0.1", family: 4 },
+    ]);
+    const pinnedFetchImpl = vi.fn();
+
+    await expect(resolveWebsiteMetadata("https://example.com/post", { pinnedFetchImpl }))
+      .rejects.toThrow("Private network URLs");
+    expect(pinnedFetchImpl).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -279,21 +354,21 @@ describe("resolveWebsiteMetadata", () => {
     process.env.RUDDER_HOME = tempHome;
     process.env.RUDDER_INSTANCE_ID = "test";
     lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(Buffer.from("ico"), {
+    const pinnedFetchImpl = vi.fn(async () => new Response(Buffer.from("ico"), {
       status: 200,
       headers: { "content-type": "image/x-icon" },
     }));
 
     try {
-      await expect(fetchWebsiteIcon("https://static.example.com/favicon.ico")).resolves.toMatchObject({
+      await expect(fetchWebsiteIcon("https://static.example.com/favicon.ico", { pinnedFetchImpl })).resolves.toMatchObject({
         contentType: "image/x-icon",
         body: Buffer.from("ico"),
       });
-      await expect(fetchWebsiteIcon("https://static.example.com/favicon.ico")).resolves.toMatchObject({
+      await expect(fetchWebsiteIcon("https://static.example.com/favicon.ico", { pinnedFetchImpl })).resolves.toMatchObject({
         contentType: "image/x-icon",
         body: Buffer.from("ico"),
       });
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(pinnedFetchImpl).toHaveBeenCalledTimes(1);
     } finally {
       await rm(tempHome, { recursive: true, force: true });
     }

@@ -78,6 +78,7 @@ describe("approvalService resolution idempotency", () => {
     mockAgentService.create.mockResolvedValue({ id: "agent-1" });
     mockAgentService.getById.mockResolvedValue({
       id: "agent-1",
+      orgId: "organization-1",
       agentRuntimeType: "codex_local",
       agentRuntimeConfig: { model: "gpt-5.4" },
     });
@@ -118,7 +119,10 @@ describe("approvalService resolution idempotency", () => {
 
   it("still performs side effects when the resolution update is newly applied", async () => {
     const approved = createApproval("approved");
-    const dbStub = createDbStub([[createApproval("pending")]], [approved]);
+    const dbStub = createDbStub(
+      [[createApproval("pending")], [createApproval("pending")]],
+      [approved],
+    );
 
     const svc = approvalService(dbStub.db as any);
     const result = await svc.approve("approval-1", "board", "ship it");
@@ -128,5 +132,44 @@ describe("approvalService resolution idempotency", () => {
     expect(mockOrganizationIntelligenceProfiles.ensureDefaultsFromRuntime).not.toHaveBeenCalled();
     expect(mockOrganizationIntelligenceRuntimeChain.assertUsable).not.toHaveBeenCalled();
     expect(mockNotifyHireApproved).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["approve", "reject"] as const)(
+    "does not %s a hire target from another organization",
+    async (action) => {
+      const dbStub = createDbStub([[createApproval("pending")]], []);
+      mockAgentService.getById.mockResolvedValue({
+        id: "agent-1",
+        orgId: "organization-2",
+        agentRuntimeType: "process",
+        agentRuntimeConfig: {},
+      });
+
+      const svc = approvalService(dbStub.db as any);
+      await expect(svc[action]("approval-1", "board", "decision"))
+        .rejects.toThrow("approval organization");
+
+      expect(dbStub.returning).not.toHaveBeenCalled();
+      expect(mockAgentService.activatePendingApproval).not.toHaveBeenCalled();
+      expect(mockAgentService.terminate).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not approve a cross-organization hire target supplied through a payload override", async () => {
+    const dbStub = createDbStub([[createApproval("pending")]], []);
+    mockAgentService.getById.mockImplementation(async (agentId: string) => ({
+      id: agentId,
+      orgId: agentId === "agent-2" ? "organization-2" : "organization-1",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+    }));
+
+    const svc = approvalService(dbStub.db as any);
+    await expect(
+      svc.approve("approval-1", "board", "decision", { agentId: "agent-2" }),
+    ).rejects.toThrow("approval organization");
+
+    expect(dbStub.returning).not.toHaveBeenCalled();
+    expect(mockAgentService.activatePendingApproval).not.toHaveBeenCalled();
   });
 });

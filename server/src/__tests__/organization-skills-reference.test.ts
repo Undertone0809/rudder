@@ -277,7 +277,11 @@ describe("organization skill references", () => {
           },
         },
       };
-      const snapshot = await skillSvc.buildAgentSkillSnapshot(agent, { env: { HOME: home } });
+      const snapshot = await skillSvc.buildAgentSkillSnapshot(
+        agent,
+        { env: { HOME: home } },
+        { allowHostCatalogs: true },
+      );
 
       expect(snapshot.entries).toContainEqual(expect.objectContaining({
         key: "build-advisor",
@@ -300,9 +304,14 @@ describe("organization skill references", () => {
       const enabledSnapshot = await skillSvc.buildAgentSkillSnapshot(
         agent,
         { env: { HOME: home } },
+        { allowHostCatalogs: true },
       );
       await skillSvc.replaceEnabledSkillKeysForAgent(orgId, agentId, enabledSelection);
-      const refreshedSnapshot = await skillSvc.buildAgentSkillSnapshot(agent, { env: { HOME: home } });
+      const refreshedSnapshot = await skillSvc.buildAgentSkillSnapshot(
+        agent,
+        { env: { HOME: home } },
+        { allowHostCatalogs: true },
+      );
       expect(refreshedSnapshot.entries).toContainEqual(expect.objectContaining({
         selectionKey: "adapter:codex_local:build-advisor",
         state: "configured",
@@ -316,6 +325,7 @@ describe("organization skill references", () => {
         "claude_local",
         { env: { HOME: home } },
         enabledSelection,
+        { allowHostCatalogs: true },
       );
       expect(runtimeEntries).toContainEqual(expect.objectContaining({
         key: "adapter:codex_local:build-advisor",

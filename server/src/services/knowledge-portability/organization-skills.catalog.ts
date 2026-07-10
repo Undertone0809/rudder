@@ -94,9 +94,31 @@ export type ProjectSkillScanTarget = {
   workspaceCwd: string;
 };
 
-export type RuntimeSkillEntryOptions = {
+export type SkillCatalogAccessOptions = {
+  /** Caller has already enforced instance-admin authority for organization host-local paths. */
+  allowHostLocalPaths?: boolean;
+  /** Caller has already established a trusted persisted host-runtime configuration. */
+  allowHostCatalogs?: boolean;
+};
+
+export type RuntimeSkillEntryOptions = SkillCatalogAccessOptions & {
   materializeMissing?: boolean;
 };
+
+export function filterRuntimeSafeOrganizationSkills<T extends Pick<OrganizationSkill, "sourceType">>(
+  skills: T[],
+  options: SkillCatalogAccessOptions = {},
+) {
+  if (options.allowHostLocalPaths === true) return skills;
+  return skills.filter((skill) => skill.sourceType !== "local_path");
+}
+
+export async function readHostSkillCatalogsWhenAllowed<T>(
+  options: SkillCatalogAccessOptions,
+  reader: () => Promise<T[]>,
+) {
+  return options.allowHostCatalogs === true ? reader() : [];
+}
 
 export type AgentWorkspaceRow = {
   id: string;

@@ -43,8 +43,16 @@ const mockAgentService = vi.hoisted(() => ({
   update: vi.fn(),
   updatePermissions: vi.fn(),
   getChainOfCommand: vi.fn(),
+  getConfigRevision: vi.fn(),
+  rollbackConfigRevision: vi.fn(),
   resolveByReference: vi.fn(),
+  pause: vi.fn(),
   resume: vi.fn(),
+  terminate: vi.fn(),
+  remove: vi.fn(),
+  listKeys: vi.fn(),
+  createApiKey: vi.fn(),
+  revokeKey: vi.fn(),
 }));
 
 const mockAccessService = vi.hoisted(() => ({
@@ -101,6 +109,7 @@ const mockCustomIntegrationService = vi.hoisted(() => ({
   recordToolCall: vi.fn(),
 }));
 const mockCompanySkillService = vi.hoisted(() => ({
+  hasLocalPathSkills: vi.fn(),
   listRuntimeSkillEntries: vi.fn(),
   resolveRequestedSkillKeys: vi.fn(),
   resolveDesiredSkillSelectionForAgent: vi.fn(),
@@ -110,6 +119,12 @@ const mockCompanySkillService = vi.hoisted(() => ({
 }));
 const mockWorkspaceOperationService = vi.hoisted(() => ({}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
+const mockRunClaudeLogin = vi.hoisted(() => vi.fn());
+
+vi.mock("@rudderhq/agent-runtime-claude-local/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@rudderhq/agent-runtime-claude-local/server")>()),
+  runClaudeLogin: mockRunClaudeLogin,
+}));
 
 vi.mock("../services/index.js", () => ({
   agentService: () => mockAgentService,
@@ -188,6 +203,7 @@ describe("agent permission routes", () => {
     mockAgentService.getById.mockResolvedValue(baseAgent);
     mockAgentService.getInternalById.mockResolvedValue(null);
     mockAgentService.getChainOfCommand.mockResolvedValue([]);
+    mockAgentService.getConfigRevision.mockResolvedValue(null);
     mockAgentService.resolveByReference.mockResolvedValue({ ambiguous: false, agent: baseAgent });
     mockAgentService.create.mockResolvedValue(baseAgent);
     mockAgentService.resume.mockResolvedValue(baseAgent);
@@ -205,6 +221,7 @@ describe("agent permission routes", () => {
     mockAccessService.listPrincipalGrants.mockResolvedValue([]);
     mockAccessService.ensureMembership.mockResolvedValue(undefined);
     mockAccessService.setPrincipalPermission.mockResolvedValue(undefined);
+    mockCompanySkillService.hasLocalPathSkills.mockResolvedValue(false);
     mockCompanySkillService.listRuntimeSkillEntries.mockResolvedValue([]);
     mockCompanySkillService.resolveRequestedSkillKeys.mockImplementation(async (_companyId, requested) => requested);
     mockCompanySkillService.replaceEnabledSkillKeysForAgent.mockResolvedValue(undefined);
@@ -252,7 +269,77 @@ describe("agent permission routes", () => {
     });
     mockSecretService.normalizeAdapterConfigForPersistence.mockImplementation(async (_companyId, config) => config);
     mockSecretService.resolveAdapterConfigForRuntime.mockImplementation(async (_companyId, config) => ({ config }));
+    mockRunClaudeLogin.mockResolvedValue({ status: "completed" });
     mockLogActivity.mockResolvedValue(undefined);
+  });
+
+  it("restricts Claude login to instance admins before loading an agent", async () => {
+    const res = await request(createApp({
+      type: "board",
+      userId: "organization-member",
+      source: "session",
+      isInstanceAdmin: false,
+      orgIds: [orgId],
+    })).post(`/api/agents/${agentId}/claude-login`);
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "Instance admin access required" });
+    expect(mockAgentService.getById).not.toHaveBeenCalled();
+    expect(mockSecretService.resolveAdapterConfigForRuntime).not.toHaveBeenCalled();
+    expect(mockRunClaudeLogin).not.toHaveBeenCalled();
+  });
+
+  it.each(["pending_approval", "terminated"])(
+    "rejects %s agents before resolving Claude runtime configuration",
+    async (status) => {
+      mockAgentService.getById.mockResolvedValue({
+        ...baseAgent,
+        status,
+        agentRuntimeType: "claude_local",
+        agentRuntimeConfig: {
+          command: "sh -lc 'touch /tmp/rudder-claude-login-rce'",
+        },
+      });
+
+      const res = await request(createApp({
+        type: "board",
+        userId: "instance-admin",
+        source: "session",
+        isInstanceAdmin: true,
+        orgIds: [orgId],
+      })).post(`/api/agents/${agentId}/claude-login`);
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toContain(status);
+      expect(mockSecretService.resolveAdapterConfigForRuntime).not.toHaveBeenCalled();
+      expect(mockRunClaudeLogin).not.toHaveBeenCalled();
+    },
+  );
+
+  it("allows an instance admin to run Claude login for an approved active agent", async () => {
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      status: "idle",
+      agentRuntimeType: "claude_local",
+      agentRuntimeConfig: { command: "claude" },
+    });
+    mockSecretService.resolveAdapterConfigForRuntime.mockResolvedValue({
+      config: { command: "/trusted/claude" },
+    });
+
+    const res = await request(createApp({
+      type: "board",
+      userId: "instance-admin",
+      source: "session",
+      isInstanceAdmin: true,
+      orgIds: [orgId],
+    })).post(`/api/agents/${agentId}/claude-login`);
+
+    expect(res.status).toBe(200);
+    expect(mockRunClaudeLogin).toHaveBeenCalledWith(expect.objectContaining({
+      agent: expect.objectContaining({ id: agentId, orgId }),
+      config: { command: "/trusted/claude" },
+    }));
   });
 
   it("replays deferred paused wakeups when an agent is resumed", async () => {
@@ -381,6 +468,50 @@ describe("agent permission routes", () => {
     );
   });
 
+  it("rejects host filesystem instruction paths when a non-admin board member creates an agent", async () => {
+    const app = createApp({
+      type: "board",
+      userId: "organization-member",
+      source: "session",
+      isInstanceAdmin: false,
+      orgIds: [orgId],
+    });
+
+    const res = await request(app)
+      .post(`/api/orgs/${orgId}/agents`)
+      .send({
+        name: "Unsafe Builder",
+        role: "engineer",
+        agentRuntimeType: "process",
+        agentRuntimeConfig: {
+          instructionsFilePath: "/etc/passwd",
+        },
+      });
+
+    expect(res.status).toBe(403);
+    expect(mockAgentService.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects explicit non-default runtimes when a non-admin board member directly creates an agent", async () => {
+    const res = await request(createApp({
+      type: "board",
+      userId: "organization-member",
+      source: "session",
+      isInstanceAdmin: false,
+      orgIds: [orgId],
+    }))
+      .post(`/api/orgs/${orgId}/agents`)
+      .send({
+        name: "Configured Builder",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+      });
+
+    expect(res.status).toBe(403);
+    expect(mockAgentService.create).not.toHaveBeenCalled();
+  });
+
   it("exposes explicit task assignment access on agent detail", async () => {
     mockAccessService.listPrincipalGrants.mockResolvedValue([
       {
@@ -475,11 +606,7 @@ describe("agent permission routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.instructionsLibraryPath).toBeNull();
-    expect(mockAgentInstructionsService.getBundle).toHaveBeenCalledWith(expect.objectContaining({
-      agentRuntimeConfig: expect.objectContaining({
-        instructionsFilePath: "/tmp/external-agent-instructions/AGENTS.md",
-      }),
-    }));
+    expect(mockAgentInstructionsService.getBundle).not.toHaveBeenCalled();
   });
 
   it("does not let a legacy agents:create grant bypass an explicit agent creation denial", async () => {
@@ -506,6 +633,244 @@ describe("agent permission routes", () => {
     expect(res.body).toEqual({ error: "Missing permission: can create agents" });
     expect(mockAccessService.hasPermission).not.toHaveBeenCalled();
     expect(mockAgentService.create).not.toHaveBeenCalled();
+  });
+
+  it("keeps agent-initiated hires pending even when the organization normally skips approval", async () => {
+    const creator = {
+      ...baseAgent,
+      permissions: { canCreateAgents: true, canManageSkills: true },
+    };
+    mockAgentService.getById.mockResolvedValue(creator);
+    mockAgentService.create.mockImplementation(async (_orgId: string, input: Record<string, unknown>) => ({
+      ...baseAgent,
+      ...input,
+      id: peerAgentId,
+      orgId,
+      agentRuntimeConfig: input.agentRuntimeConfig ?? {},
+      runtimeConfig: input.runtimeConfig ?? {},
+    }));
+    mockApprovalService.create.mockResolvedValue({
+      id: "77777777-7777-4777-8777-777777777777",
+      orgId,
+      type: "hire_agent",
+      status: "pending",
+      payload: {},
+    });
+
+    const res = await request(createApp({
+      type: "agent",
+      agentId,
+      orgId,
+      runId: "run-1",
+    }))
+      .post(`/api/orgs/${orgId}/agent-hires`)
+      .send({
+        name: "Pending Spawn",
+        role: "general",
+        agentRuntimeType: "process",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockAgentService.create).toHaveBeenCalledWith(
+      orgId,
+      expect.objectContaining({ status: "pending_approval" }),
+    );
+    expect(mockApprovalService.create).toHaveBeenCalled();
+  });
+
+  it("keeps configured hires from non-admin board members pending for privileged approval", async () => {
+    mockAccessService.canUser.mockResolvedValue(true);
+    mockAgentService.create.mockImplementation(async (_orgId: string, input: Record<string, unknown>) => ({
+      ...baseAgent,
+      ...input,
+      id: peerAgentId,
+      orgId,
+      agentRuntimeConfig: input.agentRuntimeConfig ?? {},
+      runtimeConfig: input.runtimeConfig ?? {},
+    }));
+    mockApprovalService.create.mockResolvedValue({
+      id: "77777777-7777-4777-8777-777777777777",
+      orgId,
+      type: "hire_agent",
+      status: "pending",
+      payload: {},
+    });
+
+    const res = await request(createApp({
+      type: "board",
+      userId: "organization-member",
+      orgIds: [orgId],
+      source: "session",
+      isInstanceAdmin: false,
+    }))
+      .post(`/api/orgs/${orgId}/agent-hires`)
+      .send({
+        name: "Configured Spawn",
+        role: "general",
+        agentRuntimeType: "process",
+        agentRuntimeConfig: { command: "sh -lc 'touch /tmp/rudder-hire-rce'" },
+        runtimeConfig: {},
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockAgentService.create).toHaveBeenCalledWith(
+      orgId,
+      expect.objectContaining({ status: "pending_approval" }),
+    );
+    expect(mockApprovalService.create).toHaveBeenCalled();
+  });
+
+  it("allows agent-authenticated profile edits but blocks runtime control-plane fields", async () => {
+    mockAgentService.getInternalById.mockResolvedValue(baseAgent);
+    mockAgentService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
+      ...baseAgent,
+      ...patch,
+    }));
+    const actor = {
+      type: "agent",
+      agentId,
+      orgId,
+      runId: "run-1",
+    };
+
+    const profileRes = await request(createApp(actor))
+      .patch(`/api/agents/${agentId}`)
+      .send({ title: "Updated Builder" });
+    expect(profileRes.status, JSON.stringify(profileRes.body)).toBe(200);
+    expect(mockAgentService.update).toHaveBeenCalledWith(
+      agentId,
+      expect.objectContaining({ title: "Updated Builder" }),
+      expect.any(Object),
+    );
+
+    mockAgentService.update.mockClear();
+    const runtimeRes = await request(createApp(actor))
+      .patch(`/api/agents/${agentId}`)
+      .send({
+        agentRuntimeConfig: {
+          workspaceRuntime: {
+            services: [{ name: "host-command", command: "touch /tmp/rudder-rce" }],
+          },
+        },
+      });
+    expect(runtimeRes.status).toBe(403);
+    expect(runtimeRes.body.error).toContain("blocked fields: agentRuntimeConfig");
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects config revision rollback with agent authentication", async () => {
+    const res = await request(createApp({
+      type: "agent",
+      agentId,
+      orgId,
+      runId: "run-1",
+    })).post(`/api/agents/${agentId}/config-revisions/77777777-7777-4777-8777-777777777777/rollback`);
+
+    expect(res.status).toBe(403);
+    expect(mockAgentService.rollbackConfigRevision).not.toHaveBeenCalled();
+  });
+
+  it("rejects cross-organization lifecycle and API key mutations", async () => {
+    const app = createApp({
+      type: "board",
+      userId: "other-organization-member",
+      orgIds: ["99999999-9999-4999-8999-999999999999"],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+
+    const responses = await Promise.all([
+      request(app).post(`/api/agents/${agentId}/pause`),
+      request(app).post(`/api/agents/${agentId}/resume`),
+      request(app).post(`/api/agents/${agentId}/terminate`),
+      request(app).delete(`/api/agents/${agentId}`),
+      request(app).get(`/api/agents/${agentId}/keys`),
+      request(app).post(`/api/agents/${agentId}/keys`).send({ name: "stolen" }),
+      request(app).delete(`/api/agents/${agentId}/keys/key-from-another-agent`),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([403, 403, 403, 403, 403, 403, 403]);
+    expect(mockAgentService.pause).not.toHaveBeenCalled();
+    expect(mockAgentService.resume).not.toHaveBeenCalled();
+    expect(mockAgentService.terminate).not.toHaveBeenCalled();
+    expect(mockAgentService.remove).not.toHaveBeenCalled();
+    expect(mockAgentService.listKeys).not.toHaveBeenCalled();
+    expect(mockAgentService.createApiKey).not.toHaveBeenCalled();
+    expect(mockAgentService.revokeKey).not.toHaveBeenCalled();
+  });
+
+  it("does not revoke an API key through a different agent path", async () => {
+    mockAgentService.listKeys.mockResolvedValue([{ id: "owned-key", name: "default" }]);
+    const res = await request(createApp({
+      type: "board",
+      userId: "organization-member",
+      orgIds: [orgId],
+      source: "session",
+      isInstanceAdmin: false,
+    })).delete(`/api/agents/${agentId}/keys/key-from-another-agent`);
+
+    expect(res.status).toBe(404);
+    expect(mockAgentService.revokeKey).not.toHaveBeenCalled();
+  });
+
+  it("requires instance-admin authority to roll back to external instruction config", async () => {
+    mockAgentService.getConfigRevision.mockResolvedValue({
+      id: "77777777-7777-4777-8777-777777777777",
+      afterConfig: {
+        name: "Builder",
+        agentRuntimeConfig: {
+          instructionsBundleMode: "external",
+          instructionsRootPath: "/etc",
+          instructionsFilePath: "/etc/passwd",
+        },
+      },
+    });
+
+    const res = await request(createApp({
+      type: "board",
+      userId: "organization-member",
+      orgIds: [orgId],
+      source: "session",
+      isInstanceAdmin: false,
+    })).post(`/api/agents/${agentId}/config-revisions/77777777-7777-4777-8777-777777777777/rollback`);
+
+    expect(res.status).toBe(403);
+    expect(mockAgentService.rollbackConfigRevision).not.toHaveBeenCalled();
+  });
+
+  it("allows instance admins to roll back to external instruction config", async () => {
+    mockAgentService.getConfigRevision.mockResolvedValue({
+      id: "77777777-7777-4777-8777-777777777777",
+      afterConfig: {
+        name: "Builder",
+        agentRuntimeConfig: {
+          instructionsBundleMode: "external",
+          instructionsRootPath: "/srv/rudder-instructions",
+          instructionsFilePath: "/srv/rudder-instructions/SOUL.md",
+        },
+      },
+    });
+    mockAgentService.rollbackConfigRevision.mockResolvedValue({
+      ...baseAgent,
+      agentRuntimeConfig: {
+        instructionsBundleMode: "external",
+        instructionsRootPath: "/srv/rudder-instructions",
+        instructionsFilePath: "/srv/rudder-instructions/SOUL.md",
+      },
+    });
+
+    const res = await request(createApp({
+      type: "board",
+      userId: "instance-admin",
+      orgIds: [],
+      source: "session",
+      isInstanceAdmin: true,
+    })).post(`/api/agents/${agentId}/config-revisions/77777777-7777-4777-8777-777777777777/rollback`);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockAgentService.rollbackConfigRevision).toHaveBeenCalled();
   });
 
   it("does not let a legacy agents:create grant expose agent configurations after explicit denial", async () => {

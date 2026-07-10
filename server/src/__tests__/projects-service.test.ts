@@ -95,6 +95,29 @@ describe("project service workspace resolution", () => {
   const cleanupDirs = new Set<string>();
   const originalRudderHome = process.env.RUDDER_HOME;
   const originalRudderInstanceId = process.env.RUDDER_INSTANCE_ID;
+  const invalidProjectResourceMessage = "One or more project resources are invalid for this organization.";
+
+  async function createTestOrganization(name: string, issuePrefix: string) {
+    const id = randomUUID();
+    await db.insert(organizations).values({
+      id,
+      name,
+      urlKey: deriveOrganizationUrlKey(name),
+      issuePrefix,
+      requireBoardApprovalForNewAgents: false,
+    });
+    return id;
+  }
+
+  async function createTestResource(orgId: string, name: string) {
+    return db.insert(organizationResources).values({
+      orgId,
+      name,
+      kind: "url",
+      sourceType: "external",
+      locator: `https://example.invalid/${randomUUID()}`,
+    }).returning().then((rows) => rows[0]!);
+  }
 
   beforeAll(async () => {
     const started = await startTempDatabase();
@@ -577,5 +600,117 @@ describe("project service workspace resolution", () => {
       .from(organizationResources)
       .where(eq(organizationResources.orgId, orgId));
     expect(persistedOrgResources).toHaveLength(1);
+  });
+
+  it("rejects cross-organization resources during bulk replacement without removing existing attachments", async () => {
+    const orgAId = await createTestOrganization("Attachment Org A", "AOA");
+    const orgBId = await createTestOrganization("Attachment Org B", "AOB");
+    const originalResource = await createTestResource(orgAId, "Original resource");
+    const crossOrganizationResource = await createTestResource(orgBId, "Other organization resource");
+    const project = await projectSvc.create(orgAId, {
+      name: "Tenant Bound Project",
+      status: "planned",
+      resourceAttachments: [{ resourceId: originalResource.id }],
+    });
+
+    await expect(projectSvc.update(project.id, {
+      resourceAttachments: [{ resourceId: crossOrganizationResource.id }],
+    })).rejects.toMatchObject({
+      status: 422,
+      message: invalidProjectResourceMessage,
+    });
+
+    const persistedAttachments = await db
+      .select({ resourceId: projectResourceAttachments.resourceId })
+      .from(projectResourceAttachments)
+      .where(eq(projectResourceAttachments.projectId, project.id));
+    expect(persistedAttachments).toEqual([{ resourceId: originalResource.id }]);
+  });
+
+  it("returns the same validation error for a missing resource UUID and preserves existing attachments", async () => {
+    const orgId = await createTestOrganization("Missing Attachment Org", "MAO");
+    const originalResource = await createTestResource(orgId, "Original resource");
+    const project = await projectSvc.create(orgId, {
+      name: "Missing Resource Project",
+      status: "planned",
+      resourceAttachments: [{ resourceId: originalResource.id }],
+    });
+
+    await expect(projectSvc.update(project.id, {
+      resourceAttachments: [{ resourceId: randomUUID() }],
+    })).rejects.toMatchObject({
+      status: 422,
+      message: invalidProjectResourceMessage,
+    });
+
+    const persistedAttachments = await db
+      .select({ resourceId: projectResourceAttachments.resourceId })
+      .from(projectResourceAttachments)
+      .where(eq(projectResourceAttachments.projectId, project.id));
+    expect(persistedAttachments).toEqual([{ resourceId: originalResource.id }]);
+  });
+
+  it("allows replacement with a resource from the same organization", async () => {
+    const orgId = await createTestOrganization("Valid Attachment Org", "VAO");
+    const originalResource = await createTestResource(orgId, "Original resource");
+    const replacementResource = await createTestResource(orgId, "Replacement resource");
+    const project = await projectSvc.create(orgId, {
+      name: "Same Organization Project",
+      status: "planned",
+      resourceAttachments: [{ resourceId: originalResource.id }],
+    });
+
+    const updated = await projectSvc.update(project.id, {
+      resourceAttachments: [{
+        resourceId: replacementResource.id,
+        role: "working_set",
+        note: "Use this resource",
+      }],
+    });
+
+    expect(updated?.resources).toEqual([
+      expect.objectContaining({
+        resourceId: replacementResource.id,
+        role: "working_set",
+        note: "Use this resource",
+      }),
+    ]);
+  });
+
+  it("replaces a project's complete attachment set with multiple same-organization resources", async () => {
+    const orgId = await createTestOrganization("Bulk Attachment Org", "BAO");
+    const originalResource = await createTestResource(orgId, "Original resource");
+    const firstReplacement = await createTestResource(orgId, "First replacement");
+    const secondReplacement = await createTestResource(orgId, "Second replacement");
+    const project = await projectSvc.create(orgId, {
+      name: "Bulk Resource Project",
+      status: "planned",
+      resourceAttachments: [{ resourceId: originalResource.id }],
+    });
+
+    const updated = await projectSvc.update(project.id, {
+      resourceAttachments: [
+        { resourceId: firstReplacement.id, role: "reference", sortOrder: 1 },
+        { resourceId: secondReplacement.id, role: "deliverable", sortOrder: 0 },
+      ],
+    });
+
+    expect(updated?.resources.map((attachment) => ({
+      resourceId: attachment.resourceId,
+      role: attachment.role,
+      sortOrder: attachment.sortOrder,
+    }))).toEqual([
+      { resourceId: secondReplacement.id, role: "deliverable", sortOrder: 0 },
+      { resourceId: firstReplacement.id, role: "reference", sortOrder: 1 },
+    ]);
+
+    const persistedAttachments = await db
+      .select({ resourceId: projectResourceAttachments.resourceId })
+      .from(projectResourceAttachments)
+      .where(eq(projectResourceAttachments.projectId, project.id));
+    expect(persistedAttachments.map((attachment) => attachment.resourceId).sort()).toEqual([
+      firstReplacement.id,
+      secondReplacement.id,
+    ].sort());
   });
 });

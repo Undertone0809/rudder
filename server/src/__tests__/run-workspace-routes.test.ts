@@ -3,11 +3,17 @@ import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { runWorkspaceRoutes } from "../routes/execution-workspaces.js";
+import { runWorkspaceService } from "../services/execution-workspaces.js";
 
 const mockRunWorkspaceService = vi.hoisted(() => ({
   list: vi.fn(),
   getById: vi.fn(),
   update: vi.fn(),
+}));
+
+const mockWorkspaceRuntime = vi.hoisted(() => ({
+  cleanupExecutionWorkspaceArtifacts: vi.fn(),
+  stopRuntimeServicesForExecutionWorkspace: vi.fn(),
 }));
 
 vi.mock("../services/index.js", () => ({
@@ -18,7 +24,9 @@ vi.mock("../services/index.js", () => ({
   logActivity: vi.fn(),
 }));
 
-function createApp() {
+vi.mock("../services/workspace-runtime.js", () => mockWorkspaceRuntime);
+
+function createApp(db: any = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -31,7 +39,7 @@ function createApp() {
     };
     next();
   });
-  app.use("/api", runWorkspaceRoutes({} as any));
+  app.use("/api", runWorkspaceRoutes(db));
   app.use(errorHandler);
   return app;
 }
@@ -39,6 +47,11 @@ function createApp() {
 describe("run workspace routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockWorkspaceRuntime.cleanupExecutionWorkspaceArtifacts.mockResolvedValue({
+      cleaned: true,
+      warnings: [],
+    });
+    mockWorkspaceRuntime.stopRuntimeServicesForExecutionWorkspace.mockResolvedValue(undefined);
   });
 
   it("serves the canonical run workspace list route", async () => {
@@ -73,5 +86,66 @@ describe("run workspace routes", () => {
 
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: "Run workspace not found" });
+  });
+
+  it("blocks the two-step runtime provenance forgery before an archive cleanup", async () => {
+    const existing = {
+      id: "workspace-1",
+      orgId: "organization-1",
+      projectId: "project-1",
+      projectWorkspaceId: null,
+      sourceIssueId: null,
+      status: "active",
+      cwd: "/tmp/shared-organization-workspace",
+      providerType: "local_fs",
+      providerRef: null,
+      branchName: null,
+      repoUrl: null,
+      baseRef: null,
+      metadata: { source: "project_primary", createdByRuntime: false },
+    };
+    mockRunWorkspaceService.getById.mockResolvedValue(existing);
+    mockRunWorkspaceService.update.mockImplementation(async (_id, patch) => ({
+      ...existing,
+      ...patch,
+    }));
+    const selectWhere = vi.fn(async () => []);
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({ where: selectWhere })),
+      })),
+    };
+    const app = createApp(db);
+
+    const forged = await request(app)
+      .patch("/api/run-workspaces/workspace-1")
+      .send({ metadata: { createdByRuntime: true, source: "runtime" } });
+    expect(forged.status).toBe(400);
+    expect(mockRunWorkspaceService.update).not.toHaveBeenCalled();
+
+    const archived = await request(app)
+      .patch("/api/run-workspaces/workspace-1")
+      .send({ status: "archived" });
+    expect(archived.status).toBe(200);
+    expect(mockWorkspaceRuntime.cleanupExecutionWorkspaceArtifacts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspace: expect.objectContaining({
+          metadata: { source: "project_primary", createdByRuntime: false },
+        }),
+      }),
+    );
+  });
+
+  it("rejects runtime metadata updates in the service unless an internal caller opts in", async () => {
+    const update = vi.fn();
+    const svc = runWorkspaceService({ update } as any);
+
+    await expect(svc.update("workspace-1", {
+      metadata: { createdByRuntime: true, source: "runtime" },
+    })).rejects.toMatchObject({
+      status: 422,
+      message: "Run workspace runtime metadata is managed internally",
+    });
+    expect(update).not.toHaveBeenCalled();
   });
 });

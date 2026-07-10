@@ -16,6 +16,7 @@ import { organizationService } from "../orgs.js";
 import { projectService } from "../projects.js";
 
 import {
+  assertAgentSafeImportPolicy,
   DEFAULT_COLLISION_STRATEGY,
   normalizeSkillSlug,
   resolveImportMode,
@@ -62,6 +63,9 @@ export function createOrganizationPortabilityPreviewHandlers(context: PreviewCon
     const collisionStrategy = input.collisionStrategy ?? DEFAULT_COLLISION_STRATEGY;
     if (mode === "agent_safe" && collisionStrategy === "replace") {
       throw unprocessable("Safe import routes do not allow replace collision strategy.");
+    }
+    if (mode === "agent_safe") {
+      assertAgentSafeImportPolicy(manifest, include);
     }
     const warnings = [...source.warnings];
     const errors: string[] = [];

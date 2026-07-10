@@ -9,8 +9,15 @@ import {
   issues,
   projects
 } from "@rudderhq/db";
-import { formatMessengerPreview, type ChatStreamTranscriptEntry, type ChatTranscriptSummary } from "@rudderhq/shared";
+import {
+  formatMessengerPreview,
+  updateAgentSchema,
+  updateOrganizationSchema,
+  type ChatStreamTranscriptEntry,
+  type ChatTranscriptSummary,
+} from "@rudderhq/shared";
 import { inArray, sql } from "drizzle-orm";
+import { unprocessable } from "../errors.js";
 
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
@@ -212,6 +219,25 @@ export function operationProposalFromPayload(payload: Record<string, unknown> | 
     summary,
     patch,
   };
+}
+
+export function validateOperationProposalPatch(
+  targetType: string,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  if (targetType !== "organization" && targetType !== "agent") {
+    throw unprocessable("Invalid chat operation target type");
+  }
+  const schema = targetType === "agent"
+    ? updateAgentSchema.strict()
+    : updateOrganizationSchema.strict();
+  const parsed = schema.safeParse(patch);
+  if (!parsed.success) {
+    throw unprocessable(`Invalid chat ${targetType} operation patch`, {
+      issues: parsed.error.issues,
+    });
+  }
+  return parsed.data as Record<string, unknown>;
 }
 
 export function operationProposalDecisionStatusFromPayload(payload: Record<string, unknown> | null | undefined) {

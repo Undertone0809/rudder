@@ -10,7 +10,8 @@ import { Router, type Request } from "express";
 import { forbidden } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import { accessService, agentService, logActivity, organizationSkillService } from "../services/index.js";
-import { assertCompanyAccess, getActorInfo } from "./authz.js";
+import { parseSkillImportSourceInput } from "../services/organization-skills.js";
+import { assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 
 export function organizationSkillRoutes(db: Db) {
   const router = Router();
@@ -55,9 +56,23 @@ export function organizationSkillRoutes(db: Db) {
     throw forbidden("Missing permission: can manage skills");
   }
 
+  async function getSkillWithHostBoundary(req: Request, orgId: string, skillId: string) {
+    const skill = await svc.getById(skillId);
+    if (!skill || skill.orgId !== orgId) return null;
+    if (skill.sourceType === "local_path") {
+      assertInstanceAdmin(req);
+    }
+    return skill;
+  }
+
   router.get("/orgs/:orgId/skills", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
+    if (await svc.hasLocalPathSkills(orgId)) {
+      // Local skill rows carry host paths and metadata. Keep even the list
+      // boundary host-global so it cannot become a filesystem disclosure.
+      assertInstanceAdmin(req);
+    }
     const result = await svc.list(orgId);
     res.json(result);
   });
@@ -66,6 +81,11 @@ export function organizationSkillRoutes(db: Db) {
     const orgId = req.params.orgId as string;
     const skillId = req.params.skillId as string;
     assertCompanyAccess(req, orgId);
+    const storedSkill = await getSkillWithHostBoundary(req, orgId, skillId);
+    if (!storedSkill) {
+      res.status(404).json({ error: "Skill not found" });
+      return;
+    }
     const result = await svc.detail(orgId, skillId);
     if (!result) {
       res.status(404).json({ error: "Skill not found" });
@@ -78,6 +98,11 @@ export function organizationSkillRoutes(db: Db) {
     const orgId = req.params.orgId as string;
     const skillId = req.params.skillId as string;
     assertCompanyAccess(req, orgId);
+    const storedSkill = await getSkillWithHostBoundary(req, orgId, skillId);
+    if (!storedSkill) {
+      res.status(404).json({ error: "Skill not found" });
+      return;
+    }
     const result = await svc.updateStatus(orgId, skillId);
     if (!result) {
       res.status(404).json({ error: "Skill not found" });
@@ -91,6 +116,11 @@ export function organizationSkillRoutes(db: Db) {
     const skillId = req.params.skillId as string;
     const relativePath = String(req.query.path ?? "SKILL.md");
     assertCompanyAccess(req, orgId);
+    const storedSkill = await getSkillWithHostBoundary(req, orgId, skillId);
+    if (!storedSkill) {
+      res.status(404).json({ error: "Skill not found" });
+      return;
+    }
     const result = await svc.readFile(orgId, skillId, relativePath);
     if (!result) {
       res.status(404).json({ error: "Skill not found" });
@@ -105,6 +135,9 @@ export function organizationSkillRoutes(db: Db) {
     async (req, res) => {
       const orgId = req.params.orgId as string;
       await assertCanMutateOrganizationSkills(req, orgId);
+      // Creating a managed local skill writes to the host filesystem. This
+      // shares the same authority boundary as importing or scanning a path.
+      assertInstanceAdmin(req);
       const result = await svc.createLocalSkill(orgId, req.body);
 
       const actor = getActorInfo(req);
@@ -134,6 +167,11 @@ export function organizationSkillRoutes(db: Db) {
       const orgId = req.params.orgId as string;
       const skillId = req.params.skillId as string;
       await assertCanMutateOrganizationSkills(req, orgId);
+      const storedSkill = await getSkillWithHostBoundary(req, orgId, skillId);
+      if (!storedSkill) {
+        res.status(404).json({ error: "Skill not found" });
+        return;
+      }
       const result = await svc.updateFile(
         orgId,
         skillId,
@@ -168,6 +206,10 @@ export function organizationSkillRoutes(db: Db) {
       const orgId = req.params.orgId as string;
       await assertCanMutateOrganizationSkills(req, orgId);
       const source = String(req.body.source ?? "");
+      const parsedSource = parseSkillImportSourceInput(source);
+      if (!/^https?:\/\//i.test(parsedSource.resolvedSource)) {
+        assertInstanceAdmin(req);
+      }
       const result = await svc.importFromSource(orgId, source);
 
       const actor = getActorInfo(req);
@@ -198,6 +240,7 @@ export function organizationSkillRoutes(db: Db) {
     async (req, res) => {
       const orgId = req.params.orgId as string;
       await assertCanMutateOrganizationSkills(req, orgId);
+      assertInstanceAdmin(req);
       const result = await svc.scanProjectWorkspaces(orgId, req.body);
 
       const actor = getActorInfo(req);
@@ -231,6 +274,7 @@ export function organizationSkillRoutes(db: Db) {
     async (req, res) => {
       const orgId = req.params.orgId as string;
       await assertCanMutateOrganizationSkills(req, orgId);
+      assertInstanceAdmin(req);
       const result = await svc.scanLocalSkillRoots(orgId, req.body);
 
       const actor = getActorInfo(req);
@@ -261,6 +305,11 @@ export function organizationSkillRoutes(db: Db) {
     const orgId = req.params.orgId as string;
     const skillId = req.params.skillId as string;
     await assertCanMutateOrganizationSkills(req, orgId);
+    const storedSkill = await getSkillWithHostBoundary(req, orgId, skillId);
+    if (!storedSkill) {
+      res.status(404).json({ error: "Skill not found" });
+      return;
+    }
     const result = await svc.deleteSkill(orgId, skillId);
     if (!result) {
       res.status(404).json({ error: "Skill not found" });
@@ -290,6 +339,11 @@ export function organizationSkillRoutes(db: Db) {
     const orgId = req.params.orgId as string;
     const skillId = req.params.skillId as string;
     await assertCanMutateOrganizationSkills(req, orgId);
+    const storedSkill = await getSkillWithHostBoundary(req, orgId, skillId);
+    if (!storedSkill) {
+      res.status(404).json({ error: "Skill not found" });
+      return;
+    }
     const result = await svc.installUpdate(orgId, skillId);
     if (!result) {
       res.status(404).json({ error: "Skill not found" });

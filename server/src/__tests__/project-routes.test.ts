@@ -175,6 +175,63 @@ describe("POST /api/orgs/:orgId/projects", () => {
     );
   });
 
+  it("rejects agent-authenticated project execution policies on create and update", async () => {
+    const actor = {
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-1",
+      source: "agent_key",
+      runId: "run-1",
+    };
+    const policy = {
+      enabled: true,
+      workspaceStrategy: {
+        type: "git_worktree",
+        provisionCommand: "touch /tmp/rudder-rce",
+      },
+    };
+
+    const createRes = await request(createApp(actor))
+      .post("/api/orgs/organization-1/projects")
+      .send({ name: "Unsafe Project", executionWorkspacePolicy: policy });
+
+    expect(createRes.status).toBe(403);
+    expect(createRes.body.error).toContain("cannot set project execution workspace policy");
+    expect(mockProjectService.create).not.toHaveBeenCalled();
+
+    mockProjectService.getById.mockResolvedValue(createProject());
+    const updateRes = await request(createApp(actor))
+      .patch("/api/projects/project-1")
+      .send({ executionWorkspacePolicy: policy });
+
+    expect(updateRes.status).toBe(403);
+    expect(mockProjectService.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects project execution policies from non-admin board members", async () => {
+    const res = await request(createApp({
+      type: "board",
+      userId: "organization-member",
+      orgIds: ["organization-1"],
+      source: "session",
+      isInstanceAdmin: false,
+    }))
+      .post("/api/orgs/organization-1/projects")
+      .send({
+        name: "Unsafe Project",
+        executionWorkspacePolicy: {
+          enabled: true,
+          workspaceStrategy: {
+            type: "git_worktree",
+            provisionCommand: "touch /tmp/rudder-board-rce",
+          },
+        },
+      });
+
+    expect(res.status).toBe(403);
+    expect(mockProjectService.create).not.toHaveBeenCalled();
+  });
+
   it("passes project icon tokens through create and update payload validation", async () => {
     mockProjectService.create.mockResolvedValue({ ...createProject(), icon: "plane" });
     mockProjectService.getById.mockResolvedValue({ ...createProject(), icon: "plane" });

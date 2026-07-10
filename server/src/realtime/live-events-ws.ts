@@ -8,6 +8,11 @@ import { createRequire } from "node:module";
 import type { Duplex } from "node:stream";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import { logger } from "../middleware/logger.js";
+import {
+  isPrivateHostnameAllowed,
+  isSameOriginHost,
+  resolvePrivateHostnameAllowSet,
+} from "../middleware/private-hostname-guard.js";
 import { subscribeCompanyLiveEvents } from "../services/live-events.js";
 
 interface WsSocket {
@@ -180,10 +185,18 @@ export function setupLiveEventsWebSocketServer(
   db: Db,
   opts: {
     deploymentMode: DeploymentMode;
+    deploymentExposure: "private" | "public";
+    allowedHostnames: string[];
+    bindHost: string;
     resolveSessionFromHeaders?: (headers: Headers) => Promise<BetterAuthSessionResult | null>;
   },
 ) {
   const wss = new WebSocketServer({ noServer: true });
+  const enforcePrivateHostname = opts.deploymentExposure === "private";
+  const privateHostnameAllowSet = resolvePrivateHostnameAllowSet({
+    allowedHostnames: opts.allowedHostnames,
+    bindHost: opts.bindHost,
+  });
   const cleanupByClient = new Map<WsSocket, () => void>();
   const aliveByClient = new Map<WsSocket, boolean>();
 
@@ -234,6 +247,11 @@ export function setupLiveEventsWebSocketServer(
   });
 
   server.on("upgrade", (req, socket, head) => {
+    if (enforcePrivateHostname && !isPrivateHostnameAllowed(req.headers.host, privateHostnameAllowSet)) {
+      rejectUpgrade(socket, "403 Forbidden", "hostname not allowed");
+      return;
+    }
+
     if (!req.url) {
       rejectUpgrade(socket, "400 Bad Request", "missing url");
       return;
@@ -243,6 +261,16 @@ export function setupLiveEventsWebSocketServer(
     const orgId = parseCompanyId(url.pathname);
     if (!orgId) {
       socket.destroy();
+      return;
+    }
+
+    const token = parseBearerToken(req.headers.authorization) ?? url.searchParams.get("token")?.trim();
+    const origin = req.headers.origin;
+    // Browsers always send Origin for WebSocket handshakes. Require it to
+    // match Host for cookie/local-implicit auth, and reject a mismatched Origin
+    // even when a token is present. Non-browser bearer clients may omit it.
+    if ((origin && !isSameOriginHost(origin, req.headers.host)) || (!origin && !token)) {
+      rejectUpgrade(socket, "403 Forbidden", "origin not allowed");
       return;
     }
 

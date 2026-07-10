@@ -1,4 +1,8 @@
 import { Router } from "express";
+import {
+  ACTIVE_CONTENT_SANDBOX_CSP,
+  normalizeResponseContentType,
+} from "../content-response-policy.js";
 import { badRequest } from "../errors.js";
 import {
   fetchWebsiteIcon,
@@ -8,6 +12,16 @@ import {
   type WebsiteMetadataOptions,
 } from "../services/website-metadata.js";
 import { assertBoard } from "./authz.js";
+
+const SAFE_WEBSITE_ICON_CONTENT_TYPES = new Set([
+  "image/gif",
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/vnd.microsoft.icon",
+  "image/webp",
+  "image/x-icon",
+]);
 
 export interface WebsiteMetadataRouteOptions {
   resolveWebsiteMetadata?: (url: string) => Promise<WebsiteMetadata>;
@@ -72,9 +86,16 @@ export function websiteMetadataRoutes(options: WebsiteMetadataRouteOptions = {})
       res.status(404).json({ error: "Website icon not found" });
       return;
     }
+    const contentType = normalizeResponseContentType(icon.contentType);
+    if (!SAFE_WEBSITE_ICON_CONTENT_TYPES.has(contentType)) {
+      res.status(415).json({ error: "Unsupported website icon type" });
+      return;
+    }
 
-    res.setHeader("content-type", icon.contentType);
+    res.setHeader("content-type", contentType);
     res.setHeader("cache-control", "public, max-age=86400");
+    res.setHeader("x-content-type-options", "nosniff");
+    res.setHeader("content-security-policy", ACTIVE_CONTENT_SANDBOX_CSP);
     res.send(icon.body);
   });
 

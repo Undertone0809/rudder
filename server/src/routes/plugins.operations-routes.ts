@@ -11,7 +11,8 @@
  * - Retrieving UI slot contributions for frontend rendering
  * - Discovering and executing plugin-contributed agent tools
  *
- * All routes require board-level authentication (assertBoard middleware).
+ * Runtime inspection routes require board-level authentication. Instance-
+ * global lifecycle and configuration routes require instance-admin access.
  *
  * @module server/routes/plugins
  * @see doc/engineering/PLUGIN_RUNTIME_CONTRACT.md for the current plugin runtime contract
@@ -23,9 +24,13 @@ import { JsonRpcCallError, PLUGIN_RPC_ERROR_CODES } from "@rudderhq/plugin-sdk";
 import { and, desc, eq, gte } from "drizzle-orm";
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
+import {
+  boundedPluginWebhookFailureMessage,
+  selectPersistedPluginWebhookHeaders,
+} from "../middleware/plugin-webhook-security.js";
 import { publishGlobalLiveEvent } from "../services/live-events.js";
 import { validateInstanceConfig } from "../services/plugin-config-validator.js";
-import { assertBoard } from "./authz.js";
+import { assertInstanceAdmin } from "./authz.js";
 
 interface PluginHealthCheckResult {
   pluginId: string;
@@ -60,7 +65,7 @@ export function registerPluginOperationsRoutes(ctx: PluginOperationsRouteContext
     mapRpcErrorToBridgeError,
   } = ctx;
   router.get("/plugins/:pluginId/logs", async (req, res) => {
-    assertBoard(req);
+    assertInstanceAdmin(req);
     const { pluginId } = req.params;
 
     const plugin = await resolvePlugin(registry, pluginId);
@@ -110,7 +115,7 @@ export function registerPluginOperationsRoutes(ctx: PluginOperationsRouteContext
    * Errors: 404 if plugin not found, 400 for lifecycle errors
    */
   router.post("/plugins/:pluginId/upgrade", async (req, res) => {
-    assertBoard(req);
+    assertInstanceAdmin(req);
     const { pluginId } = req.params;
     const body = req.body as { version?: string } | undefined;
     const version = body?.version;
@@ -159,7 +164,7 @@ export function registerPluginOperationsRoutes(ctx: PluginOperationsRouteContext
    * Errors: 404 if plugin not found
    */
   router.get("/plugins/:pluginId/config", async (req, res) => {
-    assertBoard(req);
+    assertInstanceAdmin(req);
     const { pluginId } = req.params;
 
     const plugin = await resolvePlugin(registry, pluginId);
@@ -189,7 +194,7 @@ export function registerPluginOperationsRoutes(ctx: PluginOperationsRouteContext
    * - 404 if plugin not found
    */
   router.post("/plugins/:pluginId/config", async (req, res) => {
-    assertBoard(req);
+    assertInstanceAdmin(req);
     const { pluginId } = req.params;
 
     const plugin = await resolvePlugin(registry, pluginId);
@@ -294,7 +299,7 @@ export function registerPluginOperationsRoutes(ctx: PluginOperationsRouteContext
    * - 502 if the worker is unavailable
    */
   router.post("/plugins/:pluginId/config/test", async (req, res) => {
-    assertBoard(req);
+    assertInstanceAdmin(req);
 
     if (!bridgeDeps) {
       res.status(501).json({ error: "Plugin bridge is not enabled" });
@@ -391,7 +396,7 @@ export function registerPluginOperationsRoutes(ctx: PluginOperationsRouteContext
    * Errors: 404 if plugin not found
    */
   router.get("/plugins/:pluginId/jobs", async (req, res) => {
-    assertBoard(req);
+    assertInstanceAdmin(req);
     if (!jobDeps) {
       res.status(501).json({ error: "Job scheduling is not enabled" });
       return;
@@ -437,7 +442,7 @@ export function registerPluginOperationsRoutes(ctx: PluginOperationsRouteContext
    * Errors: 404 if plugin not found
    */
   router.get("/plugins/:pluginId/jobs/:jobId/runs", async (req, res) => {
-    assertBoard(req);
+    assertInstanceAdmin(req);
     if (!jobDeps) {
       res.status(501).json({ error: "Job scheduling is not enabled" });
       return;
@@ -485,7 +490,7 @@ export function registerPluginOperationsRoutes(ctx: PluginOperationsRouteContext
    * - 400 if job not found, not active, already running, or worker unavailable
    */
   router.post("/plugins/:pluginId/jobs/:jobId/trigger", async (req, res) => {
-    assertBoard(req);
+    assertInstanceAdmin(req);
     if (!jobDeps) {
       res.status(501).json({ error: "Job scheduling is not enabled" });
       return;
@@ -539,6 +544,8 @@ export function registerPluginOperationsRoutes(ctx: PluginOperationsRouteContext
    * Errors:
    * - 404 if plugin not found or endpointKey not declared
    * - 400 if plugin is not in ready state or lacks webhooks.receive capability
+   * - 413 if the request body exceeds the webhook-specific limit
+   * - 429 if the source exceeds its webhook delivery rate limit
    * - 502 if the worker is unavailable or the RPC call fails
    */
   router.post("/plugins/:pluginId/webhooks/:endpointKey", async (req, res) => {
@@ -593,14 +600,10 @@ export function registerPluginOperationsRoutes(ctx: PluginOperationsRouteContext
 
     // Step 5: Extract request data
     const requestId = randomUUID();
-    const rawHeaders: Record<string, string> = {};
-    for (const [key, value] of Object.entries(req.headers)) {
-      if (typeof value === "string") {
-        rawHeaders[key] = value;
-      } else if (Array.isArray(value)) {
-        rawHeaders[key] = value.join(", ");
-      }
-    }
+    // Workers receive the original headers for provider-specific signature
+    // verification, but the delivery audit row stores only bounded,
+    // non-sensitive routing metadata.
+    const persistedHeaders = selectPersistedPluginWebhookHeaders(req.headers);
 
     // Use the raw buffer stashed by the express.json() `verify` callback.
     // This preserves the exact bytes the provider signed, whereas
@@ -619,7 +622,7 @@ export function registerPluginOperationsRoutes(ctx: PluginOperationsRouteContext
         webhookKey: endpointKey,
         status: "pending",
         payload,
-        headers: rawHeaders,
+        headers: persistedHeaders,
         startedAt,
       })
       .returning({ id: pluginWebhookDeliveries.id });
@@ -654,7 +657,7 @@ export function registerPluginOperationsRoutes(ctx: PluginOperationsRouteContext
       // Step 8 (error): Update delivery record to failed
       const finishedAt = new Date();
       const durationMs = finishedAt.getTime() - startedAt.getTime();
-      const errorMessage = err instanceof Error ? err.message : String(err);
+      const errorMessage = boundedPluginWebhookFailureMessage(err);
 
       await db
         .update(pluginWebhookDeliveries)
@@ -669,7 +672,7 @@ export function registerPluginOperationsRoutes(ctx: PluginOperationsRouteContext
       res.status(502).json({
         deliveryId: delivery.id,
         status: "failed",
-        error: errorMessage,
+        error: "Plugin webhook handler failed",
       });
     }
   });
@@ -691,7 +694,7 @@ export function registerPluginOperationsRoutes(ctx: PluginOperationsRouteContext
    * Errors: 404 if plugin not found
    */
   router.get("/plugins/:pluginId/dashboard", async (req, res) => {
-    assertBoard(req);
+    assertInstanceAdmin(req);
     const { pluginId } = req.params;
 
     const plugin = await resolvePlugin(registry, pluginId);

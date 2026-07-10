@@ -524,6 +524,22 @@ export function canReplayOpenClawGatewayInviteAccept(input: {
   );
 }
 
+export function canMutateJoinRequestOnInviteReplay(status: string) {
+  return status === "pending_approval";
+}
+
+export function joinRequestRequiresInstanceAdmin(input: {
+  requestType: string;
+  agentRuntimeType?: string | null;
+  agentDefaultsPayload?: unknown;
+}) {
+  return input.requestType === "agent"
+    && (
+      (input.agentRuntimeType ?? "process") !== "process"
+      || (isPlainObject(input.agentDefaultsPayload) && Object.keys(input.agentDefaultsPayload).length > 0)
+    );
+}
+
 export function summarizeSecretForLog(
   value: unknown
 ): { present: true; length: number; sha256Prefix: string } | null {
@@ -572,4 +588,3 @@ export function summarizeOpenClawGatewayDefaultsForLog(defaultsPayload: unknown)
     gatewayToken: summarizeSecretForLog(gatewayTokenValue)
   };
 }
-

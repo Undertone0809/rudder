@@ -77,7 +77,26 @@ describe("website metadata routes", () => {
     expect(fetchWebsiteIcon).toHaveBeenCalledWith(iconUrl);
     expect(iconRes.headers["content-type"]).toContain("image/x-icon");
     expect(iconRes.headers["cache-control"]).toBe("public, max-age=86400");
+    expect(iconRes.headers["x-content-type-options"]).toBe("nosniff");
+    expect(iconRes.headers["content-security-policy"]).toBe(
+      "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'",
+    );
     expect(iconRes.body).toEqual(Buffer.from("ico"));
+  });
+
+  it("rejects proxied SVG icons even when the icon fetcher returns one", async () => {
+    const fetchWebsiteIcon = vi.fn().mockResolvedValue({
+      contentType: "image/svg+xml",
+      body: Buffer.from("<svg onload='alert(1)'/>"),
+    });
+    const app = createApp({ fetchWebsiteIcon });
+
+    const iconRes = await request(app)
+      .get("/api/website-metadata/icon")
+      .query({ url: "https://static.example.com/favicon.svg" });
+
+    expect(iconRes.status).toBe(415);
+    expect(iconRes.body.error).toBe("Unsupported website icon type");
   });
 
   it("rejects private-network metadata targets before fetching", async () => {

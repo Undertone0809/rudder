@@ -8,7 +8,7 @@ import { sanitizeRecord } from "../redaction.js";
 import { activityService } from "../services/activity.js";
 import { resolveHeartbeatRunIdReference } from "../services/heartbeat-run-reference.js";
 import { issueService } from "../services/index.js";
-import { assertBoard, assertCompanyAccess, getAuthorizedOrgScope } from "./authz.js";
+import { assertCompanyAccess, assertInstanceAdmin, getAuthorizedOrgScope } from "./authz.js";
 
 const USER_ACTIVITY_INCLUDES = new Set(["chat", "comments", "issues", "approvals", "activity"]);
 
@@ -139,8 +139,9 @@ export function activityRoutes(db: Db) {
   });
 
   router.post("/orgs/:orgId/activity", validate(createActivitySchema), async (req, res) => {
-    assertBoard(req);
+    assertInstanceAdmin(req);
     const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
     const event = await svc.create({
       orgId,
       ...req.body,

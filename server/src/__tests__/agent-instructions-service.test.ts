@@ -192,6 +192,21 @@ describe("agent instructions service", () => {
     await expect(fs.readFile(path.join(externalRoot, "docs", "AGENTS.md"), "utf8")).resolves.toBe("# Managed Agent\n");
   });
 
+  it("rejects relative external instruction roots", async () => {
+    const paperclipHome = await makeTempDir("rudder-agent-instructions-relative-external-");
+    cleanupDirs.add(paperclipHome);
+    process.env.RUDDER_HOME = paperclipHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const svc = agentInstructionsService();
+    const agent = makeAgent({});
+
+    await expect(svc.updateBundle(agent, {
+      mode: "external",
+      rootPath: "relative/instructions",
+    })).rejects.toThrow("External instructions bundles require an absolute rootPath");
+  });
+
   it("filters junk files, dependency bundles, and python caches from bundle listings and exports", async () => {
     const externalRoot = await makeTempDir("rudder-agent-instructions-ignore-");
     cleanupDirs.add(externalRoot);
@@ -660,5 +675,37 @@ describe("agent instructions service", () => {
     expect(bundle.files).toEqual([]);
     await expect(fs.readFile(path.join(managedRoot, "AGENTS.md"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.readFile(path.join(legacyRoot, "AGENTS.md"), "utf8")).resolves.toBe("# Legacy Agent\n");
+  });
+
+  it("rejects instruction file reads and writes through symbolic links", async () => {
+    if (process.platform === "win32") return;
+
+    const paperclipHome = await makeTempDir("rudder-agent-instructions-symlink-home-");
+    const externalRoot = await makeTempDir("rudder-agent-instructions-symlink-root-");
+    const outsideRoot = await makeTempDir("rudder-agent-instructions-symlink-outside-");
+    cleanupDirs.add(paperclipHome);
+    cleanupDirs.add(externalRoot);
+    cleanupDirs.add(outsideRoot);
+    process.env.RUDDER_HOME = paperclipHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const outsideFile = path.join(outsideRoot, "secret.md");
+    await fs.writeFile(outsideFile, "host secret\n", "utf8");
+    await fs.symlink(outsideFile, path.join(externalRoot, "escape.md"));
+    await fs.symlink(outsideRoot, path.join(externalRoot, "escape-dir"), "dir");
+
+    const svc = agentInstructionsService();
+    const agent = makeAgent({
+      instructionsBundleMode: "external",
+      instructionsRootPath: externalRoot,
+      instructionsEntryFile: "SOUL.md",
+      instructionsFilePath: path.join(externalRoot, "SOUL.md"),
+    });
+
+    await expect(svc.readFile(agent, "escape.md")).rejects.toThrow("cannot traverse symbolic links");
+    await expect(svc.writeFile(agent, "escape-dir/created.md", "escaped\n"))
+      .rejects.toThrow("cannot traverse symbolic links");
+    await expect(fs.readFile(outsideFile, "utf8")).resolves.toBe("host secret\n");
+    await expect(fs.stat(path.join(outsideRoot, "created.md"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

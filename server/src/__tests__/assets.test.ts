@@ -1,4 +1,5 @@
 import express from "express";
+import { Readable } from "node:stream";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
@@ -26,7 +27,7 @@ vi.mock("../services/index.js", () => ({
   logActivity: logActivityMock,
 }));
 
-function createAsset() {
+function createAsset(overrides: Record<string, unknown> = {}) {
   const now = new Date("2026-01-01T00:00:00.000Z");
   return {
     id: "asset-1",
@@ -41,6 +42,7 @@ function createAsset() {
     createdByUserId: "user-1",
     createdAt: now,
     updatedAt: now,
+    ...overrides,
   };
 }
 
@@ -115,29 +117,22 @@ describe("POST /api/orgs/:orgId/assets/images", () => {
     });
   });
 
-  it("allows supported non-image attachments outside the organization logo flow", async () => {
+  it.each([
+    ["text/plain", "note.txt"],
+    ["text/html", "page.html"],
+    ["image/svg+xml", "image.svg"],
+  ])("rejects non-raster uploads with type %s", async (contentType, filename) => {
     const text = createStorageService("text/plain");
     const app = createApp(text);
-
-    createAssetMock.mockResolvedValue({
-      ...createAsset(),
-      contentType: "text/plain",
-      originalFilename: "note.txt",
-    });
 
     const res = await request(app)
       .post("/api/orgs/organization-1/assets/images")
       .field("namespace", "issues/drafts")
-      .attach("file", Buffer.from("hello"), { filename: "note.txt", contentType: "text/plain" });
+      .attach("file", Buffer.from("untrusted"), { filename, contentType });
 
-    expect(res.status).toBe(201);
-    expect(text.putFile).toHaveBeenCalledWith({
-      orgId: "organization-1",
-      namespace: "assets/issues/drafts",
-      originalFilename: "note.txt",
-      contentType: "text/plain",
-      body: expect.any(Buffer),
-    });
+    expect(res.status).toBe(422);
+    expect(res.body.error).toBe(`Unsupported file type: ${contentType}`);
+    expect(text.putFile).not.toHaveBeenCalled();
   });
 });
 
@@ -170,15 +165,9 @@ describe("POST /api/orgs/:orgId/logo", () => {
     });
   });
 
-  it("sanitizes SVG logo uploads before storing them", async () => {
+  it("rejects SVG logo uploads", async () => {
     const svg = createStorageService("image/svg+xml");
     const app = createApp(svg);
-
-    createAssetMock.mockResolvedValue({
-      ...createAsset(),
-      contentType: "image/svg+xml",
-      originalFilename: "logo.svg",
-    });
 
     const res = await request(app)
       .post("/api/orgs/organization-1/logo")
@@ -190,17 +179,9 @@ describe("POST /api/orgs/:orgId/logo", () => {
         "logo.svg",
       );
 
-    expect(res.status).toBe(201);
-    expect(svg.putFile).toHaveBeenCalledTimes(1);
-    const stored = (svg.putFile as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-    expect(stored.contentType).toBe("image/svg+xml");
-    expect(stored.originalFilename).toBe("logo.svg");
-    const body = stored.body.toString("utf8");
-    expect(body).toContain("<svg");
-    expect(body).toContain("<circle");
-    expect(body).not.toContain("<script");
-    expect(body).not.toContain("onload=");
-    expect(body).not.toContain("https://evil.example/");
+    expect(res.status).toBe(422);
+    expect(res.body.error).toBe("Unsupported image type: image/svg+xml");
+    expect(svg.putFile).not.toHaveBeenCalled();
   });
 
   it("allows logo uploads within the general attachment limit", async () => {
@@ -242,16 +223,54 @@ describe("POST /api/orgs/:orgId/logo", () => {
     expect(createAssetMock).not.toHaveBeenCalled();
   });
 
-  it("rejects SVG image uploads that cannot be sanitized", async () => {
-    const app = createApp(createStorageService("image/svg+xml"));
-    createAssetMock.mockResolvedValue(createAsset());
+});
 
-    const res = await request(app)
-      .post("/api/orgs/organization-1/logo")
-      .attach("file", Buffer.from("not actually svg"), "logo.svg");
+describe("GET /api/assets/:assetId/content", () => {
+  afterEach(() => {
+    createAssetMock.mockReset();
+    getAssetByIdMock.mockReset();
+    logActivityMock.mockReset();
+  });
 
-    expect(res.status).toBe(422);
-    expect(res.body.error).toBe("SVG could not be sanitized");
-    expect(createAssetMock).not.toHaveBeenCalled();
+  it("serves safe raster images inline with MIME sniffing disabled", async () => {
+    const body = Buffer.from("png");
+    const storage = createStorageService("image/png");
+    getAssetByIdMock.mockResolvedValue(createAsset({ byteSize: body.length }));
+    vi.mocked(storage.getObject).mockResolvedValue({
+      stream: Readable.from(body),
+      contentType: "image/png",
+      contentLength: body.length,
+    });
+
+    const res = await request(createApp(storage)).get("/api/assets/asset-1/content");
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-disposition"]).toBe('inline; filename="logo.png"');
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    expect(res.headers["content-security-policy"]).toBeUndefined();
+  });
+
+  it("forces legacy active content to download under a restrictive sandbox", async () => {
+    const body = Buffer.from("<script>alert(1)</script>");
+    const storage = createStorageService("text/html");
+    getAssetByIdMock.mockResolvedValue(createAsset({
+      byteSize: body.length,
+      contentType: "text/html",
+      originalFilename: "payload.html",
+    }));
+    vi.mocked(storage.getObject).mockResolvedValue({
+      stream: Readable.from(body),
+      contentType: "text/html",
+      contentLength: body.length,
+    });
+
+    const res = await request(createApp(storage)).get("/api/assets/asset-1/content");
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-disposition"]).toBe('attachment; filename="payload.html"');
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    expect(res.headers["content-security-policy"]).toBe(
+      "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'",
+    );
   });
 });

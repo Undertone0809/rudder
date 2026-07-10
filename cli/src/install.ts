@@ -2,6 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 
 export const CLI_NPM_PACKAGE_NAME = "@rudderhq/cli";
 export const CLI_BIN_NAME = "rudder";
+const SAFE_NPM_VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
 
 interface PersistentCliStateOptions {
   entryPath?: string | null | undefined;
@@ -50,7 +51,7 @@ export function resolvePersistentCliInstallSpec(env: NodeJS.ProcessEnv = process
   const pkgName = env.npm_package_name?.trim();
   const pkgVersion = env.npm_package_version?.trim();
 
-  if (pkgName === CLI_NPM_PACKAGE_NAME && pkgVersion) {
+  if (pkgName === CLI_NPM_PACKAGE_NAME && pkgVersion && SAFE_NPM_VERSION.test(pkgVersion)) {
     return `${pkgName}@${pkgVersion}`;
   }
 
@@ -148,6 +149,7 @@ export function detectPersistentCliState(options: PersistentCliStateOptions = {}
 export function installPersistentCli(
   options: InstallPersistentCliOptions,
 ): PersistentCliInstallResult {
+  assertSafePersistentCliInstallSpec(options.installSpec);
   const spawnSyncImpl = options.spawnSyncImpl ?? spawnSync;
   const command = `npm install --global ${options.installSpec}`;
   const initialResult = runNpmGlobalInstall(spawnSyncImpl, ["install", "--global", options.installSpec]);
@@ -170,6 +172,13 @@ export function installPersistentCli(
     command: forcedCommand,
     output: forcedOutput || initialOutput,
   };
+}
+
+function assertSafePersistentCliInstallSpec(installSpec: string): void {
+  if (installSpec === CLI_NPM_PACKAGE_NAME) return;
+  const prefix = `${CLI_NPM_PACKAGE_NAME}@`;
+  if (installSpec.startsWith(prefix) && SAFE_NPM_VERSION.test(installSpec.slice(prefix.length))) return;
+  throw new Error(`Refusing unsafe Rudder CLI install spec: ${installSpec}`);
 }
 
 function runNpmGlobalInstall(

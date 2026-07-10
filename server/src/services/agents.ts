@@ -609,6 +609,9 @@ export function agentService(db: Db) {
       const existing = await getById(id);
       if (!existing) return null;
       if (existing.status === "terminated") throw conflict("Cannot pause terminated agent");
+      if (existing.status === "pending_approval") {
+        throw conflict("Pending approval agents cannot be paused");
+      }
 
       const updated = await db
         .update(agents)

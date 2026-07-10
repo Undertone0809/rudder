@@ -1,5 +1,26 @@
-import type { BrowserWindowConstructorOptions, OpenDialogOptions, WebContents } from "electron";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, shell, systemPreferences, Tray } from "electron";
+import type {
+  BrowserWindowConstructorOptions,
+  IpcMainInvokeEvent,
+  OpenDialogOptions,
+  Session,
+  WebContents,
+} from "electron";
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  Menu,
+  MenuItem,
+  nativeImage,
+  nativeTheme,
+  Notification,
+  session,
+  shell,
+  systemPreferences,
+  Tray,
+} from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -19,9 +40,10 @@ import {
 } from "./ide-opener.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
 import {
-  canOpenBlockedNavigationExternally,
   collectDesktopNavigationOrigins,
-  isAllowedDesktopNavigation,
+  isAllowedDesktopPrivilegedDocument,
+  isAllowedDesktopWebviewNavigation,
+  normalizeExternalOpenTarget,
 } from "./navigation-guard.js";
 import {
   consumePostUpdateReloadMarker,
@@ -68,6 +90,7 @@ import {
 } from "./desktop-workspace-launch-payload.js";
 import { isSidePanelCloseShortcutInput } from "./side-panel-close-shortcut.js";
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const DESKTOP_BROWSER_WEBVIEW_PARTITION = "persist:rudder-browser";
 type BootState = {
   stage: string;
   message: string;
@@ -710,10 +733,11 @@ function installRendererRecoveryHandlers(window: BrowserWindow, initialUrl: stri
     serverHandle?.apiUrl,
   );
   const handleBlockedNavigation = (targetUrl: string) => {
-    if (isAllowedDesktopNavigation(targetUrl, allowedOrigins(), { allowInternalProtocols: false })) return false;
+    if (isAllowedDesktopPrivilegedDocument(targetUrl, allowedOrigins())) return false;
 
-    if (canOpenBlockedNavigationExternally(targetUrl)) {
-      shell.openExternal(targetUrl).catch((error) => {
+    const externalTarget = normalizeExternalOpenTarget(targetUrl);
+    if (externalTarget) {
+      shell.openExternal(externalTarget).catch((error) => {
         console.warn("[rudder-desktop] failed to open external navigation", targetUrl, error);
       });
     }
@@ -735,8 +759,15 @@ function installRendererRecoveryHandlers(window: BrowserWindow, initialUrl: stri
     }
   });
 
+  window.webContents.on("will-redirect", (event, targetUrl, _isInPlace, isMainFrame) => {
+    if (!isMainFrame) return;
+    if (handleBlockedNavigation(targetUrl)) {
+      event.preventDefault();
+    }
+  });
+
   window.webContents.on("did-navigate", (_event, targetUrl) => {
-    if (isAllowedDesktopNavigation(targetUrl, allowedOrigins())) {
+    if (isAllowedDesktopPrivilegedDocument(targetUrl, allowedOrigins())) {
       rememberAppUrl(targetUrl);
     }
     rendererRecoveryInFlight = false;
@@ -761,6 +792,38 @@ function installRendererRecoveryHandlers(window: BrowserWindow, initialUrl: stri
 
   window.on("unresponsive", () => {
     void promptForUnresponsiveRenderer();
+  });
+}
+
+function installDesktopWebviewSecurityHandlers(window: BrowserWindow): void {
+  window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+    webPreferences.nodeIntegration = false;
+    webPreferences.nodeIntegrationInSubFrames = false;
+    webPreferences.nodeIntegrationInWorker = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+    webPreferences.allowRunningInsecureContent = false;
+    delete webPreferences.preload;
+    delete params.preload;
+
+    if (
+      params.partition !== DESKTOP_BROWSER_WEBVIEW_PARTITION
+      || !isAllowedDesktopWebviewNavigation(params.src ?? "")
+    ) {
+      event.preventDefault();
+    }
+  });
+
+  window.webContents.on("did-attach-webview", (_event, guestContents) => {
+    guestContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    guestContents.on("will-navigate", (event, targetUrl) => {
+      if (!isAllowedDesktopWebviewNavigation(targetUrl)) event.preventDefault();
+    });
+    guestContents.on("will-redirect", (event, targetUrl, _isInPlace, isMainFrame) => {
+      if (!isMainFrame) return;
+      if (!isAllowedDesktopWebviewNavigation(targetUrl)) event.preventDefault();
+    });
   });
 }
 
@@ -819,6 +882,7 @@ async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
   });
 
   installRendererRecoveryHandlers(window, initialUrl);
+  installDesktopWebviewSecurityHandlers(window);
   installMainWindowSidePanelCloseShortcutHandler(window);
 
   window.on("close", (event) => {
@@ -1313,6 +1377,54 @@ async function stopLocalRudder(): Promise<void> {
   await handle.stop();
 }
 
+function currentDesktopAppOrigins(): string[] {
+  return collectDesktopNavigationOrigins(
+    resolveDesktopAppBaseUrl(),
+    serverHandle?.apiUrl,
+    lastKnownAppUrl,
+  );
+}
+
+function isTrustedDesktopMainFrameEvent(event: IpcMainInvokeEvent): boolean {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false;
+  if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame) return false;
+  return isAllowedDesktopPrivilegedDocument(event.senderFrame.url, currentDesktopAppOrigins());
+}
+
+const securedDesktopSessions = new WeakSet<Session>();
+
+function installDesktopSessionPermissionHandlers(targetSession: Session): void {
+  if (securedDesktopSessions.has(targetSession)) return;
+  securedDesktopSessions.add(targetSession);
+
+  const isAllowedPermission = (
+    webContents: WebContents | null,
+    permission: string,
+    requestingUrl: string,
+    isMainFrame: boolean,
+  ) => permission === "notifications"
+    && Boolean(webContents)
+    && Boolean(mainWindow)
+    && !mainWindow?.isDestroyed()
+    && webContents === mainWindow?.webContents
+    && isMainFrame
+    && isAllowedDesktopPrivilegedDocument(requestingUrl || webContents?.getURL() || "", currentDesktopAppOrigins());
+
+  targetSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => (
+    isAllowedPermission(
+      webContents,
+      permission,
+      details.requestingUrl ?? requestingOrigin,
+      details.isMainFrame,
+    )
+  ));
+  targetSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    callback(isAllowedPermission(webContents, permission, details.requestingUrl, details.isMainFrame));
+  });
+  targetSession.setDevicePermissionHandler(() => false);
+  targetSession.setDisplayMediaRequestHandler((_request, callback) => callback({}));
+}
+
 function registerIpc(): void {
   ipcMain.handle("desktop:get-boot-state", async () => {
     refreshDesktopSystemPermissions();
@@ -1428,8 +1540,15 @@ function registerIpc(): void {
   ipcMain.handle("desktop:send-feedback", async () => {
     await shell.openExternal(createFeedbackMailtoUrl());
   });
-  ipcMain.handle("desktop:open-external", async (_event, target: string) => {
-    await shell.openExternal(target);
+  ipcMain.handle("desktop:open-external", async (event, target: unknown) => {
+    if (!isTrustedDesktopMainFrameEvent(event)) {
+      throw new Error("External URLs can only be opened by the Rudder app.");
+    }
+    const normalizedTarget = normalizeExternalOpenTarget(target);
+    if (!normalizedTarget) {
+      throw new Error("Only HTTP, HTTPS, and mailto URLs can be opened externally.");
+    }
+    await shell.openExternal(normalizedTarget);
   });
   ipcMain.handle("desktop:pick-path", async (event, options: DesktopPathPickOptions): Promise<DesktopPathPickResult> => {
     const kind = options.kind === "file" ? "file" : "directory";
@@ -1651,6 +1770,10 @@ if (desktopCliArgv) {
       refreshDesktopSystemPermissions();
     });
 
+    app.on("session-created", (createdSession) => {
+      installDesktopSessionPermissionHandlers(createdSession);
+    });
+
     app.on("web-contents-created", (_event, contents) => {
       installSidePanelCloseShortcutHandler(contents);
     });
@@ -1666,7 +1789,10 @@ if (desktopCliArgv) {
       void beginQuitFlow();
     });
 
-    void app.whenReady().then(() => bootstrap()).catch((error) => {
+    void app.whenReady().then(() => {
+      installDesktopSessionPermissionHandlers(session.defaultSession);
+      return bootstrap();
+    }).catch((error) => {
       console.error("[rudder-desktop] Failed to bootstrap desktop app", error);
       app.exit(1);
     });

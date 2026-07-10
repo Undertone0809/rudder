@@ -27,6 +27,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { promisify } from "node:util";
+import { unprocessable } from "../../errors.js";
 import { type OrgNode } from "../../routes/org-chart-svg.js";
 import { automationService } from "../automations.js";
 import { validateCron } from "../cron.js";
@@ -102,6 +103,46 @@ export let bundledSkillsCommitPromise: Promise<string | null> | null = null;
 
 export function resolveImportMode(options?: ImportBehaviorOptions): ImportMode {
   return options?.mode ?? "board_full";
+}
+
+export function assertAgentSafeImportPolicy(
+  manifest: OrganizationPortabilityManifest,
+  include: OrganizationPortabilityInclude,
+) {
+  if (include.agents) {
+    throw unprocessable("Safe import routes do not allow importing agents.");
+  }
+
+  if (include.projects) {
+    const projectWithPolicy = manifest.projects.find(
+      (project) => project.executionWorkspacePolicy != null,
+    );
+    if (projectWithPolicy) {
+      throw unprocessable(
+        `Safe import routes do not allow project executionWorkspacePolicy (${projectWithPolicy.slug}).`,
+      );
+    }
+
+    const workspaceWithCommands = manifest.projects
+      .flatMap((project) => project.workspaces.map((workspace) => ({ project, workspace })))
+      .find(({ workspace }) => Boolean(asString(workspace.setupCommand) || asString(workspace.cleanupCommand)));
+    if (workspaceWithCommands) {
+      throw unprocessable(
+        `Safe import routes do not allow workspace setup/cleanup commands (${workspaceWithCommands.project.slug}/${workspaceWithCommands.workspace.key}).`,
+      );
+    }
+  }
+
+  if (include.issues) {
+    const issueWithRuntimeOverrides = manifest.issues.find(
+      (issue) => issue.assigneeAgentRuntimeOverrides != null || issue.executionWorkspaceSettings != null,
+    );
+    if (issueWithRuntimeOverrides) {
+      throw unprocessable(
+        `Safe import routes do not allow issue runtime overrides (${issueWithRuntimeOverrides.slug}).`,
+      );
+    }
+  }
 }
 
 export function resolveSkillConflictStrategy(mode: ImportMode, collisionStrategy: OrganizationPortabilityCollisionStrategy) {

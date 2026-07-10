@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { actorMiddleware } from "../middleware/auth.js";
 import { errorHandler, httpLogger } from "../middleware/index.js";
+import { createPluginWebhookIngressMiddleware } from "../middleware/plugin-webhook-security.js";
 import { privateHostnameGuard, resolvePrivateHostnameAllowSet } from "../middleware/private-hostname-guard.js";
 import { llmRoutes } from "../routes/llms.js";
 import { pluginUiStaticRoutes } from "../routes/plugin-ui-static.js";
@@ -27,13 +28,31 @@ export async function createHttpApp(
   pluginRuntime: PluginHostRuntime,
 ) {
   const app = express();
-  const privateHostnameGateEnabled =
-    opts.deploymentMode === "authenticated" && opts.deploymentExposure === "private";
+  app.disable("x-powered-by");
+  app.use((_req, res, next) => {
+    // The desktop side-panel browser can load arbitrary sites. Prevent those
+    // sites (and regular web origins) from framing an authenticated/local board
+    // and clickjacking privileged actions.
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
+    res.setHeader("Content-Security-Policy", "frame-ancestors 'self'");
+    next();
+  });
+  // Private authenticated and local-trusted instances are both vulnerable to
+  // DNS rebinding unless requests are restricted to configured hostnames.
+  const privateHostnameGateEnabled = opts.deploymentExposure === "private";
   const privateHostnameAllowSet = resolvePrivateHostnameAllowSet({
     allowedHostnames: opts.allowedHostnames,
     bindHost: opts.bindHost,
   });
 
+  const pluginWebhookIngress = createPluginWebhookIngressMiddleware();
+  app.use(
+    "/api/plugins/:pluginId/webhooks/:endpointKey",
+    pluginWebhookIngress.rateLimit,
+    pluginWebhookIngress.rawBody,
+    pluginWebhookIngress.rawBodyError,
+    pluginWebhookIngress.decodeBody,
+  );
   app.use(express.json({
     // Organization import/export payloads can inline full portable packages.
     limit: "10mb",

@@ -2,6 +2,7 @@ import type { Db } from "@rudderhq/db";
 import { executionWorkspaces } from "@rudderhq/db";
 import type { RunWorkspace } from "@rudderhq/shared";
 import { and, desc, eq, inArray } from "drizzle-orm";
+import { unprocessable } from "../errors.js";
 
 type ExecutionWorkspaceRow = typeof executionWorkspaces.$inferSelect;
 
@@ -85,7 +86,17 @@ export function runWorkspaceService(db: Db) {
       return row ? toRunWorkspace(row) : null;
     },
 
-    update: async (id: string, patch: Partial<typeof executionWorkspaces.$inferInsert>) => {
+    update: async (
+      id: string,
+      patch: Partial<typeof executionWorkspaces.$inferInsert>,
+      options?: { allowRuntimeMetadata?: boolean },
+    ) => {
+      if (
+        Object.prototype.hasOwnProperty.call(patch, "metadata")
+        && options?.allowRuntimeMetadata !== true
+      ) {
+        throw unprocessable("Run workspace runtime metadata is managed internally");
+      }
       const row = await db
         .update(executionWorkspaces)
         .set({ ...patch, updatedAt: new Date() })

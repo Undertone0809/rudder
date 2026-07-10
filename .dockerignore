@@ -1,6 +1,12 @@
 .git
 .github
 .rudder
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
 .pnpm-store
 node_modules
 **/node_modules

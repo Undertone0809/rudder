@@ -5,23 +5,36 @@ function isLoopbackHostname(hostname: string): boolean {
   return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
 }
 
-function extractHostname(req: Request): string | null {
-  const forwardedHost = req.header("x-forwarded-host")?.split(",")[0]?.trim();
-  const hostHeader = req.header("host")?.trim();
-  const raw = forwardedHost || hostHeader;
+function normalizeHostname(hostname: string): string {
+  const normalized = hostname.trim().toLowerCase().replace(/\.$/, "");
+  if (normalized.startsWith("[") && normalized.endsWith("]")) {
+    return normalized.slice(1, -1);
+  }
+  return normalized;
+}
+
+export function extractHostnameFromHostHeader(rawHost: string | undefined): string | null {
+  const raw = rawHost?.trim();
   if (!raw) return null;
 
   try {
-    return new URL(`http://${raw}`).hostname.trim().toLowerCase();
+    return normalizeHostname(new URL(`http://${raw}`).hostname);
   } catch {
-    return raw.trim().toLowerCase();
+    return normalizeHostname(raw);
   }
+}
+
+function extractHostname(req: Request): string | null {
+  // Do not trust X-Forwarded-Host here. This server does not configure a
+  // trusted proxy boundary, so a direct client could otherwise spoof it and
+  // bypass the DNS-rebinding guard.
+  return extractHostnameFromHostHeader(req.header("host"));
 }
 
 function normalizeAllowedHostnames(values: string[]): string[] {
   const unique = new Set<string>();
   for (const value of values) {
-    const trimmed = value.trim().toLowerCase();
+    const trimmed = normalizeHostname(value);
     if (!trimmed) continue;
     unique.add(trimmed);
   }
@@ -30,7 +43,7 @@ function normalizeAllowedHostnames(values: string[]): string[] {
 
 export function resolvePrivateHostnameAllowSet(opts: { allowedHostnames: string[]; bindHost: string }): Set<string> {
   const configuredAllow = normalizeAllowedHostnames(opts.allowedHostnames);
-  const bindHost = opts.bindHost.trim().toLowerCase();
+  const bindHost = normalizeHostname(opts.bindHost);
   const allowSet = new Set<string>(configuredAllow);
 
   if (bindHost && bindHost !== "0.0.0.0") {
@@ -40,6 +53,32 @@ export function resolvePrivateHostnameAllowSet(opts: { allowedHostnames: string[
   allowSet.add("127.0.0.1");
   allowSet.add("::1");
   return allowSet;
+}
+
+export function isPrivateHostnameAllowed(rawHost: string | undefined, allowSet: ReadonlySet<string>): boolean {
+  const hostname = extractHostnameFromHostHeader(rawHost);
+  return hostname !== null && (isLoopbackHostname(hostname) || allowSet.has(hostname));
+}
+
+export function isSameOriginHost(origin: string | undefined, rawHost: string | undefined): boolean {
+  if (!origin || !rawHost) return false;
+  try {
+    const parsedOrigin = new URL(origin);
+    if (
+      (parsedOrigin.protocol !== "http:" && parsedOrigin.protocol !== "https:")
+      || parsedOrigin.username
+      || parsedOrigin.password
+      || parsedOrigin.pathname !== "/"
+      || parsedOrigin.search
+      || parsedOrigin.hash
+    ) {
+      return false;
+    }
+    const parsedHost = new URL(`${parsedOrigin.protocol}//${rawHost}`);
+    return parsedOrigin.host.toLowerCase() === parsedHost.host.toLowerCase();
+  } catch {
+    return false;
+  }
 }
 
 function blockedHostnameMessage(hostname: string): string {
@@ -77,7 +116,7 @@ export function privateHostnameGuard(opts: {
       return;
     }
 
-    if (isLoopbackHostname(hostname) || allowSet.has(hostname)) {
+    if (isPrivateHostnameAllowed(req.header("host"), allowSet)) {
       next();
       return;
     }

@@ -1,10 +1,6 @@
 import type { Request, RequestHandler } from "express";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
-const DEFAULT_DEV_ORIGINS = [
-  "http://localhost:3100",
-  "http://127.0.0.1:3100",
-];
 
 function parseOrigin(value: string | undefined) {
   if (!value) return null;
@@ -17,7 +13,7 @@ function parseOrigin(value: string | undefined) {
 }
 
 function trustedOriginsForRequest(req: Request) {
-  const origins = new Set(DEFAULT_DEV_ORIGINS.map((value) => value.toLowerCase()));
+  const origins = new Set<string>();
   const host = req.header("host")?.trim();
   if (host) {
     origins.add(`http://${host}`.toLowerCase());
@@ -28,8 +24,11 @@ function trustedOriginsForRequest(req: Request) {
 
 function isTrustedBoardMutationRequest(req: Request) {
   const allowedOrigins = trustedOriginsForRequest(req);
-  const origin = parseOrigin(req.header("origin"));
-  if (origin && allowedOrigins.has(origin)) return true;
+  const rawOrigin = req.header("origin");
+  if (rawOrigin !== undefined) {
+    const origin = parseOrigin(rawOrigin);
+    return origin !== null && allowedOrigins.has(origin);
+  }
 
   const refererOrigin = parseOrigin(req.header("referer"));
   if (refererOrigin && allowedOrigins.has(refererOrigin)) return true;
@@ -49,11 +48,20 @@ export function boardMutationGuard(): RequestHandler {
       return;
     }
 
-    // Local-trusted mode and board bearer keys are not browser-session requests.
-    // In these modes, origin/referer headers can be absent; do not block those mutations.
+    // Local-trusted mode and board bearer keys also support non-browser clients,
+    // where Origin/Referer can legitimately be absent. When either header is
+    // present, however, treat the request as browser-originated and enforce the
+    // same-origin check so arbitrary websites cannot mutate a localhost board.
     if (req.actor.source === "local_implicit" || req.actor.source === "board_key") {
-      next();
-      return;
+      const fetchSite = req.header("sec-fetch-site")?.trim().toLowerCase();
+      if (
+        !req.header("origin")
+        && !req.header("referer")
+        && (!fetchSite || fetchSite === "same-origin" || fetchSite === "none")
+      ) {
+        next();
+        return;
+      }
     }
 
     if (!isTrustedBoardMutationRequest(req)) {

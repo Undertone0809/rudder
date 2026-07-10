@@ -75,6 +75,7 @@ const CHAT_SIDE_PANEL_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([
   ".text",
 ]);
 const CHAT_SIDE_PANEL_BROWSER_BLANK_URL = "about:blank";
+const CHAT_SIDE_PANEL_BROWSER_PARTITION = "persist:rudder-browser";
 
 type BrowserWebviewElement = HTMLElement & {
   canGoBack?: () => boolean;
@@ -145,10 +146,23 @@ function chatSidePanelBrowserLabel(url: string) {
 function normalizeChatSidePanelBrowserUrl(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return CHAT_SIDE_PANEL_BROWSER_BLANK_URL;
-  if (/^(about|data|file|https?):/i.test(trimmed)) return trimmed;
+  if (/^https?:/i.test(trimmed)) {
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.hostname && !parsed.username && !parsed.password) return parsed.href;
+    } catch {
+      // Treat malformed and unsupported addresses as search terms below.
+    }
+  }
   if (/\s/.test(trimmed)) return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
   if (/^(localhost|\d{1,3}(?:\.\d{1,3}){3})(:\d+)?(\/.*)?$/i.test(trimmed)) {
     return `http://${trimmed}`;
+  }
+  if (/^(?:[a-z\d](?:[a-z\d-]*[a-z\d])?\.)+[a-z\d-]{2,}(?::\d+)?(?:[/?#].*)?$/i.test(trimmed)) {
+    return `https://${trimmed}`;
+  }
+  if (/^[a-z][a-z\d+.-]*:/i.test(trimmed)) {
+    return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
   }
   if (trimmed.includes(".")) {
     return `https://${trimmed}`;
@@ -1140,9 +1154,9 @@ function ChatSidePanelBrowserView({
         ) : createElement("webview", {
           ref: handleWebviewRef,
           src: currentUrl,
+          partition: CHAT_SIDE_PANEL_BROWSER_PARTITION,
           className: "min-h-[52vh] flex-1 bg-[color:var(--surface-panel)]",
           "data-testid": "chat-side-panel-browser-webview",
-          allowpopups: "true",
         })}
       </div>
     </div>

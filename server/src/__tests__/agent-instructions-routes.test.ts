@@ -64,17 +64,17 @@ vi.mock("../agent-runtimes/index.js", () => ({
   listAgentRuntimeModels: vi.fn(),
 }));
 
-function createApp() {
+function createApp(actor: Record<string, unknown> = {
+  type: "board",
+  userId: "local-board",
+  orgIds: ["organization-1"],
+  source: "local_implicit",
+  isInstanceAdmin: false,
+}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).actor = {
-      type: "board",
-      userId: "local-board",
-      orgIds: ["organization-1"],
-      source: "local_implicit",
-      isInstanceAdmin: false,
-    };
+    (req as any).actor = actor;
     next();
   });
   app.use("/api", agentRoutes({} as any));
@@ -159,6 +159,28 @@ describe("agent instructions bundle routes", () => {
       },
       agentRuntimeConfig: {},
       changed: false,
+    });
+    mockAgentInstructionsService.updateBundle.mockResolvedValue({
+      bundle: {
+        agentId: "11111111-1111-4111-8111-111111111111",
+        orgId: "organization-1",
+        mode: "external",
+        rootPath: "/srv/rudder-instructions",
+        managedRootPath: "/tmp/agent-1",
+        entryFile: "SOUL.md",
+        resolvedEntryPath: "/srv/rudder-instructions/SOUL.md",
+        editable: true,
+        warnings: [],
+        legacyPromptTemplateActive: false,
+        legacyBootstrapPromptTemplateActive: false,
+        files: [],
+      },
+      agentRuntimeConfig: {
+        instructionsBundleMode: "external",
+        instructionsRootPath: "/srv/rudder-instructions",
+        instructionsEntryFile: "SOUL.md",
+        instructionsFilePath: "/srv/rudder-instructions/SOUL.md",
+      },
     });
     mockAgentInstructionsService.readFile.mockResolvedValue({
       path: "SOUL.md",
@@ -269,6 +291,191 @@ describe("agent instructions bundle routes", () => {
     );
     expect(mockAgentInstructionsService.reconcileBundle).not.toHaveBeenCalled();
     expect(mockAgentService.update).not.toHaveBeenCalled();
+  });
+
+  it("keeps relative managed bundle file edits available to the owning agent", async () => {
+    const res = await request(createApp({
+      type: "agent",
+      agentId: "11111111-1111-4111-8111-111111111111",
+      orgId: "organization-1",
+      source: "agent_key",
+    }))
+      .put("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle/file")
+      .send({
+        path: "SOUL.md",
+        content: "# Updated Agent\n",
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockAgentInstructionsService.writeFile).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "11111111-1111-4111-8111-111111111111" }),
+      "SOUL.md",
+      "# Updated Agent\n",
+      expect.any(Object),
+    );
+  });
+
+  it("rejects agent-authenticated instructions path and bundle control-plane changes", async () => {
+    const actor = {
+      type: "agent",
+      agentId: "11111111-1111-4111-8111-111111111111",
+      orgId: "organization-1",
+      source: "agent_key",
+    };
+    const app = createApp(actor);
+
+    const pathRes = await request(app)
+      .patch("/api/agents/11111111-1111-4111-8111-111111111111/instructions-path")
+      .send({ path: "/etc/passwd" });
+    const bundleRes = await request(app)
+      .patch("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle")
+      .send({ mode: "external", rootPath: "/etc" });
+
+    expect(pathRes.status).toBe(403);
+    expect(bundleRes.status).toBe(403);
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+    expect(mockAgentInstructionsService.updateBundle).not.toHaveBeenCalled();
+  });
+
+  it("rejects host filesystem instruction settings from non-admin board members", async () => {
+    const app = createApp({
+      type: "board",
+      userId: "organization-member",
+      orgIds: ["organization-1"],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+
+    const pathRes = await request(app)
+      .patch("/api/agents/11111111-1111-4111-8111-111111111111/instructions-path")
+      .send({ path: "/etc/passwd" });
+    const bundleRes = await request(app)
+      .patch("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle")
+      .send({ mode: "external", rootPath: "/etc" });
+
+    expect(pathRes.status).toBe(403);
+    expect(bundleRes.status).toBe(403);
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+    expect(mockAgentInstructionsService.updateBundle).not.toHaveBeenCalled();
+  });
+
+  it("rejects external instruction paths hidden in a generic runtime config patch", async () => {
+    const res = await request(createApp({
+      type: "board",
+      userId: "organization-member",
+      orgIds: ["organization-1"],
+      source: "session",
+      isInstanceAdmin: false,
+    }))
+      .patch("/api/agents/11111111-1111-4111-8111-111111111111")
+      .send({
+        agentRuntimeConfig: {
+          instructionsBundleMode: "external",
+          instructionsRootPath: "/etc",
+          instructionsFilePath: "/etc/passwd",
+        },
+      });
+
+    expect(res.status).toBe(403);
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+  });
+
+  it("allows instance admins to configure host filesystem instruction settings", async () => {
+    const app = createApp({
+      type: "board",
+      userId: "instance-admin",
+      orgIds: [],
+      source: "session",
+      isInstanceAdmin: true,
+    });
+
+    const pathRes = await request(app)
+      .patch("/api/agents/11111111-1111-4111-8111-111111111111/instructions-path")
+      .send({ path: "/srv/rudder-instructions/SOUL.md" });
+    const bundleRes = await request(app)
+      .patch("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle")
+      .send({ mode: "external", rootPath: "/srv/rudder-instructions" });
+
+    expect(pathRes.status, JSON.stringify(pathRes.body)).toBe(200);
+    expect(bundleRes.status, JSON.stringify(bundleRes.body)).toBe(200);
+    expect(mockAgentInstructionsService.updateBundle).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "11111111-1111-4111-8111-111111111111" }),
+      expect.objectContaining({ mode: "external", rootPath: "/srv/rudder-instructions" }),
+    );
+  });
+
+  it("rejects external bundle access from non-admin board members before touching the filesystem service", async () => {
+    mockAgentService.getInternalById.mockResolvedValue({
+      ...makeAgent(),
+      agentRuntimeConfig: {
+        instructionsBundleMode: "external",
+        instructionsRootPath: "/etc",
+        instructionsEntryFile: "passwd",
+        instructionsFilePath: "/etc/passwd",
+      },
+    });
+    const app = createApp({
+      type: "board",
+      userId: "organization-member",
+      orgIds: ["organization-1"],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+
+    const bundleRes = await request(app)
+      .get("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle?orgId=organization-1");
+    const readRes = await request(app)
+      .get("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle/file?orgId=organization-1&path=passwd");
+    const writeRes = await request(app)
+      .put("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle/file")
+      .send({ path: "passwd", content: "blocked" });
+    const deleteRes = await request(app)
+      .delete("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle/file?path=passwd");
+
+    expect([bundleRes.status, readRes.status, writeRes.status, deleteRes.status]).toEqual([
+      403,
+      403,
+      403,
+      403,
+    ]);
+    expect(mockAgentInstructionsService.getBundle).not.toHaveBeenCalled();
+    expect(mockAgentInstructionsService.readFile).not.toHaveBeenCalled();
+    expect(mockAgentInstructionsService.writeFile).not.toHaveBeenCalled();
+    expect(mockAgentInstructionsService.deleteFile).not.toHaveBeenCalled();
+  });
+
+  it("allows instance admins to access files in an existing external bundle", async () => {
+    mockAgentService.getInternalById.mockResolvedValue({
+      ...makeAgent(),
+      agentRuntimeConfig: {
+        instructionsBundleMode: "external",
+        instructionsRootPath: "/srv/rudder-instructions",
+        instructionsEntryFile: "SOUL.md",
+        instructionsFilePath: "/srv/rudder-instructions/SOUL.md",
+      },
+    });
+    const app = createApp({
+      type: "board",
+      userId: "instance-admin",
+      orgIds: [],
+      source: "session",
+      isInstanceAdmin: true,
+    });
+
+    const readRes = await request(app)
+      .get("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle/file?path=SOUL.md");
+    const writeRes = await request(app)
+      .put("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle/file")
+      .send({ path: "SOUL.md", content: "# Updated Agent\n" });
+    const deleteRes = await request(app)
+      .delete("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle/file?path=docs%2FTOOLS.md");
+
+    expect(readRes.status, JSON.stringify(readRes.body)).toBe(200);
+    expect(writeRes.status, JSON.stringify(writeRes.body)).toBe(200);
+    expect(deleteRes.status, JSON.stringify(deleteRes.body)).toBe(200);
+    expect(mockAgentInstructionsService.readFile).toHaveBeenCalled();
+    expect(mockAgentInstructionsService.writeFile).toHaveBeenCalled();
+    expect(mockAgentInstructionsService.deleteFile).toHaveBeenCalled();
   });
 
   it("writes a bundle file and persists compatibility config", async () => {

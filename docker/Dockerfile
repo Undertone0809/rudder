@@ -35,8 +35,22 @@ RUN test -f server/dist/index.js || (echo "ERROR: server build output missing" &
 
 FROM base AS production
 WORKDIR /app
-COPY --chown=node:node --from=build /app /app
-RUN npm install --global --omit=dev @anthropic-ai/claude-code@latest @openai/codex@latest opencode-ai \
+ARG CLAUDE_CODE_VERSION=2.1.206
+ARG CODEX_VERSION=0.144.1
+ARG OPENCODE_VERSION=1.17.18
+# Copy the runtime closure explicitly. In particular, do not promote the whole
+# build context into the final image, where local configuration files could
+# otherwise become readable by image consumers.
+COPY --chown=node:node --from=build /app/package.json /app/package.json
+COPY --chown=node:node --from=build /app/node_modules /app/node_modules
+COPY --chown=node:node --from=build /app/server /app/server
+COPY --chown=node:node --from=build /app/packages /app/packages
+COPY --chown=node:node --from=build /app/cli /app/cli
+COPY --chown=node:node --from=build /app/ui/dist /app/ui/dist
+RUN npm install --global --omit=dev \
+      "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+      "@openai/codex@${CODEX_VERSION}" \
+      "opencode-ai@${OPENCODE_VERSION}" \
   && mkdir -p /rudder \
   && chown node:node /rudder
 

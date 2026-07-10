@@ -35,6 +35,8 @@ jobs:
     if: github.repository == 'Undertone0809/rudder'
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:
@@ -46,7 +48,7 @@ jobs:
           corepack prepare pnpm@9.15.4 --activate
 
       - name: Install Vercel CLI
-        run: npm install --global vercel@latest
+        run: npm install --global vercel@55.0.0
 
       - name: Validate docs
         working-directory: docs

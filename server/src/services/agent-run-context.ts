@@ -21,6 +21,13 @@ import { listProjectResourceAttachments } from "./resource-catalog.js";
 import { secretService } from "./secrets.js";
 const REPO_ONLY_CWD_SENTINEL = "/__paperclip_repo_only__";
 const LEGACY_COPILOT_SYSTEM_KIND = "rudder_copilot";
+const HOST_CATALOG_APPROVED_AGENT_STATUSES = new Set([
+  "active",
+  "paused",
+  "idle",
+  "running",
+  "error",
+]);
 
 export type AgentRunScene = "issue" | "chat" | "automation" | "review" | "heartbeat";
 
@@ -489,6 +496,13 @@ export function agentRunContextService(db: Db) {
         input.agent.agentRuntimeType,
         resolvedConfig,
         desiredSkills,
+        {
+          // Host catalog discovery is allowed only for durable agent configs
+          // that have cleared pending approval. Organization local_path rows
+          // remain excluded from unattended runtime preparation.
+          allowHostCatalogs: HOST_CATALOG_APPROVED_AGENT_STATUSES.has(input.agent.status ?? ""),
+          allowHostLocalPaths: false,
+        },
       );
     const desiredRuntimeSkills = runtimeSkillEntries.map((entry) => entry.key);
     return {

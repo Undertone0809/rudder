@@ -9,6 +9,7 @@ import {
 import { Router, type Request } from "express";
 import multer from "multer";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
+import { buildContentResponsePolicy } from "../content-response-policy.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import {
@@ -613,11 +614,20 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
     assertCompanyAccess(req, attachment.orgId);
 
     const object = await storage.getObject(attachment.orgId, attachment.objectKey);
-    res.setHeader("Content-Type", attachment.contentType || object.contentType || "application/octet-stream");
+    const responseContentType = attachment.contentType || object.contentType || "application/octet-stream";
+    const responsePolicy = buildContentResponsePolicy(
+      responseContentType,
+      attachment.originalFilename ?? "attachment",
+      "attachment",
+    );
+    res.setHeader("Content-Type", responseContentType);
     res.setHeader("Content-Length", String(attachment.byteSize || object.contentLength || 0));
     res.setHeader("Cache-Control", "private, max-age=60");
-    const filename = attachment.originalFilename ?? "attachment";
-    res.setHeader("Content-Disposition", `inline; filename=\"${filename.replaceAll("\"", "")}\"`);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    if (responsePolicy.contentSecurityPolicy) {
+      res.setHeader("Content-Security-Policy", responsePolicy.contentSecurityPolicy);
+    }
+    res.setHeader("Content-Disposition", responsePolicy.contentDisposition);
 
     object.stream.on("error", (err) => {
       next(err);

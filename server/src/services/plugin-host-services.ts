@@ -11,11 +11,6 @@ import type {
 } from "@rudderhq/plugin-sdk";
 import { and, desc, eq, like } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { lookup as dnsLookup } from "node:dns/promises";
-import type { RequestOptions as HttpRequestOptions, IncomingMessage } from "node:http";
-import { request as httpRequest } from "node:http";
-import { request as httpsRequest } from "node:https";
-import { isIP } from "node:net";
 import { logger } from "../middleware/logger.js";
 import { logActivity } from "./activity-log.js";
 import { activityService } from "./activity.js";
@@ -32,238 +27,207 @@ import { pluginRegistryService } from "./plugin-registry.js";
 import { createPluginSecretsHandler } from "./plugin-secrets-handler.js";
 import { pluginStateStore } from "./plugin-state-store.js";
 import { projectService } from "./projects.js";
+import {
+  fetchPublicHttpUrlOnce,
+  type WebsiteMetadataOptions,
+} from "./website-metadata.js";
 
 // ---------------------------------------------------------------------------
-// SSRF protection for plugin HTTP fetch
+// SSRF and resource controls for plugin HTTP fetch
 // ---------------------------------------------------------------------------
 
-/** Maximum time (ms) a plugin fetch request may take before being aborted. */
 const PLUGIN_FETCH_TIMEOUT_MS = 30_000;
+const PLUGIN_FETCH_MAX_REDIRECTS = 5;
+const DEFAULT_PLUGIN_FETCH_REQUEST_BYTES = 1024 * 1024;
+const HARD_MAX_PLUGIN_FETCH_REQUEST_BYTES = 8 * 1024 * 1024;
+const DEFAULT_PLUGIN_FETCH_RESPONSE_BYTES = 8 * 1024 * 1024;
+const HARD_MAX_PLUGIN_FETCH_RESPONSE_BYTES = 32 * 1024 * 1024;
 
-/** Maximum time (ms) to wait for a DNS lookup before aborting. */
-const DNS_LOOKUP_TIMEOUT_MS = 5_000;
+export type PluginHttpFetchOptions = {
+  timeoutMs?: number;
+  maxRedirects?: number;
+  maxRequestBytes?: number;
+  maxResponseBytes?: number;
+  publicHttpOptions?: WebsiteMetadataOptions;
+};
 
-/** Only these protocols are allowed for plugin HTTP requests. */
-const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
-
-/**
- * Check if an IP address is in a private/reserved range (RFC 1918, loopback,
- * link-local, etc.) that plugins should never be able to reach.
- *
- * Handles IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1) which Node's
- * dns.lookup may return depending on OS configuration.
- */
-function isPrivateIP(ip: string): boolean {
-  const lower = ip.toLowerCase();
-
-  // Unwrap IPv4-mapped IPv6 addresses (::ffff:x.x.x.x) and re-check as IPv4
-  const v4MappedMatch = lower.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-  if (v4MappedMatch && v4MappedMatch[1]) return isPrivateIP(v4MappedMatch[1]);
-
-  // IPv4 patterns
-  if (ip.startsWith("10.")) return true;
-  if (ip.startsWith("172.")) {
-    const second = parseInt(ip.split(".")[1]!, 10);
-    if (second >= 16 && second <= 31) return true;
-  }
-  if (ip.startsWith("192.168.")) return true;
-  if (ip.startsWith("127.")) return true;                   // loopback
-  if (ip.startsWith("169.254.")) return true;               // link-local
-  if (ip === "0.0.0.0") return true;
-
-  // IPv6 patterns
-  if (lower === "::1") return true;                          // loopback
-  if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // ULA
-  if (lower.startsWith("fe80")) return true;                 // link-local
-  if (lower === "::") return true;
-
-  return false;
+function boundedPluginFetchInteger(value: unknown, fallback: number, min: number, max: number) {
+  const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(Math.max(Math.floor(parsed), min), max);
 }
 
-/**
- * Validate a URL for plugin fetch: protocol whitelist + private IP blocking.
- *
- * SSRF Prevention Strategy:
- * 1. Parse and validate the URL syntax
- * 2. Enforce protocol whitelist (http/https only)
- * 3. Resolve the hostname to IP(s) via DNS
- * 4. Validate that ALL resolved IPs are non-private
- * 5. Pin the first safe IP into the URL so fetch() does not re-resolve DNS
- *
- * This prevents DNS rebinding attacks where an attacker controls DNS to
- * resolve to a safe IP during validation, then to a private IP when fetch() runs.
- *
- * @returns Request-routing metadata used to connect directly to the resolved IP
- *          while preserving the original hostname for HTTP Host and TLS SNI.
- */
-interface ValidatedFetchTarget {
-  parsedUrl: URL;
-  resolvedAddress: string;
-  hostHeader: string;
-  tlsServername?: string;
-  useTls: boolean;
+function pluginRequestBody(body: RequestInit["body"]) {
+  if (body === undefined || body === null) return undefined;
+  return typeof body === "string" ? body : String(body);
 }
 
-async function validateAndResolveFetchUrl(urlString: string): Promise<ValidatedFetchTarget> {
-  let parsed: URL;
-  try {
-    parsed = new URL(urlString);
-  } catch {
-    throw new Error(`Invalid URL: ${urlString}`);
-  }
+function pluginFetchHeaders(response: Response) {
+  return Object.fromEntries(response.headers.entries());
+}
 
-  if (!ALLOWED_PROTOCOLS.has(parsed.protocol)) {
-    throw new Error(
-      `Disallowed protocol "${parsed.protocol}" — only http: and https: are permitted`,
-    );
-  }
+async function cancelPluginFetchResponse(response: Response, reason?: unknown) {
+  await response.body?.cancel(reason).catch(() => undefined);
+}
 
-  // Resolve the hostname to an IP and check for private ranges.
-  // We pin the resolved IP into the URL to eliminate the TOCTOU window
-  // between DNS resolution here and the second resolution fetch() would do.
-  const originalHostname = parsed.hostname.replace(/^\[|\]$/g, ""); // strip IPv6 brackets
-  const hostHeader = parsed.host; // includes port if non-default
-
-  // Race the DNS lookup against a timeout to prevent indefinite hangs
-  // when DNS is misconfigured or unresponsive.
-  const dnsPromise = dnsLookup(originalHostname, { all: true });
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(
-      () => reject(new Error(`DNS lookup timed out after ${DNS_LOOKUP_TIMEOUT_MS}ms for ${originalHostname}`)),
-      DNS_LOOKUP_TIMEOUT_MS,
-    );
+async function racePluginFetchSignal<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw signal.reason ?? new Error("Plugin HTTP request aborted");
+  let rejectOnAbort: ((reason?: unknown) => void) | null = null;
+  const abortPromise = new Promise<never>((_resolve, reject) => {
+    rejectOnAbort = reject;
   });
-
+  const onAbort = () => rejectOnAbort?.(signal.reason ?? new Error("Plugin HTTP request aborted"));
+  signal.addEventListener("abort", onAbort, { once: true });
   try {
-    const results = await Promise.race([dnsPromise, timeoutPromise]);
-    if (results.length === 0) {
-      throw new Error(`DNS resolution returned no results for ${originalHostname}`);
-    }
-
-    // Filter to only non-private IPs instead of rejecting the entire request
-    // when some IPs are private. This handles multi-homed hosts that resolve
-    // to both private and public addresses.
-    const safeResults = results.filter((entry) => !isPrivateIP(entry.address));
-    if (safeResults.length === 0) {
-      throw new Error(
-        `All resolved IPs for ${originalHostname} are in private/reserved ranges`,
-      );
-    }
-
-    const resolved = safeResults[0]!;
-    return {
-      parsedUrl: parsed,
-      resolvedAddress: resolved.address,
-      hostHeader,
-      tlsServername: parsed.protocol === "https:" && isIP(originalHostname) === 0
-        ? originalHostname
-        : undefined,
-      useTls: parsed.protocol === "https:",
-    };
-  } catch (err) {
-    // Re-throw our own errors; wrap DNS failures
-    if (err instanceof Error && (
-      err.message.startsWith("All resolved IPs") ||
-      err.message.startsWith("DNS resolution returned") ||
-      err.message.startsWith("DNS lookup timed out")
-    )) throw err;
-    throw new Error(`DNS resolution failed for ${originalHostname}: ${(err as Error).message}`);
+    return await Promise.race([operation, abortPromise]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
   }
 }
 
-function buildPinnedRequestOptions(
-  target: ValidatedFetchTarget,
-  init?: RequestInit,
-): { options: HttpRequestOptions & { servername?: string }; body: string | undefined } {
-  const headers = new Headers(init?.headers);
-  const method = init?.method ?? "GET";
-  const body = init?.body === undefined || init?.body === null
-    ? undefined
-    : typeof init.body === "string"
-      ? init.body
-      : String(init.body);
-
-  headers.set("Host", target.hostHeader);
-  if (body !== undefined && !headers.has("content-length") && !headers.has("transfer-encoding")) {
-    headers.set("content-length", String(Buffer.byteLength(body)));
+async function readBoundedPluginFetchBody(response: Response, maxBytes: number) {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    await cancelPluginFetchResponse(response, new Error("Plugin HTTP response exceeds size limit"));
+    throw new Error(`Plugin HTTP response body exceeded ${maxBytes} bytes`);
   }
+  if (!response.body) return "";
 
-  const pathname = `${target.parsedUrl.pathname}${target.parsedUrl.search}`;
-  const auth = target.parsedUrl.username || target.parsedUrl.password
-    ? `${decodeURIComponent(target.parsedUrl.username)}:${decodeURIComponent(target.parsedUrl.password)}`
-    : undefined;
-
-  return {
-    options: {
-      protocol: target.parsedUrl.protocol,
-      host: target.resolvedAddress,
-      port: target.parsedUrl.port
-        ? Number(target.parsedUrl.port)
-        : target.useTls
-          ? 443
-          : 80,
-      path: pathname,
-      method,
-      headers: Object.fromEntries(headers.entries()),
-      auth,
-      servername: target.tlsServername,
-    },
-    body,
-  };
-}
-
-async function executePinnedHttpRequest(
-  target: ValidatedFetchTarget,
-  init: RequestInit | undefined,
-  signal: AbortSignal,
-): Promise<{ status: number; statusText: string; headers: Record<string, string>; body: string }> {
-  const { options, body } = buildPinnedRequestOptions(target, init);
-
-  const response = await new Promise<IncomingMessage>((resolve, reject) => {
-    const requestFn = target.useTls ? httpsRequest : httpRequest;
-    const req = requestFn({ ...options, signal }, resolve);
-
-    req.on("error", reject);
-
-    if (body !== undefined) {
-      req.write(body);
-    }
-    req.end();
-  });
-
-  const MAX_RESPONSE_BODY_BYTES = 200 * 1024 * 1024; // 200 MB
+  const reader = response.body.getReader();
   const chunks: Buffer[] = [];
   let totalBytes = 0;
-  await new Promise<void>((resolve, reject) => {
-    response.on("data", (chunk: Buffer | string) => {
-      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      totalBytes += buf.length;
-      if (totalBytes > MAX_RESPONSE_BODY_BYTES) {
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
         chunks.length = 0;
-        response.destroy(new Error(`Response body exceeded ${MAX_RESPONSE_BODY_BYTES} bytes`));
-        return;
+        await reader.cancel(new Error("Plugin HTTP response exceeds size limit"));
+        throw new Error(`Plugin HTTP response body exceeded ${maxBytes} bytes`);
       }
-      chunks.push(buf);
-    });
-    response.on("end", resolve);
-    response.on("error", reject);
-  });
-
-  const headers: Record<string, string> = {};
-  for (const [key, value] of Object.entries(response.headers)) {
-    if (Array.isArray(value)) {
-      headers[key] = value.join(", ");
-    } else if (value !== undefined) {
-      headers[key] = value;
+      chunks.push(Buffer.from(value));
     }
+    return Buffer.concat(chunks).toString("utf8");
+  } catch (error) {
+    chunks.length = 0;
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function stripCrossOriginSensitiveHeaders(headers: Headers) {
+  for (const name of ["authorization", "cookie", "proxy-authorization"]) {
+    headers.delete(name);
+  }
+}
+
+export async function fetchPluginHttp(
+  params: { url: string; init?: RequestInit },
+  options: PluginHttpFetchOptions = {},
+): Promise<{ status: number; statusText: string; headers: Record<string, string>; body: string }> {
+  const maxRequestBytes = boundedPluginFetchInteger(
+    options.maxRequestBytes ?? process.env.RUDDER_PLUGIN_HTTP_MAX_REQUEST_BYTES,
+    DEFAULT_PLUGIN_FETCH_REQUEST_BYTES,
+    1,
+    HARD_MAX_PLUGIN_FETCH_REQUEST_BYTES,
+  );
+  const maxResponseBytes = boundedPluginFetchInteger(
+    options.maxResponseBytes ?? process.env.RUDDER_PLUGIN_HTTP_MAX_RESPONSE_BYTES,
+    DEFAULT_PLUGIN_FETCH_RESPONSE_BYTES,
+    1,
+    HARD_MAX_PLUGIN_FETCH_RESPONSE_BYTES,
+  );
+  const maxRedirects = boundedPluginFetchInteger(
+    options.maxRedirects,
+    PLUGIN_FETCH_MAX_REDIRECTS,
+    0,
+    10,
+  );
+  const timeoutMs = boundedPluginFetchInteger(
+    options.timeoutMs,
+    PLUGIN_FETCH_TIMEOUT_MS,
+    1,
+    PLUGIN_FETCH_TIMEOUT_MS,
+  );
+  let requestBody = pluginRequestBody(params.init?.body);
+  if (requestBody !== undefined && Buffer.byteLength(requestBody) > maxRequestBytes) {
+    throw new Error(`Plugin HTTP request body exceeded ${maxRequestBytes} bytes`);
   }
 
-  return {
-    status: response.statusCode ?? 500,
-    statusText: response.statusMessage ?? "",
-    headers,
-    body: Buffer.concat(chunks).toString("utf8"),
-  };
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = params.init?.signal
+    ? AbortSignal.any([params.init.signal, timeoutSignal])
+    : timeoutSignal;
+  let currentUrl = new URL(params.url);
+  let method = params.init?.method ?? "GET";
+  let headers = new Headers(params.init?.headers);
+
+  for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount += 1) {
+    if (requestBody !== undefined && !headers.has("content-length") && !headers.has("transfer-encoding")) {
+      headers.set("content-length", String(Buffer.byteLength(requestBody)));
+    }
+    const fetched = await racePluginFetchSignal(
+      fetchPublicHttpUrlOnce(
+        currentUrl,
+        options.publicHttpOptions,
+        {
+          method,
+          headers,
+          body: requestBody,
+          signal,
+          redirect: "manual",
+        },
+      ),
+      signal,
+    );
+    const { response } = fetched;
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      await cancelPluginFetchResponse(response);
+      if (!location) {
+        return {
+          status: response.status,
+          statusText: response.statusText,
+          headers: pluginFetchHeaders(response),
+          body: "",
+        };
+      }
+      if (redirectCount === maxRedirects) {
+        throw new Error("Plugin HTTP redirect limit exceeded");
+      }
+
+      const nextUrl = new URL(location, fetched.url);
+      if (nextUrl.origin !== fetched.url.origin) {
+        headers = new Headers(headers);
+        stripCrossOriginSensitiveHeaders(headers);
+      }
+      if (response.status === 303 || ((response.status === 301 || response.status === 302) && method === "POST")) {
+        method = "GET";
+        requestBody = undefined;
+        headers.delete("content-length");
+        headers.delete("content-type");
+        headers.delete("transfer-encoding");
+      }
+      currentUrl = nextUrl;
+      continue;
+    }
+
+    const body = await racePluginFetchSignal(
+      readBoundedPluginFetchBody(response, maxResponseBytes),
+      signal,
+    );
+    return {
+      status: response.status,
+      statusText: response.statusText,
+      headers: pluginFetchHeaders(response),
+      body,
+    };
+  }
+
+  throw new Error("Plugin HTTP redirect limit exceeded");
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -571,19 +535,10 @@ export function buildHostServices(
 
     http: {
       async fetch(params) {
-        // SSRF protection: validate protocol whitelist + block private IPs.
-        // Resolve once, then connect directly to that IP to prevent DNS rebinding.
-        const target = await validateAndResolveFetchUrl(params.url);
-
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), PLUGIN_FETCH_TIMEOUT_MS);
-
-        try {
-          const init = params.init as RequestInit | undefined;
-          return await executePinnedHttpRequest(target, init, controller.signal);
-        } finally {
-          clearTimeout(timeout);
-        }
+        return fetchPluginHttp({
+          url: params.url,
+          init: params.init as RequestInit | undefined,
+        });
       },
     },
 

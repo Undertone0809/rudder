@@ -6,7 +6,7 @@ import {
   reportIssueCommitSchema,
   updateIssueSchema
 } from "@rudderhq/shared";
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { forbidden, HttpError, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
@@ -17,7 +17,7 @@ import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.
 import { buildIssueReviewWakeupOptions, queueIssueReviewWakeup } from "../services/issue-review-wakeup.js";
 import { publishLiveEvent } from "../services/live-events.js";
 import type { StorageService } from "../storage/types.js";
-import { assertCompanyAccess, getActorInfo } from "./authz.js";
+import { assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
 
 
@@ -39,6 +39,27 @@ const RUN_WORKSPACE_FIELD_ALIASES = [
   ["runWorkspacePreference", "executionWorkspacePreference"],
   ["runWorkspaceSettings", "executionWorkspaceSettings"],
 ] as const;
+
+const AGENT_FORBIDDEN_ISSUE_RUNTIME_FIELDS = [
+  "assigneeAgentRuntimeOverrides",
+  "runWorkspaceSettings",
+  "executionWorkspaceSettings",
+] as const;
+
+function assertAgentIssueRuntimeFieldsAllowed(
+  req: Request,
+  body: Record<string, unknown>,
+) {
+  const blockedFields = AGENT_FORBIDDEN_ISSUE_RUNTIME_FIELDS
+    .filter((field) => Object.prototype.hasOwnProperty.call(body, field));
+  if (blockedFields.length === 0) return;
+  if (req.actor.type === "agent") {
+    throw forbidden(
+      `Agent authentication cannot set issue runtime overrides: ${blockedFields.join(", ")}`,
+    );
+  }
+  assertInstanceAdmin(req);
+}
 
 function mutationValueEquals(a: unknown, b: unknown) {
   return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
@@ -203,6 +224,7 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
   router.post("/orgs/:orgId/issues", validate(createIssueSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
+    assertAgentIssueRuntimeFieldsAllowed(req, req.body as Record<string, unknown>);
     const body = normalizeIssueRunWorkspaceFields(req.body);
     if (body.assigneeAgentId || body.assigneeUserId || body.reviewerAgentId || body.reviewerUserId) {
       await assertCanAssignTasks(req, orgId);
@@ -262,6 +284,7 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
 
   router.patch("/issues/:id", validate(updateIssueSchema), async (req, res) => {
     const id = req.params.id as string;
+    assertAgentIssueRuntimeFieldsAllowed(req, req.body as Record<string, unknown>);
     const body = normalizeIssueRunWorkspaceFields(req.body);
     const existing = await svc.getById(id);
     if (!existing) {

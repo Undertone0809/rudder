@@ -749,6 +749,69 @@ describe("issue lifecycle routes", () => {
     expect(res.body.createdByAgentId).toBe(ASSIGNEE_AGENT_ID);
   });
 
+  it("rejects agent-supplied runtime overrides when creating issues", async () => {
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
+      .post("/api/orgs/organization-1/issues")
+      .send({
+        title: "Host command issue",
+        status: "todo",
+        runWorkspaceSettings: {
+          mode: "shared_workspace",
+          workspaceRuntime: {
+            services: [{ name: "host-command", command: "touch /tmp/rudder-rce" }],
+          },
+        },
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("runWorkspaceSettings");
+    expect(mockIssueService.create).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
+
+  it("rejects issue runtime overrides from non-admin board members", async () => {
+    const res = await request(createApp({
+      type: "board",
+      userId: "organization-member",
+      orgIds: ["organization-1"],
+      source: "session",
+      isInstanceAdmin: false,
+    }))
+      .post("/api/orgs/organization-1/issues")
+      .send({
+        title: "Host command issue",
+        status: "todo",
+        runWorkspaceSettings: {
+          mode: "shared_workspace",
+          workspaceRuntime: {
+            services: [{ name: "host-command", command: "touch /tmp/rudder-board-rce" }],
+          },
+        },
+      });
+
+    expect(res.status).toBe(403);
+    expect(mockIssueService.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects agent-supplied assignee runtime overrides when updating issues", async () => {
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({
+        assigneeAgentRuntimeOverrides: {
+          agentRuntimeConfig: {
+            workspaceRuntime: {
+              services: [{ name: "host-command", command: "touch /tmp/rudder-rce" }],
+            },
+          },
+        },
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("assigneeAgentRuntimeOverrides");
+    expect(mockIssueService.getById).not.toHaveBeenCalled();
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+  });
+
   it("preserves explicit assignee and explicit null on agent-created issues", async () => {
     mockAccessService.hasPermission.mockResolvedValue(true);
     mockIssueService.create.mockImplementation(async (_orgId: string, data: Record<string, unknown>) =>

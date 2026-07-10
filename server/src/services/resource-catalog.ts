@@ -14,7 +14,7 @@ import type {
   UpdateProjectResourceAttachmentRequest,
 } from "@rudderhq/shared";
 import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
-import { badRequest, conflict } from "../errors.js";
+import { badRequest, conflict, unprocessable } from "../errors.js";
 
 function toOrganizationResource(row: typeof organizationResources.$inferSelect): OrganizationResource {
   return {
@@ -145,6 +145,26 @@ async function listOrganizationResourceMap(db: Db, orgId: string, resourceIds: s
   return new Map(rows.map((row) => [row.id, toOrganizationResource(row)]));
 }
 
+async function assertResourcesBelongToOrganization(
+  dbOrTx: Db | any,
+  orgId: string,
+  attachments: ProjectResourceAttachmentInput[],
+) {
+  const resourceIds = [...new Set(attachments.map((attachment) => attachment.resourceId))];
+  if (resourceIds.length === 0) return;
+
+  const resources = await dbOrTx
+    .select({ id: organizationResources.id })
+    .from(organizationResources)
+    .where(and(eq(organizationResources.orgId, orgId), inArray(organizationResources.id, resourceIds)))
+    .then((rows: Array<{ id: string }>) => rows);
+  if (resources.length !== resourceIds.length) {
+    // Keep missing and cross-organization resources indistinguishable so this
+    // endpoint cannot be used to probe resource UUIDs in another organization.
+    throw unprocessable("One or more project resources are invalid for this organization.");
+  }
+}
+
 export async function listProjectResourceAttachments(
   db: Db,
   orgId: string,
@@ -216,6 +236,11 @@ export async function replaceProjectResourceAttachments(
     newResources?: CreateProjectInlineResourceInput[];
   },
 ): Promise<ProjectResourceAttachment[]> {
+  // Validate before creating inline resources or deleting existing attachments.
+  // This makes replacement atomic even when this helper is used without an
+  // explicit surrounding transaction.
+  await assertResourcesBelongToOrganization(dbOrTx, input.orgId, input.attachments);
+
   const createdResourceIds: string[] = [];
 
   for (const inlineResource of input.newResources ?? []) {

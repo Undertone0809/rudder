@@ -18,7 +18,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   promote:
@@ -28,6 +27,8 @@ jobs:
     environment: npm-canary
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:
@@ -37,9 +38,21 @@ jobs:
       - name: Promote dist-tag
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PUBLISH_VERSION: ${{ inputs.version }}
+          DIST_TAG: ${{ inputs.tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          args=(--version "${{ inputs.version }}" --tag "${{ inputs.tag }}")
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
+          if [[ ! "$PUBLISH_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid npm version: $PUBLISH_VERSION" >&2
+            exit 1
+          fi
+          if [[ ! "$DIST_TAG" =~ ^[A-Za-z][A-Za-z0-9._-]*$ ]]; then
+            echo "Invalid npm dist-tag: $DIST_TAG" >&2
+            exit 1
+          fi
+
+          args=(--version "$PUBLISH_VERSION" --tag "$DIST_TAG")
+          if [ "$DRY_RUN" = "true" ]; then
             args+=(--dry-run)
           fi
           node scripts/promote-npm-dist-tag.mjs "${args[@]}"

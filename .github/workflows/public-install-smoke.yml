@@ -41,10 +41,15 @@ jobs:
             runner: macos-14
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:
           node-version: 24
 
       - name: Smoke public npx install
-        run: node scripts/smoke-public-install.mjs --package-spec "${{ inputs.package_spec }}" --repo "${{ inputs.repo }}"
+        env:
+          RUDDER_PUBLIC_INSTALL_PACKAGE_SPEC: ${{ inputs.package_spec }}
+          RUDDER_PUBLIC_INSTALL_RELEASE_REPO: ${{ inputs.repo }}
+        run: node scripts/smoke-public-install.mjs

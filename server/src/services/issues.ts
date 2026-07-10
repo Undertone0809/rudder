@@ -162,6 +162,32 @@ export function issueService(db: Db) {
     await assertIssueUserPrincipal(orgId, userId, "Reviewer");
   }
 
+  async function assertValidProject(orgId: string, projectId: string | null | undefined) {
+    if (!projectId) return;
+    const project = await db
+      .select({ id: projects.id, orgId: projects.orgId })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .then((rows) => rows[0] ?? null);
+    if (!project) throw notFound("Project not found");
+    if (project.orgId !== orgId) {
+      throw unprocessable("Project must belong to same organization");
+    }
+  }
+
+  async function assertValidCreatorAgent(orgId: string, agentId: string | null | undefined) {
+    if (!agentId) return;
+    const creator = await db
+      .select({ id: agents.id, orgId: agents.orgId })
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .then((rows) => rows[0] ?? null);
+    if (!creator) throw notFound("Creator agent not found");
+    if (creator.orgId !== orgId) {
+      throw unprocessable("Creator agent must belong to same organization");
+    }
+  }
+
   async function assertValidProjectWorkspace(orgId: string, projectId: string | null | undefined, projectWorkspaceId: string) {
     // Compatibility guard for legacy issue.projectWorkspaceId references.
     // Project Workspace CRUD is no longer a normal product entry point, but old
@@ -805,6 +831,8 @@ export function issueService(db: Db) {
       if (data.goalId) {
         await assertValidGoal(orgId, data.goalId);
       }
+      await assertValidProject(orgId, issueData.projectId);
+      await assertValidCreatorAgent(orgId, issueData.createdByAgentId);
       const parentIssue = await assertValidParentIssue(orgId, null, issueData.parentId);
       if (issueData.parentId && issueData.projectId === undefined && parentIssue?.projectId) {
         issueData.projectId = parentIssue.projectId;
@@ -959,6 +987,12 @@ export function issueService(db: Db) {
       }
       if (issueData.goalId) {
         await assertValidGoal(existing.orgId, issueData.goalId);
+      }
+      if (issueData.projectId) {
+        await assertValidProject(existing.orgId, issueData.projectId);
+      }
+      if (issueData.createdByAgentId) {
+        await assertValidCreatorAgent(existing.orgId, issueData.createdByAgentId);
       }
       const projectChanged = issueData.projectId !== undefined && issueData.projectId !== existing.projectId;
       if (projectChanged) {

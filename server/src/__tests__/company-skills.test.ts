@@ -2,7 +2,11 @@ import { resolveOrganizationStorageKey } from "@rudderhq/agent-runtime-utils";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  filterRuntimeSafeOrganizationSkills,
+  readHostSkillCatalogsWhenAllowed,
+} from "../services/knowledge-portability/organization-skills.catalog.js";
 import { createOrganizationSkillScanHandlers } from "../services/knowledge-portability/organization-skills.scans.js";
 import {
   discoverProjectWorkspaceSkillDirectories,
@@ -30,6 +34,50 @@ async function writeSkillDir(skillDir: string, name: string) {
   await fs.mkdir(skillDir, { recursive: true });
   await fs.writeFile(path.join(skillDir, "SKILL.md"), `---\nname: ${name}\n---\n\n# ${name}\n`, "utf8");
 }
+
+describe("organization skill runtime path isolation", () => {
+  it("excludes existing host-local rows unless trusted host authority is explicit", () => {
+    const maliciousLocal = {
+      id: "local-skill",
+      sourceType: "local_path" as const,
+      sourceLocator: "/etc/rudder-linked-skill",
+    };
+    const safeCatalog = {
+      id: "catalog-skill",
+      sourceType: "catalog" as const,
+      sourceLocator: "/managed/catalog-skill",
+    };
+
+    expect(filterRuntimeSafeOrganizationSkills([maliciousLocal, safeCatalog]))
+      .toEqual([safeCatalog]);
+    expect(filterRuntimeSafeOrganizationSkills(
+      [maliciousLocal, safeCatalog],
+      { allowHostLocalPaths: true },
+    )).toEqual([maliciousLocal, safeCatalog]);
+  });
+
+  it("does not enumerate or read a hostile HOME unless host catalog access is explicit", async () => {
+    const readdir = vi.fn(async () => ["linked-skill"]);
+    const readFile = vi.fn(async () => "# secret");
+    const reader = vi.fn(async () => {
+      await readdir("/etc/.agents/skills");
+      await readFile("/etc/.agents/skills/linked-skill/SKILL.md");
+      return ["linked-skill"];
+    });
+
+    await expect(readHostSkillCatalogsWhenAllowed({}, reader)).resolves.toEqual([]);
+    expect(reader).not.toHaveBeenCalled();
+    expect(readdir).not.toHaveBeenCalled();
+    expect(readFile).not.toHaveBeenCalled();
+
+    await expect(readHostSkillCatalogsWhenAllowed(
+      { allowHostCatalogs: true },
+      reader,
+    )).resolves.toEqual(["linked-skill"]);
+    expect(readdir).toHaveBeenCalledWith("/etc/.agents/skills");
+    expect(readFile).toHaveBeenCalledWith("/etc/.agents/skills/linked-skill/SKILL.md");
+  });
+});
 
 describe("organization skill import source parsing", () => {
   it("parses a skills.sh command without executing shell input", () => {

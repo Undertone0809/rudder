@@ -1,5 +1,8 @@
 FROM node:lts-trixie-slim
 
+ARG CLAUDE_CODE_VERSION=2.1.206
+ARG CODEX_VERSION=0.144.1
+
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     bash \
@@ -18,7 +21,9 @@ RUN apt-get update \
 RUN ln -sf /usr/bin/fdfind /usr/local/bin/fd
 
 RUN corepack enable \
-  && npm install --global --omit=dev @anthropic-ai/claude-code@latest @openai/codex@latest
+  && npm install --global --omit=dev \
+    "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    "@openai/codex@${CODEX_VERSION}"
 
 RUN useradd --create-home --shell /bin/bash reviewer
 

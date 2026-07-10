@@ -42,6 +42,17 @@ export function approvalService(db: Db) {
     return existing;
   }
 
+  async function assertHireAgentTargetScope(approval: ApprovalRecord) {
+    if (approval.type !== "hire_agent") return;
+    const payload = approval.payload as Record<string, unknown>;
+    const payloadAgentId = typeof payload.agentId === "string" ? payload.agentId : null;
+    if (!payloadAgentId) return;
+    const targetAgent = await agentsSvc.getById(payloadAgentId);
+    if (!targetAgent || targetAgent.orgId !== approval.orgId) {
+      throw unprocessable("Hire approval target agent must belong to the approval organization");
+    }
+  }
+
   async function resolveApproval(
     id: string,
     targetStatus: "approved" | "rejected",
@@ -115,6 +126,11 @@ export function approvalService(db: Db) {
       decisionNote?: string | null,
       payloadOverride?: Record<string, unknown>,
     ) => {
+      const existing = await getExistingApproval(id);
+      await assertHireAgentTargetScope({
+        ...existing,
+        ...(payloadOverride ? { payload: payloadOverride } : {}),
+      });
       const { approval: updated, applied } = await resolveApproval(
         id,
         "approved",
@@ -185,6 +201,7 @@ export function approvalService(db: Db) {
     },
 
     reject: async (id: string, decidedByUserId: string, decisionNote?: string | null) => {
+      await assertHireAgentTargetScope(await getExistingApproval(id));
       const { approval: updated, applied } = await resolveApproval(
         id,
         "rejected",

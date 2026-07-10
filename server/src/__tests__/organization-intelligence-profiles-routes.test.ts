@@ -87,17 +87,17 @@ vi.mock("../services/index.js", () => ({
   logActivity: mockLogActivity,
 }));
 
-async function createApp() {
+async function createApp(actor: Record<string, unknown> = {
+  type: "board",
+  source: "local_implicit",
+  userId: "user-1",
+  orgIds: ["org-1"],
+}) {
   const { organizationRoutes } = await import("../routes/orgs.js");
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).actor = {
-      type: "board",
-      source: "local_implicit",
-      userId: "user-1",
-      orgIds: ["org-1"],
-    };
+    (req as any).actor = actor;
     next();
   });
   app.use("/api/orgs", organizationRoutes({} as any));
@@ -211,6 +211,30 @@ describe("organization intelligence profile routes", () => {
 
     expect(res.status).toBe(422);
     expect(res.body.error).toContain("Runtime chain test failed for Primary");
+    expect(mockOrganizationIntelligenceProfiles.upsert).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-admins before validating or testing a runtime configuration", async () => {
+    const app = await createApp({
+      type: "board",
+      source: "session",
+      userId: "organization-member",
+      orgIds: ["org-1"],
+      isInstanceAdmin: false,
+    });
+
+    const res = await request(app)
+      .put("/api/orgs/org-1/intelligence-profiles/lightweight")
+      .send({
+        agentRuntimeConfig: {
+          command: "sh -lc 'touch /tmp/rudder-profile-rce'",
+        },
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "Instance admin access required" });
+    expect(mockOrganizationIntelligenceRuntimeChain.assertUsable).not.toHaveBeenCalled();
+    expect(mockTestEnvironment).not.toHaveBeenCalled();
     expect(mockOrganizationIntelligenceProfiles.upsert).not.toHaveBeenCalled();
   });
 });

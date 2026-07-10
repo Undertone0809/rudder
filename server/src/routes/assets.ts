@@ -1,86 +1,20 @@
 import type { Db } from "@rudderhq/db";
 import { createAssetImageMetadataSchema } from "@rudderhq/shared";
-import createDOMPurify from "dompurify";
 import { Router, type Request, type Response } from "express";
-import { JSDOM } from "jsdom";
 import multer from "multer";
-import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
+import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
+import { buildContentResponsePolicy } from "../content-response-policy.js";
 import { assetService, logActivity } from "../services/index.js";
 import type { StorageService } from "../storage/types.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
-const SVG_CONTENT_TYPE = "image/svg+xml";
-const ALLOWED_COMPANY_LOGO_CONTENT_TYPES = new Set([
+
+const SAFE_RASTER_IMAGE_CONTENT_TYPES = new Set([
   "image/png",
   "image/jpeg",
   "image/jpg",
   "image/webp",
   "image/gif",
-  SVG_CONTENT_TYPE,
 ]);
-
-function sanitizeSvgBuffer(input: Buffer): Buffer | null {
-  const raw = input.toString("utf8").trim();
-  if (!raw) return null;
-
-  const baseDom = new JSDOM("");
-  const domPurify = createDOMPurify(
-    baseDom.window as unknown as Parameters<typeof createDOMPurify>[0],
-  );
-  domPurify.addHook("uponSanitizeAttribute", (_node, data) => {
-    const attrName = data.attrName.toLowerCase();
-    const attrValue = (data.attrValue ?? "").trim();
-
-    if (attrName.startsWith("on")) {
-      data.keepAttr = false;
-      return;
-    }
-
-    if ((attrName === "href" || attrName === "xlink:href") && attrValue && !attrValue.startsWith("#")) {
-      data.keepAttr = false;
-    }
-  });
-
-  let parsedDom: JSDOM | null = null;
-  try {
-    const sanitized = domPurify.sanitize(raw, {
-      USE_PROFILES: { svg: true, svgFilters: true, html: false },
-      FORBID_TAGS: ["script", "foreignObject"],
-      FORBID_CONTENTS: ["script", "foreignObject"],
-      RETURN_TRUSTED_TYPE: false,
-    });
-
-    parsedDom = new JSDOM(sanitized, { contentType: SVG_CONTENT_TYPE });
-    const document = parsedDom.window.document;
-    const root = document.documentElement;
-    if (!root || root.tagName.toLowerCase() !== "svg") return null;
-
-    for (const el of Array.from(root.querySelectorAll("script, foreignObject"))) {
-      el.remove();
-    }
-    for (const el of Array.from(root.querySelectorAll("*"))) {
-      for (const attr of Array.from(el.attributes)) {
-        const attrName = attr.name.toLowerCase();
-        const attrValue = attr.value.trim();
-        if (attrName.startsWith("on")) {
-          el.removeAttribute(attr.name);
-          continue;
-        }
-        if ((attrName === "href" || attrName === "xlink:href") && attrValue && !attrValue.startsWith("#")) {
-          el.removeAttribute(attr.name);
-        }
-      }
-    }
-
-    const output = root.outerHTML.trim();
-    if (!output || !/^<svg[\s>]/i.test(output)) return null;
-    return Buffer.from(output, "utf8");
-  } catch {
-    return null;
-  } finally {
-    parsedDom?.window.close();
-    baseDom.window.close();
-  }
-}
 
 export function assetRoutes(db: Db, storage: StorageService) {
   const router = Router();
@@ -139,19 +73,11 @@ export function assetRoutes(db: Db, storage: StorageService) {
 
     const namespaceSuffix = parsedMeta.data.namespace ?? "general";
     const contentType = (file.mimetype || "").toLowerCase();
-    if (contentType !== SVG_CONTENT_TYPE && !isAllowedContentType(contentType)) {
+    if (!SAFE_RASTER_IMAGE_CONTENT_TYPES.has(contentType)) {
       res.status(422).json({ error: `Unsupported file type: ${contentType || "unknown"}` });
       return;
     }
-    let fileBody = file.buffer;
-    if (contentType === SVG_CONTENT_TYPE) {
-      const sanitized = sanitizeSvgBuffer(file.buffer);
-      if (!sanitized || sanitized.length <= 0) {
-        res.status(422).json({ error: "SVG could not be sanitized" });
-        return;
-      }
-      fileBody = sanitized;
-    }
+    const fileBody = file.buffer;
     if (fileBody.length <= 0) {
       res.status(422).json({ error: "Image is empty" });
       return;
@@ -235,20 +161,12 @@ export function assetRoutes(db: Db, storage: StorageService) {
     }
 
     const contentType = (file.mimetype || "").toLowerCase();
-    if (!ALLOWED_COMPANY_LOGO_CONTENT_TYPES.has(contentType)) {
+    if (!SAFE_RASTER_IMAGE_CONTENT_TYPES.has(contentType)) {
       res.status(422).json({ error: `Unsupported image type: ${contentType || "unknown"}` });
       return;
     }
 
-    let fileBody = file.buffer;
-    if (contentType === SVG_CONTENT_TYPE) {
-      const sanitized = sanitizeSvgBuffer(file.buffer);
-      if (!sanitized || sanitized.length <= 0) {
-        res.status(422).json({ error: "SVG could not be sanitized" });
-        return;
-      }
-      fileBody = sanitized;
-    }
+    const fileBody = file.buffer;
 
     if (fileBody.length <= 0) {
       res.status(422).json({ error: "Image is empty" });
@@ -320,15 +238,19 @@ export function assetRoutes(db: Db, storage: StorageService) {
 
     const object = await storage.getObject(asset.orgId, asset.objectKey);
     const responseContentType = asset.contentType || object.contentType || "application/octet-stream";
+    const responsePolicy = buildContentResponsePolicy(
+      responseContentType,
+      asset.originalFilename ?? "asset",
+      "asset",
+    );
     res.setHeader("Content-Type", responseContentType);
     res.setHeader("Content-Length", String(asset.byteSize || object.contentLength || 0));
     res.setHeader("Cache-Control", "private, max-age=60");
     res.setHeader("X-Content-Type-Options", "nosniff");
-    if (responseContentType === SVG_CONTENT_TYPE) {
-      res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'");
+    if (responsePolicy.contentSecurityPolicy) {
+      res.setHeader("Content-Security-Policy", responsePolicy.contentSecurityPolicy);
     }
-    const filename = asset.originalFilename ?? "asset";
-    res.setHeader("Content-Disposition", `inline; filename=\"${filename.replaceAll("\"", "")}\"`);
+    res.setHeader("Content-Disposition", responsePolicy.contentDisposition);
 
     object.stream.on("error", (err) => {
       next(err);

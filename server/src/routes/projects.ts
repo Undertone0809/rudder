@@ -7,15 +7,23 @@ import {
   updateProjectSchema,
 } from "@rudderhq/shared";
 import { Router, type Request } from "express";
-import { conflict } from "../errors.js";
+import { conflict, forbidden } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import { logActivity, projectService, resourceCatalogService } from "../services/index.js";
-import { assertCompanyAccess, getActorInfo } from "./authz.js";
+import { assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 
 export function projectRoutes(db: Db) {
   const router = Router();
   const svc = projectService(db);
   const resources = resourceCatalogService(db);
+
+  function assertAgentProjectPolicyAllowed(req: Request, body: Record<string, unknown>) {
+    if (!Object.prototype.hasOwnProperty.call(body, "executionWorkspacePolicy")) return;
+    if (req.actor.type === "agent") {
+      throw forbidden("Agent authentication cannot set project execution workspace policy");
+    }
+    assertInstanceAdmin(req);
+  }
 
   async function resolveOrgIdForProjectReference(req: Request) {
     const orgIdQuery = req.query.orgId;
@@ -85,6 +93,7 @@ export function projectRoutes(db: Db) {
   router.post("/orgs/:orgId/projects", validate(createProjectSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
+    assertAgentProjectPolicyAllowed(req, req.body as Record<string, unknown>);
     // Legacy project workspace creation used a nested `workspace` body. Current
     // project creation ignores that old shape; workspaces are resolved through
     // organization Library/codebase and run workspace paths.
@@ -118,6 +127,7 @@ export function projectRoutes(db: Db) {
       return;
     }
     assertCompanyAccess(req, existing.orgId);
+    assertAgentProjectPolicyAllowed(req, req.body as Record<string, unknown>);
     const body = { ...req.body };
     if (typeof body.archivedAt === "string") {
       body.archivedAt = new Date(body.archivedAt);

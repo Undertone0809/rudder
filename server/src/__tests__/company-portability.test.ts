@@ -1906,17 +1906,8 @@ describe("organization portability", () => {
     });
   });
 
-  it("copies source organization memberships for safe new-organization imports", async () => {
+  it("rejects agent imports through safe portability routes", async () => {
     const portability = organizationPortabilityService({} as any);
-
-    companySvc.create.mockResolvedValue({
-      id: "organization-imported",
-      name: "Imported Rudder",
-    });
-    agentSvc.create.mockResolvedValue({
-      id: "agent-created",
-      name: "ClaudeCoder",
-    });
 
     const exported = await portability.exportBundle("organization-1", {
       include: {
@@ -1929,36 +1920,136 @@ describe("organization portability", () => {
 
     agentSvc.list.mockResolvedValue([]);
 
-    await portability.importBundle({
-      source: {
-        type: "inline",
-        rootPath: exported.rootPath,
-        files: exported.files,
-      },
-      include: {
-        organization: true,
-        agents: true,
-        projects: false,
-        issues: false,
-      },
-      target: {
-        mode: "new_organization",
-        newOrganizationName: "Imported Rudder",
-      },
-      agents: "all",
-      collisionStrategy: "rename",
-    }, null, {
-      mode: "agent_safe",
-      sourceOrganizationId: "organization-1",
-    });
+    await expect(portability.importBundle({
+        source: {
+          type: "inline",
+          rootPath: exported.rootPath,
+          files: exported.files,
+        },
+        include: {
+          organization: true,
+          agents: true,
+          projects: false,
+          issues: false,
+        },
+        target: {
+          mode: "new_organization",
+          newOrganizationName: "Imported Rudder",
+        },
+        agents: "all",
+        collisionStrategy: "rename",
+      }, null, {
+        mode: "agent_safe",
+        sourceOrganizationId: "organization-1",
+      })).rejects.toThrow("Safe import routes do not allow importing agents");
 
-    expect(accessSvc.listActiveUserMemberships).toHaveBeenCalledWith("organization-1");
-    expect(accessSvc.copyActiveUserMemberships).toHaveBeenCalledWith("organization-1", "organization-imported");
-    expect(accessSvc.ensureMembership).not.toHaveBeenCalledWith("organization-imported", "user", expect.anything(), "owner", "active");
-    const textOnlyFiles = Object.fromEntries(Object.entries(exported.files).filter(([, v]) => typeof v === "string"));
-    expect(organizationSkillSvc.importPackageFiles).toHaveBeenCalledWith("organization-imported", textOnlyFiles, {
-      onConflict: "rename",
+    expect(companySvc.create).not.toHaveBeenCalled();
+    expect(agentSvc.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects execution-sensitive project and issue data through safe portability routes", async () => {
+    const portability = organizationPortabilityService({} as any);
+    const target = { mode: "existing_organization" as const, orgId: "organization-1" };
+
+    projectSvc.list.mockResolvedValue([{
+      id: "project-1",
+      name: "Unsafe Project",
+      urlKey: "unsafe-project",
+      description: null,
+      leadAgentId: null,
+      targetDate: null,
+      color: null,
+      status: "planned",
+      executionWorkspacePolicy: {
+        enabled: true,
+        workspaceStrategy: {
+          type: "git_worktree",
+          provisionCommand: "touch /tmp/rudder-rce",
+        },
+      },
+      workspaces: [],
+      archivedAt: null,
+    }]);
+    const policyExport = await portability.exportBundle("organization-1", {
+      include: { organization: false, agents: false, projects: true, issues: false },
     });
+    await expect(portability.previewImport({
+      source: { type: "inline", rootPath: policyExport.rootPath, files: policyExport.files },
+      include: { organization: false, agents: false, projects: true, issues: false },
+      target,
+      collisionStrategy: "rename",
+    }, { mode: "agent_safe", sourceOrganizationId: "organization-1" }))
+      .rejects.toThrow("do not allow project executionWorkspacePolicy");
+
+    projectSvc.list.mockResolvedValue([{
+      id: "project-1",
+      name: "Workspace Commands",
+      urlKey: "workspace-commands",
+      description: null,
+      leadAgentId: null,
+      targetDate: null,
+      color: null,
+      status: "planned",
+      executionWorkspacePolicy: null,
+      workspaces: [{
+        id: "workspace-1",
+        orgId: "organization-1",
+        projectId: "project-1",
+        name: "Main",
+        sourceType: "git_repo",
+        cwd: null,
+        repoUrl: "https://github.com/example/repo.git",
+        repoRef: "main",
+        defaultRef: "main",
+        visibility: "default",
+        setupCommand: "id",
+        cleanupCommand: null,
+        metadata: null,
+        isPrimary: true,
+      }],
+      archivedAt: null,
+    }]);
+    const commandExport = await portability.exportBundle("organization-1", {
+      include: { organization: false, agents: false, projects: true, issues: false },
+    });
+    await expect(portability.previewImport({
+      source: { type: "inline", rootPath: commandExport.rootPath, files: commandExport.files },
+      include: { organization: false, agents: false, projects: true, issues: false },
+      target,
+      collisionStrategy: "rename",
+    }, { mode: "agent_safe", sourceOrganizationId: "organization-1" }))
+      .rejects.toThrow("do not allow workspace setup/cleanup commands");
+
+    projectSvc.list.mockResolvedValue([]);
+    issueSvc.list.mockResolvedValue([{
+      id: "issue-1",
+      identifier: "PAP-1",
+      title: "Unsafe Issue",
+      description: null,
+      projectId: null,
+      projectWorkspaceId: null,
+      assigneeAgentId: null,
+      status: "todo",
+      priority: "medium",
+      labelIds: [],
+      billingCode: null,
+      executionWorkspaceSettings: {
+        workspaceRuntime: {
+          services: [{ name: "host-command", command: "touch /tmp/rudder-rce" }],
+        },
+      },
+      assigneeAgentRuntimeOverrides: null,
+    }]);
+    const issueExport = await portability.exportBundle("organization-1", {
+      include: { organization: false, agents: false, projects: false, issues: true },
+    });
+    await expect(portability.previewImport({
+      source: { type: "inline", rootPath: issueExport.rootPath, files: issueExport.files },
+      include: { organization: false, agents: false, projects: false, issues: true },
+      target,
+      collisionStrategy: "rename",
+    }, { mode: "agent_safe", sourceOrganizationId: "organization-1" }))
+      .rejects.toThrow("do not allow issue runtime overrides");
   });
 
   it("disables timer heartbeats on imported agents", async () => {

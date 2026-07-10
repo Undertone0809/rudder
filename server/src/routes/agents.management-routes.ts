@@ -19,7 +19,7 @@ import { Router, type Request } from "express";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
 import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
-import { notFound } from "../errors.js";
+import { conflict, forbidden, notFound } from "../errors.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { validate } from "../middleware/validate.js";
 import { redactEventPayload } from "../redaction.js";
@@ -31,7 +31,13 @@ import {
   syncInstructionsBundleConfigFromFilePath
 } from "../services/index.js";
 import type { StorageService } from "../storage/types.js";
-import { assertBoard, assertCompanyAccess, getActorInfo, getAuthorizedOrgScope } from "./authz.js";
+import {
+  assertBoard,
+  assertCompanyAccess,
+  assertInstanceAdmin,
+  getActorInfo,
+  getAuthorizedOrgScope,
+} from "./authz.js";
 
 type AgentManagementRouteContext = {
   router: Router;
@@ -74,6 +80,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     parseSourceIssueIds,
     applyCreateDefaultsByAdapterType,
     resolveDesiredSkillAssignment,
+    assertAdapterConfigShape,
     assertAdapterConfigConstraints,
     assertAgentAvatarAssetBelongsToOrg,
     materializeDefaultInstructionsBundleForNewAgent,
@@ -84,6 +91,9 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     AGENT_AVATAR_CONTENT_TYPES,
     compressAgentAvatar,
     assertCanManageInstructionsPath,
+    assertCanAccessInstructionsFile,
+    isCanonicalManagedInstructionsRoot,
+    isCanonicalManagedInstructionsConfig,
     asRecord,
     asNonEmptyString,
     resolveInstructionsFilePath,
@@ -98,6 +108,59 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     KNOWN_INSTRUCTIONS_PATH_KEYS,
     KNOWN_INSTRUCTIONS_BUNDLE_KEYS,
   } = ctx;
+
+  const AGENT_PROFILE_PATCH_FIELDS = new Set([
+    "name",
+    "title",
+    "icon",
+    "capabilities",
+  ]);
+
+  function assertAgentProfilePatch(req: Request) {
+    if (req.actor.type !== "agent") return;
+    const blockedFields = Object.keys(req.body as Record<string, unknown>)
+      .filter((field) => !AGENT_PROFILE_PATCH_FIELDS.has(field))
+      .sort();
+    if (blockedFields.length === 0) return;
+    throw forbidden(
+      `Agent authentication can only update profile fields; blocked fields: ${blockedFields.join(", ")}`,
+    );
+  }
+
+  function isNonEmptyRecord(value: unknown) {
+    return typeof value === "object"
+      && value !== null
+      && !Array.isArray(value)
+      && Object.keys(value as Record<string, unknown>).length > 0;
+  }
+
+  function selectsHostRuntimeConfiguration(input: {
+    agentRuntimeType?: unknown;
+    agentRuntimeConfig?: unknown;
+    runtimeConfig?: unknown;
+  }) {
+    return (
+      (typeof input.agentRuntimeType === "string" && input.agentRuntimeType !== "process")
+      || isNonEmptyRecord(input.agentRuntimeConfig)
+      || isNonEmptyRecord(input.runtimeConfig)
+    );
+  }
+
+  function assertCanSelectHostRuntimeConfiguration(req: Request, input: {
+    agentRuntimeType?: unknown;
+    agentRuntimeConfig?: unknown;
+    runtimeConfig?: unknown;
+  }) {
+    if (selectsHostRuntimeConfiguration(input)) assertInstanceAdmin(req);
+  }
+
+  async function getAuthorizedBoardAgent(req: Request, id: string) {
+    assertBoard(req);
+    const agent = await svc.getById(id);
+    if (!agent) throw notFound("Agent not found");
+    assertCompanyAccess(req, agent.orgId);
+    return agent;
+  }
 
   async function ensureFirstAgentIntelligenceDefaults(
     orgId: string,
@@ -147,22 +210,20 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       orgId,
       normalizedAdapterConfig,
     );
+    assertAdapterConfigShape(hireInput.agentRuntimeType, runtimeAdapterConfig);
     const desiredSkillAssignment = await resolveDesiredSkillAssignment(
+      req,
       orgId,
       hireInput.agentRuntimeType,
       runtimeAdapterConfig,
       Array.isArray(requestedDesiredSkills) ? requestedDesiredSkills : undefined,
-    );
-    await assertAdapterConfigConstraints(
-      orgId,
-      hireInput.agentRuntimeType,
-      normalizedAdapterConfig,
     );
     const normalizedHireInput = {
       ...hireInput,
       icon: normalizeCreatedAgentAvatarIcon(hireInput.icon),
       agentRuntimeConfig: normalizedAdapterConfig,
     };
+    const hireSelectsHostRuntime = selectsHostRuntimeConfiguration(normalizedHireInput);
     await assertAgentAvatarAssetBelongsToOrg(orgId, normalizedHireInput.icon);
 
     const organization = await db
@@ -175,8 +236,26 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       return;
     }
 
-    const requiresApproval = organization.requireBoardApprovalForNewAgents;
+    // Agent-initiated hires always require a human decision. Otherwise an
+    // agent with creation permission can materialize a new runtime before the
+    // board has reviewed its execution-sensitive configuration.
+    const requiresApproval =
+      req.actor.type === "agent"
+      || organization.requireBoardApprovalForNewAgents
+      || (
+        hireSelectsHostRuntime
+        && req.actor.type === "board"
+        && req.actor.source !== "local_implicit"
+        && !req.actor.isInstanceAdmin
+      );
     const status = requiresApproval ? "pending_approval" : "idle";
+    if (!requiresApproval) {
+      await assertAdapterConfigConstraints(
+        orgId,
+        hireInput.agentRuntimeType,
+        normalizedAdapterConfig,
+      );
+    }
     const createdAgent = await svc.create(orgId, {
       ...normalizedHireInput,
       status,
@@ -326,6 +405,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       createInput.agentRuntimeType,
       ((createInput.agentRuntimeConfig ?? {}) as Record<string, unknown>),
     );
+    assertCanSelectHostRuntimeConfiguration(req, createInput);
     const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
       orgId,
       stripPersistedSkillSyncConfig(requestedAdapterConfig),
@@ -336,6 +416,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       normalizedAdapterConfig,
     );
     const desiredSkillAssignment = await resolveDesiredSkillAssignment(
+      req,
       orgId,
       createInput.agentRuntimeType,
       runtimeAdapterConfig,
@@ -552,6 +633,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   router.patch("/agents/:id/instructions-path", validate(updateAgentInstructionsPathSchema), async (req, res) => {
+    assertInstanceAdmin(req);
     const id = req.params.id as string;
     const existing = await svc.getInternalById(id);
     if (!existing) {
@@ -636,11 +718,12 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       res.status(404).json({ error: "Agent not found" });
       return;
     }
-    await assertCanReadAgent(req, existing);
+    await assertCanAccessInstructionsFile(req, existing);
     res.json(await instructions.getBundle(existing));
   });
 
   router.patch("/agents/:id/instructions-bundle", validate(updateAgentInstructionsBundleSchema), async (req, res) => {
+    assertBoard(req);
     const id = req.params.id as string;
     const existing = await svc.getInternalById(id);
     if (!existing) {
@@ -648,6 +731,16 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       return;
     }
     await assertCanManageInstructionsPath(req, existing);
+    if (
+      !isCanonicalManagedInstructionsConfig(existing)
+      || req.body.mode === "external"
+      || (
+        typeof req.body.rootPath === "string"
+        && !isCanonicalManagedInstructionsRoot(existing, req.body.rootPath)
+      )
+    ) {
+      assertInstanceAdmin(req);
+    }
 
     const actor = getActorInfo(req);
     const { bundle, agentRuntimeConfig } = await instructions.updateBundle(existing, req.body);
@@ -695,7 +788,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       res.status(404).json({ error: "Agent not found" });
       return;
     }
-    await assertCanReadAgent(req, existing);
+    await assertCanAccessInstructionsFile(req, existing);
 
     const relativePath = typeof req.query.path === "string" ? req.query.path : "";
     if (!relativePath.trim()) {
@@ -713,6 +806,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       return;
     }
     await assertCanManageInstructionsPath(req, existing);
+    await assertCanAccessInstructionsFile(req, existing);
 
     const actor = getActorInfo(req);
     const result = await instructions.writeFile(existing, req.body.path, req.body.content, {
@@ -762,6 +856,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       return;
     }
     await assertCanManageInstructionsPath(req, existing);
+    await assertCanAccessInstructionsFile(req, existing);
 
     const relativePath = typeof req.query.path === "string" ? req.query.path : "";
     if (!relativePath.trim()) {
@@ -811,7 +906,19 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       res.status(404).json({ error: "Agent not found" });
       return;
     }
+    assertAgentProfilePatch(req);
     await assertCanUpdateAgent(req, existing);
+    if (req.actor.type === "board") {
+      assertCanSelectHostRuntimeConfiguration(req, req.body as Record<string, unknown>);
+      if (
+        existing.status === "pending_approval"
+        && typeof req.body.status === "string"
+        && req.body.status !== "pending_approval"
+        && selectsHostRuntimeConfiguration(existing)
+      ) {
+        assertInstanceAdmin(req);
+      }
+    }
 
     if (Object.prototype.hasOwnProperty.call(req.body, "permissions")) {
       res.status(422).json({ error: "Use /api/agents/:id/permissions for permission changes" });
@@ -871,6 +978,16 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
         requestedAdapterType,
         rawEffectiveAdapterConfig,
       );
+      if (
+        req.actor.type === "board"
+        && Object.prototype.hasOwnProperty.call(patchData, "agentRuntimeType")
+        && isNonEmptyRecord(effectiveAdapterConfig)
+      ) {
+        assertInstanceAdmin(req);
+      }
+      if (!isCanonicalManagedInstructionsConfig(existing, effectiveAdapterConfig)) {
+        assertInstanceAdmin(req);
+      }
       const normalizedEffectiveAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
         existing.orgId,
         effectiveAdapterConfig,
@@ -922,8 +1039,8 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   router.post("/agents/:id/pause", async (req, res) => {
-    assertBoard(req);
     const id = req.params.id as string;
+    await getAuthorizedBoardAgent(req, id);
     const agent = await svc.pause(id);
     if (!agent) {
       res.status(404).json({ error: "Agent not found" });
@@ -945,8 +1062,8 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   router.post("/agents/:id/resume", async (req, res) => {
-    assertBoard(req);
     const id = req.params.id as string;
+    await getAuthorizedBoardAgent(req, id);
     const agent = await svc.resume(id);
     if (!agent) {
       res.status(404).json({ error: "Agent not found" });
@@ -968,8 +1085,8 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   router.post("/agents/:id/terminate", async (req, res) => {
-    assertBoard(req);
     const id = req.params.id as string;
+    await getAuthorizedBoardAgent(req, id);
     const agent = await svc.terminate(id);
     if (!agent) {
       res.status(404).json({ error: "Agent not found" });
@@ -991,8 +1108,8 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   router.delete("/agents/:id", async (req, res) => {
-    assertBoard(req);
     const id = req.params.id as string;
+    await getAuthorizedBoardAgent(req, id);
     const agent = await svc.remove(id);
     if (!agent) {
       res.status(404).json({ error: "Agent not found" });
@@ -1012,36 +1129,39 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   router.get("/agents/:id/keys", async (req, res) => {
-    assertBoard(req);
     const id = req.params.id as string;
+    await getAuthorizedBoardAgent(req, id);
     const keys = await svc.listKeys(id);
     res.json(keys);
   });
 
   router.post("/agents/:id/keys", validate(createAgentKeySchema), async (req, res) => {
-    assertBoard(req);
     const id = req.params.id as string;
+    const agent = await getAuthorizedBoardAgent(req, id);
     const key = await svc.createApiKey(id, req.body.name);
 
-    const agent = await svc.getById(id);
-    if (agent) {
-      await logActivity(db, {
-        orgId: agent.orgId,
-        actorType: "user",
-        actorId: req.actor.userId ?? "board",
-        action: "agent.key_created",
-        entityType: "agent",
-        entityId: agent.id,
-        details: { keyId: key.id, name: key.name },
-      });
-    }
+    await logActivity(db, {
+      orgId: agent.orgId,
+      actorType: "user",
+      actorId: req.actor.userId ?? "board",
+      action: "agent.key_created",
+      entityType: "agent",
+      entityId: agent.id,
+      details: { keyId: key.id, name: key.name },
+    });
 
     res.status(201).json(key);
   });
 
   router.delete("/agents/:id/keys/:keyId", async (req, res) => {
-    assertBoard(req);
+    const id = req.params.id as string;
+    await getAuthorizedBoardAgent(req, id);
     const keyId = req.params.keyId as string;
+    const keys = await svc.listKeys(id);
+    if (!keys.some((key: { id: string }) => key.id === keyId)) {
+      res.status(404).json({ error: "Key not found" });
+      return;
+    }
     const revoked = await svc.revokeKey(keyId);
     if (!revoked) {
       res.status(404).json({ error: "Key not found" });
@@ -1150,7 +1270,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   router.post("/agents/:id/claude-login", async (req, res) => {
-    assertBoard(req);
+    assertInstanceAdmin(req);
     const id = req.params.id as string;
     const agent = await svc.getById(id);
     if (!agent) {
@@ -1158,6 +1278,9 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       return;
     }
     assertCompanyAccess(req, agent.orgId);
+    if (agent.status === "pending_approval" || agent.status === "terminated") {
+      throw conflict(`Claude login is unavailable for ${agent.status} agents`);
+    }
     if (agent.agentRuntimeType !== "claude_local") {
       res.status(400).json({ error: "Login is only supported for claude_local agents" });
       return;

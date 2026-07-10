@@ -89,6 +89,7 @@ import {
   stripChatMetadataFromPayload,
   textContains,
   truncatePreview,
+  validateOperationProposalPatch,
   visibleIncomingMessageSql,
   withOperationProposalDecisionState,
   withPersistedTranscript,
@@ -2419,10 +2420,19 @@ export function chatService(db: Db) {
       const decidedAtIso = new Date().toISOString();
 
       if (input.action === "approve") {
+        const validatedPatch = validateOperationProposalPatch(proposal.targetType, proposal.patch);
+        if (
+          proposal.targetType === "agent"
+          && ["agentRuntimeType", "agentRuntimeConfig", "runtimeConfig"].some((key) =>
+            Object.prototype.hasOwnProperty.call(validatedPatch, key)
+          )
+        ) {
+          throw unprocessable("Agent runtime changes require a full approval");
+        }
         if (proposal.targetType === "organization") {
           const updated = await organizationsSvc.update(
             proposal.targetId,
-            proposal.patch as Partial<typeof organizations.$inferInsert> & { logoAssetId?: string | null },
+            validatedPatch as Partial<typeof organizations.$inferInsert> & { logoAssetId?: string | null },
           );
           if (!updated) throw notFound("Organization not found");
           const updatedMessage = await updateMessageStructuredPayload(
@@ -2464,7 +2474,7 @@ export function chatService(db: Db) {
               source: "chat_lightweight_change",
               sourceMessageId: messageId,
               decisionNote,
-              ...proposal.patch,
+              ...validatedPatch,
             },
           });
           return { message: updatedMessage, systemMessage };
@@ -2472,7 +2482,7 @@ export function chatService(db: Db) {
 
         const updated = await agentsSvc.update(
           proposal.targetId,
-          proposal.patch as Partial<typeof agents.$inferInsert>,
+          validatedPatch as Partial<typeof agents.$inferInsert>,
         );
         if (!updated || updated.orgId !== conversation.orgId) {
           throw notFound("Agent not found");
@@ -2515,7 +2525,7 @@ export function chatService(db: Db) {
             source: "chat_lightweight_change",
             sourceMessageId: messageId,
             decisionNote,
-            ...proposal.patch,
+            ...validatedPatch,
           },
         });
         return { message: updatedMessage, systemMessage };
@@ -2566,6 +2576,10 @@ export function chatService(db: Db) {
       const messageId = safeTrim(typeof payload.chatMessageId === "string" ? payload.chatMessageId : null);
       if (!conversationId) {
         throw unprocessable("Chat approval missing chatConversationId");
+      }
+      const approvalConversation = await getConversationOrThrow(conversationId);
+      if (approvalConversation.orgId !== approval.orgId) {
+        throw unprocessable("Chat approval conversation must belong to the approval organization");
       }
 
       if (approval.type === "chat_issue_creation") {
@@ -2655,6 +2669,7 @@ export function chatService(db: Db) {
       if (!proposal) {
         throw unprocessable("Chat operation approval payload was incomplete");
       }
+      const validatedPatch = validateOperationProposalPatch(proposal.targetType, proposal.patch);
 
       if (proposal.targetType === "organization" && proposal.targetId !== approval.orgId) {
         throw unprocessable("Organization approvals can only update the same organization");
@@ -2669,7 +2684,7 @@ export function chatService(db: Db) {
       if (proposal.targetType === "organization") {
         const updated = await organizationsSvc.update(
           proposal.targetId,
-          proposal.patch as Partial<typeof organizations.$inferInsert> & { logoAssetId?: string | null },
+          validatedPatch as Partial<typeof organizations.$inferInsert> & { logoAssetId?: string | null },
         );
         if (!updated) throw notFound("Organization not found");
         await addMessage(conversationId, {
@@ -2691,14 +2706,14 @@ export function chatService(db: Db) {
           action: "organization.updated",
           entityType: "organization",
           entityId: proposal.targetId,
-          details: proposal.patch,
+          details: validatedPatch,
         });
         return updated;
       }
 
       const updated = await agentsSvc.update(
         proposal.targetId,
-        proposal.patch as Partial<typeof agents.$inferInsert>,
+        validatedPatch as Partial<typeof agents.$inferInsert>,
       );
       if (!updated) throw notFound("Agent not found");
       await addMessage(conversationId, {
@@ -2720,7 +2735,7 @@ export function chatService(db: Db) {
         action: "agent.updated",
         entityType: "agent",
         entityId: proposal.targetId,
-        details: proposal.patch,
+        details: validatedPatch,
       });
       return updated;
   }

@@ -16,7 +16,12 @@ import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import { redactEventPayload } from "../redaction.js";
 import {
+  operationProposalFromPayload,
+  validateOperationProposalPatch,
+} from "../services/chats.helpers.js";
+import {
   accessService,
+  agentService,
   approvalService,
   chatService,
   heartbeatService,
@@ -25,7 +30,7 @@ import {
   logActivity,
   secretService,
 } from "../services/index.js";
-import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import {
   wakeIssueAssigneeAfterChatConversion,
   type ChatConvertedIssue,
@@ -149,12 +154,142 @@ export function approvalRoutes(db: Db) {
   const router = Router();
   const svc = approvalService(db);
   const access = accessService(db);
+  const agentsSvc = agentService(db);
   const heartbeat = heartbeatService(db);
   const chatsSvc = chatService(db);
   const issueApprovalsSvc = issueApprovalService(db);
   const issuesSvc = issueService(db);
   const secretsSvc = secretService(db);
   const strictSecretsMode = process.env.RUDDER_SECRETS_STRICT_MODE === "true";
+
+  function asRecord(value: unknown): Record<string, unknown> | null {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+    return value as Record<string, unknown>;
+  }
+
+  async function assertAgentBelongsToApprovalOrganization(
+    orgId: string,
+    agentId: string,
+    label: string,
+  ) {
+    const agent = await agentsSvc.getById(agentId);
+    if (!agent || agent.orgId !== orgId) {
+      throw unprocessable(`${label} must belong to the approval organization`);
+    }
+    return agent;
+  }
+
+  async function assertApprovalAgentReferences(approval: {
+    orgId: string;
+    type: string;
+    payload: Record<string, unknown>;
+    requestedByAgentId?: string | null;
+  }) {
+    if (approval.requestedByAgentId) {
+      await assertAgentBelongsToApprovalOrganization(
+        approval.orgId,
+        approval.requestedByAgentId,
+        "Requesting agent",
+      );
+    }
+    if (approval.type === "chat_issue_creation") {
+      const proposedByAgentId = typeof approval.payload.proposedByAgentId === "string"
+        ? approval.payload.proposedByAgentId.trim()
+        : "";
+      if (proposedByAgentId) {
+        await assertAgentBelongsToApprovalOrganization(
+          approval.orgId,
+          proposedByAgentId,
+          "Proposing agent",
+        );
+      }
+    }
+  }
+
+  async function assertHireApprovalTargetScope(approval: {
+    orgId: string;
+    type: string;
+    payload: Record<string, unknown>;
+  }) {
+    if (approval.type !== "hire_agent") return null;
+    const agentId = typeof approval.payload.agentId === "string"
+      ? approval.payload.agentId.trim()
+      : "";
+    return agentId
+      ? await assertAgentBelongsToApprovalOrganization(approval.orgId, agentId, "Hire approval target agent")
+      : null;
+  }
+
+  async function assertCanApproveHireAgent(req: Request, approval: {
+    id: string;
+    orgId: string;
+    type: string;
+    payload: Record<string, unknown>;
+  }) {
+    if (approval.type !== "hire_agent") return;
+    const payload = asRecord(approval.payload) ?? {};
+    const requestedSnapshot = asRecord(payload.requestedConfigurationSnapshot) ?? {};
+    const persistedAgent = await assertHireApprovalTargetScope(approval);
+    const agentRuntimeConfigs = [
+      asRecord(payload.agentRuntimeConfig),
+      asRecord(requestedSnapshot.agentRuntimeConfig),
+      asRecord(persistedAgent?.agentRuntimeConfig),
+    ].filter((value): value is Record<string, unknown> => value !== null);
+    const runtimeConfigs = [
+      asRecord(payload.runtimeConfig),
+      asRecord(requestedSnapshot.runtimeConfig),
+      asRecord(persistedAgent?.runtimeConfig),
+    ].filter((value): value is Record<string, unknown> => value !== null);
+    const runtimeTypes = [
+      payload.agentRuntimeType,
+      requestedSnapshot.agentRuntimeType,
+      persistedAgent?.agentRuntimeType,
+    ].filter((value): value is string => typeof value === "string");
+
+    if (
+      runtimeTypes.some((runtimeType) => runtimeType !== "process")
+      || [...agentRuntimeConfigs, ...runtimeConfigs].some((config) => Object.keys(config).length > 0)
+    ) {
+      assertInstanceAdmin(req);
+    }
+  }
+
+  function assertCanApproveChatOperation(req: Request, approval: {
+    type: string;
+    payload: Record<string, unknown>;
+  }) {
+    if (approval.type !== "chat_operation") return;
+    const payload = asRecord(approval.payload) ?? {};
+    const proposal = operationProposalFromPayload(
+      asRecord(payload.operationProposal) ?? payload,
+    );
+    if (!proposal) throw unprocessable("Chat operation approval payload was incomplete");
+    const patch = validateOperationProposalPatch(proposal.targetType, proposal.patch);
+    if (
+      proposal.targetType === "agent"
+      && ["agentRuntimeType", "agentRuntimeConfig", "runtimeConfig"].some((key) =>
+        Object.prototype.hasOwnProperty.call(patch, key)
+      )
+    ) {
+      assertInstanceAdmin(req);
+    }
+  }
+
+  async function assertChatApprovalConversationScope(approval: {
+    orgId: string;
+    type: string;
+    payload: Record<string, unknown>;
+  }) {
+    if (approval.type !== "chat_issue_creation" && approval.type !== "chat_operation") return;
+    const conversationId = typeof approval.payload.chatConversationId === "string"
+      ? approval.payload.chatConversationId.trim()
+      : "";
+    if (!conversationId) throw unprocessable("Chat approval missing chatConversationId");
+    const conversation = await chatsSvc.getById(conversationId);
+    if (!conversation || conversation.orgId !== approval.orgId) {
+      throw unprocessable("Chat approval conversation must belong to the approval organization");
+    }
+  }
 
   function proposalAssignsOrReviewsIssue(proposal: Record<string, unknown> | null | undefined) {
     if (!proposal) return false;
@@ -289,12 +424,30 @@ export function approvalRoutes(db: Db) {
         : approvalInput.payload;
 
     const actor = getActorInfo(req);
+    const requestedByAgentId = actor.actorType === "agent"
+      ? actor.actorId
+      : approvalInput.requestedByAgentId ?? null;
+    await assertApprovalAgentReferences({
+      orgId,
+      type: approvalInput.type,
+      payload: normalizedPayload,
+      requestedByAgentId,
+    });
+    await assertHireApprovalTargetScope({
+      orgId,
+      type: approvalInput.type,
+      payload: normalizedPayload,
+    });
+    await assertChatApprovalConversationScope({
+      orgId,
+      type: approvalInput.type,
+      payload: normalizedPayload,
+    });
     const approval = await svc.create(orgId, {
       ...approvalInput,
       payload: normalizedPayload,
       requestedByUserId: actor.actorType === "user" ? actor.actorId : null,
-      requestedByAgentId:
-        approvalInput.requestedByAgentId ?? (actor.actorType === "agent" ? actor.actorId : null),
+      requestedByAgentId,
       status: "pending",
       decisionNote: null,
       decidedByUserId: null,
@@ -355,14 +508,23 @@ export function approvalRoutes(db: Db) {
     assertBoard(req);
     const id = req.params.id as string;
     const pendingApproval = await svc.getById(id);
+    if (!pendingApproval) {
+      res.status(404).json({ error: "Approval not found" });
+      return;
+    }
+    assertCompanyAccess(req, pendingApproval.orgId);
+    await assertApprovalAgentReferences(pendingApproval);
+    await assertCanApproveHireAgent(req, pendingApproval);
+    assertCanApproveChatOperation(req, pendingApproval);
+    await assertChatApprovalConversationScope(pendingApproval);
     const payloadOverride =
-      pendingApproval?.type === "chat_issue_creation"
+      pendingApproval.type === "chat_issue_creation"
       && req.body.payload
       && typeof req.body.payload === "object"
       && !Array.isArray(req.body.payload)
         ? (req.body.payload as Record<string, unknown>)
         : undefined;
-    const approvalForValidation = pendingApproval && payloadOverride
+    const approvalForValidation = payloadOverride
       ? { ...pendingApproval, payload: payloadOverride }
       : pendingApproval;
     if (approvalForValidation?.type === "chat_issue_creation") {
@@ -371,7 +533,7 @@ export function approvalRoutes(db: Db) {
     }
     const { approval, applied } = await svc.approve(
       id,
-      req.body.decidedByUserId ?? "board",
+      req.actor.userId ?? "local-board",
       req.body.decisionNote,
       payloadOverride,
     );
@@ -548,6 +710,7 @@ export function approvalRoutes(db: Db) {
 
       if (approval.requestedByAgentId) {
         try {
+          await assertApprovalAgentReferences(approval);
           const wakeRun = await heartbeat.wakeup(approval.requestedByAgentId, {
             source: "automation",
             triggerDetail: "system",
@@ -616,9 +779,15 @@ export function approvalRoutes(db: Db) {
   router.post("/approvals/:id/reject", validate(resolveApprovalSchema), async (req, res) => {
     assertBoard(req);
     const id = req.params.id as string;
+    const pendingApproval = await svc.getById(id);
+    if (!pendingApproval) {
+      res.status(404).json({ error: "Approval not found" });
+      return;
+    }
+    assertCompanyAccess(req, pendingApproval.orgId);
     const { approval, applied } = await svc.reject(
       id,
-      req.body.decidedByUserId ?? "board",
+      req.actor.userId ?? "local-board",
       req.body.decisionNote,
     );
 
@@ -643,9 +812,15 @@ export function approvalRoutes(db: Db) {
     async (req, res) => {
       assertBoard(req);
       const id = req.params.id as string;
+      const pendingApproval = await svc.getById(id);
+      if (!pendingApproval) {
+        res.status(404).json({ error: "Approval not found" });
+        return;
+      }
+      assertCompanyAccess(req, pendingApproval.orgId);
       const approval = await svc.requestRevision(
         id,
-        req.body.decidedByUserId ?? "board",
+        req.actor.userId ?? "local-board",
         req.body.decisionNote,
       );
 
@@ -686,6 +861,10 @@ export function approvalRoutes(db: Db) {
           )
         : req.body.payload
       : undefined;
+    const nextPayload = normalizedPayload ?? existing.payload;
+    await assertApprovalAgentReferences({ ...existing, payload: nextPayload });
+    await assertHireApprovalTargetScope({ ...existing, payload: nextPayload });
+    await assertChatApprovalConversationScope({ ...existing, payload: nextPayload });
     const approval = await svc.resubmit(id, normalizedPayload);
     const actor = getActorInfo(req);
     await logActivity(db, {

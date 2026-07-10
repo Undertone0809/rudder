@@ -52,7 +52,7 @@
   "dependencies": {
     "@rudderhq/agent-runtime-utils": "workspace:*",
     "picocolors": "^1.1.1",
-    "ws": "^8.20.0"
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^24.12.0",

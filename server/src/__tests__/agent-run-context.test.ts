@@ -152,6 +152,14 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
     });
 
     expect(prepared.runtimeConfig.instructionsFilePath).toBe(instructionsFilePath);
+    expect(mockListRealizedSkillEntriesForAgent).toHaveBeenCalledWith(
+      orgId,
+      "11111111-1111-4111-8111-111111111111",
+      "codex_local",
+      baseConfig,
+      [],
+      { allowHostCatalogs: false, allowHostLocalPaths: false },
+    );
     await expect(fs.stat(instructionsFilePath)).rejects.toThrow();
   });
 
@@ -199,6 +207,7 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
         id: "11111111-1111-4111-8111-111111111111",
         orgId,
         name: "Builder",
+        status: "active",
         workspaceKey,
         agentRuntimeType: "codex_local",
         agentRuntimeConfig: materializedConfig,
@@ -225,6 +234,14 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
       }),
     );
     expect(prepared.runtimeConfig.instructionsFilePath).toBe(expectedInstructionsFilePath);
+    expect(mockListRealizedSkillEntriesForAgent).toHaveBeenLastCalledWith(
+      orgId,
+      "11111111-1111-4111-8111-111111111111",
+      "codex_local",
+      expect.objectContaining({ instructionsFilePath: expectedInstructionsFilePath }),
+      [],
+      { allowHostCatalogs: true, allowHostLocalPaths: false },
+    );
   });
 
   it("does not write per-run baseConfig instruction overrides into the managed bundle", async () => {

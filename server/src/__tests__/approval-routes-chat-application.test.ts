@@ -19,7 +19,12 @@ const mockApprovalService = vi.hoisted(() => ({
   addComment: vi.fn(),
 }));
 
+const mockAgentService = vi.hoisted(() => ({
+  getById: vi.fn(),
+}));
+
 const mockChatService = vi.hoisted(() => ({
+  getById: vi.fn(),
   applyApprovedApproval: vi.fn(),
 }));
 
@@ -48,6 +53,7 @@ const mockLogActivity = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
+  agentService: () => mockAgentService,
   approvalService: () => mockApprovalService,
   chatService: () => mockChatService,
   heartbeatService: () => mockHeartbeatService,
@@ -91,6 +97,14 @@ describe("approval routes chat application", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockHeartbeatService.wakeup.mockResolvedValue(null);
+    mockAgentService.getById.mockResolvedValue({
+      id: "agent-1",
+      orgId: "organization-1",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+    });
+    mockChatService.getById.mockResolvedValue({ id: "chat-1", orgId: "organization-1" });
     mockIssueApprovalService.listIssuesForApproval.mockResolvedValue([{ id: "issue-1" }]);
     mockLogActivity.mockResolvedValue(undefined);
     mockIssueService.update.mockResolvedValue(null);
@@ -449,7 +463,7 @@ describe("approval routes chat application", () => {
     expect(res.status).toBe(200);
     expect(mockApprovalService.approve).toHaveBeenCalledWith(
       "approval-1",
-      "board",
+      "user-1",
       undefined,
       payload,
     );

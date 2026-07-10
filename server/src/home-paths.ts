@@ -103,6 +103,10 @@ export function resolveDefaultBackupDir(): string {
   return path.resolve(resolveRudderInstanceRoot(), "data", "backups");
 }
 
+export function resolveManagedRunWorkspacesRoot(orgId: string): string {
+  return path.resolve(resolveOrganizationRoot(orgId), "runtime-workspaces");
+}
+
 export function resolveOrganizationRoot(orgId: string): string {
   const normalizedOrgId = resolveOrganizationStorageKey(orgId);
   return path.resolve(

@@ -22,6 +22,7 @@ type ExportJobRecord = OrganizationExportJob & {
   controller: AbortController;
   result: OrganizationPortabilityExportResult | null;
   cleanupTimer: NodeJS.Timeout;
+  requiresInstanceAdmin: boolean;
 };
 
 function nowIso() {
@@ -69,7 +70,11 @@ export function organizationExportJobService() {
     job.updatedAt = nowIso();
   }
 
-  function create(orgId: string, build: ExportJobBuild): OrganizationExportJob {
+  function create(
+    orgId: string,
+    build: ExportJobBuild,
+    options?: { requiresInstanceAdmin?: boolean },
+  ): OrganizationExportJob {
     const controller = new AbortController();
     const createdAt = nowIso();
     const job: ExportJobRecord = {
@@ -91,6 +96,7 @@ export function organizationExportJobService() {
       controller,
       result: null,
       cleanupTimer: setTimeout(() => undefined, 0),
+      requiresInstanceAdmin: options?.requiresInstanceAdmin === true,
     };
     jobs.set(job.id, job);
     scheduleCleanup(job);
@@ -151,6 +157,10 @@ export function organizationExportJobService() {
     return jobs.get(jobId)?.result ?? null;
   }
 
+  function requiresInstanceAdmin(jobId: string): boolean {
+    return jobs.get(jobId)?.requiresInstanceAdmin === true;
+  }
+
   function cancel(jobId: string): OrganizationExportJob | null {
     const job = jobs.get(jobId);
     if (!job) return null;
@@ -173,6 +183,7 @@ export function organizationExportJobService() {
     create,
     get,
     getResult,
+    requiresInstanceAdmin,
     cancel,
   };
 }

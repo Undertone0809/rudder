@@ -9,6 +9,10 @@ import {
 } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
 import type { Request } from "express";
+import {
+  fetchPublicHttpUrlOnce,
+  type WebsiteMetadataOptions,
+} from "../services/website-metadata.js";
 import { generateEd25519PrivateKeyPem, headerMapGetIgnoreCase, headerMapHasKeyIgnoreCase, isLoopbackHost, isPlainObject, JoinDiagnostic, nonEmptyTrimmedString, normalizeHeaderMap, normalizeHostname, parseBooleanLike, requestBaseUrl, tokenFromAuthorizationHeader } from "./access.helpers.js";
 
 export function normalizeAgentDefaultsForJoin(input: {
@@ -881,17 +885,27 @@ export type InviteResolutionProbe = {
 
 export async function probeInviteResolutionTarget(
   url: URL,
-  timeoutMs: number
+  timeoutMs: number,
+  /** Test-only transport override; production always uses validated, pinned DNS addresses. */
+  publicHttpOptions: WebsiteMetadataOptions = {},
 ): Promise<InviteResolutionProbe> {
   const startedAt = Date.now();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, {
-      method: "HEAD",
-      redirect: "manual",
-      signal: controller.signal
-    });
+    const { response } = await fetchPublicHttpUrlOnce(
+      url,
+      publicHttpOptions,
+      {
+        method: "HEAD",
+        redirect: "manual",
+        signal: controller.signal,
+        headers: {
+          accept: "*/*",
+          "user-agent": "RudderInviteResolutionProbe/1.0",
+        },
+      },
+    );
     const durationMs = Date.now() - startedAt;
     if (
       response.ok ||
@@ -943,5 +957,4 @@ export async function probeInviteResolutionTarget(
     clearTimeout(timeout);
   }
 }
-
 

@@ -43,6 +43,7 @@ const mockAgentInstructionsService = vi.hoisted(() => ({
 }));
 
 const mockCompanySkillService = vi.hoisted(() => ({
+  hasLocalPathSkills: vi.fn(),
   list: vi.fn(),
   listRuntimeSkillEntries: vi.fn(),
   mergeWithRequiredSkillKeys: vi.fn(),
@@ -153,17 +154,20 @@ function createDb(
   };
 }
 
-function createApp(db: Record<string, unknown> = createDb()) {
+function createApp(
+  db: Record<string, unknown> = createDb(),
+  actor: Record<string, unknown> = {
+    type: "board",
+    userId: "local-board",
+    orgIds: ["organization-1"],
+    source: "local_implicit",
+    isInstanceAdmin: false,
+  },
+) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).actor = {
-      type: "board",
-      userId: "local-board",
-      orgIds: ["organization-1"],
-      source: "local_implicit",
-      isInstanceAdmin: false,
-    };
+    (req as any).actor = actor;
     next();
   });
   app.use("/api", agentRoutes(db as any));
@@ -286,6 +290,7 @@ describe("agent skill routes", () => {
     mockAgentService.getInternalById.mockResolvedValue(makeAgent("claude_local"));
     mockAgentService.list.mockResolvedValue([makeAgent("claude_local")]);
     mockSecretService.resolveAdapterConfigForRuntime.mockResolvedValue({ config: { env: {} } });
+    mockCompanySkillService.hasLocalPathSkills.mockResolvedValue(false);
     mockCompanySkillService.list.mockResolvedValue([
       {
         id: "skill-rudder",
@@ -406,6 +411,7 @@ describe("agent skill routes", () => {
     expect(mockCompanySkillService.buildAgentSkillSnapshot).toHaveBeenCalledWith(
       expect.objectContaining({ agentRuntimeType: "claude_local" }),
       expect.objectContaining({ env: {} }),
+      { allowHostCatalogs: true, allowHostLocalPaths: true },
     );
     expect(mockAdapter.listSkills).not.toHaveBeenCalled();
   });
@@ -420,6 +426,7 @@ describe("agent skill routes", () => {
     expect(mockCompanySkillService.buildAgentSkillSnapshot).toHaveBeenCalledWith(
       expect.objectContaining({ agentRuntimeType: "codex_local" }),
       expect.objectContaining({ env: {} }),
+      { allowHostCatalogs: true, allowHostLocalPaths: true },
     );
   });
 
@@ -657,6 +664,143 @@ describe("agent skill routes", () => {
         | undefined;
       expect(createInput?.agentRuntimeConfig?.model).toBe("deepseek/deepseek-chat");
     }
+
+    expect(mockEnsurePiModelConfiguredAndAvailable).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "deepseek/deepseek-chat" }),
+    );
+    expect(mockEnsureOpenCodeModelConfiguredAndAvailable).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "deepseek/deepseek-chat" }),
+    );
+  });
+
+  it("does not run OpenCode discovery for a non-admin board hire pending approval", async () => {
+    mockSecretService.resolveAdapterConfigForRuntime.mockImplementation(
+      async (_orgId: string, config: Record<string, unknown>) => ({ config }),
+    );
+
+    const res = await request(createApp(createDb(false), {
+      type: "board",
+      userId: "organization-member",
+      orgIds: ["organization-1"],
+      source: "session",
+      isInstanceAdmin: false,
+    }))
+      .post("/api/orgs/organization-1/agent-hires")
+      .send({
+        name: "Pending OpenCode Hire",
+        role: "engineer",
+        agentRuntimeType: "opencode_local",
+        agentRuntimeConfig: {
+          model: "deepseek/deepseek-chat",
+          command: "sh -lc 'touch /tmp/rudder-opencode-hire-rce'",
+        },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockAgentService.create).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({ status: "pending_approval" }),
+    );
+    expect(mockEnsureOpenCodeModelConfiguredAndAvailable).not.toHaveBeenCalled();
+  });
+
+  it("keeps OpenCode discovery on an instance-admin hire that can start immediately", async () => {
+    mockSecretService.resolveAdapterConfigForRuntime.mockImplementation(
+      async (_orgId: string, config: Record<string, unknown>) => ({ config }),
+    );
+
+    const res = await request(createApp(createDb(false), {
+      type: "board",
+      userId: "instance-admin",
+      orgIds: ["organization-1"],
+      source: "session",
+      isInstanceAdmin: true,
+    }))
+      .post("/api/orgs/organization-1/agent-hires")
+      .send({
+        name: "Approved OpenCode Hire",
+        role: "engineer",
+        agentRuntimeType: "opencode_local",
+        agentRuntimeConfig: {
+          model: "deepseek/deepseek-chat",
+          command: "/trusted/opencode",
+        },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockAgentService.create).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({ status: "idle" }),
+    );
+    expect(mockEnsureOpenCodeModelConfiguredAndAvailable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "deepseek/deepseek-chat",
+        command: "/trusted/opencode",
+      }),
+    );
+  });
+
+  it("does not run Pi discovery for an agent-initiated hire pending approval", async () => {
+    mockSecretService.resolveAdapterConfigForRuntime.mockImplementation(
+      async (_orgId: string, config: Record<string, unknown>) => ({ config }),
+    );
+    mockAgentService.getById.mockResolvedValue({
+      ...makeAgent("process"),
+      permissions: { canCreateAgents: true },
+    });
+
+    const res = await request(createApp(createDb(false), {
+      type: "agent",
+      agentId: "11111111-1111-4111-8111-111111111111",
+      orgId: "organization-1",
+      runId: "run-1",
+    }))
+      .post("/api/orgs/organization-1/agent-hires")
+      .send({
+        name: "Pending Pi Hire",
+        role: "engineer",
+        agentRuntimeType: "pi_local",
+        agentRuntimeConfig: {
+          model: "deepseek/deepseek-chat",
+          command: "sh -lc 'touch /tmp/rudder-pi-hire-rce'",
+        },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockAgentService.create).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({ status: "pending_approval" }),
+    );
+    expect(mockEnsurePiModelConfiguredAndAvailable).not.toHaveBeenCalled();
+  });
+
+  it("pure-validates pending hire model references without running discovery", async () => {
+    mockSecretService.resolveAdapterConfigForRuntime.mockImplementation(
+      async (_orgId: string, config: Record<string, unknown>) => ({ config }),
+    );
+
+    const res = await request(createApp(createDb(false), {
+      type: "board",
+      userId: "organization-member",
+      orgIds: ["organization-1"],
+      source: "session",
+      isInstanceAdmin: false,
+    }))
+      .post("/api/orgs/organization-1/agent-hires")
+      .send({
+        name: "Invalid Pending Pi Hire",
+        role: "engineer",
+        agentRuntimeType: "pi_local",
+        agentRuntimeConfig: {
+          model: "missing-provider-separator",
+          command: "sh -lc 'touch /tmp/rudder-pi-hire-rce'",
+        },
+      });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain("provider/model format");
+    expect(mockEnsurePiModelConfiguredAndAvailable).not.toHaveBeenCalled();
+    expect(mockAgentService.create).not.toHaveBeenCalled();
   });
 
   it("rejects Pi updates that clear the required provider/model value", async () => {
@@ -830,6 +974,44 @@ describe("agent skill routes", () => {
           requestedConfigurationSnapshot: expect.objectContaining({
             desiredSkills: [],
           }),
+        }),
+      }),
+    );
+  });
+
+  it("keeps pending hires on organization-only skill resolution for hostile HOME input", async () => {
+    mockSecretService.resolveAdapterConfigForRuntime.mockImplementation(async (_orgId, config) => ({ config }));
+    mockAgentService.getById.mockResolvedValue({
+      ...makeAgent("process"),
+      permissions: { canCreateAgents: true },
+    });
+    const res = await request(createApp(createDb(false), {
+      type: "agent",
+      agentId: "11111111-1111-4111-8111-111111111111",
+      orgId: "organization-1",
+      runId: "run-1",
+    }))
+      .post("/api/orgs/organization-1/agent-hires")
+      .send({
+        name: "Safe Pending Hire",
+        role: "engineer",
+        agentRuntimeType: "process",
+        desiredSkills: ["alpha-test"],
+        agentRuntimeConfig: { env: { HOME: "/etc" } },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockCompanySkillService.resolveDesiredSkillSelectionForAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ id: null, orgId: "organization-1" }),
+      expect.objectContaining({ env: { HOME: "/etc" } }),
+      ["alpha-test"],
+      { allowHostCatalogs: false, allowHostLocalPaths: false },
+    );
+    expect(mockApprovalService.create).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          desiredSkills: ["org:organization/organization-1/alpha-test"],
         }),
       }),
     );

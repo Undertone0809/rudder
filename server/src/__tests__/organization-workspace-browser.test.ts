@@ -813,4 +813,43 @@ describe("organization workspace browser", () => {
     await expect(workspaceBrowser.deleteLegacyHeartbeatInstructions(orgId)).resolves.toEqual({ deleted: [] });
   });
 
+  it("rejects Library reads and writes through symbolic links", async () => {
+    if (process.platform === "win32") return;
+
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-symlink-home-"));
+    const outsideRoot = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-symlink-outside-"));
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(outsideRoot);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Workspace Browser Symlink Org",
+      urlKey: deriveOrganizationUrlKey("Workspace Browser Symlink Org"),
+      issuePrefix: "WBS",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const root = resolveOrganizationWorkspaceRoot(orgId);
+    const projectRoot = path.join(root, "projects", "linked");
+    const outsideFile = path.join(outsideRoot, "secret.md");
+    await fs.mkdir(projectRoot, { recursive: true });
+    await fs.writeFile(outsideFile, "host secret\n", "utf8");
+    await fs.symlink(outsideFile, path.join(projectRoot, "secret.md"));
+    await fs.symlink(outsideRoot, path.join(projectRoot, "outside"), "dir");
+
+    await expect(workspaceBrowser.readFile(orgId, "projects/linked/secret.md"))
+      .rejects.toThrow("cannot traverse symbolic links");
+    await expect(workspaceBrowser.readAttachmentFile(orgId, "projects/linked/secret.md"))
+      .rejects.toThrow("cannot traverse symbolic links");
+    await expect(workspaceBrowser.writeFile(orgId, "projects/linked/secret.md", "overwritten\n"))
+      .rejects.toThrow("cannot traverse symbolic links");
+    await expect(workspaceBrowser.createFile(orgId, "projects/linked/outside/created.md", "escaped\n"))
+      .rejects.toThrow("cannot traverse symbolic links");
+    await expect(fs.readFile(outsideFile, "utf8")).resolves.toBe("host secret\n");
+    await expect(fs.stat(path.join(outsideRoot, "created.md"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
 });

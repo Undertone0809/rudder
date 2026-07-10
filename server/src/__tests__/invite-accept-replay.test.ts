@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildJoinDefaultsPayloadForAccept,
+  canMutateJoinRequestOnInviteReplay,
   canReplayOpenClawGatewayInviteAccept,
+  joinRequestRequiresInstanceAdmin,
   mergeJoinDefaultsPayloadForReplay,
 } from "../routes/access.js";
 
@@ -54,6 +56,34 @@ describe("canReplayOpenClawGatewayInviteAccept", () => {
         },
       }),
     ).toBe(false);
+  });
+});
+
+describe("canMutateJoinRequestOnInviteReplay", () => {
+  it("keeps approved join requests immutable when an invite token is replayed", () => {
+    expect(canMutateJoinRequestOnInviteReplay("pending_approval")).toBe(true);
+    expect(canMutateJoinRequestOnInviteReplay("approved")).toBe(false);
+    expect(canMutateJoinRequestOnInviteReplay("rejected")).toBe(false);
+  });
+});
+
+describe("joinRequestRequiresInstanceAdmin", () => {
+  it("treats non-default runtimes and non-empty adapter defaults as privileged", () => {
+    expect(joinRequestRequiresInstanceAdmin({
+      requestType: "agent",
+      agentRuntimeType: "openclaw_gateway",
+      agentDefaultsPayload: { url: "ws://gateway.example" },
+    })).toBe(true);
+    expect(joinRequestRequiresInstanceAdmin({
+      requestType: "agent",
+      agentRuntimeType: "process",
+      agentDefaultsPayload: { command: "touch /tmp/rudder-join-rce" },
+    })).toBe(true);
+    expect(joinRequestRequiresInstanceAdmin({
+      requestType: "agent",
+      agentRuntimeType: "process",
+      agentDefaultsPayload: {},
+    })).toBe(false);
   });
 });
 

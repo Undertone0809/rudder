@@ -2144,6 +2144,7 @@ describe("Chat Side Panel link handling", () => {
     sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     expect(sidePanel?.textContent).toContain("Start browsing");
     expect(sidePanel?.querySelector("[data-testid='chat-side-panel-browser-view']")).not.toBeNull();
+    expect(sidePanel?.querySelector("[data-testid='chat-side-panel-browser-webview']")).toBeNull();
     expect(sidePanel?.className).toContain("motion-chat-side-panel");
     expect(sidePanel?.className).toContain("transition-[width,opacity,transform]");
     expect(container.querySelector('[data-testid="chat-side-panel-trigger"]')).toBeNull();
@@ -2164,6 +2165,8 @@ describe("Chat Side Panel link handling", () => {
     const webview = sidePanel?.querySelector<HTMLElement>("[data-testid='chat-side-panel-browser-webview']");
     expect(webview).not.toBeNull();
     expect(webview?.getAttribute("src")).toBe("http://localhost:3100/api/health");
+    expect(webview?.getAttribute("partition")).toBe("persist:rudder-browser");
+    expect(webview?.getAttribute("allowpopups")).toBeNull();
     expect(Array.from(sidePanel!.querySelectorAll<HTMLElement>("[data-testid='chat-side-panel-tab']")).at(0)?.textContent).toContain("localhost");
 
     const newBrowserTabButton = sidePanel!.querySelector<HTMLButtonElement>('button[aria-label="Open new browser tab"]');

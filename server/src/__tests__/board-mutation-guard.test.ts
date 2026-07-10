@@ -79,10 +79,46 @@ describe("boardMutationGuard", () => {
     expect(res.status).toBe(204);
   });
 
+  it.each(["local_implicit", "board_key"] as const)(
+    "blocks cross-origin browser mutations for %s boards",
+    async (source) => {
+      const app = createApp("board", source);
+      const res = await request(app)
+        .post("/mutate")
+        .set("Origin", "https://attacker.example")
+        .send({ ok: true });
+
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({ error: "Board mutation requires trusted browser origin" });
+    },
+  );
+
+  it("does not let a trusted referer override an explicitly untrusted Origin", async () => {
+    const res = await request(createApp("board", "local_implicit"))
+      .post("/mutate")
+      .set("Host", "localhost:3100")
+      .set("Origin", "https://attacker.example")
+      .set("Referer", "http://localhost:3100/activity")
+      .send({ ok: true });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "Board mutation requires trusted browser origin" });
+  });
+
+  it("blocks local browser mutations identified as cross-site even without Origin", async () => {
+    const res = await request(createApp("board", "local_implicit"))
+      .post("/mutate")
+      .set("Sec-Fetch-Site", "cross-site")
+      .send({ ok: true });
+
+    expect(res.status).toBe(403);
+  });
+
   it("allows board mutations from trusted origin", async () => {
     const app = createApp("board");
     const res = await request(app)
       .post("/mutate")
+      .set("Host", "localhost:3100")
       .set("Origin", "http://localhost:3100")
       .send({ ok: true });
     expect(res.status).toBe(204);
@@ -92,6 +128,7 @@ describe("boardMutationGuard", () => {
     const app = createApp("board");
     const res = await request(app)
       .post("/mutate")
+      .set("Host", "localhost:3100")
       .set("Referer", "http://localhost:3100/issues/abc")
       .send({ ok: true });
     expect(res.status).toBe(204);

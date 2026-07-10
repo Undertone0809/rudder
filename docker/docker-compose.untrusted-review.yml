@@ -12,12 +12,13 @@ services:
       CODEX_HOME: "/home/reviewer/.codex"
       CLAUDE_HOME: "/home/reviewer/.claude"
       RUDDER_HOME: "/home/reviewer/.rudder-review"
-      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
-      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
-      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+      # This container checks out contributor-controlled code. Do not pass host
+      # credentials into it: install/test hooks can read every container env var.
+      # Authenticate and perform write operations from a separate trusted context.
     ports:
-      - "${REVIEW_RUDDER_PORT:-3100}:3100"
-      - "${REVIEW_VITE_PORT:-5173}:5173"
+      # Contributor-controlled processes must only be reachable from this host.
+      - "127.0.0.1:${REVIEW_RUDDER_PORT:-3100}:3100"
+      - "127.0.0.1:${REVIEW_VITE_PORT:-5173}:5173"
     volumes:
       - review-home:/home/reviewer
       - review-work:/work

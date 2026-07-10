@@ -1593,6 +1593,66 @@ describe("issueService.list participantAgentId", () => {
     });
   });
 
+  it("rejects project and creator-agent links outside the organization", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Issue Boundary Org",
+        urlKey: deriveOrganizationUrlKey("Issue Boundary Org"),
+        issuePrefix: `I${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Other Issue Boundary Org",
+        urlKey: deriveOrganizationUrlKey("Other Issue Boundary Org"),
+        issuePrefix: `J${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    const [foreignProject] = await db.insert(projects).values({
+      orgId: otherOrgId,
+      name: "Foreign Project",
+      slug: `foreign-${randomUUID()}`,
+      status: "active",
+    }).returning();
+    const [foreignAgent] = await db.insert(agents).values({
+      orgId: otherOrgId,
+      name: "Foreign Creator",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    }).returning();
+
+    await expect(svc.create(orgId, {
+      title: "Cross-org project",
+      status: "todo",
+      priority: "medium",
+      projectId: foreignProject!.id,
+    })).rejects.toThrow("Project must belong to same organization");
+    await expect(svc.create(orgId, {
+      title: "Cross-org creator",
+      status: "todo",
+      priority: "medium",
+      createdByAgentId: foreignAgent!.id,
+    })).rejects.toThrow("Creator agent must belong to same organization");
+
+    const issue = await svc.create(orgId, {
+      title: "Local issue",
+      status: "todo",
+      priority: "medium",
+    });
+    await expect(svc.update(issue.id, { projectId: foreignProject!.id }))
+      .rejects.toThrow("Project must belong to same organization");
+    await expect(svc.update(issue.id, { createdByAgentId: foreignAgent!.id }))
+      .rejects.toThrow("Creator agent must belong to same organization");
+  });
+
   it("persists an explicit goal clear for projectless issues with a default organization goal", async () => {
     const orgId = randomUUID();
 

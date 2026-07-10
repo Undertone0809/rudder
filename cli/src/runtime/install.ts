@@ -29,6 +29,9 @@ const NPM_PLATFORM_REPAIR_ENV = {
   npm_config_update_notifier: "false",
   NO_UPDATE_NOTIFIER: "1",
 };
+const SAFE_NPM_PACKAGE_NAME = /^(?:@[A-Za-z0-9][A-Za-z0-9._-]*\/)?[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const SAFE_NPM_VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
+const SAFE_NPM_DIST_TAGS = new Set(["latest", "canary"]);
 
 type PackageJsonLike = {
   name?: string;
@@ -113,7 +116,11 @@ function sanitizeRuntimeCacheSegment(value: string): string {
 
 export function resolveRuntimePackageVersion(version: string): string {
   const normalized = version.trim();
-  return normalized.length > 0 ? normalized : "latest";
+  const resolved = normalized.length > 0 ? normalized : "latest";
+  if (!SAFE_NPM_VERSION.test(resolved) && !SAFE_NPM_DIST_TAGS.has(resolved)) {
+    throw new Error(`Refusing unsafe runtime package version: ${version}`);
+  }
+  return resolved;
 }
 
 export function resolveRuntimeCacheDir(
@@ -127,6 +134,9 @@ export function resolveRuntimePackageSpec(
   version: string,
   packageName: string = RUNTIME_NPM_PACKAGE_NAME,
 ): string {
+  if (!SAFE_NPM_PACKAGE_NAME.test(packageName)) {
+    throw new Error(`Refusing unsafe runtime package name: ${packageName}`);
+  }
   const packageVersion = resolveRuntimePackageVersion(version);
   return packageVersion === "latest" ? `${packageName}@latest` : `${packageName}@${packageVersion}`;
 }
@@ -632,8 +642,8 @@ function packageNameFromSpec(packageSpec: string): string {
 function normalizeOptionalDependencyVersion(versionRange: string | undefined): string | null {
   const trimmed = versionRange?.trim();
   if (!trimmed) return null;
-  const exactVersion = /^[~^]\s*([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$/.exec(trimmed);
-  return exactVersion?.[1] ?? trimmed;
+  const exactVersion = /^(?:[~^]\s*)?([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?)$/.exec(trimmed);
+  return exactVersion?.[1] ?? null;
 }
 
 function runtimePostgresPlatformSegment(

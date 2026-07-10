@@ -41,10 +41,10 @@ import {
   notifyHireApproved
 } from "../services/index.js";
 import { buildInviteOnboardingManifest, buildInviteOnboardingTextDocument, grantsFromDefaults, inviteExpired, isInviteTokenHashCollisionError, isLocalImplicit, mergeInviteDefaults, normalizeAgentDefaultsForJoin, probeInviteResolutionTarget, requestIp, resolveActorEmail, resolveJoinRequestAgentManagerId, toInviteSummaryResponse } from "./access-onboarding.helpers.js";
-import { buildCliAuthApprovalPath, buildJoinDefaultsPayloadForAccept, canReplayOpenClawGatewayInviteAccept, companyInviteExpiresAt, createClaimSecret, createInviteToken, hashToken, INVITE_TOKEN_MAX_RETRIES, isPlainObject, JoinDiagnostic, listAvailableSkills, mergeJoinDefaultsPayloadForReplay, readSkillMarkdown, requestBaseUrl, summarizeOpenClawGatewayDefaultsForLog, toJoinRequestResponse, tokenHashesMatch } from "./access.helpers.js";
+import { buildCliAuthApprovalPath, buildJoinDefaultsPayloadForAccept, canMutateJoinRequestOnInviteReplay, canReplayOpenClawGatewayInviteAccept, companyInviteExpiresAt, createClaimSecret, createInviteToken, hashToken, INVITE_TOKEN_MAX_RETRIES, JoinDiagnostic, joinRequestRequiresInstanceAdmin, listAvailableSkills, mergeJoinDefaultsPayloadForReplay, readSkillMarkdown, requestBaseUrl, summarizeOpenClawGatewayDefaultsForLog, toJoinRequestResponse, tokenHashesMatch } from "./access.helpers.js";
 import { assertCompanyAccess } from "./authz.js";
 export { buildInviteOnboardingTextDocument, normalizeAgentDefaultsForJoin, resolveJoinRequestAgentManagerId } from "./access-onboarding.helpers.js";
-export { buildJoinDefaultsPayloadForAccept, canReplayOpenClawGatewayInviteAccept, companyInviteExpiresAt, mergeJoinDefaultsPayloadForReplay } from "./access.helpers.js";
+export { buildJoinDefaultsPayloadForAccept, canMutateJoinRequestOnInviteReplay, canReplayOpenClawGatewayInviteAccept, companyInviteExpiresAt, joinRequestRequiresInstanceAdmin, mergeJoinDefaultsPayloadForReplay } from "./access.helpers.js";
 
 export function accessRoutes(
   db: Db,
@@ -800,7 +800,9 @@ export function accessRoutes(
               .then((rows) => rows[0]);
             return row;
           })
-        : await db
+        : !canMutateJoinRequestOnInviteReplay(existingJoinRequestForInvite?.status ?? "")
+          ? existingJoinRequestForInvite
+          : await db
             .update(joinRequests)
             .set({
               requestIp: requestIp(req),
@@ -827,45 +829,6 @@ export function accessRoutes(
 
       if (!created) {
         throw conflict("Join request not found");
-      }
-
-      if (
-        inviteAlreadyAccepted &&
-        requestType === "agent" &&
-        agentRuntimeType === "openclaw_gateway" &&
-        created.status === "approved" &&
-        created.createdAgentId
-      ) {
-        const existingAgent = await agents.getById(created.createdAgentId);
-        if (!existingAgent) {
-          throw conflict("Approved join request agent not found");
-        }
-        const existingAdapterConfig = isPlainObject(existingAgent.agentRuntimeConfig)
-          ? (existingAgent.agentRuntimeConfig as Record<string, unknown>)
-          : {};
-        const nextAdapterConfig = {
-          ...existingAdapterConfig,
-          ...(joinDefaults.normalized ?? {})
-        };
-        const updatedAgent = await agents.update(created.createdAgentId, {
-          agentRuntimeType,
-          agentRuntimeConfig: nextAdapterConfig
-        });
-        if (!updatedAgent) {
-          throw conflict("Approved join request agent not found");
-        }
-        await logActivity(db, {
-          orgId,
-          actorType: req.actor.type === "agent" ? "agent" : "user",
-          actorId:
-            req.actor.type === "agent"
-              ? req.actor.agentId ?? "invite-agent"
-              : req.actor.userId ?? "board",
-          action: "agent.updated_from_join_replay",
-          entityType: "agent",
-          entityId: updatedAgent.id,
-          details: { inviteId: invite.id, joinRequestId: created.id }
-        });
       }
 
       if (requestType === "agent" && agentRuntimeType === "openclaw_gateway") {
@@ -1055,6 +1018,9 @@ export function accessRoutes(
       if (!existing) throw notFound("Join request not found");
       if (existing.status !== "pending_approval")
         throw conflict("Join request is not pending");
+      if (joinRequestRequiresInstanceAdmin(existing)) {
+        await assertInstanceAdmin(req);
+      }
 
       const invite = await db
         .select()

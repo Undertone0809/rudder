@@ -11,14 +11,16 @@
  * - Retrieving UI slot contributions for frontend rendering
  * - Discovering and executing plugin-contributed agent tools
  *
- * All routes require board-level authentication (assertBoard middleware).
+ * Read routes require board-level authentication. Plugin UI bridges and
+ * instance-global lifecycle mutations require instance-admin authentication
+ * because they can execute plugin code against instance-global host services.
  *
  * @module server/routes/plugins
  * @see doc/engineering/PLUGIN_RUNTIME_CONTRACT.md for the current plugin runtime contract
  */
 
 import type { Db } from "@rudderhq/db";
-import { organizations } from "@rudderhq/db";
+import { agents, organizations, projects } from "@rudderhq/db";
 import type { ToolRunContext } from "@rudderhq/plugin-sdk";
 import { JsonRpcCallError, PLUGIN_RPC_ERROR_CODES } from "@rudderhq/plugin-sdk";
 import type {
@@ -30,11 +32,13 @@ import type {
 import {
   PLUGIN_STATUSES,
 } from "@rudderhq/shared";
+import { eq } from "drizzle-orm";
 import type { Request } from "express";
 import { Router } from "express";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { badRequest, forbidden } from "../errors.js";
 import { logActivity } from "../services/activity-log.js";
 import { publishGlobalLiveEvent } from "../services/live-events.js";
 import type { PluginJobScheduler } from "../services/plugin-job-scheduler.js";
@@ -45,7 +49,7 @@ import { pluginRegistryService } from "../services/plugin-registry.js";
 import type { PluginStreamBus } from "../services/plugin-stream-bus.js";
 import type { PluginToolDispatcher } from "../services/plugin-tool-dispatcher.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
-import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import { registerPluginOperationsRoutes } from "./plugins.operations-routes.js";
 
 /** UI slot declaration extracted from plugin manifest */
@@ -370,6 +374,99 @@ export function pluginRoutes(
       })));
   }
 
+  function normalizePluginBridgeParams(
+    req: Request,
+    orgIdValue: unknown,
+    paramsValue: unknown,
+  ): Record<string, unknown> {
+    if (
+      paramsValue !== undefined
+      && (
+        typeof paramsValue !== "object"
+        || paramsValue === null
+        || Array.isArray(paramsValue)
+      )
+    ) {
+      throw badRequest('"params" must be an object when provided');
+    }
+
+    const params = { ...((paramsValue ?? {}) as Record<string, unknown>) };
+    const outerOrgId = typeof orgIdValue === "string" && orgIdValue.trim()
+      ? orgIdValue.trim()
+      : null;
+    const parameterOrgId = typeof params.orgId === "string" && params.orgId.trim()
+      ? params.orgId.trim()
+      : null;
+    if (outerOrgId && parameterOrgId && outerOrgId !== parameterOrgId) {
+      throw forbidden("Plugin parameters must use the authorized organization scope");
+    }
+    const orgId = outerOrgId ?? parameterOrgId;
+
+    // An organization-less bridge call operates in instance-global plugin
+    // context. Keep that surface reserved for the host administrator.
+    if (!orgId) {
+      assertInstanceAdmin(req);
+      return params;
+    }
+
+    assertCompanyAccess(req, orgId);
+    for (const key of ["orgId", "organizationId", "companyId"] as const) {
+      const parameterScope = params[key];
+      if (
+        parameterScope !== undefined
+        && (typeof parameterScope !== "string" || parameterScope !== orgId)
+      ) {
+        throw forbidden("Plugin parameters must use the authorized organization scope");
+      }
+    }
+
+    // The worker protocol does not carry a separate trusted organization
+    // context, so bind the authorized scope into the parameters it receives.
+    params.orgId = orgId;
+    return params;
+  }
+
+  function assertPluginToolParameterScope(
+    req: Request,
+    orgId: string,
+    parameters: unknown,
+  ) {
+    assertCompanyAccess(req, orgId);
+    if (typeof parameters !== "object" || parameters === null || Array.isArray(parameters)) return;
+
+    const params = parameters as Record<string, unknown>;
+    for (const key of ["orgId", "organizationId", "companyId"] as const) {
+      const parameterScope = params[key];
+      if (
+        parameterScope !== undefined
+        && (typeof parameterScope !== "string" || parameterScope !== orgId)
+      ) {
+        throw forbidden("Plugin tool parameters must use the authorized organization scope");
+      }
+    }
+  }
+
+  async function assertPluginToolRunContextEntities(runContext: ToolRunContext) {
+    const [agentRows, projectRows] = await Promise.all([
+      db
+        .select({ orgId: agents.orgId })
+        .from(agents)
+        .where(eq(agents.id, runContext.agentId))
+        .limit(1),
+      db
+        .select({ orgId: projects.orgId })
+        .from(projects)
+        .where(eq(projects.id, runContext.projectId))
+        .limit(1),
+    ]);
+    if (
+      agentRows[0]?.orgId !== runContext.orgId
+      || projectRows[0]?.orgId !== runContext.orgId
+    ) {
+      throw forbidden("Plugin tool run context must stay within the authorized organization");
+    }
+  }
+
   /**
    * GET /api/plugins
    *
@@ -543,11 +640,6 @@ export function pluginRoutes(
   router.post("/plugins/tools/execute", async (req, res) => {
     assertBoard(req);
 
-    if (!toolDeps) {
-      res.status(501).json({ error: "Plugin tool dispatch is not enabled" });
-      return;
-    }
-
     const body = (req.body as PluginToolExecuteRequest | undefined);
     if (!body) {
       res.status(400).json({ error: "Request body is required" });
@@ -567,14 +659,23 @@ export function pluginRoutes(
       return;
     }
 
-    if (!runContext.agentId || !runContext.runId || !runContext.orgId || !runContext.projectId) {
+    if (
+      ![runContext.agentId, runContext.runId, runContext.orgId, runContext.projectId]
+        .every((value) => typeof value === "string" && value.trim().length > 0)
+    ) {
       res.status(400).json({
         error: '"runContext" must include agentId, runId, orgId, and projectId',
       });
       return;
     }
 
-    assertCompanyAccess(req, runContext.orgId);
+    assertPluginToolParameterScope(req, runContext.orgId, parameters);
+
+    if (!toolDeps) {
+      res.status(501).json({ error: "Plugin tool dispatch is not enabled" });
+      return;
+    }
+    await assertPluginToolRunContextEntities(runContext);
 
     // Verify the tool exists
     const registeredTool = toolDeps.toolDispatcher.getTool(tool);
@@ -625,7 +726,7 @@ export function pluginRoutes(
    * - `500` — installation succeeded but manifest is missing (indicates a loader bug)
    */
   router.post("/plugins/install", async (req, res) => {
-    assertBoard(req);
+    assertInstanceAdmin(req);
     const { packageName, version, isLocalPath } = req.body as PluginInstallRequest;
 
     // Input validation
@@ -817,23 +918,28 @@ export function pluginRoutes(
    * @see doc/engineering/PLUGIN_RUNTIME_CONTRACT.md — Error Propagation Through The Bridge
    */
   router.post("/plugins/:pluginId/bridge/data", async (req, res) => {
-    assertBoard(req);
+    assertInstanceAdmin(req);
 
+    // Validate request body
+    const body = req.body as PluginBridgeDataRequest | undefined;
+    if (!body || !body.key || typeof body.key !== "string") {
+      res.status(400).json({ error: '"key" is required and must be a string' });
+      return;
+    }
+
+    const params = normalizePluginBridgeParams(req, body.orgId, body.params);
     if (!bridgeDeps) {
       res.status(501).json({ error: "Plugin bridge is not enabled" });
       return;
     }
 
     const { pluginId } = req.params;
-
-    // Resolve plugin
     const plugin = await resolvePlugin(registry, pluginId);
     if (!plugin) {
       res.status(404).json({ error: "Plugin not found" });
       return;
     }
 
-    // Validate plugin is in ready state
     if (plugin.status !== "ready") {
       const bridgeError: PluginBridgeErrorResponse = {
         code: "WORKER_UNAVAILABLE",
@@ -843,24 +949,13 @@ export function pluginRoutes(
       return;
     }
 
-    // Validate request body
-    const body = req.body as PluginBridgeDataRequest | undefined;
-    if (!body || !body.key || typeof body.key !== "string") {
-      res.status(400).json({ error: '"key" is required and must be a string' });
-      return;
-    }
-
-    if (body.orgId) {
-      assertCompanyAccess(req, body.orgId);
-    }
-
     try {
       const result = await bridgeDeps.workerManager.call(
         plugin.id,
         "getData",
         {
           key: body.key,
-          params: body.params ?? {},
+          params,
           renderEnvironment: body.renderEnvironment ?? null,
         },
       );
@@ -900,23 +995,28 @@ export function pluginRoutes(
    * @see doc/engineering/PLUGIN_RUNTIME_CONTRACT.md — Error Propagation Through The Bridge
    */
   router.post("/plugins/:pluginId/bridge/action", async (req, res) => {
-    assertBoard(req);
+    assertInstanceAdmin(req);
 
+    // Validate request body
+    const body = req.body as PluginBridgeActionRequest | undefined;
+    if (!body || !body.key || typeof body.key !== "string") {
+      res.status(400).json({ error: '"key" is required and must be a string' });
+      return;
+    }
+
+    const params = normalizePluginBridgeParams(req, body.orgId, body.params);
     if (!bridgeDeps) {
       res.status(501).json({ error: "Plugin bridge is not enabled" });
       return;
     }
 
     const { pluginId } = req.params;
-
-    // Resolve plugin
     const plugin = await resolvePlugin(registry, pluginId);
     if (!plugin) {
       res.status(404).json({ error: "Plugin not found" });
       return;
     }
 
-    // Validate plugin is in ready state
     if (plugin.status !== "ready") {
       const bridgeError: PluginBridgeErrorResponse = {
         code: "WORKER_UNAVAILABLE",
@@ -926,24 +1026,13 @@ export function pluginRoutes(
       return;
     }
 
-    // Validate request body
-    const body = req.body as PluginBridgeActionRequest | undefined;
-    if (!body || !body.key || typeof body.key !== "string") {
-      res.status(400).json({ error: '"key" is required and must be a string' });
-      return;
-    }
-
-    if (body.orgId) {
-      assertCompanyAccess(req, body.orgId);
-    }
-
     try {
       const result = await bridgeDeps.workerManager.call(
         plugin.id,
         "performAction",
         {
           key: body.key,
-          params: body.params ?? {},
+          params,
           renderEnvironment: body.renderEnvironment ?? null,
         },
       );
@@ -984,23 +1073,27 @@ export function pluginRoutes(
    * @see doc/engineering/PLUGIN_RUNTIME_CONTRACT.md — Error Propagation Through The Bridge
    */
   router.post("/plugins/:pluginId/data/:key", async (req, res) => {
-    assertBoard(req);
+    assertInstanceAdmin(req);
 
+    const body = req.body as {
+      orgId?: string;
+      params?: Record<string, unknown>;
+      renderEnvironment?: PluginLauncherRenderContextSnapshot | null;
+    } | undefined;
+
+    const params = normalizePluginBridgeParams(req, body?.orgId, body?.params);
     if (!bridgeDeps) {
       res.status(501).json({ error: "Plugin bridge is not enabled" });
       return;
     }
 
     const { pluginId, key } = req.params;
-
-    // Resolve plugin
     const plugin = await resolvePlugin(registry, pluginId);
     if (!plugin) {
       res.status(404).json({ error: "Plugin not found" });
       return;
     }
 
-    // Validate plugin is in ready state
     if (plugin.status !== "ready") {
       const bridgeError: PluginBridgeErrorResponse = {
         code: "WORKER_UNAVAILABLE",
@@ -1010,23 +1103,13 @@ export function pluginRoutes(
       return;
     }
 
-    const body = req.body as {
-      orgId?: string;
-      params?: Record<string, unknown>;
-      renderEnvironment?: PluginLauncherRenderContextSnapshot | null;
-    } | undefined;
-
-    if (body?.orgId) {
-      assertCompanyAccess(req, body.orgId);
-    }
-
     try {
       const result = await bridgeDeps.workerManager.call(
         plugin.id,
         "getData",
         {
           key,
-          params: body?.params ?? {},
+          params,
           renderEnvironment: body?.renderEnvironment ?? null,
         },
       );
@@ -1063,23 +1146,27 @@ export function pluginRoutes(
    * @see doc/engineering/PLUGIN_RUNTIME_CONTRACT.md — Error Propagation Through The Bridge
    */
   router.post("/plugins/:pluginId/actions/:key", async (req, res) => {
-    assertBoard(req);
+    assertInstanceAdmin(req);
 
+    const body = req.body as {
+      orgId?: string;
+      params?: Record<string, unknown>;
+      renderEnvironment?: PluginLauncherRenderContextSnapshot | null;
+    } | undefined;
+
+    const params = normalizePluginBridgeParams(req, body?.orgId, body?.params);
     if (!bridgeDeps) {
       res.status(501).json({ error: "Plugin bridge is not enabled" });
       return;
     }
 
     const { pluginId, key } = req.params;
-
-    // Resolve plugin
     const plugin = await resolvePlugin(registry, pluginId);
     if (!plugin) {
       res.status(404).json({ error: "Plugin not found" });
       return;
     }
 
-    // Validate plugin is in ready state
     if (plugin.status !== "ready") {
       const bridgeError: PluginBridgeErrorResponse = {
         code: "WORKER_UNAVAILABLE",
@@ -1089,23 +1176,13 @@ export function pluginRoutes(
       return;
     }
 
-    const body = req.body as {
-      orgId?: string;
-      params?: Record<string, unknown>;
-      renderEnvironment?: PluginLauncherRenderContextSnapshot | null;
-    } | undefined;
-
-    if (body?.orgId) {
-      assertCompanyAccess(req, body.orgId);
-    }
-
     try {
       const result = await bridgeDeps.workerManager.call(
         plugin.id,
         "performAction",
         {
           key,
-          params: body?.params ?? {},
+          params,
           renderEnvironment: body?.renderEnvironment ?? null,
         },
       );
@@ -1252,7 +1329,7 @@ export function pluginRoutes(
    * Errors: 404 if plugin not found, 400 for lifecycle errors
    */
   router.delete("/plugins/:pluginId", async (req, res) => {
-    assertBoard(req);
+    assertInstanceAdmin(req);
     const { pluginId } = req.params;
     const purge = req.query.purge === "true";
 
@@ -1288,7 +1365,7 @@ export function pluginRoutes(
    * Errors: 404 if plugin not found, 400 for lifecycle errors
    */
   router.post("/plugins/:pluginId/enable", async (req, res) => {
-    assertBoard(req);
+    assertInstanceAdmin(req);
     const { pluginId } = req.params;
 
     const plugin = await resolvePlugin(registry, pluginId);
@@ -1326,7 +1403,7 @@ export function pluginRoutes(
    * Errors: 404 if plugin not found, 400 for lifecycle errors
    */
   router.post("/plugins/:pluginId/disable", async (req, res) => {
-    assertBoard(req);
+    assertInstanceAdmin(req);
     const { pluginId } = req.params;
     const body = req.body as { reason?: string } | undefined;
     const reason = body?.reason;

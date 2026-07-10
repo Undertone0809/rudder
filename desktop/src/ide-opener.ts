@@ -377,19 +377,18 @@ function defaultOpenDefaultApp(absolutePath: string, platform: NodeJS.Platform) 
 }
 
 function defaultRunCommand(command: string, absolutePath: string, platform: NodeJS.Platform) {
-  if (platform === "win32") {
-    return new Promise<void>((resolve, reject) => {
-      const child = spawn(command, [absolutePath], {
-        shell: true,
-        stdio: "ignore",
-        windowsHide: true,
-      });
-      child.once("error", reject);
-      child.once("spawn", () => resolve());
-      child.unref();
+  if (platform !== "win32") return execFilePromise(command, [absolutePath]);
+
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(command, [absolutePath], {
+      shell: false,
+      stdio: "ignore",
+      windowsHide: true,
     });
-  }
-  return execFilePromise(command, [absolutePath]);
+    child.once("error", reject);
+    child.once("spawn", () => resolve());
+    child.unref();
+  });
 }
 
 function defaultRunExecutable(executablePath: string, absolutePath: string, platform: NodeJS.Platform) {

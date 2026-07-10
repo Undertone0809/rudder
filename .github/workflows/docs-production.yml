@@ -13,7 +13,7 @@ on:
         default: ""
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: docs-production
@@ -31,16 +31,47 @@ env:
   DOCS_PRODUCTION_ALIASES: doc.rudder.zeeland.studio,rudder-docs.vercel.app,rudder-docs-zeelands-projects.vercel.app
 
 jobs:
-  publish:
-    name: Publish production docs
+  resolve-source:
+    name: Resolve trusted docs source
+    if: github.repository == 'Undertone0809/rudder' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    if: github.repository == 'Undertone0809/rudder'
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.source_ref }}
+          ref: main
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve source commit from main history
+        id: source
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          source_sha="$(git rev-parse --verify --end-of-options "${SOURCE_REF}^{commit}")"
+          if ! git merge-base --is-ancestor "$source_sha" origin/main; then
+            echo "Docs source must belong to the protected main history: $SOURCE_REF" >&2
+            exit 1
+          fi
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Publish production docs
+    needs: resolve-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    environment: docs-production
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve-source.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:
@@ -52,15 +83,17 @@ jobs:
           corepack prepare pnpm@9.15.4 --activate
 
       - name: Install Vercel CLI
-        run: npm install --global vercel@latest
+        run: npm install --global vercel@55.0.0
 
       - name: Resolve docs tag
         id: tag
+        env:
+          TAG_NAME: ${{ inputs.tag_name }}
         run: |
           git fetch --tags --force origin
 
-          if [[ -n "${{ inputs.tag_name }}" ]]; then
-            tag="${{ inputs.tag_name }}"
+          if [[ -n "$TAG_NAME" ]]; then
+            tag="$TAG_NAME"
           else
             tag="docs/v$(TZ=Asia/Shanghai date +%Y.%m.%d)"
           fi
@@ -207,6 +240,7 @@ jobs:
         id: deploy
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          SOURCE_REF: ${{ inputs.source_ref }}
         run: |
           deployment_output="$(
             vercel deploy "$RUNNER_TEMP/rudder-docs-export" \
@@ -216,7 +250,7 @@ jobs:
               --scope "$VERCEL_SCOPE" \
               --token "$VERCEL_TOKEN" \
               --meta githubCommitSha="${{ steps.tag.outputs.sha }}" \
-              --meta githubCommitRef="${{ inputs.source_ref }}" \
+              --meta githubCommitRef="$SOURCE_REF" \
               --meta docsChannel=production
           )"
           printf '%s\n' "$deployment_output"
@@ -256,6 +290,8 @@ jobs:
           DOCS_HEALTH_HOSTS="$hosts" node scripts/check-docs-public-health.mjs
 
       - name: Create docs release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           tag="${{ steps.tag.outputs.tag }}"
           current_sha="$(git rev-parse HEAD)"
@@ -273,4 +309,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$tag" -m "docs: publish $tag"
-          git push origin "refs/tags/$tag"
+          auth_header="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic ${auth_header}" \
+            push origin "refs/tags/$tag"

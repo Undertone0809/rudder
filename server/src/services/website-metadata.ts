@@ -3,9 +3,17 @@ import { JSDOM } from "jsdom";
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { request as httpRequest, type IncomingMessage, type RequestOptions } from "node:http";
+import { request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
 import { isIP } from "node:net";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { resolveRudderInstanceRoot } from "../home-paths.js";
+import {
+  isNonPublicIpAddress,
+  isPrivateHostname,
+  isPublicDnsHostname,
+} from "../network/public-address.js";
 
 export interface WebsiteMetadata {
   url: string;
@@ -16,6 +24,12 @@ export interface WebsiteMetadata {
 export interface WebsiteMetadataOptions {
   allowPrivateHosts?: boolean;
   fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
+  /** Test-only transport hook that still exercises production DNS validation. */
+  pinnedFetchImpl?: (
+    url: URL,
+    init: RequestInit,
+    addresses: ReadonlyArray<{ address: string; family: 4 | 6 }>,
+  ) => Promise<Response>;
 }
 
 const MAX_HTML_BYTES = 256 * 1024;
@@ -31,72 +45,10 @@ const IMAGE_CONTENT_TYPES = new Set([
   "image/jpeg",
   "image/jpg",
   "image/png",
-  "image/svg+xml",
   "image/vnd.microsoft.icon",
   "image/webp",
   "image/x-icon",
 ]);
-
-function isBenchmarkNetworkIpAddress(value: string) {
-  const normalized = value.replace(/^\[|\]$/gu, "").toLowerCase();
-  const ipv4Mapped = normalized.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/u);
-  if (ipv4Mapped) return isBenchmarkNetworkIpAddress(ipv4Mapped[1]);
-
-  const parts = normalized.split(".");
-  if (parts.length !== 4) return false;
-  const octets = parts.map((part) => Number(part));
-  if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return false;
-  const [a, b] = octets;
-  return a === 198 && (b === 18 || b === 19);
-}
-
-function isPrivateIpAddress(value: string) {
-  const normalized = value.replace(/^\[|\]$/gu, "").toLowerCase();
-  const ipv4Mapped = normalized.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/u);
-  if (ipv4Mapped) return isPrivateIpAddress(ipv4Mapped[1]);
-  if (normalized === "::1" || normalized.startsWith("fe80:") || normalized.startsWith("fc") || normalized.startsWith("fd")) return true;
-
-  const parts = normalized.split(".");
-  if (parts.length !== 4) return false;
-  const octets = parts.map((part) => Number(part));
-  if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return false;
-  const [a, b] = octets;
-  if (a === 10 || a === 127 || a === 0) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 0) return true;
-  if (a === 192 && b === 168) return true;
-  if (isBenchmarkNetworkIpAddress(normalized)) return true;
-  return false;
-}
-
-function isBlockedResolvedIpAddress(value: string) {
-  return isPrivateIpAddress(value) && !isBenchmarkNetworkIpAddress(value);
-}
-
-function isPrivateHostname(hostname: string) {
-  const normalized = hostname.replace(/^\[|\]$/gu, "").toLowerCase();
-  if (normalized === "localhost" || normalized.endsWith(".localhost")) return true;
-  if (isIP(normalized)) return isPrivateIpAddress(normalized);
-  return false;
-}
-
-function isPublicDnsHostname(hostname: string) {
-  const normalized = hostname.replace(/^\[|\]$/gu, "").toLowerCase();
-  if (normalized === "localhost" || normalized.endsWith(".localhost")) return false;
-  if (
-    normalized.endsWith(".local") ||
-    normalized.endsWith(".lan") ||
-    normalized.endsWith(".home") ||
-    normalized.endsWith(".internal") ||
-    normalized.endsWith(".corp") ||
-    normalized.endsWith(".intranet")
-  ) return false;
-  if (!normalized.includes(".")) return false;
-  if (isIP(normalized)) return false;
-  return true;
-}
 
 export function parsePublicHttpUrl(value: string, options: WebsiteMetadataOptions = {}) {
   const parsed = new URL(value);
@@ -114,48 +66,167 @@ function resolveWebsiteIconCacheDir() {
   return path.resolve(resolveRudderInstanceRoot(), "data", "website-icons");
 }
 
-async function assertPublicResolvedHost(url: URL, options: WebsiteMetadataOptions) {
-  if (options.allowPrivateHosts || options.fetchImpl || isIP(url.hostname.replace(/^\[|\]$/gu, ""))) return;
-  const addresses = await lookup(url.hostname, { all: true, verbatim: true });
-  const allowBenchmarkNetworkResolution = isPublicDnsHostname(url.hostname);
-  if (addresses.some((address) => isPrivateIpAddress(address.address) && (!allowBenchmarkNetworkResolution || !isBenchmarkNetworkIpAddress(address.address)))) {
+export type PublicHttpResolvedAddress = { address: string; family: 4 | 6 };
+
+async function resolvePublicConnectionAddresses(
+  url: URL,
+  options: WebsiteMetadataOptions,
+): Promise<PublicHttpResolvedAddress[] | null> {
+  if (options.allowPrivateHosts || options.fetchImpl) return null;
+
+  const hostname = url.hostname.replace(/^\[|\]$/gu, "");
+  const literalFamily = isIP(hostname);
+  const addresses = literalFamily
+    ? [{ address: hostname, family: literalFamily as 4 | 6 }]
+    : await lookup(hostname, { all: true, verbatim: true });
+  if (
+    addresses.length === 0
+    || addresses.some((address) => isNonPublicIpAddress(address.address))
+  ) {
     throw new Error("Private network URLs cannot be inspected");
   }
+  return addresses.map((address) => ({
+    address: address.address,
+    family: address.family as 4 | 6,
+  }));
 }
 
-interface FetchResult {
+function pinnedRequestBody(init: RequestInit) {
+  if (init.body === undefined || init.body === null) return undefined;
+  return typeof init.body === "string" ? init.body : String(init.body);
+}
+
+function requestHeaders(init: RequestInit, url: URL, body: string | undefined) {
+  const headers = new Headers(init.headers);
+  headers.set("host", url.host);
+  headers.set("accept-encoding", "identity");
+  headers.set("connection", "close");
+  if (body !== undefined && !headers.has("content-length") && !headers.has("transfer-encoding")) {
+    headers.set("content-length", String(Buffer.byteLength(body)));
+  }
+  return Object.fromEntries(headers.entries());
+}
+
+function requestPinnedAddress(
+  url: URL,
+  init: RequestInit,
+  address: PublicHttpResolvedAddress,
+): Promise<Response> {
+  return new Promise<Response>((resolve, reject) => {
+    const body = pinnedRequestBody(init);
+    const commonOptions: RequestOptions = {
+      hostname: address.address,
+      family: address.family,
+      port: url.port || undefined,
+      path: `${url.pathname}${url.search}`,
+      method: init.method ?? "GET",
+      headers: requestHeaders(init, url, body),
+      signal: init.signal ?? undefined,
+      agent: false,
+    };
+    const handleResponse = (incoming: IncomingMessage) => {
+      const headers = new Headers();
+      for (let index = 0; index < incoming.rawHeaders.length; index += 2) {
+        headers.append(incoming.rawHeaders[index]!, incoming.rawHeaders[index + 1]!);
+      }
+      const status = incoming.statusCode ?? 500;
+      const responseHasBody = init.method !== "HEAD" && ![101, 204, 205, 304].includes(status);
+      const body = responseHasBody
+        ? Readable.toWeb(incoming) as unknown as ReadableStream<Uint8Array>
+        : null;
+      resolve(new Response(body, {
+        status,
+        statusText: incoming.statusMessage,
+        headers,
+      }));
+    };
+    const request = url.protocol === "https:"
+      ? httpsRequest({
+          ...commonOptions,
+          servername: isIP(url.hostname.replace(/^\[|\]$/gu, "")) ? undefined : url.hostname,
+        } satisfies HttpsRequestOptions, handleResponse)
+      : httpRequest(commonOptions, handleResponse);
+    request.once("error", reject);
+    request.end(body);
+  });
+}
+
+async function fetchPinnedPublicUrl(
+  url: URL,
+  init: RequestInit,
+  addresses: PublicHttpResolvedAddress[],
+): Promise<Response> {
+  let lastError: unknown = null;
+  for (const address of addresses) {
+    try {
+      return await requestPinnedAddress(url, init, address);
+    } catch (error) {
+      lastError = error;
+      if (init.signal?.aborted) throw error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Website metadata connection failed");
+}
+
+export interface PublicHttpFetchResult {
   response: Response;
   url: URL;
 }
 
-async function fetchWithTimeout(url: URL, options: WebsiteMetadataOptions, init?: RequestInit): Promise<FetchResult> {
+/**
+ * Fetch one HTTP(S) URL after rejecting every non-public DNS answer and pinning
+ * the connection to the validated address set. Redirects are deliberately
+ * returned to the caller so each hop can be authorized independently.
+ */
+export async function fetchPublicHttpUrlOnce(
+  url: URL,
+  options: WebsiteMetadataOptions = {},
+  init: RequestInit = {},
+): Promise<PublicHttpFetchResult> {
+  const currentUrl = parsePublicHttpUrl(url.href, options);
+  const addresses = await resolvePublicConnectionAddresses(currentUrl, options);
+  const requestInit: RequestInit = {
+    ...init,
+    redirect: "manual",
+  };
+  const response = options.fetchImpl
+    ? await options.fetchImpl(currentUrl.href, requestInit)
+    : addresses && options.pinnedFetchImpl
+      ? await options.pinnedFetchImpl(currentUrl, requestInit, addresses)
+      : addresses
+        ? await fetchPinnedPublicUrl(currentUrl, requestInit, addresses)
+        : await fetch(currentUrl.href, requestInit);
+  return { response, url: currentUrl };
+}
+
+async function fetchWithTimeout(
+  url: URL,
+  options: WebsiteMetadataOptions,
+  init?: RequestInit,
+): Promise<PublicHttpFetchResult> {
   let currentUrl = parsePublicHttpUrl(url.href, options);
-  const fetchImpl = options.fetchImpl ?? fetch;
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
-    await assertPublicResolvedHost(currentUrl, options);
+    const requestInit: RequestInit = {
+      redirect: "manual",
+      ...init,
+      signal: init?.signal
+        ? AbortSignal.any([init.signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)])
+        : AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      headers: {
+        accept: "text/html,application/xhtml+xml,image/avif,image/webp,image/png,image/*,*/*;q=0.8",
+        "user-agent": "RudderWebsiteMetadata/1.0",
+        ...(init?.headers ?? {}),
+      },
+    };
+    const fetched = await fetchPublicHttpUrlOnce(currentUrl, options, requestInit);
+    const { response } = fetched;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    try {
-      const response = await fetchImpl(currentUrl.href, {
-        redirect: "manual",
-        ...init,
-        signal: controller.signal,
-        headers: {
-          accept: "text/html,application/xhtml+xml,image/avif,image/webp,image/png,image/svg+xml,image/*,*/*;q=0.8",
-          "user-agent": "RudderWebsiteMetadata/1.0",
-          ...(init?.headers ?? {}),
-        },
-      });
-
-      if (response.status < 300 || response.status >= 400) return { response, url: currentUrl };
-      const location = response.headers.get("location");
-      if (!location) return { response, url: currentUrl };
-      currentUrl = parsePublicHttpUrl(new URL(location, currentUrl).href, options);
-    } finally {
-      clearTimeout(timeout);
-    }
+    if (response.status < 300 || response.status >= 400) return fetched;
+    const location = response.headers.get("location");
+    if (!location) return fetched;
+    await response.body?.cancel().catch(() => undefined);
+    currentUrl = parsePublicHttpUrl(new URL(location, currentUrl).href, options);
   }
 
   throw new Error("Website metadata redirect limit exceeded");
@@ -188,6 +259,7 @@ async function readLimitedBuffer(response: Response, maxBytes: number, options: 
           await reader.cancel();
           break;
         }
+        await reader.cancel();
         throw new Error("Response exceeds metadata size limit");
       }
       chunks.push(Buffer.from(value));
@@ -196,6 +268,110 @@ async function readLimitedBuffer(response: Response, maxBytes: number, options: 
     reader.releaseLock();
   }
   return Buffer.concat(chunks);
+}
+
+export interface PublicHttpTextOptions extends WebsiteMetadataOptions {
+  timeoutMs?: number;
+  maxRedirects?: number;
+  maxBytes?: number;
+  headers?: HeadersInit;
+  userAgent?: string;
+}
+
+export interface PublicHttpTextResult {
+  ok: boolean;
+  status: number;
+  text: string;
+  url: URL;
+}
+
+/**
+ * Fetch bounded public text while validating and pinning every redirect hop.
+ * This is shared by features that accept administrator- or tenant-supplied
+ * URLs and must never reach loopback, metadata, or private network services.
+ */
+export async function fetchPublicHttpText(
+  value: string | URL,
+  options: PublicHttpTextOptions = {},
+): Promise<PublicHttpTextResult> {
+  const timeoutMs = Math.max(1, Math.min(30_000, Math.floor(options.timeoutMs ?? 10_000)));
+  const maxRedirects = Math.max(0, Math.min(10, Math.floor(options.maxRedirects ?? 5)));
+  const maxBytes = Math.max(1, Math.min(16 * 1024 * 1024, Math.floor(options.maxBytes ?? 1024 * 1024)));
+  const signal = AbortSignal.timeout(timeoutMs);
+  const headers = new Headers(options.headers);
+  if (!headers.has("accept")) {
+    headers.set("accept", "text/markdown,text/plain,application/json;q=0.9,*/*;q=0.1");
+  }
+  headers.set("user-agent", options.userAgent ?? "RudderPublicTextFetcher/1.0");
+
+  const performFetch = async () => {
+    let currentUrl = parsePublicHttpUrl(value instanceof URL ? value.href : value, options);
+    for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount += 1) {
+      const fetched = await fetchPublicHttpUrlOnce(
+        currentUrl,
+        options,
+        {
+          method: "GET",
+          redirect: "manual",
+          signal,
+          headers,
+        },
+      );
+      const { response } = fetched;
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        if (!location) {
+          await response.body?.cancel().catch(() => undefined);
+          return { ok: false, status: response.status, text: "", url: fetched.url };
+        }
+        await response.body?.cancel().catch(() => undefined);
+        if (redirectCount === maxRedirects) {
+          throw new Error("Public HTTP redirect limit exceeded");
+        }
+        currentUrl = parsePublicHttpUrl(new URL(location, fetched.url).href, options);
+        continue;
+      }
+
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => undefined);
+        return { ok: false, status: response.status, text: "", url: fetched.url };
+      }
+      const declaredLength = Number(response.headers.get("content-length"));
+      if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+        await response.body?.cancel().catch(() => undefined);
+        throw new Error("Response exceeds public text size limit");
+      }
+      let body: Buffer;
+      try {
+        body = await readLimitedBuffer(response, maxBytes);
+      } catch (error) {
+        if (error instanceof Error && error.message === "Response exceeds metadata size limit") {
+          throw new Error("Response exceeds public text size limit");
+        }
+        throw error;
+      }
+      return {
+        ok: true,
+        status: response.status,
+        text: body.toString("utf8"),
+        url: fetched.url,
+      };
+    }
+    throw new Error("Public HTTP redirect limit exceeded");
+  };
+
+  let rejectOnTimeout: ((reason?: unknown) => void) | null = null;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    rejectOnTimeout = reject;
+  });
+  const onTimeout = () => rejectOnTimeout?.(signal.reason ?? new Error("Public HTTP request timed out"));
+  if (signal.aborted) onTimeout();
+  else signal.addEventListener("abort", onTimeout, { once: true });
+  try {
+    return await Promise.race([performFetch(), timeoutPromise]);
+  } finally {
+    signal.removeEventListener("abort", onTimeout);
+  }
 }
 
 function contentTypeBase(value: string | null) {
@@ -309,7 +485,7 @@ async function resolveWebsiteMetadataUncached(value: string, options: WebsiteMet
     return { url: pageUrl.href, siteName: knownIcon.siteName, iconUrl: knownIcon.iconDataUrl };
   }
 
-  let pageResult: FetchResult;
+  let pageResult: PublicHttpFetchResult;
   try {
     pageResult = await fetchWithTimeout(pageUrl, options);
   } catch (error) {

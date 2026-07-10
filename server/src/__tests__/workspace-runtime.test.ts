@@ -5,6 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  resolveManagedRunWorkspacesRoot,
+  resolveOrganizationWorkspaceRoot,
+} from "../home-paths.ts";
 import type { WorkspaceOperationRecorder } from "../services/workspace-operations.ts";
 import {
   cleanupExecutionWorkspaceArtifacts,
@@ -615,6 +619,129 @@ describe("realizeExecutionWorkspace", () => {
     ).resolves.toMatchObject({
       stdout: expect.stringContaining(workspace.branchName!),
     });
+  });
+
+  it("removes a runtime-created local workspace only from its managed runtime root", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-managed-runtime-cleanup-"));
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "workspace-cleanup-test";
+    const orgId = "organization-1";
+    const workspacePath = path.join(resolveManagedRunWorkspacesRoot(orgId), "run-workspace-1");
+    await fs.mkdir(workspacePath, { recursive: true });
+    await fs.writeFile(path.join(workspacePath, "result.txt"), "done\n", "utf8");
+
+    try {
+      const cleanup = await cleanupExecutionWorkspaceArtifacts({
+        workspace: {
+          id: "execution-workspace-1",
+          orgId,
+          cwd: workspacePath,
+          providerType: "local_fs",
+          providerRef: null,
+          branchName: null,
+          repoUrl: null,
+          baseRef: null,
+          projectId: "project-1",
+          projectWorkspaceId: null,
+          sourceIssueId: "issue-1",
+          metadata: { createdByRuntime: true },
+        },
+        projectWorkspace: null,
+      });
+
+      expect(cleanup.cleaned).toBe(true);
+      expect(cleanup.warnings).toEqual([]);
+      await expect(fs.lstat(workspacePath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await fs.rm(rudderHome, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to recursively remove the managed root, its ancestor, or the organization workspace root", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-runtime-root-guard-"));
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "workspace-root-guard-test";
+    const orgId = "organization-1";
+    const managedRoot = resolveManagedRunWorkspacesRoot(orgId);
+    const managedRootAncestor = path.dirname(managedRoot);
+    const organizationWorkspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(managedRoot, { recursive: true });
+    await fs.mkdir(organizationWorkspaceRoot, { recursive: true });
+
+    try {
+      for (const guardedPath of [managedRoot, managedRootAncestor, organizationWorkspaceRoot]) {
+        const cleanup = await cleanupExecutionWorkspaceArtifacts({
+          workspace: {
+            id: "execution-workspace-1",
+            orgId,
+            cwd: guardedPath,
+            providerType: "local_fs",
+            providerRef: null,
+            branchName: null,
+            repoUrl: null,
+            baseRef: null,
+            projectId: "project-1",
+            projectWorkspaceId: null,
+            sourceIssueId: "issue-1",
+            metadata: { createdByRuntime: true },
+          },
+          projectWorkspace: null,
+        });
+
+        expect(cleanup.cleaned).toBe(false);
+        expect(cleanup.warnings.join(" ")).toContain("managed runtime workspace root");
+        await expect(fs.lstat(guardedPath)).resolves.toBeDefined();
+      }
+    } finally {
+      await fs.rm(rudderHome, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses local cleanup through a symlink target or symlink ancestor", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-runtime-symlink-guard-"));
+    const externalRoot = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-runtime-external-"));
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "workspace-symlink-guard-test";
+    const orgId = "organization-1";
+    const managedRoot = resolveManagedRunWorkspacesRoot(orgId);
+    const symlinkTarget = path.join(managedRoot, "target-link");
+    const symlinkAncestor = path.join(managedRoot, "ancestor-link");
+    const nestedExternalPath = path.join(externalRoot, "nested-workspace");
+    await fs.mkdir(managedRoot, { recursive: true });
+    await fs.mkdir(nestedExternalPath, { recursive: true });
+    await fs.writeFile(path.join(externalRoot, "keep.txt"), "keep\n", "utf8");
+    await fs.symlink(externalRoot, symlinkTarget, "dir");
+    await fs.symlink(externalRoot, symlinkAncestor, "dir");
+
+    try {
+      for (const guardedPath of [symlinkTarget, path.join(symlinkAncestor, "nested-workspace")]) {
+        const cleanup = await cleanupExecutionWorkspaceArtifacts({
+          workspace: {
+            id: "execution-workspace-1",
+            orgId,
+            cwd: guardedPath,
+            providerType: "local_fs",
+            providerRef: null,
+            branchName: null,
+            repoUrl: null,
+            baseRef: null,
+            projectId: "project-1",
+            projectWorkspaceId: null,
+            sourceIssueId: "issue-1",
+            metadata: { createdByRuntime: true },
+          },
+          projectWorkspace: null,
+        });
+
+        expect(cleanup.cleaned).toBe(false);
+        expect(cleanup.warnings.join(" ")).toContain("symbolic link");
+      }
+      await expect(fs.readFile(path.join(externalRoot, "keep.txt"), "utf8")).resolves.toBe("keep\n");
+      await expect(fs.lstat(nestedExternalPath)).resolves.toBeDefined();
+    } finally {
+      await fs.rm(rudderHome, { recursive: true, force: true });
+      await fs.rm(externalRoot, { recursive: true, force: true });
+    }
   });
 
   it("records teardown and cleanup operations when a recorder is provided", async () => {

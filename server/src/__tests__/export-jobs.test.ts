@@ -58,6 +58,14 @@ describe("organizationExportJobService", () => {
     expect(completed?.resultAvailable).toBe(true);
     expect(completed?.progress.stage).toBe("ready");
     expect(jobs.getResult(created.id)).toEqual(result);
+    expect(jobs.requiresInstanceAdmin(created.id)).toBe(false);
+  });
+
+  it("retains instance-admin sensitivity for the lifetime of an export job", () => {
+    const jobs = organizationExportJobService();
+    const created = jobs.create("org-1", async () => result, { requiresInstanceAdmin: true });
+
+    expect(jobs.requiresInstanceAdmin(created.id)).toBe(true);
   });
 
   it("cancels a pending export job", async () => {

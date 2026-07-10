@@ -65,6 +65,7 @@ import {
   pruneRuntimeCache,
   readRuntimeInstallMetadata,
   resolveRuntimeCacheDir,
+  resolveRuntimePackageSpec,
   resolveRuntimePostgresPayloadBinDir,
   RUNTIME_METADATA_FILE,
   type RuntimeInstallError,
@@ -225,6 +226,15 @@ describe("persistent CLI install helpers", () => {
     expect(resolvePersistentCliInstallSpec({})).toBe(CLI_NPM_PACKAGE_NAME);
   });
 
+  it("ignores unsafe npm package version metadata", () => {
+    expect(
+      resolvePersistentCliInstallSpec({
+        npm_package_name: CLI_NPM_PACKAGE_NAME,
+        npm_package_version: "1.2.3 & whoami",
+      }),
+    ).toBe(CLI_NPM_PACKAGE_NAME);
+  });
+
   it("reads the global install state from npm list output", () => {
     const execFileSyncImpl = vi.fn(() =>
       JSON.stringify({
@@ -322,6 +332,17 @@ describe("persistent CLI install helpers", () => {
       npmInstallSpawnOptions,
     );
   });
+
+  it.each(["@rudderhq/cli@latest & whoami", "@rudderhq/cli@1.2.3|whoami", "left-pad@1.0.0"])(
+    "rejects an unsafe persistent install spec before spawning: %s",
+    (installSpec) => {
+      const spawnSyncImpl = vi.fn();
+      expect(() => installPersistentCli({ installSpec, spawnSyncImpl: spawnSyncImpl as never })).toThrow(
+        "Refusing unsafe Rudder CLI install spec",
+      );
+      expect(spawnSyncImpl).not.toHaveBeenCalled();
+    },
+  );
 
   it("retries with --force when npm reports an existing rudder binary", () => {
     const spawnSyncImpl = vi
@@ -1632,6 +1653,14 @@ describe("desktop start command helpers", () => {
 });
 
 describe("runtime install helpers", () => {
+  it.each([
+    ["1.2.3 & whoami", "@rudderhq/server"],
+    ["1.2.3|whoami", "@rudderhq/server"],
+    ["1.2.3", "@rudderhq/server & whoami"],
+  ])("rejects unsafe runtime npm inputs before spawning", (version, packageName) => {
+    expect(() => resolveRuntimePackageSpec(version, packageName)).toThrow("Refusing unsafe runtime package");
+  });
+
   it("uses the versioned runtime cache when metadata and package version match", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-cache-test."));
     try {

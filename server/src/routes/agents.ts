@@ -49,9 +49,11 @@ import { findServerAdapter, listAgentRuntimeModels } from "../agent-runtimes/ind
 import { resolveStoredOrDerivedAgentWorkspaceKey } from "../agent-workspace-key.js";
 import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
+import { resolveAgentInstructionsDir, resolveHomeAwarePath } from "../home-paths.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import { redactEventPayload } from "../redaction.js";
+import { isCanonicalManagedAgentInstructionsConfig } from "../services/agent-instructions.js";
 import { listAgentRuntimeAvailability } from "../services/agent-runtime-availability.js";
 import { assetService } from "../services/assets.js";
 import {
@@ -559,9 +561,11 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     const publicAgent = internalAgent
       ? (({ workspaceKey: _workspaceKey, ...rest }) => rest)(internalAgent)
       : agent;
+    const instructionsAgent = internalAgent ?? agent;
     const instructionsBundle = options?.restricted
+      || !isCanonicalManagedAgentInstructionsConfig(instructionsAgent)
       ? null
-      : await instructions.getBundle(internalAgent ?? agent);
+      : await instructions.getBundle(instructionsAgent);
     const instructionsLibraryPath = instructionsBundle?.mode === "managed"
       ? `agents/${resolveStoredOrDerivedAgentWorkspaceKey(internalAgent ?? agent)}/instructions`
       : null;
@@ -860,6 +864,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
   ) {
     if (agentRuntimeType !== "opencode_local" && agentRuntimeType !== "pi_local") return;
     const { config: runtimeConfig } = await secretsSvc.resolveAdapterConfigForRuntime(orgId, agentRuntimeConfig);
+    assertAdapterConfigShape(agentRuntimeType, runtimeConfig);
     const runtimeEnv = asRecord(runtimeConfig.env) ?? {};
     try {
       const ensureModelConfigured =
@@ -876,6 +881,23 @@ export function agentRoutes(db: Db, storage?: StorageService) {
       const reason = err instanceof Error ? err.message : String(err);
       throw unprocessable(`Invalid ${agentRuntimeType} agentRuntimeConfig: ${reason}`);
     }
+  }
+
+  function assertAdapterConfigShape(
+    agentRuntimeType: string | null | undefined,
+    agentRuntimeConfig: Record<string, unknown>,
+  ) {
+    if (agentRuntimeType !== "opencode_local" && agentRuntimeType !== "pi_local") return;
+    const model = typeof agentRuntimeConfig.model === "string"
+      ? agentRuntimeConfig.model.trim()
+      : "";
+    const [provider, modelId] = model.split("/", 2).map((part) => part.trim());
+    if (provider && modelId) return;
+    const runtimeLabel = agentRuntimeType === "pi_local" ? "Pi" : "OpenCode";
+    throw unprocessable(
+      `Invalid ${agentRuntimeType} agentRuntimeConfig: ${runtimeLabel} requires `
+        + "`agentRuntimeConfig.model` in provider/model format.",
+    );
   }
 
   function resolveInstructionsFilePath(candidatePath: string, agentRuntimeConfig: Record<string, unknown>) {
@@ -954,6 +976,39 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     throw forbidden("Only the target agent or an ancestor manager can update instructions path");
   }
 
+  function isCanonicalManagedInstructionsRoot(
+    targetAgent: { id: string; orgId: string; name?: string | null; workspaceKey?: string | null },
+    candidateRootPath: string,
+  ) {
+    if (
+      !path.isAbsolute(candidateRootPath)
+      && candidateRootPath !== "~"
+      && !candidateRootPath.startsWith("~/")
+    ) {
+      return false;
+    }
+    const managedRootPath = resolveAgentInstructionsDir(targetAgent.orgId, targetAgent);
+    return path.resolve(resolveHomeAwarePath(candidateRootPath)) === path.resolve(managedRootPath);
+  }
+
+  async function assertCanAccessInstructionsFile(
+    req: Request,
+    targetAgent: {
+      id: string;
+      orgId: string;
+      name?: string | null;
+      workspaceKey?: string | null;
+      agentRuntimeConfig: unknown;
+    },
+  ) {
+    await assertCanReadAgent(req, targetAgent);
+    if (isCanonicalManagedAgentInstructionsConfig(targetAgent)) return;
+
+    // External roots grant access to arbitrary host filesystem locations, so
+    // even organization board members need host-global authority to use them.
+    assertInstanceAdmin(req);
+  }
+
   function summarizeAgentUpdateDetails(patch: Record<string, unknown>) {
     const changedTopLevelKeys = Object.keys(patch).sort();
     const details: Record<string, unknown> = { changedTopLevelKeys };
@@ -986,11 +1041,13 @@ export function agentRoutes(db: Db, storage?: StorageService) {
   }
 
   async function resolveDesiredSkillAssignment(
+    req: Request,
     orgId: string,
     agentRuntimeType: string,
     runtimeConfig: Record<string, unknown>,
     requestedDesiredSkills: string[] | undefined,
   ) {
+    const catalogAccess = skillCatalogAccessForRequest(req);
     return organizationSkills.resolveDesiredSkillSelectionForAgent(
       {
         id: null,
@@ -1000,10 +1057,12 @@ export function agentRoutes(db: Db, storage?: StorageService) {
       },
       runtimeConfig,
       requestedDesiredSkills,
+      catalogAccess,
     );
   }
 
   async function resolveDesiredSkillAssignmentForAgent(
+    req: Request,
     agent: Awaited<ReturnType<typeof svc.getById>>,
     runtimeConfig: Record<string, unknown>,
     requestedDesiredSkills: string[] | undefined,
@@ -1014,25 +1073,48 @@ export function agentRoutes(db: Db, storage?: StorageService) {
         warnings: [] as string[],
       };
     }
+    const catalogAccess = await assertCanUseOrganizationLocalSkills(req, agent.orgId);
     return organizationSkills.resolveDesiredSkillSelectionForAgent(
       agent,
       runtimeConfig,
       requestedDesiredSkills,
+      catalogAccess,
     );
   }
 
   async function buildAgentSkillSnapshot(
+    req: Request,
     agent: Awaited<ReturnType<typeof svc.getById>>,
     runtimeConfig: Record<string, unknown>,
   ) {
     if (!agent) {
       return buildUnsupportedSkillSnapshot("", []);
     }
-    const snapshot = await organizationSkills.buildAgentSkillSnapshot(agent, runtimeConfig);
+    const catalogAccess = await assertCanUseOrganizationLocalSkills(req, agent.orgId);
+    const snapshot = await organizationSkills.buildAgentSkillSnapshot(agent, runtimeConfig, catalogAccess);
     if (!snapshot.supported) {
       return buildUnsupportedSkillSnapshot(agent.agentRuntimeType, snapshot.desiredSkills);
     }
     return snapshot;
+  }
+
+  function skillCatalogAccessForRequest(req: Request) {
+    const trustedHostAuthority = req.actor.type === "board"
+      && (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin);
+    return {
+      allowHostLocalPaths: trustedHostAuthority,
+      allowHostCatalogs: trustedHostAuthority,
+    };
+  }
+
+  async function assertCanUseOrganizationLocalSkills(req: Request, orgId: string) {
+    const catalogAccess = skillCatalogAccessForRequest(req);
+    if (!catalogAccess.allowHostLocalPaths && await organizationSkills.hasLocalPathSkills(orgId)) {
+      // Catalog resolution exposes local source paths and enabling a skill
+      // causes later adapter runs to consume that host directory.
+      assertInstanceAdmin(req);
+    }
+    return catalogAccess;
   }
 
   function redactForRestrictedAgentView(agent: Awaited<ReturnType<typeof svc.getById>>) {
@@ -1135,6 +1217,10 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     "/orgs/:orgId/adapters/:type/test-environment",
     validate(testAgentRuntimeEnvironmentSchema),
     async (req, res) => {
+      // Environment tests may create directories and spawn a caller-selected
+      // local command, so they require host-global authority before any input
+      // is parsed or resolved.
+      assertInstanceAdmin(req);
       const orgId = req.params.orgId as string;
       const type = req.params.type as string;
       await assertCanReadConfigurations(req, orgId);
@@ -1180,7 +1266,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
       agent.orgId,
       agent.agentRuntimeConfig,
     );
-    const snapshot = await buildAgentSkillSnapshot(agent, runtimeConfig);
+    const snapshot = await buildAgentSkillSnapshot(req, agent, runtimeConfig);
     res.json(snapshot);
   });
 
@@ -1215,6 +1301,10 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     "/agents/:id/skills/private",
     validate(organizationSkillCreateSchema),
     async (req, res) => {
+      // This endpoint creates directories and writes SKILL.md below an agent
+      // workspace. A pre-planted symlink must never turn an agent key or org
+      // manager into a host-filesystem write primitive.
+      assertInstanceAdmin(req);
       const id = req.params.id as string;
       const agent = await svc.getById(id);
       if (!agent) {
@@ -1256,6 +1346,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
         return;
       }
       await assertCanUpdateAgent(req, agent);
+      await assertCanUseOrganizationLocalSkills(req, agent.orgId);
 
       const requestedSkills = Array.from(
         new Set(
@@ -1269,6 +1360,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
         agent.agentRuntimeConfig,
       );
       const { desiredSkills } = await resolveDesiredSkillAssignmentForAgent(
+        req,
         agent,
         runtimeConfig,
         requestedSkills,
@@ -1296,7 +1388,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
         updated.orgId,
         updated.agentRuntimeConfig,
       );
-      const snapshot = await buildAgentSkillSnapshot(updated, updatedRuntimeConfig);
+      const snapshot = await buildAgentSkillSnapshot(req, updated, updatedRuntimeConfig);
 
       await logActivity(db, {
         orgId: updated.orgId,
@@ -1332,6 +1424,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
         return;
       }
       await assertCanUpdateAgent(req, agent);
+      await assertCanUseOrganizationLocalSkills(req, agent.orgId);
 
       const requestedSkills = Array.from(
         new Set(
@@ -1346,6 +1439,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
       );
       const currentDesiredSkills = await organizationSkills.getEnabledSkillKeysForAgent(agent.orgId, agent);
       const { desiredSkills } = await resolveDesiredSkillAssignmentForAgent(
+        req,
         agent,
         runtimeConfig,
         [...currentDesiredSkills, ...requestedSkills],
@@ -1354,7 +1448,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
       const actor = getActorInfo(req);
       await organizationSkills.addEnabledSkillKeysForAgent(agent.orgId, agent.id, desiredSkills);
 
-      const snapshot = await buildAgentSkillSnapshot(agent, runtimeConfig);
+      const snapshot = await buildAgentSkillSnapshot(req, agent, runtimeConfig);
 
       await logActivity(db, {
         orgId: agent.orgId,
@@ -1875,6 +1969,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
   });
 
   router.post("/agents/:id/config-revisions/:revisionId/rollback", async (req, res) => {
+    assertBoard(req);
     const id = req.params.id as string;
     const revisionId = req.params.revisionId as string;
     const existing = await svc.getById(id);
@@ -1883,6 +1978,30 @@ export function agentRoutes(db: Db, storage?: StorageService) {
       return;
     }
     await assertCanUpdateAgent(req, existing);
+
+    const revision = await svc.getConfigRevision(id, revisionId);
+    if (!revision) {
+      res.status(404).json({ error: "Revision not found" });
+      return;
+    }
+    const revisionSnapshot = asRecord(revision.afterConfig) ?? {};
+    const prospectiveAgent = {
+      ...existing,
+      name: asNonEmptyString(revisionSnapshot.name) ?? existing.name,
+      agentRuntimeConfig: asRecord(revisionSnapshot.agentRuntimeConfig) ?? {},
+    };
+    const revisionRuntimeConfig = asRecord(revisionSnapshot.runtimeConfig) ?? {};
+    const revisionSelectsHostRuntime = (
+      (typeof revisionSnapshot.agentRuntimeType === "string" && revisionSnapshot.agentRuntimeType !== "process")
+      || Object.keys(prospectiveAgent.agentRuntimeConfig).length > 0
+      || Object.keys(revisionRuntimeConfig).length > 0
+    );
+    if (revisionSelectsHostRuntime) {
+      assertInstanceAdmin(req);
+    }
+    if (!isCanonicalManagedAgentInstructionsConfig(prospectiveAgent)) {
+      assertInstanceAdmin(req);
+    }
 
     const actor = getActorInfo(req);
     const updated = await svc.rollbackConfigRevision(id, revisionId, {
@@ -1999,6 +2118,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     parseSourceIssueIds,
     applyCreateDefaultsByAdapterType,
     resolveDesiredSkillAssignment,
+    assertAdapterConfigShape,
     assertAdapterConfigConstraints,
     assertAgentAvatarAssetBelongsToOrg,
     materializeDefaultInstructionsBundleForNewAgent,
@@ -2009,6 +2129,9 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     AGENT_AVATAR_CONTENT_TYPES,
     compressAgentAvatar,
     assertCanManageInstructionsPath,
+    assertCanAccessInstructionsFile,
+    isCanonicalManagedInstructionsRoot,
+    isCanonicalManagedInstructionsConfig: isCanonicalManagedAgentInstructionsConfig,
     asRecord,
     asNonEmptyString,
     resolveInstructionsFilePath,
