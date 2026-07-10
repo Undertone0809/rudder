@@ -1157,6 +1157,7 @@ export function OnboardingWizard() {
                         allowDefault={!requiresProviderModel}
                         required={requiresProviderModel}
                         groupByProvider={requiresProviderModel}
+                        preserveModelOrder={agentRuntimeType === "codex_local"}
                         emptyLabel={runtimeModelEmptyLabel(agentRuntimeType, requiresProviderModel)}
                         searchPlaceholder={runtimeModelSearchPlaceholder(agentRuntimeType)}
                         emptyMessage={runtimeModelEmptyMessage(

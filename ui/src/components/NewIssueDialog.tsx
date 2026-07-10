@@ -1111,19 +1111,20 @@ export function NewIssueDialog() {
         assigneeAdapterType ?? "",
         assigneeAgentRuntimeModels,
       );
-      return [...models]
-        .sort((a, b) => {
+      const orderedModels = assigneeAdapterType === "codex_local"
+        ? models
+        : [...models].sort((a, b) => {
           const providerA = extractProviderIdWithFallback(a.id);
           const providerB = extractProviderIdWithFallback(b.id);
           const byProvider = providerA.localeCompare(providerB);
           if (byProvider !== 0) return byProvider;
           return a.id.localeCompare(b.id);
-        })
-        .map((model) => ({
-          id: model.id,
-          label: model.label,
-          searchText: `${model.id} ${extractProviderIdWithFallback(model.id)}`,
-        }));
+        });
+      return orderedModels.map((model) => ({
+        id: model.id,
+        label: model.label,
+        searchText: `${model.id} ${extractProviderIdWithFallback(model.id)}`,
+      }));
     },
     [assigneeAdapterType, assigneeAgentRuntimeModels],
   );

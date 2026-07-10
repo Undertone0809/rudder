@@ -114,16 +114,16 @@ test.describe("Agent configuration advanced options", () => {
     const primaryModelPopover = page.locator("[data-radix-popper-content-wrapper]").last();
     const primaryModelOptions = primaryModelPopover.getByRole("button");
     await expect(primaryModelOptions).toHaveCount(8);
-    expect((await primaryModelOptions.allTextContents()).sort()).toEqual([
+    expect(await primaryModelOptions.allTextContents()).toEqual([
       "Default",
-      "GPT-5.2",
-      "GPT-5.4",
-      "GPT-5.4 Mini",
-      "GPT-5.5",
-      "GPT-5.6-luna",
       "GPT-5.6-sol",
       "GPT-5.6-terra",
-    ].sort());
+      "GPT-5.6-luna",
+      "GPT-5.5",
+      "GPT-5.4",
+      "GPT-5.4 Mini",
+      "GPT-5.2",
+    ]);
     await primaryModelPopover.getByRole("button", { name: "GPT-5.6-sol", exact: true }).click();
     await expect(page.getByTestId("agent-primary-model")).toContainText("GPT-5.6-sol");
 
