@@ -533,7 +533,7 @@ describe("rudder org import/export e2e", () => {
     );
 
     expect(previewExisting.errors).toEqual([]);
-    expect(previewExisting.plan.organizationAction).toBe("none");
+    expect(previewExisting.plan.organizationAction).toBe("update");
     expect(previewExisting.plan.agentPlans.some((plan) => plan.action === "create")).toBe(true);
     expect(previewExisting.plan.projectPlans.some((plan) => plan.action === "create")).toBe(true);
     expect(previewExisting.plan.issuePlans.some((plan) => plan.action === "create")).toBe(true);
@@ -559,7 +559,7 @@ describe("rudder org import/export e2e", () => {
       { apiBase, configPath },
     );
 
-    expect(importedExisting.organization.action).toBe("unchanged");
+    expect(importedExisting.organization.action).toBe("updated");
     expect(importedExisting.agents.some((agent) => agent.action === "created")).toBe(true);
 
     const twiceImportedAgents = await api<Array<{ id: string; name: string }>>(
