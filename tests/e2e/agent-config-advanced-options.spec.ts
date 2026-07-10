@@ -19,7 +19,14 @@ test.describe("Agent configuration advanced options", () => {
         agentRuntimeConfig: {
           command: "codex",
           model: "gpt-5.5",
-          modelFallbacks: [{ agentRuntimeType: "codex_local", model: "gpt-5.4" }],
+          modelFallbacks: [{
+            agentRuntimeType: "codex_local",
+            model: "gpt-5.6-terra",
+            config: {
+              model: "gpt-5.6-terra",
+              modelReasoningEffort: "ultra",
+            },
+          }],
           modelReasoningEffort: "",
         },
       },
@@ -83,7 +90,43 @@ test.describe("Agent configuration advanced options", () => {
     await expect(page.getByText("Fallback 1", { exact: true })).toBeVisible();
     await expect(page.getByText("Model", { exact: true }).first()).toBeVisible();
     await expect(page.getByRole("button", { name: "GPT-5.5", exact: true })).toBeVisible();
-    await expect(page.getByTestId("agent-fallback-model-1")).toContainText("GPT-5.4");
+    const fallbackModelButton = page.getByTestId("agent-fallback-model-1");
+    const fallbackCard = page.locator('[data-runtime-chain-item="fallback-0"]');
+    await expect(fallbackModelButton).toContainText("GPT-5.6-terra");
+    await expect(fallbackCard.getByRole("button", { name: "Ultra", exact: true })).toBeVisible();
+
+    await fallbackModelButton.click();
+    await page.locator("[data-radix-popper-content-wrapper]").last()
+      .getByRole("button", { name: "GPT-5.4", exact: true })
+      .click();
+    await expect(fallbackModelButton).toContainText("GPT-5.4");
+    const fallbackThinkingEffortButton = fallbackCard.getByRole("button", { name: "Auto", exact: true });
+    await expect(fallbackThinkingEffortButton).toBeVisible();
+    await fallbackThinkingEffortButton.click();
+    const fallbackThinkingEffortPopover = page.locator("[data-radix-popper-content-wrapper]").last();
+    await expect(fallbackThinkingEffortPopover.getByText("Low", { exact: true })).toBeVisible();
+    await expect(fallbackThinkingEffortPopover.getByText("Light", { exact: true })).toHaveCount(0);
+    await expect(fallbackThinkingEffortPopover.getByText("Max", { exact: true })).toHaveCount(0);
+    await expect(fallbackThinkingEffortPopover.getByText("Ultra", { exact: true })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+
+    await page.getByTestId("agent-primary-model").click();
+    const primaryModelPopover = page.locator("[data-radix-popper-content-wrapper]").last();
+    const primaryModelOptions = primaryModelPopover.getByRole("button");
+    await expect(primaryModelOptions).toHaveCount(8);
+    expect((await primaryModelOptions.allTextContents()).sort()).toEqual([
+      "Default",
+      "GPT-5.2",
+      "GPT-5.4",
+      "GPT-5.4 Mini",
+      "GPT-5.5",
+      "GPT-5.6-luna",
+      "GPT-5.6-sol",
+      "GPT-5.6-terra",
+    ].sort());
+    await primaryModelPopover.getByRole("button", { name: "GPT-5.6-sol", exact: true }).click();
+    await expect(page.getByTestId("agent-primary-model")).toContainText("GPT-5.6-sol");
+
     await expect(page.getByText("Add fallback model", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Codex (local)", exact: true }).first().click();
     const runtimeTypePopover = page.locator("[data-radix-popper-content-wrapper]").last();
@@ -102,9 +145,13 @@ test.describe("Agent configuration advanced options", () => {
     await expect(primaryThinkingEffortButton).toBeVisible();
     await primaryThinkingEffortButton.click();
     const thinkingEffortPopover = page.locator('[data-radix-popper-content-wrapper]').last();
+    await expect(thinkingEffortPopover.getByText("Light", { exact: true })).toBeVisible();
     await expect(thinkingEffortPopover.getByText("Extra High", { exact: true })).toBeVisible();
-    await expect(thinkingEffortPopover.getByText("xhigh", { exact: true })).toBeVisible();
-    await expect(thinkingEffortPopover.getByText("Minimal", { exact: true })).toHaveCount(0);
+    await expect(thinkingEffortPopover.getByText("Max", { exact: true })).toBeVisible();
+    await expect(thinkingEffortPopover.getByText("Ultra", { exact: true })).toBeVisible();
+    await expect(thinkingEffortPopover.getByText("Low", { exact: true })).toHaveCount(0);
+    await thinkingEffortPopover.getByText("Ultra", { exact: true }).click();
+    await expect(page.getByRole("button", { name: "Ultra", exact: true }).first()).toBeVisible();
     const runConcurrencyInput = page.getByRole("spinbutton", { name: "Agent run concurrency" });
     await expect(runConcurrencyInput).toBeVisible();
     await expect(runConcurrencyInput).toHaveValue("3");
@@ -148,18 +195,24 @@ test.describe("Agent configuration advanced options", () => {
     const refreshed = await refreshedRes.json() as {
       agentRuntimeConfig: {
         countSubscriptionUsageAsCost?: boolean;
+        model?: string;
         modelFallbacks?: Array<{ agentRuntimeType: string; model: string; config?: Record<string, unknown> }>;
+        modelReasoningEffort?: string;
       };
       runtimeConfig: { heartbeat?: { maxConcurrentRuns?: number; preflightEnabled?: boolean } };
     };
     expect(refreshed.agentRuntimeConfig.countSubscriptionUsageAsCost).toBe(false);
+    expect(refreshed.agentRuntimeConfig.model).toBe("gpt-5.6-sol");
+    expect(refreshed.agentRuntimeConfig.modelReasoningEffort).toBe("ultra");
     expect(refreshed.agentRuntimeConfig.modelFallbacks).toEqual([
-      { agentRuntimeType: "codex_local", model: "gpt-5.4" },
+      expect.objectContaining({ agentRuntimeType: "codex_local", model: "gpt-5.4" }),
       expect.objectContaining({
         agentRuntimeType: "claude_local",
         model: "openrouter/custom-model",
       }),
     ]);
+    expect(refreshed.agentRuntimeConfig.modelFallbacks?.[0]?.config ?? {})
+      .not.toHaveProperty("modelReasoningEffort");
     expect(refreshed.runtimeConfig.heartbeat?.maxConcurrentRuns).toBe(4);
     expect(refreshed.runtimeConfig.heartbeat?.preflightEnabled ?? true).toBe(true);
   });

@@ -6,13 +6,17 @@ describe("resolveRuntimeModels", () => {
   it("includes codex fallback models when discovery is empty", () => {
     const models = resolveRuntimeModels("codex_local");
 
-    expect(models).toEqual(codexLocalModels);
-    expect(models[0]?.id).toBe(DEFAULT_CODEX_LOCAL_MODEL);
+    expect(models).toEqual([
+      { id: "gpt-5.6-sol", label: "GPT-5.6-sol" },
+      { id: "gpt-5.6-terra", label: "GPT-5.6-terra" },
+      { id: "gpt-5.6-luna", label: "GPT-5.6-luna" },
+      { id: "gpt-5.5", label: "GPT-5.5" },
+      { id: "gpt-5.4", label: "GPT-5.4" },
+      { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
+      { id: "gpt-5.2", label: "GPT-5.2" },
+    ]);
+    expect(models.some((model) => model.id === DEFAULT_CODEX_LOCAL_MODEL)).toBe(true);
     expect(models.map((model) => model.id)).toEqual(codexLocalModels.map((model) => model.id));
-    expect(models.some((model) => model.id === "gpt-5.5-codex")).toBe(true);
-    expect(models.some((model) => model.id === "codex-mini-latest")).toBe(true);
-    expect(models.some((model) => model.id === "gpt-5")).toBe(false);
-    expect(models.some((model) => model.id === "o3")).toBe(false);
   });
 
   it("ignores discovered codex models so the menu stays aligned with Codex", () => {

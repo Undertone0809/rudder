@@ -71,12 +71,15 @@ describe("adapter model listing", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(first).toEqual(second);
     expect(first).toEqual(codexFallbackModels);
-    expect(first[0]?.id).toBe("gpt-5.5");
-    expect(first.map((model) => model.id)).toEqual(codexFallbackModels.map((model) => model.id));
-    expect(first.some((model) => model.id === "gpt-5.5-codex")).toBe(true);
-    expect(first.some((model) => model.id === "codex-mini-latest")).toBe(true);
-    expect(first.some((model) => model.id === "gpt-5")).toBe(false);
-    expect(first.some((model) => model.id === "o3")).toBe(false);
+    expect(first).toEqual([
+      { id: "gpt-5.6-sol", label: "GPT-5.6-sol" },
+      { id: "gpt-5.6-terra", label: "GPT-5.6-terra" },
+      { id: "gpt-5.6-luna", label: "GPT-5.6-luna" },
+      { id: "gpt-5.5", label: "GPT-5.5" },
+      { id: "gpt-5.4", label: "GPT-5.4" },
+      { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
+      { id: "gpt-5.2", label: "GPT-5.2" },
+    ]);
   });
 
   it("falls back to static codex models when OpenAI model discovery fails", async () => {

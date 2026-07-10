@@ -5,23 +5,20 @@ export const DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX = true;
 export const DEFAULT_CODEX_LOCAL_SEARCH = true;
 export const DEFAULT_CODEX_LOCAL_COUNT_SUBSCRIPTION_USAGE_AS_COST = true;
 
+export const GPT_5_6_CODEX_LOCAL_MODEL_IDS = [
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+] as const;
+
 export const models = [
+  { id: GPT_5_6_CODEX_LOCAL_MODEL_IDS[0], label: "GPT-5.6-sol" },
+  { id: GPT_5_6_CODEX_LOCAL_MODEL_IDS[1], label: "GPT-5.6-terra" },
+  { id: GPT_5_6_CODEX_LOCAL_MODEL_IDS[2], label: "GPT-5.6-luna" },
   { id: DEFAULT_CODEX_LOCAL_MODEL, label: "GPT-5.5" },
-  { id: "gpt-5.5-codex", label: "GPT-5.5-Codex" },
-  { id: "gpt-5.5-fast", label: "GPT-5.5-Fast" },
-  { id: "gpt-5.5-flex", label: "GPT-5.5-Flex" },
   { id: "gpt-5.4", label: "GPT-5.4" },
-  { id: "gpt-5.4-codex", label: "GPT-5.4-Codex" },
-  { id: "gpt-5.4-mini", label: "GPT-5.4-Mini" },
-  { id: "gpt-5.4-nano", label: "GPT-5.4-Nano" },
-  { id: "gpt-5.3-codex", label: "GPT-5.3-Codex" },
-  { id: "gpt-5.3-codex-spark", label: "GPT-5.3-Codex-Spark" },
-  { id: "gpt-5.2-codex", label: "GPT-5.2-Codex" },
-  { id: "gpt-5.1-codex", label: "GPT-5.1-Codex" },
-  { id: "gpt-5.1-codex-max", label: "GPT-5.1-Codex-Max" },
-  { id: "gpt-5.1-codex-mini", label: "GPT-5.1-Codex-Mini" },
-  { id: "gpt-5-codex", label: "GPT-5-Codex" },
-  { id: "codex-mini-latest", label: "Codex Mini Latest" },
+  { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
+  { id: "gpt-5.2", label: "GPT-5.2" },
 ];
 
 export const agentConfigurationDoc = `# codex_local agent configuration
@@ -33,7 +30,7 @@ Core fields:
 - instructionsFilePath (string, optional): absolute path to a markdown role/persona instructions file such as SOUL.md; Rudder's shared operating contract is prepended separately at runtime
 - model (string, optional): Codex model id
 - modelFallbacks (array, optional): ordered fallback attempts as { agentRuntimeType, model, config? }; each may use a different runtime/provider
-- modelReasoningEffort (string, optional): reasoning effort override (low|medium|high|xhigh) passed via -c model_reasoning_effort=...
+- modelReasoningEffort (string, optional): model-dependent reasoning effort override (light|low|medium|high|xhigh|max|ultra) passed via -c model_reasoning_effort=...
 - promptTemplate (string, optional): run prompt template
 - search (boolean, optional, defaults to true on new Codex agents): run codex with --search
 - countSubscriptionUsageAsCost (boolean, optional, defaults to true): when Codex uses local subscription auth, estimate API-equivalent spend from token usage instead of recording subscription runs as $0. Known-model estimates count toward Rudder spend and budget hard stops. Rates are stored per model from the OpenAI/Codex price table used by Vibe Usage; unknown models remain subscription usage until added.

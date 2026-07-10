@@ -139,7 +139,7 @@ export type RuntimeProviderCardProps = {
   availableSecrets: OrganizationSecret[];
   onCreateSecret: (name: string, value: string) => Promise<OrganizationSecret>;
   onRuntimeTypeChange: (runtimeType: string) => void;
-  onModelChange: (model: string) => void;
+  onModelChange: (model: string, clearThinkingEffort: boolean) => void;
   onConfigFieldChange: (field: string, value: unknown) => void;
   onConfigPatchChange?: (patch: Record<string, unknown>) => void;
   onRemove?: () => void;
@@ -205,6 +205,16 @@ export function RuntimeProviderCard({
   const currentThinkingEffort = createValues
     ? createValues.thinkingEffort
     : String(config[thinkingEffortKey] ?? config.reasoningEffort ?? "");
+  const thinkingEffortOptions = thinkingEffortOptionsForRuntime(runtimeType, model);
+  const updateThinkingEffort = (value: string) => {
+    if (createSet) {
+      createSet({ thinkingEffort: value });
+    } else if (runtimeType === "codex_local") {
+      onConfigPatchChange?.({ modelReasoningEffort: value || undefined, reasoningEffort: undefined });
+    } else {
+      onConfigFieldChange(thinkingEffortKey, value || undefined);
+    }
+  };
   const adapterFieldProps: AgentRuntimeConfigFieldsProps = {
     mode: createValues ? "create" : "edit",
     isCreate: Boolean(createValues),
@@ -277,7 +287,14 @@ export function RuntimeProviderCard({
           hint={help.model}
           models={models}
           value={model}
-          onChange={onModelChange}
+          onChange={(nextModel) => {
+            const supportedEfforts = thinkingEffortOptionsForRuntime(runtimeType, nextModel);
+            const clearThinkingEffort = Boolean(
+              currentThinkingEffort
+              && !supportedEfforts.some((option) => option.id === currentThinkingEffort)
+            );
+            onModelChange(nextModel, clearThinkingEffort);
+          }}
           open={modelOpen}
           onOpenChange={setModelOpen}
           allowDefault={!requiresProviderModel && !onRemove}
@@ -294,16 +311,8 @@ export function RuntimeProviderCard({
           <>
             <ThinkingEffortDropdown
               value={currentThinkingEffort}
-              options={thinkingEffortOptionsForRuntime(runtimeType)}
-              onChange={(value) => {
-                if (createSet) {
-                  createSet({ thinkingEffort: value });
-                } else if (runtimeType === "codex_local") {
-                  onConfigPatchChange?.({ modelReasoningEffort: value || undefined, reasoningEffort: undefined });
-                } else {
-                  onConfigFieldChange(thinkingEffortKey, value || undefined);
-                }
-              }}
+              options={thinkingEffortOptions}
+              onChange={updateThinkingEffort}
               open={thinkingEffortOpen}
               onOpenChange={setThinkingEffortOpen}
               disabled={disabled}

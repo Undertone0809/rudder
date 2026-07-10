@@ -75,7 +75,10 @@ import { priorityOptions } from "../lib/priorities";
 import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { resolveRuntimeModels } from "../lib/runtime-models";
-import { CODEX_LOCAL_REASONING_EFFORT_OPTIONS, withDefaultThinkingEffortOption } from "../lib/runtime-thinking-effort";
+import {
+  codexLocalReasoningEffortOptionsForModel,
+  withDefaultThinkingEffortOption,
+} from "../lib/runtime-thinking-effort";
 import { issueStatusText, issueStatusTextDefault } from "../lib/status-colors";
 import { cn } from "../lib/utils";
 import { AgentMenuLabel } from "./AssigneeLabel";
@@ -128,7 +131,6 @@ const ISSUE_THINKING_EFFORT_OPTIONS = {
     { value: "medium", label: "Medium" },
     { value: "high", label: "High" },
   ],
-  codex_local: withDefaultThinkingEffortOption("Default", CODEX_LOCAL_REASONING_EFFORT_OPTIONS),
   opencode_local: [
     { value: "", label: "Default" },
     { value: "minimal", label: "Minimal" },
@@ -306,6 +308,10 @@ export function NewIssueDialog() {
     : null;
 
   const assigneeAdapterType = currentAssignee?.agentRuntimeType ?? null;
+  const configuredAssigneeModel = typeof currentAssignee?.agentRuntimeConfig.model === "string"
+    ? currentAssignee.agentRuntimeConfig.model
+    : "";
+  const effectiveAssigneeModel = assigneeModelOverride || configuredAssigneeModel;
   const supportsAssigneeOverrides = Boolean(
     assigneeAdapterType && ISSUE_OVERRIDE_ADAPTER_TYPES.has(assigneeAdapterType),
   );
@@ -698,14 +704,17 @@ export function NewIssueDialog() {
 
     const validThinkingValues =
       assigneeAdapterType === "codex_local"
-        ? ISSUE_THINKING_EFFORT_OPTIONS.codex_local
+        ? withDefaultThinkingEffortOption(
+          "Default",
+          codexLocalReasoningEffortOptionsForModel(effectiveAssigneeModel),
+        )
         : assigneeAdapterType === "opencode_local"
           ? ISSUE_THINKING_EFFORT_OPTIONS.opencode_local
           : ISSUE_THINKING_EFFORT_OPTIONS.claude_local;
     if (!validThinkingValues.some((option) => option.value === assigneeThinkingEffort)) {
       setAssigneeThinkingEffort("");
     }
-  }, [supportsAssigneeOverrides, assigneeAdapterType, assigneeThinkingEffort]);
+  }, [supportsAssigneeOverrides, assigneeAdapterType, assigneeThinkingEffort, effectiveAssigneeModel]);
 
   // Cleanup timer on unmount
   useEffect(() => {
@@ -945,7 +954,10 @@ export function NewIssueDialog() {
         : "Agent options";
   const thinkingEffortOptions =
     assigneeAdapterType === "codex_local"
-      ? ISSUE_THINKING_EFFORT_OPTIONS.codex_local
+      ? withDefaultThinkingEffortOption(
+        "Default",
+        codexLocalReasoningEffortOptionsForModel(effectiveAssigneeModel),
+      )
       : assigneeAdapterType === "opencode_local"
         ? ISSUE_THINKING_EFFORT_OPTIONS.opencode_local
       : ISSUE_THINKING_EFFORT_OPTIONS.claude_local;

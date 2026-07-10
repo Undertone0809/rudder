@@ -24,6 +24,7 @@ import {
   defaultFallbackItemForChain,
   defaultModelForRuntime,
   runtimeChainItemsFromConfig,
+  thinkingEffortOptionsForRuntime,
 } from "./AgentConfigForm.helpers";
 
 describe("AgentConfigForm runtime defaults", () => {
@@ -44,6 +45,31 @@ describe("AgentConfigForm runtime defaults", () => {
     expect(defaultConfigForRuntime("codex_local")).toMatchObject({
       model: "gpt-5.5",
     });
+  });
+
+  it.each(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])(
+    "uses GPT-5.6 reasoning levels for %s",
+    (model) => {
+      expect(thinkingEffortOptionsForRuntime("codex_local", model)).toEqual([
+        { id: "", label: "Auto" },
+        { id: "light", label: "Light" },
+        { id: "medium", label: "Medium" },
+        { id: "high", label: "High" },
+        { id: "xhigh", label: "Extra High" },
+        { id: "max", label: "Max" },
+        { id: "ultra", label: "Ultra" },
+      ]);
+    },
+  );
+
+  it("keeps existing Codex models on the standard reasoning levels", () => {
+    expect(thinkingEffortOptionsForRuntime("codex_local", "gpt-5.5")).toEqual([
+      { id: "", label: "Auto" },
+      { id: "low", label: "Low" },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High" },
+      { id: "xhigh", label: "Extra High" },
+    ]);
   });
 
   it("uses non-dangerous Claude auto permission mode by default", () => {

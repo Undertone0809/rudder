@@ -580,7 +580,7 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
                                 status: "disabled",
                               }));
                             }}
-                            onModelChange={(nextModel) => {
+                            onModelChange={(nextModel, clearThinkingEffort) => {
                               const nextFallbacks = normalizeModelFallbacksForEditor(
                                 fallbacks,
                                 primaryModelFallbackKey(draft.agentRuntimeType, nextModel),
@@ -591,6 +591,9 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
                                   ...current.agentRuntimeConfig,
                                   model: nextModel,
                                   modelFallbacks: nextFallbacks,
+                                  ...(clearThinkingEffort && draft.agentRuntimeType === "codex_local"
+                                    ? { modelReasoningEffort: undefined, reasoningEffort: undefined }
+                                    : {}),
                                 },
                                 status: "disabled",
                               }));
@@ -656,7 +659,7 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
                               status: "disabled",
                             }));
                           }}
-                          onModelChange={(nextModel) => {
+                          onModelChange={(nextModel, clearThinkingEffort) => {
                             const next = [...fallbacks];
                             next[fallbackIndex] = {
                               ...fallback,
@@ -664,6 +667,9 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
                               config: {
                                 ...(fallback.config ?? {}),
                                 model: nextModel,
+                                ...(clearThinkingEffort && fallback.agentRuntimeType === "codex_local"
+                                  ? { modelReasoningEffort: undefined, reasoningEffort: undefined }
+                                  : {}),
                               },
                             };
                             setDraft(purpose, (current) => ({

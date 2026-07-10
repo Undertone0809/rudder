@@ -20,7 +20,11 @@ import type {
 } from "@rudderhq/shared";
 import { getUIAdapter } from "../agent-runtimes";
 import type { AgentRuntimeModel } from "../api/agents";
-import { CODEX_LOCAL_REASONING_EFFORT_OPTIONS, withDefaultThinkingEffortOption } from "../lib/runtime-thinking-effort";
+import {
+  CODEX_LOCAL_REASONING_EFFORT_OPTIONS,
+  codexLocalReasoningEffortOptionsForModel,
+  withDefaultThinkingEffortOption,
+} from "../lib/runtime-thinking-effort";
 import { defaultCreateValues } from "./agent-config-defaults";
 import {
   adapterLabels
@@ -252,8 +256,13 @@ export function thinkingEffortKeyForRuntime(agentRuntimeType: string) {
   return "effort";
 }
 
-export function thinkingEffortOptionsForRuntime(agentRuntimeType: string) {
-  if (agentRuntimeType === "codex_local") return codexThinkingEffortOptions;
+export function thinkingEffortOptionsForRuntime(agentRuntimeType: string, model = "") {
+  if (agentRuntimeType === "codex_local") {
+    return withDefaultThinkingEffortOption(
+      "Auto",
+      codexLocalReasoningEffortOptionsForModel(model),
+    ).map((option) => ({ id: option.value, label: option.label }));
+  }
   if (agentRuntimeType === "cursor") return cursorModeOptions;
   if (agentRuntimeType === "opencode_local" || agentRuntimeType === "pi_local") {
     return openCodeThinkingEffortOptions;

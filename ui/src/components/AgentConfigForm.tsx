@@ -612,16 +612,25 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                             },
                           }));
                         }}
-                        onModelChange={(model) => {
+                        onModelChange={(model, clearThinkingEffort) => {
                           const normalizedFallbacks = normalizeModelFallbacksForEditor(
                             currentFallbackModels,
                             primaryModelFallbackKey(agentRuntimeType, model),
                           );
                           if (isCreate) {
-                            set!({ model, modelFallbacks: normalizedFallbacks });
+                            set!({
+                              model,
+                              modelFallbacks: normalizedFallbacks,
+                              ...(clearThinkingEffort ? { thinkingEffort: "" } : {}),
+                            });
                           } else {
-                            mark("agentRuntimeConfig", "model", model || undefined);
-                            mark("agentRuntimeConfig", "modelFallbacks", normalizedFallbacks);
+                            markAgentRuntimeConfigPatch({
+                              model: model || undefined,
+                              modelFallbacks: normalizedFallbacks,
+                              ...(clearThinkingEffort && agentRuntimeType === "codex_local"
+                                ? { modelReasoningEffort: undefined, reasoningEffort: undefined }
+                                : {}),
+                            });
                           }
                         }}
                         onConfigFieldChange={(field, value) =>
@@ -673,7 +682,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                         };
                         updateFallbackModels(next);
                       }}
-                      onModelChange={(model) => {
+                      onModelChange={(model, clearThinkingEffort) => {
                         const next = [...currentFallbackModels];
                         next[fallbackIndex] = {
                           ...fallback,
@@ -681,6 +690,9 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                           config: {
                             ...(fallback.config ?? {}),
                             model,
+                            ...(clearThinkingEffort && fallback.agentRuntimeType === "codex_local"
+                              ? { modelReasoningEffort: undefined, reasoningEffort: undefined }
+                              : {}),
                           },
                         };
                         updateFallbackModels(next);
