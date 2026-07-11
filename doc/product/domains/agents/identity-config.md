@@ -38,9 +38,11 @@ related_tests:
   - ui/src/components/agent-config-defaults.test.ts
   - ui/src/components/AgentConfigForm.helpers.test.ts
   - ui/src/components/AgentConfigForm.model-dropdown.test.tsx
+  - ui/src/components/OnboardingWizard.runtime-config.test.tsx
   - ui/src/lib/runtime-models.test.ts
   - tests/e2e/agent-config-advanced-options.spec.ts
   - tests/e2e/codex-model-order.spec.ts
+  - tests/e2e/onboarding.spec.ts
 edit_policy: user_confirmed_only
 ---
 
@@ -126,6 +128,8 @@ Product model:
   `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, and
   `gpt-5.2`; discovered OpenAI models do not augment or reorder it. Explicit
   custom model values may still be preserved where the editor supports them.
+- New Codex agent configurations default to `gpt-5.6-sol`, including the
+  onboarding and standard agent-creation surfaces.
 - Codex thinking effort is model-family-specific. The GPT-5.6 Codex variants
   offer Light, Medium, High, Extra High, Max, and Ultra; the remaining curated
   Codex models offer Low, Medium, High, and Extra High. Switching models clears
