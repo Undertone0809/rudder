@@ -1,11 +1,22 @@
 import type { BrowserWindowConstructorOptions, OpenDialogOptions, WebContents } from "electron";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, session, shell, systemPreferences, Tray } from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveDesktopAppName } from "./app-identity.js";
 import { createBootScreenHtml, createRendererRecoveryScreenHtml } from "./boot-screen.js";
+import { registerBrowserIpcHandlers } from "./browser-ipc.js";
+import {
+  createBrowserProfileController,
+  deriveBrowserPartition,
+  type BrowserProfileController,
+} from "./browser-profile.js";
+import {
+  createBrowserGuestRegistry,
+  installBrowserSessionPolicy,
+  installBrowserWebviewPolicy,
+} from "./browser-webview-policy.js";
 import { ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
 import { runDesktopCliMode } from "./cli-runner.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
@@ -365,6 +376,7 @@ if (desktopUserDataOverride) {
 const initialPaths = resolveSharedInstancePaths(initialProfile.instanceId);
 
 let mainWindow: BrowserWindow | null = null;
+let currentMainRenderer: WebContents | null = null;
 let residentTray: Tray | null = null;
 let sidePanelCloseShortcutActive = false;
 let residentControlsAvailable = false;
@@ -376,6 +388,8 @@ let currentAppearance: DesktopAppearance = resolveAppearanceForThemePreference(
   nativeTheme.shouldUseDarkColors,
 );
 const sidePanelCloseShortcutWebContents = new WeakSet<WebContents>();
+const browserGuestRegistry = createBrowserGuestRegistry();
+let browserProfileController: BrowserProfileController | null = null;
 let currentBootState: BootState = {
   stage: "starting",
   message: "Resolving shared local Rudder instance…",
@@ -593,6 +607,54 @@ function applyDesktopEnvironment(): LocalEnvProfile {
   return profile;
 }
 
+function requireBrowserProfileController(): BrowserProfileController {
+  if (!browserProfileController) {
+    throw new Error("Rudder Browser profile has not been initialized.");
+  }
+  return browserProfileController;
+}
+
+function getCurrentMainRenderer(): WebContents | null {
+  if (!currentMainRenderer || currentMainRenderer.isDestroyed()) return null;
+  return currentMainRenderer;
+}
+
+function collectBrowserControlPlaneOrigins(...additionalOrigins: Array<string | null | undefined>): string[] {
+  const configuredPort = process.env.PORT?.trim();
+  const configuredOrigin = configuredPort ? `http://127.0.0.1:${configuredPort}` : null;
+  return collectDesktopNavigationOrigins(
+    ...additionalOrigins,
+    configuredOrigin,
+    resolveDesktopAppBaseUrl(),
+    currentBootState.runtime?.apiUrl,
+    serverHandle?.apiUrl,
+    lastKnownAppUrl,
+  );
+}
+
+function initializeBrowserProfile(instanceRoot: string): void {
+  const partition = deriveBrowserPartition(instanceRoot);
+  if (browserProfileController) {
+    if (browserProfileController.getPartition() !== partition) {
+      throw new Error("Rudder Browser profile cannot change instances after Desktop startup.");
+    }
+    return;
+  }
+
+  const browserSession = session.fromPartition(partition);
+  installBrowserSessionPolicy(browserSession, {
+    getControlPlaneOrigins: collectBrowserControlPlaneOrigins,
+  });
+  browserProfileController = createBrowserProfileController({
+    partition,
+    session: browserSession,
+    closeBrowserGuests: browserGuestRegistry.closeAll,
+    broadcastReset: (event) => {
+      getCurrentMainRenderer()?.send("desktop:browser-reset", event);
+    },
+  });
+}
+
 function updateBootState(nextState: Partial<BootState> & Pick<BootState, "stage" | "message">): void {
   currentBootState = {
     ...currentBootState,
@@ -793,6 +855,7 @@ function installMainWindowSidePanelCloseShortcutHandler(window: BrowserWindow): 
 }
 
 async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
+  const browserProfile = requireBrowserProfileController();
   const preloadPath = path.resolve(MODULE_DIR, "preload.js");
   const macWindowEffects = process.platform === "darwin"
     ? resolveMacWindowEffects()
@@ -815,6 +878,13 @@ async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
   if (process.platform !== "darwin") {
     window.setMenuBarVisibility(false);
   }
+
+  installBrowserWebviewPolicy(window.webContents, {
+    partition: browserProfile.getPartition(),
+    getControlPlaneOrigins: () => collectBrowserControlPlaneOrigins(initialUrl),
+    isBrowserAvailable: () => browserProfile.getState().available,
+    registerGuest: browserGuestRegistry.register,
+  });
 
   window.once("ready-to-show", () => {
     window.show();
@@ -841,6 +911,7 @@ async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
     updateResidentShellMenu();
   });
 
+  currentMainRenderer = window.webContents;
   await window.loadURL(initialUrl);
   return window;
 }
@@ -852,6 +923,7 @@ async function replaceMainWindow(nextWindow: BrowserWindow): Promise<void> {
   }
 
   mainWindow = nextWindow;
+  currentMainRenderer = nextWindow.webContents;
   mainWindow.setTitle(APP_NAME);
 
   if (previousWindow && previousWindow !== nextWindow && !previousWindow.isDestroyed()) {
@@ -1321,6 +1393,10 @@ function desktopWorkspaceFileAllowedRoots() {
 }
 
 function registerIpc(): void {
+  registerBrowserIpcHandlers(ipcMain, {
+    getMainRenderer: getCurrentMainRenderer,
+    controller: requireBrowserProfileController(),
+  });
   ipcMain.handle("desktop:get-boot-state", async () => {
     refreshDesktopSystemPermissions();
     return currentBootState;
@@ -1556,6 +1632,8 @@ async function captureDesktopWindowIfRequested(): Promise<void> {
 async function bootstrap(): Promise<void> {
   const profile = applyDesktopEnvironment();
   const appName = applyDesktopAppIdentity(profile);
+  const instancePaths = resolveSharedInstancePaths(profile.instanceId);
+  initializeBrowserProfile(instancePaths.instanceRoot ?? path.resolve(resolveSharedRudderHomeDir(), "instances", profile.instanceId));
   if (desktopDebugEnabled()) {
     console.info("[rudder-desktop] bootstrap:start", {
       profile: profile.name,
@@ -1605,7 +1683,7 @@ async function bootstrap(): Promise<void> {
   currentBootState = {
     ...currentBootState,
     capabilities: desktopCapabilities,
-    paths: resolveSharedInstancePaths(profile.instanceId),
+    paths: instancePaths,
     runtime: {
       ...currentBootState.runtime,
       localEnv: profile.name,

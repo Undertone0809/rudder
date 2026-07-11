@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import type { DesktopBrowserResetEvent } from "./browser-profile.js";
 import { readDesktopCapabilities, type DesktopCapabilities } from "./desktop-capabilities.js";
 import type { DesktopSystemPermissions } from "./system-permissions.js";
 
@@ -264,6 +265,21 @@ contextBridge.exposeInMainWorld("desktopShell", {
     invokeOptionalDesktopChannel("notifications", "desktop:show-notification", payload),
   pickPath: (options: DesktopPathPickOptions) =>
     ipcRenderer.invoke("desktop:pick-path", options) as Promise<DesktopPathPickResult>,
+  getBrowserPartition: () =>
+    ipcRenderer.invoke("desktop:get-browser-partition") as Promise<string>,
+  clearBrowserData: () =>
+    ipcRenderer.invoke("desktop:clear-browser-data") as Promise<void>,
+  setBrowserEnabled: (enabled: boolean) =>
+    ipcRenderer.invoke("desktop:set-browser-enabled", enabled) as Promise<void>,
+  onBrowserReset: (listener: (event: DesktopBrowserResetEvent) => void) => {
+    const wrapped = (_event: IpcRendererEvent, payload: DesktopBrowserResetEvent) => {
+      listener(payload);
+    };
+    ipcRenderer.on("desktop:browser-reset", wrapped);
+    return () => {
+      ipcRenderer.removeListener("desktop:browser-reset", wrapped);
+    };
+  },
 });
 
 declare global {
@@ -305,6 +321,10 @@ declare global {
       setBadgeCount(count: number): Promise<void>;
       showNotification(payload: DesktopInboxNotificationPayload): Promise<void>;
       pickPath(options: DesktopPathPickOptions): Promise<DesktopPathPickResult>;
+      getBrowserPartition(): Promise<string>;
+      clearBrowserData(): Promise<void>;
+      setBrowserEnabled(enabled: boolean): Promise<void>;
+      onBrowserReset(listener: (event: DesktopBrowserResetEvent) => void): () => void;
     };
   }
 }

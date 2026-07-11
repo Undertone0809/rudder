@@ -163,9 +163,17 @@ target path, and permission-oriented recovery guidance. On Windows, that
 guidance includes choosing a writable workspace home or running Rudder as
 administrator when local folder policy requires elevated access.
 
-Electron `userData` now stores only desktop-shell preferences such as window state. It is not the source of truth for Rudder config, database, or storage.
-Desktop also stores per-version release-note acknowledgement state there so a
-completed update can show the current version's changelog once after restart.
+Electron `userData` stores desktop-shell preferences such as window state and
+the local Rudder Browser profile. Browser data uses a dedicated persistent
+partition named from a SHA-256 hash of the canonical absolute instance root.
+It is shared across organizations attached to that local instance, isolated
+from both the main Rudder renderer session and Browser profiles for other
+instance roots, and does not expose the instance path in the partition name.
+The Browser partition is separate from shell preferences even though both live
+under Electron `userData`. Neither is the source of truth for Rudder config,
+database, server-backed Browser settings, or organization storage. Desktop also
+stores per-version release-note acknowledgement state there so a completed
+update can show the current version's changelog once after restart.
 
 Published CLI and Desktop starts install the server runtime into a versioned
 cache under `~/.rudder/runtimes/<version>`. Rudder automatically prunes old
@@ -212,7 +220,10 @@ RUDDER_LOCAL_ENV=prod_local \
 pnpm --filter @rudderhq/desktop smoke
 ```
 
-`RUDDER_HOME` controls shared Rudder state. `RUDDER_DESKTOP_USER_DATA_DIR` only controls Electron shell preferences.
+`RUDDER_HOME` controls shared Rudder state. `RUDDER_DESKTOP_USER_DATA_DIR`
+controls Electron-local state: shell preferences and the instance-keyed Rudder
+Browser partition. Browser data remains a distinct partition and is not stored
+inside the shell preference files.
 Use `RUDDER_ORGANIZATION_WORKSPACE_HOME` when a smoke or manual run needs an
 isolated organization workspace root outside the user's Documents folder.
 

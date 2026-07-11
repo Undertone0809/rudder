@@ -182,6 +182,12 @@ export type DesktopBrowserImportResult = {
   errors?: DesktopBrowserImportError[];
 };
 
+export type DesktopBrowserResetEvent = {
+  reason: "clear" | "disabled";
+  enabled: boolean;
+  available: boolean;
+};
+
 export type DesktopShellApi = {
   getBootState(): Promise<DesktopBootState>;
   onBootState(listener: (state: DesktopBootState) => void): () => void;
@@ -221,8 +227,10 @@ export type DesktopShellApi = {
   pickPath(options: DesktopPathPickOptions): Promise<DesktopPathPickResult>;
   listBrowserImportSources?(): Promise<DesktopBrowserImportSource[]>;
   importBrowserData?(input: { sourceId: string; importCookies: true }): Promise<DesktopBrowserImportResult>;
+  getBrowserPartition?(): Promise<string>;
   clearBrowserData?(): Promise<void>;
   setBrowserEnabled?(enabled: boolean): Promise<void>;
+  onBrowserReset?(listener: (event: DesktopBrowserResetEvent) => void): () => void;
 };
 
 export function readDesktopShell(): DesktopShellApi | null {
