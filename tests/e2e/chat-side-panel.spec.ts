@@ -146,7 +146,7 @@ test.describe("Chat Side Panel", () => {
     const libraryFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
       data: {
         filePath: libraryFilePath,
-        content: "# File launcher proof\n\nOpen this document outside Rudder.",
+        content: "# OpenClaw and Hermes Agent SEO competitor research\n\nOpen this document outside Rudder.",
       },
     });
     expect(libraryFileRes.ok(), await libraryFileRes.text()).toBe(true);
@@ -187,10 +187,24 @@ test.describe("Chat Side Panel", () => {
     await expect(assistantMessage).toContainText(libraryFileName, { timeout: 15_000 });
     await assistantMessage.getByRole("link", { name: libraryFileName }).click();
     const sidePanel = page.getByTestId("chat-side-panel");
-    await expect(sidePanel).toContainText("File launcher proof");
+    const documentTitle = sidePanel.getByRole("heading", {
+      name: "OpenClaw and Hermes Agent SEO competitor research",
+      exact: true,
+    });
+    await expect(documentTitle).toBeVisible();
 
     const libraryOpenIn = sidePanel.getByRole("button", { name: "Open Library document in another app" });
     await expect(libraryOpenIn).toBeVisible();
+    const [titleBox, openInBox] = await Promise.all([
+      documentTitle.boundingBox(),
+      libraryOpenIn.boundingBox(),
+    ]);
+    expect(titleBox).not.toBeNull();
+    expect(openInBox).not.toBeNull();
+    expect(Math.abs((titleBox?.y ?? 0) - (openInBox?.y ?? 0))).toBeLessThanOrEqual(2);
+    expect((openInBox?.y ?? 0) + (openInBox?.height ?? 0)).toBeLessThanOrEqual(
+      (titleBox?.y ?? 0) + (titleBox?.height ?? 0),
+    );
     await libraryOpenIn.click();
     await expect(page.getByRole("menuitem", { name: "Default app" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "VS Code" })).toBeVisible();

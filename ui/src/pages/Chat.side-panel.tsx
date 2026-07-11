@@ -935,44 +935,54 @@ function ChatSidePanelLibraryFileView({
     return <ExternalLink className="h-4 w-4" />;
   };
 
+  const openInMenu = canOpenFile ? (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 gap-1 px-2"
+          aria-label="Open Library document in another app"
+          title="Open in another app"
+        >
+          <ExternalLink className="h-4 w-4" />
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuItem
+          disabled={openingTargetId !== null}
+          onSelect={() => void openTarget({ id: "defaultApp", label: "Default app", kind: "app" })}
+        >
+          {targetIcon({ id: "defaultApp", kind: "app" })}
+          <span>Default app</span>
+        </DropdownMenuItem>
+        {visibleTargets.map((target) => (
+          <DropdownMenuItem
+            key={target.id}
+            disabled={openingTargetId !== null}
+            onSelect={() => void openTarget(target)}
+          >
+            {targetIcon(target)}
+            <span>{target.label}</span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  ) : null;
+  const showMarkdownHeaderAction = Boolean(
+    canOpenFile
+      && libraryFile.previewKind === "text"
+      && libraryFile.content !== null
+      && markdown,
+  );
+
   return (
     <div className="flex min-h-full flex-col" data-testid="chat-side-panel-library-file-view">
-      {canOpenFile ? (
+      {openInMenu && !showMarkdownHeaderAction ? (
         <div className="flex shrink-0 justify-end px-1 pt-2" data-testid="chat-side-panel-library-open-in">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1 px-2"
-                aria-label="Open Library document in another app"
-                title="Open in another app"
-              >
-                <ExternalLink className="h-4 w-4" />
-                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuItem
-                disabled={openingTargetId !== null}
-                onSelect={() => void openTarget({ id: "defaultApp", label: "Default app", kind: "app" })}
-              >
-                {targetIcon({ id: "defaultApp", kind: "app" })}
-                <span>Default app</span>
-              </DropdownMenuItem>
-              {visibleTargets.map((target) => (
-                <DropdownMenuItem
-                  key={target.id}
-                  disabled={openingTargetId !== null}
-                  onSelect={() => void openTarget(target)}
-                >
-                  {targetIcon(target)}
-                  <span>{target.label}</span>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {openInMenu}
         </div>
       ) : null}
       <div className="shrink-0 rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3 text-sm">
@@ -984,9 +994,17 @@ function ChatSidePanelLibraryFileView({
       </div>
       {libraryFile.previewKind === "text" && libraryFile.content !== null ? (
         markdown ? (
-          <article className="min-w-0 flex-1 px-1 py-5" data-testid="chat-side-panel-library-markdown-preview">
+          <article className="relative min-w-0 flex-1 px-1 py-5" data-testid="chat-side-panel-library-markdown-preview">
+            {showMarkdownHeaderAction ? (
+              <div className="absolute right-1 top-5 z-10" data-testid="chat-side-panel-library-open-in">
+                {openInMenu}
+              </div>
+            ) : null}
             <MarkdownBody
-              className="rudder-library-document-editor rudder-side-panel-library-document text-[15px] leading-7 text-foreground"
+              className={cn(
+                "rudder-library-document-editor rudder-side-panel-library-document text-[15px] leading-7 text-foreground",
+                showMarkdownHeaderAction && "rudder-side-panel-library-document--with-header-action",
+              )}
               enableCodeBlockCopy
             >
               {libraryFile.content}
