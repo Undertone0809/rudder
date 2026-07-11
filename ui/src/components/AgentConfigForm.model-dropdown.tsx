@@ -32,6 +32,7 @@ export function ModelDropdown({
   allowCustom = false,
   required,
   groupByProvider,
+  preserveModelOrder = false,
   emptyLabel,
   searchPlaceholder = "Search models...",
   emptyMessage = "No models found.",
@@ -50,6 +51,7 @@ export function ModelDropdown({
   allowCustom?: boolean;
   required: boolean;
   groupByProvider: boolean;
+  preserveModelOrder?: boolean;
   emptyLabel: string;
   searchPlaceholder?: string;
   emptyMessage?: string;
@@ -79,7 +81,9 @@ export function ModelDropdown({
       return [
         {
           provider: "models",
-          entries: [...filteredModels].sort((a, b) => a.id.localeCompare(b.id)),
+          entries: preserveModelOrder
+            ? filteredModels
+            : [...filteredModels].sort((a, b) => a.id.localeCompare(b.id)),
         },
       ];
     }
@@ -96,7 +100,7 @@ export function ModelDropdown({
         provider,
         entries: [...entries].sort((a, b) => a.id.localeCompare(b.id)),
       }));
-  }, [filteredModels, groupByProvider]);
+  }, [filteredModels, groupByProvider, preserveModelOrder]);
 
   return (
     <Field label={label} hint={hint}>

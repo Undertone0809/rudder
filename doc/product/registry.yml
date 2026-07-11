@@ -35,13 +35,18 @@ contracts:
     docs:
       - doc/product/domains/issues/surfaces.md
     related_code:
+      - packages/db/src/schema/issues.ts
+      - packages/shared/src/validators/issue.ts
       - ui/src/components/InlineEditor.tsx
+      - ui/src/components/NewIssueDialog.tsx
+      - ui/src/lib/new-issue-dialog.ts
       - ui/src/index.css
       - ui/src/pages/IssueDetail.tsx
       - ui/src/pages/Issues.tsx
     related_tests:
       - ui/src/components/InlineEditor.test.tsx
       - ui/src/pages/IssueDetail.test.tsx
+      - tests/e2e/codex-model-order.spec.ts
       - tests/e2e/issue-detail-toolbar-actions.spec.ts
       - tests/e2e/issue-board-display-properties.spec.ts
     related_plans:
@@ -104,11 +109,15 @@ contracts:
     docs:
       - doc/product/domains/execution/agent-runs.md
     related_code:
+      - packages/db/src/schema/issues.ts
       - server/src/services/runtime-kernel/heartbeat.execute.ts
+      - server/src/services/runtime-kernel/heartbeat.sessions.ts
       - server/src/services/runtime-kernel/model-fallback.ts
     related_tests:
       - server/src/__tests__/heartbeat-observability.test.ts
       - server/src/__tests__/heartbeat-process-recovery.test.ts
+      - server/src/__tests__/heartbeat-workspace-preflight.test.ts
+      - tests/e2e/codex-model-order.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
   RUN.ADMISSION.001:
@@ -352,20 +361,33 @@ contracts:
     docs:
       - doc/product/domains/agents/identity-config.md
     related_code:
+      - packages/agent-runtimes/codex-local/src/index.ts
       - packages/shared/src/types/agent.ts
+      - server/src/agent-runtimes/codex-models.ts
       - server/src/agent-runtimes/registry.ts
       - server/src/routes/agents.ts
       - server/src/services/agent-runtime-availability.ts
       - server/src/services/runtime-kernel/heartbeat.execute.ts
       - ui/src/api/agents.ts
       - ui/src/components/AgentConfigForm.advanced.tsx
+      - ui/src/components/AgentConfigForm.environment.tsx
+      - ui/src/components/AgentConfigForm.helpers.tsx
       - ui/src/components/AgentConfigForm.tsx
+      - ui/src/components/NewIssueDialog.tsx
+      - ui/src/lib/runtime-models.ts
+      - ui/src/lib/runtime-thinking-effort.ts
     related_tests:
+      - server/src/__tests__/adapter-models.test.ts
       - server/src/__tests__/agent-runtime-availability.test.ts
       - server/src/__tests__/agent-run-context.test.ts
       - server/src/__tests__/heartbeat-process-recovery.test.ts
+      - ui/src/components/agent-config-defaults.test.ts
       - ui/src/components/AgentConfigForm.advanced.test.tsx
+      - ui/src/components/AgentConfigForm.helpers.test.ts
+      - ui/src/components/AgentConfigForm.model-dropdown.test.tsx
+      - ui/src/lib/runtime-models.test.ts
       - tests/e2e/agent-config-advanced-options.spec.ts
+      - tests/e2e/codex-model-order.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
   AGENT.RUNTIME.PERMISSIONS.001:
@@ -552,14 +574,17 @@ contracts:
       - server/src/services/organization-workspace-browser.ts
       - ui/src/pages/OrganizationResources.tsx
       - ui/src/pages/OrganizationWorkspaces.tsx
+      - ui/src/pages/Chat.side-panel.tsx
       - desktop/src/ide-opener.ts
     related_tests:
       - server/src/__tests__/home-paths.test.ts
       - server/src/__tests__/library-path-markdown.test.ts
       - server/src/__tests__/organization-workspace-browser.test.ts
       - desktop/src/ide-opener.test.ts
+      - ui/src/pages/Chat.attachment-preview.test.tsx
       - ui/src/pages/OrganizationWorkspaceFilesSidebar.test.tsx
       - ui/src/pages/OrganizationWorkspaces.scrollbars.test.tsx
+      - tests/e2e/chat-side-panel.spec.ts
       - tests/e2e/organization-workspaces-launcher.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md

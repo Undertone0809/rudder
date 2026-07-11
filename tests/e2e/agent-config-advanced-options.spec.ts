@@ -114,16 +114,16 @@ test.describe("Agent configuration advanced options", () => {
     const primaryModelPopover = page.locator("[data-radix-popper-content-wrapper]").last();
     const primaryModelOptions = primaryModelPopover.getByRole("button");
     await expect(primaryModelOptions).toHaveCount(8);
-    expect((await primaryModelOptions.allTextContents()).sort()).toEqual([
+    expect(await primaryModelOptions.allTextContents()).toEqual([
       "Default",
-      "GPT-5.2",
-      "GPT-5.4",
-      "GPT-5.4 Mini",
-      "GPT-5.5",
-      "GPT-5.6-luna",
       "GPT-5.6-sol",
       "GPT-5.6-terra",
-    ].sort());
+      "GPT-5.6-luna",
+      "GPT-5.5",
+      "GPT-5.4",
+      "GPT-5.4 Mini",
+      "GPT-5.2",
+    ]);
     await primaryModelPopover.getByRole("button", { name: "GPT-5.6-sol", exact: true }).click();
     await expect(page.getByTestId("agent-primary-model")).toContainText("GPT-5.6-sol");
 
@@ -284,7 +284,7 @@ test.describe("Agent configuration advanced options", () => {
     expect(savedAuto.agentRuntimeConfig).not.toHaveProperty("reasoningEffort");
   });
 
-  test("suppresses warning-only runtime environment results in the visible UI", async ({ page }) => {
+  test("shows warning-only runtime environment results as setup guidance", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Agent-Config-Warn-${Date.now()}`,
@@ -344,10 +344,8 @@ test.describe("Agent configuration advanced options", () => {
     await testButton.click();
     expect((await testResponse).ok()).toBe(true);
 
-    await expect(page.getByText("Env passed", { exact: true })).toBeVisible();
-    await expect(page.getByText(/Primary .*: Passed/)).toBeVisible();
-    await expect(page.getByText("Auth is optional", { exact: true })).toHaveCount(0);
-    await expect(page.getByText("Warnings", { exact: true })).toHaveCount(0);
-    await expect(page.getByText("Env warnings", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Env needs setup", { exact: true })).toBeVisible();
+    await expect(page.getByText(/Primary .*: Needs setup/)).toBeVisible();
+    await expect(page.getByText("Auth is optional", { exact: true })).toBeVisible();
   });
 });

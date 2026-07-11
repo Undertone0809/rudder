@@ -8,17 +8,20 @@ contract_ids:
   - RUN.CHAT.AGENT.001
   - RUN.EXECUTION.001
 related_code:
+  - packages/db/src/schema/issues.ts
   - packages/shared/src/agent-run.ts
   - server/src/services/runtime-kernel/heartbeat.execute.ts
+  - server/src/services/runtime-kernel/heartbeat.sessions.ts
   - server/src/services/runtime-kernel/model-fallback.ts
 related_tests:
   - packages/shared/src/agent-run.test.ts
   - packages/agent-runtime-utils/src/server-utils.test.ts
   - server/src/__tests__/codex-local-execute.test.ts
-  - server/src/__tests__/heartbeat-workspace-preflight.test.ts
   - ui/src/pages/AgentDetail.run-filters.test.ts
   - server/src/__tests__/heartbeat-observability.test.ts
   - server/src/__tests__/heartbeat-process-recovery.test.ts
+  - server/src/__tests__/heartbeat-workspace-preflight.test.ts
+  - tests/e2e/codex-model-order.spec.ts
 edit_policy: user_confirmed_only
 ---
 
@@ -258,6 +261,14 @@ Behavior:
   invocation when configured.
 - Supported local adapters receive a local agent JWT as `RUDDER_API_KEY` when
   the adapter supports it and the secret is available.
+- For an issue-backed run, persisted assignee runtime overrides are eligible
+  only when the issue's current `assigneeAgentId` still matches the running
+  agent. A missing issue, unassigned issue, or reassignment makes the old
+  assignee-specific override ineligible.
+- Runtime config precedence is agent config, then workspace-managed config,
+  then the eligible issue assignee runtime config. An issue override replaces
+  only the supplied top-level runtime fields, so unrelated agent/workspace
+  settings remain available to the adapter.
 - The adapter is invoked through model fallback support so configured fallback
   runtimes/models can attempt execution.
 - Final outcome is derived from cancellation, timeout, adapter result, and
@@ -268,18 +279,27 @@ Invariant:
 - Adapters do not mutate Rudder DB state directly; the heartbeat executor
   records the result, logs, events, usage, sessions, and run status.
 - Agent status must be finalized after a terminal run outcome.
+- An override created for one assignee must never follow the issue to another
+  assignee or affect runs that are not backed by that issue.
 
 Rationale:
 
 - The execution domain must make agent work inspectable and resumable while
   keeping runtime-specific behavior behind adapter contracts.
+- Assignee matching prevents stale tuning from silently changing a replacement
+  agent's runtime, while issue-last precedence makes the operator's explicit
+  one-job choice effective for the intended run.
 
 Related code:
 
+- `packages/db/src/schema/issues.ts`
 - `server/src/services/runtime-kernel/heartbeat.execute.ts`
+- `server/src/services/runtime-kernel/heartbeat.sessions.ts`
 - `server/src/services/runtime-kernel/model-fallback.ts`
 
 Related tests:
 
 - `server/src/__tests__/heartbeat-observability.test.ts`
 - `server/src/__tests__/heartbeat-process-recovery.test.ts`
+- `server/src/__tests__/heartbeat-workspace-preflight.test.ts`
+- `tests/e2e/codex-model-order.spec.ts`

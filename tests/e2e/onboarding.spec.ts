@@ -30,6 +30,23 @@ async function expectSelectedCodexModel(page: Page) {
   await expect(modelButton).toBeVisible();
   const model = (await modelButton.textContent())?.trim();
   expect(model).toMatch(/^gpt-5(?:\.\d+)?(?:-[\w.-]+)?$/i);
+
+  await modelButton.click();
+  const modelPopover = page.locator("[data-radix-popper-content-wrapper]").last();
+  const modelOptions = modelPopover.getByRole("button");
+  await expect(modelOptions).toHaveCount(8);
+  expect(await modelOptions.allTextContents()).toEqual([
+    "Default",
+    "GPT-5.6-sol",
+    "GPT-5.6-terra",
+    "GPT-5.6-luna",
+    "GPT-5.5",
+    "GPT-5.4",
+    "GPT-5.4 Mini",
+    "GPT-5.2",
+  ]);
+  await modelPopover.getByRole("button", { name: model!, exact: true }).click();
+
   return model!.toLowerCase();
 }
 

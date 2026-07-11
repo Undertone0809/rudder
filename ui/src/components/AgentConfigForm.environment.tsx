@@ -300,6 +300,7 @@ export function RuntimeProviderCard({
           allowDefault={!requiresProviderModel && !onRemove}
           required={requiresProviderModel || Boolean(onRemove)}
           groupByProvider={requiresProviderModel}
+          preserveModelOrder={runtimeType === "codex_local"}
           emptyLabel={runtimeModelEmptyLabel(runtimeType, Boolean(onRemove))}
           searchPlaceholder={runtimeModelSearchPlaceholder(runtimeType)}
           emptyMessage={runtimeModelEmptyMessage(runtimeType)}
