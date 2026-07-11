@@ -28,13 +28,22 @@ vi.mock("@rudderhq/db", () => ({
   agentIntegrationOutboundMessages: {},
   agentIntegrationUserBindings: {},
   agentIntegrations: {},
-  chatConversations: {},
+  chatConversations: {
+    createdAt: "created_at",
+    id: "id",
+  },
+  chatGenerations: {
+    conversationId: "conversation_id",
+    id: "id",
+    status: "status",
+  },
   organizationMemberships: {},
 }));
 
 vi.mock("drizzle-orm", () => ({
   and: vi.fn(() => ({})),
   eq: vi.fn(() => ({})),
+  inArray: vi.fn(() => ({})),
   isNull: vi.fn(() => ({})),
   or: vi.fn(() => ({})),
 }));
@@ -69,9 +78,17 @@ const insertNewBinding = {
 };
 
 function selectExistingBinding() {
+  const existingRows = mockDb.existingBinding
+    ? [{ ...mockDb.existingBinding, createdAt: new Date() }]
+    : [];
   return {
     from: vi.fn(() => ({
-      where: vi.fn(async () => (mockDb.existingBinding ? [mockDb.existingBinding] : [])),
+      innerJoin: vi.fn(() => ({
+        where: vi.fn(async () => existingRows),
+      })),
+      where: vi.fn(() => ({
+        limit: vi.fn(async () => []),
+      })),
     })),
   };
 }
@@ -180,7 +197,7 @@ describe("Feishu DB dispatcher chat title generation", () => {
       commandBody: "and what else?",
     }));
 
-    expect(chat).toEqual({ conversationId: "conversation-1" });
+    expect(chat).toMatchObject({ conversationId: "conversation-1" });
     expect(mockStartAutomaticGeneration).toHaveBeenCalledWith(
       expect.objectContaining({ id: "conversation-1" }),
       expect.objectContaining({ id: "message-row-1" }),
