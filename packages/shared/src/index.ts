@@ -91,7 +91,7 @@ export type {
   HeartbeatRun,
   HeartbeatRunContextSnapshot,
   HeartbeatRunEvent,
-  HeartbeatRunRecoveryContext, InstanceGeneralSettings, InstanceLangfuseSettings, InstanceLocale, InstanceNotificationSettings, InstancePathPickerRequest,
+  HeartbeatRunRecoveryContext, InstanceBrowserSettings, InstanceGeneralSettings, InstanceLangfuseSettings, InstanceLocale, InstanceNotificationSettings, InstancePathPickerRequest,
   InstancePathPickerResult,
   InstancePathPickerSelectionType, InstanceSchedulerHeartbeatAgent, InstanceSettings, InstanceUserRoleGrant, Invite, Issue,
   IssueAssigneeAgentRuntimeOverrides, IssueAttachment, IssueComment,
@@ -133,14 +133,14 @@ export type {
 } from "./types/index.js";
 
 export {
-  KEYBOARD_SHORTCUT_ACTION_IDS, OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH, instanceGeneralSettingsSchema, instanceLangfuseSettingsSchema, instanceLocaleSchema, instanceNotificationSettingsSchema, instancePathPickerRequestSchema,
+  DEFAULT_INSTANCE_BROWSER_SETTINGS, KEYBOARD_SHORTCUT_ACTION_IDS, OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH, instanceBrowserSettingsSchema, instanceGeneralSettingsSchema, instanceLangfuseSettingsSchema, instanceLocaleSchema, instanceNotificationSettingsSchema, instancePathPickerRequestSchema,
   instancePathPickerResultSchema, instancePathPickerSelectionTypeSchema, keyboardShortcutActionIdSchema,
   keyboardShortcutBindingSchema,
   keyboardShortcutPreferenceSchema,
-  keyboardShortcutSettingsSchema, operatorProfileSettingsSchema, patchInstanceGeneralSettingsSchema, patchInstanceLangfuseSettingsSchema, patchInstanceNotificationSettingsSchema, patchKeyboardShortcutSettingsSchema, patchOperatorProfileSettingsSchema, type KeyboardShortcutActionId,
+  keyboardShortcutSettingsSchema, operatorProfileSettingsSchema, patchInstanceBrowserSettingsSchema, patchInstanceGeneralSettingsSchema, patchInstanceLangfuseSettingsSchema, patchInstanceNotificationSettingsSchema, patchKeyboardShortcutSettingsSchema, patchOperatorProfileSettingsSchema, type KeyboardShortcutActionId,
   type KeyboardShortcutBinding,
   type KeyboardShortcutPreference,
-  type KeyboardShortcutSettings, type PatchInstanceGeneralSettings, type PatchInstanceLangfuseSettings, type PatchInstanceNotificationSettings, type PatchKeyboardShortcutSettings, type PatchOperatorProfileSettings
+  type KeyboardShortcutSettings, type PatchInstanceBrowserSettings, type PatchInstanceGeneralSettings, type PatchInstanceLangfuseSettings, type PatchInstanceNotificationSettings, type PatchKeyboardShortcutSettings, type PatchOperatorProfileSettings
 } from "./validators/index.js";
 
 export {

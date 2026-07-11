@@ -1,10 +1,48 @@
 import { describe, expect, it } from "vitest";
 import {
   OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH,
+  instanceBrowserSettingsSchema,
   instanceGeneralSettingsSchema,
   keyboardShortcutSettingsSchema,
   operatorProfileSettingsSchema,
+  patchInstanceBrowserSettingsSchema,
 } from "./instance.js";
+
+describe("instanceBrowserSettingsSchema", () => {
+  it("defaults Browser on and opens links in the built-in Browser", () => {
+    expect(instanceBrowserSettingsSchema.parse({})).toEqual({
+      enabled: true,
+      openLinksIn: "built_in",
+    });
+  });
+
+  it("accepts supported Browser settings", () => {
+    expect(instanceBrowserSettingsSchema.parse({
+      enabled: false,
+      openLinksIn: "default_browser",
+    })).toEqual({
+      enabled: false,
+      openLinksIn: "default_browser",
+    });
+  });
+
+  it("rejects invalid and unknown Browser settings", () => {
+    expect(instanceBrowserSettingsSchema).toBeDefined();
+    expect(() => instanceBrowserSettingsSchema.parse({ openLinksIn: "external" })).toThrow();
+    expect(() => instanceBrowserSettingsSchema.parse({ enabled: true, cookie: "secret" })).toThrow();
+  });
+});
+
+describe("patchInstanceBrowserSettingsSchema", () => {
+  it("accepts a partial Browser settings patch", () => {
+    expect(patchInstanceBrowserSettingsSchema.parse({ enabled: false })).toEqual({ enabled: false });
+  });
+
+  it("rejects unknown Browser settings patch fields", () => {
+    expect(patchInstanceBrowserSettingsSchema).toBeDefined();
+    expect(() => patchInstanceBrowserSettingsSchema.parse({ profilePath: "/tmp/profile" })).toThrow();
+  });
+});
 
 describe("instanceGeneralSettingsSchema", () => {
   it("defaults developer diagnostics off", () => {

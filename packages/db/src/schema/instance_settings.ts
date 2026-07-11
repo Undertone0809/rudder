@@ -5,6 +5,7 @@ export const instanceSettings = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     singletonKey: text("singleton_key").notNull().default("default"),
+    browser: jsonb("browser").$type<Record<string, unknown>>().notNull().default({}),
     general: jsonb("general").$type<Record<string, unknown>>().notNull().default({}),
     notifications: jsonb("notifications").$type<Record<string, unknown>>().notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

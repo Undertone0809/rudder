@@ -1,5 +1,21 @@
 import { z } from "zod";
 
+export const DEFAULT_INSTANCE_BROWSER_SETTINGS = {
+  enabled: true,
+  openLinksIn: "built_in",
+} as const;
+
+export const instanceBrowserSettingsSchema = z.object({
+  enabled: z.boolean().default(DEFAULT_INSTANCE_BROWSER_SETTINGS.enabled),
+  openLinksIn: z.enum(["built_in", "default_browser"])
+    .default(DEFAULT_INSTANCE_BROWSER_SETTINGS.openLinksIn),
+}).strict();
+
+export const patchInstanceBrowserSettingsSchema = z.object({
+  enabled: z.boolean().optional(),
+  openLinksIn: z.enum(["built_in", "default_browser"]).optional(),
+}).strict();
+
 export const instanceLocaleSchema = z.enum(["en", "zh-CN"]);
 
 export const instanceGeneralSettingsSchema = z.object({
@@ -104,6 +120,8 @@ export const instancePathPickerResultSchema = z.object({
 }).strict();
 
 export type InstanceGeneralSettings = z.infer<typeof instanceGeneralSettingsSchema>;
+export type InstanceBrowserSettings = z.infer<typeof instanceBrowserSettingsSchema>;
+export type PatchInstanceBrowserSettings = z.infer<typeof patchInstanceBrowserSettingsSchema>;
 export type PatchInstanceGeneralSettings = z.infer<typeof patchInstanceGeneralSettingsSchema>;
 export type InstanceLangfuseSettings = z.infer<typeof instanceLangfuseSettingsSchema>;
 export type PatchInstanceLangfuseSettings = z.infer<typeof patchInstanceLangfuseSettingsSchema>;

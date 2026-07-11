@@ -3,8 +3,10 @@ import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockInstanceSettingsService = vi.hoisted(() => ({
+  getBrowser: vi.fn(),
   getGeneral: vi.fn(),
   getNotifications: vi.fn(),
+  updateBrowser: vi.fn(),
   updateGeneral: vi.fn(),
   updateNotifications: vi.fn(),
   listCompanyIds: vi.fn(),
@@ -86,6 +88,10 @@ describe("instance settings routes", () => {
       desktopIssueNotifications: true,
       desktopChatNotifications: true,
     });
+    mockInstanceSettingsService.getBrowser.mockResolvedValue({
+      enabled: true,
+      openLinksIn: "built_in",
+    });
     mockInstanceSettingsService.updateGeneral.mockResolvedValue({
       id: "instance-settings-1",
       general: {
@@ -101,6 +107,13 @@ describe("instance settings routes", () => {
         desktopDockBadge: true,
         desktopIssueNotifications: false,
         desktopChatNotifications: true,
+      },
+    });
+    mockInstanceSettingsService.updateBrowser.mockResolvedValue({
+      id: "instance-settings-1",
+      browser: {
+        enabled: false,
+        openLinksIn: "default_browser",
       },
     });
     mockInstanceSettingsService.listCompanyIds.mockResolvedValue(["organization-1", "organization-2"]);
@@ -202,6 +215,135 @@ describe("instance settings routes", () => {
       desktopIssueNotifications: false,
     });
     expect(mockLogActivity).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows local implicit board users to read and update Browser settings", async () => {
+    const app = await createApp({
+      type: "board",
+      userId: "local-board",
+      source: "local_implicit",
+      isInstanceAdmin: false,
+    });
+
+    const getRes = await request(app).get("/api/instance/settings/browser");
+    expect(getRes.status).toBe(200);
+    expect(getRes.body).toEqual({
+      enabled: true,
+      openLinksIn: "built_in",
+    });
+
+    const patchRes = await request(app)
+      .patch("/api/instance/settings/browser")
+      .send({ openLinksIn: "default_browser", enabled: false });
+
+    expect(patchRes.status).toBe(200);
+    expect(patchRes.body).toEqual({
+      enabled: false,
+      openLinksIn: "default_browser",
+    });
+    expect(mockInstanceSettingsService.updateBrowser).toHaveBeenCalledWith({
+      openLinksIn: "default_browser",
+      enabled: false,
+    });
+    expect(mockLogActivity).toHaveBeenCalledTimes(2);
+    expect(mockLogActivity.mock.calls.map(([, event]) => event)).toEqual([
+      expect.objectContaining({
+        orgId: "organization-1",
+        action: "instance.settings.browser_updated",
+        entityType: "instance_settings",
+        entityId: "instance-settings-1",
+        details: {
+          settings: {
+            enabled: false,
+            openLinksIn: "default_browser",
+          },
+          changedKeys: ["enabled", "openLinksIn"],
+        },
+      }),
+      expect.objectContaining({
+        orgId: "organization-2",
+        action: "instance.settings.browser_updated",
+        entityType: "instance_settings",
+        entityId: "instance-settings-1",
+        details: {
+          settings: {
+            enabled: false,
+            openLinksIn: "default_browser",
+          },
+          changedKeys: ["enabled", "openLinksIn"],
+        },
+      }),
+    ]);
+    for (const [, event] of mockLogActivity.mock.calls) {
+      expect(Object.keys(event.details).sort()).toEqual(["changedKeys", "settings"]);
+    }
+  });
+
+  it("rejects Browser settings outside local_trusted mode", async () => {
+    const app = await createApp({
+      type: "board",
+      userId: "admin-1",
+      source: "session",
+      isInstanceAdmin: true,
+    }, "authenticated");
+
+    const getRes = await request(app).get("/api/instance/settings/browser");
+    const patchRes = await request(app)
+      .patch("/api/instance/settings/browser")
+      .send({ enabled: false });
+
+    expect(getRes.status).toBe(422);
+    expect(getRes.body).toEqual({
+      error: "Browser settings are only available in local_trusted mode.",
+    });
+    expect(patchRes.status).toBe(422);
+    expect(patchRes.body).toEqual({
+      error: "Browser settings are only available in local_trusted mode.",
+    });
+    expect(mockInstanceSettingsService.getBrowser).not.toHaveBeenCalled();
+    expect(mockInstanceSettingsService.updateBrowser).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-admin and agent callers from Browser settings", async () => {
+    const nonAdminApp = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "session",
+      isInstanceAdmin: false,
+      orgIds: ["organization-1"],
+    });
+    const agentApp = await createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-1",
+      source: "agent_key",
+    });
+
+    const nonAdminRes = await request(nonAdminApp).get("/api/instance/settings/browser");
+    const agentRes = await request(agentApp)
+      .patch("/api/instance/settings/browser")
+      .send({ enabled: false });
+
+    expect(nonAdminRes.status).toBe(403);
+    expect(agentRes.status).toBe(403);
+    expect(mockInstanceSettingsService.getBrowser).not.toHaveBeenCalled();
+    expect(mockInstanceSettingsService.updateBrowser).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown Browser patch fields before persistence", async () => {
+    const app = await createApp({
+      type: "board",
+      userId: "local-board",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+    });
+
+    const res = await request(app)
+      .patch("/api/instance/settings/browser")
+      .send({ profilePath: "/tmp/profile" });
+
+    expect(res.status).toBe(400);
+    expect(mockInstanceSettingsService.updateBrowser).not.toHaveBeenCalled();
   });
 
 

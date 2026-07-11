@@ -1,18 +1,28 @@
 import type { Db } from "@rudderhq/db";
 import { instanceSettings, organizations } from "@rudderhq/db";
 import {
+  DEFAULT_INSTANCE_BROWSER_SETTINGS,
+  instanceBrowserSettingsSchema,
   instanceGeneralSettingsSchema,
   instanceNotificationSettingsSchema,
+  type InstanceBrowserSettings,
   type InstanceGeneralSettings,
   type InstanceLocale,
   type InstanceNotificationSettings,
   type InstanceSettings,
+  type PatchInstanceBrowserSettings,
   type PatchInstanceGeneralSettings,
   type PatchInstanceNotificationSettings,
 } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
 
 const DEFAULT_SINGLETON_KEY = "default";
+
+function normalizeBrowserSettings(raw: unknown): InstanceBrowserSettings {
+  const parsed = instanceBrowserSettingsSchema.safeParse(raw ?? {});
+  if (parsed.success) return parsed.data;
+  return { ...DEFAULT_INSTANCE_BROWSER_SETTINGS };
+}
 
 function stripLegacyGitIdentity(raw: unknown): unknown {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
@@ -63,6 +73,7 @@ function normalizeNotificationSettings(raw: unknown): InstanceNotificationSettin
 function toInstanceSettings(row: typeof instanceSettings.$inferSelect): InstanceSettings {
   return {
     id: row.id,
+    browser: normalizeBrowserSettings(row.browser),
     general: normalizeGeneralSettings(row.general),
     notifications: normalizeNotificationSettings(row.notifications),
     createdAt: row.createdAt,
@@ -84,6 +95,7 @@ export function instanceSettingsService(db: Db) {
       .insert(instanceSettings)
       .values({
         singletonKey: DEFAULT_SINGLETON_KEY,
+        browser: {},
         general: {},
         notifications: {},
         createdAt: now,
@@ -121,6 +133,11 @@ export function instanceSettingsService(db: Db) {
   return {
     get: async (): Promise<InstanceSettings> => toInstanceSettings(await getOrCreateRow()),
 
+    getBrowser: async (): Promise<InstanceBrowserSettings> => {
+      const row = await getOrCreateRow();
+      return normalizeBrowserSettings(row.browser);
+    },
+
     getGeneral: async (): Promise<InstanceGeneralSettings> => {
       const row = await getOrCreateRow();
       return normalizeGeneralSettings(row.general);
@@ -133,6 +150,24 @@ export function instanceSettingsService(db: Db) {
 
     updateGeneral: async (patch: PatchInstanceGeneralSettings): Promise<InstanceSettings> => {
       return updateGeneralJson(patch);
+    },
+
+    updateBrowser: async (patch: PatchInstanceBrowserSettings): Promise<InstanceSettings> => {
+      const current = await getOrCreateRow();
+      const nextBrowser = normalizeBrowserSettings({
+        ...normalizeBrowserSettings(current.browser),
+        ...patch,
+      });
+      const now = new Date();
+      const [updated] = await db
+        .update(instanceSettings)
+        .set({
+          browser: { ...nextBrowser },
+          updatedAt: now,
+        })
+        .where(eq(instanceSettings.id, current.id))
+        .returning();
+      return toInstanceSettings(updated ?? current);
     },
 
     updateNotifications: async (patch: PatchInstanceNotificationSettings): Promise<InstanceSettings> => {
