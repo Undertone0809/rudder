@@ -17,6 +17,7 @@ import {
   type DesktopFileLaunchTargetId,
   type DesktopWorkspaceLaunchTargetId,
 } from "./ide-opener.js";
+import { previewLocalFile } from "./local-file-preview.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
 import {
   canOpenBlockedNavigationExternally,
@@ -1345,6 +1346,12 @@ function registerIpc(): void {
   });
   ipcMain.handle("desktop:open-path", async (_event, targetPath: string) => {
     await shell.openPath(targetPath);
+  });
+  ipcMain.handle("desktop:preview-local-file", async (event, targetPath: string) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+      throw new Error("Local file preview is only available to the main Rudder window.");
+    }
+    return await previewLocalFile(targetPath);
   });
   ipcMain.handle("desktop:list-available-ides", async (): Promise<DesktopIdeTarget[]> => {
     return await listAvailableIdeTargets();

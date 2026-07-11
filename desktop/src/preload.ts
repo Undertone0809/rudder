@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { readDesktopCapabilities, type DesktopCapabilities } from "./desktop-capabilities.js";
+import type { DesktopLocalFilePreview } from "./local-file-preview.js";
 import type { DesktopSystemPermissions } from "./system-permissions.js";
 
 type BootState = {
@@ -190,6 +191,8 @@ contextBridge.exposeInMainWorld("desktopShell", {
     };
   },
   openPath: (targetPath: string) => ipcRenderer.invoke("desktop:open-path", targetPath),
+  previewLocalFile: (targetPath: string) =>
+    ipcRenderer.invoke("desktop:preview-local-file", targetPath) as Promise<DesktopLocalFilePreview>,
   listAvailableIdes: () => ipcRenderer.invoke("desktop:list-available-ides") as Promise<DesktopIdeTarget[]>,
   listWorkspaceLaunchTargets: () =>
     ipcRenderer.invoke("desktop:list-workspace-launch-targets") as Promise<DesktopWorkspaceLaunchTarget[]>,
@@ -270,6 +273,7 @@ declare global {
       getBootState(): Promise<BootState>;
       onBootState(listener: (state: BootState) => void): () => void;
       openPath(targetPath: string): Promise<void>;
+      previewLocalFile(targetPath: string): Promise<DesktopLocalFilePreview>;
       listAvailableIdes(): Promise<DesktopIdeTarget[]>;
       listWorkspaceLaunchTargets(): Promise<DesktopWorkspaceLaunchTarget[]>;
       openWorkspace(rootPath: string, targetId?: DesktopWorkspaceLaunchTarget["id"]): Promise<void>;
