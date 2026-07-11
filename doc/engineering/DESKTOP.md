@@ -175,6 +175,28 @@ database, server-backed Browser settings, or organization storage. Desktop also
 stores per-version release-note acknowledgement state there so a completed
 update can show the current version's changelog once after restart.
 
+### Browser data import
+
+The first Browser data importer is a macOS Desktop capability for cookies from
+Google Chrome, Microsoft Edge, and Brave profiles. Discovery reads only each
+browser's `Local State` profile index. The renderer receives opaque source ids,
+profile labels, and supported data types; it never receives source paths,
+Keychain values, Cookie database rows, or decrypted cookie values.
+
+Import requires the source browser to be closed. Desktop verifies that the
+source Cookie database is not open, copies `Cookies` and any matching WAL/SHM
+files into a mode-`0700` temporary directory, rejects source changes during the
+copy, and removes the snapshot on every exit path. SQLite parsing and macOS
+Chromium `v10` decryption run in a worker thread. Linux `v11`, partitioned
+cookies that Electron cannot represent, malformed rows, and expired cookies are
+reported as skipped instead of being silently weakened. Existing Rudder Browser
+cookies win on identity collisions, and successful imports are flushed to the
+instance-scoped Browser partition.
+
+Saved-password import is not part of this implementation. Automated tests must
+use synthetic profiles and must not inspect a contributor's real browser data or
+Keychain.
+
 Published CLI and Desktop starts install the server runtime into a versioned
 cache under `~/.rudder/runtimes/<version>`. Rudder automatically prunes old
 runtime cache entries after runtime preparation while protecting the requested

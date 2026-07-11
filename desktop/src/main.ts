@@ -6,6 +6,9 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveDesktopAppName } from "./app-identity.js";
 import { createBootScreenHtml, createRendererRecoveryScreenHtml } from "./boot-screen.js";
+import { runBrowserCookieImportWorker } from "./browser-cookie-import-worker.js";
+import { createBrowserCookieImporter, type BrowserDataImportResult } from "./browser-cookie-import.js";
+import { createBrowserImportSourceRegistry, type BrowserImportSource } from "./browser-import-sources.js";
 import { registerBrowserIpcHandlers } from "./browser-ipc.js";
 import {
   createBrowserProfileController,
@@ -390,6 +393,10 @@ let currentAppearance: DesktopAppearance = resolveAppearanceForThemePreference(
 const sidePanelCloseShortcutWebContents = new WeakSet<WebContents>();
 const browserGuestRegistry = createBrowserGuestRegistry();
 let browserProfileController: BrowserProfileController | null = null;
+let browserCookieImporter: {
+  listBrowserImportSources(): Promise<BrowserImportSource[]>;
+  importBrowserData(input: { sourceId: string; importCookies: true }): Promise<BrowserDataImportResult>;
+} | null = null;
 let currentBootState: BootState = {
   stage: "starting",
   message: "Resolving shared local Rudder instance…",
@@ -614,6 +621,13 @@ function requireBrowserProfileController(): BrowserProfileController {
   return browserProfileController;
 }
 
+function requireBrowserCookieImporter() {
+  if (!browserCookieImporter) {
+    throw new Error("Rudder Browser data import has not been initialized.");
+  }
+  return browserCookieImporter;
+}
+
 function getCurrentMainRenderer(): WebContents | null {
   if (!currentMainRenderer || currentMainRenderer.isDestroyed()) return null;
   return currentMainRenderer;
@@ -645,13 +659,25 @@ function initializeBrowserProfile(instanceRoot: string): void {
   installBrowserSessionPolicy(browserSession, {
     getControlPlaneOrigins: collectBrowserControlPlaneOrigins,
   });
-  browserProfileController = createBrowserProfileController({
+  const controller = createBrowserProfileController({
     partition,
     session: browserSession,
     closeBrowserGuests: browserGuestRegistry.closeAll,
     broadcastReset: (event) => {
       getCurrentMainRenderer()?.send("desktop:browser-reset", event);
     },
+  });
+  browserProfileController = controller;
+  const sourceRegistry = createBrowserImportSourceRegistry();
+  browserCookieImporter = createBrowserCookieImporter({
+    sourceRegistry,
+    cookies: {
+      get: () => browserSession.cookies.get({}),
+      set: (details) => browserSession.cookies.set(details),
+      flushStore: () => browserSession.cookies.flushStore(),
+    },
+    runWorker: runBrowserCookieImportWorker,
+    runExclusive: (operation) => controller.runExclusive(operation),
   });
 }
 
@@ -1396,6 +1422,7 @@ function registerIpc(): void {
   registerBrowserIpcHandlers(ipcMain, {
     getMainRenderer: getCurrentMainRenderer,
     controller: requireBrowserProfileController(),
+    importer: requireBrowserCookieImporter(),
   });
   ipcMain.handle("desktop:get-boot-state", async () => {
     refreshDesktopSystemPermissions();

@@ -1,4 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import type { BrowserDataImportResult } from "./browser-cookie-import.js";
+import type { BrowserImportSource } from "./browser-import-sources.js";
 import type { DesktopBrowserResetEvent } from "./browser-profile.js";
 import { readDesktopCapabilities, type DesktopCapabilities } from "./desktop-capabilities.js";
 import type { DesktopSystemPermissions } from "./system-permissions.js";
@@ -265,6 +267,10 @@ contextBridge.exposeInMainWorld("desktopShell", {
     invokeOptionalDesktopChannel("notifications", "desktop:show-notification", payload),
   pickPath: (options: DesktopPathPickOptions) =>
     ipcRenderer.invoke("desktop:pick-path", options) as Promise<DesktopPathPickResult>,
+  listBrowserImportSources: () =>
+    ipcRenderer.invoke("desktop:list-browser-import-sources") as Promise<BrowserImportSource[]>,
+  importBrowserData: (input: { sourceId: string; importCookies: true }) =>
+    ipcRenderer.invoke("desktop:import-browser-data", input) as Promise<BrowserDataImportResult>,
   getBrowserPartition: () =>
     ipcRenderer.invoke("desktop:get-browser-partition") as Promise<string>,
   clearBrowserData: () =>
@@ -321,6 +327,8 @@ declare global {
       setBadgeCount(count: number): Promise<void>;
       showNotification(payload: DesktopInboxNotificationPayload): Promise<void>;
       pickPath(options: DesktopPathPickOptions): Promise<DesktopPathPickResult>;
+      listBrowserImportSources(): Promise<BrowserImportSource[]>;
+      importBrowserData(input: { sourceId: string; importCookies: true }): Promise<BrowserDataImportResult>;
       getBrowserPartition(): Promise<string>;
       clearBrowserData(): Promise<void>;
       setBrowserEnabled(enabled: boolean): Promise<void>;

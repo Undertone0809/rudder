@@ -245,4 +245,35 @@ describe("Rudder Browser profile lifecycle", () => {
     expect(maxActiveGuestShutdowns).toBe(1);
     expect(session.clearAuthCache).toHaveBeenCalledTimes(1);
   });
+
+  it("serializes Browser imports with clear and disable lifecycle operations", async () => {
+    const importGate = createDeferred();
+    const session = createSessionMock();
+    const closeBrowserGuests = vi.fn(async () => undefined);
+    const controller = createBrowserProfileController({
+      partition: "persist:rudder-browser-v1-test",
+      session,
+      closeBrowserGuests,
+      broadcastReset: vi.fn(),
+    });
+    const lifecycle: string[] = [];
+
+    const importing = controller.runExclusive(async () => {
+      lifecycle.push("import:start");
+      await importGate.promise;
+      lifecycle.push("import:end");
+      return 42;
+    });
+    const clearing = controller.clearBrowserData().then(() => lifecycle.push("clear:end"));
+    const disabling = controller.setEnabled(false).then(() => lifecycle.push("disable:end"));
+    await vi.waitFor(() => expect(lifecycle).toContain("import:start"));
+
+    expect(session.clearAuthCache).not.toHaveBeenCalled();
+    expect(closeBrowserGuests).not.toHaveBeenCalled();
+    importGate.resolve();
+    await expect(importing).resolves.toBe(42);
+    await clearing;
+    await disabling;
+    expect(lifecycle).toEqual(["import:start", "import:end", "clear:end", "disable:end"]);
+  });
 });

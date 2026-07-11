@@ -21,6 +21,8 @@ vi.mock("electron", () => ({
 await import("./preload.js");
 
 type ExposedDesktopShell = {
+  listBrowserImportSources(): Promise<unknown[]>;
+  importBrowserData(input: { sourceId: string; importCookies: true }): Promise<unknown>;
   getBrowserPartition(): Promise<string>;
   clearBrowserData(): Promise<void>;
   setBrowserEnabled(enabled: boolean): Promise<void>;
@@ -40,18 +42,25 @@ describe("Rudder Browser preload bridge", () => {
     electronMocks.removeListener.mockClear();
   });
 
-  it("wires partition, clear, and enable calls to their Browser IPC channels", async () => {
+  it("wires import, partition, clear, and enable calls to their Browser IPC channels", async () => {
     const shell = desktopShell();
 
+    await shell.listBrowserImportSources();
+    await shell.importBrowserData({ sourceId: "opaque-source", importCookies: true });
     await shell.getBrowserPartition();
     await shell.clearBrowserData();
     await shell.setBrowserEnabled(false);
     await shell.setBrowserEnabled("false" as never);
 
-    expect(electronMocks.invoke).toHaveBeenNthCalledWith(1, "desktop:get-browser-partition");
-    expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "desktop:clear-browser-data");
-    expect(electronMocks.invoke).toHaveBeenNthCalledWith(3, "desktop:set-browser-enabled", false);
-    expect(electronMocks.invoke).toHaveBeenNthCalledWith(4, "desktop:set-browser-enabled", "false");
+    expect(electronMocks.invoke).toHaveBeenNthCalledWith(1, "desktop:list-browser-import-sources");
+    expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "desktop:import-browser-data", {
+      sourceId: "opaque-source",
+      importCookies: true,
+    });
+    expect(electronMocks.invoke).toHaveBeenNthCalledWith(3, "desktop:get-browser-partition");
+    expect(electronMocks.invoke).toHaveBeenNthCalledWith(4, "desktop:clear-browser-data");
+    expect(electronMocks.invoke).toHaveBeenNthCalledWith(5, "desktop:set-browser-enabled", false);
+    expect(electronMocks.invoke).toHaveBeenNthCalledWith(6, "desktop:set-browser-enabled", "false");
   });
 
   it("subscribes and unsubscribes Browser reset listeners", () => {

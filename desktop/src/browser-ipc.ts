@@ -1,9 +1,13 @@
+import type { BrowserDataImportResult } from "./browser-cookie-import.js";
+import type { BrowserImportSource } from "./browser-import-sources.js";
 import type { BrowserProfileController } from "./browser-profile.js";
 
 export const BROWSER_IPC_CHANNELS = {
   getPartition: "desktop:get-browser-partition",
   clearData: "desktop:clear-browser-data",
   setEnabled: "desktop:set-browser-enabled",
+  listImportSources: "desktop:list-browser-import-sources",
+  importData: "desktop:import-browser-data",
 } as const;
 
 type BrowserIpcEvent = {
@@ -27,6 +31,10 @@ function requireCurrentMainRenderer(event: BrowserIpcEvent, getMainRenderer: () 
 export function registerBrowserIpcHandlers(ipcMain: BrowserIpcMain, options: {
   getMainRenderer(): unknown;
   controller: Pick<BrowserProfileController, "getPartition" | "clearBrowserData" | "setEnabled">;
+  importer: {
+    listBrowserImportSources(): Promise<BrowserImportSource[]>;
+    importBrowserData(input: { sourceId: string; importCookies: true }): Promise<BrowserDataImportResult>;
+  };
 }): void {
   ipcMain.handle(BROWSER_IPC_CHANNELS.getPartition, async (event) => {
     requireCurrentMainRenderer(event, options.getMainRenderer);
@@ -42,5 +50,16 @@ export function registerBrowserIpcHandlers(ipcMain: BrowserIpcMain, options: {
       throw new TypeError("Rudder Browser enabled state must be a boolean.");
     }
     await options.controller.setEnabled(enabled);
+  });
+  ipcMain.handle(BROWSER_IPC_CHANNELS.listImportSources, async (event) => {
+    requireCurrentMainRenderer(event, options.getMainRenderer);
+    return options.importer.listBrowserImportSources();
+  });
+  ipcMain.handle(BROWSER_IPC_CHANNELS.importData, async (event, input: unknown) => {
+    requireCurrentMainRenderer(event, options.getMainRenderer);
+    if (!input || typeof input !== "object") {
+      throw new TypeError("Browser import input must be an object.");
+    }
+    return options.importer.importBrowserData(input as { sourceId: string; importCookies: true });
   });
 }

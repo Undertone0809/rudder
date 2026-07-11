@@ -49,6 +49,7 @@ export type BrowserProfileSession = {
 export type BrowserProfileController = {
   getPartition(): string;
   getState(): BrowserProfileState;
+  runExclusive<T>(operation: () => Promise<T>): Promise<T>;
   clearBrowserData(): Promise<void>;
   setEnabled(enabled: boolean): Promise<void>;
 };
@@ -162,12 +163,19 @@ export function createBrowserProfileController(options: {
     await options.session.cookies.flushStore();
   };
 
+  const runExclusive = <T>(operation: () => Promise<T>): Promise<T> => {
+    const result = lifecycleQueue.then(operation);
+    lifecycleQueue = result.then(() => undefined, () => undefined);
+    return result;
+  };
+
   return {
     getPartition: () => options.partition,
     getState,
+    runExclusive,
     clearBrowserData: () => {
       pendingClears += 1;
-      const operation = lifecycleQueue.then(runClear);
+      const operation = runExclusive(runClear);
       const trackedOperation = operation.finally(() => {
         pendingClears -= 1;
       });
@@ -179,7 +187,7 @@ export function createBrowserProfileController(options: {
       if (nextEnabled) return lifecycleQueue;
 
       pendingDisables += 1;
-      const operation = lifecycleQueue.then(async () => {
+      const operation = runExclusive(async () => {
         await options.broadcastReset({ reason: "disabled", enabled: false, available: false });
         await options.closeBrowserGuests();
       });

@@ -15,9 +15,14 @@ describe("Rudder Browser IPC", () => {
       clearBrowserData: vi.fn(async () => undefined),
       setEnabled: vi.fn(async () => undefined),
     };
+    const importer = {
+      listBrowserImportSources: vi.fn(async () => [{ id: "opaque-source" }]),
+      importBrowserData: vi.fn(async () => ({ status: "succeeded", importedCount: 1, skippedCount: 0, failedCount: 0 })),
+    };
     registerBrowserIpcHandlers(ipcMain, {
       getMainRenderer: () => mainRenderer,
       controller,
+      importer,
     });
 
     await expect(handlers.get(BROWSER_IPC_CHANNELS.getPartition)?.({ sender: mainRenderer })).resolves.toBe(
@@ -25,9 +30,17 @@ describe("Rudder Browser IPC", () => {
     );
     await handlers.get(BROWSER_IPC_CHANNELS.clearData)?.({ sender: mainRenderer });
     await handlers.get(BROWSER_IPC_CHANNELS.setEnabled)?.({ sender: mainRenderer }, false);
+    await expect(handlers.get(BROWSER_IPC_CHANNELS.listImportSources)?.({ sender: mainRenderer })).resolves.toEqual([
+      { id: "opaque-source" },
+    ]);
+    await expect(handlers.get(BROWSER_IPC_CHANNELS.importData)?.(
+      { sender: mainRenderer },
+      { sourceId: "opaque-source", importCookies: true },
+    )).resolves.toEqual({ status: "succeeded", importedCount: 1, skippedCount: 0, failedCount: 0 });
 
     expect(controller.clearBrowserData).toHaveBeenCalledTimes(1);
     expect(controller.setEnabled).toHaveBeenCalledWith(false);
+    expect(importer.importBrowserData).toHaveBeenCalledWith({ sourceId: "opaque-source", importCookies: true });
   });
 
   it("rejects every Browser handler from non-main renderer senders", async () => {
@@ -44,9 +57,14 @@ describe("Rudder Browser IPC", () => {
       clearBrowserData: vi.fn(async () => undefined),
       setEnabled: vi.fn(async () => undefined),
     };
+    const importer = {
+      listBrowserImportSources: vi.fn(async () => []),
+      importBrowserData: vi.fn(async () => ({ status: "succeeded", importedCount: 0, skippedCount: 0, failedCount: 0 })),
+    };
     registerBrowserIpcHandlers(ipcMain, {
       getMainRenderer: () => mainRenderer,
       controller,
+      importer,
     });
 
     await expect(handlers.get(BROWSER_IPC_CHANNELS.getPartition)?.({ sender: guestRenderer })).rejects.toThrow(
@@ -58,9 +76,18 @@ describe("Rudder Browser IPC", () => {
     await expect(handlers.get(BROWSER_IPC_CHANNELS.setEnabled)?.({ sender: guestRenderer }, false)).rejects.toThrow(
       "current Rudder renderer",
     );
+    await expect(handlers.get(BROWSER_IPC_CHANNELS.listImportSources)?.({ sender: guestRenderer })).rejects.toThrow(
+      "current Rudder renderer",
+    );
+    await expect(handlers.get(BROWSER_IPC_CHANNELS.importData)?.(
+      { sender: guestRenderer },
+      { sourceId: "opaque-source", importCookies: true },
+    )).rejects.toThrow("current Rudder renderer");
     expect(controller.getPartition).not.toHaveBeenCalled();
     expect(controller.clearBrowserData).not.toHaveBeenCalled();
     expect(controller.setEnabled).not.toHaveBeenCalled();
+    expect(importer.listBrowserImportSources).not.toHaveBeenCalled();
+    expect(importer.importBrowserData).not.toHaveBeenCalled();
   });
 
   it("rejects non-boolean enable values", async () => {
@@ -76,9 +103,14 @@ describe("Rudder Browser IPC", () => {
       clearBrowserData: vi.fn(async () => undefined),
       setEnabled: vi.fn(async () => undefined),
     };
+    const importer = {
+      listBrowserImportSources: vi.fn(async () => []),
+      importBrowserData: vi.fn(async () => ({ status: "succeeded", importedCount: 0, skippedCount: 0, failedCount: 0 })),
+    };
     registerBrowserIpcHandlers(ipcMain, {
       getMainRenderer: () => mainRenderer,
       controller,
+      importer,
     });
 
     await expect(handlers.get(BROWSER_IPC_CHANNELS.setEnabled)?.({ sender: mainRenderer }, "false")).rejects.toThrow(
