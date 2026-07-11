@@ -185,7 +185,16 @@ export function BrowserDataImportDialog({
           ) : null}
 
           {result ? (
-            <div aria-live="polite" className="space-y-2 rounded-[var(--radius-md)] border border-border/70 bg-muted/25 px-3 py-2.5">
+            <div role="status" aria-live="polite" className="space-y-2 rounded-[var(--radius-md)] border border-border/70 bg-muted/25 px-3 py-2.5">
+              <div className="text-[13px] font-medium text-foreground">
+                {t(
+                  result.status === "succeeded"
+                    ? "browser.import.result.status.succeeded"
+                    : result.status === "partial"
+                      ? "browser.import.result.status.partial"
+                      : "browser.import.result.status.failed",
+                )}
+              </div>
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-foreground">
                 <span>{t("browser.import.result.imported", { count: result.importedCount })}</span>
                 <span>{t("browser.import.result.skipped", { count: result.skippedCount })}</span>

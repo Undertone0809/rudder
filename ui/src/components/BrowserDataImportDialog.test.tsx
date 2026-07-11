@@ -28,6 +28,9 @@ const messages: Record<string, string> = {
   "browser.import.result.imported": "Imported {{count}}",
   "browser.import.result.skipped": "Skipped {{count}}",
   "browser.import.result.failed": "Failed {{count}}",
+  "browser.import.result.status.succeeded": "Import complete",
+  "browser.import.result.status.partial": "Partial import",
+  "browser.import.result.status.failed": "Import failed",
   "common.cancel": "Cancel",
 };
 
@@ -136,6 +139,9 @@ describe("BrowserDataImportDialog", () => {
     expect(document.body.textContent).toContain("Imported 3");
     expect(document.body.textContent).toContain("Skipped 2");
     expect(document.body.textContent).toContain("Failed 1");
+    const resultStatus = document.body.querySelector('[role="status"]');
+    expect(resultStatus).not.toBeNull();
+    expect(resultStatus!.textContent).toContain("Partial import");
     expect(document.body.textContent).toContain("COOKIE_DECRYPT_FAILED");
     expect(document.body.textContent).toContain("One cookie could not be decrypted.");
     expect(document.body.textContent).not.toContain("opaque-profile-1");
@@ -160,5 +166,30 @@ describe("BrowserDataImportDialog", () => {
       .find((button) => button.textContent?.trim() === "Import");
     expect(importButton?.hasAttribute("disabled")).toBe(true);
     expect(importBrowserData).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["succeeded", "Import complete"],
+    ["failed", "Import failed"],
+  ] as const)("labels a %s result explicitly", async (status, expectedLabel) => {
+    importBrowserData.mockResolvedValue({
+      status,
+      importedCount: status === "succeeded" ? 2 : 0,
+      skippedCount: 0,
+      failedCount: status === "failed" ? 2 : 0,
+      errors: [],
+    });
+
+    renderDialog(true);
+    await flush();
+
+    const importButton = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Import");
+    act(() => importButton!.click());
+    await flush();
+
+    const resultStatus = document.body.querySelector('[role="status"]');
+    expect(resultStatus).not.toBeNull();
+    expect(resultStatus!.textContent).toContain(expectedLabel);
   });
 });
