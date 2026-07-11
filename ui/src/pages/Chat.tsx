@@ -1809,16 +1809,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 }} >
                 <Paperclip className="mr-2 h-4 w-4" />
                 Add files </DropdownMenuItem>
-              <DropdownMenuItem className="rounded-[var(--radius-md)] px-3 py-2.5" onSelect={() => {
-                setPlusMenuOpen(false);
-                openSidePanelTarget({
-                    kind: "library_directory",
-                    directoryPath: "",
-                    label: "Library",
-                  });
-              }} >
-                <Folder className="mr-2 h-4 w-4" />
-                Open Library in Side Panel </DropdownMenuItem>
               <button type="button" role="switch" aria-checked={activePlanMode} aria-label="Plan mode" data-testid="chat-plan-mode-toggle" title={PLAN_MODE_HELP_TEXT} className={cn(
                   "flex w-full cursor-pointer items-center justify-between gap-2 rounded-[var(--radius-md)] px-3 py-2.5 text-left text-sm outline-hidden transition-colors focus:bg-accent focus:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/40",
                   activePlanMode && "bg-[color:color-mix(in_oklab,var(--accent-soft)_72%,transparent)] text-foreground focus:bg-[color:color-mix(in_oklab,var(--accent-soft)_88%,transparent)]",
@@ -1835,12 +1825,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                       "inline-block h-5 w-5 rounded-full border border-[color:color-mix(in_oklab,var(--border-soft)_80%,transparent)] bg-[color:var(--surface-elevated)] shadow-[0_4px_12px_rgb(0_0_0/0.18)] transition-transform",
                       activePlanMode ? "translate-x-5" : "translate-x-0.5",
                     )} /> </span> </button>
-              <DropdownMenuSeparator className="panel-divider" />
-              <DropdownMenuItem
-                className="rounded-[var(--radius-md)] px-3 py-2.5 text-muted-foreground focus:text-foreground"
-                onSelect={() => { setPlusMenuOpen(false); navigate("/organization/settings"); }}
-              >
-                Open chat settings </DropdownMenuItem> </DropdownMenuContent> </DropdownMenu>
+              </DropdownMenuContent> </DropdownMenu>
           {activePlanMode ? (
             <button type="button" className="inline-flex max-w-[10rem] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] bg-[color:color-mix(in_oklab,var(--accent-soft)_78%,var(--surface-elevated))] px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-[color:color-mix(in_oklab,var(--accent-soft)_92%,var(--surface-elevated))] hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40" aria-label="Turn off plan mode" title={PLAN_MODE_HELP_TEXT} onClick={() => applyPlanMode(false)} >
               <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[color:color-mix(in_oklab,var(--ink-muted)_78%,transparent)] text-[color:var(--surface-elevated)]">

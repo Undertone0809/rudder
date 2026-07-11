@@ -1386,9 +1386,11 @@ describe("Chat Side Panel link handling", () => {
 
     const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     expect(sidePanel).not.toBeNull();
+    expect(sidePanel?.querySelector("[data-testid='automation-detail-shell']")).not.toBeNull();
     expect(sidePanel?.textContent).toContain("Daily report");
-    expect(sidePanel?.textContent).toContain("Runs in");
-    expect(sidePanel?.textContent).toContain("No runs yet.");
+    expect(sidePanel?.textContent).toContain("Details");
+    expect(sidePanel?.textContent).toContain("Frequency");
+    expect(sidePanel?.textContent).toContain("No activity yet.");
     expect(mockState.navigate).not.toHaveBeenCalledWith("/automations/automation-1?t=Daily%20report");
   });
 
@@ -1811,7 +1813,7 @@ describe("Chat Side Panel link handling", () => {
     expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Other chat side panel content");
   });
 
-  it("opens the Library browser from the plus menu with a file-count summary and file drill-in", async () => {
+  it("opens the Library browser from the Side Panel picker with a file-count summary and file drill-in", async () => {
     mockState.workspaceDirectories = {
       "": {
         directoryPath: "",
@@ -1885,15 +1887,16 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
 
-    const plusTrigger = container.querySelector<HTMLButtonElement>('button[aria-label="Add files and options"]');
-    expect(plusTrigger).not.toBeNull();
+    const chatSidePanelButton = container.querySelector<HTMLButtonElement>('button[aria-label="Open Side Panel"]');
+    expect(chatSidePanelButton).not.toBeNull();
     await act(async () => {
-      plusTrigger?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+      chatSidePanelButton?.click();
       await Promise.resolve();
     });
 
-    const openLibraryOption = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
-      (candidate) => candidate.textContent?.includes("Open Library in Side Panel"),
+    let sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    const openLibraryOption = Array.from(sidePanel!.querySelectorAll<HTMLButtonElement>("button")).find(
+      (candidate) => candidate.textContent?.includes("Library"),
     );
     expect(openLibraryOption).not.toBeUndefined();
 
@@ -1979,10 +1982,13 @@ describe("Chat Side Panel link handling", () => {
     });
 
     sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    const fileView = sidePanel?.querySelector("[data-testid='chat-side-panel-library-file-view']");
     const markdownPreview = sidePanel?.querySelector("[data-testid='chat-side-panel-library-markdown-preview']");
     expect(markdownPreview?.querySelector("h1")?.textContent).toBe("Side Panel notes");
     expect(markdownPreview?.querySelector("li")?.textContent).toBe("Keep markdown rendered");
     expect(markdownPreview?.textContent).not.toContain("# Side Panel notes");
+    expect(fileView?.textContent).not.toContain("notes.md");
+    expect(fileView?.textContent).not.toContain("text/markdown");
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(2);
   });
 

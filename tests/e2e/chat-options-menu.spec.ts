@@ -47,6 +47,9 @@ test.describe("Chat options menu", () => {
     await expect(menuButton).toBeVisible();
 
     await menuButton.click();
+    await expect(page.getByRole("menuitem", { name: "Add files" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Open Library in Side Panel" })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: "Open chat settings" })).toHaveCount(0);
     const planModeToggle = page.getByRole("switch", { name: "Plan mode" });
     await expect(planModeToggle).toHaveAttribute("aria-checked", "false");
     await expect(page.locator('[title*="Read-only planning."]')).toBeVisible();
