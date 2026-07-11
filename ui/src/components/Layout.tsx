@@ -93,13 +93,17 @@ const WORKSPACE_COLUMN_WIDTH_LIMITS: Record<WorkspaceColumnFamily, { min: number
   backups: { min: 280, max: 420 },
 };
 
-function readRememberedSettingsPath(canManageAdminSettings: boolean): string {
+function readRememberedSettingsPath(
+  canManageAdminSettings: boolean,
+  deploymentMode: "local_trusted" | "authenticated" = "authenticated",
+): string {
   const fallback = resolveDefaultSettingsPath(canManageAdminSettings);
   if (typeof window === "undefined") return fallback;
   try {
     return normalizeRememberedSettingsPath(
       window.localStorage.getItem(INSTANCE_SETTINGS_MEMORY_KEY),
       canManageAdminSettings,
+      deploymentMode,
     );
   } catch {
     return fallback;
@@ -842,8 +846,11 @@ export function Layout() {
   }, [isMobile]);
 
   useEffect(() => {
-    setSettingsTarget(readRememberedSettingsPath(canManageAdminSettings));
-  }, [canManageAdminSettings]);
+    setSettingsTarget(readRememberedSettingsPath(
+      canManageAdminSettings,
+      health?.deploymentMode ?? "authenticated",
+    ));
+  }, [canManageAdminSettings, health?.deploymentMode]);
 
   useEffect(() => {
     if (!workspaceColumnFamily) return;
@@ -893,6 +900,7 @@ export function Layout() {
     const nextPath = normalizeRememberedSettingsPath(
       `${location.pathname}${location.search}${location.hash}`,
       canManageAdminSettings,
+      health?.deploymentMode ?? "authenticated",
     );
     setSettingsTarget(nextPath);
 
@@ -901,7 +909,7 @@ export function Layout() {
     } catch {
       // Ignore storage failures in restricted environments.
     }
-  }, [canManageAdminSettings, isSettingsRoute, location.hash, location.pathname, location.search]);
+  }, [canManageAdminSettings, health?.deploymentMode, isSettingsRoute, location.hash, location.pathname, location.search]);
 
   const showDesktopWorkspaceShell = !isMobile && !isSettingsRoute;
   const showIntegratedShellSidebar =

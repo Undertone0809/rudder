@@ -11,6 +11,7 @@ import { DesktopReleaseNotesDialog } from "./components/DesktopReleaseNotesDialo
 import { DesktopUpdatePromptBridge } from "./components/DesktopUpdatePromptBridge";
 import { DesktopUpdateStatusCard } from "./components/DesktopUpdateStatusCard";
 import { DesktopSettingsModalFrame, Layout } from "./components/Layout";
+import { LocalTrustedSettingsRoute } from "./components/LocalTrustedSettingsRoute";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 import { ProductTourOverlay } from "./components/ProductTourOverlay";
 import { ToastViewport } from "./components/ToastViewport";
@@ -302,8 +303,13 @@ function InstanceSettingsRedirect({ requestedPath }: { requestedPath?: string })
     queryFn: () => accessApi.getCurrentBoardAccess(),
     retry: false,
   });
+  const healthQuery = useQuery({
+    queryKey: queryKeys.health,
+    queryFn: () => healthApi.get(),
+    retry: false,
+  });
 
-  if (boardAccessQuery.isLoading) {
+  if (boardAccessQuery.isLoading || healthQuery.isLoading) {
     return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">{t("common.loading")}</div>;
   }
 
@@ -314,6 +320,7 @@ function InstanceSettingsRedirect({ requestedPath }: { requestedPath?: string })
       : normalizeRememberedInstanceSettingsPath(
           `${requestedPath}${location.search}${location.hash}`,
           canManageAdminSettings,
+          healthQuery.data?.deploymentMode ?? "authenticated",
         )
     : resolveDefaultInstanceSettingsPath(canManageAdminSettings);
 
@@ -555,7 +562,14 @@ export function App() {
             <Route path="shortcuts" element={<InstanceShortcutsSettings />} />
             <Route path="general" element={<InstanceGeneralSettings />} />
             <Route path="appearance" element={<InstanceAppearanceSettings />} />
-            <Route path="browser" element={<InstanceBrowserSettings />} />
+            <Route
+              path="browser"
+              element={
+                <LocalTrustedSettingsRoute>
+                  <InstanceBrowserSettings />
+                </LocalTrustedSettingsRoute>
+              }
+            />
             <Route path="notifications" element={<InstanceNotificationsSettings />} />
             <Route path="langfuse" element={<InstanceLangfuseSettings />} />
             <Route path="about" element={<InstanceAboutSettings />} />
@@ -619,7 +633,14 @@ export function App() {
               <Route path="shortcuts" element={<InstanceShortcutsSettings />} />
               <Route path="general" element={<InstanceGeneralSettings />} />
               <Route path="appearance" element={<InstanceAppearanceSettings />} />
-              <Route path="browser" element={<InstanceBrowserSettings />} />
+              <Route
+                path="browser"
+                element={
+                  <LocalTrustedSettingsRoute>
+                    <InstanceBrowserSettings />
+                  </LocalTrustedSettingsRoute>
+                }
+              />
               <Route path="notifications" element={<InstanceNotificationsSettings />} />
               <Route path="langfuse" element={<InstanceLangfuseSettings />} />
               <Route path="about" element={<InstanceAboutSettings />} />

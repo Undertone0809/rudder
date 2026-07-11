@@ -47,6 +47,7 @@ vi.mock("@/context/I18nContext", () => ({
 
 const listSources = vi.fn();
 const importBrowserData = vi.fn();
+const onOpenChange = vi.fn();
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 
@@ -57,8 +58,16 @@ function renderDialog(open: boolean) {
     root = createRoot(container);
   }
   act(() => {
-    root!.render(<BrowserDataImportDialog open={open} onOpenChange={vi.fn()} />);
+    root!.render(<BrowserDataImportDialog open={open} onOpenChange={onOpenChange} />);
   });
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 async function flush() {
@@ -71,6 +80,7 @@ async function flush() {
 beforeEach(() => {
   listSources.mockReset();
   importBrowserData.mockReset();
+  onOpenChange.mockReset();
   listSources.mockResolvedValue([
     {
       id: "opaque-profile-1",
@@ -191,5 +201,72 @@ describe("BrowserDataImportDialog", () => {
     const resultStatus = document.body.querySelector('[role="status"]');
     expect(resultStatus).not.toBeNull();
     expect(resultStatus!.textContent).toContain(expectedLabel);
+  });
+
+  it("blocks user dismissal and ignores a stale import after a parent close and reopen", async () => {
+    const oldImport = createDeferred<{
+      status: "succeeded";
+      importedCount: number;
+      skippedCount: number;
+      failedCount: number;
+      errors: [];
+    }>();
+    importBrowserData.mockReturnValueOnce(oldImport.promise);
+    listSources.mockResolvedValue([
+      {
+        id: "opaque-profile-1",
+        displayName: "Google Chrome - Work",
+        browserName: "Google Chrome",
+        profileName: "Work",
+        supported: { cookies: true, passwords: false },
+      },
+      {
+        id: "opaque-profile-2",
+        displayName: "Google Chrome - Personal",
+        browserName: "Google Chrome",
+        profileName: "Personal",
+        supported: { cookies: true, passwords: false },
+      },
+    ]);
+
+    renderDialog(true);
+    await flush();
+    const importButton = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Import");
+    act(() => importButton!.click());
+    await flush();
+    expect(document.body.textContent).toContain("Importing...");
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain("Import browser data");
+
+    renderDialog(false);
+    renderDialog(true);
+    await flush();
+    const sourceSelect = document.body.querySelector<HTMLSelectElement>("#browser-import-source");
+    expect(sourceSelect).not.toBeNull();
+    act(() => {
+      sourceSelect!.value = "opaque-profile-2";
+      sourceSelect!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(sourceSelect!.value).toBe("opaque-profile-2");
+
+    await act(async () => {
+      oldImport.resolve({
+        status: "succeeded",
+        importedCount: 99,
+        skippedCount: 0,
+        failedCount: 0,
+        errors: [],
+      });
+      await oldImport.promise;
+    });
+
+    expect(document.body.textContent).not.toContain("Imported 99");
+    expect(document.body.querySelector('[role="status"]')).toBeNull();
+    expect(sourceSelect!.value).toBe("opaque-profile-2");
   });
 });

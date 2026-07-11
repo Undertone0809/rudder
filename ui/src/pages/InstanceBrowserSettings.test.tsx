@@ -106,15 +106,15 @@ async function renderPage() {
       </QueryClientProvider>,
     );
   });
-  await flush();
+  await waitFor(() => {
+    expect(container!.textContent).toContain("Enable Rudder Browser");
+  });
   return container;
 }
 
-async function flush() {
+async function waitFor(assertion: () => void) {
   await act(async () => {
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(assertion, { interval: 1, timeout: 1000 });
   });
 }
 
@@ -164,13 +164,15 @@ describe("InstanceBrowserSettings", () => {
     expect(page.textContent).toContain("shared by every organization and Agent");
 
     act(() => toggle!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    await flush();
-    expect(apiMocks.updateBrowser).toHaveBeenCalledWith({ enabled: false });
-    expect(page.textContent).toContain("Agents lose Browser access. Existing browsing data is retained.");
+    await waitFor(() => {
+      expect(apiMocks.updateBrowser).toHaveBeenCalledWith({ enabled: false });
+      expect(page.textContent).toContain("Agents lose Browser access. Existing browsing data is retained.");
+    });
 
     act(() => defaultBrowser!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    await flush();
-    expect(apiMocks.updateBrowser).toHaveBeenCalledWith({ openLinksIn: "default_browser" });
+    await waitFor(() => {
+      expect(apiMocks.updateBrowser).toHaveBeenCalledWith({ openLinksIn: "default_browser" });
+    });
   });
 
   it("opens import and confirms clear without changing Browser settings", async () => {
@@ -181,19 +183,20 @@ describe("InstanceBrowserSettings", () => {
       .find((button) => button.textContent?.trim() === "Clear all browsing data");
 
     act(() => importButton!.click());
-    await flush();
-    expect(document.body.textContent).toContain("Import browser data");
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("Import browser data");
+    });
 
     act(() => clearButton!.click());
-    await flush();
-
-    expect(confirm).toHaveBeenCalledWith({
-      title: "Clear all browsing data?",
-      description: "Every organization will be signed out of websites. Browser settings will not change.",
-      confirmLabel: "Clear all browsing data",
-      tone: "destructive",
+    await waitFor(() => {
+      expect(confirm).toHaveBeenCalledWith({
+        title: "Clear all browsing data?",
+        description: "Every organization will be signed out of websites. Browser settings will not change.",
+        confirmLabel: "Clear all browsing data",
+        tone: "destructive",
+      });
+      expect(clearBrowserData).toHaveBeenCalledTimes(1);
     });
-    expect(clearBrowserData).toHaveBeenCalledTimes(1);
     expect(apiMocks.updateBrowser).not.toHaveBeenCalled();
   });
 

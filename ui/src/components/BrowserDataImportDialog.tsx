@@ -16,7 +16,7 @@ import {
   type DesktopBrowserImportSource,
 } from "@/lib/desktop-shell";
 import { CircleAlert, Cookie, KeyRound } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 export function BrowserDataImportDialog({
   open,
@@ -33,9 +33,20 @@ export function BrowserDataImportDialog({
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<DesktopBrowserImportResult | null>(null);
+  const generationRef = useRef(0);
+
+  useLayoutEffect(() => {
+    generationRef.current += 1;
+    return () => {
+      generationRef.current += 1;
+    };
+  }, [open]);
 
   useEffect(() => {
-    if (!open) return undefined;
+    if (!open) {
+      setImporting(false);
+      return undefined;
+    }
 
     let cancelled = false;
     const desktopShell = readDesktopShell();
@@ -82,6 +93,7 @@ export function BrowserDataImportDialog({
       return;
     }
 
+    const generation = generationRef.current;
     setImporting(true);
     setError(null);
     setResult(null);
@@ -90,17 +102,32 @@ export function BrowserDataImportDialog({
         sourceId: selectedSource.id,
         importCookies: true,
       });
-      setResult(nextResult);
+      if (generationRef.current === generation) setResult(nextResult);
     } catch {
-      setError(t("browser.import.failed"));
+      if (generationRef.current === generation) setError(t("browser.import.failed"));
     } finally {
-      setImporting(false);
+      if (generationRef.current === generation) setImporting(false);
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-[34rem]" showCloseButton={false}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && importing) return;
+        onOpenChange(nextOpen);
+      }}
+    >
+      <DialogContent
+        className="gap-0 overflow-hidden p-0 sm:max-w-[34rem]"
+        showCloseButton={false}
+        onEscapeKeyDown={(event) => {
+          if (importing) event.preventDefault();
+        }}
+        onInteractOutside={(event) => {
+          if (importing) event.preventDefault();
+        }}
+      >
         <DialogHeader className="border-b border-border/70 px-5 py-4">
           <DialogTitle className="text-base leading-6">{t("browser.import.title")}</DialogTitle>
           <DialogDescription className="text-[13px] leading-5">

@@ -5,6 +5,7 @@ import {
   INSTANCE_SETTINGS_ABOUT_PATH,
   INSTANCE_SETTINGS_APPEARANCE_PATH,
   INSTANCE_SETTINGS_BROWSER_PATH,
+  INSTANCE_SETTINGS_GENERAL_PATH,
   INSTANCE_SETTINGS_LANGFUSE_PATH,
   INSTANCE_SETTINGS_NOTIFICATIONS_PATH,
   INSTANCE_SETTINGS_PROFILE_PATH,
@@ -67,6 +68,16 @@ describe("normalizeRememberedInstanceSettingsPath", () => {
       INSTANCE_SETTINGS_PROFILE_PATH,
     );
   });
+
+  it("does not restore Browser settings for authenticated instance admins", () => {
+    expect(
+      normalizeRememberedInstanceSettingsPath(
+        "/instance/settings/browser?source=remembered#data",
+        true,
+        "authenticated",
+      ),
+    ).toBe(INSTANCE_SETTINGS_GENERAL_PATH);
+  });
 });
 
 describe("resolveDefaultInstanceSettingsPath", () => {
@@ -111,6 +122,12 @@ describe("normalizeRememberedSettingsPath", () => {
     );
     expect(normalizeRememberedSettingsPath("/instance/settings/notifications", false)).toBe(
       INSTANCE_SETTINGS_PROFILE_PATH,
+    );
+  });
+
+  it("drops the unified remembered Browser target in authenticated deployments", () => {
+    expect(normalizeRememberedSettingsPath(INSTANCE_SETTINGS_BROWSER_PATH, true, "authenticated")).toBe(
+      DEFAULT_SETTINGS_PATH,
     );
   });
 });
