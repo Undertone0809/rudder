@@ -876,14 +876,17 @@ export function Automations() {
         </DialogContent>
       </Dialog>
 
-      <div data-testid="automations-master-detail" className="flex h-full min-h-0 min-w-0 overflow-hidden">
-      <section
-        data-testid="automations-list-pane"
-        className={cn(
-          "scrollbar-auto-hide min-h-0 min-w-0 flex-1 overflow-y-auto px-1 py-4 sm:px-2 md:py-6",
-          automationId && "hidden min-[1100px]:block",
-        )}
+      <div
+        data-testid="automations-master-detail"
+        className="flex h-full min-h-0 min-w-0 gap-2 overflow-hidden p-2"
       >
+        <section
+          data-testid="automations-list-pane"
+          className={cn(
+            "surface-panel scrollbar-auto-hide min-h-0 min-w-0 flex-1 overflow-y-auto rounded-[var(--desktop-workspace-radius)] px-1 py-4 sm:px-2 md:py-6",
+            automationId && "hidden min-[1100px]:block",
+          )}
+        >
         {error ? (
           <Card>
             <CardContent className="pt-6 text-sm text-destructive">
@@ -1101,13 +1104,13 @@ export function Automations() {
           </div>
         )}
       </div>
-      </section>
+        </section>
 
       {automationId ? (
         <aside
           data-testid="automation-detail-pane"
           aria-label="Automation detail"
-          className="min-h-0 min-w-0 flex-1 overflow-hidden bg-background/30 min-[1100px]:w-[48%] min-[1100px]:min-w-[500px] min-[1100px]:max-w-[720px] min-[1100px]:shrink-0 min-[1100px]:border-l min-[1100px]:border-border/70"
+          className="surface-panel min-h-0 min-w-0 flex-1 overflow-hidden rounded-[var(--desktop-workspace-radius)] min-[1100px]:w-[48%] min-[1100px]:min-w-[500px] min-[1100px]:max-w-[720px] min-[1100px]:shrink-0"
         >
           <AutomationDetail
             key={automationId}

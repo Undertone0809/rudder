@@ -20,7 +20,7 @@ related_code:
   - tests/e2e/automations-index-layout.spec.ts
   - tests/e2e/automation-detail-layout.spec.ts
 commit_refs: []
-updated_at: 2026-07-10
+updated_at: 2026-07-11
 ---
 
 # Automation Three-Column Detail Workspace
@@ -108,7 +108,8 @@ old detail page's internal main-plus-sidebar split inside the third column.
 ## Layout And Responsive Behavior
 
 - On wide desktop viewports, the Automation list and detail inspector share the
-  workspace content area, separated by a stable border.
+  workspace content area as independent, small-radius work cards separated by
+  a compact gutter and inset from the workspace edge.
 - The list keeps enough width for identity and last-run scanning; lower-priority
   columns may collapse before the list becomes unusably narrow.
 - The inspector gets a stable bounded width suitable for the Codex-like vertical

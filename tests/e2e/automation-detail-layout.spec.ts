@@ -92,6 +92,7 @@ test.describe("Automation detail layout", () => {
 
     const headerActions = page.getByTestId("workspace-main-header-actions");
     const primaryRail = page.getByTestId("primary-rail");
+    const masterDetail = page.getByTestId("automations-master-detail");
     const listPane = page.getByTestId("automations-list-pane");
     const automationRow = page.getByRole("row").filter({ hasText: "Every morning summarize onboarding blockers" });
     await expect(page.getByTestId("automation-detail-pane")).toHaveCount(0);
@@ -166,6 +167,9 @@ test.describe("Automation detail layout", () => {
     await expect(page).toHaveURL(new RegExp(`/automations/${automation.id}$`));
 
     const titleInput = page.getByPlaceholder("Automation title");
+    await expect(titleInput).toHaveValue("Every morning summarize onboarding blockers");
+    await page.waitForTimeout(1_000);
+    await expect(titleInput).toHaveValue("Every morning summarize onboarding blockers");
     const patchPromise = page.waitForResponse((response) =>
       response.request().method() === "PATCH" &&
       response.url().includes(`/api/automations/${automation.id}`),
@@ -208,17 +212,37 @@ test.describe("Automation detail layout", () => {
     await expect(deleteDialog).toContainText("This will permanently remove the automation and stop future runs.");
     await deleteDialog.getByRole("button", { name: "Cancel" }).click();
 
-    const [railBox, listBox, detailBox] = await Promise.all([
+    const [railBox, masterDetailBox, listBox, detailBox] = await Promise.all([
       primaryRail.boundingBox(),
+      masterDetail.boundingBox(),
       listPane.boundingBox(),
       detailPane.boundingBox(),
     ]);
+    const panelStyles = await Promise.all([
+      listPane.evaluate((element) => {
+        const style = window.getComputedStyle(element);
+        return { borderRadius: Number.parseFloat(style.borderTopLeftRadius), borderWidth: Number.parseFloat(style.borderTopWidth) };
+      }),
+      detailPane.evaluate((element) => {
+        const style = window.getComputedStyle(element);
+        return { borderRadius: Number.parseFloat(style.borderTopLeftRadius), borderWidth: Number.parseFloat(style.borderTopWidth) };
+      }),
+    ]);
     expect(railBox).not.toBeNull();
+    expect(masterDetailBox).not.toBeNull();
     expect(listBox).not.toBeNull();
     expect(detailBox).not.toBeNull();
     expect(listBox!.x).toBeGreaterThanOrEqual(railBox!.x + railBox!.width - 2);
-    expect(detailBox!.x).toBeGreaterThanOrEqual(listBox!.x + listBox!.width - 2);
+    expect(listBox!.x).toBeGreaterThan(masterDetailBox!.x);
+    expect(listBox!.y).toBeGreaterThan(masterDetailBox!.y);
+    expect(detailBox!.x - (listBox!.x + listBox!.width)).toBeGreaterThanOrEqual(8);
+    expect(masterDetailBox!.x + masterDetailBox!.width - (detailBox!.x + detailBox!.width)).toBeGreaterThanOrEqual(8);
+    expect(masterDetailBox!.y + masterDetailBox!.height - (detailBox!.y + detailBox!.height)).toBeGreaterThanOrEqual(8);
     expect(detailBox!.width).toBeGreaterThanOrEqual(500);
+    expect(panelStyles[0].borderRadius).toBeGreaterThan(0);
+    expect(panelStyles[1].borderRadius).toBeGreaterThan(0);
+    expect(panelStyles[0].borderWidth).toBeGreaterThan(0);
+    expect(panelStyles[1].borderWidth).toBeGreaterThan(0);
 
     await page.screenshot({
       path: testInfo.outputPath("automation-three-column-detail.png"),

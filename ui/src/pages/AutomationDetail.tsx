@@ -967,7 +967,7 @@ export function AutomationDetail({
       {embedded ? (
         <header
           data-testid="automation-detail-panel-header"
-          className="sticky top-0 z-20 border-b border-border/70 bg-background/95 px-4 py-2.5 backdrop-blur sm:px-5"
+          className="sticky top-0 z-20 border-b border-border/70 bg-card/95 px-4 py-2.5 backdrop-blur sm:px-5"
         >
           <div className="flex min-w-0 items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2 text-xs font-medium">
