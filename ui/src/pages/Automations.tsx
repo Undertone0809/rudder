@@ -28,6 +28,8 @@ import {
   ChevronDown,
   FolderOpen,
   MoreHorizontal,
+  PanelRightClose,
+  PanelRightOpen,
   Pause,
   Pencil,
   Play,
@@ -305,6 +307,7 @@ export function Automations() {
   const [statusMutationAutomationId, setStatusMutationAutomationId] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [detailCollapsed, setDetailCollapsed] = useState(false);
   const [draft, setDraft] = useState({
     title: "",
     description: "",
@@ -878,15 +881,28 @@ export function Automations() {
 
       <div
         data-testid="automations-master-detail"
-        className="flex h-full min-h-0 min-w-0 gap-2 overflow-hidden p-2"
+        className="flex h-full min-h-0 min-w-0 gap-2 overflow-hidden md:gap-[9px]"
       >
         <section
           data-testid="automations-list-pane"
           className={cn(
-            "surface-panel scrollbar-auto-hide min-h-0 min-w-0 flex-1 overflow-y-auto rounded-[var(--desktop-workspace-radius)] px-1 py-4 sm:px-2 md:py-6",
+            "workspace-main-card min-h-0 min-w-0 flex-1 overflow-hidden rounded-[var(--desktop-workspace-radius)]",
             automationId && "hidden min-[1100px]:block",
           )}
         >
+        <header
+          data-testid="automations-list-card-header"
+          className="workspace-card-header workspace-main-header hidden h-12 shrink-0 items-center justify-between gap-3 px-4 md:flex"
+        >
+          <h2 className="truncate text-[14px] font-semibold text-foreground">Automations</h2>
+          {!automationId && selectedOrganizationId ? (
+            <Button type="button" size="sm" className="px-4" onClick={() => openComposer()}>
+              <Plus className="mr-1.5 h-3.5 w-3.5" />
+              Create automation
+            </Button>
+          ) : null}
+        </header>
+        <div className="scrollbar-auto-hide h-full min-h-0 overflow-y-auto px-1 py-4 sm:px-2 md:h-[calc(100%-3rem)] md:py-6">
         {error ? (
           <Card>
             <CardContent className="pt-6 text-sm text-destructive">
@@ -1104,20 +1120,54 @@ export function Automations() {
           </div>
         )}
       </div>
+        </div>
         </section>
 
       {automationId ? (
         <aside
           data-testid="automation-detail-pane"
           aria-label="Automation detail"
-          className="surface-panel min-h-0 min-w-0 flex-1 overflow-hidden rounded-[var(--desktop-workspace-radius)] min-[1100px]:w-[48%] min-[1100px]:min-w-[500px] min-[1100px]:max-w-[720px] min-[1100px]:shrink-0"
+          data-collapsed={detailCollapsed ? "true" : undefined}
+          className={cn(
+            "workspace-main-card min-h-0 min-w-0 flex-1 overflow-hidden rounded-[var(--desktop-workspace-radius)]",
+            detailCollapsed
+              ? "min-[1100px]:w-12 min-[1100px]:min-w-12 min-[1100px]:max-w-12 min-[1100px]:flex-none"
+              : "min-[1100px]:w-[48%] min-[1100px]:min-w-[500px] min-[1100px]:max-w-[860px] min-[1100px]:shrink-0",
+          )}
         >
-          <AutomationDetail
-            key={automationId}
-            automationId={automationId}
-            embedded
-            onClose={() => navigate("/automations")}
-          />
+          <header
+            data-testid="automation-detail-card-header"
+            className={cn(
+              "workspace-card-header workspace-main-header relative z-30 hidden h-12 shrink-0 items-center md:flex",
+              detailCollapsed ? "justify-center px-0" : "justify-between px-3",
+            )}
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-muted-foreground hover:text-foreground"
+              aria-label={detailCollapsed ? "Expand automation detail" : "Collapse automation detail"}
+              title={detailCollapsed ? "Expand automation detail" : "Collapse automation detail"}
+              onClick={() => setDetailCollapsed((collapsed) => !collapsed)}
+            >
+              {detailCollapsed ? <PanelRightOpen className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
+            </Button>
+            {!detailCollapsed ? (
+              <Button type="button" size="sm" className="px-4" onClick={() => openComposer()}>
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                Create automation
+              </Button>
+            ) : null}
+          </header>
+          <div className={cn("h-full min-h-0 md:h-[calc(100%-3rem)]", detailCollapsed && "min-[1100px]:hidden")}>
+            <AutomationDetail
+              key={automationId}
+              automationId={automationId}
+              embedded
+              onClose={() => navigate("/automations")}
+            />
+          </div>
         </aside>
       ) : null}
       </div>

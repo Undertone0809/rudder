@@ -108,8 +108,9 @@ old detail page's internal main-plus-sidebar split inside the third column.
 ## Layout And Responsive Behavior
 
 - On wide desktop viewports, the Automation list and detail inspector share the
-  workspace content area as independent, small-radius work cards separated by
-  a compact gutter and inset from the workspace edge.
+  workspace content area as independent outer workspace cards, each with its
+  own card header and separated by the same compact gutter used by Rudder's
+  Issues and Agents layouts. They must not be nested inside another work card.
 - The list keeps enough width for identity and last-run scanning; lower-priority
   columns may collapse before the list becomes unusably narrow.
 - The inspector gets a stable bounded width suitable for the Codex-like vertical

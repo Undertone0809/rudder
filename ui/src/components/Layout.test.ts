@@ -89,4 +89,9 @@ describe("workspace main card framing", () => {
     expect(shouldUseFramelessWorkspaceMain("/library")).toBe(true);
     expect(shouldUseFramelessWorkspaceMain("/workspaces/backups")).toBe(false);
   });
+
+  it("lets Automations own its outer list and detail cards", () => {
+    expect(shouldUseFramelessWorkspaceMain("/automations")).toBe(true);
+    expect(shouldUseFramelessWorkspaceMain("/automations/automation-1")).toBe(true);
+  });
 });

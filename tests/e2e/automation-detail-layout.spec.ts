@@ -65,7 +65,7 @@ async function createAutomationFixture(page: Page) {
 
 test.describe("Automation detail layout", () => {
   test("opens a Codex-style inspector beside the list and preserves editing controls", async ({ page }, testInfo) => {
-    await page.setViewportSize({ width: 1440, height: 1200 });
+    await page.setViewportSize({ width: 1900, height: 1200 });
     const { organization, project, agent, automation } = await createAutomationFixture(page);
     const secondAutomationRes = await page.request.post(`/api/orgs/${organization.id}/automations`, {
       data: {
@@ -92,22 +92,27 @@ test.describe("Automation detail layout", () => {
 
     const headerActions = page.getByTestId("workspace-main-header-actions");
     const primaryRail = page.getByTestId("primary-rail");
+    const workspaceCard = page.getByTestId("workspace-main-card");
     const masterDetail = page.getByTestId("automations-master-detail");
     const listPane = page.getByTestId("automations-list-pane");
     const automationRow = page.getByRole("row").filter({ hasText: "Every morning summarize onboarding blockers" });
+    const automationRowTitle = automationRow.getByText("Every morning summarize onboarding blockers", { exact: true });
     await expect(page.getByTestId("automation-detail-pane")).toHaveCount(0);
-    await automationRow.click();
+    await automationRowTitle.click();
     await expect(page).toHaveURL(new RegExp(`/automations/${automation.id}$`));
 
     const secondAutomationRow = page.getByRole("row").filter({ hasText: "Weekly review of onboarding progress" });
-    await secondAutomationRow.click();
+    const secondAutomationRowTitle = secondAutomationRow.getByText("Weekly review of onboarding progress", { exact: true });
+    await secondAutomationRowTitle.click();
     await expect(page).toHaveURL(new RegExp(`/automations/${secondAutomation.id}$`));
     await expect(page.getByPlaceholder("Automation title")).toHaveValue("Weekly review of onboarding progress");
     await expect(secondAutomationRow).toHaveAttribute("aria-current", "page");
-    await automationRow.click();
+    await automationRowTitle.click();
     await expect(page).toHaveURL(new RegExp(`/automations/${automation.id}$`));
 
     const detailPane = page.getByTestId("automation-detail-pane");
+    const listCardHeader = page.getByTestId("automations-list-card-header");
+    const detailCardHeader = page.getByTestId("automation-detail-card-header");
     const shell = page.getByTestId("automation-detail-shell");
     const panelHeader = page.getByTestId("automation-detail-panel-header");
     const configurationCard = page.getByTestId("automation-configuration-card");
@@ -121,7 +126,9 @@ test.describe("Automation detail layout", () => {
     await expect(primaryRail).toBeVisible();
     await expect(listPane).toBeVisible();
     await expect(detailPane).toBeVisible();
-    await expect(headerActions.getByRole("button", { name: "Create automation" })).toBeVisible();
+    await expect(headerActions).toHaveCount(0);
+    await expect(listCardHeader).toContainText("Automations");
+    await expect(detailCardHeader.getByRole("button", { name: "Create automation" })).toBeVisible();
     await expect(automationRow).toHaveAttribute("aria-current", "page");
     await expect(automationRow.getByText("Every morning summarize onboarding blockers", { exact: true })).toBeVisible();
     await expect(shell).toBeVisible();
@@ -160,10 +167,10 @@ test.describe("Automation detail layout", () => {
     expect((await rotateSecretResponse).ok()).toBe(true);
     await expect(page.getByText("Webhook secret rotated")).toBeVisible();
     await page.keyboard.press("Escape");
-    await secondAutomationRow.click();
+    await secondAutomationRowTitle.click();
     await expect(page).toHaveURL(new RegExp(`/automations/${secondAutomation.id}$`));
     await expect(page.getByText("Webhook secret rotated")).toHaveCount(0);
-    await automationRow.click();
+    await automationRowTitle.click();
     await expect(page).toHaveURL(new RegExp(`/automations/${automation.id}$`));
 
     const titleInput = page.getByPlaceholder("Automation title");
@@ -219,13 +226,29 @@ test.describe("Automation detail layout", () => {
       detailPane.boundingBox(),
     ]);
     const panelStyles = await Promise.all([
+      workspaceCard.evaluate((element) => {
+        const style = window.getComputedStyle(element);
+        return {
+          borderRadius: Number.parseFloat(style.borderTopLeftRadius),
+          borderWidth: Number.parseFloat(style.borderTopWidth),
+          backgroundColor: style.backgroundColor,
+        };
+      }),
       listPane.evaluate((element) => {
         const style = window.getComputedStyle(element);
-        return { borderRadius: Number.parseFloat(style.borderTopLeftRadius), borderWidth: Number.parseFloat(style.borderTopWidth) };
+        return {
+          borderRadius: Number.parseFloat(style.borderTopLeftRadius),
+          borderWidth: Number.parseFloat(style.borderTopWidth),
+          backgroundColor: style.backgroundColor,
+        };
       }),
       detailPane.evaluate((element) => {
         const style = window.getComputedStyle(element);
-        return { borderRadius: Number.parseFloat(style.borderTopLeftRadius), borderWidth: Number.parseFloat(style.borderTopWidth) };
+        return {
+          borderRadius: Number.parseFloat(style.borderTopLeftRadius),
+          borderWidth: Number.parseFloat(style.borderTopWidth),
+          backgroundColor: style.backgroundColor,
+        };
       }),
     ]);
     expect(railBox).not.toBeNull();
@@ -233,16 +256,41 @@ test.describe("Automation detail layout", () => {
     expect(listBox).not.toBeNull();
     expect(detailBox).not.toBeNull();
     expect(listBox!.x).toBeGreaterThanOrEqual(railBox!.x + railBox!.width - 2);
-    expect(listBox!.x).toBeGreaterThan(masterDetailBox!.x);
-    expect(listBox!.y).toBeGreaterThan(masterDetailBox!.y);
+    expect(Math.abs(listBox!.x - masterDetailBox!.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(listBox!.y - masterDetailBox!.y)).toBeLessThanOrEqual(2);
     expect(detailBox!.x - (listBox!.x + listBox!.width)).toBeGreaterThanOrEqual(8);
-    expect(masterDetailBox!.x + masterDetailBox!.width - (detailBox!.x + detailBox!.width)).toBeGreaterThanOrEqual(8);
-    expect(masterDetailBox!.y + masterDetailBox!.height - (detailBox!.y + detailBox!.height)).toBeGreaterThanOrEqual(8);
+    expect(Math.abs(masterDetailBox!.x + masterDetailBox!.width - (detailBox!.x + detailBox!.width))).toBeLessThanOrEqual(2);
+    expect(Math.abs(masterDetailBox!.y + masterDetailBox!.height - (detailBox!.y + detailBox!.height))).toBeLessThanOrEqual(2);
     expect(detailBox!.width).toBeGreaterThanOrEqual(500);
-    expect(panelStyles[0].borderRadius).toBeGreaterThan(0);
+    expect(panelStyles[0].borderWidth).toBe(0);
+    expect(panelStyles[0].backgroundColor).toBe("rgba(0, 0, 0, 0)");
     expect(panelStyles[1].borderRadius).toBeGreaterThan(0);
-    expect(panelStyles[0].borderWidth).toBeGreaterThan(0);
+    expect(panelStyles[2].borderRadius).toBeGreaterThan(0);
     expect(panelStyles[1].borderWidth).toBeGreaterThan(0);
+    expect(panelStyles[2].borderWidth).toBeGreaterThan(0);
+
+    const expandedListBox = await listPane.boundingBox();
+    await detailCardHeader.getByRole("button", { name: "Collapse automation detail" }).click();
+    await expect(detailPane).toHaveAttribute("data-collapsed", "true");
+    await expect(shell).toBeHidden();
+    await expect(page).toHaveURL(new RegExp(`/automations/${automation.id}$`));
+    await expect(automationRow).toHaveAttribute("aria-current", "page");
+    await expect(detailCardHeader.getByRole("button", { name: "Expand automation detail" })).toBeVisible();
+    const [collapsedDetailBox, collapsedListBox] = await Promise.all([
+      detailPane.boundingBox(),
+      listPane.boundingBox(),
+    ]);
+    expect(collapsedDetailBox?.width).toBeLessThanOrEqual(50);
+    expect(collapsedListBox!.width).toBeGreaterThan(expandedListBox!.width);
+    await page.screenshot({
+      path: testInfo.outputPath("automation-detail-collapsed.png"),
+      fullPage: true,
+    });
+
+    await detailCardHeader.getByRole("button", { name: "Expand automation detail" }).click();
+    await expect(detailPane).not.toHaveAttribute("data-collapsed", "true");
+    await expect(shell).toBeVisible();
+    await expect(detailCardHeader.getByRole("button", { name: "Collapse automation detail" })).toBeVisible();
 
     await page.screenshot({
       path: testInfo.outputPath("automation-three-column-detail.png"),
