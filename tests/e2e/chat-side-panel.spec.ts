@@ -229,6 +229,103 @@ test.describe("Chat Side Panel", () => {
     });
   });
 
+  test("reuses the Automation detail UI in the Side Panel", async ({ page }, testInfo) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Chat-Side-Panel-Automation-${Date.now()}` },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Side Panel Automation Agent",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: { model: "gpt-5.4" },
+      },
+    });
+    expect(agentRes.ok(), await agentRes.text()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+
+    const automationRes = await page.request.post(`/api/orgs/${organization.id}/automations`, {
+      data: {
+        title: "Shared Side Panel automation detail",
+        description: "This Automation uses the same detail UI in Messenger and the workspace.",
+        assigneeAgentId: agent.id,
+        priority: "medium",
+        outputMode: "chat_output",
+      },
+    });
+    expect(automationRes.ok(), await automationRes.text()).toBe(true);
+    const automation = await automationRes.json() as { id: string; title: string };
+    const triggerRes = await page.request.post(`/api/automations/${automation.id}/triggers`, {
+      data: {
+        kind: "schedule",
+        label: "weekday verification",
+        cronExpression: "0 9 * * 1-5",
+        timezone: "Asia/Shanghai",
+      },
+    });
+    expect(triggerRes.ok(), await triggerRes.text()).toBe(true);
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Automation detail host chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: `Inspect [${automation.title}](${buildAutomationMentionHref(automation.id, automation.title)}) beside this chat.`,
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    const hostChatPath = `/${organization.issuePrefix}/messenger/chat/${chat.id}`;
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(hostChatPath);
+
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(assistantMessage).toContainText(automation.title, { timeout: 15_000 });
+    await assistantMessage.locator('a[data-mention-kind="automation"]').click();
+
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(page).toHaveURL(new RegExp(`${chat.id}$`));
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await expect(sidePanel.getByTestId("chat-side-panel-automation-view")).toBeVisible();
+    await expect(sidePanel.getByTestId("automation-detail-shell")).toBeVisible();
+    await expect(sidePanel).toContainText(automation.title);
+    await expect(sidePanel).toContainText("Details");
+    await expect(sidePanel).toContainText("Frequency");
+    await expect(sidePanel).toContainText("Previous runs");
+    await expect(sidePanel.getByLabel("Pause automation")).toBeVisible();
+    await sidePanel.getByRole("button", { name: "Automation actions" }).click();
+    await expect(page.getByRole("menuitem", { name: "Run now" })).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    await page.screenshot({
+      path: testInfo.outputPath("chat-side-panel-shared-automation-detail.png"),
+      fullPage: true,
+    });
+
+    await sidePanel.getByLabel("Close automation detail").click();
+    await expect(sidePanel.getByTestId("automation-detail-shell")).toHaveCount(0);
+  });
+
   test("opens issue, automation, library, and chat references in the Side Panel without replacing the Chat route", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Chat-Side-Panel-${Date.now()}` },

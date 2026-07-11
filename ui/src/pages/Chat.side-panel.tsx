@@ -1,6 +1,5 @@
 import { agentsApi } from "@/api/agents";
 import { authApi } from "@/api/auth";
-import { automationsApi } from "@/api/automations";
 import { chatsApi } from "@/api/chats";
 import { issuesApi } from "@/api/issues";
 import { organizationsApi } from "@/api/orgs";
@@ -26,7 +25,7 @@ import { readDesktopShell, type DesktopFileLaunchTargetId, type DesktopWorkspace
 import { queryKeys } from "@/lib/queryKeys";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
-import type { Agent, Automation, AutomationDetail, AutomationRunSummary, AutomationTrigger, Issue, IssueComment, OrganizationWorkspaceFileDetail, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
+import type { Agent, Issue, IssueComment, OrganizationWorkspaceFileDetail, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -34,8 +33,6 @@ import {
   Bot,
   Box,
   Boxes,
-  CalendarClock,
-  CheckCircle2,
   ChevronDown,
   ChevronRight,
   Circle,
@@ -53,7 +50,6 @@ import {
   Minimize2,
   PackageOpen,
   PanelRightClose,
-  Play,
   Plus,
   RotateCw,
   Terminal,
@@ -61,7 +57,7 @@ import {
   X
 } from "lucide-react";
 import { createElement, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { formatAutomationTimestamp, runSourceLabel, runStatusTitle, summarizeTrigger } from "./AutomationDetail.parts";
+import { AutomationDetail } from "./AutomationDetail";
 import { conversationDisplayTitle } from "./Chat.parts";
 import { IssueDetail } from "./IssueDetail";
 
@@ -164,35 +160,6 @@ function normalizeChatSidePanelBrowserUrl(value: string) {
     return `https://${trimmed}`;
   }
   return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
-}
-
-function sidePanelDate(value: Date | string | null | undefined, fallback = "-") {
-  if (!value) return fallback;
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    }).format(new Date(value));
-  } catch {
-    return fallback;
-  }
-}
-
-function SidePanelDetailRow({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="grid grid-cols-[76px_minmax(0,1fr)] items-center gap-3 text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <div className="min-w-0 text-right text-foreground">{children}</div>
-    </div>
-  );
 }
 
 function SidePanelEmptyState({
@@ -464,151 +431,6 @@ function ChatIssueSidePanelView({
           </aside>
         ) : null}
       </div>
-    </div>
-  );
-}
-
-function automationNextTrigger(automation: AutomationDetail): AutomationTrigger | null {
-  return [...automation.triggers]
-    .filter((trigger) => trigger.enabled)
-    .sort((a, b) => {
-      const aTime = a.nextRunAt ? new Date(a.nextRunAt).getTime() : Number.POSITIVE_INFINITY;
-      const bTime = b.nextRunAt ? new Date(b.nextRunAt).getTime() : Number.POSITIVE_INFINITY;
-      return aTime - bTime;
-    })[0] ?? automation.triggers[0] ?? null;
-}
-
-function ChatAutomationSidePanelView({
-  automation,
-  onRun,
-  runs,
-  onUpdate,
-  running,
-  updating,
-}: {
-  automation: AutomationDetail;
-  onRun: () => Promise<unknown>;
-  runs: AutomationRunSummary[];
-  onUpdate: (data: Record<string, unknown>) => Promise<Automation | AutomationDetail>;
-  running: boolean;
-  updating: boolean;
-}) {
-  const [error, setError] = useState<string | null>(null);
-  const nextTrigger = automationNextTrigger(automation);
-  const latestRun = runs[0] ?? automation.recentRuns[0] ?? null;
-  const active = automation.status === "active";
-  const projectLabel = automation.project?.name ?? "No project";
-  const modelLabel = automation.assignee ? `${automation.assignee.name}` : "No assignee";
-  const visibleRuns = runs.length > 0 ? runs : automation.recentRuns;
-  const toggleStatus = async () => {
-    setError(null);
-    try {
-      await onUpdate({ status: active ? "paused" : "active" });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not update this automation.");
-    }
-  };
-  const runNow = async () => {
-    setError(null);
-    try {
-      await onRun();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not run this automation.");
-    }
-  };
-
-  return (
-    <div className="flex min-h-full flex-col" data-testid="chat-side-panel-automation-view">
-      <div className="space-y-4 border-b border-[color:var(--border-soft)] pb-4">
-        <div className="flex items-start gap-3">
-          <h3 className="min-w-0 flex-1 text-lg font-semibold leading-7 text-foreground">{automation.title}</h3>
-          <span className={cn(
-            "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-xs",
-            active ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" : "bg-[color:var(--surface-active)] text-muted-foreground",
-          )}>
-            <span className={cn("h-1.5 w-1.5 rounded-full", active ? "bg-emerald-500" : "bg-muted-foreground/60")} />
-            {active ? "Active" : "Paused"}
-          </span>
-        </div>
-        {automation.description ? (
-          <p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{automation.description}</p>
-        ) : null}
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Button type="button" variant="outline" size="xs" onClick={() => void toggleStatus()} disabled={updating}>
-            {updating ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
-            {active ? "Pause" : "Resume"}
-          </Button>
-          <Button type="button" variant="outline" size="xs" onClick={() => void runNow()} disabled={running}>
-            {running ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
-            {running ? "Starting..." : "Run now"}
-          </Button>
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-[color:var(--surface-active)] px-2 py-1">
-            <Bot className="h-3 w-3" />
-            {automation.outputMode === "chat_output" ? "Sends to chat" : "Tracks issue"}
-          </span>
-        </div>
-        {error ? (
-          <div role="alert" className="rounded-[var(--radius-md)] border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {error}
-          </div>
-        ) : null}
-      </div>
-
-      <section className="space-y-2 border-b border-[color:var(--border-soft)] py-4">
-        <h4 className="text-sm font-semibold text-foreground">Status</h4>
-        <SidePanelDetailRow label="Status">
-          <span className="truncate">{active ? "Active" : "Paused"}</span>
-        </SidePanelDetailRow>
-        <SidePanelDetailRow label="Next run">
-          <span className="truncate">{formatAutomationTimestamp(nextTrigger?.nextRunAt, "-")}</span>
-        </SidePanelDetailRow>
-        <SidePanelDetailRow label="Last ran">
-          <span className="truncate">{formatAutomationTimestamp(latestRun?.triggeredAt, "-")}</span>
-        </SidePanelDetailRow>
-      </section>
-
-      <section className="space-y-2 border-b border-[color:var(--border-soft)] py-4">
-        <h4 className="text-sm font-semibold text-foreground">Details</h4>
-        <SidePanelDetailRow label="Runs in">
-          <span className="truncate">{automation.outputMode === "chat_output" ? "Chat" : "Issue"}</span>
-        </SidePanelDetailRow>
-        <SidePanelDetailRow label="Project">
-          <span className="truncate">{projectLabel}</span>
-        </SidePanelDetailRow>
-        <SidePanelDetailRow label="Repeats">
-          <span className="truncate">{summarizeTrigger(nextTrigger)}</span>
-        </SidePanelDetailRow>
-        <SidePanelDetailRow label="Model">
-          <span className="truncate">{modelLabel}</span>
-        </SidePanelDetailRow>
-      </section>
-
-      <section className="flex min-h-[12rem] flex-1 flex-col py-4">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <h4 className="text-sm font-semibold text-foreground">Previous runs</h4>
-          <span className="text-xs text-muted-foreground">{visibleRuns.length}</span>
-        </div>
-        {visibleRuns.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No runs yet.</p>
-        ) : (
-          <div className="space-y-2">
-            {visibleRuns.slice(0, 12).map((run) => (
-              <div key={run.id} className="grid grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-2 text-sm">
-                {run.status === "running" ? (
-                  <CalendarClock className="h-3.5 w-3.5 text-blue-500" />
-                ) : (
-                  <Circle className={cn("h-2.5 w-2.5 fill-current", run.status === "failed" ? "text-red-500" : "text-muted-foreground")} />
-                )}
-                <div className="min-w-0">
-                  <div className="truncate text-foreground">{runStatusTitle(run.status)}</div>
-                  <div className="truncate text-xs text-muted-foreground">{runSourceLabel(run.source)}</div>
-                </div>
-                <span className="text-xs text-muted-foreground">{sidePanelDate(run.triggeredAt)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
     </div>
   );
 }
@@ -1384,40 +1206,6 @@ export function ChatSidePanel({
     queryFn: () => chatsApi.listMessages(chatTarget!.conversationId),
     enabled: !!selectedOrganizationId && !!chatTarget,
   });
-  const automationQuery = useQuery({
-    queryKey: queryKeys.automations.detail(automationTarget?.automationId ?? "__none__"),
-    queryFn: () => automationsApi.get(automationTarget!.automationId),
-    enabled: !!automationTarget,
-  });
-  const automationRunsQuery = useQuery({
-    queryKey: queryKeys.automations.runs(automationTarget?.automationId ?? "__none__"),
-    queryFn: () => automationsApi.listRuns(automationTarget!.automationId),
-    enabled: !!automationTarget,
-  });
-  const updateAutomationMutation = useMutation({
-    mutationFn: ({ automationId, data }: { automationId: string; data: Record<string, unknown> }) =>
-      automationsApi.update(automationId, data),
-    onSuccess: (updatedAutomation) => {
-      queryClient.setQueryData(queryKeys.automations.detail(updatedAutomation.id), (current: AutomationDetail | undefined) =>
-        current ? { ...current, ...updatedAutomation } : updatedAutomation,
-      );
-      void queryClient.invalidateQueries({ queryKey: ["automations"] });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.automations.runs(updatedAutomation.id) });
-      void queryClient.invalidateQueries({ queryKey: ["messenger"] });
-    },
-  });
-  const runAutomationMutation = useMutation({
-    mutationFn: (automationId: string) => automationsApi.run(automationId),
-    onSuccess: (run, automationId) => {
-      queryClient.setQueryData(queryKeys.automations.runs(automationId), (current: AutomationRunSummary[] | undefined) =>
-        current ? [run, ...current] : [run],
-      );
-      void queryClient.invalidateQueries({ queryKey: queryKeys.automations.detail(automationId) });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.automations.runs(automationId) });
-      void queryClient.invalidateQueries({ queryKey: ["automations"] });
-      void queryClient.invalidateQueries({ queryKey: ["messenger"] });
-    },
-  });
   const libraryFileQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFile(selectedOrganizationId ?? "__none__", libraryFilePreviewPath ?? ""),
     queryFn: () => organizationsApi.readWorkspaceFile(selectedOrganizationId!, libraryFilePreviewPath!),
@@ -1434,19 +1222,16 @@ export function ChatSidePanel({
   const loading = Boolean(
     (issueTarget && issueQuery.isPending)
       || (chatTarget && (chatQuery.isPending || chatMessagesQuery.isPending))
-      || (automationTarget && (automationQuery.isPending || automationRunsQuery.isPending))
       || (libraryFilePreviewPath && libraryFileQuery.isPending)
       || (libraryDirectoryTarget && libraryDirectoryQuery.isPending),
   );
-  const error = issueQuery.error ?? issueCommentsQuery.error ?? agentsQuery.error ?? sessionQuery.error ?? chatQuery.error ?? chatMessagesQuery.error ?? automationQuery.error ?? automationRunsQuery.error ?? libraryFileQuery.error ?? libraryDirectoryQuery.error;
+  const error = issueQuery.error ?? issueCommentsQuery.error ?? agentsQuery.error ?? sessionQuery.error ?? chatQuery.error ?? chatMessagesQuery.error ?? libraryFileQuery.error ?? libraryDirectoryQuery.error;
   const issue = issueTarget ? issueQuery.data : null;
   const issueComments = issueTarget ? (issueCommentsQuery.data ?? []) : [];
   const currentUserId = sessionQuery.data?.user?.id ?? sessionQuery.data?.session?.userId ?? null;
   const agentMap = new Map((agentsQuery.data ?? []).map((agent) => [agent.id, agent]));
   const chat = chatTarget ? chatQuery.data : null;
   const chatMessages = chatTarget ? (chatMessagesQuery.data ?? []) : [];
-  const automation = automationTarget ? automationQuery.data : null;
-  const automationRuns = automationTarget ? (automationRunsQuery.data ?? []) : [];
   const libraryFile = libraryFilePreviewPath ? libraryFileQuery.data : null;
   const libraryDirectory = libraryDirectoryTarget ? libraryDirectoryQuery.data : null;
   const activeTargetKey = activeTarget ? sidePanelTargetKey(activeTarget) : "empty";
@@ -1568,7 +1353,7 @@ export function ChatSidePanel({
       <div className="workspace-main-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]">
         <div className={cn(
           "scrollbar-auto-hide min-h-0 flex-1",
-          browserTarget || issueTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
+          browserTarget || issueTarget || automationTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
           issueTarget && !browserTarget && "px-4 py-4",
         )} data-testid="chat-side-panel-scroll-body">
           {!activeTarget ? (
@@ -1603,15 +1388,15 @@ export function ChatSidePanel({
                 }}
               />
             )
-          ) : automationTarget && automation ? (
-            <ChatAutomationSidePanelView
-              automation={automation}
-              runs={automationRuns}
-              running={runAutomationMutation.isPending}
-              updating={updateAutomationMutation.isPending}
-              onRun={() => runAutomationMutation.mutateAsync(automation.id)}
-              onUpdate={(data) => updateAutomationMutation.mutateAsync({ automationId: automation.id, data })}
-            />
+          ) : automationTarget ? (
+            <div className="h-full min-h-0" data-testid="chat-side-panel-automation-view">
+              <AutomationDetail
+                key={automationTarget.automationId}
+                automationId={automationTarget.automationId}
+                embedded
+                onClose={() => closeSidePanelTab(automationTarget)}
+              />
+            </div>
           ) : placeholderTarget ? (
             <SidePanelPlaceholderView target={placeholderTarget} onOpenTarget={openSidePanelTarget} />
           ) : chatTarget ? (

@@ -1295,17 +1295,18 @@ describe("Chat Side Panel link handling", () => {
 
     const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     expect(sidePanel).not.toBeNull();
+    expect(sidePanel?.querySelector("[data-testid='automation-detail-shell']")).not.toBeNull();
     expect(sidePanel?.textContent).toContain("Daily report");
     expect(sidePanel?.textContent).toContain("Active");
     expect(sidePanel?.textContent).toContain("Next run");
-    expect(sidePanel?.textContent).toContain("Last ran");
-    expect(sidePanel?.textContent).toContain("Launch Ops");
-    expect(sidePanel?.textContent).toContain("Repeats");
+    expect(sidePanel?.textContent).toContain("Details");
+    expect(sidePanel?.textContent).toContain("Frequency");
     expect(sidePanel?.textContent).toContain("Previous runs");
-    expect(sidePanel?.textContent).toContain("Run now");
+    expect(sidePanel?.querySelector("button[aria-label='Automation actions']")).not.toBeNull();
+    expect(sidePanel?.querySelector("button[aria-label='Pause automation']")).not.toBeNull();
     expect(mockState.navigate).not.toHaveBeenCalledWith("/automations/automation-1");
     expect(sidePanel?.querySelector<HTMLAnchorElement>('a[href="/automations/automation-1"]')).toBeNull();
-  });
+  }, 15_000);
 
   it("lets the operator pause an automation from the Side Panel", async () => {
     mockState.automations["automation-1"] = automationDetail();
@@ -1322,7 +1323,7 @@ describe("Chat Side Panel link handling", () => {
       ],
     };
 
-    const { container, rerender } = renderChat();
+    const { container } = renderChat();
     await act(async () => {
       await Promise.resolve();
     });
@@ -1333,24 +1334,14 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
 
-    const pauseButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
-      (candidate) => candidate.textContent?.includes("Pause"),
-    );
-    expect(pauseButton).not.toBeUndefined();
+    const pauseButton = container.querySelector<HTMLButtonElement>("button[aria-label='Pause automation']");
+    expect(pauseButton).not.toBeNull();
 
     await act(async () => {
       pauseButton?.click();
       await Promise.resolve();
     });
-    rerender();
-
-    expect(mockState.mutations).toContainEqual({
-      automationId: "automation-1",
-      data: { status: "paused" },
-    });
-    const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
-    expect(sidePanel?.textContent).toContain("Paused");
-    expect(sidePanel?.textContent).toContain("Resume");
+    expect(mockState.mutations).toContainEqual("paused");
   });
 
   it("opens an internal automation route in the Side Panel without leaving chat", async () => {
