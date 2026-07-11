@@ -112,6 +112,84 @@ async function createCiWebhookAutomationFixture(page: Page) {
 }
 
 test.describe("Automations index layout", () => {
+  test("filters the list by all, active, and paused status", async ({ page }) => {
+    const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: { name: `Automations-Filters-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = (await orgRes.json()) as { id: string; issuePrefix: string };
+
+    const agentRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Automation Filter Agent",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: { model: "gpt-5.4" },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = (await agentRes.json()) as { id: string };
+
+    const activeRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/automations`, {
+      data: {
+        title: "Active daily review",
+        description: "Active filter fixture.",
+        assigneeAgentId: agent.id,
+        priority: "medium",
+      },
+    });
+    expect(activeRes.ok()).toBe(true);
+
+    const pausedRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/automations`, {
+      data: {
+        title: "Paused weekly review",
+        description: "Paused filter fixture.",
+        assigneeAgentId: agent.id,
+        priority: "medium",
+      },
+    });
+    expect(pausedRes.ok()).toBe(true);
+    const pausedAutomation = (await pausedRes.json()) as { id: string };
+    const pauseRes = await page.request.patch(`${E2E_BASE_URL}/api/automations/${pausedAutomation.id}`, {
+      data: { status: "paused" },
+    });
+    expect(pauseRes.ok(), await pauseRes.text()).toBe(true);
+
+    await selectOrganization(page, organization.id);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/automations`);
+
+    const statusTabs = page.getByRole("tablist", { name: "Automation status" });
+    const tableSurface = page.getByTestId("automations-table-surface");
+    await expect(statusTabs.getByRole("tab", { name: "All" })).toHaveAttribute("aria-selected", "true");
+    await expect(tableSurface.getByText("Active daily review", { exact: true })).toBeVisible();
+    await expect(tableSurface.getByText("Paused weekly review", { exact: true })).toBeVisible();
+    await page.screenshot({ path: "/tmp/rudder-automation-status-tabs.png", fullPage: true });
+
+
+    await tableSurface.getByText("Active daily review", { exact: true }).click();
+
+    await statusTabs.getByRole("tab", { name: "All" }).focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(statusTabs.getByRole("tab", { name: "Active" })).toHaveAttribute("aria-selected", "true");
+    await expect(tableSurface.getByText("Active daily review", { exact: true })).toBeVisible();
+    await expect(tableSurface.getByText("Paused weekly review", { exact: true })).toHaveCount(0);
+
+    await statusTabs.getByRole("tab", { name: "Paused" }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/automations$`));
+    await expect(page.getByTestId("automation-detail-pane")).toHaveCount(0);
+    await expect(tableSurface.getByText("Active daily review", { exact: true })).toHaveCount(0);
+    await expect(tableSurface.getByText("Paused weekly review", { exact: true })).toBeVisible();
+
+    await tableSurface.getByText("Paused weekly review", { exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/automations/${pausedAutomation.id}$`));
+    await expect(page.getByTestId("automation-detail-pane")).toBeVisible();
+    await tableSurface.getByRole("switch", { name: "Enable Paused weekly review" }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/automations$`));
+    await expect(page.getByTestId("automation-detail-pane")).toHaveCount(0);
+    await expect(page.getByText("No paused automations", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("automation-template-grid")).toHaveCount(0);
+  });
+
   test("uses the outer list card and places the create action in its header", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 900 });
 

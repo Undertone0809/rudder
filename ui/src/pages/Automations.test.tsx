@@ -542,6 +542,59 @@ describe("Automations", () => {
     expect(container.textContent).not.toContain("Archived");
   });
 
+  it("filters automations by active and paused status", async () => {
+    automationListState.items = [
+      automation,
+      {
+        ...automation,
+        id: "auto-2",
+        title: "Paused weekly review",
+        status: "paused",
+      },
+    ];
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("flomo memo export");
+    expect(container.textContent).toContain("Paused weekly review");
+
+    await act(async () => {
+      (Array.from(container.querySelectorAll("button"))
+        .find((button) => button.textContent === "Active") as HTMLButtonElement | undefined)?.focus();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("flomo memo export");
+    expect(container.textContent).not.toContain("Paused weekly review");
+
+    await act(async () => {
+      (Array.from(container.querySelectorAll("button"))
+        .find((button) => button.textContent === "Paused") as HTMLButtonElement | undefined)?.focus();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).not.toContain("flomo memo export");
+    expect(container.textContent).toContain("Paused weekly review");
+  });
+
+  it("shows a filtered empty result without replacing it with onboarding templates", async () => {
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+      (Array.from(container.querySelectorAll("button"))
+        .find((button) => button.textContent === "Paused") as HTMLButtonElement | undefined)?.focus();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("No paused automations");
+    expect(container.textContent).not.toContain("No automations yet");
+    expect(container.querySelector('[data-testid="automation-template-grid"]')).toBeNull();
+  });
+
   it("keeps the selected automation in the list and closes its detail back to the index route", async () => {
     automationRouteState.automationId = "auto-1";
     const container = renderPage();
@@ -558,6 +611,20 @@ describe("Automations", () => {
       Array.from(container.querySelectorAll("button"))
         .find((button) => button.textContent === "Close automation detail")
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith("/automations");
+  });
+
+  it("closes a selected detail when it is outside the chosen status filter", async () => {
+    automationRouteState.automationId = "auto-1";
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+      (Array.from(container.querySelectorAll("button"))
+        .find((button) => button.textContent === "Paused") as HTMLButtonElement | undefined)?.focus();
+      await Promise.resolve();
     });
 
     expect(mockNavigate).toHaveBeenCalledWith("/automations");

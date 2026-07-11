@@ -16,6 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { useNavigate, useParams } from "@/lib/router";
 import type { InstanceLocale } from "@rudderhq/shared";
@@ -80,6 +81,7 @@ const automationComposerChipIconClass =
   "h-3.5 w-3.5 shrink-0 text-muted-foreground";
 
 type AutomationOutputMode = "track_issue";
+type AutomationStatusFilter = "all" | "active" | "paused";
 
 type LocalizedText = {
   en: string;
@@ -310,6 +312,7 @@ export function Automations() {
   const [composerOpen, setComposerOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [detailCollapsed, setDetailCollapsed] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<AutomationStatusFilter>("all");
   const [draft, setDraft] = useState({
     title: "",
     description: "",
@@ -387,6 +390,27 @@ export function Automations() {
     queryFn: () => automationsApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId,
   });
+  const filteredAutomations = useMemo(
+    () => (automations ?? []).filter((automation) => (
+      statusFilter === "all" || automation.status === statusFilter
+    )),
+    [automations, statusFilter],
+  );
+  const applyStatusFilter = useCallback((value: AutomationStatusFilter) => {
+    setStatusFilter(value);
+    if (value === "all" || !automationId) return;
+    const selectedAutomation = (automations ?? []).find((automation) => automation.id === automationId);
+    if (selectedAutomation && selectedAutomation.status !== value) {
+      navigate("/automations");
+    }
+  }, [automationId, automations, navigate]);
+  useEffect(() => {
+    if (statusFilter === "all" || !automationId) return;
+    const selectedAutomation = (automations ?? []).find((automation) => automation.id === automationId);
+    if (selectedAutomation && selectedAutomation.status !== statusFilter) {
+      navigate("/automations");
+    }
+  }, [automationId, automations, navigate, statusFilter]);
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(selectedOrganizationId!),
     queryFn: () => agentsApi.list(selectedOrganizationId!),
@@ -974,8 +998,29 @@ export function Automations() {
             </div>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
+          <div>
+            <Tabs
+              value={statusFilter}
+              onValueChange={(value) => applyStatusFilter(value as AutomationStatusFilter)}
+              className="gap-0"
+            >
+              <TabsList
+                variant="line"
+                aria-label="Automation status"
+                className="mx-3 mb-3 h-9 border-b border-border px-0"
+              >
+                <TabsTrigger value="all">All</TabsTrigger>
+                <TabsTrigger value="active">Active</TabsTrigger>
+                <TabsTrigger value="paused">Paused</TabsTrigger>
+              </TabsList>
+            </Tabs>
+            {filteredAutomations.length === 0 ? (
+              <div className="flex min-h-56 items-center justify-center px-4 py-12 text-sm text-muted-foreground">
+                No {statusFilter} automations
+              </div>
+            ) : (
+              <div data-testid="automations-table-surface" className="overflow-x-auto">
+                <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-muted-foreground border-b border-border">
                   <th className="px-3 py-2 font-medium">Name</th>
@@ -987,7 +1032,7 @@ export function Automations() {
                 </tr>
               </thead>
               <tbody>
-                {(automations ?? []).map((automation) => {
+                {filteredAutomations.map((automation) => {
                   const enabled = automation.status === "active";
                   const isStatusPending = statusMutationAutomationId === automation.id;
                   const lastRunDisplay = automation.lastRun ? getAutomationRunDisplay(automation.lastRun, locale) : null;
@@ -1151,7 +1196,9 @@ export function Automations() {
                   );
                 })}
               </tbody>
-            </table>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </div>
