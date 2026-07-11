@@ -118,7 +118,6 @@ test.describe("Automations index layout", () => {
     });
     expect(orgRes.ok()).toBe(true);
     const organization = (await orgRes.json()) as { id: string; issuePrefix: string };
-
     const agentRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/agents`, {
       data: {
         name: "Automation Filter Agent",
@@ -209,6 +208,15 @@ test.describe("Automations index layout", () => {
     });
     expect(orgRes.ok()).toBe(true);
     const organization = (await orgRes.json()) as { id: string; issuePrefix: string };
+    const agentRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Automation Output Agent",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: { model: "gpt-5.4" },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
 
     await selectOrganization(page, organization.id);
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/automations`);
@@ -269,9 +277,31 @@ test.describe("Automations index layout", () => {
 
     await createButton.click();
     await expect(page.getByPlaceholder("Automation title")).toBeVisible();
+    const outputMethod = page.getByTestId("automation-create-output-mode");
+    await expect(outputMethod).toContainText("Send to chat");
+    await expect(page.getByTestId("automation-create-chat-destination")).toContainText("New chat per run");
+    await outputMethod.click();
+    await page.getByRole("button", { name: /Track as issue/ }).click();
+    await expect(outputMethod).toContainText("Track as issue");
+    await expect(page.getByTestId("automation-create-chat-destination")).toHaveCount(0);
     await expect(page.getByRole("button", { name: /Delivery rules/ })).toBeVisible();
     await expect(page.getByText("Every day at 09:00")).toBeVisible();
     await expect(page.getByTestId("automation-composer-shell")).toBeVisible();
+    await page.getByPlaceholder("Automation title").fill("Persist tracked output");
+    await page.getByRole("button", { name: /^Assignee$/ }).click();
+    await page.getByRole("button", { name: /Automation Output Agent/ }).click();
+    await page.keyboard.press("Escape");
+    await page.screenshot({
+      path: testInfo.outputPath("automation-output-method-track-issue.png"),
+      fullPage: true,
+    });
+    await page.getByRole("button", { name: /^Create$/ }).click();
+    await expect(page.getByText("Persist tracked output", { exact: true })).toBeVisible();
+    const automationsRes = await page.request.get(`${E2E_BASE_URL}/api/orgs/${organization.id}/automations`);
+    expect(automationsRes.ok()).toBe(true);
+    const createdAutomation = ((await automationsRes.json()) as Array<{ title: string; outputMode: string }>)
+      .find((automation) => automation.title === "Persist tracked output");
+    expect(createdAutomation?.outputMode).toBe("track_issue");
   });
 
   test("applies the documentation check template from the composer header", async ({ page }, testInfo) => {
@@ -405,7 +435,7 @@ test.describe("Automations index layout", () => {
     await expect(page.getByRole("button", { name: /Send to chat/ })).toBeEnabled();
     await page.getByRole("button", { name: /Send to chat/ }).click();
     await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("each run's final result to a new Rudder chat");
-    await expect(page.getByRole("button", { name: /Create automation/ })).toBeDisabled();
+    await expect(page.getByRole("button", { name: /^Create$/ })).toBeDisabled();
 
     await page.screenshot({
       path: testInfo.outputPath("automations-template-composer.png"),

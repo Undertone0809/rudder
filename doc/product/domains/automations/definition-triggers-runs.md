@@ -41,6 +41,8 @@ Product model:
 - It may bind to project, goal, parent issue, and assignee agent.
 - It has status such as active, paused, or archived.
 - Output mode is either tracked issue or chat output.
+- The create composer defaults custom automations to chat output and lets the
+  operator explicitly switch between chat output and tracked issue output.
 - Agent actors can manage only automations they are allowed to own.
 - `/automations` and `/automations/:automationId` are one route-driven
   master-detail workspace. On wide screens the primary rail, Automation list,
@@ -50,7 +52,7 @@ Product model:
 Flow:
 
 1. Operator or agent creates automation with prompt, owner, context, trigger,
-   and output mode.
+   and an explicitly visible output mode; custom drafts start with chat output.
 2. Server validates organization boundary, assignee, project/goal/parent issue,
    status, and permissions.
 3. Selecting a row updates the route, marks that row as current, and opens or

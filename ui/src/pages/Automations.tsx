@@ -28,6 +28,7 @@ import {
   CheckCircle2,
   ChevronDown,
   FolderOpen,
+  MessageSquare,
   MoreHorizontal,
   PanelRightClose,
   PanelRightOpen,
@@ -80,7 +81,7 @@ const automationComposerChipClass =
 const automationComposerChipIconClass =
   "h-3.5 w-3.5 shrink-0 text-muted-foreground";
 
-type AutomationOutputMode = "track_issue";
+type AutomationOutputMode = "track_issue" | "chat_output";
 type AutomationStatusFilter = "all" | "active" | "paused";
 
 type LocalizedText = {
@@ -191,7 +192,7 @@ const automationTemplates: AutomationTemplate[] = [
     title: { en: "Daily news digest", "zh-CN": "每日信息简报" },
     summary: { en: "Search and summarize relevant updates for the team.", "zh-CN": "检索并总结团队需要知道的外部变化。" },
     scheduleCron: "0 8 * * 1-5",
-    outputMode: "track_issue",
+    outputMode: "chat_output",
     description: {
       en: [
         "1. Search for important market, customer, or platform updates relevant to the organization.",
@@ -212,7 +213,7 @@ const automationTemplates: AutomationTemplate[] = [
     title: { en: "Daily standup review", "zh-CN": "日会" },
     summary: { en: "Summarize daily agent work, risks, and next actions for review.", "zh-CN": "汇总今天的阻塞、重点和交接事项。" },
     scheduleCron: "30 9 * * 1-5",
-    outputMode: "track_issue",
+    outputMode: "chat_output",
     description: {
       en: [
         "For each active agent or owner:",
@@ -246,24 +247,59 @@ const blankAutomationTemplate: AutomationTemplate = {
     "zh-CN": "",
   },
   scheduleCron: "0 9 * * *",
-  outputMode: "track_issue",
+  outputMode: "chat_output",
 };
 
 function localizeText(text: LocalizedText, locale: InstanceLocale) {
   return text[locale] ?? text.en;
 }
 
-function outputInstruction(locale: InstanceLocale) {
+function outputInstruction(mode: AutomationOutputMode, locale: InstanceLocale) {
+  if (mode === "chat_output") {
+    return locale === "zh-CN"
+      ? "输出：每次运行都将最终结果发送到新的 Rudder chat；只有出现明确阻塞或后续动作时才创建任务。"
+      : "Output: send each run's final result to a new Rudder chat; create tracked work only for concrete blockers or follow-up actions.";
+  }
   return locale === "zh-CN"
     ? "输出：创建或更新 board 可跟踪任务，确保结果可以被 review。"
     : "Output: create or update board-tracked work so the result can be reviewed.";
 }
 
-function withOutputInstruction(description: string, locale: InstanceLocale) {
+function outputMethodCopy(locale: InstanceLocale) {
+  if (locale === "zh-CN") {
+    return {
+      heading: "运行输出",
+      trackIssue: "跟踪为任务",
+      trackIssueSummary: "每次运行创建可跟踪任务",
+      sendToChat: "发送到聊天",
+      sendToChatSummary: "每次运行发布到新聊天",
+      newChatPerRun: "每次运行新建聊天",
+    };
+  }
+  return {
+    heading: "Run output",
+    trackIssue: "Track as issue",
+    trackIssueSummary: "Each run opens board-tracked work",
+    sendToChat: "Send to chat",
+    sendToChatSummary: "Post each run to a new chat",
+    newChatPerRun: "New chat per run",
+  };
+}
+
+function withOutputInstruction(description: string, mode: AutomationOutputMode, locale: InstanceLocale) {
   const trimmedDescription = description.trim();
   if (!trimmedDescription) return "";
-  const instruction = outputInstruction(locale);
+  const instruction = outputInstruction(mode, locale);
   return `${trimmedDescription}\n\n${instruction}`;
+}
+
+function removeOutputInstruction(description: string) {
+  return description
+    .replace(/\n*Output: create or update board-tracked work so the result can be reviewed\.\s*$/u, "")
+    .replace(/\n*Output: send each run's final result to a new Rudder chat; create tracked work only for concrete blockers or follow-up actions\.\s*$/u, "")
+    .replace(/\n*输出：创建或更新 board 可跟踪任务，确保结果可以被 review。\s*$/u, "")
+    .replace(/\n*输出：每次运行都将最终结果发送到新的 Rudder chat；只有出现明确阻塞或后续动作时才创建任务。\s*$/u, "")
+    .trim();
 }
 
 function autoResizeTextarea(element: HTMLTextAreaElement | null) {
@@ -297,6 +333,7 @@ export function Automations() {
   const navigate = useNavigate();
   const { confirm } = useDialog();
   const { locale } = useI18n();
+  const outputCopy = outputMethodCopy(locale);
   const { pushToast } = useToast();
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -322,7 +359,7 @@ export function Automations() {
     concurrencyPolicy: "coalesce_if_active",
     catchUpPolicy: "skip_missed",
     scheduleCron: "0 9 * * *",
-    outputMode: "track_issue" as AutomationOutputMode,
+    outputMode: "chat_output" as AutomationOutputMode,
     chatConversationId: "",
   });
 
@@ -336,7 +373,7 @@ export function Automations() {
       concurrencyPolicy: "coalesce_if_active",
       catchUpPolicy: "skip_missed",
       scheduleCron: "0 9 * * *",
-      outputMode: "track_issue",
+      outputMode: "chat_output",
       chatConversationId: "",
     });
   }, []);
@@ -345,13 +382,22 @@ export function Automations() {
     setDraft((current) => ({
       ...current,
       title: localizeText(template.title, locale),
-      description: withOutputInstruction(localizeText(template.description, locale), locale),
+      description: withOutputInstruction(localizeText(template.description, locale), template.outputMode, locale),
       scheduleCron: template.scheduleCron,
       outputMode: template.outputMode,
       chatConversationId: "",
     }));
     setAdvancedOpen(false);
     setComposerOpen(true);
+  }, [locale]);
+
+  const selectOutputMode = useCallback((outputMode: AutomationOutputMode) => {
+    setDraft((current) => ({
+      ...current,
+      outputMode,
+      chatConversationId: "",
+      description: withOutputInstruction(removeOutputInstruction(current.description), outputMode, locale),
+    }));
   }, [locale]);
 
   useEffect(() => {
@@ -451,7 +497,7 @@ export function Automations() {
         priority: draft.priority,
         concurrencyPolicy: draft.concurrencyPolicy,
         catchUpPolicy: draft.catchUpPolicy,
-        outputMode: "track_issue",
+        outputMode: draft.outputMode,
         chatConversationId: null,
         notifyOnIssueCreated: false,
       });
@@ -817,16 +863,79 @@ export function Automations() {
                 </PopoverContent>
               </Popover>
 
-              <div
-                data-testid="automation-create-output-mode"
-                className={cn(
-                  "inline-flex max-w-full items-center gap-1.5 border border-border bg-transparent text-foreground",
-                  automationComposerChipClass,
-                )}
-              >
-                <CheckCircle2 className={automationComposerChipIconClass} />
-                <span className="truncate">Track as issue</span>
-              </div>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    data-testid="automation-create-output-mode"
+                    className={cn(
+                      "inline-flex max-w-full items-center gap-1.5 border border-border bg-transparent text-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      automationComposerChipClass,
+                    )}
+                  >
+                    {draft.outputMode === "track_issue" ? (
+                      <CheckCircle2 className={automationComposerChipIconClass} />
+                    ) : (
+                      <MessageSquare className={automationComposerChipIconClass} />
+                    )}
+                    <span className="truncate">{draft.outputMode === "track_issue" ? outputCopy.trackIssue : outputCopy.sendToChat}</span>
+                    <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/80" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="start" side="top" sideOffset={8} disablePortal className="w-[min(320px,calc(100vw-2rem))] space-y-2 p-2">
+                  <p className="px-1 pt-1 text-xs font-medium text-muted-foreground">{outputCopy.heading}</p>
+                  {([
+                    {
+                      value: "track_issue" as const,
+                      icon: CheckCircle2,
+                      title: outputCopy.trackIssue,
+                      summary: outputCopy.trackIssueSummary,
+                    },
+                    {
+                      value: "chat_output" as const,
+                      icon: MessageSquare,
+                      title: outputCopy.sendToChat,
+                      summary: outputCopy.sendToChatSummary,
+                    },
+                  ]).map((option) => {
+                    const Icon = option.icon;
+                    const selected = draft.outputMode === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        aria-pressed={selected}
+                        className={cn(
+                          "flex w-full min-w-0 items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors",
+                          selected
+                            ? "border-foreground/70 bg-accent/60 text-foreground"
+                            : "border-border/70 bg-background/40 text-muted-foreground hover:bg-accent/40",
+                        )}
+                        onClick={() => selectOutputMode(option.value)}
+                      >
+                        <Icon className="h-4 w-4 shrink-0" />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium">{option.title}</span>
+                          <span className="block truncate text-xs text-muted-foreground">{option.summary}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </PopoverContent>
+              </Popover>
+
+              {draft.outputMode === "chat_output" ? (
+                <div
+                  data-testid="automation-create-chat-destination"
+                  className={cn(
+                    "inline-flex items-center gap-1.5 border border-border bg-transparent text-muted-foreground",
+                    automationComposerChipClass,
+                  )}
+                >
+                  <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{outputCopy.newChatPerRun}</span>
+                </div>
+              ) : null}
 
               <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>
                 <PopoverTrigger asChild>

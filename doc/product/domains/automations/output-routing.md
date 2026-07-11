@@ -39,14 +39,16 @@ Tracked issue flow:
 
 Chat output flow:
 
-1. Each real automation execution run gets its own Messenger chat conversation.
-2. `automation_runs.linkedChatConversationId` is the source of truth for the
+1. The create composer defaults custom automations to chat output while keeping
+   tracked issue available as an explicit selectable alternative.
+2. Each real automation execution run gets its own Messenger chat conversation.
+3. `automation_runs.linkedChatConversationId` is the source of truth for the
    per-run conversation.
-3. Rudder writes a chat-native user/input message that represents automation
+4. Rudder writes a chat-native user/input message that represents automation
    run input, then streams or records the assistant result.
-4. The chat assistant turn is linked to Agent Run semantics when a runtime is
+5. The chat assistant turn is linked to Agent Run semantics when a runtime is
    invoked.
-5. Failed chat output leaves visible partial/fallback evidence instead of
+6. Failed chat output leaves visible partial/fallback evidence instead of
    silently creating an empty unread thread.
 
 Invariants:
