@@ -605,6 +605,8 @@ describe("Automations", () => {
 
     const selectedRow = container.querySelector('tr[data-selected="true"]');
     expect(selectedRow?.getAttribute("aria-current")).toBe("page");
+    expect(container.querySelector('[data-testid="automations-table-surface"]')?.className).toContain("rounded-[var(--radius-md)]");
+    expect(selectedRow?.className).toContain("[&>td:first-child]:rounded-l-[var(--radius-sm)]");
     expect(container.querySelector('[data-testid="mock-automation-detail"]')?.textContent).toContain("auto-1");
 
     await act(async () => {

@@ -1019,10 +1019,13 @@ export function Automations() {
                 No {statusFilter} automations
               </div>
             ) : (
-              <div data-testid="automations-table-surface" className="overflow-x-auto">
-                <table className="min-w-full text-sm">
+              <div
+                data-testid="automations-table-surface"
+                className="mx-3 overflow-x-auto rounded-[var(--radius-md)] border border-border/70 bg-background/25 p-1"
+              >
+                <table className="min-w-full border-separate border-spacing-y-1 text-sm">
               <thead>
-                <tr className="text-left text-xs text-muted-foreground border-b border-border">
+                <tr className="text-left text-xs text-muted-foreground">
                   <th className="px-3 py-2 font-medium">Name</th>
                   <th className={cn("px-3 py-2 font-medium", automationId && "hidden 2xl:table-cell")}>Project</th>
                   <th className={cn("px-3 py-2 font-medium", automationId && "hidden 2xl:table-cell")}>Assignee</th>
@@ -1043,8 +1046,8 @@ export function Automations() {
                       aria-current={isSelected ? "page" : undefined}
                       data-selected={isSelected ? "true" : undefined}
                       className={cn(
-                        "cursor-pointer align-middle border-b border-border transition-colors hover:bg-accent/50 last:border-b-0",
-                        isSelected && "bg-accent/70 hover:bg-accent/70",
+                        "group cursor-pointer align-middle [&>td]:transition-colors [&>td:first-child]:rounded-l-[var(--radius-sm)] [&>td:last-child]:rounded-r-[var(--radius-sm)] [&>td]:group-hover:bg-accent/50",
+                        isSelected && "[&>td]:bg-accent/70 [&>td]:group-hover:bg-accent/70",
                       )}
                       onClick={() => {
                         setDetailCollapsed(false);

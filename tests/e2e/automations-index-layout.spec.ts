@@ -165,8 +165,17 @@ test.describe("Automations index layout", () => {
     await expect(tableSurface.getByText("Paused weekly review", { exact: true })).toBeVisible();
     await page.screenshot({ path: "/tmp/rudder-automation-status-tabs.png", fullPage: true });
 
+    await expect(tableSurface).toBeVisible();
+    expect(await tableSurface.evaluate((element) => Number.parseFloat(getComputedStyle(element).borderTopLeftRadius))).toBeGreaterThan(0);
 
     await tableSurface.getByText("Active daily review", { exact: true }).click();
+    const selectedRow = page.locator('tr[data-selected="true"]');
+    const firstSelectedCell = selectedRow.locator("td").first();
+    expect(await firstSelectedCell.evaluate((element) => Number.parseFloat(getComputedStyle(element).borderTopLeftRadius))).toBeGreaterThan(0);
+
+    const detailHeader = page.getByTestId("automation-detail-panel-header");
+    await expect(detailHeader).toBeVisible();
+    expect(await detailHeader.evaluate((element) => Number.parseFloat(getComputedStyle(element).borderTopLeftRadius))).toBeGreaterThan(0);
 
     await statusTabs.getByRole("tab", { name: "All" }).focus();
     await page.keyboard.press("ArrowRight");

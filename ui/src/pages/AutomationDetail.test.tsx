@@ -455,7 +455,9 @@ describe("AutomationDetail", () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelector('[data-testid="automation-detail-panel-header"]')).toBeTruthy();
+    const panelHeader = container.querySelector('[data-testid="automation-detail-panel-header"]');
+    expect(panelHeader).toBeTruthy();
+    expect(panelHeader?.className).toContain("rounded-[var(--radius-md)]");
     expect(container.textContent).toContain("Automation not found");
 
     await act(async () => {
