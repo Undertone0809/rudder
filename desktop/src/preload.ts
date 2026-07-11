@@ -197,6 +197,8 @@ contextBridge.exposeInMainWorld("desktopShell", {
     ipcRenderer.invoke("desktop:open-workspace", { rootPath, targetId }) as Promise<void>,
   openWorkspaceFileInIde: (rootPath: string, filePath: string, ideId?: DesktopFileLaunchTargetId) =>
     ipcRenderer.invoke("desktop:open-workspace-file-in-ide", { rootPath, filePath, ideId }) as Promise<void>,
+  openWorkspaceFileLocation: (rootPath: string, filePath: string, targetId: DesktopWorkspaceLaunchTarget["id"]) =>
+    ipcRenderer.invoke("desktop:open-workspace-file-location", { rootPath, filePath, targetId }) as Promise<void>,
   copyText: (value: string) => ipcRenderer.invoke("desktop:copy-text", value),
   copyImage: (payload: DesktopImageDataPayload) => ipcRenderer.invoke("desktop:copy-image", payload),
   showImageInFolder: (payload: DesktopImageDataPayload) => ipcRenderer.invoke("desktop:show-image-in-folder", payload),
@@ -274,6 +276,7 @@ declare global {
       listWorkspaceLaunchTargets(): Promise<DesktopWorkspaceLaunchTarget[]>;
       openWorkspace(rootPath: string, targetId?: DesktopWorkspaceLaunchTarget["id"]): Promise<void>;
       openWorkspaceFileInIde(rootPath: string, filePath: string, ideId?: DesktopFileLaunchTargetId): Promise<void>;
+      openWorkspaceFileLocation(rootPath: string, filePath: string, targetId: DesktopWorkspaceLaunchTarget["id"]): Promise<void>;
       copyText(value: string): Promise<void>;
       copyImage(payload: DesktopImageDataPayload): Promise<void>;
       showImageInFolder(payload: DesktopImageDataPayload): Promise<void>;

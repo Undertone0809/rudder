@@ -14,6 +14,7 @@ import {
   listWorkspaceLaunchTargets,
   openWorkspace,
   openWorkspaceFileInIde,
+  openWorkspaceFileLocation,
   type DesktopFileLaunchTargetId,
   type DesktopWorkspaceLaunchTargetId,
 } from "./ide-opener.js";
@@ -42,6 +43,7 @@ import {
   type DesktopReleaseNotes,
 } from "./release-notes.js";
 import {
+  resolveDesktopOrganizationWorkspaceAllowedRoots,
   resolveDesktopOrganizationWorkspaceHomeEnv,
   resolveExternalRuntimeServerEntrypoint,
   resolveSharedRudderHomeDir,
@@ -1313,6 +1315,11 @@ async function stopLocalRudder(): Promise<void> {
   await handle.stop();
 }
 
+function desktopWorkspaceFileAllowedRoots() {
+  const instanceId = process.env.RUDDER_INSTANCE_ID?.trim() || initialProfile.instanceId;
+  return resolveDesktopOrganizationWorkspaceAllowedRoots(process.env, instanceId);
+}
+
 function registerIpc(): void {
   ipcMain.handle("desktop:get-boot-state", async () => {
     refreshDesktopSystemPermissions();
@@ -1362,7 +1369,18 @@ function registerIpc(): void {
   ipcMain.handle(
     "desktop:open-workspace-file-in-ide",
     async (_event, payload: { rootPath: string; filePath: string; ideId?: DesktopFileLaunchTargetId }) => {
-      await openWorkspaceFileInIde(payload.rootPath, payload.filePath, payload.ideId);
+      await openWorkspaceFileInIde(payload.rootPath, payload.filePath, payload.ideId, {
+        allowedRootPaths: desktopWorkspaceFileAllowedRoots(),
+      });
+    },
+  );
+  ipcMain.handle(
+    "desktop:open-workspace-file-location",
+    async (_event, payload: { rootPath: string; filePath: string; targetId: DesktopWorkspaceLaunchTargetId }) => {
+      await openWorkspaceFileLocation(payload.rootPath, payload.filePath, payload.targetId, {
+        allowedRootPaths: desktopWorkspaceFileAllowedRoots(),
+        revealFile: async (absolutePath) => shell.showItemInFolder(absolutePath),
+      });
     },
   );
   ipcMain.handle("desktop:copy-text", async (_event, value: string) => {

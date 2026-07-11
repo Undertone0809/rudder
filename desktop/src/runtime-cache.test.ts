@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   resolveDefaultOrganizationWorkspaceHomeDir,
+  resolveDesktopOrganizationWorkspaceAllowedRoots,
   resolveDesktopOrganizationWorkspaceHomeEnv,
   resolveExternalRuntimeServerEntrypoint,
   resolveSharedRudderHomeDir,
@@ -54,6 +55,21 @@ describe("runtime cache helpers", () => {
       "dev",
       "/Users/test",
     )).toBeNull();
+  });
+
+  it("resolves trusted workspace roots for explicit, compatibility, and default Desktop homes", () => {
+    expect(resolveDesktopOrganizationWorkspaceAllowedRoots(
+      { RUDDER_ORGANIZATION_WORKSPACE_HOME: "~/workspaces" },
+      "dev",
+      "/Users/test",
+    )).toEqual(["/Users/test/workspaces"]);
+    expect(resolveDesktopOrganizationWorkspaceAllowedRoots(
+      { RUDDER_HOME: "~/rudder-data" },
+      "worktree",
+      "/Users/test",
+    )).toEqual(["/Users/test/rudder-data/instances/worktree/organizations"]);
+    expect(resolveDesktopOrganizationWorkspaceAllowedRoots({}, "dev", "/Users/test"))
+      .toEqual(["/Users/test/Documents/Rudder"]);
   });
 
   it("resolves a matching external server runtime entrypoint", async () => {

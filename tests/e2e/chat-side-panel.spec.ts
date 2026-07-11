@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { chatMessages, createDb } from "../../packages/db/src/index.ts";
 import { E2E_DATABASE_URL } from "./support/e2e-env";
@@ -26,6 +26,31 @@ function buildAutomationMentionHref(automationId: string, title?: string | null)
 
 function buildLibraryDirectoryMentionHref(directoryPath: string) {
   return `library-directory://directory?p=${encodeURIComponent(directoryPath)}`;
+}
+
+async function installDesktopShellFileLauncherStub(page: Page) {
+  await page.addInitScript(() => {
+    const fileLocationCalls: Array<{ rootPath: string; filePath: string; targetId: string }> = [];
+    Object.defineProperty(window, "__rudderFileLocationCalls", {
+      configurable: true,
+      value: fileLocationCalls,
+    });
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: {
+        listWorkspaceLaunchTargets: async () => [
+          { id: "vscode", label: "VS Code", kind: "ide" },
+          { id: "terminal", label: "Terminal", kind: "terminal" },
+          { id: "finder", label: "Finder", kind: "folder" },
+        ],
+        openWorkspaceFileInIde: async () => {},
+        openWorkspaceFileLocation: async (rootPath: string, filePath: string, targetId: string) => {
+          fileLocationCalls.push({ rootPath, filePath, targetId });
+        },
+        setSidePanelCloseShortcutActive: async () => {},
+      },
+    });
+  });
 }
 
 test.describe("Chat Side Panel", () => {
@@ -107,6 +132,85 @@ test.describe("Chat Side Panel", () => {
 
     await page.screenshot({
       path: testInfo.outputPath("chat-side-panel-expanded-issue-detail.png"),
+      fullPage: true,
+    });
+  });
+
+  test("opens a Library document with Desktop app, Finder, and Terminal targets", async ({ page }, testInfo) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Chat-Side-Panel-File-Launcher-${Date.now()}` },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const libraryFilePath = `docs/file-launcher-${Date.now()}.md`;
+    const libraryFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: {
+        filePath: libraryFilePath,
+        content: "# File launcher proof\n\nOpen this document outside Rudder.",
+      },
+    });
+    expect(libraryFileRes.ok(), await libraryFileRes.text()).toBe(true);
+    const libraryFile = await libraryFileRes.json() as { markdownLink: string };
+    const libraryFileName = libraryFilePath.split("/").at(-1) ?? libraryFilePath;
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Library file launcher host chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: `Open ${libraryFile.markdownLink} beside this chat.`,
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await installDesktopShellFileLauncherStub(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(assistantMessage).toContainText(libraryFileName, { timeout: 15_000 });
+    await assistantMessage.getByRole("link", { name: libraryFileName }).click();
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toContainText("File launcher proof");
+
+    const libraryOpenIn = sidePanel.getByRole("button", { name: "Open Library document in another app" });
+    await expect(libraryOpenIn).toBeVisible();
+    await libraryOpenIn.click();
+    await expect(page.getByRole("menuitem", { name: "Default app" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "VS Code" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Finder" })).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath("chat-side-panel-library-open-in-menu.png"),
+      fullPage: true,
+    });
+    await page.getByRole("menuitem", { name: "Terminal" }).click();
+    await expect(page.getByText("Opened in Terminal")).toBeVisible();
+    await expect.poll(() => page.evaluate(() => (
+      window as typeof window & {
+        __rudderFileLocationCalls?: Array<{ rootPath: string; filePath: string; targetId: string }>;
+      }
+    ).__rudderFileLocationCalls ?? [])).toEqual([
+      expect.objectContaining({ filePath: libraryFilePath, targetId: "terminal" }),
+    ]);
+
+    await page.screenshot({
+      path: testInfo.outputPath("chat-side-panel-library-open-in.png"),
       fullPage: true,
     });
   });

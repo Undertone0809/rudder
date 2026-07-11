@@ -166,6 +166,7 @@ export type DesktopShellApi = {
   listWorkspaceLaunchTargets?(): Promise<DesktopWorkspaceLaunchTarget[]>;
   openWorkspace?(rootPath: string, targetId?: DesktopWorkspaceLaunchTarget["id"]): Promise<void>;
   openWorkspaceFileInIde(rootPath: string, filePath: string, ideId?: DesktopFileLaunchTargetId): Promise<void>;
+  openWorkspaceFileLocation?(rootPath: string, filePath: string, targetId: DesktopWorkspaceLaunchTarget["id"]): Promise<void>;
   copyText(value: string): Promise<void>;
   copyImage?(payload: DesktopImageDataPayload): Promise<void>;
   showImageInFolder?(payload: DesktopImageDataPayload): Promise<void>;

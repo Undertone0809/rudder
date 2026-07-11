@@ -7,6 +7,7 @@ import {
   listWorkspaceLaunchTargets,
   openWorkspace,
   openWorkspaceFileInIde,
+  openWorkspaceFileLocation,
   resolveWorkspaceFileAbsolutePath,
   resolveWorkspaceRootDirectory,
   windowsTerminalLaunchArgs,
@@ -343,6 +344,99 @@ describe("openWorkspaceFileInIde", () => {
         commandExists: async () => false,
       }),
     ).rejects.toThrow("No supported local IDE was detected.");
+  });
+});
+
+describe("openWorkspaceFileLocation", () => {
+  it("reveals the selected file in the folder target", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-file-location-"));
+    const filePath = path.join("reports", "launch.md");
+    await fs.mkdir(path.join(root, "reports"));
+    await fs.writeFile(path.join(root, filePath), "# Launch\n", "utf8");
+    const revealFile = vi.fn(async () => {});
+
+    await openWorkspaceFileLocation(root, filePath, "finder", {
+      platform: "darwin",
+      pathExists: async () => false,
+      commandExists: async () => false,
+      revealFile,
+    });
+
+    expect(revealFile).toHaveBeenCalledWith(path.join(root, filePath), "darwin");
+  });
+
+  it("opens a terminal target with the file parent directory as cwd", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-file-terminal-"));
+    const filePath = path.join("reports", "launch.md");
+    await fs.mkdir(path.join(root, "reports"));
+    await fs.writeFile(path.join(root, filePath), "# Launch\n", "utf8");
+    const runTerminalCommand = vi.fn(async () => {});
+
+    await openWorkspaceFileLocation(root, filePath, "terminal", {
+      platform: "darwin",
+      pathExists: async (targetPath) => targetPath === "/System/Applications/Utilities/Terminal.app",
+      commandExists: async () => false,
+      runTerminalCommand,
+    });
+
+    expect(runTerminalCommand).toHaveBeenCalledWith(
+      "/System/Applications/Utilities/Terminal.app",
+      path.join(root, "reports"),
+      "darwin",
+    );
+  });
+
+  it("rejects file locations that escape the workspace root", async () => {
+    const revealFile = vi.fn(async () => {});
+
+    await expect(
+      openWorkspaceFileLocation("/tmp/org", "../secrets.txt", "finder", {
+        platform: "darwin",
+        pathExists: async () => false,
+        commandExists: async () => false,
+        revealFile,
+      }),
+    ).rejects.toThrow("Workspace file path must stay inside the workspace root.");
+    expect(revealFile).not.toHaveBeenCalled();
+  });
+
+  it("rejects renderer-provided roots outside the trusted workspace home", async () => {
+    const workspaceHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-trusted-workspaces-"));
+    const outsideRoot = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-untrusted-workspace-"));
+    await fs.writeFile(path.join(outsideRoot, "secret.md"), "secret\n", "utf8");
+    const revealFile = vi.fn(async () => {});
+
+    await expect(
+      openWorkspaceFileLocation(outsideRoot, "secret.md", "finder", {
+        platform: "darwin",
+        allowedRootPaths: [workspaceHome],
+        pathExists: async () => false,
+        commandExists: async () => false,
+        revealFile,
+      }),
+    ).rejects.toThrow("Workspace root is not inside an allowed workspace home.");
+    expect(revealFile).not.toHaveBeenCalled();
+  });
+
+  it("rejects symlinks that resolve outside the trusted workspace root", async () => {
+    const workspaceHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-trusted-workspaces-"));
+    const root = path.join(workspaceHome, "example-org");
+    const outsideRoot = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-untrusted-workspace-"));
+    await fs.mkdir(root);
+    await fs.writeFile(path.join(outsideRoot, "secret.md"), "secret\n", "utf8");
+    await fs.symlink(path.join(outsideRoot, "secret.md"), path.join(root, "linked.md"));
+    const revealFile = vi.fn(async () => {});
+
+    await expect(
+      openWorkspaceFileLocation(root, "linked.md", "finder", {
+        platform: "darwin",
+        allowedRootPaths: [workspaceHome],
+        pathExists: async () => false,
+        commandExists: async () => false,
+        revealFile,
+      }),
+    ).rejects.toThrow("Workspace file path must stay inside the workspace root.");
+    expect(revealFile).not.toHaveBeenCalled();
   });
 });
 

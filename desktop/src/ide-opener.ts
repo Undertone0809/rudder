@@ -67,10 +67,16 @@ type OpenWorkspaceOptions = DetectAvailableWorkspaceLaunchTargetsOptions & {
 };
 
 type OpenWorkspaceFileInIdeOptions = DetectAvailableWorkspaceLaunchTargetsOptions & {
+  allowedRootPaths?: string[];
   openDarwinApp?: (appPath: string, absolutePath: string) => Promise<void>;
   openDefaultApp?: (absolutePath: string, platform: NodeJS.Platform) => Promise<void>;
   runCommand?: (command: string, absolutePath: string, platform: NodeJS.Platform) => Promise<void>;
   runExecutable?: (executablePath: string, absolutePath: string, platform: NodeJS.Platform) => Promise<void>;
+};
+
+type OpenWorkspaceFileLocationOptions = OpenWorkspaceOptions & {
+  allowedRootPaths?: string[];
+  revealFile?: (absolutePath: string, platform: NodeJS.Platform) => Promise<void>;
 };
 
 type DesktopWorkspaceLaunchSpec = {
@@ -376,6 +382,12 @@ function defaultOpenDefaultApp(absolutePath: string, platform: NodeJS.Platform) 
   return defaultOpenFolder(absolutePath, platform);
 }
 
+function defaultRevealFile(absolutePath: string, platform: NodeJS.Platform) {
+  if (platform === "win32") return execFilePromise("explorer", [`/select,${absolutePath}`]);
+  if (platform === "darwin") return execFilePromise("open", ["-R", absolutePath]);
+  return defaultOpenFolder(path.dirname(absolutePath), platform);
+}
+
 function defaultRunCommand(command: string, absolutePath: string, platform: NodeJS.Platform) {
   if (platform === "win32") {
     return new Promise<void>((resolve, reject) => {
@@ -469,6 +481,36 @@ export function resolveWorkspaceFileAbsolutePath(rootPath: string, filePath: str
   return resolvedTarget;
 }
 
+function isPathInside(rootPath: string, targetPath: string) {
+  const relativePath = path.relative(rootPath, targetPath);
+  return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+}
+
+async function resolveTrustedWorkspaceFileAbsolutePath(
+  rootPath: string,
+  filePath: string,
+  allowedRootPaths: string[] | undefined,
+) {
+  const absolutePath = resolveWorkspaceFileAbsolutePath(rootPath, filePath);
+  if (!allowedRootPaths) return absolutePath;
+  if (allowedRootPaths.length === 0) {
+    throw new Error("No trusted workspace home is configured.");
+  }
+
+  const [resolvedRoot, resolvedTarget, ...resolvedAllowedRoots] = await Promise.all([
+    fs.realpath(path.resolve(rootPath)),
+    fs.realpath(absolutePath),
+    ...allowedRootPaths.map((allowedRootPath) => fs.realpath(path.resolve(allowedRootPath))),
+  ]);
+  if (!resolvedAllowedRoots.some((allowedRootPath) => isPathInside(allowedRootPath, resolvedRoot))) {
+    throw new Error("Workspace root is not inside an allowed workspace home.");
+  }
+  if (!isPathInside(resolvedRoot, resolvedTarget)) {
+    throw new Error("Workspace file path must stay inside the workspace root.");
+  }
+  return resolvedTarget;
+}
+
 export async function openWorkspace(
   rootPath: string,
   targetId?: DesktopWorkspaceLaunchTargetId,
@@ -529,7 +571,7 @@ export async function openWorkspaceFileInIde(
   const openDefaultApp = options.openDefaultApp ?? defaultOpenDefaultApp;
   const runCommand = options.runCommand ?? defaultRunCommand;
   const runExecutable = options.runExecutable ?? defaultRunExecutable;
-  const absolutePath = resolveWorkspaceFileAbsolutePath(rootPath, filePath);
+  const absolutePath = await resolveTrustedWorkspaceFileAbsolutePath(rootPath, filePath, options.allowedRootPaths);
 
   if (ideId === "defaultApp") {
     await openDefaultApp(absolutePath, platform);
@@ -568,6 +610,35 @@ export async function openWorkspaceFileInIde(
   return {
     id: target.id,
     label: target.label,
+    absolutePath,
+  };
+}
+
+export async function openWorkspaceFileLocation(
+  rootPath: string,
+  filePath: string,
+  targetId: DesktopWorkspaceLaunchTargetId,
+  options: OpenWorkspaceFileLocationOptions = {},
+) {
+  const platform = options.platform ?? process.platform;
+  const absolutePath = await resolveTrustedWorkspaceFileAbsolutePath(rootPath, filePath, options.allowedRootPaths);
+  const detections = await detectAvailableWorkspaceLaunchTargetsInternal(options);
+  const target = detections.find((entry) => entry.id === targetId);
+
+  if (!target || (target.kind !== "folder" && target.kind !== "terminal")) {
+    throw new Error(`The requested file location launcher is not available: ${targetId}`);
+  }
+
+  if (target.kind === "folder") {
+    await (options.revealFile ?? defaultRevealFile)(absolutePath, platform);
+  } else {
+    await openWorkspace(path.dirname(absolutePath), targetId, options);
+  }
+
+  return {
+    id: target.id,
+    label: target.label,
+    kind: target.kind,
     absolutePath,
   };
 }

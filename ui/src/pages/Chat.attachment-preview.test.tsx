@@ -39,7 +39,7 @@ const mockState = vi.hoisted(() => ({
   projects: [] as Project[],
   routeBase: "/messenger/chat",
   workspaceDirectories: {} as Record<string, { directoryPath: string; entries: OrganizationWorkspaceFileEntry[] }>,
-  workspaceFiles: {} as Record<string, { filePath: string; content: string | null; contentType: string | null; previewKind: "text" | "image" | "pdf" | "binary"; contentPath: string | null; truncated: boolean }>,
+  workspaceFiles: {} as Record<string, { rootPath?: string | null; filePath: string; content: string | null; contentType: string | null; previewKind: "text" | "image" | "pdf" | "binary"; contentPath: string | null; truncated: boolean }>,
   queueSnapshot: { activeGenerationId: null, items: [] } as ChatQueueSnapshot,
   cancelQueuedMessage: vi.fn(),
   createQueuedMessage: vi.fn(),
@@ -1164,6 +1164,7 @@ afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
   document.body.innerHTML = "";
+  delete (window as typeof window & { desktopShell?: unknown }).desktopShell;
   vi.unstubAllGlobals();
 });
 
@@ -2094,6 +2095,115 @@ describe("Chat Side Panel link handling", () => {
     expect(sidePanel?.textContent).toContain("Activity report");
     expect(sidePanel?.textContent).toContain("Stable Library entry links should render inline.");
     expect(sidePanel?.textContent).not.toContain("Open this target in the full page for details.");
+  });
+
+  it.each([false, true])("offers Desktop app launch targets for a Library file when expanded is %s", async (expanded) => {
+    const openWorkspaceFileLocation = vi.fn(async () => {});
+    const openWorkspaceFileInIde = vi.fn(async () => {});
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: {
+        listWorkspaceLaunchTargets: vi.fn(async () => [
+          { id: "vscode", label: "VS Code", kind: "ide" },
+          { id: "terminal", label: "Terminal", kind: "terminal" },
+          { id: "finder", label: "Finder", kind: "folder" },
+        ]),
+        openWorkspaceFileInIde,
+        openWorkspaceFileLocation,
+      },
+    });
+    mockState.workspaceFiles = {
+      "reports/activity.md": {
+        rootPath: "/Users/tester/Documents/Rudder/rudder",
+        filePath: "reports/activity.md",
+        content: "# Activity report\n",
+        contentType: "text/markdown",
+        previewKind: "text",
+        contentPath: null,
+        truncated: false,
+      },
+    };
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+
+    await act(async () => {
+      root.render(
+        <ThemeProvider>
+          <SidePanelProvider>
+            <ChatSidePanel
+              expanded={expanded}
+              selectedOrganizationId="org-1"
+              target={{ kind: "library_file", filePath: "reports/activity.md", label: "activity.md" }}
+            />
+          </SidePanelProvider>
+        </ThemeProvider>,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="Open Library document in another app"]');
+    expect(trigger).not.toBeNull();
+    await act(async () => {
+      trigger?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+
+    const menuItems = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+    expect(menuItems.map((item) => item.textContent)).toEqual(expect.arrayContaining([
+      expect.stringContaining("Default app"),
+      expect.stringContaining("VS Code"),
+      expect.stringContaining("Terminal"),
+      expect.stringContaining("Finder"),
+    ]));
+
+    const terminalItem = menuItems.find((item) => item.textContent?.includes("Terminal"));
+    await act(async () => {
+      terminalItem?.click();
+      await Promise.resolve();
+    });
+    expect(openWorkspaceFileLocation).toHaveBeenCalledWith(
+      "/Users/tester/Documents/Rudder/rudder",
+      "reports/activity.md",
+      "terminal",
+    );
+  }, 15_000);
+
+  it("hides the Library app launcher outside the Desktop shell", async () => {
+    mockState.workspaceFiles = {
+      "reports/activity.md": {
+        rootPath: "/Users/tester/Documents/Rudder/rudder",
+        filePath: "reports/activity.md",
+        content: "# Activity report\n",
+        contentType: "text/markdown",
+        previewKind: "text",
+        contentPath: null,
+        truncated: false,
+      },
+    };
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+    await act(async () => {
+      root.render(
+        <ThemeProvider>
+          <SidePanelProvider>
+            <ChatSidePanel
+              selectedOrganizationId="org-1"
+              target={{ kind: "library_file", filePath: "reports/activity.md", label: "activity.md" }}
+            />
+          </SidePanelProvider>
+        </ThemeProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('button[aria-label="Open Library document in another app"]')).toBeNull();
   });
 
   it("opens the empty Side Panel picker from the add-tab button without a menu", async () => {

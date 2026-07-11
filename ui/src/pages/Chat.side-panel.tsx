@@ -12,9 +12,17 @@ import { MarkdownBody } from "@/components/MarkdownBody";
 import { PriorityIcon } from "@/components/PriorityIcon";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { useSidePanel } from "@/context/SidePanelContext";
+import { useToast } from "@/context/ToastContext";
 import { useOperatorDisplayName } from "@/hooks/useOperatorDisplayName";
+import { readDesktopShell, type DesktopFileLaunchTargetId, type DesktopWorkspaceLaunchTarget } from "@/lib/desktop-shell";
 import { queryKeys } from "@/lib/queryKeys";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
@@ -36,6 +44,7 @@ import {
   FileCode2,
   FileText,
   Folder,
+  FolderOpen,
   Globe2,
   Image as ImageIcon,
   Loader2,
@@ -47,6 +56,7 @@ import {
   Play,
   Plus,
   RotateCw,
+  Terminal,
   UserRound,
   X
 } from "lucide-react";
@@ -856,10 +866,115 @@ function ChatSidePanelLibraryFileView({
 }: {
   libraryFile: OrganizationWorkspaceFileDetail;
 }) {
+  const { pushToast } = useToast();
   const markdown = isChatSidePanelWorkspaceMarkdownFile(libraryFile.filePath, libraryFile.contentType);
+  const [launchTargets, setLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
+  const [openingTargetId, setOpeningTargetId] = useState<string | null>(null);
+  const desktopShell = readDesktopShell();
+  const canOpenFile = Boolean(libraryFile.rootPath && desktopShell?.openWorkspaceFileInIde);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!canOpenFile || !desktopShell?.listWorkspaceLaunchTargets) {
+      setLaunchTargets([]);
+      return undefined;
+    }
+    void desktopShell.listWorkspaceLaunchTargets()
+      .then((targets) => {
+        if (!cancelled) setLaunchTargets(targets);
+      })
+      .catch(() => {
+        if (!cancelled) setLaunchTargets([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canOpenFile, desktopShell]);
+
+  const visibleTargets = launchTargets.filter((target) => (
+    (target.kind === "ide" && target.id !== "xcode")
+    || ((target.kind === "terminal" || target.kind === "folder") && Boolean(desktopShell?.openWorkspaceFileLocation))
+  ));
+
+  const openTarget = async (target: { id: DesktopFileLaunchTargetId | DesktopWorkspaceLaunchTarget["id"]; label: string; kind: "app" | DesktopWorkspaceLaunchTarget["kind"] }) => {
+    if (!libraryFile.rootPath || !desktopShell) return;
+    setOpeningTargetId(target.id);
+    try {
+      if (target.kind === "app" || target.kind === "ide") {
+        await desktopShell.openWorkspaceFileInIde(
+          libraryFile.rootPath,
+          libraryFile.filePath,
+          target.id as DesktopFileLaunchTargetId,
+        );
+      } else {
+        await desktopShell.openWorkspaceFileLocation?.(
+          libraryFile.rootPath,
+          libraryFile.filePath,
+          target.id as DesktopWorkspaceLaunchTarget["id"],
+        );
+      }
+      pushToast({ title: `Opened in ${target.label}`, tone: "success" });
+    } catch (error) {
+      pushToast({
+        title: `Could not open in ${target.label}`,
+        body: error instanceof Error ? error.message : "Try another app.",
+        tone: "error",
+      });
+    } finally {
+      setOpeningTargetId(null);
+    }
+  };
+
+  const targetIcon = (target: DesktopWorkspaceLaunchTarget | { id: "defaultApp"; kind: "app" }) => {
+    if ("iconDataUrl" in target && target.iconDataUrl) {
+      return <img src={target.iconDataUrl} alt="" className="h-4 w-4 object-contain" />;
+    }
+    if (target.kind === "terminal") return <Terminal className="h-4 w-4" />;
+    if (target.kind === "folder") return <FolderOpen className="h-4 w-4" />;
+    if (target.kind === "ide") return <FileCode2 className="h-4 w-4" />;
+    return <ExternalLink className="h-4 w-4" />;
+  };
 
   return (
     <div className="flex min-h-full flex-col" data-testid="chat-side-panel-library-file-view">
+      {canOpenFile ? (
+        <div className="flex shrink-0 justify-end px-1 pt-2" data-testid="chat-side-panel-library-open-in">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1 px-2"
+                aria-label="Open Library document in another app"
+                title="Open in another app"
+              >
+                <ExternalLink className="h-4 w-4" />
+                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuItem
+                disabled={openingTargetId !== null}
+                onSelect={() => void openTarget({ id: "defaultApp", label: "Default app", kind: "app" })}
+              >
+                {targetIcon({ id: "defaultApp", kind: "app" })}
+                <span>Default app</span>
+              </DropdownMenuItem>
+              {visibleTargets.map((target) => (
+                <DropdownMenuItem
+                  key={target.id}
+                  disabled={openingTargetId !== null}
+                  onSelect={() => void openTarget(target)}
+                >
+                  {targetIcon(target)}
+                  <span>{target.label}</span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      ) : null}
       <div className="shrink-0 rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3 text-sm">
         <div className="font-mono text-xs text-muted-foreground">{libraryFile.filePath}</div>
         <div className="mt-2 text-xs text-muted-foreground">
