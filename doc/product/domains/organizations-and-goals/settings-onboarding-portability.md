@@ -9,6 +9,8 @@ contract_ids:
   - ORG.DESKTOP.RELEASE.NOTES.001
   - ORG.PORTABILITY.001
 related_code:
+  - desktop/src/browser-ipc.ts
+  - desktop/src/browser-profile.ts
   - desktop/src/main.ts
   - desktop/src/post-update-reload.ts
   - desktop/src/release-notes.ts
@@ -33,6 +35,7 @@ related_code:
   - ui/src/components/OnboardingWizard.tsx
   - ui/src/context/ThemeContext.tsx
   - ui/src/pages/InstanceAppearanceSettings.tsx
+  - ui/src/pages/InstanceBrowserSettings.tsx
   - ui/src/pages/InstanceGeneralSettings.tsx
   - ui/src/pages/InstanceSettings.tsx
   - ui/src/pages/OrganizationSettings.tsx
@@ -42,6 +45,8 @@ related_code:
   - ui/src/pages/NotFound.tsx
   - ui/src/components/DesktopReleaseNotesDialog.tsx
 related_tests:
+  - desktop/src/browser-ipc.test.ts
+  - desktop/src/browser-profile.test.ts
   - desktop/src/release-notes.test.ts
   - desktop/src/post-update-reload.test.ts
   - server/src/__tests__/instance-settings-service.test.ts
@@ -55,6 +60,7 @@ related_tests:
   - ui/src/hooks/useOrganizationPageMemory.test.ts
   - ui/src/lib/organization-routes.test.ts
   - ui/src/pages/InstanceAppearanceSettings.test.tsx
+  - ui/src/pages/InstanceBrowserSettings.test.tsx
   - ui/src/pages/InstanceGeneralSettings.test.tsx
   - ui/src/components/DesktopReleaseNotesDialog.test.tsx
   - tests/e2e/onboarding.spec.ts
@@ -79,6 +85,13 @@ Why:
 Product model:
 
 - Instance settings are deployment/local-shell scoped.
+- Browser settings are instance-scoped behavioral settings shared by every
+  organization in the current local Rudder instance. `enabled` defaults to
+  `true`, and `openLinksIn` defaults to `built_in`; the alternative link
+  destination is `default_browser`.
+- Browser settings do not make Browser data organization-scoped. The Desktop
+  Browser profile belongs to the current OS user plus canonical Rudder instance
+  and intentionally shares signed-in website sessions across organizations.
 - Operator profile settings are user-scoped.
 - Organization settings and intelligence profiles are organization-scoped.
 - Appearance settings are presentation-only local shell/browser preferences.
@@ -100,15 +113,26 @@ Flow:
 2. UI loads current instance/operator/org configuration.
 3. Service-backed pages save through the owning settings service and invalidate
    relevant UI caches.
-4. Appearance choices apply immediately by setting root DOM attributes and the
+4. Browser settings control the instance capability and default web-link
+   destination. Import and clear actions execute through the trusted Desktop
+   boundary and disclose that their effect is shared across organizations.
+5. Appearance choices apply immediately by setting root DOM attributes and the
    resolved browser theme color, then persist to local storage so the next app
    boot can apply the same presentation before React finishes loading.
-5. Affected workflows read settings through their own domain service; workflow
+6. Affected workflows read settings through their own domain service; workflow
    behavior must not depend on presentation-only appearance values.
 
 Invariants:
 
 - Settings must not silently cross organization or user boundaries.
+- Missing or legacy Browser fields must resolve to enabled plus built-in link
+  routing. Invalid saved values must fall back to those defaults.
+- Disabling Browser preserves its profile data and saved link preference;
+  clearing Browser data preserves both settings. Their tab, lease, and data
+  lifecycle is owned by `AGENT.BROWSER.001`.
+- Browser import and clear must name the instance-wide, cross-organization
+  session impact and require explicit confirmation before reading or deleting
+  browser data.
 - Route-backed settings overlays must preserve the previous work surface when
   the shell uses contextual settings.
 - Appearance state must remain reversible and local: selecting a color mode,
@@ -131,6 +155,12 @@ Evidence:
   bridging.
 - `ui/src/pages/InstanceAppearanceSettings.test.tsx` covers the visible
   Appearance settings choices.
+- `server/src/__tests__/instance-settings-service.test.ts`,
+  `server/src/__tests__/instance-settings-routes.test.ts`, and
+  `ui/src/pages/InstanceBrowserSettings.test.tsx` cover Browser defaults,
+  persistence, supported values, and visible instance-wide controls.
+- `desktop/src/browser-ipc.test.ts` and `desktop/src/browser-profile.test.ts`
+  cover trusted clear/disable handling and preservation of Browser settings.
 - `tests/e2e/settings-appearance.spec.ts` covers the user-visible Appearance
   workflow, including persistence for expanded base and theme color options.
 - `tests/e2e/settings-sidebar.spec.ts` covers visible settings navigation.

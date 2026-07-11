@@ -22,6 +22,7 @@ edit_policy: user_confirmed_only
   loading.
 - Enabled skill resolution for a runtime invocation.
 - Agent-facing inbox and skill telemetry.
+- Instance-shared Built-in Browser capability with run-isolated Agent control.
 - Stable instruction and dynamic run-context separation.
 
 ## Does Not Own
@@ -45,6 +46,8 @@ edit_policy: user_confirmed_only
 - `AGENT.CONTROL.TOOLS.001`: first-party Rudder MCP control-plane tools expose
   the stable `agent-v1` command contract to supported runtimes through
   runtime-managed identity and auth.
+- `AGENT.BROWSER.001`: Rudder Desktop Browser profile, link routing, import,
+  clear/disable lifecycle, conditional skill/tools, and run-owned tab control.
 - `AGENT.SKILLS.001`: skills have source, desired, enabled, materialized, and
   always-enabled semantics.
 - `AGENT.SKILL.TELEMETRY.001`: skill analytics preserve evidence level.

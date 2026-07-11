@@ -14,6 +14,9 @@ contract_ids:
   - MESSENGER.CUSTOM.GROUPS.001
   - IM.FEISHU.001
 related_code:
+  - desktop/src/browser-ipc.ts
+  - desktop/src/browser-profile.ts
+  - desktop/src/browser-webview-policy.ts
   - packages/db/src/schema/chat_conversations.ts
   - packages/db/src/schema/chat_messages.ts
   - packages/db/src/schema/chat_generations.ts
@@ -53,6 +56,9 @@ related_code:
   - server/src/services/website-metadata.ts
   - ui/src/pages/AgentDetail.integrations.tsx
 related_tests:
+  - desktop/src/browser-ipc.test.ts
+  - desktop/src/browser-profile.test.ts
+  - desktop/src/browser-webview-policy.test.ts
   - server/src/__tests__/chat-routes.test.ts
   - server/src/__tests__/chat-assistant.test.ts
   - server/src/__tests__/messenger-service.test.ts
@@ -68,6 +74,7 @@ related_tests:
   - ui/src/components/MilkdownMarkdownEditor.test.ts
   - ui/src/components/MarkdownBody.test.tsx
   - ui/src/lib/side-panel-targets.test.ts
+  - ui/src/context/SidePanelContext.test.tsx
   - ui/src/components/Layout.test.ts
   - ui/src/pages/AgentDetail.runs.test.ts
   - ui/src/pages/Chat.test.tsx
@@ -748,10 +755,11 @@ Product model:
   not automatically open a target-type menu; target choice belongs in the picker
   page so the operator can choose Browser, Library, Issue, or another supported
   target from the panel body.
-- When a secure embedded browser surface is available, the Browser target can
-  load typed URLs and search queries inside the Side Panel. When that surface is
-  unavailable, Browser remains an empty tab/picker target and must not perform
-  unsafe remote fetches by itself.
+- In Rudder Desktop, an enabled Built-in Browser loads typed URLs and search
+  queries inside Side Panel Browser tabs on the dedicated instance profile.
+  Ordinary external HTTP(S) links use that target by default without replacing
+  the current Rudder route. Unsupported shells or unavailable Browser
+  capability must not perform an unsafe remote fetch by themselves.
 
 Flow:
 
@@ -791,7 +799,12 @@ Flow:
    for tabs.
 14. Browser tabs normalize address-bar input into either a URL or search-query
    navigation, keep back/forward/reload state scoped to the embedded browser,
-   and can open the current page externally as a secondary action.
+   can open the current page externally as a secondary action, and route popup
+   requests into another Browser tab instead of an unrestricted guest window.
+15. Desktop routes ordinary external HTTP(S) links to a Browser Side Panel tab
+    when Browser is enabled and its instance preference is `built_in`. The
+    `default_browser` preference, disabled state, and explicit `Open externally`
+    action use the operating-system browser instead.
 
 Invariants:
 
@@ -833,6 +846,13 @@ Invariants:
   application privileges beyond the embedded browser shell. Local board URLs are
   navigable through the browser surface, but organization-scoped data still
   relies on the normal board/API authorization model.
+- Browser tabs must use the dedicated persistent Browser partition and its
+  sandbox, protocol, popup, permission, and download policy. They must not share
+  the Rudder UI/API session partition or gain Node/application privileges.
+- Browser profile data is shared across organizations in one local instance,
+  but Side Panel tab/session state continues to follow this contract's active
+  work-item rules. Disabling or clearing Browser closes Browser targets without
+  deleting unrelated Side Panel tabs.
 - On desktop and web shells, the Side Panel docks directly against the main
   workspace with only a narrow resize affordance between them. It must not leave
   a broad blank gutter that visually separates the panel from the current work
@@ -863,8 +883,10 @@ Evidence:
 - Side Panel E2E covers expanding an issue target and rendering the embedded
   Issue Detail body, including issue content sections such as attachments,
   activity, and properties, without navigating away from Chat.
-- Desktop smoke covers the Side Panel Browser loading a local `/api/health` URL
-  and normalizing a plain search query into browser navigation.
+- Desktop Browser policy/profile tests and smoke cover the dedicated partition,
+  secure guest policy, Side Panel navigation, external-open escape, and address
+  input normalization. Side Panel E2E owns the route-preserving global link
+  workflow.
 
 ## MESSENGER.ATTENTION.001
 

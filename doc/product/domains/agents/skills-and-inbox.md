@@ -8,13 +8,17 @@ contract_ids:
   - AGENT.SKILL.TELEMETRY.001
   - AGENT.INBOX.001
 related_code:
+  - packages/shared/src/organization-skill-reference.ts
+  - server/resources/bundled-skills/browser/SKILL.md
   - server/src/routes/agents.ts
+  - server/src/services/agent-run-context.ts
   - server/src/services/agent-enabled-skills.ts
   - server/src/services/knowledge-portability/organization-skills.ts
   - server/src/services/knowledge-portability/organization-skills.catalog.ts
   - packages/agent-runtime-utils/src/server-utils.prompts.ts
   - ui/src/pages/AgentDetail.skills.tsx
 related_tests:
+  - server/src/__tests__/agent-run-context.test.ts
   - server/src/__tests__/organization-skills-reference.test.ts
   - server/src/__tests__/organization-skills-prune.test.ts
   - desktop/scripts/smoke.mjs
@@ -37,6 +41,9 @@ Why:
   Skills page can show candidates, but discovery is not runtime enablement.
 - Bundled Rudder skills define core control-plane operations and must remain
   available even when optional skills are disabled.
+- Capability-bundled skills are distinct from that always-enabled baseline:
+  they are Rudder-managed and read-only, but appear only while their owning
+  instance capability is enabled.
 
 Product model:
 
@@ -48,6 +55,10 @@ Product model:
   `conversation-to-skill` and `skill-optimizer`, are not part of the default
   Rudder-resolved set unless they are introduced through a non-bundled
   selection path.
+- `Browser` is a capability-bundled skill, not part of the always-enabled
+  baseline. It is projected for every organization and agent when the
+  instance-level Built-in Browser is enabled and removed when disabled, without
+  writing one durable organization or agent assignment per capability change.
 - Skill state distinguishes discovered, installed, desired, enabled,
   materialized, native, prompt-injected, and unavailable entries.
 - Desired skills are scoped by organization, agent, runtime type, and runtime
@@ -64,16 +75,24 @@ Product model:
 
 Flow:
 
-1. Organization skill library is seeded and scanned.
-2. Agent skill snapshot is built from all supported sources.
-3. Desired selection is validated against available/always-enabled entries.
-4. Runtime skill sync/materialization prepares the runtime-side skill surface
-   from the Rudder-resolved desired/always-enabled set only.
-5. Instruction loading exposes desired/realized skill facts to the adapter.
+1. Rudder resolves always-bundled and capability-bundled skills from current
+   instance capability state.
+2. Organization skill library is seeded, reconciled, and scanned.
+3. Agent skill snapshot is built from all supported sources.
+4. Desired selection is validated against available/always-enabled entries.
+5. Runtime skill sync/materialization prepares the runtime-side skill surface
+   from the Rudder-resolved selected, always-bundled, and active
+   capability-bundled set only.
+6. Instruction loading exposes desired/realized skill facts to the adapter.
 
 Invariants:
 
 - Bundled Rudder skills are not disabled by normal optional-skill toggles.
+- `Browser` must be read-only and available to existing and future
+  organizations only while Built-in Browser is enabled. A stale organization
+  projection or run snapshot must not keep it usable after live disablement.
+- Capability projection must not create per-organization ownership of the
+  instance Browser setting or Browser profile.
 - Repo-owned skill packages outside the canonical bundled baseline must not be
   seeded as locked-on organization skills, counted as required bundled skills,
   or auto-loaded into runtime skill metadata merely because their source files
@@ -92,6 +111,9 @@ Evidence:
 
 - Agent Detail Skills tab shows source and enabled state.
 - Runtime invocation receives desired skill context.
+- Organization reconciliation and run-context tests prove that `Browser` is
+  projected when enabled, absent when disabled, and derived from trusted live
+  instance state rather than agent-supplied config.
 
 ## AGENT.SKILL.TELEMETRY.001
 

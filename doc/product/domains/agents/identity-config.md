@@ -7,7 +7,12 @@ contract_ids:
   - AGENT.IDENTITY.CONFIG.001
   - AGENT.RUNTIME.ADAPTERS.001
 related_code:
+  - packages/agent-runtime-utils/src/rudder-mcp.ts
   - packages/agent-runtimes/codex-local/src/index.ts
+  - packages/agent-runtimes/claude-local/src/server/execute.ts
+  - packages/agent-runtimes/codex-local/src/server/execute.ts
+  - packages/agent-runtimes/opencode-local/src/server/execute.ts
+  - packages/agent-runtimes/pi-local/src/server/execute.ts
   - packages/db/src/schema/agents.ts
   - packages/shared/src/types/agent.ts
   - server/src/agent-runtimes/codex-models.ts
@@ -22,6 +27,10 @@ related_code:
   - ui/src/lib/runtime-models.ts
   - ui/src/lib/runtime-thinking-effort.ts
 related_tests:
+  - server/src/__tests__/claude-local-execute.test.ts
+  - server/src/__tests__/codex-local-execute.test.ts
+  - server/src/__tests__/opencode-local-execute.test.ts
+  - server/src/__tests__/pi-local-execute.test.ts
   - server/src/__tests__/adapter-models.test.ts
   - server/src/__tests__/agent-permissions-routes.test.ts
   - server/src/__tests__/agent-startup-context.test.ts
@@ -94,7 +103,13 @@ Product model:
 - The runtime registry maps an agent runtime type to adapter capabilities.
 - Adapter capabilities can include execute, test environment, model listing,
   skill listing/sync, local auth token support, session codec, transcript
-  parser, and quota/cost metadata.
+  parser, quota/cost metadata, and managed MCP/native control-plane tool
+  projection.
+- Built-in Browser control is a Desktop `local_trusted` capability in V1.
+  Codex, Claude, and OpenCode may receive it through Rudder-managed MCP config;
+  Pi may receive the equivalent managed native extension. Remote runtimes and
+  adapters without an authenticated managed tool path must report it as
+  unavailable instead of receiving a false Browser capability.
 - Runtime execution must pass a bounded Rudder context to the adapter and then
   persist normalized result evidence back into Rudder.
 - Agent configuration exposes only operator-facing runtime choices in the
@@ -129,11 +144,14 @@ Flow:
    choosing.
 3. Agent config selects a runtime type and config payload.
 4. Registry resolves the adapter and capability surface.
-5. Runtime config is prepared, secrets are resolved, skills/context are loaded,
+5. For a supported local adapter, Rudder derives conditional Browser skill/tool
+   availability from trusted instance/run context after user environment merge,
+   so agent config cannot force-enable or retain it after disablement.
+6. Runtime config is prepared, secrets are resolved, skills/context are loaded,
    and execution workspace is realized.
-6. Adapter executes and returns provider-specific result/transcript/session
+7. Adapter executes and returns provider-specific result/transcript/session
    evidence.
-7. Rudder normalizes and stores the result under `RUN.RESULT.001`.
+8. Rudder normalizes and stores the result under `RUN.RESULT.001`.
 
 Invariants:
 
@@ -150,6 +168,13 @@ Invariants:
   API-key-dependent list. Catalog changes are deliberate product updates.
 - A warning-only environment result must remain distinguishable from both pass
   and fail while leaving supported configuration and recovery actions visible.
+- Runtime adapters must not expose Browser tools from inherited user MCP config
+  or an agent-supplied enable flag. Managed projection is conditional, and live
+  authorization remains enforced by `AGENT.BROWSER.001`.
+- Browser parity is not implied across remote, generic process/HTTP, or
+  unsupported adapters. They must expose an honest unavailable state or CLI
+  fallback only when local trusted command execution preserves the same
+  identity boundary.
 
 Evidence:
 
@@ -162,3 +187,5 @@ Evidence:
   fixed Codex model ordering, and hidden process/HTTP entries.
 - Adapter model tests prove Codex ignores discovered OpenAI models and returns
   the curated menu in its declared order.
+- Codex, Claude, OpenCode, and Pi execute tests cover managed Browser capability
+  propagation and prove the eight Browser tools are absent when disabled.
