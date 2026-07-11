@@ -42,6 +42,10 @@ Product model:
 - It has status such as active, paused, or archived.
 - Output mode is either tracked issue or chat output.
 - Agent actors can manage only automations they are allowed to own.
+- `/automations` and `/automations/:automationId` are one route-driven
+  master-detail workspace. On wide screens the primary rail, Automation list,
+  and selected detail remain visible together; on narrow screens the selected
+  detail becomes the single content pane.
 
 Flow:
 
@@ -49,14 +53,29 @@ Flow:
    and output mode.
 2. Server validates organization boundary, assignee, project/goal/parent issue,
    status, and permissions.
-3. Automation detail shows definition, trigger, output, run history, and state.
-4. Pausing stops new dispatch while preserving definition and history.
+3. Selecting a row updates the route, marks that row as current, and opens or
+   swaps the detail inspector in place without discarding the list on wide
+   screens.
+4. Automation detail shows definition, trigger, output, run history, and state.
+5. Closing detail returns to `/automations`; deleting the selected Automation
+   also returns to the remaining list.
+6. A direct link opens the same workspace. Invalid direct links stay inside a
+   closable detail error state so the operator can recover to the list.
+7. Pausing stops new dispatch while preserving definition and history.
 
 Invariants:
 
 - Automation context must remain traceable to the org/project/goal/issue that
   justified the repeated work.
 - Archived automations are historical records, not active dispatch sources.
+- On wide screens, collapsing detail must remove the detail pane, its border,
+  and its reserved gap from the visible layout. The restore control remains in
+  the Automation list, and reopening uses a visible transition while honoring
+  the operator's reduced-motion preference.
+- Row toggles and action menus must not accidentally select a different detail.
+  The selected row remains visibly and accessibly current.
+- Narrow detail must provide a close/back path and must not introduce
+  horizontal document overflow.
 
 Evidence:
 
@@ -64,8 +83,9 @@ Evidence:
   `server/src/__tests__/automations-routes.test.ts` are the primary regression
   evidence for definition validation and permission boundaries.
 - `tests/e2e/automations-index-layout.spec.ts` and
-  `tests/e2e/automation-detail-layout.spec.ts` prove the operator surfaces show
-  definition and run-history affordances.
+  `tests/e2e/automation-detail-layout.spec.ts` prove list/detail selection,
+  in-place swapping, direct-link recovery, responsive one-pane fallback,
+  definition editing, and run-history affordances.
 - Known gap: this contract records product behavior; it does not replace
   automation output proof, which belongs to `AUTOMATION.OUTPUT.001`.
 

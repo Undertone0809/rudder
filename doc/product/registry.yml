@@ -630,8 +630,10 @@ contracts:
       - server/src/__tests__/automations-service.test.ts
       - server/src/__tests__/automations-routes.test.ts
       - tests/e2e/automations-index-layout.spec.ts
+      - tests/e2e/automation-detail-layout.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-07-10-automation-three-column-detail.md
   AUTOMATION.TRIGGER.001:
     owner: product
     domain: automations
