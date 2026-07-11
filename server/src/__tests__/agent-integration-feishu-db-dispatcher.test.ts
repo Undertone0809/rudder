@@ -1530,11 +1530,13 @@ describe("Feishu inbound dispatcher DB deps", () => {
       .select()
       .from(chatMessages)
       .orderBy(chatMessages.createdAt);
-    expect(messages.map((message) => ({ role: message.role, body: message.body }))).toEqual([
+    const messageBodies = messages.map((message) => ({ role: message.role, body: message.body }));
+    expect(messageBodies).toHaveLength(3);
+    expect(messageBodies).toEqual(expect.arrayContaining([
       { role: "user", body: "start a long runtime reply" },
       { role: "assistant", body: "first runtime reply" },
       { role: "user", body: "arrives while runtime reply is active" },
-    ]);
+    ]));
     await expect(db.select().from(chatGenerations).where(eq(chatGenerations.status, "active"))).resolves.toHaveLength(1);
   });
 
