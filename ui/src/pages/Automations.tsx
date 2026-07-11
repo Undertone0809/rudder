@@ -301,6 +301,8 @@ export function Automations() {
   const descriptionComposerRef = useRef<HTMLDivElement | null>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
+  const expandDetailButtonRef = useRef<HTMLButtonElement | null>(null);
+  const collapseDetailButtonRef = useRef<HTMLButtonElement | null>(null);
   const composerBodyScrollRef = useScrollbarActivityRef("rudder:automation-composer-body");
   const composerMainScrollRef = useScrollbarActivityRef("rudder:automation-composer-main");
   const [runningAutomationId, setRunningAutomationId] = useState<string | null>(null);
@@ -352,6 +354,17 @@ export function Automations() {
   useEffect(() => {
     setBreadcrumbs([{ label: "Automations" }]);
   }, [setBreadcrumbs]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const wideDetailLayout = window.matchMedia("(min-width: 1100px)");
+    const resetCollapsedDetailOnNarrowLayout = () => {
+      if (!wideDetailLayout.matches) setDetailCollapsed(false);
+    };
+    resetCollapsedDetailOnNarrowLayout();
+    wideDetailLayout.addEventListener("change", resetCollapsedDetailOnNarrowLayout);
+    return () => wideDetailLayout.removeEventListener("change", resetCollapsedDetailOnNarrowLayout);
+  }, []);
 
   useEffect(() => {
     if (!selectedOrganizationId) {
@@ -881,7 +894,10 @@ export function Automations() {
 
       <div
         data-testid="automations-master-detail"
-        className="flex h-full min-h-0 min-w-0 gap-2 overflow-hidden md:gap-[9px]"
+        className={cn(
+          "flex h-full min-h-0 min-w-0 overflow-hidden transition-[gap] duration-300 ease-out motion-reduce:transition-none",
+          detailCollapsed ? "gap-0" : "gap-2 md:gap-[9px]",
+        )}
       >
         <section
           data-testid="automations-list-pane"
@@ -895,7 +911,23 @@ export function Automations() {
           className="workspace-card-header workspace-main-header hidden h-12 shrink-0 items-center justify-between gap-3 px-4 md:flex"
         >
           <h2 className="truncate text-[14px] font-semibold text-foreground">Automations</h2>
-          {!automationId && selectedOrganizationId ? (
+          {detailCollapsed && automationId ? (
+            <Button
+              ref={expandDetailButtonRef}
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="hidden h-8 w-8 text-muted-foreground hover:text-foreground min-[1100px]:inline-flex"
+              aria-label="Expand automation detail"
+              title="Expand automation detail"
+              onClick={() => {
+                setDetailCollapsed(false);
+                window.requestAnimationFrame(() => collapseDetailButtonRef.current?.focus());
+              }}
+            >
+              <PanelRightOpen className="h-4 w-4" />
+            </Button>
+          ) : !automationId && selectedOrganizationId ? (
             <Button type="button" size="sm" className="px-4" onClick={() => openComposer()}>
               <Plus className="mr-1.5 h-3.5 w-3.5" />
               Create automation
@@ -969,7 +1001,10 @@ export function Automations() {
                         "cursor-pointer align-middle border-b border-border transition-colors hover:bg-accent/50 last:border-b-0",
                         isSelected && "bg-accent/70 hover:bg-accent/70",
                       )}
-                      onClick={() => navigate(`/automations/${automation.id}`)}
+                      onClick={() => {
+                        setDetailCollapsed(false);
+                        navigate(`/automations/${automation.id}`);
+                      }}
                     >
                       <td className="px-3 py-2.5">
                         <div className="min-w-[180px]">
@@ -1127,38 +1162,41 @@ export function Automations() {
         <aside
           data-testid="automation-detail-pane"
           aria-label="Automation detail"
+          aria-hidden={detailCollapsed || undefined}
           data-collapsed={detailCollapsed ? "true" : undefined}
           className={cn(
-            "workspace-main-card min-h-0 min-w-0 flex-1 overflow-hidden rounded-[var(--desktop-workspace-radius)]",
+            "workspace-main-card min-h-0 min-w-0 flex-1 overflow-hidden rounded-[var(--desktop-workspace-radius)] transition-[width,min-width,max-width,opacity,border-color] duration-300 ease-out motion-reduce:transition-none",
             detailCollapsed
-              ? "min-[1100px]:w-12 min-[1100px]:min-w-12 min-[1100px]:max-w-12 min-[1100px]:flex-none"
-              : "min-[1100px]:w-[48%] min-[1100px]:min-w-[500px] min-[1100px]:max-w-[860px] min-[1100px]:shrink-0",
+              ? "min-[1100px]:pointer-events-none min-[1100px]:invisible min-[1100px]:w-0 min-[1100px]:min-w-0 min-[1100px]:max-w-0 min-[1100px]:flex-none min-[1100px]:border-0 min-[1100px]:opacity-0"
+              : "min-[1100px]:w-[48%] min-[1100px]:min-w-[500px] min-[1100px]:max-w-[860px] min-[1100px]:shrink-0 min-[1100px]:opacity-100",
           )}
         >
           <header
             data-testid="automation-detail-card-header"
             className={cn(
-              "workspace-card-header workspace-main-header relative z-30 hidden h-12 shrink-0 items-center md:flex",
-              detailCollapsed ? "justify-center px-0" : "justify-between px-3",
+              "workspace-card-header workspace-main-header relative z-30 hidden h-12 shrink-0 items-center justify-between px-3 md:flex",
+              detailCollapsed && "min-[1100px]:invisible",
             )}
           >
             <Button
+              ref={collapseDetailButtonRef}
               type="button"
               variant="ghost"
               size="icon"
-              className="h-8 w-8 text-muted-foreground hover:text-foreground"
-              aria-label={detailCollapsed ? "Expand automation detail" : "Collapse automation detail"}
-              title={detailCollapsed ? "Expand automation detail" : "Collapse automation detail"}
-              onClick={() => setDetailCollapsed((collapsed) => !collapsed)}
+              className="hidden h-8 w-8 text-muted-foreground hover:text-foreground min-[1100px]:inline-flex"
+              aria-label="Collapse automation detail"
+              title="Collapse automation detail"
+              onClick={() => {
+                setDetailCollapsed(true);
+                window.requestAnimationFrame(() => expandDetailButtonRef.current?.focus());
+              }}
             >
-              {detailCollapsed ? <PanelRightOpen className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
+              <PanelRightClose className="h-4 w-4" />
             </Button>
-            {!detailCollapsed ? (
-              <Button type="button" size="sm" className="px-4" onClick={() => openComposer()}>
-                <Plus className="mr-1.5 h-3.5 w-3.5" />
-                Create automation
-              </Button>
-            ) : null}
+            <Button type="button" size="sm" className="px-4" onClick={() => openComposer()}>
+              <Plus className="mr-1.5 h-3.5 w-3.5" />
+              Create automation
+            </Button>
           </header>
           <div className={cn("h-full min-h-0 md:h-[calc(100%-3rem)]", detailCollapsed && "min-[1100px]:hidden")}>
             <AutomationDetail

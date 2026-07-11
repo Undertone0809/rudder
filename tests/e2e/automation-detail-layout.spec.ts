@@ -275,22 +275,41 @@ test.describe("Automation detail layout", () => {
     await expect(shell).toBeHidden();
     await expect(page).toHaveURL(new RegExp(`/automations/${automation.id}$`));
     await expect(automationRow).toHaveAttribute("aria-current", "page");
-    await expect(detailCardHeader.getByRole("button", { name: "Expand automation detail" })).toBeVisible();
+    await expect.poll(async () => (await detailPane.boundingBox())?.width ?? 0).toBeLessThanOrEqual(1);
     const [collapsedDetailBox, collapsedListBox] = await Promise.all([
       detailPane.boundingBox(),
       listPane.boundingBox(),
     ]);
-    expect(collapsedDetailBox?.width).toBeLessThanOrEqual(50);
+    expect(collapsedDetailBox?.width).toBeLessThanOrEqual(1);
     expect(collapsedListBox!.width).toBeGreaterThan(expandedListBox!.width);
+    expect(Math.abs(masterDetailBox!.x + masterDetailBox!.width - (collapsedListBox!.x + collapsedListBox!.width))).toBeLessThanOrEqual(2);
+    await expect(detailCardHeader.getByRole("button", { name: "Collapse automation detail" })).toBeHidden();
+    const expandDetailButton = listCardHeader.getByRole("button", { name: "Expand automation detail" });
+    await expect(expandDetailButton).toBeFocused();
     await page.screenshot({
       path: testInfo.outputPath("automation-detail-collapsed.png"),
       fullPage: true,
     });
 
-    await detailCardHeader.getByRole("button", { name: "Expand automation detail" }).click();
+    await page.setViewportSize({ width: 900, height: 900 });
+    await expect(detailPane).not.toHaveAttribute("aria-hidden", "true");
+    await expect(shell).toBeVisible();
+    await expect(detailCardHeader.getByRole("button", { name: "Collapse automation detail" })).toBeHidden();
+
+    await page.setViewportSize({ width: 1900, height: 1200 });
+    await expect(detailCardHeader.getByRole("button", { name: "Collapse automation detail" })).toBeVisible();
+    await detailCardHeader.getByRole("button", { name: "Collapse automation detail" }).click();
+    await expect.poll(async () => (await detailPane.boundingBox())?.width ?? 0).toBeLessThanOrEqual(1);
+    await expect(expandDetailButton).toBeFocused();
+    await expandDetailButton.press("Enter");
+    await page.waitForTimeout(100);
+    const expandingDetailBox = await detailPane.boundingBox();
+    expect(expandingDetailBox?.width).toBeGreaterThan(1);
+    expect(expandingDetailBox?.width).toBeLessThan(detailBox!.width);
     await expect(detailPane).not.toHaveAttribute("data-collapsed", "true");
     await expect(shell).toBeVisible();
     await expect(detailCardHeader.getByRole("button", { name: "Collapse automation detail" })).toBeVisible();
+    await expect(detailCardHeader.getByRole("button", { name: "Collapse automation detail" })).toBeFocused();
 
     await page.screenshot({
       path: testInfo.outputPath("automation-three-column-detail.png"),
