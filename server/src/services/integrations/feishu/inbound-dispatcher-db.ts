@@ -23,6 +23,7 @@ import { cancelActiveChatGeneration, getActiveChatGeneration } from "../../chat-
 import { chatTitleGenerationService } from "../../chat-title-generation.js";
 import { chatService } from "../../chats.js";
 import { issueService } from "../../issues.js";
+import { isPostgresError } from "../../postgres-errors.js";
 import { productIntelligenceService, type ProductIntelligenceExecuteInput } from "../../product-intelligence.js";
 import { executeAdapterWithModelFallbacks } from "../../runtime-kernel/model-fallback.js";
 import { secretService } from "../../secrets.js";
@@ -36,10 +37,6 @@ import type {
 const BINDING_TOKEN_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_DAILY_SESSION_ROLLOVER_HOURS = 24;
 const DAILY_SESSION_STARTED_TEXT = "New daily session started.";
-
-function isUniqueViolation(error: unknown) {
-  return (error as { code?: unknown }).code === "23505";
-}
 
 function createBindingToken() {
   return `rudder_feishu_${randomBytes(24).toString("hex")}`;
@@ -533,7 +530,7 @@ export function createFeishuInboundDispatcherDbDeps(
         });
         return true;
       } catch (error) {
-        if (isUniqueViolation(error)) return false;
+        if (isPostgresError(error, "23505")) return false;
         throw error;
       }
     },
@@ -618,7 +615,7 @@ export function createFeishuInboundDispatcherDbDeps(
           .then((rows) => rows[0]);
         if (inserted) return { ...inserted, created: true, initialTitle };
       } catch (error) {
-        if (!isUniqueViolation(error)) throw error;
+        if (!isPostgresError(error, "23505")) throw error;
       }
 
       const raced = await db

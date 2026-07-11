@@ -9,6 +9,7 @@ import {
 } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
 import type { Request } from "express";
+import { isPostgresError } from "../services/postgres-errors.js";
 import { generateEd25519PrivateKeyPem, headerMapGetIgnoreCase, headerMapHasKeyIgnoreCase, isLoopbackHost, isPlainObject, JoinDiagnostic, nonEmptyTrimmedString, normalizeHeaderMap, normalizeHostname, parseBooleanLike, requestBaseUrl, tokenFromAuthorizationHeader } from "./access.helpers.js";
 
 export function normalizeAgentDefaultsForJoin(input: {
@@ -842,29 +843,7 @@ export function resolveJoinRequestAgentManagerId(
 }
 
 export function isInviteTokenHashCollisionError(error: unknown) {
-  const candidates = [
-    error,
-    (error as { cause?: unknown } | null)?.cause ?? null
-  ];
-  for (const candidate of candidates) {
-    if (!candidate || typeof candidate !== "object") continue;
-    const code =
-      "code" in candidate && typeof candidate.code === "string"
-        ? candidate.code
-        : null;
-    const message =
-      "message" in candidate && typeof candidate.message === "string"
-        ? candidate.message
-        : "";
-    const constraint =
-      "constraint" in candidate && typeof candidate.constraint === "string"
-        ? candidate.constraint
-        : null;
-    if (code !== "23505") continue;
-    if (constraint === "invites_token_hash_unique_idx") return true;
-    if (message.includes("invites_token_hash_unique_idx")) return true;
-  }
-  return false;
+  return isPostgresError(error, "23505", "invites_token_hash_unique_idx");
 }
 
 export function isAbortError(error: unknown) {
@@ -943,5 +922,4 @@ export async function probeInviteResolutionTarget(
     clearTimeout(timeout);
   }
 }
-
 

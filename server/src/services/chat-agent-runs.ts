@@ -5,6 +5,7 @@ import type { ChatConversation, HeartbeatRun } from "@rudderhq/shared";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { AgentRuntimeInvocationMeta } from "../agent-runtimes/index.js";
 import { publishLiveEvent } from "./live-events.js";
+import { isPostgresError } from "./postgres-errors.js";
 import { buildHeartbeatAdapterInvokePayload } from "./runtime-kernel/heartbeat.core.js";
 
 const MAX_EVENT_TEXT_CHARS = 2_000;
@@ -45,12 +46,7 @@ function serializeRun(row: typeof heartbeatRuns.$inferSelect): HeartbeatRun {
 }
 
 function isActiveChatRunConflict(error: unknown) {
-  const candidate = error as { code?: unknown; constraint?: unknown; message?: unknown };
-  return candidate.code === "23505"
-    && (
-      candidate.constraint === ACTIVE_CHAT_RUN_UNIQUE_INDEX
-      || (typeof candidate.message === "string" && candidate.message.includes(ACTIVE_CHAT_RUN_UNIQUE_INDEX))
-    );
+  return isPostgresError(error, "23505", ACTIVE_CHAT_RUN_UNIQUE_INDEX);
 }
 
 export function chatAgentRunService(db: Db) {

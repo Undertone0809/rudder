@@ -10,6 +10,7 @@ import { sanitizeRecord } from "../redaction.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { publishLiveEvent } from "./live-events.js";
 import type { PluginEventBus } from "./plugin-event-bus.js";
+import { isPostgresError } from "./postgres-errors.js";
 
 const PLUGIN_EVENT_SET: ReadonlySet<string> = new Set(PLUGIN_EVENT_TYPES);
 const LANGFUSE_ACTIVITY_EXPORT_ALLOWLIST: ReadonlySet<string> = new Set();
@@ -55,9 +56,7 @@ function normalizeHeartbeatRunId(runId: string | null | undefined): string | nul
 }
 
 function isActivityRunIdPersistenceError(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  const record = error as Record<string, unknown>;
-  return record.code === "23503" && record.constraint_name === ACTIVITY_RUN_ID_FK_CONSTRAINT;
+  return isPostgresError(error, "23503", ACTIVITY_RUN_ID_FK_CONSTRAINT);
 }
 
 export async function logActivity(db: Db, input: LogActivityInput) {
