@@ -158,6 +158,30 @@ export type DesktopWorkspaceLaunchTarget = {
   iconDataUrl?: string;
 };
 
+export type DesktopBrowserImportSource = {
+  id: string;
+  displayName: string;
+  browserName: string;
+  profileName: string;
+  supported: {
+    cookies: boolean;
+    passwords: boolean;
+  };
+};
+
+export type DesktopBrowserImportError = {
+  errorCode: string;
+  message: string;
+};
+
+export type DesktopBrowserImportResult = {
+  status: "succeeded" | "partial" | "failed";
+  importedCount: number;
+  skippedCount: number;
+  failedCount: number;
+  errors?: DesktopBrowserImportError[];
+};
+
 export type DesktopShellApi = {
   getBootState(): Promise<DesktopBootState>;
   onBootState(listener: (state: DesktopBootState) => void): () => void;
@@ -195,6 +219,10 @@ export type DesktopShellApi = {
   setBadgeCount(count: number): Promise<void>;
   showNotification(payload: DesktopNotificationPayload): Promise<void>;
   pickPath(options: DesktopPathPickOptions): Promise<DesktopPathPickResult>;
+  listBrowserImportSources?(): Promise<DesktopBrowserImportSource[]>;
+  importBrowserData?(input: { sourceId: string; importCookies: true }): Promise<DesktopBrowserImportResult>;
+  clearBrowserData?(): Promise<void>;
+  setBrowserEnabled?(enabled: boolean): Promise<void>;
 };
 
 export function readDesktopShell(): DesktopShellApi | null {

@@ -166,6 +166,7 @@ export const queryKeys = {
     session: ["auth", "session"] as const,
   },
   instance: {
+    browserSettings: ["instance", "browser-settings"] as const,
     profileSettings: ["instance", "profile-settings"] as const,
     shortcutSettings: ["instance", "shortcut-settings"] as const,
     generalSettings: ["instance", "general-settings"] as const,

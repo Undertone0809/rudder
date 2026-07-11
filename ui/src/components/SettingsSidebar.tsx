@@ -23,6 +23,7 @@ import {
   Check,
   Clock3,
   ExternalLink,
+  Globe2,
   IdCard,
   Info,
   Keyboard,
@@ -222,6 +223,16 @@ export function SettingsSidebar({
                 end
                 variant={modalVariant ? "compact" : "default"}
               />
+              {canManageLocalLangfuse ? (
+                <SidebarNavItem
+                  to="/instance/settings/browser"
+                  state={overlayState}
+                  label={t("common.browser")}
+                  icon={Globe2}
+                  end
+                  variant={modalVariant ? "compact" : "default"}
+                />
+              ) : null}
               <SidebarNavItem
                 to="/instance/settings/notifications"
                 state={overlayState}

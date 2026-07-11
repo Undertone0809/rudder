@@ -36,6 +36,7 @@ vi.mock("@/api/heartbeats", () => ({
 vi.mock("@/api/instanceSettings", () => ({
   instanceSettingsApi: {
     getGeneral: vi.fn(async () => ({ locale: "en" })),
+    getBrowser: vi.fn(async () => ({ enabled: true, openLinksIn: "built_in" })),
     getLangfuse: vi.fn(async () => ({})),
     getNotifications: vi.fn(async () => ({})),
     getProfile: vi.fn(async () => ({ nickname: "", moreAboutYou: "" })),
@@ -105,6 +106,12 @@ describe("listSettingsPrefetchQueryKeys", () => {
       ["organizations"],
     ]);
 
+    expect(listSettingsPrefetchQueryKeys("/instance/settings/browser", "org_123")).toEqual([
+      ["access", "current-board-access"],
+      ["organizations"],
+      ["instance", "browser-settings"],
+    ]);
+
     expect(listSettingsPrefetchQueryKeys("/instance/settings/heartbeats", "org_123")).toEqual([
       ["access", "current-board-access"],
       ["organizations"],
@@ -167,5 +174,18 @@ describe("scheduleSettingsPrefetchQueries", () => {
     expect(accessApi.getCurrentBoardAccess).toHaveBeenCalledTimes(1);
     expect(organizationsApi.list).toHaveBeenCalledTimes(1);
     expect(healthApi.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("prefetches Browser settings for the Browser destination", async () => {
+    const queryClient = makeQueryClient();
+
+    scheduleSettingsPrefetchQueries(queryClient, {
+      target: "/instance/settings/browser",
+      organizationId: "org_123",
+    });
+
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(instanceSettingsApi.getBrowser).toHaveBeenCalledTimes(1);
   });
 });

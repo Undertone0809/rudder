@@ -1,0 +1,164 @@
+// @vitest-environment jsdom
+
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { BrowserDataImportDialog } from "./BrowserDataImportDialog";
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const messages: Record<string, string> = {
+  "browser.import.title": "Import browser data",
+  "browser.import.description": "Choose a browser profile and the data to import.",
+  "browser.import.source": "Browser profile",
+  "browser.import.loadingSources": "Looking for browser profiles...",
+  "browser.import.noSources": "No supported browser profiles found.",
+  "browser.import.desktopUnavailable": "Browser data import is available only in Rudder Desktop.",
+  "browser.import.dataTypes": "Data to import",
+  "browser.import.cookies": "Cookies and site data",
+  "browser.import.cookiesDescription": "Import supported signed-in website sessions.",
+  "browser.import.passwords": "Passwords",
+  "browser.import.passwordsDescription": "Saved-password import requires a future secure importer.",
+  "browser.import.notAvailable": "Not available in this version",
+  "browser.import.notAvailableFromSource": "Not available from this profile",
+  "browser.import.disclosure": "Imported sessions are shared by every organization and Agent in this Rudder instance.",
+  "browser.import.action": "Import",
+  "browser.import.importing": "Importing...",
+  "browser.import.failed": "Browser data import failed.",
+  "browser.import.result.imported": "Imported {{count}}",
+  "browser.import.result.skipped": "Skipped {{count}}",
+  "browser.import.result.failed": "Failed {{count}}",
+  "common.cancel": "Cancel",
+};
+
+const translate = (key: string, values?: Record<string, string | number>) => {
+  const template = messages[key] ?? key;
+  return template.replace(/\{\{(\w+)\}\}/g, (_, name: string) => String(values?.[name] ?? ""));
+};
+
+vi.mock("@/context/I18nContext", () => ({
+  useI18n: () => ({
+    t: translate,
+  }),
+}));
+
+const listSources = vi.fn();
+const importBrowserData = vi.fn();
+let root: Root | null = null;
+let container: HTMLDivElement | null = null;
+
+function renderDialog(open: boolean) {
+  if (!container) {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  }
+  act(() => {
+    root!.render(<BrowserDataImportDialog open={open} onOpenChange={vi.fn()} />);
+  });
+}
+
+async function flush() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+beforeEach(() => {
+  listSources.mockReset();
+  importBrowserData.mockReset();
+  listSources.mockResolvedValue([
+    {
+      id: "opaque-profile-1",
+      displayName: "Google Chrome - Work",
+      browserName: "Google Chrome",
+      profileName: "Work",
+      supported: { cookies: true, passwords: false },
+    },
+  ]);
+  importBrowserData.mockResolvedValue({
+    status: "partial",
+    importedCount: 3,
+    skippedCount: 2,
+    failedCount: 1,
+    errors: [
+      { errorCode: "COOKIE_DECRYPT_FAILED", message: "One cookie could not be decrypted." },
+    ],
+  });
+  (window as typeof window & { desktopShell?: unknown }).desktopShell = {
+    listBrowserImportSources: listSources,
+    importBrowserData,
+  };
+});
+
+afterEach(() => {
+  if (root) {
+    act(() => root!.unmount());
+  }
+  container?.remove();
+  root = null;
+  container = null;
+  delete (window as typeof window & { desktopShell?: unknown }).desktopShell;
+});
+
+describe("BrowserDataImportDialog", () => {
+  it("discovers sources only after opening and marks password import unavailable", async () => {
+    renderDialog(false);
+    expect(listSources).not.toHaveBeenCalled();
+
+    renderDialog(true);
+    await flush();
+
+    expect(listSources).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent).toContain("Google Chrome - Work");
+    expect(document.body.textContent).toContain("Cookies and site data");
+    expect(document.body.textContent).toContain("Passwords");
+    expect(document.body.textContent).toContain("Not available in this version");
+    expect(document.body.textContent).toContain("shared by every organization and Agent");
+  });
+
+  it("imports only cookies and visibly reports partial counts and sanitized errors", async () => {
+    renderDialog(true);
+    await flush();
+
+    const importButton = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Import");
+    expect(importButton).toBeTruthy();
+
+    act(() => importButton!.click());
+    await flush();
+
+    expect(importBrowserData).toHaveBeenCalledWith({
+      sourceId: "opaque-profile-1",
+      importCookies: true,
+    });
+    expect(document.body.textContent).toContain("Imported 3");
+    expect(document.body.textContent).toContain("Skipped 2");
+    expect(document.body.textContent).toContain("Failed 1");
+    expect(document.body.textContent).toContain("COOKIE_DECRYPT_FAILED");
+    expect(document.body.textContent).toContain("One cookie could not be decrypted.");
+    expect(document.body.textContent).not.toContain("opaque-profile-1");
+  });
+
+  it("uses source capabilities to disable cookie import with an explicit status", async () => {
+    listSources.mockResolvedValue([
+      {
+        id: "opaque-profile-unsupported",
+        displayName: "Chromium - Guest",
+        browserName: "Chromium",
+        profileName: "Guest",
+        supported: { cookies: false, passwords: false },
+      },
+    ]);
+
+    renderDialog(true);
+    await flush();
+
+    expect(document.body.textContent).toContain("Not available from this profile");
+    const importButton = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Import");
+    expect(importButton?.hasAttribute("disabled")).toBe(true);
+    expect(importBrowserData).not.toHaveBeenCalled();
+  });
+});
