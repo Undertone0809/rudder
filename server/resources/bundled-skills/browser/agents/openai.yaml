@@ -1,0 +1,4 @@
+interface:
+  display_name: "Browser"
+  short_description: "Control Rudder built-in Browser tabs safely"
+  default_prompt: "Use $browser to open and interact with a web page in the Rudder built-in Browser."

@@ -3,6 +3,7 @@ import {
   applyPendingMigrations,
   createDb,
   ensurePostgresDatabase,
+  instanceSettings,
   organizationSkills,
   organizations,
 } from "@rudderhq/db";
@@ -101,6 +102,7 @@ describe("organization skill references", () => {
     await db.delete(agents);
     await db.delete(organizationSkills);
     await db.delete(organizations);
+    await db.update(instanceSettings).set({ browser: {} });
   });
 
   afterAll(async () => {
@@ -189,12 +191,13 @@ describe("organization skill references", () => {
 
     const skills = await skillSvc.list(orgId);
 
-    expect(skills.slice(0, 5).map((skill) => skill.key)).toEqual([
+    expect(skills.slice(0, 6).map((skill) => skill.key)).toEqual([
       "rudder/para-memory-files",
       "rudder/rudder",
       "rudder/rudder-create-agent",
       "rudder/rudder-create-plugin",
       "rudder/skill-creator",
+      "rudder/browser",
     ]);
 
     expect(skills.map((skill) => skill.key)).toEqual(expect.arrayContaining([
@@ -221,6 +224,32 @@ describe("organization skill references", () => {
       sourceLabel: "Bundled by Rudder",
       editable: false,
     });
+  });
+
+  it("removes the Browser bundled projection when the instance capability is disabled", { timeout: 30000 }, async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Browser Disabled Org",
+      urlKey: "browser-disabled-org",
+      issuePrefix: "BRO",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(instanceSettings).values({
+      singletonKey: "default",
+      browser: { enabled: false, openLinksIn: "built_in" },
+      general: {},
+      notifications: {},
+    }).onConflictDoUpdate({
+      target: instanceSettings.singletonKey,
+      set: { browser: { enabled: false, openLinksIn: "built_in" } },
+    });
+
+    const skills = await skillSvc.list(orgId);
+    expect(skills.map((skill) => skill.key)).not.toContain("rudder/browser");
+    expect(skills.map((skill) => skill.key)).toContain("rudder/rudder");
   });
 
   it("keeps external adapter skills visible and loadable across runtime switches", { timeout: 30000 }, async () => {

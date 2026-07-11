@@ -44,6 +44,13 @@ const SAMPLE_INPUT_BY_TOOL: Record<string, Record<string, unknown>> = {
   rudder_skill_import: { source: "/tmp/skill" },
   rudder_skill_scan_local: { roots: "/tmp/skills" },
   rudder_skill_scan_projects: { projectIds: "proj_123" },
+  rudder_browser_open: { url: "https://example.com" },
+  rudder_browser_navigate: { tabId: "tab-1", url: "https://example.com/next" },
+  rudder_browser_read: { tabId: "tab-1" },
+  rudder_browser_click: { tabId: "tab-1", ref: "ref-1" },
+  rudder_browser_type: { tabId: "tab-1", ref: "ref-1", text: "hello", submit: true },
+  rudder_browser_screenshot: { tabId: "tab-1" },
+  rudder_browser_close: { tabId: "tab-1" },
   rudder_automation_get: { automation: "aut_123" },
   rudder_automation_runs: { automation: "aut_123", limit: 5 },
   rudder_automation_triggers_list: { automation: "aut_123" },
@@ -221,6 +228,52 @@ describe("agent-v1 MCP server", () => {
     }
   });
 
+  it("advertises Browser tools only for runs with the managed Browser capability flag", async () => {
+    const baseEnv = {
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+      RUDDER_AGENT_ID: "runtime-agent",
+      RUDDER_RUN_ID: "runtime-run",
+    };
+    const disabled = await runAgentV1McpJsonRpcMessage(
+      { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      buildMcpServerEnv(baseEnv),
+    );
+    const enabled = await runAgentV1McpJsonRpcMessage(
+      { jsonrpc: "2.0", id: 2, method: "tools/list" },
+      buildMcpServerEnv({ ...baseEnv, RUDDER_BROWSER_ENABLED: "true" }),
+    );
+
+    const disabledNames = ((disabled?.result as { tools: Array<{ name: string }> }).tools).map((tool) => tool.name);
+    const enabledNames = ((enabled?.result as { tools: Array<{ name: string }> }).tools).map((tool) => tool.name);
+    expect(disabledNames).not.toContain("rudder_browser_open");
+    expect(enabledNames).toContain("rudder_browser_open");
+    expect(enabledNames).toHaveLength(disabledNames.length + 8);
+  });
+
+  it("rejects Browser calls without a runtime-owned run and capability flag", async () => {
+    const response = await runAgentV1McpJsonRpcMessage(
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "rudder_browser_tabs", arguments: {} },
+      },
+      buildMcpServerEnv({
+        RUDDER_API_URL: "http://127.0.0.1:3100",
+        RUDDER_API_KEY: "runtime-key",
+        RUDDER_ORG_ID: "runtime-org",
+        RUDDER_AGENT_ID: "runtime-agent",
+      }),
+    );
+
+    const result = response!.result as { content: Array<{ text: string }>; isError: boolean };
+    const payload = JSON.parse(result.content[0]?.text ?? "{}") as { code: string; message: string };
+    expect(result.isError).toBe(true);
+    expect(payload.code).toBe("browser_disabled");
+  });
+
   it("turns direct comment text into a temporary body file instead of shell text", () => {
     const plan = buildAgentV1ToolCallPlan(
       "rudder_issue_comment",
@@ -261,6 +314,7 @@ describe("agent-v1 MCP server", () => {
       RUDDER_ORG_ID: "runtime-org",
       RUDDER_AGENT_ID: "runtime-agent",
       RUDDER_RUN_ID: "runtime-run",
+      RUDDER_BROWSER_ENABLED: "true",
     };
 
     for (const tool of buildAgentV1McpToolsManifest("agent-v1").tools) {
@@ -477,6 +531,43 @@ describe("agent-v1 MCP server", () => {
     expect(checkoutResponse?.result).toMatchObject({
       isError: false,
       structuredContent: { id: "ISSUE-1", status: "in_progress" },
+    });
+  });
+
+  it("dispatches Browser tools directly through the runtime-owned API identity", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      expect(String(input)).toBe("http://127.0.0.1:3100/api/browser/open");
+      const headers = new Headers(init?.headers);
+      expect(init?.method).toBe("POST");
+      expect(headers.get("authorization")).toBe("Bearer runtime-key");
+      expect(headers.get("x-rudder-agent-id")).toBe("11111111-1111-4111-8111-111111111111");
+      expect(headers.get("x-rudder-run-id")).toBe("22222222-2222-4222-8222-222222222222");
+      expect(JSON.parse(String(init?.body))).toEqual({ url: "https://example.com" });
+      return new Response(JSON.stringify({ tabId: "tab-1", url: "https://example.com/" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: { name: "rudder_browser_open", arguments: { url: "https://example.com" } },
+    }, buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+      RUDDER_AGENT_ID: "11111111-1111-4111-8111-111111111111",
+      RUDDER_RUN_ID: "22222222-2222-4222-8222-222222222222",
+      RUDDER_BROWSER_ENABLED: "true",
+      RUDDER_MCP_RUDDER_BIN: "/missing/rudder",
+    }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(response?.result).toMatchObject({
+      isError: false,
+      structuredContent: { tabId: "tab-1", url: "https://example.com/" },
     });
   });
 

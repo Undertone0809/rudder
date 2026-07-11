@@ -15,6 +15,7 @@ import {
 } from "../home-paths.js";
 import { agentInstructionsService } from "./agent-instructions.js";
 import { agentStartupContextService } from "./agent-startup-context.js";
+import { instanceSettingsService } from "./instance-settings.js";
 import { customIntegrationService } from "./integrations/custom-integrations.js";
 import { organizationSkillService } from "./organization-skills.js";
 import { listProjectResourceAttachments } from "./resource-catalog.js";
@@ -457,6 +458,7 @@ async function resolveProjectLibraryContext(
 
 export function agentRunContextService(db: Db) {
   const instructions = agentInstructionsService();
+  const instanceSettings = instanceSettingsService(db);
   const secretsSvc = secretService(db);
   const organizationSkills = organizationSkillService(db);
   const startupContextSvc = agentStartupContextService(db);
@@ -473,6 +475,7 @@ export function agentRunContextService(db: Db) {
         input.agent.orgId,
         baseConfig,
       );
+    const browserSettings = await instanceSettings.getBrowser();
     const desiredSkills = await organizationSkills.getEnabledSkillKeysForAgent(
       input.agent.orgId,
       {
@@ -495,6 +498,7 @@ export function agentRunContextService(db: Db) {
       resolvedConfig,
       runtimeConfig: {
         ...resolvedConfig,
+        rudderBrowserEnabled: browserSettings.enabled,
         rudderSkillSync: { desiredSkills: desiredRuntimeSkills },
         paperclipSkillSync: { desiredSkills: desiredRuntimeSkills },
         rudderRuntimeSkills: runtimeSkillEntries,

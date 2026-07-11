@@ -35,6 +35,7 @@ const mockResolveAdapterConfigForRuntime = vi.fn();
 const mockGetEnabledSkillKeysForAgent = vi.fn();
 const mockListRealizedSkillEntriesForAgent = vi.fn();
 const mockListRuntimeToolsForAgent = vi.fn();
+const mockGetBrowserSettings = vi.fn();
 
 vi.mock("../services/secrets.js", () => ({
   secretService: () => ({
@@ -46,6 +47,12 @@ vi.mock("../services/organization-skills.js", () => ({
   organizationSkillService: () => ({
     getEnabledSkillKeysForAgent: mockGetEnabledSkillKeysForAgent,
     listRealizedSkillEntriesForAgent: mockListRealizedSkillEntriesForAgent,
+  }),
+}));
+
+vi.mock("../services/instance-settings.js", () => ({
+  instanceSettingsService: () => ({
+    getBrowser: mockGetBrowserSettings,
   }),
 }));
 
@@ -97,11 +104,16 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
   const originalRudderInstanceId = process.env.RUDDER_INSTANCE_ID;
   const cleanupDirs = new Set<string>();
 
+  beforeEach(() => {
+    mockGetBrowserSettings.mockResolvedValue({ enabled: true, openLinksIn: "built_in" });
+  });
+
   afterEach(async () => {
     mockResolveAdapterConfigForRuntime.mockReset();
     mockGetEnabledSkillKeysForAgent.mockReset();
     mockListRealizedSkillEntriesForAgent.mockReset();
     mockListRuntimeToolsForAgent.mockReset();
+    mockGetBrowserSettings.mockReset();
     if (originalRudderHome === undefined) delete process.env.RUDDER_HOME;
     else process.env.RUDDER_HOME = originalRudderHome;
     if (originalRudderInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
@@ -110,6 +122,41 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
       await fs.rm(dir, { recursive: true, force: true });
       cleanupDirs.delete(dir);
     }));
+  });
+
+  it("projects the live Browser capability into run config without trusting agent config", async () => {
+    mockResolveAdapterConfigForRuntime.mockResolvedValue({
+      config: { rudderBrowserEnabled: false },
+      secretKeys: new Set<string>(),
+    });
+    mockGetEnabledSkillKeysForAgent.mockResolvedValue(["rudder/browser"]);
+    mockListRealizedSkillEntriesForAgent.mockResolvedValue([]);
+
+    const svc = agentRunContextService({} as any);
+    const enabled = await svc.prepareRuntimeConfig({
+      scene: "heartbeat",
+      agent: {
+        id: "agent-1",
+        orgId: "organization-1",
+        name: "Browser Agent",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: { rudderBrowserEnabled: false },
+      },
+    });
+    expect(enabled.runtimeConfig.rudderBrowserEnabled).toBe(true);
+
+    mockGetBrowserSettings.mockResolvedValueOnce({ enabled: false, openLinksIn: "built_in" });
+    const disabled = await svc.prepareRuntimeConfig({
+      scene: "heartbeat",
+      agent: {
+        id: "agent-1",
+        orgId: "organization-1",
+        name: "Browser Agent",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: { rudderBrowserEnabled: true },
+      },
+    });
+    expect(disabled.runtimeConfig.rudderBrowserEnabled).toBe(false);
   });
 
   it("does not materialize a missing managed instructions entry while preparing runtime config", async () => {

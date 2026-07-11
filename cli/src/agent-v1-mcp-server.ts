@@ -29,6 +29,7 @@ interface McpServerEnv {
   RUDDER_ORG_ID?: string;
   RUDDER_AGENT_ID?: string;
   RUDDER_RUN_ID?: string;
+  RUDDER_BROWSER_ENABLED?: string;
   RUDDER_PROJECT_LIBRARY_PATH?: string;
   RUDDER_MCP_RUDDER_BIN?: string;
   [key: string]: string | undefined;
@@ -80,6 +81,7 @@ export function buildMcpServerEnv(env: NodeJS.ProcessEnv = process.env): McpServ
     RUDDER_ORG_ID: env.RUDDER_ORG_ID,
     RUDDER_AGENT_ID: env.RUDDER_AGENT_ID,
     RUDDER_RUN_ID: env.RUDDER_RUN_ID,
+    RUDDER_BROWSER_ENABLED: env.RUDDER_BROWSER_ENABLED,
     RUDDER_PROJECT_LIBRARY_PATH: env.RUDDER_PROJECT_LIBRARY_PATH,
     RUDDER_MCP_RUDDER_BIN: env.RUDDER_MCP_RUDDER_BIN,
   };
@@ -97,6 +99,7 @@ export function buildAgentV1ToolCallPlan(
   }
   const capability = getAgentCliCapabilityById(capabilityId);
   rejectModelProvidedRuntimeIdentity(input);
+  assertBrowserCapabilityEnabled(capabilityId, env);
   assertRuntimeMcpContext(capability, env);
 
   const tempFiles: TempFilePlan[] = [];
@@ -113,6 +116,7 @@ export function buildAgentV1ToolCallPlan(
       RUDDER_ORG_ID: env.RUDDER_ORG_ID,
       RUDDER_AGENT_ID: env.RUDDER_AGENT_ID,
       RUDDER_RUN_ID: env.RUDDER_RUN_ID,
+      RUDDER_BROWSER_ENABLED: env.RUDDER_BROWSER_ENABLED,
       RUDDER_PROJECT_LIBRARY_PATH: env.RUDDER_PROJECT_LIBRARY_PATH,
     },
     tempFiles,
@@ -137,7 +141,9 @@ export async function runAgentV1McpJsonRpcMessage(
         });
       case "tools/list":
         return rpcResult(id, {
-          tools: buildAgentV1McpToolsManifest("agent-v1").tools.map(toMcpToolListEntry),
+          tools: buildAgentV1McpToolsManifest("agent-v1", {
+            browserEnabled: browserCapabilityEnabled(env),
+          }).tools.map(toMcpToolListEntry),
         });
       case "tools/call":
         return rpcResult(id, await callToolSafely(message.params, env));
@@ -342,6 +348,41 @@ async function callToolDirectlyIfSupported(
         { status: "done", comment },
       ));
     }
+    case "browser.tabs":
+      return mcpSuccess(await api.post("/api/browser/tabs", {}));
+    case "browser.open":
+      return mcpSuccess(await api.post("/api/browser/open", {
+        url: requiredString(input, "url"),
+      }));
+    case "browser.navigate":
+      return mcpSuccess(await api.post("/api/browser/navigate", {
+        tabId: requiredString(input, "tabId"),
+        url: requiredString(input, "url"),
+      }));
+    case "browser.read":
+      return mcpSuccess(await api.post("/api/browser/read", {
+        tabId: requiredString(input, "tabId"),
+      }));
+    case "browser.click":
+      return mcpSuccess(await api.post("/api/browser/click", {
+        tabId: requiredString(input, "tabId"),
+        ref: requiredString(input, "ref"),
+      }));
+    case "browser.type":
+      return mcpSuccess(await api.post("/api/browser/type", {
+        tabId: requiredString(input, "tabId"),
+        ref: requiredString(input, "ref"),
+        text: requiredString(input, "text"),
+        ...(input.submit === true ? { submit: true } : {}),
+      }));
+    case "browser.screenshot":
+      return mcpSuccess(await api.post("/api/browser/screenshot", {
+        tabId: requiredString(input, "tabId"),
+      }));
+    case "browser.close":
+      return mcpSuccess(await api.post("/api/browser/close", {
+        tabId: requiredString(input, "tabId"),
+      }));
     default:
       return null;
   }
@@ -596,6 +637,25 @@ function cliArgsForCapability(
       pushOptional(args, "--workspace-ids", input.workspaceIds);
       return args;
     }
+    case "browser.tabs":
+      return ["browser", "tabs"];
+    case "browser.open":
+      return ["browser", "open", requiredString(input, "url")];
+    case "browser.navigate":
+      return ["browser", "navigate", requiredString(input, "tabId"), requiredString(input, "url")];
+    case "browser.read":
+      return ["browser", "read", requiredString(input, "tabId")];
+    case "browser.click":
+      return ["browser", "click", requiredString(input, "tabId"), requiredString(input, "ref")];
+    case "browser.type": {
+      const args = ["browser", "type", requiredString(input, "tabId"), requiredString(input, "ref"), "--text", requiredString(input, "text")];
+      pushBoolean(args, "--submit", input.submit);
+      return args;
+    }
+    case "browser.screenshot":
+      return ["browser", "screenshot", requiredString(input, "tabId")];
+    case "browser.close":
+      return ["browser", "close", requiredString(input, "tabId")];
     case "automation.list": {
       const args = ["automation", "list"];
       pushOptional(args, "--status", input.status);
@@ -927,7 +987,7 @@ function normalizeRuntimeIdentityKey(key: string): string {
 }
 
 function assertRuntimeMcpContext(
-  capability: { requiresOrgId: boolean; requiresAgentId: boolean },
+  capability: { requiresOrgId: boolean; requiresAgentId: boolean; requiresRunId: boolean },
   env: McpServerEnv,
 ): void {
   const missing: string[] = [];
@@ -935,10 +995,22 @@ function assertRuntimeMcpContext(
   if (!optionalString(env.RUDDER_API_KEY)) missing.push("RUDDER_API_KEY");
   if (capability.requiresOrgId && !optionalString(env.RUDDER_ORG_ID)) missing.push("RUDDER_ORG_ID");
   if (capability.requiresAgentId && !optionalString(env.RUDDER_AGENT_ID)) missing.push("RUDDER_AGENT_ID");
+  if (capability.requiresRunId && !optionalString(env.RUDDER_RUN_ID)) missing.push("RUDDER_RUN_ID");
   if (missing.length === 0) return;
   const err = new Error(`Rudder MCP runtime context is incomplete. Missing ${missing.join(", ")}.`);
   (err as Error & { code?: string }).code = "rudder_mcp_missing_runtime_context";
   throw err;
+}
+
+function browserCapabilityEnabled(env: McpServerEnv): boolean {
+  return optionalString(env.RUDDER_BROWSER_ENABLED)?.toLowerCase() === "true";
+}
+
+function assertBrowserCapabilityEnabled(capabilityId: string, env: McpServerEnv): void {
+  if (!capabilityId.startsWith("browser.") || browserCapabilityEnabled(env)) return;
+  const error = new Error("Rudder Browser is disabled or unavailable for this run.");
+  (error as Error & { code?: string }).code = "browser_disabled";
+  throw error;
 }
 
 function structuredContentFromJsonText(text: string): { structuredContent?: Record<string, unknown> } {

@@ -67,6 +67,14 @@ describe("agent-v1 registry", () => {
       "skill.import",
       "skill.scan-local",
       "skill.scan-projects",
+      "browser.tabs",
+      "browser.open",
+      "browser.navigate",
+      "browser.read",
+      "browser.click",
+      "browser.type",
+      "browser.screenshot",
+      "browser.close",
       "automation.list",
       "automation.get",
       "automation.runs",
@@ -145,6 +153,7 @@ describe("agent-v1 registry", () => {
     );
     expect(mcpManifest.tools.map((tool) => tool.name)).toContain("rudder_issue_checkout");
     expect(mcpManifest.tools.map((tool) => tool.name)).toContain("rudder_runs_errors");
+    expect(mcpManifest.tools.map((tool) => tool.name)).toContain("rudder_browser_open");
     expect(mcpManifest.tools.find((tool) => tool.capabilityId === "issue.checkout")).toMatchObject({
       name: "rudder_issue_checkout",
       mutating: true,
@@ -155,6 +164,17 @@ describe("agent-v1 registry", () => {
       mutating: false,
       attachesRunIdWhenAvailable: false,
     });
+  });
+
+  it("can remove Browser tools from a runtime manifest without changing the CLI contract", () => {
+    const cliManifest = buildAgentCliCapabilitiesManifest("agent-v1");
+    const enabled = buildAgentV1McpToolsManifest("agent-v1", { browserEnabled: true });
+    const disabled = buildAgentV1McpToolsManifest("agent-v1", { browserEnabled: false });
+
+    expect(cliManifest.capabilities.map((entry) => entry.id)).toContain("browser.open");
+    expect(enabled.tools.map((tool) => tool.name)).toContain("rudder_browser_open");
+    expect(disabled.tools.map((tool) => tool.name)).not.toContain("rudder_browser_open");
+    expect(enabled.tools).toHaveLength(disabled.tools.length + 8);
   });
 
   it("keeps compat commands out of the MCP manifest even when CLI capabilities include all", () => {

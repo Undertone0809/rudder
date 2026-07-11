@@ -16,7 +16,7 @@ import type {
   OrganizationSkillUsageAgent,
 } from "@rudderhq/shared";
 import {
-  RUDDER_BUNDLED_SKILL_SLUGS,
+  getActiveRudderBundledSkillSlugs,
   getBundledRudderSkillSlug,
   toBundledRudderSkillKey,
 } from "@rudderhq/shared";
@@ -26,10 +26,11 @@ import path from "node:path";
 import { conflict, notFound, unprocessable } from "../../errors.js";
 import {
   resolveAgentSkillsDir,
-  resolveOrganizationWorkspaceRoot
+  resolveOrganizationWorkspaceRoot,
 } from "../../home-paths.js";
 import { agentEnabledSkillsService } from "../agent-enabled-skills.js";
 import { agentService } from "../agents.js";
+import { instanceSettingsService } from "../instance-settings.js";
 import { projectService } from "../projects.js";
 
 import {
@@ -37,7 +38,6 @@ import {
   AgentSkillCatalogEntry,
   AgentSkillSelectionResolution,
   AgentWorkspaceRow,
-  CANONICAL_BUNDLED_SKILL_KEYS,
   COMMUNITY_PRESET_SKILLS,
   COMMUNITY_PRESET_SKILL_SLUGS,
   EnabledSkillsAgentRef,
@@ -136,13 +136,16 @@ export function organizationSkillService(db: Db) {
   }
 
   async function ensureBundledSkills(orgId: string) {
+    const browserEnabled = (await instanceSettingsService(db).getBrowser()).enabled;
+    const activeBundledSlugs = getActiveRudderBundledSkillSlugs(browserEnabled);
+    const activeBundledKeys = activeBundledSlugs.map((slug) => `rudder/${slug}`);
     for (const skillsRoot of resolveBundledSkillsRoot()) {
       const stats = await fs.stat(skillsRoot).catch(() => null);
       if (!stats?.isDirectory()) continue;
       let bundledSkillCandidates: Array<ImportedSkill | null> = [];
       try {
         bundledSkillCandidates = await Promise.all(
-          RUDDER_BUNDLED_SKILL_SLUGS.map(async (slug) => {
+          activeBundledSlugs.map(async (slug) => {
             const skillDir = path.join(skillsRoot, slug);
             const skillStats = await fs.stat(skillDir).catch(() => null);
             if (!skillStats?.isDirectory()) return null;
@@ -180,7 +183,7 @@ export function organizationSkillService(db: Db) {
         })
         .from(organizationSkills)
         .where(eq(organizationSkills.orgId, orgId));
-      const staleBundledIds = listStaleBundledSkillIds(existingRows, Array.from(CANONICAL_BUNDLED_SKILL_KEYS));
+      const staleBundledIds = listStaleBundledSkillIds(existingRows, activeBundledKeys);
       if (staleBundledIds.length > 0) {
         const staleKeys = existingRows
           .filter((row) => staleBundledIds.includes(row.id))

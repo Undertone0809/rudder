@@ -167,7 +167,7 @@ export { deriveAgentUrlKey, isUuidLike, normalizeAgentUrlKey } from "./agent-url
 export { API, API_PREFIX } from "./api.js";
 export { formatMessengerPreview, formatMessengerTitle, type MessengerPreviewOptions } from "./messenger-preview.js";
 export {
-  RUDDER_BUNDLED_SKILL_SLUGS, buildOrganizationSkillSearchText, formatOrganizationSkillPublicRef, getBundledRudderSkillSlug,
+  RUDDER_BUNDLED_SKILL_SLUGS, buildOrganizationSkillSearchText, formatOrganizationSkillPublicRef, getActiveRudderBundledSkillSlugs, getBundledRudderSkillSlug,
   isCanonicalBundledRudderSkillKey, normalizeOrganizationSkillKey, parseOrganizationSkillReference,
   resolveOrganizationSkillReference, toBundledRudderSkillKey, type OrganizationSkillPublicRefContext,
   type OrganizationSkillPublicRefScope,
