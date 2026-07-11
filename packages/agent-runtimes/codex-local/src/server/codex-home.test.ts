@@ -1,3 +1,4 @@
+import { applyRudderBrowserCapabilityEnv } from "@rudderhq/agent-runtime-utils";
 import fs, { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -12,7 +13,10 @@ describe("managed Codex home config sync", () => {
     await Promise.all(tempRoots.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
-  async function prepareWithSharedConfig(configToml: string) {
+  async function prepareWithSharedConfig(
+    configToml: string,
+    mcpEnv: Record<string, string> = {},
+  ) {
     const root = await mkdtemp(path.join(os.tmpdir(), "rudder-codex-home-"));
     tempRoots.push(root);
 
@@ -32,6 +36,9 @@ describe("managed Codex home config sync", () => {
       },
       "org-1",
       "agent-1",
+      undefined,
+      undefined,
+      mcpEnv,
     );
 
     return {
@@ -40,6 +47,19 @@ describe("managed Codex home config sync", () => {
       logs,
     };
   }
+
+  it.each([
+    { enabled: true, expected: "true", untrusted: "false" },
+    { enabled: false, expected: "false", untrusted: "true" },
+  ])("renders the trusted Browser capability into managed MCP TOML ($expected)", async ({ enabled, expected, untrusted }) => {
+    const mcpEnv = { RUDDER_BROWSER_ENABLED: untrusted };
+    applyRudderBrowserCapabilityEnv(mcpEnv, { rudderBrowserEnabled: enabled });
+
+    const { config } = await prepareWithSharedConfig('model = "gpt-5.5"\n', mcpEnv);
+
+    expect(config).toContain(`[mcp_servers.rudder-control-plane.env]`);
+    expect(config).toContain(`RUDDER_BROWSER_ENABLED = "${expected}"`);
+  });
 
   it("strips inherited Codex service_tier default values unsupported by current Codex", async () => {
     const { config, logs } = await prepareWithSharedConfig([

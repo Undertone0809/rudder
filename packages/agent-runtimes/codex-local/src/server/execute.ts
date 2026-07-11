@@ -1,4 +1,5 @@
 import {
+  applyRudderBrowserCapabilityEnv,
   inferOpenAiCompatibleBiller,
   pickRudderMcpManagedEnv,
   rudderMcpRuntimeMetadata,
@@ -466,6 +467,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   for (const [k, v] of Object.entries(envConfig)) {
     if (typeof v === "string" && !CODEX_PROTECTED_ENV_KEYS.has(k)) env[k] = v;
   }
+  const browserEnabled = applyRudderBrowserCapabilityEnv(env, config);
   env.CODEX_HOME = effectiveCodexHome;
   env.HOME = operatorHome;
   env.USERPROFILE = process.env.USERPROFILE ?? operatorHome;
@@ -670,7 +672,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         promptMetrics,
         loadedSkills,
         realizedSkills: loadedSkills,
-        rudderMcp: rudderMcpRuntimeMetadata(),
+        rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled }),
         context,
       });
     }

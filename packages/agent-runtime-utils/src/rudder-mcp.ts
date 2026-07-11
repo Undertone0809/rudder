@@ -1,11 +1,13 @@
 export const RUDDER_MCP_SERVER_NAME = "rudder-control-plane";
 export const RUDDER_MCP_TOOL_COUNT = 69;
+export const RUDDER_BROWSER_MCP_TOOL_COUNT = 8;
 export const RUDDER_MCP_MANAGED_ENV_KEYS = [
   "RUDDER_API_URL",
   "RUDDER_API_KEY",
   "RUDDER_ORG_ID",
   "RUDDER_AGENT_ID",
   "RUDDER_RUN_ID",
+  "RUDDER_BROWSER_ENABLED",
   "RUDDER_PROJECT_LIBRARY_PATH",
 ] as const;
 
@@ -26,14 +28,35 @@ export interface RudderMcpRuntimeMetadata {
 }
 
 export function rudderMcpRuntimeMetadata(
-  input: { available?: boolean; fallbackReason?: string | null } = {},
+  input: {
+    available?: boolean;
+    browserEnabled?: boolean;
+    fallbackReason?: string | null;
+  } = {},
 ): RudderMcpRuntimeMetadata {
   return {
     available: input.available ?? true,
     serverName: RUDDER_MCP_SERVER_NAME,
-    toolCount: RUDDER_MCP_TOOL_COUNT,
+    toolCount: RUDDER_MCP_TOOL_COUNT + (input.browserEnabled === true ? RUDDER_BROWSER_MCP_TOOL_COUNT : 0),
     fallbackReason: input.fallbackReason ?? null,
   };
+}
+
+export function applyRudderBrowserCapabilityEnv(
+  env: Record<string, string>,
+  config: Record<string, unknown>,
+): boolean {
+  const browserEnabled = config.rudderBrowserEnabled === true;
+  env.RUDDER_BROWSER_ENABLED = browserEnabled ? "true" : "false";
+  return browserEnabled;
+}
+
+export function filterRudderMcpToolsForBrowserCapability<T extends { name: string }>(
+  tools: readonly T[],
+  browserEnabled: boolean,
+): T[] {
+  if (browserEnabled) return [...tools];
+  return tools.filter((tool) => !tool.name.startsWith("rudder_browser_"));
 }
 
 export function rudderMcpCliCommand(): RudderMcpCliCommand {

@@ -1,5 +1,6 @@
 import {
   RUDDER_MCP_SERVER_NAME,
+  applyRudderBrowserCapabilityEnv,
   pickRudderMcpManagedEnv,
   resolveOrganizationStorageKey,
   rudderMcpRuntimeMetadata,
@@ -164,7 +165,7 @@ async function writePrivateJsonFile(filePath: string, value: unknown): Promise<v
   await fs.chmod(filePath, 0o600);
 }
 
-async function resolveRudderMcpServerConfig(managedEnv: RudderMcpManagedEnv = {}): Promise<Record<string, unknown>> {
+export async function resolveRudderMcpServerConfig(managedEnv: RudderMcpManagedEnv = {}): Promise<Record<string, unknown>> {
   const rudderMcp = await resolveRudderMcpCliCommand(__moduleDir);
   const env = {
     ...(rudderMcp.env ?? {}),
@@ -285,6 +286,7 @@ interface ClaudeExecutionInput {
 }
 
 interface ClaudeRuntimeConfig {
+  browserEnabled: boolean;
   command: string;
   cwd: string;
   workspaceId: string | null;
@@ -481,6 +483,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     if (CLAUDE_PROTECTED_ENV_KEYS.has(key)) continue;
     if (typeof value === "string") env[key] = value;
   }
+  const browserEnabled = applyRudderBrowserCapabilityEnv(env, config);
 
   const sourceEnv = { ...process.env };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
@@ -525,6 +528,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   const permissionMode = resolveClaudePermissionMode(config);
 
   return {
+    browserEnabled,
     command,
     cwd,
     workspaceId,
@@ -600,6 +604,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     onLog,
   });
   const {
+    browserEnabled,
     command,
     cwd,
     workspaceId,
@@ -814,7 +819,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         promptMetrics,
         loadedSkills,
         realizedSkills: loadedSkills,
-        rudderMcp: rudderMcpRuntimeMetadata(),
+        rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled }),
         context,
       });
     }

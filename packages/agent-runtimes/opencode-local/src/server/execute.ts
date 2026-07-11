@@ -1,6 +1,7 @@
 import {
   RUDDER_MCP_MANAGED_ENV_KEYS,
   RUDDER_MCP_SERVER_NAME,
+  applyRudderBrowserCapabilityEnv,
   inferOpenAiCompatibleBiller,
   pickRudderMcpManagedEnv,
   rudderMcpRuntimeMetadata,
@@ -215,7 +216,7 @@ async function readOpenCodeConfigFile(sourceHome: string): Promise<Record<string
   return sanitizeOpenCodeConfig({});
 }
 
-async function resolveRudderOpenCodeMcpConfig(
+export async function resolveRudderOpenCodeMcpConfig(
   managedEnv: RudderMcpManagedEnv = {},
 ): Promise<Record<string, unknown>> {
   const rudderMcp = await resolveRudderMcpCliCommand(__moduleDir);
@@ -459,6 +460,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (OPENCODE_PROTECTED_ENV_KEYS.has(key)) continue;
     if (typeof value === "string") env[key] = value;
   }
+  const browserEnabled = applyRudderBrowserCapabilityEnv(env, config);
   const sourceEnv = { ...process.env };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
   if (authToken) env.RUDDER_API_KEY = authToken;
@@ -701,7 +703,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         loadedSkills,
         realizedSkills: loadedSkills,
         promptInjectedSkills: loadedSkills,
-        rudderMcp: rudderMcpRuntimeMetadata(),
+        rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled }),
         context,
       });
     }
