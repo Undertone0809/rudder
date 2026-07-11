@@ -218,6 +218,7 @@ function getWorkspaceColumnFamily(relativePath: string): WorkspaceColumnFamily |
 
 export function shouldUseFramelessWorkspaceMain(relativePath: string): boolean {
   if (/^\/(?:library|resources|workspaces)(?:\/|$)/.test(relativePath) && !/^\/workspaces\/backups(?:\/|$)/.test(relativePath)) return true;
+  if (/^\/automations(?:\/|$)/.test(relativePath)) return true;
   if (/^\/chat(?:\/|$)/.test(relativePath)) return true;
   if (/^\/messenger\/chat(?:\/|$)/.test(relativePath)) return true;
   return relativePath === "/messenger";

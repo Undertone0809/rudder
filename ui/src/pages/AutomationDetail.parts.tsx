@@ -176,11 +176,24 @@ export function automationNextActionLabel(input: {
   return "Run now";
 }
 
-export function SidebarSection({ title, children }: { title: string; children: ReactNode }) {
+export function SidebarSection({
+  title,
+  children,
+  card = false,
+}: {
+  title: string;
+  children: ReactNode;
+  card?: boolean;
+}) {
   return (
     <section className="space-y-2.5">
-      <h2 className="text-xs font-medium text-muted-foreground">{title}</h2>
-      <div className="space-y-2.5">{children}</div>
+      <h2 className={cn("font-medium text-muted-foreground", card ? "text-sm" : "text-xs")}>{title}</h2>
+      <div className={cn(
+        "space-y-2.5",
+        card && "rounded-md border border-border/70 bg-card/70 px-3.5 py-2.5",
+      )}>
+        {children}
+      </div>
     </section>
   );
 }

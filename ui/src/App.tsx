@@ -41,7 +41,6 @@ import { Activity } from "./pages/Activity";
 import { AgentDetail } from "./pages/AgentDetail";
 import { Agents } from "./pages/Agents";
 import { AuthPage } from "./pages/Auth";
-import { AutomationDetail } from "./pages/AutomationDetail";
 import { Automations } from "./pages/Automations";
 import { BoardClaimPage } from "./pages/BoardClaim";
 import { Calendar as CalendarPage } from "./pages/Calendar";
@@ -241,7 +240,7 @@ function boardRoutes() {
       <Route path="chat" element={<LegacyMessengerRedirect />} />
       <Route path="chat/:conversationId" element={<LegacyMessengerRedirect />} />
       <Route path="automations" element={<Automations />} />
-      <Route path="automations/:automationId" element={<AutomationDetail />} />
+      <Route path="automations/:automationId" element={<Automations />} />
       <Route path="calendar" element={<LegacyCalendarRedirect />} />
       <Route path="run-workspaces/:workspaceId" element={<RunWorkspaceDetail />} />
       <Route path="execution-workspaces/:workspaceId" element={<RunWorkspaceDetail />} />

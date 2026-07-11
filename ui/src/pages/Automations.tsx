@@ -17,7 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
-import { useNavigate } from "@/lib/router";
+import { useNavigate, useParams } from "@/lib/router";
 import type { InstanceLocale } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -28,6 +28,8 @@ import {
   ChevronDown,
   FolderOpen,
   MoreHorizontal,
+  PanelRightClose,
+  PanelRightOpen,
   Pause,
   Pencil,
   Play,
@@ -68,6 +70,7 @@ import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
 import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { cn, formatDateTimeSeconds } from "../lib/utils";
+import { AutomationDetail } from "./AutomationDetail";
 
 const concurrencyPolicies = ["coalesce_if_active", "always_enqueue", "skip_if_active"];
 const catchUpPolicies = ["skip_missed", "enqueue_missed_with_cap"];
@@ -285,6 +288,7 @@ function nextAutomationStatus(enabled: boolean) {
 }
 
 export function Automations() {
+  const { automationId } = useParams<{ automationId: string }>();
   const { selectedOrganizationId, selectedOrganization } = useOrganization();
   const { setBreadcrumbs, setHeaderActions } = useBreadcrumbs();
   const queryClient = useQueryClient();
@@ -297,12 +301,15 @@ export function Automations() {
   const descriptionComposerRef = useRef<HTMLDivElement | null>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
+  const expandDetailButtonRef = useRef<HTMLButtonElement | null>(null);
+  const collapseDetailButtonRef = useRef<HTMLButtonElement | null>(null);
   const composerBodyScrollRef = useScrollbarActivityRef("rudder:automation-composer-body");
   const composerMainScrollRef = useScrollbarActivityRef("rudder:automation-composer-main");
   const [runningAutomationId, setRunningAutomationId] = useState<string | null>(null);
   const [statusMutationAutomationId, setStatusMutationAutomationId] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [detailCollapsed, setDetailCollapsed] = useState(false);
   const [draft, setDraft] = useState({
     title: "",
     description: "",
@@ -347,6 +354,17 @@ export function Automations() {
   useEffect(() => {
     setBreadcrumbs([{ label: "Automations" }]);
   }, [setBreadcrumbs]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const wideDetailLayout = window.matchMedia("(min-width: 1100px)");
+    const resetCollapsedDetailOnNarrowLayout = () => {
+      if (!wideDetailLayout.matches) setDetailCollapsed(false);
+    };
+    resetCollapsedDetailOnNarrowLayout();
+    wideDetailLayout.addEventListener("change", resetCollapsedDetailOnNarrowLayout);
+    return () => wideDetailLayout.removeEventListener("change", resetCollapsedDetailOnNarrowLayout);
+  }, []);
 
   useEffect(() => {
     if (!selectedOrganizationId) {
@@ -565,7 +583,7 @@ export function Automations() {
   }
 
   return (
-    <div data-testid="automations-page-content" className="mx-auto w-full max-w-[1120px] space-y-6 px-1 py-4 sm:px-2 md:py-6">
+    <div data-testid="automations-page-content" className="h-full min-h-0 w-full">
       <Dialog
         open={composerOpen}
         onOpenChange={(open) => {
@@ -874,15 +892,58 @@ export function Automations() {
         </DialogContent>
       </Dialog>
 
-      {error ? (
-        <Card>
-          <CardContent className="pt-6 text-sm text-destructive">
-            {error instanceof Error ? error.message : "Failed to load automations"}
-          </CardContent>
-        </Card>
-      ) : null}
+      <div
+        data-testid="automations-master-detail"
+        className={cn(
+          "flex h-full min-h-0 min-w-0 overflow-hidden transition-[gap] duration-300 ease-out motion-reduce:transition-none",
+          detailCollapsed ? "gap-0" : "gap-2 md:gap-[9px]",
+        )}
+      >
+        <section
+          data-testid="automations-list-pane"
+          className={cn(
+            "workspace-main-card min-h-0 min-w-0 flex-1 overflow-hidden rounded-[var(--desktop-workspace-radius)]",
+            automationId && "hidden min-[1100px]:block",
+          )}
+        >
+        <header
+          data-testid="automations-list-card-header"
+          className="workspace-card-header workspace-main-header hidden h-12 shrink-0 items-center justify-between gap-3 px-4 md:flex"
+        >
+          <h2 className="truncate text-[14px] font-semibold text-foreground">Automations</h2>
+          {detailCollapsed && automationId ? (
+            <Button
+              ref={expandDetailButtonRef}
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="hidden h-8 w-8 text-muted-foreground hover:text-foreground min-[1100px]:inline-flex"
+              aria-label="Expand automation detail"
+              title="Expand automation detail"
+              onClick={() => {
+                setDetailCollapsed(false);
+                window.requestAnimationFrame(() => collapseDetailButtonRef.current?.focus());
+              }}
+            >
+              <PanelRightOpen className="h-4 w-4" />
+            </Button>
+          ) : !automationId && selectedOrganizationId ? (
+            <Button type="button" size="sm" className="px-4" onClick={() => openComposer()}>
+              <Plus className="mr-1.5 h-3.5 w-3.5" />
+              Create automation
+            </Button>
+          ) : null}
+        </header>
+        <div className="scrollbar-auto-hide h-full min-h-0 overflow-y-auto px-1 py-4 sm:px-2 md:h-[calc(100%-3rem)] md:py-6">
+        {error ? (
+          <Card>
+            <CardContent className="pt-6 text-sm text-destructive">
+              {error instanceof Error ? error.message : "Failed to load automations"}
+            </CardContent>
+          </Card>
+        ) : null}
 
-      <div>
+      <div className="mx-auto w-full max-w-[1120px]">
         {(automations ?? []).length === 0 ? (
           <div className="mx-auto flex min-h-[min(620px,calc(100vh-14rem))] max-w-4xl flex-col items-center justify-center px-4 py-16 text-center md:py-20">
             <h1 className="text-xl font-semibold">No automations yet</h1>
@@ -918,8 +979,8 @@ export function Automations() {
               <thead>
                 <tr className="text-left text-xs text-muted-foreground border-b border-border">
                   <th className="px-3 py-2 font-medium">Name</th>
-                  <th className="px-3 py-2 font-medium">Project</th>
-                  <th className="px-3 py-2 font-medium">Assignee</th>
+                  <th className={cn("px-3 py-2 font-medium", automationId && "hidden 2xl:table-cell")}>Project</th>
+                  <th className={cn("px-3 py-2 font-medium", automationId && "hidden 2xl:table-cell")}>Assignee</th>
                   <th className="px-3 py-2 font-medium">Last run</th>
                   <th className="px-3 py-2 font-medium">Enabled</th>
                   <th className="w-12 px-3 py-2" />
@@ -930,11 +991,20 @@ export function Automations() {
                   const enabled = automation.status === "active";
                   const isStatusPending = statusMutationAutomationId === automation.id;
                   const lastRunDisplay = automation.lastRun ? getAutomationRunDisplay(automation.lastRun, locale) : null;
+                  const isSelected = automationId === automation.id;
                   return (
                     <tr
                       key={automation.id}
-                      className="align-middle border-b border-border transition-colors hover:bg-accent/50 last:border-b-0 cursor-pointer"
-                      onClick={() => navigate(`/automations/${automation.id}`)}
+                      aria-current={isSelected ? "page" : undefined}
+                      data-selected={isSelected ? "true" : undefined}
+                      className={cn(
+                        "cursor-pointer align-middle border-b border-border transition-colors hover:bg-accent/50 last:border-b-0",
+                        isSelected && "bg-accent/70 hover:bg-accent/70",
+                      )}
+                      onClick={() => {
+                        setDetailCollapsed(false);
+                        navigate(`/automations/${automation.id}`);
+                      }}
                     >
                       <td className="px-3 py-2.5">
                         <div className="min-w-[180px]">
@@ -948,7 +1018,7 @@ export function Automations() {
                           )}
                         </div>
                       </td>
-                      <td className="px-3 py-2.5">
+                      <td className={cn("px-3 py-2.5", automationId && "hidden 2xl:table-cell")}>
                         {automation.projectId ? (
                           <div className="flex items-center gap-2 text-sm text-muted-foreground">
                             <ProjectIcon
@@ -962,7 +1032,7 @@ export function Automations() {
                           <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </td>
-                      <td className="px-3 py-2.5">
+                      <td className={cn("px-3 py-2.5", automationId && "hidden 2xl:table-cell")}>
                         {automation.assigneeAgentId ? (() => {
                           const agent = agentById.get(automation.assigneeAgentId);
                           return agent ? (
@@ -979,7 +1049,7 @@ export function Automations() {
                       </td>
                       <td className="px-3 py-2.5">
                         {automation.lastRun && lastRunDisplay ? (
-                          <div className="min-w-[260px] max-w-[380px] space-y-1">
+                          <div className={cn("space-y-1", automationId ? "min-w-[170px] max-w-[260px]" : "min-w-[260px] max-w-[380px]")}>
                             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                               <span className={cn(
                                 "inline-flex shrink-0 items-center rounded-md border px-1.5 py-0.5 text-[11px] font-medium leading-none",
@@ -1084,6 +1154,60 @@ export function Automations() {
             </table>
           </div>
         )}
+      </div>
+        </div>
+        </section>
+
+      {automationId ? (
+        <aside
+          data-testid="automation-detail-pane"
+          aria-label="Automation detail"
+          aria-hidden={detailCollapsed || undefined}
+          data-collapsed={detailCollapsed ? "true" : undefined}
+          className={cn(
+            "workspace-main-card min-h-0 min-w-0 flex-1 overflow-hidden rounded-[var(--desktop-workspace-radius)] transition-[width,min-width,max-width,opacity,border-color] duration-300 ease-out motion-reduce:transition-none",
+            detailCollapsed
+              ? "min-[1100px]:pointer-events-none min-[1100px]:invisible min-[1100px]:w-0 min-[1100px]:min-w-0 min-[1100px]:max-w-0 min-[1100px]:flex-none min-[1100px]:border-0 min-[1100px]:opacity-0"
+              : "min-[1100px]:w-[48%] min-[1100px]:min-w-[500px] min-[1100px]:max-w-[860px] min-[1100px]:shrink-0 min-[1100px]:opacity-100",
+          )}
+        >
+          <header
+            data-testid="automation-detail-card-header"
+            className={cn(
+              "workspace-card-header workspace-main-header relative z-30 hidden h-12 shrink-0 items-center justify-between px-3 md:flex",
+              detailCollapsed && "min-[1100px]:invisible",
+            )}
+          >
+            <Button
+              ref={collapseDetailButtonRef}
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="hidden h-8 w-8 text-muted-foreground hover:text-foreground min-[1100px]:inline-flex"
+              aria-label="Collapse automation detail"
+              title="Collapse automation detail"
+              onClick={() => {
+                setDetailCollapsed(true);
+                window.requestAnimationFrame(() => expandDetailButtonRef.current?.focus());
+              }}
+            >
+              <PanelRightClose className="h-4 w-4" />
+            </Button>
+            <Button type="button" size="sm" className="px-4" onClick={() => openComposer()}>
+              <Plus className="mr-1.5 h-3.5 w-3.5" />
+              Create automation
+            </Button>
+          </header>
+          <div className={cn("h-full min-h-0 md:h-[calc(100%-3rem)]", detailCollapsed && "min-[1100px]:hidden")}>
+            <AutomationDetail
+              key={automationId}
+              automationId={automationId}
+              embedded
+              onClose={() => navigate("/automations")}
+            />
+          </div>
+        </aside>
+      ) : null}
       </div>
     </div>
   );

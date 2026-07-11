@@ -112,7 +112,7 @@ async function createCiWebhookAutomationFixture(page: Page) {
 }
 
 test.describe("Automations index layout", () => {
-  test("places the create action in the workspace header", async ({ page }, testInfo) => {
+  test("uses the outer list card and places the create action in its header", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 900 });
 
     const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
@@ -126,14 +126,16 @@ test.describe("Automations index layout", () => {
     await selectOrganization(page, organization.id);
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/automations`);
 
-    const headerActions = page.getByTestId("workspace-main-header-actions");
     const workspaceCard = page.getByTestId("workspace-main-card");
+    const listPane = page.getByTestId("automations-list-pane");
+    const listCardHeader = page.getByTestId("automations-list-card-header");
     const pageContent = page.getByTestId("automations-page-content");
-    const createButton = headerActions.getByRole("button", { name: "Create automation" });
+    const createButton = listCardHeader.getByRole("button", { name: "Create automation" });
     const emptyState = page.getByText("No automations yet");
     const templateGrid = page.getByTestId("automation-template-grid");
 
-    await expect(headerActions).toBeVisible();
+    await expect(workspaceCard).toHaveClass(/workspace-main-card--frameless/);
+    await expect(listCardHeader).toContainText("Automations");
     await expect(pageContent).toBeVisible();
     await expect(createButton).toBeVisible();
     await expect(emptyState).toBeVisible();
@@ -146,40 +148,43 @@ test.describe("Automations index layout", () => {
     await expect(page.getByRole("button", { name: /Create custom automation/ })).toHaveCount(0);
     await expect(page.getByText("Start from scratch")).toHaveCount(0);
 
-    const headerActionsBox = await headerActions.boundingBox();
+    const listCardHeaderBox = await listCardHeader.boundingBox();
     const workspaceCardBox = await workspaceCard.boundingBox();
+    const listPaneBox = await listPane.boundingBox();
     const pageContentBox = await pageContent.boundingBox();
     const createButtonBox = await createButton.boundingBox();
     const emptyStateBox = await emptyState.boundingBox();
 
-    expect(headerActionsBox).not.toBeNull();
+    expect(listCardHeaderBox).not.toBeNull();
     expect(workspaceCardBox).not.toBeNull();
+    expect(listPaneBox).not.toBeNull();
     expect(pageContentBox).not.toBeNull();
     expect(createButtonBox).not.toBeNull();
     expect(emptyStateBox).not.toBeNull();
-    expect(pageContentBox!.width).toBeLessThan(workspaceCardBox!.width - 80);
-    const pageContentLeftGap = pageContentBox!.x - workspaceCardBox!.x;
-    const pageContentRightGap = workspaceCardBox!.x + workspaceCardBox!.width - (pageContentBox!.x + pageContentBox!.width);
-    expect(pageContentLeftGap).toBeGreaterThan(48);
-    expect(Math.abs(pageContentLeftGap - pageContentRightGap)).toBeLessThanOrEqual(8);
-    expect(createButtonBox!.x).toBeGreaterThanOrEqual(headerActionsBox!.x - 2);
-    expect(createButtonBox!.y).toBeGreaterThanOrEqual(headerActionsBox!.y - 2);
-    expect(createButtonBox!.y + createButtonBox!.height).toBeLessThanOrEqual(headerActionsBox!.y + headerActionsBox!.height + 2);
+    expect(Math.abs(pageContentBox!.width - workspaceCardBox!.width)).toBeLessThanOrEqual(2);
+    expect(Math.abs(listPaneBox!.x - workspaceCardBox!.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(listPaneBox!.width - workspaceCardBox!.width)).toBeLessThanOrEqual(2);
+    const cardStyles = await Promise.all([
+      workspaceCard.evaluate((element) => Number.parseFloat(window.getComputedStyle(element).borderTopWidth)),
+      listPane.evaluate((element) => Number.parseFloat(window.getComputedStyle(element).borderTopWidth)),
+    ]);
+    expect(cardStyles[0]).toBe(0);
+    expect(cardStyles[1]).toBeGreaterThan(0);
+    expect(createButtonBox!.x).toBeGreaterThanOrEqual(listCardHeaderBox!.x - 2);
+    expect(createButtonBox!.y).toBeGreaterThanOrEqual(listCardHeaderBox!.y - 2);
+    expect(createButtonBox!.y + createButtonBox!.height).toBeLessThanOrEqual(listCardHeaderBox!.y + listCardHeaderBox!.height + 2);
     expect(createButtonBox!.y + createButtonBox!.height).toBeLessThan(emptyStateBox!.y);
+
+    await page.screenshot({
+      path: testInfo.outputPath("automations-index-outer-card.png"),
+      fullPage: true,
+    });
 
     await createButton.click();
     await expect(page.getByPlaceholder("Automation title")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Use template" })).toBeVisible();
-    await expect(page.getByRole("button", { name: /Send to chat/ })).toBeVisible();
-    await expect(page.getByTestId("automation-create-chat-destination")).toContainText("New chat per run");
     await expect(page.getByRole("button", { name: /Delivery rules/ })).toBeVisible();
     await expect(page.getByText("Every day at 09:00")).toBeVisible();
     await expect(page.getByTestId("automation-composer-shell")).toBeVisible();
-
-    await page.screenshot({
-      path: testInfo.outputPath("automations-index-layout.png"),
-      fullPage: true,
-    });
   });
 
   test("applies the documentation check template from the composer header", async ({ page }, testInfo) => {
@@ -196,7 +201,7 @@ test.describe("Automations index layout", () => {
     await selectOrganization(page, organization.id);
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/automations`);
 
-    await page.getByTestId("workspace-main-header-actions").getByRole("button", { name: "Create automation" }).click();
+    await page.getByTestId("automations-list-card-header").getByRole("button", { name: "Create automation" }).click();
     await page.getByRole("button", { name: "Use template" }).click();
 
     const templatePicker = page.getByTestId("automation-template-picker");
@@ -257,7 +262,7 @@ test.describe("Automations index layout", () => {
     await selectOrganization(page, organization.id);
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/automations`);
 
-    const createButton = page.getByTestId("workspace-main-header-actions").getByRole("button", { name: "Create automation" });
+    const createButton = page.getByTestId("automations-list-card-header").getByRole("button", { name: "Create automation" });
     await createButton.click();
     await page.getByPlaceholder("Automation title").fill("Composer selector interaction");
 
@@ -557,7 +562,7 @@ test.describe("Automations index layout", () => {
     await selectOrganization(page, organization.id);
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/automations`);
 
-    await page.getByTestId("workspace-main-header-actions").getByRole("button", { name: "Create automation" }).click();
+    await page.getByTestId("automations-list-card-header").getByRole("button", { name: "Create automation" }).click();
     await page.getByPlaceholder("Automation title").fill("Composer mention menu interaction");
 
     const assigneePill = page.getByRole("button", { name: /^Assignee$/ });

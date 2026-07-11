@@ -37,6 +37,7 @@ const mockState = vi.hoisted(() => ({
   automations: {} as Record<string, AutomationDetail>,
   automationRuns: {} as Record<string, AutomationRunSummary[]>,
   projects: [] as Project[],
+  routeBase: "/messenger/chat",
   workspaceDirectories: {} as Record<string, { directoryPath: string; entries: OrganizationWorkspaceFileEntry[] }>,
   workspaceFiles: {} as Record<string, { filePath: string; content: string | null; contentType: string | null; previewKind: "text" | "image" | "pdf" | "binary"; contentPath: string | null; truncated: boolean }>,
   queueSnapshot: { activeGenerationId: null, items: [] } as ChatQueueSnapshot,
@@ -53,6 +54,8 @@ const mockState = vi.hoisted(() => ({
   getQueryData: vi.fn(),
   sendInFlightByChatId: {} as Record<string, true>,
   sendMessageStream: vi.fn(),
+  setSidebarOpen: vi.fn(),
+  sidebarOpen: true,
   setQueriesData: vi.fn(),
   setQueryData: vi.fn(),
   setBreadcrumbs: vi.fn(),
@@ -253,7 +256,7 @@ vi.mock("@/lib/router", () => ({
     <a href={to} {...props}>{children}</a>
   ),
   useLocation: () => ({
-    pathname: mockState.conversationId ? `/messenger/chat/${mockState.conversationId}` : "/messenger/chat",
+    pathname: mockState.conversationId ? `${mockState.routeBase}/${mockState.conversationId}` : mockState.routeBase,
     search: "",
     hash: "",
     key: "chat",
@@ -268,7 +271,7 @@ vi.mock("react-router-dom", () => ({
     <a href={typeof to === "string" ? to : "#"} {...props}>{children}</a>
   ),
   useLocation: () => ({
-    pathname: mockState.conversationId ? `/messenger/chat/${mockState.conversationId}` : "/messenger/chat",
+    pathname: mockState.conversationId ? `${mockState.routeBase}/${mockState.conversationId}` : mockState.routeBase,
     search: "",
     hash: "",
     key: "chat",
@@ -296,7 +299,11 @@ vi.mock("@/context/DialogContext", () => ({
 }));
 
 vi.mock("@/context/SidebarContext", () => ({
-  useSidebar: () => ({ isMobile: false }),
+  useSidebar: () => ({
+    isMobile: false,
+    setSidebarOpen: mockState.setSidebarOpen,
+    sidebarOpen: mockState.sidebarOpen,
+  }),
 }));
 
 vi.mock("@/context/I18nContext", () => ({
@@ -1058,6 +1065,7 @@ beforeEach(() => {
       color: "#2f80ed",
     }),
   ];
+  mockState.routeBase = "/messenger/chat";
   mockState.workspaceDirectories = {};
   mockState.workspaceFiles = {};
   mockState.issues = {};
@@ -1094,6 +1102,8 @@ beforeEach(() => {
   mockState.getQueryData.mockReset();
   mockState.sendInFlightByChatId = {};
   mockState.sendMessageStream.mockReset();
+  mockState.setSidebarOpen.mockReset();
+  mockState.sidebarOpen = true;
   mockState.setQueriesData.mockReset();
   mockState.setQueryData.mockReset();
   mockState.stopMessageStream.mockReset();
@@ -1155,6 +1165,34 @@ afterEach(() => {
   cleanupFn = null;
   document.body.innerHTML = "";
   vi.unstubAllGlobals();
+});
+
+describe("Messenger sidebar controls", () => {
+  it("shows an opener on the chat canvas when the Messenger sidebar is collapsed", async () => {
+    mockState.sidebarOpen = false;
+
+    const { container } = renderChat();
+    const openButton = container.querySelector<HTMLButtonElement>('button[aria-label="Open Messenger sidebar"]');
+
+    expect(openButton).not.toBeNull();
+    expect(openButton?.title).toBe("Open Messenger sidebar");
+
+    await act(async () => {
+      openButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockState.setSidebarOpen).toHaveBeenCalledWith(true);
+  });
+
+  it("does not label the legacy Chat sidebar as Messenger", () => {
+    mockState.routeBase = "/chat";
+    mockState.sidebarOpen = false;
+
+    const { container } = renderChat();
+
+    expect(container.querySelector('button[aria-label="Open Messenger sidebar"]')).toBeNull();
+  });
 });
 
 describe("Chat mention sources", () => {

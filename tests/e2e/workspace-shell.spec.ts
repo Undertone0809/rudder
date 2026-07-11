@@ -496,6 +496,32 @@ test.describe("Workspace shell", () => {
     await expect(collapseButton).toBeVisible();
   });
 
+  test("reopens the collapsed Messenger sidebar from the chat canvas", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Workspace-Shell-Messenger-Collapse-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+
+    await gotoOrganizationPath(page, organization, "/messenger/chat");
+
+    const contextCard = page.getByTestId("workspace-context-card");
+    await expect(contextCard).toBeVisible();
+    await page.getByRole("button", { name: "Collapse workspace sidebar" }).click();
+
+    await expect(contextCard).toHaveAttribute("aria-hidden", "true");
+    const openButton = page.getByRole("button", { name: "Open Messenger sidebar" });
+    await expect(openButton).toBeVisible();
+
+    await openButton.click();
+
+    await expect(contextCard).toHaveAttribute("aria-hidden", "false");
+    await expect(contextCard).toHaveCSS("opacity", "1");
+    await expect(page.getByRole("button", { name: "Collapse workspace sidebar" })).toBeVisible();
+  });
+
   test("renders projects inside the org workspace shell", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {

@@ -1,6 +1,13 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -21,6 +28,8 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  MoreHorizontal,
+  Pause,
   Play,
   RefreshCw,
   Repeat,
@@ -56,8 +65,55 @@ import { timeAgo } from "../lib/timeAgo";
 import { cn } from "../lib/utils";
 import { addUniqueId, automationPolicyDescription, automationPolicyLabel, automationRiskLabel, autoResizeTextarea, catchUpPolicies, catchUpPolicyDescriptions, concurrencyPolicies, concurrencyPolicyDescriptions, formatActivityDetailValue, formatAutomationTimestamp, getActivityDetailString, getLocalTimezone, humanizeToken, removeId, runSourceLabel, SecretMessage, SidebarPropertyRow, SidebarRow, SidebarSection, SidebarSelectValue, summarizeTrigger, TriggerEditor, triggerKindLabel } from "./AutomationDetail.parts";
 
-export function AutomationDetail() {
-  const { automationId } = useParams<{ automationId: string }>();
+interface AutomationDetailProps {
+  automationId?: string;
+  embedded?: boolean;
+  onClose?: () => void;
+}
+
+function EmbeddedAutomationDetailState({
+  children,
+  onClose,
+}: {
+  children: ReactNode;
+  onClose?: () => void;
+}) {
+  return (
+    <div
+      className="scrollbar-auto-hide h-full min-h-0 overflow-y-auto overscroll-contain"
+      data-testid="automation-detail-shell"
+    >
+      <header
+        data-testid="automation-detail-panel-header"
+        className="sticky top-0 z-20 border-b border-border/70 bg-background/95 px-4 py-2.5 backdrop-blur sm:px-5"
+      >
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <span className="text-xs font-medium text-muted-foreground">Automation</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground"
+            aria-label="Close automation detail"
+            title="Close automation detail"
+            onClick={onClose}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      </header>
+      <div className="p-4 sm:p-5">{children}</div>
+    </div>
+  );
+}
+
+export function AutomationDetail({
+  automationId: providedAutomationId,
+  embedded = false,
+  onClose,
+}: AutomationDetailProps = {}) {
+  const { automationId: routeAutomationId } = useParams<{ automationId: string }>();
+  const automationId = providedAutomationId ?? routeAutomationId;
   const { selectedOrganizationId, selectedOrganization } = useOrganization();
   const { confirm } = useDialog();
   const { setBreadcrumbs, setHeaderActions } = useBreadcrumbs();
@@ -214,7 +270,9 @@ export function AutomationDetail() {
 
   useEffect(() => {
     if (!automation) return;
-    setBreadcrumbs([{ label: "Automations", href: "/automations" }, { label: automation.title }]);
+    if (!embedded) {
+      setBreadcrumbs([{ label: "Automations", href: "/automations" }, { label: automation.title }]);
+    }
     if (!automationDefaults) return;
 
     const changedAutomation = hydratedAutomationIdRef.current !== automation.id;
@@ -223,7 +281,7 @@ export function AutomationDetail() {
       hydratedAutomationIdRef.current = automation.id;
       if (changedAutomation) lastSubmittedEditKeyRef.current = null;
     }
-  }, [automation, automationDefaults, isEditDirty, setBreadcrumbs]);
+  }, [automation, automationDefaults, embedded, isEditDirty, setBreadcrumbs]);
 
   useEffect(() => {
     autoResizeTextarea(titleInputRef.current);
@@ -327,7 +385,8 @@ export function AutomationDetail() {
   const deleteAutomation = useMutation({
     mutationFn: () => automationsApi.delete(automationId!),
     onSuccess: () => {
-      navigate("/automations");
+      if (onClose) onClose();
+      else navigate("/automations");
       pushToast({ title: "Automation deleted", tone: "success" });
       void Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.list(selectedOrganizationId!) }),
@@ -367,6 +426,7 @@ export function AutomationDetail() {
   });
 
   useEffect(() => {
+    if (embedded) return;
     if (!selectedOrganizationId || !automation) {
       setHeaderActions(null);
       return;
@@ -433,6 +493,7 @@ export function AutomationDetail() {
     automation?.status,
     automation?.title,
     deleteAutomation.isPending,
+    embedded,
     runAutomation.isPending,
     selectedOrganizationId,
     setHeaderActions,
@@ -839,13 +900,28 @@ export function AutomationDetail() {
   }
 
   if (isLoading) {
+    if (embedded) {
+      return (
+        <EmbeddedAutomationDetailState onClose={onClose}>
+          <PageSkeleton variant="issues-list" />
+        </EmbeddedAutomationDetailState>
+      );
+    }
     return <PageSkeleton variant="issues-list" />;
   }
 
   if (error || !automation) {
+    const message = error instanceof Error ? error.message : "Automation not found";
+    if (embedded) {
+      return (
+        <EmbeddedAutomationDetailState onClose={onClose}>
+          <p className="text-sm text-destructive">{message}</p>
+        </EmbeddedAutomationDetailState>
+      );
+    }
     return (
       <p className="pt-6 text-sm text-destructive">
-        {error instanceof Error ? error.message : "Automation not found"}
+        {message}
       </p>
     );
   }
@@ -881,9 +957,101 @@ export function AutomationDetail() {
   });
 
   return (
-    <div className="pb-8" data-testid="automation-detail-shell">
+    <div
+      className={cn(
+        "pb-8",
+        embedded && "scrollbar-auto-hide h-full min-h-0 overflow-y-auto overscroll-contain",
+      )}
+      data-testid="automation-detail-shell"
+    >
+      {embedded ? (
+        <header
+          data-testid="automation-detail-panel-header"
+          className="sticky top-0 z-20 border-b border-border/70 bg-card/95 px-4 py-2.5 backdrop-blur sm:px-5"
+        >
+          <div className="flex min-w-0 items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2 text-xs font-medium">
+              <span className={cn(
+                "h-2 w-2 shrink-0 rounded-full",
+                automationEnabled ? "bg-emerald-500" : "bg-muted-foreground/45",
+              )} />
+              <span className="truncate">{automationLabel}</span>
+              <span className={cn("truncate font-normal", editSyncClassName)}>{editSyncLabel}</span>
+            </div>
+            <div className="flex shrink-0 items-center gap-0.5">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="text-muted-foreground"
+                    aria-label="Automation actions"
+                    title="Automation actions"
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    disabled={runAutomation.isPending || !automationEnabled}
+                    onClick={() => runAutomation.mutate()}
+                  >
+                    <Play className="h-4 w-4" />
+                    {runAutomation.isPending ? "Starting..." : "Run now"}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    variant="destructive"
+                    disabled={deleteAutomation.isPending}
+                    onClick={async () => {
+                      const confirmed = await confirm({
+                        title: `Delete "${automation.title}"?`,
+                        description: "This will permanently remove the automation and stop future runs.",
+                        confirmLabel: "Delete",
+                        tone: "destructive",
+                      });
+                      if (!confirmed) return;
+                      deleteAutomation.mutate();
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground"
+                aria-label={automationEnabled ? "Pause automation" : "Enable automation"}
+                title={automationEnabled ? "Pause automation" : "Enable automation"}
+                disabled={updateAutomationStatus.isPending}
+                onClick={() => updateAutomationStatus.mutate(automationEnabled ? "paused" : "active")}
+              >
+                {automationEnabled ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground"
+                aria-label="Close automation detail"
+                title="Close automation detail"
+                onClick={onClose}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        </header>
+      ) : null}
       {secretMessage && (
-        <div className="relative mb-4 rounded-md border border-blue-500/30 bg-blue-500/5 p-4 pr-12 text-sm">
+        <div className={cn(
+          "relative mb-4 rounded-md border border-blue-500/30 bg-blue-500/5 p-4 pr-12 text-sm",
+          embedded && "mx-4 mt-4 sm:mx-5",
+        )}>
           <div className="mb-3">
             <p className="font-medium">{secretMessage.title}</p>
             <p className="text-xs text-muted-foreground">Save this now. Rudder will not show the secret value again.</p>
@@ -919,12 +1087,20 @@ export function AutomationDetail() {
         </div>
       )}
 
-      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6 px-4 pt-3 sm:px-5 lg:grid-cols-[minmax(0,1fr)_300px] lg:px-6 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_340px]">
-        <main className="min-w-0 space-y-6">
-          <section className="max-w-none space-y-3">
+      <div className={cn(
+        "grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6 px-4 pt-3 sm:px-5",
+        embedded
+          ? "pb-4"
+          : "lg:grid-cols-[minmax(0,1fr)_300px] lg:px-6 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_340px]",
+      )}>
+        <main className={cn("min-w-0 space-y-6", embedded && "contents")}>
+          <section className={cn("max-w-none space-y-3", embedded && "order-1")}>
             <textarea
               ref={titleInputRef}
-              className="min-h-[34px] w-full resize-none overflow-hidden bg-transparent text-[1.45rem] font-semibold leading-tight outline-none placeholder:text-muted-foreground/50 sm:text-[1.6rem]"
+              className={cn(
+                "min-h-[34px] w-full resize-none overflow-hidden bg-transparent font-semibold leading-tight outline-none placeholder:text-muted-foreground/50",
+                embedded ? "text-xl" : "text-[1.45rem] sm:text-[1.6rem]",
+              )}
               placeholder="Automation title"
               rows={1}
               value={editDraft.title}
@@ -955,7 +1131,7 @@ export function AutomationDetail() {
 
             <div
               data-testid="automation-overview-strip"
-              className="border-y border-border/60 bg-transparent py-2.5"
+              className={cn("border-y border-border/60 bg-transparent py-2.5", embedded && "hidden")}
             >
               <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm">
                 <span className="inline-flex items-center gap-1.5">
@@ -1000,15 +1176,21 @@ export function AutomationDetail() {
               mentions={mentionOptions}
               placeholder="Add instructions..."
               bordered
-              className="bg-background/40"
-              contentClassName="min-h-[180px] text-[15px] leading-7 text-foreground/90 md:min-h-[240px]"
+              className={cn("bg-background/40", embedded && "rounded-md")}
+              contentClassName={cn(
+                "text-[15px] leading-7 text-foreground/90",
+                embedded ? "min-h-[220px]" : "min-h-[180px] md:min-h-[240px]",
+              )}
             />
           </section>
 
-          <section aria-label="Activity" className="space-y-3 border-t border-border/70 pt-4">
+          <section
+            aria-label={embedded ? "Previous runs" : "Activity"}
+            className={cn("space-y-3 border-t border-border/70 pt-4", embedded && "order-3")}
+          >
             <div className="flex items-center gap-2 text-sm font-semibold">
-              <ActivityIcon className="h-3.5 w-3.5 text-muted-foreground" />
-              <span>Activity</span>
+              {!embedded ? <ActivityIcon className="h-3.5 w-3.5 text-muted-foreground" /> : null}
+              <span>{embedded ? "Previous runs" : "Activity"}</span>
             </div>
             {hasLiveRun && activeIssueId && automation ? (
               <LiveRunWidget issueId={activeIssueId} orgId={automation.orgId} />
@@ -1052,9 +1234,18 @@ export function AutomationDetail() {
           </section>
         </main>
 
-        <aside className="min-w-0 border-t border-border/70 pt-4 lg:sticky lg:top-20 lg:self-start lg:border-t-0 lg:pt-0">
-          <div data-testid="automation-configuration-card" className="min-w-0 space-y-6 rounded-md border border-border/70 bg-card/85 p-4 shadow-sm">
-            <SidebarSection title="Configuration">
+        <aside className={cn(
+          "min-w-0 border-t border-border/70 pt-4",
+          embedded ? "order-2" : "lg:sticky lg:top-20 lg:self-start lg:border-t-0 lg:pt-0",
+        )}>
+          <div
+            data-testid="automation-configuration-card"
+            className={cn(
+              "min-w-0 space-y-6",
+              embedded ? "border-0 bg-transparent p-0" : "rounded-md border border-border/70 bg-card/85 p-4 shadow-sm",
+            )}
+          >
+            <SidebarSection title={embedded ? "Details" : "Configuration"} card={embedded}>
               <SidebarPropertyRow label="Assignee">
                 <div data-testid="automation-detail-agent-control" className="min-w-0 flex-1">
                   <InlineEntitySelector
@@ -1142,17 +1333,21 @@ export function AutomationDetail() {
                   />
                 </SidebarPropertyRow>
               ) : null}
-              <SidebarPropertyRow label="Repeats">
-                <span className="min-w-0 truncate text-sm text-foreground" title={summarizeTrigger(nextTrigger, locale)}>
-                  {summarizeTrigger(nextTrigger, locale)}
-                </span>
-              </SidebarPropertyRow>
+              {!embedded ? (
+                <>
+                  <SidebarPropertyRow label="Repeats">
+                    <span className="min-w-0 truncate text-sm text-foreground" title={summarizeTrigger(nextTrigger, locale)}>
+                      {summarizeTrigger(nextTrigger, locale)}
+                    </span>
+                  </SidebarPropertyRow>
 
-              <SidebarPropertyRow label="Next run">
-                <span className="min-w-0 truncate text-sm text-muted-foreground" title={formatAutomationTimestamp(nextTrigger?.nextRunAt, "-")}>
-                  {formatAutomationTimestamp(nextTrigger?.nextRunAt, "-")}
-                </span>
-              </SidebarPropertyRow>
+                  <SidebarPropertyRow label="Next run">
+                    <span className="min-w-0 truncate text-sm text-muted-foreground" title={formatAutomationTimestamp(nextTrigger?.nextRunAt, "-")}>
+                      {formatAutomationTimestamp(nextTrigger?.nextRunAt, "-")}
+                    </span>
+                  </SidebarPropertyRow>
+                </>
+              ) : null}
 
               <SidebarPropertyRow label="Project">
                 <div data-testid="automation-detail-project-control" className="min-w-0 flex-1">
@@ -1244,7 +1439,21 @@ export function AutomationDetail() {
               </CollapsibleContent>
             </Collapsible>
 
-            <SidebarSection title="Triggers">
+            <SidebarSection title={embedded ? "Frequency" : "Triggers"}>
+              {embedded ? (
+                <div className="divide-y divide-border/60 rounded-md border border-border/70 bg-card/70 px-3.5">
+                  <SidebarPropertyRow label="Repeat">
+                    <span className="min-w-0 truncate text-sm text-foreground" title={summarizeTrigger(nextTrigger, locale)}>
+                      {summarizeTrigger(nextTrigger, locale)}
+                    </span>
+                  </SidebarPropertyRow>
+                  <SidebarPropertyRow label="Next run">
+                    <span className="min-w-0 truncate text-sm text-muted-foreground" title={formatAutomationTimestamp(nextTrigger?.nextRunAt, "-")}>
+                      {formatAutomationTimestamp(nextTrigger?.nextRunAt, "-")}
+                    </span>
+                  </SidebarPropertyRow>
+                </div>
+              ) : null}
               <Popover open={newTriggerOpen} onOpenChange={setNewTriggerOpen}>
                 <PopoverTrigger asChild>
                   <Button
@@ -1316,24 +1525,26 @@ export function AutomationDetail() {
               </div>
             </SidebarSection>
 
-            <SidebarSection title="Run status">
-              <SidebarRow label="Last ran">
-                <span className="truncate">{latestRun ? timeAgo(latestRun.triggeredAt) : "-"}</span>
-              </SidebarRow>
-              <SidebarRow label="Edits">
-                <span className={editSyncClassName}>{editSyncLabel}</span>
-              </SidebarRow>
-              <SidebarRow label="Risk">
-                <span className="truncate">{riskLabel}</span>
-              </SidebarRow>
-              {hasLiveRun ? (
-                <SidebarRow label="Run">
-                  <Badge variant="outline" className="border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-300">
-                    In progress
-                  </Badge>
+            {!embedded ? (
+              <SidebarSection title="Run status">
+                <SidebarRow label="Last ran">
+                  <span className="truncate">{latestRun ? timeAgo(latestRun.triggeredAt) : "-"}</span>
                 </SidebarRow>
-              ) : null}
-            </SidebarSection>
+                <SidebarRow label="Edits">
+                  <span className={editSyncClassName}>{editSyncLabel}</span>
+                </SidebarRow>
+                <SidebarRow label="Risk">
+                  <span className="truncate">{riskLabel}</span>
+                </SidebarRow>
+                {hasLiveRun ? (
+                  <SidebarRow label="Run">
+                    <Badge variant="outline" className="border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-300">
+                      In progress
+                    </Badge>
+                  </SidebarRow>
+                ) : null}
+              </SidebarSection>
+            ) : null}
 
           </div>
         </aside>

@@ -20,6 +20,7 @@ const markdownEditorProps = vi.hoisted(() => [] as Array<{
   plainText?: boolean;
 }>);
 const automationListState = vi.hoisted(() => ({ items: [] as unknown[] }));
+const automationRouteState = vi.hoisted(() => ({ automationId: undefined as string | undefined }));
 const mockCreateAutomation = vi.hoisted(() => vi.fn(async () => ({ id: "created-auto-1" })));
 const mockCreateTrigger = vi.hoisted(() => vi.fn(async () => ({ trigger: { id: "trigger-created-1" }, secretMaterial: null })));
 
@@ -214,6 +215,16 @@ vi.mock("../api/automations", () => ({
 
 vi.mock("@/lib/router", () => ({
   useNavigate: () => mockNavigate,
+  useParams: () => automationRouteState,
+}));
+
+vi.mock("./AutomationDetail", () => ({
+  AutomationDetail: ({ automationId, onClose }: { automationId: string; onClose: () => void }) => (
+    <div data-testid="mock-automation-detail">
+      <span>{automationId}</span>
+      <button type="button" onClick={onClose}>Close automation detail</button>
+    </div>
+  ),
 }));
 
 vi.mock("../context/OrganizationContext", () => ({
@@ -317,6 +328,7 @@ let cleanupFn: (() => void) | null = null;
 beforeEach(() => {
   document.documentElement.lang = "en";
   automationListState.items = [automation];
+  automationRouteState.automationId = undefined;
   const storage = new Map<string, string>();
   Object.defineProperty(window, "localStorage", {
     configurable: true,
@@ -528,6 +540,27 @@ describe("Automations", () => {
     expect(container.textContent).not.toContain("Archive");
     expect(container.textContent).not.toContain("Restore");
     expect(container.textContent).not.toContain("Archived");
+  });
+
+  it("keeps the selected automation in the list and closes its detail back to the index route", async () => {
+    automationRouteState.automationId = "auto-1";
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const selectedRow = container.querySelector('tr[data-selected="true"]');
+    expect(selectedRow?.getAttribute("aria-current")).toBe("page");
+    expect(container.querySelector('[data-testid="mock-automation-detail"]')?.textContent).toContain("auto-1");
+
+    await act(async () => {
+      Array.from(container.querySelectorAll("button"))
+        .find((button) => button.textContent === "Close automation detail")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith("/automations");
   });
 
   it("passes agent, project, issue, and selected-assignee skill mentions to the create editor", async () => {
