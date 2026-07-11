@@ -144,6 +144,19 @@ export type DesktopImageDataPayload = {
   base64: string;
 };
 
+export type DesktopLocalFilePreview = {
+  canonicalPath: string;
+  fileName: string;
+  parentPath: string;
+  contentType: string;
+  previewKind: "markdown" | "csv" | "text" | "image" | "pdf";
+  content: string | null;
+  base64: string | null;
+  sizeBytes: number;
+  modifiedAt: string;
+  truncated: boolean;
+};
+
 export type DesktopIdeTarget = {
   id: "cursor" | "vscode" | "windsurf" | "zed" | "webstorm" | "intellij";
   label: string;
@@ -192,6 +205,7 @@ export type DesktopShellApi = {
   getBootState(): Promise<DesktopBootState>;
   onBootState(listener: (state: DesktopBootState) => void): () => void;
   openPath(targetPath: string): Promise<void>;
+  previewLocalFile(targetPath: string): Promise<DesktopLocalFilePreview>;
   listAvailableIdes(): Promise<DesktopIdeTarget[]>;
   listWorkspaceLaunchTargets?(): Promise<DesktopWorkspaceLaunchTarget[]>;
   openWorkspace?(rootPath: string, targetId?: DesktopWorkspaceLaunchTarget["id"]): Promise<void>;
