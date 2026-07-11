@@ -1380,7 +1380,7 @@ export function OnboardingWizard() {
                       {loading
                         ? "Creating..."
                         : createdNewOrganizationInSession
-                          ? "Create & Open Messenger"
+                          ? "Create"
                           : "Next"}
                     </Button>
                   )}

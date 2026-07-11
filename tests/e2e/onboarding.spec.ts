@@ -103,9 +103,10 @@ test.describe("Onboarding wizard", () => {
     await expect(onboardingNameInput).toHaveValue(/\S+/, { timeout: 15_000 });
     await page.getByRole("button", { name: "Codex" }).click();
     const selectedCodexModel = await expectSelectedCodexModel(page);
+    expect(selectedCodexModel).toBe("gpt-5.6-sol");
     await onboardingNameInput.fill(updatedAgentName);
 
-    await page.getByRole("button", { name: "Create & Open Messenger" }).click();
+    await page.getByRole("button", { name: "Create", exact: true }).click();
     await expect(page).toHaveURL(/\/messenger(?:\/chat)?$/, { timeout: 30_000 });
 
     const baseUrl = page.url().split("/").slice(0, 3).join("/");
