@@ -88,6 +88,8 @@ owning domain contract.
 
 - Chat conversation/message lifecycle, attachments, rich references, and
   assistant turns: `CHAT.LIFECYCLE.001`, `RUN.CHAT.AGENT.001`.
+- Chat Work Outputs, Sources, References, provenance, responsive shelf, and
+  separate Project roll-up: `CHAT.THREAD.MANIFEST.001`.
 - Global Side Panel opening, tabs, target parsing, empty picker, and adjacent
   object workbench behavior: `CHAT.SIDE.PANEL.001`, with target-specific
   behavior still owned by the issue, automation, Library, chat, and Messenger

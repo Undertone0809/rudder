@@ -40,6 +40,9 @@ Product model:
   cited from issues/comments where practical.
 - `issue_work_products` links issue work to output artifacts with type, URL or
   file identity, title, metadata, and producer context.
+- Chat-native Outputs with structured production evidence are also indexed by
+  `CHAT.THREAD.MANIFEST.001`; they do not need a synthetic Issue merely to remain
+  inspectable from the producing conversation.
 
 Flow:
 
@@ -47,7 +50,8 @@ Flow:
    output-producing run.
 2. Document edits create a revision and update latest body metadata.
 3. Work product records attach output evidence to the issue/run context.
-4. Issue Detail, Library, or output surfaces expose the artifact for review.
+4. Issue Detail, Library, Chat Work manifest, or output surfaces expose the
+   artifact for review.
 5. Future learning or reuse cites the artifact through Library/reference
    contracts rather than relying on raw run logs.
 
@@ -55,6 +59,8 @@ Invariants:
 
 - A work product must stay connected to the organization and the work that
   produced it.
+- Chat-native Output indexing must preserve conversation and Run/Agent
+  provenance and must not classify an arbitrary assistant link as produced work.
 - Document revision history must not be lost when latest body changes.
 - Legacy issue documents remain readable; new durable documents should converge
   toward Library-backed artifacts.
@@ -63,3 +69,5 @@ Evidence:
 
 - Issue document UX E2E covers visible document behavior.
 - Work product service tests cover persisted output links.
+- Chat Work Manifest service/E2E covers Chat-native output classification and
+  inspection.

@@ -958,6 +958,30 @@ contracts:
       - tests/e2e/markdown-website-link-rendering.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+  CHAT.THREAD.MANIFEST.001:
+    owner: product
+    domain: collaboration
+    status: active
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/collaboration/chat-messenger-im.md
+    related_code:
+      - packages/db/src/schema/chat_work_manifest_items.ts
+      - packages/shared/src/chat-work-manifest.ts
+      - packages/shared/src/types/chat.ts
+      - server/src/services/chat-work-manifest.ts
+      - server/src/routes/chats.ts
+      - ui/src/api/chats.ts
+      - ui/src/pages/Chat.work-manifest.tsx
+      - ui/src/pages/Chat.tsx
+    related_tests:
+      - packages/shared/src/chat-work-manifest.test.ts
+      - server/src/__tests__/chat-work-manifest.test.ts
+      - server/src/__tests__/chat-routes.test.ts
+      - ui/src/pages/Chat.work-manifest.test.tsx
+      - tests/e2e/chat-work-manifest.spec.ts
+    related_plans:
+      - doc/plans/2026-07-12-chat-work-manifest.md
   CHAT.SIDE.PANEL.001:
     owner: product
     domain: collaboration

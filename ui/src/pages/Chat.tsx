@@ -92,7 +92,8 @@ import {
   type ChatConversation,
   type ChatMessage,
   type ChatOperationProposalDecisionAction,
-  type ChatQueuedMessage
+  type ChatQueuedMessage,
+  type ChatWorkManifestItem
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -129,6 +130,7 @@ import { createPortal } from "react-dom";
 import { ChatAttachmentPreviewDialog, PendingAttachmentPreview } from "./Chat.attachments";
 import { AskUserPanel, AssistantDraftItem, ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, OptimisticUserDraftItem, StreamTranscriptItem, chatIssueApprovalPayloadWithProposalOverride, type ChatTurnBranchControls } from "./Chat.messages";
 import { ASK_USER_ANSWER_PREFIX, ApprovalAction, AttachmentPreviewState, ChatBranchPreview, ChatEmptyStatePromptOptions, ChatEmptyStateRecentConversations, EMPTY_STATE_PROMPT_GROUPS, EmptyStatePromptLabel, INTERRUPTED_CHAT_CONTINUATION_PROMPT, NO_CHAT_AGENT_LABEL, NO_PROJECT_ID, PLAN_MODE_HELP_TEXT, approvalNeedsAction, askUserAnswerFromMessage, askUserRequestFromMessage, buildChatProposalRejectFeedbackPrompt, buildChatProposalRevisionPrompt, buildDraftChatContextLinks, buildMessengerChatThreadSummary, canRefreshAssistantChatMessage, canRefreshDisplayedAssistantChatMessage, chatEmptyStateHeading, chatSidePanelTargetFromHref, composerMenuPositionForAnchor, computeDisplayedChatMessages, conversationDisplayTitle, draftIssueContextLabel, findLatestUnansweredAskUserMessage, findRetrySourceUserMessage, formatChatPrimaryIssueBreadcrumb, isAskUserMessageAnswered, isChatAgentSelectionLocked, isChatProjectSelectionLocked, isUserVisibleIncomingChatMessage, issueProposalFromMessage, materializePendingAttachment, mergeChatConversationsForStatus, mergeChatMessages, operationProposalFromMessage, operationProposalStatusFromMessage, parseAskUserAnswerMessage, pendingAttachmentKey, projectContextId, projectDisplayName, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, resolveDraftIssueContext, scrollChatMessagesToBottom, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, shouldHandlePlainChatLinkClick, withOptimisticOutgoingMessage, withOptimisticPlanMode } from "./Chat.parts";
+import { ChatWorkManifest } from "./Chat.work-manifest";
 export * from "./Chat.attachments";
 export * from "./Chat.messages";
 export * from "./Chat.parts";
@@ -521,6 +523,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       : activeConversationFromList?.orgId === selectedOrganizationId; const messagesQuery = useQuery({
     queryKey: queryKeys.chats.messages(selectedOrganizationId ?? "__none__", conversationId ?? "__none__"),
     queryFn: () => chatsApi.listMessages(conversationId!, { includeTranscript: false }), enabled: !!conversationId && activeConversationBelongsToSelectedOrganization, });
+  const workManifestQuery = useQuery({
+    queryKey: queryKeys.chats.workManifest(selectedOrganizationId ?? "__none__", conversationId ?? "__none__"),
+    queryFn: () => chatsApi.getWorkManifest(conversationId!),
+    enabled: !!conversationId && activeConversationBelongsToSelectedOrganization,
+  });
   const queueQuery = useQuery({
     queryKey: queryKeys.chats.queue(selectedOrganizationId ?? "__none__", conversationId ?? "__none__"),
     queryFn: () => chatsApi.listQueue(conversationId!),
@@ -683,6 +690,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(selectedOrganizationId, "all") }), invalidateMessengerThreadSummaryQueries(queryClient, selectedOrganizationId), ]);
     if (chatId) { await queryClient.invalidateQueries({ queryKey: queryKeys.chats.detail(selectedOrganizationId, chatId) });
       await queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(selectedOrganizationId, chatId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.chats.workManifest(selectedOrganizationId, chatId) });
       await queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, chatId) }); } await queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(selectedOrganizationId) }); }; const upsertConversation = (conversation: ChatConversation) => { queryClient.setQueryData(queryKeys.chats.detail(conversation.orgId, conversation.id), conversation);
     for (const status of ["active", "all"] as const) {
       queryClient.setQueryData<ChatConversation[]>(
@@ -756,6 +764,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.chats.detail(selectedOrganizationId, chatId) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(selectedOrganizationId, chatId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.chats.workManifest(selectedOrganizationId, chatId) }),
       ]);
     }
   }, [queryClient, selectedOrganizationId]); const updateConversationMutation = useMutation({
@@ -1224,7 +1233,37 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     const target = findChatMessageElement(scrollElement, messageId);
     if (!target) return;
     revealChatMessageElement(target);
-  }, []); const pendingAskUserMessage = useMemo(
+  }, []); const openWorkManifestItem = useCallback((item: ChatWorkManifestItem) => {
+    const metadata = item.metadata ?? {};
+    if (item.targetType === "library_entry") {
+      const entryId = typeof metadata.entryId === "string" ? metadata.entryId : null;
+      if (!entryId) return;
+      openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), {
+        kind: "library_entry",
+        entryId,
+        path: typeof metadata.filePath === "string" ? metadata.filePath : null,
+        label: item.title,
+      });
+      return;
+    }
+    if (item.targetType === "library_file") {
+      const filePath = typeof metadata.filePath === "string" ? metadata.filePath : null;
+      if (!filePath) return;
+      openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), {
+        kind: "library_file",
+        filePath,
+        label: item.title,
+      });
+      return;
+    }
+    const assetId = item.targetType === "attachment" && typeof metadata.assetId === "string"
+      ? metadata.assetId
+      : null;
+    const href = item.url ?? (assetId ? `/api/assets/${encodeURIComponent(assetId)}/content` : null);
+    if (!href) return;
+    const opened = window.open(href, "_blank", "noopener,noreferrer");
+    if (opened) opened.opener = null;
+  }, [openSidePanelTargetForContext, resolveCurrentSidePanelChatContextKey]); const pendingAskUserMessage = useMemo(
     () => findLatestUnansweredAskUserMessage(visibleMessages), [visibleMessages], ); const pendingAskUserRequest = pendingAskUserMessage ? askUserRequestFromMessage(pendingAskUserMessage) : null; const lastMarkedReadKeyRef = useRef<string | null>(null); const optimisticReadBadgeMarkerRef = useRef<string | null>(null);
   useEffect(() => { if (!pendingAskUserRequest) return; closeComposerContextMenus(); }, [closeComposerContextMenus, pendingAskUserRequest]);
   useEffect(() => { const chatId = selectedConversation?.id ?? null; if (!chatId || showMessagesLoading) return; if (initialScrolledConversationRef.current === chatId) return; initialScrolledConversationRef.current = chatId; const frame = requestAnimationFrame(() => { const scrollElement = chatMessagesScrollElementRef.current; if (!scrollElement) return; scrollChatMessagesToBottom(scrollElement); }); return () => cancelAnimationFrame(frame); }, [selectedConversation?.id, showMessagesLoading, visibleMessages.length]);
@@ -1257,7 +1296,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     if (agentSelectionLocked) {
       setAgentMenuOpen(false); } }, [agentSelectionLocked]);
   const loadError = conversationsQuery.error ?? conversationQuery.error ?? messagesQuery.error ?? agentsError ?? organizationSkillsError ?? activeAgentSkillsError ?? projectsError ?? issuesError;
-  const loadErrorMessage = loadError instanceof Error ? loadError.message : loadError ? "Failed to load chat data." : null; const startActiveConversationRename = () => { if (!selectedConversation) return; setRenamingConversationId(selectedConversation.id); setRenameDraft(selectedConversation.title); }; const submitActiveConversationRename = () => { if (!selectedConversation || renamingConversationId !== selectedConversation.id) return; const trimmed = renameDraft.trim(); setRenamingConversationId(null); if (!trimmed || trimmed === selectedConversation.title) return; renameConversationMutation.mutate({ chatId: selectedConversation.id, title: trimmed }); }; const copyActiveConversationLink = async () => { if (!selectedConversation) return;
+  const loadErrorMessage = loadError instanceof Error ? loadError.message : loadError ? "Failed to load chat data." : null; const workManifestError = workManifestQuery.error instanceof Error ? workManifestQuery.error.message : workManifestQuery.error ? "Failed to load work." : null; const startActiveConversationRename = () => { if (!selectedConversation) return; setRenamingConversationId(selectedConversation.id); setRenameDraft(selectedConversation.title); }; const submitActiveConversationRename = () => { if (!selectedConversation || renamingConversationId !== selectedConversation.id) return; const trimmed = renameDraft.trim(); setRenamingConversationId(null); if (!trimmed || trimmed === selectedConversation.title) return; renameConversationMutation.mutate({ chatId: selectedConversation.id, title: trimmed }); }; const copyActiveConversationLink = async () => { if (!selectedConversation) return;
     try {
       await navigator.clipboard.writeText(chatReferenceMarkdown(selectedConversation));
       pushToast({ title: "Copied chat link", tone: "success" });
@@ -2128,6 +2167,18 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
+              <div className="pointer-events-auto absolute right-4 top-12 z-20 md:right-5">
+                <ChatWorkManifest
+                  manifest={workManifestQuery.data ?? null}
+                  loading={workManifestQuery.isPending}
+                  error={workManifestError}
+                  sidePanelOpen={sidePanelOpen}
+                  onOpenItem={openWorkManifestItem}
+                  onJumpToMessage={jumpToChatMessage}
+                  onAddSource={() => fileInputRef.current?.click()}
+                  onOpenProject={(projectId) => navigate(`/projects/${projectId}`)}
+                />
+              </div>
               {isMobile && conversations.length > 0 ? (
                 <div className="shrink-0 border-b panel-divider px-4 py-2 md:hidden">
                   <div className="mx-auto w-full max-w-4xl">
@@ -2154,7 +2205,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                           }} >
                           <Plus className="mr-2 h-4 w-4" />
                           New chat </DropdownMenuItem> </DropdownMenuContent> </DropdownMenu> </div> </div> ) : null}
-              <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden px-4 py-4 md:px-5">
+              <div className={cn(
+                "relative flex min-h-0 flex-1 flex-col overflow-hidden px-4 py-4 md:px-5",
+                !sidePanelOpen && "xl:pr-[19rem]",
+              )}>
                 <div ref={chatMessagesScrollRef} data-testid="chat-messages-scroll-region" className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto" >
                   <div data-testid="chat-messages-shell" className="relative mx-auto w-full max-w-4xl">
                     {showChatScrollMap && !showMessagesLoading ? (

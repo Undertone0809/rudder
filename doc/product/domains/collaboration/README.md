@@ -25,7 +25,7 @@ edit_policy: user_confirmed_only
 ## Owns
 
 - Chat conversations, messages, attachments, rich references, and assistant
-  turns.
+  turns, including the thread Work manifest.
 - Messenger thread directory, unread state, custom groups, pin/archive/delete,
   and attention aggregation.
 - Issue-thread presentation of comments/activity when shown in Messenger.
@@ -47,6 +47,8 @@ edit_policy: user_confirmed_only
 - `CHAT.RICH.REFERENCE.RENDERING.001`: markdown rich-reference tokens keep
   consistent labels, icon rhythm, baseline alignment, and truncation behavior
   across composers and read-only rendered markdown.
+- `CHAT.THREAD.MANIFEST.001`: each Chat exposes a typed, provenance-preserving
+  Outputs/Sources/References index with a separate Project roll-up.
 - `CHAT.SIDE.PANEL.001`: Side Panel is a global board workbench for opening
   supported referenced issues, automations, Library targets, chats, and browser
   placeholders without replacing the current route.

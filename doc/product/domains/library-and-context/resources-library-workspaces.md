@@ -83,6 +83,9 @@ Invariants:
   boundary.
 - Organization resources must not be injected into unrelated runs just because
   they exist.
+- A Chat Work manifest Reference is not a Project Context Resource. It becomes
+  eligible run context only after an operator explicitly creates/selects the
+  resource and attaches it to the Project through this contract's flow.
 
 Evidence:
 

@@ -1,3 +1,4 @@
+import type { ChatWorkManifestCategory } from "../chat-work-manifest.js";
 import type { ChatConversationMutability } from "../constants.js";
 import type { Approval } from "./approval.js";
 
@@ -195,6 +196,46 @@ export interface ChatMessage {
   supersededAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export type ChatWorkManifestTargetType =
+  | "attachment"
+  | "external_url"
+  | "library_entry"
+  | "library_file"
+  | "project_resource";
+
+export interface ChatWorkManifestItem {
+  id: string;
+  orgId: string;
+  conversationId: string;
+  projectId: string | null;
+  messageId: string | null;
+  runId: string | null;
+  category: ChatWorkManifestCategory;
+  targetType: ChatWorkManifestTargetType;
+  targetKey: string;
+  title: string;
+  url: string | null;
+  status: "ready" | "unavailable" | "hidden";
+  sourceRole: "user" | "assistant" | "project" | null;
+  createdByAgentId: string | null;
+  createdByUserId: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ChatWorkManifestResponse {
+  conversationId: string;
+  totalCount: number;
+  outputs: ChatWorkManifestItem[];
+  sources: ChatWorkManifestItem[];
+  references: ChatWorkManifestItem[];
+  project: {
+    id: string;
+    totalCount: number;
+  } | null;
 }
 
 export interface ChatTranscriptSummary {

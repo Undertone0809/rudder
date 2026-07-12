@@ -53,6 +53,7 @@ import {
   buildChatTitlePromptFromMessages,
   chatTitleGenerationService,
 } from "../services/chat-title-generation.js";
+import { chatWorkManifestService } from "../services/chat-work-manifest.js";
 import { validateCron } from "../services/cron.js";
 import {
   accessService,
@@ -91,6 +92,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
   const access = accessService(db);
   const assistantSvc = chatAssistantService(db, storage);
   const chatRunsSvc = chatAgentRunService(db);
+  const workManifestSvc = chatWorkManifestService(db);
   const operatorProfiles = operatorProfileService(db);
   const heartbeat = heartbeatService(db);
   const productIntelligence = productIntelligenceService(db);
@@ -1250,6 +1252,16 @@ export function chatRoutes(db: Db, storage: StorageService) {
     const userId = req.actor.type === "board" ? (req.actor.userId ?? "local-board") : null;
     const refreshed = await svc.getById(conversation.id, userId);
     res.json(await assistantSvc.enrichConversation(refreshed as ChatConversation));
+  });
+
+  router.get("/chats/:id/work-manifest", async (req, res) => {
+    const conversation = await assertConversationAccess(req, req.params.id as string);
+    if (!conversation) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    await workManifestSvc.reconcileConversation(conversation.id);
+    res.json(await workManifestSvc.getConversationManifest(conversation.id));
   });
 
   router.patch("/chats/:id", validate(updateChatConversationSchema), async (req, res) => {

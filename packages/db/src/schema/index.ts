@@ -30,6 +30,7 @@ export { chatConversations } from "./chat_conversations.js";
 export { chatGenerations } from "./chat_generations.js";
 export { chatMessages } from "./chat_messages.js";
 export { chatQueuedMessages } from "./chat_queued_messages.js";
+export { chatWorkManifestItems } from "./chat_work_manifest_items.js";
 export { cliAuthChallenges } from "./cli_auth_challenges.js";
 export { costEvents } from "./cost_events.js";
 export { costMonthlySpendRollups } from "./cost_monthly_spend_rollups.js";
