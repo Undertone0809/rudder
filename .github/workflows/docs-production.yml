@@ -182,6 +182,26 @@ jobs:
           }
           fs.writeFileSync(analyticsFile, source.split(placeholder).join(measurementId));
 
+          const analyticsTag = '<script src="/ga.js" defer></script>';
+
+          function injectAnalyticsTag(dir) {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const filePath = path.join(dir, entry.name);
+              if (entry.isDirectory()) {
+                injectAnalyticsTag(filePath);
+                continue;
+              }
+              if (!entry.name.endsWith(".html")) continue;
+              const html = fs.readFileSync(filePath, "utf8");
+              if (html.includes(analyticsTag)) continue;
+              if (!html.includes("</head>")) {
+                throw new Error(`Closing head tag was not found in exported HTML: ${filePath}`);
+              }
+              fs.writeFileSync(filePath, html.replace("</head>", `${analyticsTag}</head>`));
+            }
+          }
+          injectAnalyticsTag(exportDir);
+
           function assertHtmlFlightPayloadsRemainUntouched(dir) {
             for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
               const filePath = path.join(dir, entry.name);
@@ -256,7 +276,9 @@ jobs:
           DOCS_HEALTH_HOSTS="$hosts" node scripts/check-docs-public-health.mjs
 
           analytics_source="$(curl -fsSL -H 'Cache-Control: no-cache' "https://$DOCS_PRODUCTION_DOMAIN/ga.js")"
+          page_source="$(curl -fsSL -H 'Cache-Control: no-cache' "https://$DOCS_PRODUCTION_DOMAIN/")"
           grep -F 'G-7LFL6GL5QZ' <<< "$analytics_source" >/dev/null
+          grep -F '<script src="/ga.js" defer></script>' <<< "$page_source" >/dev/null
           if grep -F '__RUDDER_GA_MEASUREMENT_ID__' <<< "$analytics_source" >/dev/null; then
             echo "Production docs analytics still contains the measurement placeholder" >&2
             exit 1
