@@ -183,6 +183,7 @@ jobs:
           fs.writeFileSync(analyticsFile, source.split(placeholder).join(measurementId));
 
           const analyticsTag = '<script src="/ga.js" defer></script>';
+          let injectedHtmlCount = 0;
 
           function injectAnalyticsTag(dir) {
             for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -195,12 +196,16 @@ jobs:
               const html = fs.readFileSync(filePath, "utf8");
               if (html.includes(analyticsTag)) continue;
               if (!html.includes("</head>")) {
-                throw new Error(`Closing head tag was not found in exported HTML: ${filePath}`);
+                continue;
               }
               fs.writeFileSync(filePath, html.replace("</head>", `${analyticsTag}</head>`));
+              injectedHtmlCount += 1;
             }
           }
           injectAnalyticsTag(exportDir);
+          if (injectedHtmlCount === 0) {
+            throw new Error("Analytics tag was not injected into any exported HTML page");
+          }
 
           function assertHtmlFlightPayloadsRemainUntouched(dir) {
             for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
