@@ -87,6 +87,7 @@ const CHAT_SIDE_PANEL_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([
   ".txt",
   ".text",
 ]);
+const CHAT_SIDE_PANEL_TAB_DND_MIME = "application/x-rudder-side-panel-tab";
 type BrowserWebviewElement = HTMLElement & {
   canGoBack?: () => boolean;
   canGoForward?: () => boolean;
@@ -1119,6 +1120,8 @@ export function ChatSidePanel({
   selectedOrganizationId: string | null | undefined;
 }) {
   const sidePanel = useSidePanel();
+  const [draggedTabKey, setDraggedTabKey] = useState<string | null>(null);
+  const [tabDropTarget, setTabDropTarget] = useState<{ key: string; position: "before" | "after" } | null>(null);
   const queryClient = useQueryClient();
   const operatorDisplayName = useOperatorDisplayName();
   const { openTarget } = sidePanel;
@@ -1294,29 +1297,67 @@ export function ChatSidePanel({
             {visibleTabs.map((tab) => {
               const tabKey = sidePanelTargetKey(tab);
               const selected = tabKey === activeTargetKey;
+              const dragging = draggedTabKey === tabKey;
               return (
                 <div
                   key={tabKey}
                   role="presentation"
+                  data-side-panel-tab-key={tabKey}
+                  data-dragging={dragging ? "true" : undefined}
+                  data-drop-position={tabDropTarget?.key === tabKey ? tabDropTarget.position : undefined}
+                  onDragStart={(event) => {
+                    setDraggedTabKey(tabKey);
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData(CHAT_SIDE_PANEL_TAB_DND_MIME, tabKey);
+                  }}
+                  onDragOver={(event) => {
+                    const sourceKey = draggedTabKey ?? event.dataTransfer.getData(CHAT_SIDE_PANEL_TAB_DND_MIME);
+                    if (!sourceKey || sourceKey === tabKey) return;
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                    const bounds = event.currentTarget.getBoundingClientRect();
+                    const position = event.clientX < bounds.left + bounds.width / 2 ? "before" : "after";
+                    setTabDropTarget({ key: tabKey, position });
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    const sourceKey = draggedTabKey ?? event.dataTransfer.getData(CHAT_SIDE_PANEL_TAB_DND_MIME);
+                    if (sourceKey && sourceKey !== tabKey) {
+                      const bounds = event.currentTarget.getBoundingClientRect();
+                      const position = event.clientX < bounds.left + bounds.width / 2 ? "before" : "after";
+                      sidePanel.reorderTarget(sourceKey, tabKey, position);
+                    }
+                    setDraggedTabKey(null);
+                    setTabDropTarget(null);
+                  }}
+                  onDragEnd={() => {
+                    setDraggedTabKey(null);
+                    setTabDropTarget(null);
+                  }}
                   className={cn(
-                    "group flex h-7 max-w-[12.5rem] shrink-0 items-center rounded-full border pr-1 transition-colors",
+                    "group relative flex h-7 max-w-[12.5rem] shrink-0 items-center rounded-full border pr-1 transition-[color,background-color,border-color,box-shadow,opacity]",
                     selected
                       ? "border-[color:var(--border-strong)] bg-[color:var(--surface-active)] text-foreground"
                       : "border-transparent text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground",
+                    dragging && "opacity-50",
+                    tabDropTarget?.key === tabKey && tabDropTarget.position === "before" && "shadow-[-3px_0_0_0_var(--accent)]",
+                    tabDropTarget?.key === tabKey && tabDropTarget.position === "after" && "shadow-[3px_0_0_0_var(--accent)]",
                   )}
                 >
                   <button
                     type="button"
                     role="tab"
+                    draggable={!isMobile && visibleTabs.length > 1}
                     aria-selected={selected}
                     data-testid="chat-side-panel-tab"
-                    className="min-w-0 flex-1 truncate rounded-l-full px-2.5 py-1 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                    className="min-w-0 flex-1 cursor-grab truncate rounded-l-full px-2.5 py-1 text-left text-xs active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                     onClick={() => sidePanel.setActiveKey(tabKey)}
                   >
                     {tab.label}
                   </button>
                   <button
                     type="button"
+                    draggable={false}
                     data-testid="chat-side-panel-tab-close"
                     aria-label={`Close ${tab.label} tab`}
                     className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[color:var(--surface-panel)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"

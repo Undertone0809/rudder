@@ -25,6 +25,7 @@ type SidePanelContextValue = {
   closePanel: () => void;
   closeTarget: (key: string) => void;
   replaceTarget: (key: string, target: SidePanelTarget) => void;
+  reorderTarget: (key: string, targetKey: string, position: "before" | "after") => void;
   setActiveKey: (key: string | null) => void;
   setContextKey: (contextKey: string | null) => void;
 };
@@ -284,6 +285,22 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     }));
   }, [contextKey, writeContextState]);
 
+  const reorderTarget = useCallback((key: string, targetKey: string, position: "before" | "after") => {
+    if (key === targetKey) return;
+    writeContextState(contextKey, (current) => {
+      const sourceIndex = current.tabs.findIndex((candidate) => sidePanelTargetKey(candidate) === key);
+      const targetIndex = current.tabs.findIndex((candidate) => sidePanelTargetKey(candidate) === targetKey);
+      if (sourceIndex < 0 || targetIndex < 0) return current;
+      const nextTabs = [...current.tabs];
+      const [source] = nextTabs.splice(sourceIndex, 1);
+      if (!source) return current;
+      const adjustedTargetIndex = nextTabs.findIndex((candidate) => sidePanelTargetKey(candidate) === targetKey);
+      const insertionIndex = adjustedTargetIndex + (position === "after" ? 1 : 0);
+      nextTabs.splice(insertionIndex, 0, source);
+      return { ...current, tabs: nextTabs };
+    });
+  }, [contextKey, writeContextState]);
+
   const setActiveKey = useCallback((key: string | null) => {
     writeContextState(contextKey, (current) => ({ ...current, activeKey: key, hasPanelState: true, open: true }));
   }, [contextKey, writeContextState]);
@@ -300,12 +317,13 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     openTarget,
     openTargetForContext,
     replaceTarget,
+    reorderTarget,
     setActiveKey,
     setContextKey,
     showPanel,
     showPanelForContext,
     tabs: currentContextState.tabs,
-  }), [clearCurrentContext, closePanel, closeTarget, contextKey, currentContextState.activeKey, currentContextState.tabs, hidePanel, open, openEmpty, openTarget, openTargetForContext, replaceTarget, setActiveKey, setContextKey, showPanel, showPanelForContext]);
+  }), [clearCurrentContext, closePanel, closeTarget, contextKey, currentContextState.activeKey, currentContextState.tabs, hidePanel, open, openEmpty, openTarget, openTargetForContext, reorderTarget, replaceTarget, setActiveKey, setContextKey, showPanel, showPanelForContext]);
 
   return <SidePanelContext.Provider value={value}>{children}</SidePanelContext.Provider>;
 }

@@ -56,6 +56,8 @@ function SidePanelProbe() {
       <button type="button" onClick={() => sidePanel.setContextKey("chat:b")}>Chat B</button>
       <button type="button" onClick={() => sidePanel.openTarget(issueTarget)}>Open issue</button>
       <button type="button" onClick={() => sidePanel.openTarget({ kind: "browser", url: "https://example.com", label: "Example", tabId: "browser-1" })}>Open browser</button>
+      <button type="button" onClick={() => sidePanel.reorderTarget("browser-tab:browser-1", "issue:issue-1:", "before")}>Move browser first</button>
+      <button type="button" onClick={() => sidePanel.reorderTarget("browser-tab:browser-1", "issue:issue-1:", "after")}>Move browser last</button>
       <button type="button" onClick={() => {
         for (let index = 1; index <= 9; index += 1) {
           sidePanel.openTarget({
@@ -167,6 +169,30 @@ describe("SidePanelProvider context visibility", () => {
     expect(text(container, "active-key")).toBe("issue:issue-1:");
     expect(text(container, "open")).toBe("false");
     expect(text(container, "tab-count")).toBe("1");
+  });
+
+  it("reorders tabs inside their context without changing the active tab", () => {
+    ({ container, root } = renderSidePanelProvider());
+
+    click(container, "Chat A");
+    click(container, "Open issue");
+    click(container, "Open browser");
+    expect(text(container, "tab-keys")).toBe("issue:issue-1:,browser-tab:browser-1");
+    expect(text(container, "active-key")).toBe("browser-tab:browser-1");
+
+    click(container, "Move browser first");
+    expect(text(container, "tab-keys")).toBe("browser-tab:browser-1,issue:issue-1:");
+    expect(text(container, "active-key")).toBe("browser-tab:browser-1");
+
+    click(container, "Move browser last");
+    expect(text(container, "tab-keys")).toBe("issue:issue-1:,browser-tab:browser-1");
+    expect(text(container, "active-key")).toBe("browser-tab:browser-1");
+
+    click(container, "Move browser first");
+
+    click(container, "Chat B");
+    click(container, "Chat A");
+    expect(text(container, "tab-keys")).toBe("browser-tab:browser-1,issue:issue-1:");
   });
 
   it("preserves the destination chat closed state even when the current chat is open", () => {

@@ -1336,6 +1336,22 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
     await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toContainText("New tab");
 
+    const browserTabs = sidePanel.getByTestId("chat-side-panel-tab");
+    await browserTabs.last().dragTo(browserTabs.first(), {
+      targetPosition: { x: 2, y: 14 },
+    });
+    await expect(browserTabs.first()).toContainText("New tab");
+    await expect(browserTabs.last()).toContainText("localhost");
+    await expect(browserTabs.first()).toHaveAttribute("aria-selected", "true");
+
+    await browserTabs.first().dragTo(browserTabs.last(), {
+      targetPosition: { x: 64, y: 14 },
+    });
+    await expect(browserTabs.first()).toContainText("localhost");
+    await expect(browserTabs.last()).toContainText("New tab");
+    await expect(browserTabs.last()).toHaveAttribute("aria-selected", "true");
+    await page.screenshot({ path: "/tmp/rudder-side-panel-tab-reorder.png", fullPage: true });
+
     await sidePanel.getByLabel("Close Side Panel").click();
     await expect(page.getByTestId("chat-side-panel")).toBeHidden();
     await expect(stableWebview).toHaveCount(1);
