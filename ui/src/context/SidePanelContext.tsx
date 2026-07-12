@@ -31,6 +31,7 @@ type SidePanelContextValue = {
 
 const SidePanelContext = createContext<SidePanelContextValue | null>(null);
 const DEFAULT_SIDE_PANEL_CONTEXT_KEY = "global";
+export const MAX_BROWSER_TABS_PER_CONTEXT = 8;
 
 function normalizeContextKey(contextKey: string | null | undefined): string {
   return contextKey?.trim() || DEFAULT_SIDE_PANEL_CONTEXT_KEY;
@@ -42,6 +43,75 @@ function emptyContextState(): SidePanelContextState {
 
 function contextHasPanelState(state: SidePanelContextState | undefined) {
   return Boolean(state && (state.hasPanelState || state.tabs.length > 0 || state.activeKey !== null));
+}
+
+function upsertSidePanelTarget(
+  tabs: SidePanelTarget[],
+  activeKey: string | null,
+  target: SidePanelTarget,
+): { activeKey: string | null; tabs: SidePanelTarget[] } {
+  const nextKey = sidePanelTargetKey(target);
+  const matchingBrowser = target.kind === "browser" && target.dedupeKey
+    ? tabs.find((candidate) => candidate.kind === "browser" && candidate.dedupeKey === target.dedupeKey)
+    : undefined;
+  if (matchingBrowser?.kind === "browser") {
+    const matchingKey = sidePanelTargetKey(matchingBrowser);
+    const replacement = { ...target, tabId: matchingBrowser.tabId };
+    return {
+      activeKey: matchingKey,
+      tabs: tabs.map((candidate) => (sidePanelTargetKey(candidate) === matchingKey ? replacement : candidate)),
+    };
+  }
+  if (tabs.some((candidate) => sidePanelTargetKey(candidate) === nextKey)) {
+    return {
+      activeKey: nextKey,
+      tabs: tabs.map((candidate) => (sidePanelTargetKey(candidate) === nextKey ? target : candidate)),
+    };
+  }
+  const nextTabs = [...tabs, target];
+  if (target.kind !== "browser") return { activeKey: nextKey, tabs: nextTabs };
+  const browserTabCount = tabs.filter((candidate) => candidate.kind === "browser").length;
+  if (browserTabCount < MAX_BROWSER_TABS_PER_CONTEXT) return { activeKey: nextKey, tabs: nextTabs };
+
+  // Ordinary Rudder links carry a URL dedupe key. At capacity, navigate an
+  // existing Browser tab so the click still has a visible result.
+  if (target.dedupeKey) {
+    const activeBrowser = tabs.find((candidate) => (
+      candidate.kind === "browser" && sidePanelTargetKey(candidate) === activeKey
+    ));
+    const reusable = activeBrowser ?? tabs.find((candidate) => candidate.kind === "browser");
+    if (reusable?.kind === "browser") {
+      const replacement = { ...target, tabId: reusable.tabId };
+      const reusableKey = sidePanelTargetKey(reusable);
+      return {
+        activeKey: reusableKey,
+        tabs: tabs.map((candidate) => (sidePanelTargetKey(candidate) === reusableKey ? replacement : candidate)),
+      };
+    }
+  }
+  return { activeKey, tabs };
+}
+
+function withoutBrowserTargets(state: SidePanelContextState): SidePanelContextState {
+  const activeIndex = state.activeKey
+    ? state.tabs.findIndex((target) => sidePanelTargetKey(target) === state.activeKey)
+    : -1;
+  const tabs = state.tabs.filter((target) => target.kind !== "browser");
+  if (tabs.length === state.tabs.length) return state;
+  const activeStillExists = state.activeKey !== null
+    && tabs.some((target) => sidePanelTargetKey(target) === state.activeKey);
+  const fallback = tabs[Math.min(Math.max(activeIndex, 0), tabs.length - 1)] ?? tabs.at(-1) ?? null;
+  return {
+    ...state,
+    activeKey: state.activeKey === null
+      ? null
+      : activeStillExists
+        ? state.activeKey
+        : fallback
+          ? sidePanelTargetKey(fallback)
+          : null,
+    tabs,
+  };
 }
 
 export function SidePanelProvider({ children }: { children: ReactNode }) {
@@ -75,24 +145,18 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const openTarget = useCallback((target: SidePanelTarget) => {
-    const nextKey = sidePanelTargetKey(target);
     writeContextState(contextKey, (current) => {
-      const tabs = current.tabs.some((candidate) => sidePanelTargetKey(candidate) === nextKey)
-        ? current.tabs.map((candidate) => (sidePanelTargetKey(candidate) === nextKey ? target : candidate))
-        : [...current.tabs, target];
-      return { activeKey: nextKey, hasPanelState: true, open: true, tabs };
+      const result = upsertSidePanelTarget(current.tabs, current.activeKey, target);
+      return { ...result, hasPanelState: true, open: true };
     });
     setOpen(true);
   }, [contextKey, writeContextState]);
 
   const openTargetForContext = useCallback((nextContextKey: string | null, target: SidePanelTarget) => {
     const normalizedKey = normalizeContextKey(nextContextKey);
-    const nextKey = sidePanelTargetKey(target);
     const nextState = writeContextState(normalizedKey, (current) => {
-      const tabs = current.tabs.some((candidate) => sidePanelTargetKey(candidate) === nextKey)
-        ? current.tabs.map((candidate) => (sidePanelTargetKey(candidate) === nextKey ? target : candidate))
-        : [...current.tabs, target];
-      return { activeKey: nextKey, hasPanelState: true, open: true, tabs };
+      const result = upsertSidePanelTarget(current.tabs, current.activeKey, target);
+      return { ...result, hasPanelState: true, open: true };
     });
     if (normalizedKey === currentContextKeyRef.current) {
       setCurrentContextState(nextState);
@@ -169,6 +233,20 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     return () => {
       void setSidePanelCloseShortcutActive(false).catch(() => undefined);
     };
+  }, []);
+
+  useEffect(() => {
+    const desktopShell = readDesktopShell();
+    if (!desktopShell?.onBrowserReset) return undefined;
+    return desktopShell.onBrowserReset(() => {
+      const nextStates = Object.fromEntries(
+        Object.entries(contextStatesRef.current).map(([key, state]) => [key, withoutBrowserTargets(state)]),
+      );
+      contextStatesRef.current = nextStates;
+      const current = nextStates[currentContextKeyRef.current] ?? emptyContextState();
+      setCurrentContextState(current);
+      setOpen(contextHasPanelState(current) && current.open);
+    });
   }, []);
 
   useEffect(() => {

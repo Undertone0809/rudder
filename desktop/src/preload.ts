@@ -263,6 +263,16 @@ contextBridge.exposeInMainWorld("desktopShell", {
     ipcRenderer.invoke("desktop:get-system-permissions") as Promise<DesktopSystemPermissions>,
   sendFeedback: () => ipcRenderer.invoke("desktop:send-feedback") as Promise<void>,
   openExternal: (target: string) => ipcRenderer.invoke("desktop:open-external", target) as Promise<void>,
+  forceOpenExternal: (target: string) => ipcRenderer.invoke("desktop:force-open-external", target) as Promise<void>,
+  onOpenWebLink: (listener: (request: { url: string; source: "link" | "browser_popup" }) => void) => {
+    const wrapped = (_event: IpcRendererEvent, request: { url: string; source: "link" | "browser_popup" }) => {
+      listener(request);
+    };
+    ipcRenderer.on("desktop:open-web-link", wrapped);
+    return () => {
+      ipcRenderer.removeListener("desktop:open-web-link", wrapped);
+    };
+  },
   openNotificationSettings: () =>
     ipcRenderer.invoke("desktop:open-notification-settings") as Promise<OpenNotificationSettingsResult>,
   setBadgeCount: (count: number) => invokeOptionalDesktopChannel("badgeCount", "desktop:set-badge-count", count),
@@ -327,6 +337,8 @@ declare global {
       getSystemPermissions(): Promise<DesktopSystemPermissions>;
       sendFeedback(): Promise<void>;
       openExternal(target: string): Promise<void>;
+      forceOpenExternal(target: string): Promise<void>;
+      onOpenWebLink(listener: (request: { url: string; source: "link" | "browser_popup" }) => void): () => void;
       openNotificationSettings(): Promise<OpenNotificationSettingsResult>;
       setBadgeCount(count: number): Promise<void>;
       showNotification(payload: DesktopInboxNotificationPayload): Promise<void>;

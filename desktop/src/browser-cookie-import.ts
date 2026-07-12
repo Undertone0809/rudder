@@ -109,8 +109,8 @@ export function createBrowserCookieImporter(options: {
     set(details: BrowserCookieSetDetails): Promise<void>;
     flushStore(): Promise<void>;
   };
-  runWorker(source: TrustedBrowserImportSource): Promise<ChromiumCookieDatabaseResult>;
-  runExclusive<T>(operation: () => Promise<T>): Promise<T>;
+  runWorker(source: TrustedBrowserImportSource, signal?: AbortSignal): Promise<ChromiumCookieDatabaseResult>;
+  runExclusive<T>(operation: (signal?: AbortSignal) => Promise<T>): Promise<T>;
 }) {
   return {
     listBrowserImportSources: (): Promise<BrowserImportSource[]> => options.sourceRegistry.listSources(),
@@ -119,8 +119,11 @@ export function createBrowserCookieImporter(options: {
         throw new TypeError("Browser cookie import must be enabled for a known source.");
       }
       const source = options.sourceRegistry.resolveSource(input.sourceId);
-      return options.runExclusive(async () => {
-        const workerResult = await options.runWorker(source);
+      return options.runExclusive(async (signal) => {
+        if (signal?.aborted) throw new Error("Browser data import canceled.");
+        const workerResult = signal
+          ? await options.runWorker(source, signal)
+          : await options.runWorker(source);
         const errors = workerResult.errors.slice(0, MAX_REPORTED_ERRORS);
         let importedCount = 0;
         let skippedCount = workerResult.skippedCount;

@@ -7,6 +7,7 @@ import { accessApi } from "./api/access";
 import { agentsApi } from "./api/agents";
 import { authApi } from "./api/auth";
 import { healthApi } from "./api/health";
+import { DesktopBrowserLinkBridge } from "./components/DesktopBrowserLinkBridge";
 import { DesktopReleaseNotesDialog } from "./components/DesktopReleaseNotesDialog";
 import { DesktopUpdatePromptBridge } from "./components/DesktopUpdatePromptBridge";
 import { DesktopUpdateStatusCard } from "./components/DesktopUpdateStatusCard";
@@ -546,6 +547,7 @@ export function App() {
   return (
     <>
       <SidePanelProvider>
+      <DesktopBrowserLinkBridge />
       <Routes location={showDesktopSettingsOverlay ? settingsOverlayBackgroundPath! : location}>
         <Route path="auth" element={<AuthPage />} />
         <Route path="board-claim/:token" element={<BoardClaimPage />} />

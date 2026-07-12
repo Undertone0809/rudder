@@ -6,6 +6,7 @@ import type {
   AgentSkillEntry,
   AgentSkillSnapshot,
   AgentSkillSyncMode,
+  DeploymentMode,
   OrganizationSkill,
   OrganizationSkillCreateRequest,
   OrganizationSkillDetail,
@@ -30,6 +31,11 @@ import {
 } from "../../home-paths.js";
 import { agentEnabledSkillsService } from "../agent-enabled-skills.js";
 import { agentService } from "../agents.js";
+import {
+  type BrowserCapabilityServiceOptions,
+  resolveBrowserCapability,
+  resolveBrowserCapabilityDeployment,
+} from "../browser-capability.js";
 import { instanceSettingsService } from "../instance-settings.js";
 import { projectService } from "../projects.js";
 
@@ -110,7 +116,14 @@ import {
   resolveRawGitHubUrl,
 } from "./organization-skills.sources.js";
 
-export function organizationSkillService(db: Db) {
+export function organizationSkillService(
+  db: Db,
+  options: BrowserCapabilityServiceOptions = {},
+) {
+  const deploymentMode: DeploymentMode = resolveBrowserCapabilityDeployment(
+    db,
+    options.deploymentMode,
+  );
   const agents = agentService(db);
   const enabledSkills = agentEnabledSkillsService(db);
   const projects = projectService(db);
@@ -136,8 +149,14 @@ export function organizationSkillService(db: Db) {
   }
 
   async function ensureBundledSkills(orgId: string) {
-    const browserEnabled = (await instanceSettingsService(db).getBrowser()).enabled;
-    const activeBundledSlugs = getActiveRudderBundledSkillSlugs(browserEnabled);
+    const browserSettings = await instanceSettingsService(db).getBrowser();
+    const browserCapability = resolveBrowserCapability({
+      deploymentMode,
+      browserEnabled: browserSettings.enabled,
+    });
+    const activeBundledSlugs = getActiveRudderBundledSkillSlugs(
+      browserCapability.instanceEligible,
+    );
     const activeBundledKeys = activeBundledSlugs.map((slug) => `rudder/${slug}`);
     for (const skillsRoot of resolveBundledSkillsRoot()) {
       const stats = await fs.stat(skillsRoot).catch(() => null);

@@ -54,6 +54,7 @@ describe("Browser Broker registry", () => {
     const [url, init] = fetchImpl.mock.calls[0]!;
     expect(String(url)).toBe("http://[::1]:4242/browser");
     expect(init?.method).toBe("POST");
+    expect(init?.redirect).toBe("error");
     expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${token}`);
     expect(JSON.parse(String(init?.body))).toEqual({
       identity: { orgId: "org-1", agentId: "agent-1", runId: "run-1" },
@@ -99,6 +100,62 @@ describe("Browser Broker registry", () => {
     } catch (error) {
       expect(JSON.stringify(error)).not.toContain("must-not-escape");
     }
+  });
+
+  it("keeps the request deadline active while reading a slow response body", async () => {
+    const registry = createBrowserBrokerRegistry({
+      requestTimeoutMs: 20,
+      fetchImpl: vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"ok":true,"result":'));
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } })),
+    });
+    registry.register({ endpoint: "http://127.0.0.1:4141/browser", token: "f".repeat(48) });
+
+    await expect(registry.forward({
+      identity: { orgId: "org-1", agentId: "agent-1", runId: "run-1" },
+      action: "tabs",
+      args: {},
+    })).rejects.toMatchObject({ code: "browser_unavailable" } satisfies Partial<BrowserBrokerError>);
+  });
+
+  it("rejects oversized Broker responses before parsing or returning page data", async () => {
+    const registry = createBrowserBrokerRegistry({
+      maxResponseBytes: 64,
+      fetchImpl: vi.fn(async () => new Response(JSON.stringify({
+        ok: true,
+        result: { text: "secret".repeat(100) },
+      }), { status: 200, headers: { "content-type": "application/json" } })),
+    });
+    registry.register({ endpoint: "http://127.0.0.1:4141/browser", token: "g".repeat(48) });
+
+    await expect(registry.forward({
+      identity: { orgId: "org-1", agentId: "agent-1", runId: "run-1" },
+      action: "read",
+      args: { tabId: "tab-1" },
+    })).rejects.toMatchObject({ code: "browser_broker_protocol_error" } satisfies Partial<BrowserBrokerError>);
+  });
+
+  it("accepts the Base64 envelope for a screenshot at the Desktop PNG limit", async () => {
+    const encodedScreenshot = "A".repeat(Math.ceil(10_000_000 / 3) * 4);
+    const registry = createBrowserBrokerRegistry({
+      fetchImpl: vi.fn(async () => new Response(JSON.stringify({
+        ok: true,
+        result: { tabId: "tab-1", mimeType: "image/png", base64: encodedScreenshot },
+      }), { status: 200, headers: { "content-type": "application/json" } })),
+    });
+    registry.register({ endpoint: "http://127.0.0.1:4141/browser", token: "h".repeat(48) });
+
+    const result = await registry.forward({
+      identity: { orgId: "org-1", agentId: "agent-1", runId: "run-1" },
+      action: "screenshot",
+      args: { tabId: "tab-1" },
+    }) as { tabId: string; mimeType: string; base64: string };
+    expect(result).toMatchObject({ tabId: "tab-1", mimeType: "image/png" });
+    expect(result.base64).toHaveLength(encodedScreenshot.length);
+    expect(result.base64.at(0)).toBe("A");
+    expect(result.base64.at(-1)).toBe("A");
   });
 
   it("does not let a stale Desktop credential unregister a replacement Broker", () => {

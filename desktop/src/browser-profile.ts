@@ -4,27 +4,6 @@ import path from "node:path";
 
 const BROWSER_PARTITION_PREFIX = "persist:rudder-browser-v1-";
 
-export type BrowserStorageType =
-  | "cookies"
-  | "filesystem"
-  | "indexdb"
-  | "localstorage"
-  | "shadercache"
-  | "websql"
-  | "serviceworkers"
-  | "cachestorage";
-
-export const BROWSER_STORAGE_TYPES: BrowserStorageType[] = [
-  "cookies",
-  "filesystem",
-  "indexdb",
-  "localstorage",
-  "shadercache",
-  "websql",
-  "serviceworkers",
-  "cachestorage",
-];
-
 export type DesktopBrowserResetEvent = {
   reason: "clear" | "disabled";
   enabled: boolean;
@@ -39,8 +18,7 @@ export type BrowserProfileState = {
 
 export type BrowserProfileSession = {
   clearAuthCache(): Promise<void>;
-  clearCache(): Promise<void>;
-  clearStorageData(options?: { storages?: BrowserStorageType[] }): Promise<void>;
+  clearData(): Promise<void>;
   cookies: {
     flushStore(): Promise<void>;
   };
@@ -49,9 +27,10 @@ export type BrowserProfileSession = {
 export type BrowserProfileController = {
   getPartition(): string;
   getState(): BrowserProfileState;
-  runExclusive<T>(operation: () => Promise<T>): Promise<T>;
+  runExclusive<T>(operation: (signal?: AbortSignal) => Promise<T>): Promise<T>;
   clearBrowserData(): Promise<void>;
   setEnabled(enabled: boolean): Promise<void>;
+  shutdown(): Promise<void>;
 };
 
 export function canonicalizeBrowserInstanceRoot(instanceRoot: string): string {
@@ -146,27 +125,72 @@ export function createBrowserProfileController(options: {
   let enabled = true;
   let pendingClears = 0;
   let pendingDisables = 0;
+  let pendingEnables = 0;
+  let shuttingDown = false;
+  let shutdownInFlight: Promise<void> | null = null;
+  const admittedControlOperations = new Set<AbortController>();
   let lifecycleQueue: Promise<void> = Promise.resolve();
+  let revocationQueue: Promise<void> = Promise.resolve();
 
   const getState = (): BrowserProfileState => ({
     enabled,
-    available: enabled && pendingClears === 0 && pendingDisables === 0,
+    available: enabled
+      && !shuttingDown
+      && pendingClears === 0
+      && pendingDisables === 0
+      && pendingEnables === 0,
     clearing: pendingClears > 0,
   });
 
-  const runClear = async (): Promise<void> => {
-    await options.broadcastReset({ reason: "clear", enabled, available: false });
-    await options.closeBrowserGuests();
+  const clearStoredData = async (): Promise<void> => {
     await options.session.clearAuthCache();
-    await options.session.clearCache();
-    await options.session.clearStorageData({ storages: BROWSER_STORAGE_TYPES });
+    await options.session.clearData();
     await options.session.cookies.flushStore();
   };
 
-  const runExclusive = <T>(operation: () => Promise<T>): Promise<T> => {
+  const enqueueLifecycle = <T>(operation: () => Promise<T>): Promise<T> => {
     const result = lifecycleQueue.then(operation);
     lifecycleQueue = result.then(() => undefined, () => undefined);
     return result;
+  };
+
+  const revokeBrowserGuests = (reason: DesktopBrowserResetEvent["reason"]): Promise<void> => {
+    const resetEnabled = enabled;
+    const operation = revocationQueue.then(async () => {
+      await options.broadcastReset({ reason, enabled: resetEnabled, available: false });
+      await options.closeBrowserGuests();
+    });
+    revocationQueue = operation.catch(() => undefined);
+    return operation;
+  };
+
+  const runExclusive = <T>(operation: (signal?: AbortSignal) => Promise<T>): Promise<T> => {
+    if (!getState().available) {
+      return Promise.reject(new Error("Rudder Browser is unavailable during a Browser profile lifecycle operation."));
+    }
+    const abortController = new AbortController();
+    admittedControlOperations.add(abortController);
+    return enqueueLifecycle(async () => {
+      if (abortController.signal.aborted) {
+        throw new Error("Rudder Browser control operation was canceled during shutdown.");
+      }
+      return operation(abortController.signal);
+    }).finally(() => {
+      admittedControlOperations.delete(abortController);
+    });
+  };
+
+  const shutdown = (): Promise<void> => {
+    if (shutdownInFlight) return shutdownInFlight;
+    shuttingDown = true;
+    enabled = false;
+    for (const operation of admittedControlOperations) operation.abort();
+    const revocation = revokeBrowserGuests("disabled");
+    shutdownInFlight = Promise.allSettled([lifecycleQueue, revocation]).then((results) => {
+      const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+      if (failure) throw failure.reason;
+    });
+    return shutdownInFlight;
   };
 
   return {
@@ -174,8 +198,15 @@ export function createBrowserProfileController(options: {
     getState,
     runExclusive,
     clearBrowserData: () => {
+      if (shuttingDown) {
+        return Promise.reject(new Error("Rudder Browser is unavailable during shutdown."));
+      }
       pendingClears += 1;
-      const operation = runExclusive(runClear);
+      const revocation = revokeBrowserGuests("clear");
+      const operation = enqueueLifecycle(async () => {
+        await revocation;
+        await clearStoredData();
+      });
       const trackedOperation = operation.finally(() => {
         pendingClears -= 1;
       });
@@ -183,19 +214,24 @@ export function createBrowserProfileController(options: {
       return trackedOperation;
     },
     setEnabled: (nextEnabled) => {
+      if (shuttingDown) return shutdownInFlight ?? Promise.resolve();
       enabled = nextEnabled;
-      if (nextEnabled) return lifecycleQueue;
+      if (nextEnabled) {
+        pendingEnables += 1;
+        return Promise.all([lifecycleQueue, revocationQueue])
+          .then(() => undefined)
+          .finally(() => {
+            pendingEnables -= 1;
+          });
+      }
 
       pendingDisables += 1;
-      const operation = runExclusive(async () => {
-        await options.broadcastReset({ reason: "disabled", enabled: false, available: false });
-        await options.closeBrowserGuests();
-      });
+      const operation = revokeBrowserGuests("disabled");
       const trackedOperation = operation.finally(() => {
         pendingDisables -= 1;
       });
-      lifecycleQueue = trackedOperation.catch(() => undefined);
       return trackedOperation;
     },
+    shutdown,
   };
 }

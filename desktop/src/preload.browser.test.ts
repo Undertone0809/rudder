@@ -21,6 +21,9 @@ vi.mock("electron", () => ({
 await import("./preload.js");
 
 type ExposedDesktopShell = {
+  openExternal(target: string): Promise<void>;
+  forceOpenExternal(target: string): Promise<void>;
+  onOpenWebLink(listener: (request: unknown) => void): () => void;
   listBrowserImportSources(): Promise<unknown[]>;
   importBrowserData(input: { sourceId: string; importCookies: true }): Promise<unknown>;
   getBrowserPartition(): Promise<string>;
@@ -63,6 +66,25 @@ describe("Rudder Browser preload bridge", () => {
     expect(electronMocks.invoke).toHaveBeenNthCalledWith(6, "desktop:set-browser-enabled", "false");
   });
 
+  it("preserves structured source-open import failures from IPC", async () => {
+    const sourceOpenResult = {
+      status: "failed",
+      importedCount: 0,
+      skippedCount: 0,
+      failedCount: 1,
+      errors: [{
+        errorCode: "BROWSER_SOURCE_OPEN",
+        message: "Close the source browser and try the import again.",
+      }],
+    };
+    electronMocks.invoke.mockResolvedValueOnce(sourceOpenResult);
+
+    await expect(desktopShell().importBrowserData({
+      sourceId: "opaque-source",
+      importCookies: true,
+    })).resolves.toEqual(sourceOpenResult);
+  });
+
   it("subscribes and unsubscribes Browser reset listeners", () => {
     const shell = desktopShell();
     const listener = vi.fn();
@@ -76,5 +98,23 @@ describe("Rudder Browser preload bridge", () => {
 
     remove();
     expect(electronMocks.removeListener).toHaveBeenCalledWith("desktop:browser-reset", resetRegistration?.[1]);
+  });
+
+  it("routes normal and explicit external links through separate channels", async () => {
+    const shell = desktopShell();
+    const listener = vi.fn();
+
+    await shell.openExternal("https://example.com/normal");
+    await shell.forceOpenExternal("https://example.com/explicit");
+    const remove = shell.onOpenWebLink(listener);
+    const registration = electronMocks.on.mock.calls.find(([channel]) => channel === "desktop:open-web-link");
+    const request = { url: "https://example.com/popup", source: "browser_popup" };
+    registration?.[1]({}, request);
+
+    expect(electronMocks.invoke).toHaveBeenNthCalledWith(1, "desktop:open-external", "https://example.com/normal");
+    expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "desktop:force-open-external", "https://example.com/explicit");
+    expect(listener).toHaveBeenCalledWith(request);
+    remove();
+    expect(electronMocks.removeListener).toHaveBeenCalledWith("desktop:open-web-link", registration?.[1]);
   });
 });

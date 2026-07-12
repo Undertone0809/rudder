@@ -31,6 +31,33 @@ function cookie(overrides: Partial<ImportedChromiumCookie> = {}): ImportedChromi
 }
 
 describe("Browser Cookie importer", () => {
+  it("passes the profile cancellation signal to the import worker", async () => {
+    const abortController = new AbortController();
+    const runWorker = vi.fn(async () => ({
+      cookies: [],
+      skippedCount: 0,
+      failedCount: 0,
+      errors: [],
+    }));
+    const importer = createBrowserCookieImporter({
+      sourceRegistry: {
+        listSources: async () => [],
+        resolveSource: () => source,
+      },
+      cookies: {
+        get: async () => [],
+        set: async () => undefined,
+        flushStore: async () => undefined,
+      },
+      runWorker,
+      runExclusive: async (operation) => operation(abortController.signal),
+    });
+
+    await importer.importBrowserData({ sourceId: source.id, importCookies: true });
+
+    expect(runWorker).toHaveBeenCalledWith(source, abortController.signal);
+  });
+
   it("preserves destination cookies, maps host-only/domain cookies, and reports partial writes", async () => {
     const set = vi.fn(async (details: { name?: string }) => {
       if (details.name === "write-fails") throw new Error("secret failure for /private/path");

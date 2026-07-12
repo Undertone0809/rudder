@@ -14,7 +14,10 @@ import { agentService } from "./agents.js";
 import { chatAgentRunService } from "./chat-agent-runs.js";
 import { asString, buildConversationPrompt, buildMissingResultSentinelRepairPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractGeneratedAttachments, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseAssistantTextBlock, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
 import { preflightManagedAgentWorkspace } from "./managed-workspace-preflight.js";
-import { executeAdapterWithModelFallbacks } from "./runtime-kernel/model-fallback.js";
+import {
+  executeAdapterWithModelFallbacks,
+  projectPrimaryRuntimeConfig,
+} from "./runtime-kernel/model-fallback.js";
 export * from "./chat-assistant.helpers.js";
 
 function combineChatUsage(
@@ -511,12 +514,13 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
 
       const executeChatRepairAdapter = async (chatPrompt: string) => {
         parser = adapter.parseStdoutLine;
+        const repairConfig = projectPrimaryRuntimeConfig(config, runtimeAgentType);
         return adapter.execute({
           runId,
           agent: stubAgent({
             orgId: input.conversation.orgId,
             agentRuntimeType: runtimeAgentType,
-            agentRuntimeConfig: config,
+            agentRuntimeConfig: repairConfig,
             sourceLabel: runtimeSource.descriptor.sourceLabel,
             sourceId: runtimeAgentId,
           }),
@@ -526,7 +530,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             sessionDisplayId: null,
             taskKey: null,
           },
-          config,
+          config: repairConfig,
           context: {
             chatPrompt,
             chatConversationId: input.conversation.id,

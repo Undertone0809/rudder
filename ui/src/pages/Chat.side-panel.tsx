@@ -1,6 +1,7 @@
 import { agentsApi } from "@/api/agents";
 import { authApi } from "@/api/auth";
 import { chatsApi } from "@/api/chats";
+import { instanceSettingsApi } from "@/api/instanceSettings";
 import { issuesApi } from "@/api/issues";
 import { organizationsApi } from "@/api/orgs";
 import { AgentIcon } from "@/components/AgentIconPicker";
@@ -18,9 +19,15 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { useSidePanel } from "@/context/SidePanelContext";
+import { MAX_BROWSER_TABS_PER_CONTEXT, useSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
 import { useOperatorDisplayName } from "@/hooks/useOperatorDisplayName";
+import {
+  BROWSER_SIDE_PANEL_BLANK_URL as CHAT_SIDE_PANEL_BROWSER_BLANK_URL,
+  browserSidePanelLabel as chatSidePanelBrowserLabel,
+  createBrowserSidePanelTarget as createChatSidePanelBrowserTarget,
+  normalizeBrowserSidePanelUrl as normalizeChatSidePanelBrowserUrl,
+} from "@/lib/browser-side-panel";
 import { readDesktopShell, type DesktopFileLaunchTargetId, type DesktopWorkspaceLaunchTarget } from "@/lib/desktop-shell";
 import { queryKeys } from "@/lib/queryKeys";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
@@ -80,8 +87,6 @@ const CHAT_SIDE_PANEL_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([
   ".txt",
   ".text",
 ]);
-const CHAT_SIDE_PANEL_BROWSER_BLANK_URL = "about:blank";
-
 type BrowserWebviewElement = HTMLElement & {
   canGoBack?: () => boolean;
   canGoForward?: () => boolean;
@@ -127,44 +132,11 @@ function humanizeSidePanelToken(value: string | null | undefined, fallback = "-"
   return trimmed.replace(/_/g, " ");
 }
 
-function createChatSidePanelBrowserTarget(url = CHAT_SIDE_PANEL_BROWSER_BLANK_URL): Extract<SidePanelTarget, { kind: "browser" }> {
-  return {
-    kind: "browser",
-    url,
-    label: chatSidePanelBrowserLabel(url),
-    tabId: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-  };
-}
-
-function chatSidePanelBrowserLabel(url: string) {
-  const trimmed = url.trim();
-  if (!trimmed || trimmed === CHAT_SIDE_PANEL_BROWSER_BLANK_URL) return "New tab";
-  if (trimmed.startsWith("data:")) return "Data URL";
-  try {
-    const parsed = new URL(trimmed);
-    return parsed.hostname || parsed.protocol.replace(":", "") || "Browser";
-  } catch {
-    return trimmed;
-  }
-}
-
-function normalizeChatSidePanelBrowserUrl(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return CHAT_SIDE_PANEL_BROWSER_BLANK_URL;
-  if (/^(about|data|file|https?):/i.test(trimmed)) return trimmed;
-  if (/\s/.test(trimmed)) return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
-  if (/^(localhost|\d{1,3}(?:\.\d{1,3}){3})(:\d+)?(\/.*)?$/i.test(trimmed)) {
-    return `http://${trimmed}`;
-  }
-  if (trimmed.includes(".")) {
-    return `https://${trimmed}`;
-  }
-  return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
-}
-
 function SidePanelEmptyState({
+  browserAvailable,
   onOpenTarget,
 }: {
+  browserAvailable: boolean;
   onOpenTarget: (target: SidePanelTarget) => void;
 }) {
   const targets: Array<{
@@ -173,12 +145,12 @@ function SidePanelEmptyState({
     icon: typeof Compass;
     target: SidePanelTarget;
   }> = [
-    {
+    ...(browserAvailable ? [{
       label: "Browser",
       description: "Keep a browser tab beside the current workspace.",
       icon: Compass,
       target: createChatSidePanelBrowserTarget(),
-    },
+    }] : []),
     {
       label: "Library",
       description: "Browse workspace files with the Library tree.",
@@ -215,9 +187,11 @@ function SidePanelEmptyState({
 }
 
 function SidePanelPlaceholderView({
+  browserAvailable,
   target,
   onOpenTarget,
 }: {
+  browserAvailable: boolean;
   target: Extract<SidePanelTarget, { kind: "placeholder" }>;
   onOpenTarget: (target: SidePanelTarget) => void;
 }) {
@@ -250,6 +224,7 @@ function SidePanelPlaceholderView({
       ],
     },
   }[target.targetKind];
+  const actions = config.actions.filter((action) => browserAvailable || action.target.kind !== "browser");
   const Icon = config.icon;
 
   return (
@@ -261,7 +236,7 @@ function SidePanelPlaceholderView({
         <h3 className="mt-3 text-base font-semibold text-foreground">{config.title}</h3>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">{config.body}</p>
         <div className="mt-5 flex flex-wrap justify-center gap-2">
-          {config.actions.map((action) => (
+          {actions.map((action) => (
             <Button key={action.label} type="button" variant="outline" size="sm" onClick={() => onOpenTarget(action.target)}>
               {action.label}
             </Button>
@@ -845,12 +820,16 @@ function ChatSidePanelLibraryFileView({
 }
 
 function ChatSidePanelBrowserView({
+  active,
+  canOpenNewTab,
   target,
   targetKey,
   onOpenTarget,
   onReplaceTarget,
   onCloseTarget,
 }: {
+  active: boolean;
+  canOpenNewTab: boolean;
   target: Extract<SidePanelTarget, { kind: "browser" }>;
   targetKey: string;
   onOpenTarget: (target: SidePanelTarget) => void;
@@ -905,9 +884,9 @@ function ChatSidePanelBrowserView({
     setTitle(target.label);
     setAddressValue(target.url === CHAT_SIDE_PANEL_BROWSER_BLANK_URL ? "" : target.url);
     setLoadError(null);
-    webviewReadyRef.current = false;
-    setNavigationState({ canGoBack: false, canGoForward: false });
-  }, [target.label, target.url]);
+    if (webviewReadyRef.current) updateNavigationState();
+    else setNavigationState({ canGoBack: false, canGoForward: false });
+  }, [target.label, target.url, updateNavigationState]);
 
   useEffect(() => {
     const webview = webviewRef.current;
@@ -1002,11 +981,21 @@ function ChatSidePanelBrowserView({
 
   const openExternal = () => {
     if (isBlank) return;
+    const desktopShell = readDesktopShell();
+    if (desktopShell) {
+      void (desktopShell.forceOpenExternal?.(currentUrl) ?? desktopShell.openExternal(currentUrl));
+      return;
+    }
     window.open(currentUrl, "_blank", "noopener,noreferrer");
   };
 
   return (
-    <div className="flex min-h-full flex-col" data-testid="chat-side-panel-browser-view">
+    <div
+      className="flex min-h-full flex-col"
+      data-testid={active ? "chat-side-panel-browser-view" : "chat-side-panel-browser-view-hidden"}
+      data-browser-tab-id={target.tabId}
+      data-active={active ? "true" : "false"}
+    >
       <div className="flex shrink-0 items-center gap-1 border-b border-[color:var(--border-soft)] bg-[color:var(--surface-panel)] px-2 py-2">
         <Button
           type="button"
@@ -1059,6 +1048,8 @@ function ChatSidePanelBrowserView({
           variant="ghost"
           size="icon-xs"
           aria-label="Open new browser tab"
+          title={canOpenNewTab ? "Open new browser tab" : "Browser tab limit reached"}
+          disabled={!canOpenNewTab}
           onClick={() => onOpenTarget(createChatSidePanelBrowserTarget())}
         >
           <Plus className="h-3.5 w-3.5" />
@@ -1096,7 +1087,11 @@ function ChatSidePanelBrowserView({
           ref: handleWebviewRef,
           src: currentUrl,
           className: "min-h-[52vh] flex-1 bg-[color:var(--surface-panel)]",
-          "data-testid": "chat-side-panel-browser-webview",
+          "data-testid": active ? "chat-side-panel-browser-webview" : "chat-side-panel-browser-webview-hidden",
+          "data-browser-tab-id": target.tabId,
+          "data-active": active ? "true" : "false",
+          // Lets Electron surface requests to the main-process handler, which
+          // always denies native windows before routing approved URLs.
           allowpopups: "true",
         })}
       </div>
@@ -1128,12 +1123,30 @@ export function ChatSidePanel({
   const operatorDisplayName = useOperatorDisplayName();
   const { openTarget } = sidePanel;
 
-  useEffect(() => {
-    if (!target) return;
-    openTarget(target);
-  }, [openTarget, target]);
-
   const visibleTabs = sidePanel.tabs;
+  const browserTargets = useMemo(
+    () => visibleTabs.filter((candidate): candidate is Extract<SidePanelTarget, { kind: "browser" }> => candidate.kind === "browser"),
+    [visibleTabs],
+  );
+  const desktopBrowserAvailable = Boolean(readDesktopShell()?.getBrowserPartition);
+  const browserSettingsQuery = useQuery({
+    queryKey: queryKeys.instance.browserSettings,
+    queryFn: () => instanceSettingsApi.getBrowser(),
+    enabled: desktopBrowserAvailable,
+  });
+  const browserAvailable = desktopBrowserAvailable && browserSettingsQuery.data?.enabled === true;
+  useEffect(() => {
+    if (!target || (target.kind === "browser" && !browserAvailable)) return;
+    openTarget(target);
+  }, [browserAvailable, openTarget, target]);
+
+  useEffect(() => {
+    const browserUnavailable = !desktopBrowserAvailable || browserSettingsQuery.data?.enabled === false;
+    if (!browserUnavailable) return;
+    for (const browserTarget of browserTargets) {
+      sidePanel.closeTarget(sidePanelTargetKey(browserTarget));
+    }
+  }, [browserSettingsQuery.data?.enabled, browserTargets, desktopBrowserAvailable, sidePanel]);
   const activeTarget = useMemo(() => {
     if (visibleTabs.length === 0) return null;
     if (sidePanel.activeKey === null) return null;
@@ -1217,7 +1230,7 @@ export function ChatSidePanel({
     enabled: !!selectedOrganizationId && !!libraryDirectoryTarget,
   });
 
-  if (!sidePanel.open && !exiting) return null;
+  if (!sidePanel.open && !exiting && browserTargets.length === 0) return null;
 
   const loading = Boolean(
     (issueTarget && issueQuery.isPending)
@@ -1236,7 +1249,10 @@ export function ChatSidePanel({
   const libraryDirectory = libraryDirectoryTarget ? libraryDirectoryQuery.data : null;
   const activeTargetKey = activeTarget ? sidePanelTargetKey(activeTarget) : "empty";
 
-  const openSidePanelTarget = (nextTarget: SidePanelTarget) => sidePanel.openTarget(nextTarget);
+  const openSidePanelTarget = (nextTarget: SidePanelTarget) => {
+    if (nextTarget.kind === "browser" && !browserAvailable) return;
+    sidePanel.openTarget(nextTarget);
+  };
   const replaceSidePanelTarget = (key: string, nextTarget: SidePanelTarget) => sidePanel.replaceTarget(key, nextTarget);
 
   const closeSidePanelTab = (tab: SidePanelTarget) => sidePanel.closeTarget(sidePanelTargetKey(tab));
@@ -1249,7 +1265,6 @@ export function ChatSidePanel({
 
   return (
     <aside
-      key={activeTargetKey}
       data-testid="chat-side-panel"
       className={cn(
         "motion-chat-side-panel flex min-h-0 w-full shrink-0 flex-col gap-1.5 bg-transparent",
@@ -1260,6 +1275,7 @@ export function ChatSidePanel({
             : "md:w-[min(420px,36vw)] transition-[width,opacity,transform] duration-300 ease-out motion-reduce:transition-none",
         exiting && "translate-x-4 scale-[0.985] opacity-0",
         resizing && "transition-none",
+        !sidePanel.open && !exiting && "hidden",
       )}
       style={desktopPanelStyle}
       aria-label="Side Panel"
@@ -1356,8 +1372,25 @@ export function ChatSidePanel({
           browserTarget || issueTarget || automationTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
           issueTarget && !browserTarget && "px-4 py-4",
         )} data-testid="chat-side-panel-scroll-body">
-          {!activeTarget ? (
-            <SidePanelEmptyState onOpenTarget={openSidePanelTarget} />
+          {browserTargets.map((target) => {
+            const targetKey = sidePanelTargetKey(target);
+            const active = targetKey === activeTargetKey;
+            return (
+              <div key={targetKey} className={cn("h-full min-h-0", active ? "block" : "hidden")} aria-hidden={!active}>
+                <ChatSidePanelBrowserView
+                  active={active}
+                  canOpenNewTab={browserTargets.length < MAX_BROWSER_TABS_PER_CONTEXT}
+                  target={target}
+                  targetKey={targetKey}
+                  onOpenTarget={openSidePanelTarget}
+                  onReplaceTarget={replaceSidePanelTarget}
+                  onCloseTarget={closeSidePanelTab}
+                />
+              </div>
+            );
+          })}
+          {browserTarget ? null : !activeTarget ? (
+            <SidePanelEmptyState browserAvailable={browserAvailable} onOpenTarget={openSidePanelTarget} />
           ) : loading ? (
             <LoadingPanelBody />
           ) : error ? (
@@ -1398,7 +1431,7 @@ export function ChatSidePanel({
               />
             </div>
           ) : placeholderTarget ? (
-            <SidePanelPlaceholderView target={placeholderTarget} onOpenTarget={openSidePanelTarget} />
+            <SidePanelPlaceholderView browserAvailable={browserAvailable} target={placeholderTarget} onOpenTarget={openSidePanelTarget} />
           ) : chatTarget ? (
             <div className="space-y-4" data-testid="chat-side-panel-chat-view">
               <div className="rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3">
@@ -1436,14 +1469,6 @@ export function ChatSidePanel({
                 />
               </div>
             </div>
-          ) : browserTarget ? (
-            <ChatSidePanelBrowserView
-              target={browserTarget}
-              targetKey={activeTargetKey}
-              onOpenTarget={openSidePanelTarget}
-              onReplaceTarget={replaceSidePanelTarget}
-              onCloseTarget={closeSidePanelTab}
-            />
           ) : (
             <p className="text-sm text-muted-foreground">Open this target in the full page for details.</p>
           )}

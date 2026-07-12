@@ -191,10 +191,18 @@ export function InstanceBrowserSettings() {
 
         <SettingsRow
           title={t("browser.data.import")}
-          description={t("browser.import.description")}
+          description={settings.enabled
+            ? t("browser.import.description")
+            : t("browser.import.disabledDescription")}
           className="border-t-0 pt-0"
           action={
-            <Button type="button" variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!canImport || !settings.enabled}
+              onClick={() => setImportOpen(true)}
+            >
               <Import className="h-4 w-4" />
               {t("browser.data.import")}
             </Button>

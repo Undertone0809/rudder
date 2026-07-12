@@ -8,6 +8,7 @@ import {
   hardenBrowserWebviewPreferences,
   installBrowserSessionPolicy,
   installBrowserWebviewPolicy,
+  installDefaultWindowOpenDenyPolicy,
 } from "./browser-webview-policy.js";
 
 describe("Rudder Browser webview preferences", () => {
@@ -47,10 +48,25 @@ describe("Rudder Browser webview preferences", () => {
     expect(params).toMatchObject({
       src: "https://example.com",
       partition: "persist:rudder-browser-v1-safe",
+      allowpopups: "true",
     });
     expect(params).not.toHaveProperty("preload");
-    expect(params).not.toHaveProperty("allowpopups");
     expect(params).not.toHaveProperty("webpreferences");
+  });
+});
+
+describe("Rudder Browser default window-open policy", () => {
+  it("fails closed before a WebContents receives a more specific policy", () => {
+    let handler: (() => { action: "deny" }) | undefined;
+    const contents = {
+      setWindowOpenHandler: vi.fn((nextHandler) => {
+        handler = nextHandler;
+      }),
+    };
+
+    installDefaultWindowOpenDenyPolicy(contents);
+
+    expect(handler?.()).toEqual({ action: "deny" });
   });
 });
 
@@ -128,7 +144,7 @@ describe("Rudder Browser session policy", () => {
 });
 
 describe("Rudder Browser guest policy", () => {
-  it("blocks unsafe initial URLs, navigation, redirects, and every popup", () => {
+  it("blocks unsafe initial URLs, navigation, and redirects while routing safe popups", async () => {
     const hostHandlers = new Map<string, (...args: any[]) => void>();
     const hostContents = {
       on: vi.fn((event: string, handler: (...args: any[]) => void) => {
@@ -136,12 +152,14 @@ describe("Rudder Browser guest policy", () => {
       }),
     };
     const registry = createBrowserGuestRegistry();
+    const openBrowserPopup = vi.fn();
     let browserAvailable = true;
     installBrowserWebviewPolicy(hostContents, {
       partition: "persist:rudder-browser-v1-safe",
       getControlPlaneOrigins: () => ["http://127.0.0.1:3100"],
       isBrowserAvailable: () => browserAvailable,
       registerGuest: registry.register,
+      openBrowserPopup,
     });
 
     const unsafeAttachEvent = { preventDefault: vi.fn() };
@@ -177,6 +195,11 @@ describe("Rudder Browser guest policy", () => {
     hostHandlers.get("did-attach-webview")?.({}, guest);
 
     expect(popupHandler?.({ url: "https://example.com/new" })).toEqual({ action: "deny" });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(openBrowserPopup).toHaveBeenCalledWith("https://example.com/new");
+    expect(popupHandler?.({ url: "file:///tmp/private.txt" })).toEqual({ action: "deny" });
+    expect(popupHandler?.({ url: "http://localhost:3100/api/orgs" })).toEqual({ action: "deny" });
+    expect(openBrowserPopup).toHaveBeenCalledTimes(1);
     const unsafeNavigation = { preventDefault: vi.fn() };
     guestHandlers.get("will-navigate")?.(unsafeNavigation, "file:///tmp/private.txt");
     expect(unsafeNavigation.preventDefault).toHaveBeenCalledTimes(1);

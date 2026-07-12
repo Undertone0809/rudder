@@ -45,6 +45,14 @@ type BrowserWebviewHost = {
   on(event: string, handler: (...args: any[]) => void): unknown;
 };
 
+type WindowOpenPolicyTarget = {
+  setWindowOpenHandler(handler: () => { action: "deny" }): void;
+};
+
+export function installDefaultWindowOpenDenyPolicy(contents: WindowOpenPolicyTarget): void {
+  contents.setWindowOpenHandler(() => ({ action: "deny" }));
+}
+
 export function hardenBrowserWebviewPreferences(
   preferences: BrowserWebPreferences,
   partition: string,
@@ -61,7 +69,6 @@ export function hardenBrowserWebviewPreferences(
 
 export function hardenBrowserWebviewParams(params: Record<string, string>, partition: string): void {
   delete params.preload;
-  delete params.allowpopups;
   delete params.allowPopups;
   delete params.webpreferences;
   params.partition = partition;
@@ -138,6 +145,7 @@ export function installBrowserWebviewPolicy(hostContents: BrowserWebviewHost, op
   getControlPlaneOrigins(): string[];
   isBrowserAvailable(): boolean;
   registerGuest(guest: BrowserGuest): void;
+  openBrowserPopup?(url: string): void;
 }): void {
   hostContents.on("will-attach-webview", (
     event: PreventableEvent,
@@ -160,7 +168,13 @@ export function installBrowserWebviewPolicy(hostContents: BrowserWebviewHost, op
     }
 
     options.registerGuest(guest);
-    guest.setWindowOpenHandler(() => ({ action: "deny" }));
+    guest.setWindowOpenHandler(({ url }) => {
+      if (options.isBrowserAvailable()
+        && isAllowedBrowserNavigationUrl(url, options.getControlPlaneOrigins())) {
+        setImmediate(() => options.openBrowserPopup?.(url));
+      }
+      return { action: "deny" };
+    });
     const preventUnsafeNavigation = (event: PreventableEvent, targetUrl: string) => {
       if (!isAllowedBrowserNavigationUrl(targetUrl, options.getControlPlaneOrigins())) {
         event.preventDefault();

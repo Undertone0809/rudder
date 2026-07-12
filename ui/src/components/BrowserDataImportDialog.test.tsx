@@ -15,8 +15,8 @@ const messages: Record<string, string> = {
   "browser.import.noSources": "No supported browser profiles found.",
   "browser.import.desktopUnavailable": "Browser data import is available only in Rudder Desktop.",
   "browser.import.dataTypes": "Data to import",
-  "browser.import.cookies": "Cookies and site data",
-  "browser.import.cookiesDescription": "Import supported signed-in website sessions.",
+  "browser.import.cookies": "Cookies",
+  "browser.import.cookiesDescription": "Import supported cookie-backed signed-in sessions.",
   "browser.import.passwords": "Passwords",
   "browser.import.passwordsDescription": "Saved-password import requires a future secure importer.",
   "browser.import.notAvailable": "Not available in this version",
@@ -25,6 +25,7 @@ const messages: Record<string, string> = {
   "browser.import.action": "Import",
   "browser.import.importing": "Importing...",
   "browser.import.failed": "Browser data import failed.",
+  "browser.import.sourceOpen": "Close {{browser}} completely, then try the import again.",
   "browser.import.result.imported": "Imported {{count}}",
   "browser.import.result.skipped": "Skipped {{count}}",
   "browser.import.result.failed": "Failed {{count}}",
@@ -124,8 +125,10 @@ describe("BrowserDataImportDialog", () => {
     await flush();
 
     expect(listSources).toHaveBeenCalledTimes(1);
-    expect(document.body.textContent).toContain("Google Chrome - Work");
-    expect(document.body.textContent).toContain("Cookies and site data");
+    const sourceSelect = document.body.querySelector<HTMLSelectElement>("#browser-import-source");
+    expect(sourceSelect?.selectedOptions[0]?.textContent?.trim()).toBe("Google Chrome - Work");
+    expect(document.body.textContent).toContain("Cookies");
+    expect(document.body.textContent).toContain("cookie-backed signed-in sessions");
     expect(document.body.textContent).toContain("Passwords");
     expect(document.body.textContent).toContain("Not available in this version");
     expect(document.body.textContent).toContain("shared by every organization and Agent");
@@ -155,6 +158,50 @@ describe("BrowserDataImportDialog", () => {
     expect(document.body.textContent).toContain("COOKIE_DECRYPT_FAILED");
     expect(document.body.textContent).toContain("One cookie could not be decrypted.");
     expect(document.body.textContent).not.toContain("opaque-profile-1");
+  });
+
+  it("instructs the user to close the selected source browser without exposing raw causes", async () => {
+    importBrowserData.mockResolvedValue({
+      status: "failed",
+      importedCount: 0,
+      skippedCount: 0,
+      failedCount: 1,
+      errors: [{
+        errorCode: "BROWSER_SOURCE_OPEN",
+        message: "SQLITE_BUSY at /Users/private/Chrome/Default/Network/Cookies",
+      }],
+    });
+
+    renderDialog(true);
+    await flush();
+
+    const importButton = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Import");
+    act(() => importButton!.click());
+    await flush();
+
+    const alert = document.body.querySelector('[role="alert"]');
+    expect(alert?.textContent).toBe("Close Google Chrome completely, then try the import again.");
+    expect(document.body.textContent).not.toContain("BROWSER_SOURCE_OPEN");
+    expect(document.body.textContent).not.toContain("/Users/private");
+    expect(document.body.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it("keeps unknown import rejections generic", async () => {
+    importBrowserData.mockRejectedValue(new Error("SQLITE_CORRUPT at /Users/private/Cookies"));
+
+    renderDialog(true);
+    await flush();
+
+    const importButton = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Import");
+    act(() => importButton!.click());
+    await flush();
+
+    const alert = document.body.querySelector('[role="alert"]');
+    expect(alert?.textContent).toBe("Browser data import failed.");
+    expect(document.body.textContent).not.toContain("SQLITE_CORRUPT");
+    expect(document.body.textContent).not.toContain("/Users/private");
   });
 
   it("uses source capabilities to disable cookie import with an explicit status", async () => {

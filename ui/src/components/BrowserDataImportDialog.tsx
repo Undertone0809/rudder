@@ -102,7 +102,13 @@ export function BrowserDataImportDialog({
         sourceId: selectedSource.id,
         importCookies: true,
       });
-      if (generationRef.current === generation) setResult(nextResult);
+      if (generationRef.current === generation) {
+        if (nextResult.errors?.some((item) => item.errorCode === "BROWSER_SOURCE_OPEN")) {
+          setError(t("browser.import.sourceOpen", { browser: selectedSource.browserName }));
+        } else {
+          setResult(nextResult);
+        }
+      }
     } catch {
       if (generationRef.current === generation) setError(t("browser.import.failed"));
     } finally {
@@ -154,7 +160,7 @@ export function BrowserDataImportDialog({
               >
                 {sources.map((source) => (
                   <option key={source.id} value={source.id}>
-                    {source.displayName} ({source.browserName} - {source.profileName})
+                    {source.displayName}
                   </option>
                 ))}
               </select>

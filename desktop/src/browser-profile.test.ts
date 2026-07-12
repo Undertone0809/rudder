@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  BROWSER_STORAGE_TYPES,
   createBrowserProfileController,
   deriveBrowserPartition,
   isAllowedBrowserBootstrapUrl,
@@ -21,6 +20,7 @@ async function createTempRoot(prefix: string): Promise<string> {
 function createSessionMock() {
   return {
     clearAuthCache: vi.fn(async () => undefined),
+    clearData: vi.fn(async () => undefined),
     clearCache: vi.fn(async () => undefined),
     clearStorageData: vi.fn(async () => undefined),
     cookies: {
@@ -157,9 +157,7 @@ describe("Rudder Browser profile lifecycle", () => {
     await secondClear;
 
     expect(session.clearAuthCache).toHaveBeenCalledTimes(2);
-    expect(session.clearCache).toHaveBeenCalledTimes(2);
-    expect(session.clearStorageData).toHaveBeenCalledTimes(2);
-    expect(session.clearStorageData).toHaveBeenNthCalledWith(1, { storages: BROWSER_STORAGE_TYPES });
+    expect(session.clearData).toHaveBeenCalledTimes(2);
     expect(session.cookies.flushStore).toHaveBeenCalledTimes(2);
     expect(closeBrowserGuests).toHaveBeenCalledTimes(2);
     expect(broadcastReset).toHaveBeenCalledTimes(2);
@@ -246,15 +244,16 @@ describe("Rudder Browser profile lifecycle", () => {
     expect(session.clearAuthCache).toHaveBeenCalledTimes(1);
   });
 
-  it("serializes Browser imports with clear and disable lifecycle operations", async () => {
+  it("revokes immediately while serializing Browser import and stored-data clear", async () => {
     const importGate = createDeferred();
     const session = createSessionMock();
     const closeBrowserGuests = vi.fn(async () => undefined);
+    const broadcastReset = vi.fn();
     const controller = createBrowserProfileController({
       partition: "persist:rudder-browser-v1-test",
       session,
       closeBrowserGuests,
-      broadcastReset: vi.fn(),
+      broadcastReset,
     });
     const lifecycle: string[] = [];
 
@@ -268,12 +267,236 @@ describe("Rudder Browser profile lifecycle", () => {
     const disabling = controller.setEnabled(false).then(() => lifecycle.push("disable:end"));
     await vi.waitFor(() => expect(lifecycle).toContain("import:start"));
 
+    await vi.waitFor(() => expect(closeBrowserGuests).toHaveBeenCalledTimes(2));
+    await disabling;
     expect(session.clearAuthCache).not.toHaveBeenCalled();
-    expect(closeBrowserGuests).not.toHaveBeenCalled();
+    expect(lifecycle).toEqual(["import:start", "disable:end"]);
     importGate.resolve();
     await expect(importing).resolves.toBe(42);
     await clearing;
+    expect(lifecycle).toEqual(["import:start", "disable:end", "import:end", "clear:end"]);
+    expect(broadcastReset.mock.calls.map(([event]) => event)).toEqual([
+      { reason: "clear", enabled: true, available: false },
+      { reason: "disabled", enabled: false, available: false },
+    ]);
+  });
+
+  it("revokes Browser guests immediately while clear waits for an in-flight import", async () => {
+    const importGate = createDeferred();
+    const session = createSessionMock();
+    const closeBrowserGuests = vi.fn(async () => undefined);
+    const broadcastReset = vi.fn();
+    const controller = createBrowserProfileController({
+      partition: "persist:rudder-browser-v1-test",
+      session,
+      closeBrowserGuests,
+      broadcastReset,
+    });
+
+    const importing = controller.runExclusive(async () => {
+      await importGate.promise;
+    });
+    await Promise.resolve();
+    const clearing = controller.clearBrowserData();
+
+    await vi.waitFor(() => expect(closeBrowserGuests).toHaveBeenCalledTimes(1));
+    expect(broadcastReset).toHaveBeenCalledWith({ reason: "clear", enabled: true, available: false });
+    expect(controller.getState()).toEqual({ enabled: true, available: false, clearing: true });
+    expect(session.clearData).not.toHaveBeenCalled();
+    await expect(controller.runExclusive(async () => "late import"))
+      .rejects.toThrow("unavailable during a Browser profile lifecycle operation");
+
+    importGate.resolve();
+    await importing;
+    await clearing;
+    expect(session.clearData).toHaveBeenCalledTimes(1);
+  });
+
+  it("revokes Browser guests immediately when disable races an in-flight import", async () => {
+    const importGate = createDeferred();
+    const closeBrowserGuests = vi.fn(async () => undefined);
+    const broadcastReset = vi.fn();
+    const controller = createBrowserProfileController({
+      partition: "persist:rudder-browser-v1-test",
+      session: createSessionMock(),
+      closeBrowserGuests,
+      broadcastReset,
+    });
+
+    const importing = controller.runExclusive(async () => {
+      await importGate.promise;
+    });
+    await Promise.resolve();
+    const disabling = controller.setEnabled(false);
+
+    await vi.waitFor(() => expect(closeBrowserGuests).toHaveBeenCalledTimes(1));
+    expect(broadcastReset).toHaveBeenCalledWith({ reason: "disabled", enabled: false, available: false });
+    expect(controller.getState()).toEqual({ enabled: false, available: false, clearing: false });
+
+    importGate.resolve();
+    await importing;
     await disabling;
-    expect(lifecycle).toEqual(["import:start", "import:end", "clear:end", "disable:end"]);
+  });
+
+  it("keeps clear behind an import that was admitted before disable", async () => {
+    const importGate = createDeferred();
+    const session = createSessionMock();
+    const controller = createBrowserProfileController({
+      partition: "persist:rudder-browser-v1-test",
+      session,
+      closeBrowserGuests: vi.fn(async () => undefined),
+      broadcastReset: vi.fn(),
+    });
+    const lifecycle: string[] = [];
+
+    const importing = controller.runExclusive(async () => {
+      lifecycle.push("import:start");
+      await importGate.promise;
+      lifecycle.push("import:end");
+    });
+    await Promise.resolve();
+    await controller.setEnabled(false);
+    const clearing = controller.clearBrowserData().then(() => lifecycle.push("clear:end"));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(session.clearData).not.toHaveBeenCalled();
+    expect(lifecycle).toEqual(["import:start"]);
+    importGate.resolve();
+    await importing;
+    await clearing;
+    expect(lifecycle).toEqual(["import:start", "import:end", "clear:end"]);
+  });
+
+  it("keeps re-enable unavailable until the admitted import drains and rejects new control work", async () => {
+    const importGate = createDeferred();
+    const controller = createBrowserProfileController({
+      partition: "persist:rudder-browser-v1-test",
+      session: createSessionMock(),
+      closeBrowserGuests: vi.fn(async () => undefined),
+      broadcastReset: vi.fn(),
+    });
+    const lifecycle: string[] = [];
+
+    const firstImport = controller.runExclusive(async () => {
+      lifecycle.push("first:start");
+      await importGate.promise;
+      lifecycle.push("first:end");
+    });
+    await Promise.resolve();
+    await controller.setEnabled(false);
+    const enabling = controller.setEnabled(true).then(() => lifecycle.push("enable:end"));
+    await Promise.resolve();
+
+    expect(lifecycle).toEqual(["first:start"]);
+    expect(controller.getState()).toEqual({ enabled: true, available: false, clearing: false });
+    await expect(controller.runExclusive(async () => lifecycle.push("second:start")))
+      .rejects.toThrow("unavailable during a Browser profile lifecycle operation");
+    importGate.resolve();
+    await firstImport;
+    await enabling;
+    await controller.runExclusive(async () => lifecycle.push("second:start"));
+    expect(lifecycle).toEqual(["first:start", "first:end", "enable:end", "second:start"]);
+  });
+
+  it("does not let an older enable transition override a later disable", async () => {
+    const importGate = createDeferred();
+    const controller = createBrowserProfileController({
+      partition: "persist:rudder-browser-v1-test",
+      session: createSessionMock(),
+      closeBrowserGuests: vi.fn(async () => undefined),
+      broadcastReset: vi.fn(),
+    });
+
+    const importing = controller.runExclusive(async () => {
+      await importGate.promise;
+    });
+    await Promise.resolve();
+    await controller.setEnabled(false);
+    const staleEnable = controller.setEnabled(true);
+    const latestDisable = controller.setEnabled(false);
+
+    importGate.resolve();
+    await importing;
+    await staleEnable;
+    await latestDisable;
+    expect(controller.getState()).toEqual({ enabled: false, available: false, clearing: false });
+  });
+
+  it("closes admission, cancels active control work, and waits for its cleanup during shutdown", async () => {
+    const cleanupGate = createDeferred();
+    const closeBrowserGuests = vi.fn(async () => undefined);
+    const controller = createBrowserProfileController({
+      partition: "persist:rudder-browser-v1-test",
+      session: createSessionMock(),
+      closeBrowserGuests,
+      broadcastReset: vi.fn(),
+    });
+    const lifecycle: string[] = [];
+
+    const importing = controller.runExclusive(async (signal) => {
+      lifecycle.push("import:start");
+      if (!signal) {
+        lifecycle.push("signal:missing");
+        return;
+      }
+      await new Promise<void>((resolve) => {
+        signal.addEventListener("abort", () => {
+          lifecycle.push("import:abort");
+          void cleanupGate.promise.then(() => {
+            lifecycle.push("import:cleanup");
+            resolve();
+          });
+        }, { once: true });
+      });
+    });
+    await vi.waitFor(() => expect(lifecycle).toContain("import:start"));
+
+    const shuttingDown = controller.shutdown();
+    await vi.waitFor(() => expect(lifecycle).toContain("import:abort"));
+    expect(controller.getState()).toEqual({ enabled: false, available: false, clearing: false });
+    await expect(controller.runExclusive(async () => undefined))
+      .rejects.toThrow("unavailable during a Browser profile lifecycle operation");
+    let shutdownFinished = false;
+    void shuttingDown.then(() => { shutdownFinished = true; });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(shutdownFinished).toBe(false);
+
+    cleanupGate.resolve();
+    await importing;
+    await shuttingDown;
+    expect(lifecycle).toEqual(["import:start", "import:abort", "import:cleanup"]);
+    expect(closeBrowserGuests).toHaveBeenCalledTimes(1);
+  });
+
+  it("still waits for admitted control cleanup when guest revocation fails during shutdown", async () => {
+    const cleanupGate = createDeferred();
+    const controller = createBrowserProfileController({
+      partition: "persist:rudder-browser-v1-test",
+      session: createSessionMock(),
+      closeBrowserGuests: vi.fn(async () => {
+        throw new Error("guest close failed");
+      }),
+      broadcastReset: vi.fn(),
+    });
+
+    const importing = controller.runExclusive(async (signal) => {
+      await new Promise<void>((resolve) => {
+        signal?.addEventListener("abort", () => {
+          void cleanupGate.promise.then(resolve);
+        }, { once: true });
+      });
+    });
+    await Promise.resolve();
+    let shutdownSettled = false;
+    const shuttingDown = controller.shutdown().finally(() => {
+      shutdownSettled = true;
+    });
+    void shuttingDown.catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(shutdownSettled).toBe(false);
+    cleanupGate.resolve();
+    await importing;
+    await expect(shuttingDown).rejects.toThrow("guest close failed");
   });
 });

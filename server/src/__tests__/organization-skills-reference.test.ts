@@ -93,7 +93,7 @@ describe("organization skill references", () => {
     const started = await startTempDatabase();
     db = createDb(started.connectionString);
     orgSvc = organizationService(db);
-    skillSvc = organizationSkillService(db);
+    skillSvc = organizationSkillService(db, { deploymentMode: "local_trusted" });
     instance = started.instance;
     dataDir = started.dataDir;
   }, 20_000);
@@ -248,6 +248,26 @@ describe("organization skill references", () => {
     });
 
     const skills = await skillSvc.list(orgId);
+    expect(skills.map((skill) => skill.key)).not.toContain("rudder/browser");
+    expect(skills.map((skill) => skill.key)).toContain("rudder/rudder");
+  });
+
+  it("does not expose the Browser bundled projection in authenticated deployments", { timeout: 30000 }, async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Authenticated Browser Org",
+      urlKey: "authenticated-browser-org",
+      issuePrefix: "ABR",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const authenticatedSkillSvc = organizationSkillService(db, {
+      deploymentMode: "authenticated",
+    });
+    const skills = await authenticatedSkillSvc.list(orgId);
+
     expect(skills.map((skill) => skill.key)).not.toContain("rudder/browser");
     expect(skills.map((skill) => skill.key)).toContain("rudder/rudder");
   });

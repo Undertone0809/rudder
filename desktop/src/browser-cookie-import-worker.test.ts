@@ -17,6 +17,7 @@ const source: TrustedBrowserImportSource = {
   cookieDatabasePath: "/trusted/Chrome/Default/Network/Cookies",
   keychain: { service: "Chrome Safe Storage", account: "Chrome" },
 };
+const importOwnerId = "a".repeat(64);
 
 const keyUnavailable: ChromiumCookieDatabaseResult = {
   cookies: [],
@@ -29,6 +30,43 @@ const keyUnavailable: ChromiumCookieDatabaseResult = {
 };
 
 describe("Browser Cookie import worker", () => {
+  it("returns a stable sanitized error when the source browser database is open", async () => {
+    const sourceOpenError = Object.assign(
+      new Error(`SQLITE_BUSY while opening ${source.cookieDatabasePath}`),
+      { code: "BROWSER_SOURCE_OPEN" },
+    );
+
+    await expect(processBrowserCookieImportSource(source, {
+      createSnapshot: async () => { throw sourceOpenError; },
+    })).resolves.toEqual({
+      cookies: [],
+      skippedCount: 0,
+      failedCount: 1,
+      errors: [{
+        errorCode: "BROWSER_SOURCE_OPEN",
+        message: "Close the source browser and try the import again.",
+      }],
+    });
+  });
+
+  it("does not expose unknown worker failures", async () => {
+    class FailedWorker extends EventEmitter {
+      terminate = vi.fn(async () => 1);
+
+      constructor() {
+        super();
+        queueMicrotask(() => this.emit("message", { ok: false }));
+      }
+    }
+
+    await expect(runBrowserCookieImportWorker(source, {
+      ownerId: importOwnerId,
+      createTempDirectory: async () => "/private/parent-owned",
+      cleanupTempDirectory: async () => undefined,
+      createWorker: () => new FailedWorker() as unknown as Worker,
+    })).rejects.toThrow("Browser data import failed.");
+  });
+
   it("reads plaintext first, requests Keychain only when needed, then zeroes secrets and cleans the snapshot", async () => {
     const cleanup = vi.fn(async () => undefined);
     const createSnapshot = vi.fn(async () => ({
@@ -139,13 +177,48 @@ describe("Browser Cookie import worker", () => {
       lifecycle.push("cleanup");
     });
 
+    const createTempDirectory = vi.fn(async () => "/private/parent-owned");
     await expect(runBrowserCookieImportWorker(source, {
+      ownerId: importOwnerId,
       timeoutMs: 1,
-      createTempDirectory: async () => "/private/parent-owned",
+      createTempDirectory,
       cleanupTempDirectory,
       createWorker: () => worker as unknown as Worker,
     })).rejects.toThrow("timed out");
 
+    expect(createTempDirectory).toHaveBeenCalledWith(importOwnerId);
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
+    expect(cleanupTempDirectory).toHaveBeenCalledWith("/private/parent-owned");
+    expect(lifecycle).toEqual(["terminate", "cleanup"]);
+  });
+
+  it("terminates an aborted worker before removing the parent-owned snapshot directory", async () => {
+    const lifecycle: string[] = [];
+    class HangingWorker extends EventEmitter {
+      terminate = vi.fn(async () => {
+        lifecycle.push("terminate");
+        return 1;
+      });
+    }
+    const abortController = new AbortController();
+    const worker = new HangingWorker();
+    const createWorker = vi.fn(() => worker as unknown as Worker);
+    const cleanupTempDirectory = vi.fn(async () => {
+      lifecycle.push("cleanup");
+    });
+
+    const importing = runBrowserCookieImportWorker(source, {
+      ownerId: importOwnerId,
+      signal: abortController.signal,
+      timeoutMs: 60_000,
+      createTempDirectory: async () => "/private/parent-owned",
+      cleanupTempDirectory,
+      createWorker,
+    });
+    await vi.waitFor(() => expect(createWorker).toHaveBeenCalledTimes(1));
+    abortController.abort();
+
+    await expect(importing).rejects.toThrow("canceled");
     expect(worker.terminate).toHaveBeenCalledTimes(1);
     expect(cleanupTempDirectory).toHaveBeenCalledWith("/private/parent-owned");
     expect(lifecycle).toEqual(["terminate", "cleanup"]);

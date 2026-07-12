@@ -800,7 +800,8 @@ Flow:
 14. Browser tabs normalize address-bar input into either a URL or search-query
    navigation, keep back/forward/reload state scoped to the embedded browser,
    can open the current page externally as a secondary action, and route popup
-   requests into another Browser tab instead of an unrestricted guest window.
+   requests into another Browser tab instead of an unrestricted guest window
+   while the Browser tab and popup limits permit it.
 15. Desktop routes ordinary external HTTP(S) links to a Browser Side Panel tab
     when Browser is enabled and its instance preference is `built_in`. The
     `default_browser` preference, disabled state, and explicit `Open externally`
@@ -843,12 +844,16 @@ Invariants:
   semantics; opening a chat target in the panel is not a read-state or routing
   rewrite unless the owning Messenger/chat code performs that action.
 - Side Panel Browser navigation must not grant file, organization, or
-  application privileges beyond the embedded browser shell. Local board URLs are
-  navigable through the browser surface, but organization-scoped data still
-  relies on the normal board/API authorization model.
+  application privileges beyond the embedded browser shell. Local non-control-
+  plane web apps may be navigated, but Rudder board/API origins stay in the
+  Rudder renderer and are rejected by the Browser profile.
 - Browser tabs must use the dedicated persistent Browser partition and its
   sandbox, protocol, popup, permission, and download policy. They must not share
   the Rudder UI/API session partition or gain Node/application privileges.
+- Each Side Panel context may hold at most eight Browser tabs. At capacity, an
+  ordinary Rudder link reuses the active Browser tab or the first Browser tab;
+  explicit new-tab and popup requests are discarded. Desktop also accepts at
+  most eight Browser popup requests in a rolling ten-second window.
 - Browser profile data is shared across organizations in one local instance,
   but Side Panel tab/session state continues to follow this contract's active
   work-item rules. Disabling or clearing Browser closes Browser targets without

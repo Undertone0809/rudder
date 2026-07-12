@@ -1,6 +1,4 @@
 import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
 import { deriveMacChromiumCookieKey } from "./browser-cookie-crypto-macos.js";
 import {
@@ -8,7 +6,10 @@ import {
   type ChromiumCookieDatabaseResult,
 } from "./browser-cookie-db.js";
 import {
+  BROWSER_SOURCE_OPEN_ERROR_CODE,
+  createPrivateBrowserImportTempDirectory,
   createStableCookieDatabaseSnapshot,
+  isBrowserImportSourceOpenError,
   type BrowserCookieDatabaseSnapshot,
 } from "./browser-import-snapshot.js";
 import type { TrustedBrowserImportSource } from "./browser-import-sources.js";
@@ -33,7 +34,21 @@ export async function processBrowserCookieImportSource(
   const readDatabase = dependencies.readDatabase ?? readChromiumCookieDatabase;
   const readKeychain = dependencies.readKeychain ?? readMacBrowserKeychainPassword;
   const deriveKey = dependencies.deriveKey ?? deriveMacChromiumCookieKey;
-  const snapshot = await createSnapshot({ sourcePath: source.cookieDatabasePath });
+  let snapshot: BrowserCookieDatabaseSnapshot;
+  try {
+    snapshot = await createSnapshot({ sourcePath: source.cookieDatabasePath });
+  } catch (error) {
+    if (!isBrowserImportSourceOpenError(error)) throw error;
+    return {
+      cookies: [],
+      skippedCount: 0,
+      failedCount: 1,
+      errors: [{
+        errorCode: BROWSER_SOURCE_OPEN_ERROR_CODE,
+        message: "Close the source browser and try the import again.",
+      }],
+    };
+  }
   let password: Buffer | null = null;
   let key: Buffer | null = null;
   try {
@@ -65,28 +80,21 @@ type BrowserCookieImportWorkerData = {
 };
 
 type BrowserCookieImportWorkerOptions = {
+  ownerId: string;
   timeoutMs?: number;
-  createTempDirectory?: () => Promise<string>;
+  signal?: AbortSignal;
+  createTempDirectory?: (ownerId: string) => Promise<string>;
   cleanupTempDirectory?: (tempDirectory: string) => Promise<void>;
   createWorker?: (workerData: BrowserCookieImportWorkerData) => Worker;
 };
 
-async function createPrivateImportTempDirectory(): Promise<string> {
-  const tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-browser-import-"));
-  try {
-    await fs.chmod(tempDirectory, 0o700);
-    return tempDirectory;
-  } catch (error) {
-    await fs.rm(tempDirectory, { recursive: true, force: true });
-    throw error;
-  }
-}
-
 export async function runBrowserCookieImportWorker(
   source: TrustedBrowserImportSource,
-  options: BrowserCookieImportWorkerOptions = {},
+  options: BrowserCookieImportWorkerOptions,
 ): Promise<ChromiumCookieDatabaseResult> {
-  const tempDirectory = await (options.createTempDirectory ?? createPrivateImportTempDirectory)();
+  const createTempDirectory = options.createTempDirectory
+    ?? ((ownerId: string) => createPrivateBrowserImportTempDirectory({ ownerId }));
+  const tempDirectory = await createTempDirectory(options.ownerId);
   const cleanupTempDirectory = options.cleanupTempDirectory
     ?? ((directory: string) => fs.rm(directory, { recursive: true, force: true }));
   const createWorker = options.createWorker
@@ -101,25 +109,34 @@ export async function runBrowserCookieImportWorker(
         reject(new Error("Browser data import failed."));
         return;
       }
-    let settled = false;
-    const finish = async (callback: () => void) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      await worker.terminate().catch(() => undefined);
-      callback();
-    };
-    const timeout = setTimeout(() => {
-      void finish(() => reject(new Error("Browser data import timed out.")));
-    }, options.timeoutMs ?? 120_000);
-    worker.once("message", (message: WorkerMessage) => {
-      if (message?.ok === true) void finish(() => resolve(message.result));
-      else void finish(() => reject(new Error("Browser data import failed.")));
-    });
-    worker.once("error", () => void finish(() => reject(new Error("Browser data import failed."))));
-    worker.once("exit", () => {
-      void finish(() => reject(new Error("Browser data import failed.")));
-    });
+      let settled = false;
+      const finish = async (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        options.signal?.removeEventListener("abort", handleAbort);
+        await worker.terminate().catch(() => undefined);
+        callback();
+      };
+      const handleAbort = () => {
+        void finish(() => reject(new Error("Browser data import canceled.")));
+      };
+      const timeout = setTimeout(() => {
+        void finish(() => reject(new Error("Browser data import timed out.")));
+      }, options.timeoutMs ?? 120_000);
+      options.signal?.addEventListener("abort", handleAbort, { once: true });
+      if (options.signal?.aborted) {
+        handleAbort();
+        return;
+      }
+      worker.once("message", (message: WorkerMessage) => {
+        if (message?.ok === true) void finish(() => resolve(message.result));
+        else void finish(() => reject(new Error("Browser data import failed.")));
+      });
+      worker.once("error", () => void finish(() => reject(new Error("Browser data import failed."))));
+      worker.once("exit", () => {
+        void finish(() => reject(new Error("Browser data import failed.")));
+      });
     });
   } finally {
     await cleanupTempDirectory(tempDirectory);

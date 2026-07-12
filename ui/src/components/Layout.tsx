@@ -349,6 +349,7 @@ function DesktopSidePanelSlot({
   const [resizingSidePanel, setResizingSidePanel] = useState(false);
   const [renderSidePanel, setRenderSidePanel] = useState(sidePanel.open);
   const [sidePanelExiting, setSidePanelExiting] = useState(false);
+  const hasBrowserTabs = sidePanel.tabs.some((target) => target.kind === "browser");
   const expandedSidePanelWidth = clampSidePanelWidth(SIDE_PANEL_EXPANDED_WIDTH, viewportWidth);
   const sidePanelExpanded = sidePanelWidth >= expandedSidePanelWidth - 1;
 
@@ -367,7 +368,7 @@ function DesktopSidePanelSlot({
   }, [sidePanelWidth]);
 
   useEffect(() => {
-    if (sidePanel.open) {
+    if (sidePanel.open || hasBrowserTabs) {
       setRenderSidePanel(true);
       setSidePanelExiting(false);
       return;
@@ -379,7 +380,7 @@ function DesktopSidePanelSlot({
       setSidePanelExiting(false);
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [renderSidePanel, sidePanel.open]);
+  }, [hasBrowserTabs, renderSidePanel, sidePanel.open]);
 
   useEffect(() => {
     if (viewportWidth === null || !Number.isFinite(viewportWidth)) return;
@@ -443,9 +444,13 @@ function DesktopSidePanelSlot({
     window.addEventListener("pointerup", stopResizing, { once: true });
   }, [setProportionalSidePanelWidth, sidePanel, sidePanelWidth]);
 
-  if (!renderSidePanel) {
-    return (
-      <div className="group absolute inset-y-1 right-0 z-20 w-7" data-testid="side-panel-hover-edge">
+  const panelVisible = sidePanel.open || sidePanelExiting;
+  const expandedVisible = panelVisible && sidePanelExpanded;
+  const shouldMountSidePanel = sidePanel.open || renderSidePanel || hasBrowserTabs;
+
+  return (
+    <>
+      {!panelVisible ? <div key="trigger" className="group absolute inset-y-1 right-0 z-20 w-7" data-testid="side-panel-hover-edge">
         <Button
           type="button"
           variant="outline"
@@ -458,33 +463,9 @@ function DesktopSidePanelSlot({
         >
           <PanelRightOpen className="h-4 w-4" />
         </Button>
-      </div>
-    );
-  }
-
-  if (sidePanelExpanded) {
-    return (
-      <div
-        className="absolute inset-y-0 left-0 right-0 z-30 flex min-w-0"
-        data-testid="side-panel-expanded-overlay"
-      >
-        <ChatSidePanel
-          selectedOrganizationId={selectedOrganizationId}
-          expanded
-          onClose={() => {
-            setProportionalSidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH);
-            sidePanel.hidePanel();
-          }}
-          onToggleExpanded={() => setProportionalSidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH)}
-          exiting={sidePanelExiting}
-        />
-      </div>
-    );
-  }
-
-  return (
-    <>
-      <div
+      </div> : null}
+      {panelVisible && !expandedVisible ? <div
+        key="resizer"
         data-testid="side-panel-resizer"
         className={cn(
           "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center transition-[width,opacity,transform] duration-200 ease-out motion-reduce:transition-none",
@@ -498,22 +479,29 @@ function DesktopSidePanelSlot({
         aria-label="Resize Side Panel"
       >
         <div className="workspace-column-resizer-line" />
-      </div>
-      <ChatSidePanel
-        selectedOrganizationId={selectedOrganizationId}
-        desktopWidth={sidePanelWidth}
-        expanded={sidePanelExpanded}
-        exiting={sidePanelExiting}
-        resizing={resizingSidePanel}
-        onClose={sidePanel.hidePanel}
-        onToggleExpanded={() => {
-          setProportionalSidePanelWidth(
-            sidePanelWidth >= expandedSidePanelWidth - 1
-              ? SIDE_PANEL_DEFAULT_WIDTH
-              : expandedSidePanelWidth,
-          );
-        }}
-      />
+      </div> : null}
+      {shouldMountSidePanel ? <div
+        key="panel"
+        className={expandedVisible ? "absolute inset-y-0 left-0 right-0 z-30 flex min-w-0" : "contents"}
+        data-testid={expandedVisible ? "side-panel-expanded-overlay" : "side-panel-stable-host"}
+        style={panelVisible ? undefined : { display: "none" }}
+        aria-hidden={!panelVisible}
+      >
+        <ChatSidePanel
+          selectedOrganizationId={selectedOrganizationId}
+          desktopWidth={expandedVisible ? undefined : sidePanelWidth}
+          expanded={expandedVisible}
+          exiting={sidePanelExiting}
+          resizing={resizingSidePanel}
+          onClose={() => {
+            if (sidePanelExpanded) setProportionalSidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH);
+            sidePanel.hidePanel();
+          }}
+          onToggleExpanded={() => {
+            setProportionalSidePanelWidth(sidePanelExpanded ? SIDE_PANEL_DEFAULT_WIDTH : expandedSidePanelWidth);
+          }}
+        />
+      </div> : null}
     </>
   );
 }

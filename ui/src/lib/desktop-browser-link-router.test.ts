@@ -1,0 +1,88 @@
+import { describe, expect, it, vi } from "vitest";
+import { routeDesktopWebLink } from "./desktop-browser-link-router";
+
+describe("Desktop Browser link router", () => {
+  it("opens built-in links in a stable Side Panel tab by default", async () => {
+    const openBuiltIn = vi.fn();
+    const forceOpenExternal = vi.fn();
+
+    await expect(routeDesktopWebLink({
+      request: { url: "https://example.com/docs", source: "link" },
+      getSettings: async () => ({ enabled: true, openLinksIn: "built_in" }),
+      openBuiltIn,
+      forceOpenExternal,
+    })).resolves.toBe("built_in");
+
+    expect(openBuiltIn).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "browser",
+      url: "https://example.com/docs",
+    }));
+    expect(openBuiltIn.mock.calls[0]?.[0]).toMatchObject({ dedupeKey: "https://example.com/docs" });
+    expect(forceOpenExternal).not.toHaveBeenCalled();
+  });
+
+  it("opens Browser popup requests as distinct tabs", async () => {
+    const openBuiltIn = vi.fn();
+    await routeDesktopWebLink({
+      request: { url: "https://example.com/popup", source: "browser_popup" },
+      getSettings: async () => ({ enabled: true, openLinksIn: "built_in" }),
+      openBuiltIn,
+      forceOpenExternal: vi.fn(),
+    });
+
+    expect(openBuiltIn).toHaveBeenCalledWith(expect.objectContaining({
+      url: "https://example.com/popup",
+      tabId: expect.any(String),
+    }));
+  });
+
+  it("keeps Browser popups in the Side Panel when ordinary links use the system browser", async () => {
+    const openBuiltIn = vi.fn();
+    const forceOpenExternal = vi.fn();
+
+    await expect(routeDesktopWebLink({
+      request: { url: "https://example.com/popup", source: "browser_popup" },
+      getSettings: async () => ({ enabled: true, openLinksIn: "default_browser" }),
+      openBuiltIn,
+      forceOpenExternal,
+    })).resolves.toBe("built_in");
+
+    expect(openBuiltIn).toHaveBeenCalledWith(expect.objectContaining({
+      url: "https://example.com/popup",
+      tabId: expect.any(String),
+    }));
+    expect(forceOpenExternal).not.toHaveBeenCalled();
+  });
+
+  it("uses the system browser when configured, disabled, or settings cannot be loaded", async () => {
+    for (const getSettings of [
+      async () => ({ enabled: true, openLinksIn: "default_browser" as const }),
+      async () => ({ enabled: false, openLinksIn: "built_in" as const }),
+      async () => { throw new Error("offline"); },
+    ]) {
+      const openBuiltIn = vi.fn();
+      const forceOpenExternal = vi.fn(async () => undefined);
+      await expect(routeDesktopWebLink({
+        request: { url: "https://example.com", source: "link" },
+        getSettings,
+        openBuiltIn,
+        forceOpenExternal,
+      })).resolves.toBe("default_browser");
+      expect(openBuiltIn).not.toHaveBeenCalled();
+      expect(forceOpenExternal).toHaveBeenCalledWith("https://example.com");
+    }
+  });
+
+  it("rejects non-web requests without opening either browser", async () => {
+    const openBuiltIn = vi.fn();
+    const forceOpenExternal = vi.fn();
+    await expect(routeDesktopWebLink({
+      request: { url: "file:///tmp/private.txt", source: "link" },
+      getSettings: async () => ({ enabled: true, openLinksIn: "built_in" }),
+      openBuiltIn,
+      forceOpenExternal,
+    })).resolves.toBe("ignored");
+    expect(openBuiltIn).not.toHaveBeenCalled();
+    expect(forceOpenExternal).not.toHaveBeenCalled();
+  });
+});

@@ -48,6 +48,7 @@ const payload = {
   userProfile: process.env.USERPROFILE || null,
   agentHome: process.env.AGENT_HOME || null,
   rudderOperatorHome: process.env.RUDDER_OPERATOR_HOME || null,
+  rudderApiKey: process.env.RUDDER_API_KEY || null,
   pathEnv: process.env.PATH || null,
   workspaceSkillEntries: fs.existsSync(workspaceSkillsPath)
     ? fs.readdirSync(workspaceSkillsPath).sort()
@@ -370,6 +371,7 @@ type CapturePayload = {
   userProfile: string | null;
   agentHome: string | null;
   rudderOperatorHome: string | null;
+  rudderApiKey: string | null;
   pathEnv: string | null;
   workspaceSkillEntries: string[];
   codexSkillEntries: string[];
@@ -1509,6 +1511,13 @@ describe("codex execute", { timeout: 20_000 }, () => {
           command: commandPath,
           cwd: workspace,
           env: {
+            RUDDER_AGENT_ID: "stale-agent",
+            RUDDER_API_KEY: "stale-agent-key",
+            RUDDER_API_URL: "https://stale.example.invalid",
+            RUDDER_BROWSER_ENABLED: "true",
+            RUDDER_ORG_ID: "stale-organization",
+            RUDDER_PROJECT_LIBRARY_PATH: "stale/project-library",
+            RUDDER_RUN_ID: "stale-run",
             RUDDER_TEST_CAPTURE_PATH: capturePath,
           },
           rudderSkillSync: {
@@ -1539,13 +1548,22 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(managedConfigContents).toContain("RUDDER_MCP_RUDDER_BIN =");
       expect(managedConfigContents).toContain('RUDDER_API_URL = "http://localhost:3100"');
       expect(managedConfigContents).toContain('RUDDER_API_KEY = "run-jwt-token"');
+      expect(managedConfigContents).not.toContain("stale-agent-key");
       expect(managedConfigContents).toContain('RUDDER_ORG_ID = "organization-1"');
       expect(managedConfigContents).toContain('RUDDER_AGENT_ID = "agent-1"');
       expect(managedConfigContents).toContain('RUDDER_RUN_ID = "run-strip-managed"');
+      expect(managedConfigContents).toContain('RUDDER_BROWSER_ENABLED = "false"');
+      expect(managedConfigContents).not.toContain("stale.example.invalid");
+      expect(managedConfigContents).not.toContain("stale-organization");
+      expect(managedConfigContents).not.toContain('RUDDER_AGENT_ID = "stale-agent"');
+      expect(managedConfigContents).not.toContain("stale-run");
+      expect(managedConfigContents).not.toContain("stale/project-library");
       expect(managedConfigContents).not.toContain("notify =");
       expect(managedConfigContents).not.toContain("plugins = true");
       expect(managedConfigContents).not.toContain("[mcp_servers.linear]");
       expect(managedConfigContents).not.toContain('[plugins."linear@openai-curated"]');
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.rudderApiKey).toBe("run-jwt-token");
       expect(logs).toContainEqual(
         expect.objectContaining({
           stream: "stdout",

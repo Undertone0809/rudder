@@ -56,9 +56,12 @@ Product model:
   Rudder-resolved set unless they are introduced through a non-bundled
   selection path.
 - `Browser` is a capability-bundled skill, not part of the always-enabled
-  baseline. It is projected for every organization and agent when the
-  instance-level Built-in Browser is enabled and removed when disabled, without
-  writing one durable organization or agent assignment per capability change.
+  baseline. In `local_trusted` mode it is projected for every organization when
+  the instance-level Built-in Browser is enabled. It is materialized for a run
+  only when the adapter is `claude_local`, `codex_local`, `opencode_local`, or
+  `pi_local`, and is removed when the deployment, setting, or runtime becomes
+  ineligible, without writing a durable organization or agent assignment per
+  capability change.
 - Skill state distinguishes discovered, installed, desired, enabled,
   materialized, native, prompt-injected, and unavailable entries.
 - Desired skills are scoped by organization, agent, runtime type, and runtime
@@ -88,9 +91,11 @@ Flow:
 Invariants:
 
 - Bundled Rudder skills are not disabled by normal optional-skill toggles.
-- `Browser` must be read-only and available to existing and future
-  organizations only while Built-in Browser is enabled. A stale organization
-  projection or run snapshot must not keep it usable after live disablement.
+- `Browser` must be read-only and available to existing and future organizations
+  only while the `local_trusted` Built-in Browser capability is instance-
+  eligible. A run must also use a supported local adapter. A stale organization
+  projection, run snapshot, or model fallback must not keep it usable after any
+  eligibility gate changes.
 - Capability projection must not create per-organization ownership of the
   instance Browser setting or Browser profile.
 - Repo-owned skill packages outside the canonical bundled baseline must not be

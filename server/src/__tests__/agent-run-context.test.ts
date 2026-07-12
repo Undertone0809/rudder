@@ -81,6 +81,22 @@ vi.mock("../services/agent-startup-context.js", async (importOriginal) => {
 
 const { agentRunContextService } = await import("../services/agent-run-context.js");
 
+const browserSkillEntry = {
+  key: "bundled:rudder/browser",
+  runtimeName: "browser",
+  source: "/tmp/browser-skill",
+  name: "Browser",
+  description: "Control the Rudder Browser.",
+};
+
+const rudderSkillEntry = {
+  key: "bundled:rudder/rudder",
+  runtimeName: "rudder",
+  source: "/tmp/rudder-skill",
+  name: "Rudder",
+  description: "Operate Rudder.",
+};
+
 async function makeTempDir(prefix: string) {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
 }
@@ -129,10 +145,16 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
       config: { rudderBrowserEnabled: false },
       secretKeys: new Set<string>(),
     });
-    mockGetEnabledSkillKeysForAgent.mockResolvedValue(["rudder/browser"]);
-    mockListRealizedSkillEntriesForAgent.mockResolvedValue([]);
+    mockGetEnabledSkillKeysForAgent.mockResolvedValue([
+      browserSkillEntry.key,
+      rudderSkillEntry.key,
+    ]);
+    mockListRealizedSkillEntriesForAgent.mockResolvedValue([
+      browserSkillEntry,
+      rudderSkillEntry,
+    ]);
 
-    const svc = agentRunContextService({} as any);
+    const svc = agentRunContextService({} as any, { deploymentMode: "local_trusted" });
     const enabled = await svc.prepareRuntimeConfig({
       scene: "heartbeat",
       agent: {
@@ -144,6 +166,13 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
       },
     });
     expect(enabled.runtimeConfig.rudderBrowserEnabled).toBe(true);
+    expect(enabled.runtimeSkillEntries.map((entry) => entry.key)).toEqual([
+      browserSkillEntry.key,
+      rudderSkillEntry.key,
+    ]);
+    expect(enabled.runtimeConfig.rudderSkillSync).toEqual({
+      desiredSkills: [browserSkillEntry.key, rudderSkillEntry.key],
+    });
 
     mockGetBrowserSettings.mockResolvedValueOnce({ enabled: false, openLinksIn: "built_in" });
     const disabled = await svc.prepareRuntimeConfig({
@@ -157,6 +186,56 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
       },
     });
     expect(disabled.runtimeConfig.rudderBrowserEnabled).toBe(false);
+    expect(disabled.runtimeSkillEntries.map((entry) => entry.key)).toEqual([
+      rudderSkillEntry.key,
+    ]);
+  });
+
+  it.each([
+    ["authenticated deployments", "authenticated", "codex_local", false],
+    ["unsupported local runtimes", "local_trusted", "gemini_local", true],
+  ] as const)("does not project Browser skill or tools for %s", async (
+    _label,
+    deploymentMode,
+    agentRuntimeType,
+    instanceEligible,
+  ) => {
+    mockResolveAdapterConfigForRuntime.mockResolvedValue({
+      config: { rudderBrowserEnabled: true },
+      secretKeys: new Set<string>(),
+    });
+    mockGetEnabledSkillKeysForAgent.mockResolvedValue([
+      browserSkillEntry.key,
+      rudderSkillEntry.key,
+    ]);
+    mockListRealizedSkillEntriesForAgent.mockResolvedValue([
+      browserSkillEntry,
+      rudderSkillEntry,
+    ]);
+
+    const svc = agentRunContextService({} as any, { deploymentMode });
+    const prepared = await svc.prepareRuntimeConfig({
+      scene: "heartbeat",
+      agent: {
+        id: "agent-1",
+        orgId: "organization-1",
+        name: "Browser Agent",
+        agentRuntimeType,
+        agentRuntimeConfig: { rudderBrowserEnabled: true },
+      },
+    });
+
+    expect(prepared.runtimeConfig.rudderBrowserEnabled).toBe(false);
+    expect(prepared.runtimeSkillEntries.map((entry) => entry.key)).toEqual([
+      rudderSkillEntry.key,
+    ]);
+    expect(prepared.runtimeConfig.rudderSkillSync).toEqual({
+      desiredSkills: [rudderSkillEntry.key],
+    });
+    expect(prepared.runtimeConfig.rudderBrowserCapability).toEqual({
+      instanceEligible,
+      runtimeSkillEntries: instanceEligible ? [browserSkillEntry] : [],
+    });
   });
 
   it("does not materialize a missing managed instructions entry while preparing runtime config", async () => {

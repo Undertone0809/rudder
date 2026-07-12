@@ -2,7 +2,7 @@
 title: Rudder Built-in Browser
 date: 2026-07-12
 kind: proposal
-status: in_progress
+status: completed
 area: desktop
 entities:
   - built_in_browser
@@ -13,17 +13,33 @@ issue:
 related_plans:
   - 2026-06-30-chat-side-panel.md
   - 2026-07-01-global-side-panel-workbench.md
-  - 2026-07-08-local-browser-mcp-tool-plugin.md
 supersedes: []
 related_code:
   - desktop/src/main.ts
   - desktop/src/preload.ts
+  - desktop/src/browser-profile.ts
+  - desktop/src/browser-ipc.ts
+  - desktop/src/browser-agent-tabs.ts
+  - desktop/src/browser-import-snapshot.ts
+  - desktop/src/browser-cookie-import-worker.ts
+  - desktop/src/browser-cookie-import.ts
+  - desktop/src/desktop-quit-flow.ts
+  - desktop/src/navigation-guard.ts
+  - desktop/src/browser-broker-registration.ts
+  - desktop/src/browser-broker-server.ts
+  - desktop/src/browser-popup-rate-limit.ts
   - server/src/services/instance-settings.ts
+  - server/src/services/browser-broker.ts
+  - server/src/services/browser-capability.ts
+  - server/src/routes/browser.ts
+  - server/src/services/runtime-kernel/model-fallback.ts
   - server/src/services/knowledge-portability/organization-skills.ts
   - server/src/services/agent-run-context.ts
   - server/resources/bundled-skills/browser/SKILL.md
   - cli/src/agent-v1-mcp-server.ts
   - ui/src/context/SidePanelContext.tsx
+  - ui/src/components/DesktopBrowserLinkBridge.tsx
+  - ui/src/lib/desktop-browser-link-router.ts
   - ui/src/pages/Chat.side-panel.tsx
   - ui/src/pages/InstanceBrowserSettings.tsx
 commit_refs: []
@@ -79,9 +95,11 @@ Rudder capability.
 4. **Shared identity, isolated control.** Organizations share cookies and login
    state, while agent tabs and leases are keyed by organization, agent, run, and
    tab.
-5. **Skill and tools are one capability.** Enabling Browser activates the
-   bundled `Browser` skill and Browser tools together. Disabling it removes both
-   from future runs and revokes current control.
+5. **Skill and tools are one capability.** In `local_trusted` mode, enabling
+   Browser activates the bundled `Browser` skill for organization inventory.
+   Supported local runtimes receive that skill, the capability flag, and Browser
+   tools together. Disabling or becoming runtime-ineligible removes the whole
+   capability and revokes current control.
 6. **Runtime-managed rather than copied.** Rudder does not write one Browser
    skill assignment per organization or agent. It resolves an active bundled
    capability on each inventory and run-context reconciliation.
@@ -114,6 +132,11 @@ all organizations and agents in the current Rudder instance.
 - Keep an explicit `Open externally` command that always uses the system
   browser.
 - Apply a guest navigation, popup, permission, download, and protocol policy.
+- Revalidate main-window redirect targets so external 30x destinations never
+  load into the privileged Rudder renderer.
+- Bound each Side Panel context to eight Browser tabs. At capacity, ordinary
+  Rudder links reuse an existing Browser tab, while popup and explicit new-tab
+  requests are discarded. Accept at most eight popups per rolling ten seconds.
 
 ### Browser Data
 
@@ -124,20 +147,23 @@ all organizations and agents in the current Rudder instance.
 - Import cookies into the Rudder Browser partition and return imported,
   skipped-existing, skipped-invalid, and failed counts.
 - Clear cookies, cache, storage, service workers, HTTP auth state, and site
-  permissions after closing Browser tabs and revoking agent leases.
+  permissions with Electron's exhaustive session clear after immediately
+  stopping admission, closing Browser tabs, and revoking agent leases.
 
 ### Agent Capability
 
 - Add `server/resources/bundled-skills/browser/SKILL.md` with Browser operating
   guidance and safety boundaries.
-- Make `Browser` a capability-gated bundled skill that is read-only and loaded
-  for every agent when Browser is enabled.
+- Make `Browser` a capability-gated bundled skill that is read-only, projected
+  for every organization in an enabled `local_trusted` instance, and loaded only
+  for supported Claude/Codex/OpenCode/Pi local runs.
 - Extend the first-party `rudder-control-plane` MCP/native bridge with high-level
   Browser tools rather than creating a second duplicated transport.
 - Derive organization, agent, and run identity from runtime-owned context. Tool
   arguments cannot override identity or broker credentials.
-- Enforce the current Browser setting again at tool-call time and return stable
-  `browser_disabled` or `browser_unavailable` errors.
+- Enforce deployment, current Browser setting, and runtime eligibility again at
+  tool-call time and return stable `browser_disabled`,
+  `browser_runtime_unsupported`, or `browser_unavailable` errors.
 
 ## Success Criteria For Change
 
@@ -154,11 +180,11 @@ all organizations and agents in the current Rudder instance.
 - The Import dialog discovers supported local Chromium profiles, imports valid
   cookies, preserves existing destination cookies, and reports partial failure
   accurately.
-- Every existing and future organization exposes the read-only bundled
-  `Browser` skill while the capability is enabled.
+- Every existing and future organization in an enabled `local_trusted` instance
+  exposes the read-only bundled `Browser` skill.
 - Every supported local runtime receives Browser tool definitions and
   runtime-owned identity. The server rejects disabled, unavailable, cross-run,
-  unsafe-protocol, and invalid-tab calls.
+  unsupported-runtime, unsafe-protocol, capacity, and invalid-tab calls.
 - E2E coverage exercises Settings, global link routing, organization sharing,
   disable/clear behavior, and the Import dialog. Packaged Desktop verification
   exercises the real Electron partition and link route.
@@ -191,6 +217,7 @@ all organizations and agents in the current Rudder instance.
   by default.
 - Browser tools expose navigation, reading, clicking, typing, screenshot, tab,
   and close operations only.
+- Agent Browser tabs are capped at eight per run and 32 per Desktop process.
 - Broker credentials remain in Desktop/server memory and are never injected
   into model-visible prompts or tool arguments.
 - Activity evidence records organization, agent, run, tab, action, and sanitized
@@ -205,6 +232,14 @@ all organizations and agents in the current Rudder instance.
   agent run.
 - Import is partial-success safe and does not overwrite existing Rudder Browser
   cookies.
+- An open source browser fails before copy with an actionable, sanitized close-
+  and-retry message. No source path or raw worker error reaches the renderer.
+- Disable and clear revoke guests immediately rather than waiting behind an
+  in-flight import; clear waits before final exhaustive session removal.
+- Graceful Desktop quit closes import admission, aborts the active import
+  worker, and waits for its temporary snapshot cleanup before stopping the
+  local runtime. Startup removes only dead, current-instance import snapshots;
+  live and foreign-instance snapshots are preserved.
 
 ### Maintainability
 
@@ -250,10 +285,14 @@ all organizations and agents in the current Rudder instance.
 3. The operator chooses a browser profile and supported data types.
 4. Rudder explains that imported signed-in sessions become available to every
    organization and agent in this instance.
-5. The operator starts import. The source database is copied to a temporary
-   directory before read access so a running source browser is not modified.
+5. The operator starts import. The source database is copied to a private,
+   instance-owned temporary directory before read access so the source browser
+   is not modified.
 6. Rudder imports valid cookies, preserves existing destination cookies, cleans
-   temporary files, and reports detailed counts.
+   temporary files on success, failure, cancellation, or graceful quit, and
+   reports detailed counts.
+7. After a process crash, the next startup removes dead snapshots owned by that
+   same instance without touching a live or foreign-instance import.
 
 ### Disable And Clear
 
@@ -354,10 +393,20 @@ It registers its endpoint and credential with the local Rudder server after
 startup. The server keeps registration in memory and never returns the broker
 credential to clients or agents.
 
+V1 keeps one active Broker registration. A later valid same-instance
+`local_trusted` instance-admin registration replaces the previous registration;
+token-matched unregister prevents stale shutdown from clearing the replacement,
+but generation and owner binding are deferred.
+
 Agent Browser requests pass through an authenticated Rudder API so the server
 derives organization, agent, and run identity. The server checks the live
 Browser setting, sanitizes evidence, and forwards only the allowed command to
 the Broker.
+
+Browser authorization requires a run-scoped Agent JWT. The signed `run_id` is
+authoritative; an optional `X-Rudder-Run-Id` header must match it and cannot
+override it. Long-lived Agent API keys cannot obtain Browser access by naming a
+run. This prevents one concurrent run of an Agent from impersonating another.
 
 ### Runtime Tool Surface
 
@@ -373,11 +422,11 @@ V1 tool names:
 - `rudder_browser_close`
 
 The tools reuse the existing first-party `rudder-control-plane` transport.
-Codex, Claude, OpenCode, and Pi receive the same managed identity boundary.
-Adapters that cannot expose managed MCP/native tools must use the Browser CLI
-fallback where local command execution is supported, or report the capability
-as unavailable. Remote runtimes do not receive a false promise of local Desktop
-control.
+`codex_local`, `claude_local`, `opencode_local`, and `pi_local` receive the same
+managed identity boundary. Other adapters and remote runtimes do not receive the
+Browser skill, capability flag, or tools, and stale unsupported-runtime calls
+return `browser_runtime_unsupported` rather than a false promise of local
+Desktop control.
 
 ### Capability-Gated Bundled Skill
 
@@ -385,13 +434,16 @@ Bundled skills are split conceptually into:
 
 ```text
 always bundled
-  + capability-bundled Browser when browser.enabled
-  = active bundled skills for this run
+  + capability-bundled Browser when local_trusted && browser.enabled
+  + run materialization when adapter is Claude/Codex/OpenCode/Pi local
+  = active bundled skills and tools for this run
 ```
 
 The Browser projection remains Rudder-managed and read-only. Disabling removes
 the projection during the next organization reconciliation and prevents runtime
-materialization immediately.
+materialization immediately. Model fallback recomputes the same gate and removes
+the Browser skill, capability flag, skill sync, and tools together when the
+fallback runtime is unsupported.
 
 ### Cookie Import
 
@@ -406,7 +458,8 @@ Microsoft Edge, and Brave Browser. It:
 5. validates scheme, host, path, expiry, SameSite, and secure fields;
 6. preserves existing destination cookies;
 7. writes valid cookies through Electron's supported `session.cookies` API;
-8. removes all temporary copies in a `finally` path.
+8. removes temporary copies on normal, error, cancellation, and graceful-quit
+   paths; startup safely reaps dead same-instance crash residue.
 
 No imported cookie value crosses the renderer or Rudder server API.
 
@@ -422,6 +475,13 @@ New local endpoints are loopback-only and authenticated with an in-memory
 credential. Agent requests enter through the existing Rudder API authentication
 boundary and never accept model-supplied organization, agent, run, API, or
 broker identity.
+Every credential-bearing Browser hop rejects HTTP redirects, including Desktop
+registration/lifecycle requests to the local API and server requests to the
+Desktop Broker.
+
+The Agent Browser route accepts only a run-scoped Agent JWT. A mismatched run
+header is rejected before run lookup, and a long-lived Agent API key cannot
+bootstrap Browser authority from an unsigned run header.
 
 The importer reads only the explicitly selected local profile. It does not
 modify the source browser, upload data, or persist raw cookie databases. Cookie
@@ -496,12 +556,30 @@ Agent paths.
    operator starts import.
 10. Import preserves existing cookies and reports valid, expired, malformed,
     unsupported-encryption, and write-failure results.
+    An open source browser produces an actionable sanitized close-and-retry
+    result.
 11. Browser skill is realized for every agent when enabled and absent when
     disabled.
-12. Browser tools derive identity, reject reserved identity arguments, enforce
-    live enabled state, reject unsafe URLs, and isolate tabs by run.
+12. Browser tools derive identity from a run-scoped JWT, reject mismatched or
+    unsigned run headers and reserved identity arguments, enforce live enabled
+    state, reject unsafe URLs, and isolate tabs by run.
 13. Packaged Desktop smoke opens a real webview on the dedicated partition and
     proves clear/persistence behavior.
+14. Side Panel contexts enforce the eight-tab cap and popup rate limit; Agent
+    tabs enforce the eight-per-run and 32-per-process caps.
+15. Deployment/runtime eligibility and model fallback keep Browser skill, flag,
+    sync, tools, and API authorization consistent.
+16. Main-window cross-origin redirects are intercepted before commit, and clear
+    removes cookies, local storage, and CacheStorage through the real Electron
+    partition.
+17. The Import dialog shows Cookies as supported, shows Passwords as unavailable,
+    and never sends a password-import field to Desktop.
+18. Graceful quit during import aborts the worker and waits until its raw
+    snapshot is removed before runtime shutdown.
+19. Startup removes dead same-instance import residue while preserving live
+    same-instance and foreign-instance temporary directories.
+20. Both Desktop-to-server lifecycle requests and server-to-Desktop Broker
+    command requests reject redirects before forwarding credentials or bodies.
 
 ### Expected Results
 
@@ -511,12 +589,37 @@ unit tests as a substitute for packaged Desktop and Agent-path acceptance.
 
 ### Pass / Fail
 
-- Product logic: pending implementation.
-- Unit and integration checks: pending implementation.
-- Browser E2E: pending implementation.
-- Packaged Desktop verification: pending implementation.
-- Spawned product verifier: pending implementation.
-- Final functional, adversarial, and heuristic reviews: pending implementation.
+- Product logic: PASS. `pnpm product-logic:check` validated 67 contracts.
+- Unit and integration checks: PASS for the Browser delivery. The clean
+  pre-reconciliation serial Vitest run completed 494 files with 3,927 passed
+  and 2 skipped tests. After adding four final reconciliation tests, the full
+  serial rerun reached 493/494 files with 3,928 passed and 2 skipped; one
+  unrelated asynchronous issue-lifecycle wakeup assertion was flaky, and that
+  complete file passed 67/67 on immediate isolated rerun. The final
+  popup/import-state reconciliation packet passed 9/9 focused tests. A parallel
+  `pnpm test:run` also hit 14 unrelated five-second git/worktree or readiness
+  timeouts; all three affected files passed 27/27 on serial isolated rerun.
+- Browser E2E: PASS. The focused Browser, Agent integrations, and full nearest
+  Side Panel packet passed 17/17. The runtime-managed Browser skill scenarios
+  passed 2/2. The final Built-in Browser rerun, including system-browser popup
+  routing and disabled Import, passed 2/2.
+- Packaged Desktop verification: PASS. `pnpm desktop:verify` completed dev smoke,
+  packaging, server-package verification, packaged clean smoke, and upgrade
+  smoke. The packaged acceptance scenario covered the real Electron partition,
+  import, organization sharing, instance isolation, restart persistence,
+  disable preservation, clear, Side Panel webview, and Agent MCP discovery plus
+  open/read/close.
+- Spawned product verifier: PASS. The independent verifier reproduced the
+  packaged Desktop, Browser/Settings, Side Panel, skill, lifecycle, race, and
+  authorization acceptance paths with no handoff blocker.
+- Final functional, adversarial, and heuristic reviews: PASS. All three
+  reviewers returned `accept`; the heuristic review's popup-routing and
+  disabled-Import revisions were implemented, tested, and accepted on rerun.
+- Full repository E2E: not clean. The broad run reported 331 passed and 131
+  failed. Read-only triage found one Browser-caused stale tool-count assertion,
+  which was corrected from 69 to 77; the remaining failures were existing
+  branch/test drift outside the Browser path. Browser, Settings, skill, and
+  complete nearest Side Panel suites pass independently.
 
 ## Documentation Changes
 
@@ -538,5 +641,8 @@ unit tests as a substitute for packaged Desktop and Agent-path acceptance.
   source adapters before those platforms can claim cookie import parity.
 - Remote runtimes cannot control a local Desktop Browser unless a future secure
   remote Broker transport is designed.
+- V1 permits another same-instance `local_trusted` instance-admin Desktop/client
+  to replace the active in-memory Broker registration. Broker generation and
+  owner binding remain a hardening follow-up.
 - A future permission page may add per-origin and external-side-effect approval
   policies without changing the shared-profile decision.

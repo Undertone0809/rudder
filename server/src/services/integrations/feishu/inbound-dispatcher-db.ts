@@ -24,7 +24,10 @@ import { chatTitleGenerationService } from "../../chat-title-generation.js";
 import { chatService } from "../../chats.js";
 import { issueService } from "../../issues.js";
 import { productIntelligenceService, type ProductIntelligenceExecuteInput } from "../../product-intelligence.js";
-import { executeAdapterWithModelFallbacks } from "../../runtime-kernel/model-fallback.js";
+import {
+  executeAdapterWithModelFallbacks,
+  sanitizeUntrustedRuntimeConfig,
+} from "../../runtime-kernel/model-fallback.js";
 import { secretService } from "../../secrets.js";
 import { runtimeResultText } from "../../title-generation.js";
 import type {
@@ -220,6 +223,10 @@ async function buildAgentRuntimeSessionSummary(input: {
     "",
     transcript,
   ].join("\n");
+  const runtimeConfig = sanitizeUntrustedRuntimeConfig({
+    ...config,
+    promptTemplate: prompt,
+  });
   const result = await executeAdapterWithModelFallbacks(adapter, {
     runId: `feishu-session-summary-${randomUUID()}`,
     agent: {
@@ -227,7 +234,7 @@ async function buildAgentRuntimeSessionSummary(input: {
       orgId: input.orgId,
       name: agent.name,
       agentRuntimeType: agent.agentRuntimeType,
-      agentRuntimeConfig: config,
+      agentRuntimeConfig: runtimeConfig,
     },
     runtime: {
       sessionId: null,
@@ -235,10 +242,7 @@ async function buildAgentRuntimeSessionSummary(input: {
       sessionDisplayId: null,
       taskKey: null,
     },
-    config: {
-      ...config,
-      promptTemplate: prompt,
-    },
+    config: runtimeConfig,
     context: {
       chatPrompt: prompt,
       rudderScene: "feishu_daily_session_summary",

@@ -452,6 +452,8 @@ contracts:
       - packages/agent-runtimes/codex-local/src/server/execute.ts
       - packages/agent-runtimes/opencode-local/src/server/execute.ts
       - packages/agent-runtimes/pi-local/src/server/execute.ts
+      - server/src/services/browser-capability.ts
+      - server/src/services/runtime-kernel/model-fallback.ts
       - server/src/routes/browser.ts
       - server/src/services/browser-broker.ts
       - server/resources/bundled-skills/browser/SKILL.md
@@ -466,6 +468,7 @@ contracts:
       - server/src/__tests__/opencode-local-execute.test.ts
       - server/src/__tests__/pi-local-execute.test.ts
       - server/src/__tests__/browser-routes.test.ts
+      - server/src/__tests__/model-fallback.test.ts
       - server/src/services/browser-broker.test.ts
       - tests/e2e/agent-detail-integrations-tab.spec.ts
     related_plans:
@@ -482,17 +485,41 @@ contracts:
       - desktop/src/browser-profile.ts
       - desktop/src/browser-ipc.ts
       - desktop/src/browser-webview-policy.ts
+      - desktop/src/browser-import-snapshot.ts
+      - desktop/src/browser-import-sources.ts
+      - desktop/src/browser-cookie-import-worker.ts
       - desktop/src/browser-cookie-import.ts
+      - desktop/src/browser-cookie-db.ts
+      - desktop/src/browser-cookie-crypto-macos.ts
+      - desktop/src/browser-keychain-macos.ts
+      - desktop/src/desktop-quit-flow.ts
+      - desktop/src/navigation-guard.ts
+      - desktop/src/preload.ts
+      - desktop/src/browser-agent-electron.ts
+      - desktop/src/browser-agent-tabs.ts
+      - desktop/src/browser-broker-registration.ts
+      - desktop/src/browser-broker-server.ts
+      - desktop/src/browser-popup-rate-limit.ts
+      - desktop/src/browser-runtime-lifecycle.ts
       - desktop/src/main.ts
       - server/src/services/instance-settings.ts
       - server/src/services/browser-broker.ts
+      - server/src/services/browser-capability.ts
+      - server/src/middleware/auth.ts
       - server/src/routes/browser.ts
       - server/src/services/agent-run-context.ts
       - server/src/services/knowledge-portability/organization-skills.ts
+      - server/src/services/runtime-kernel/model-fallback.ts
+      - server/src/services/chat-assistant.ts
+      - server/src/services/organization-intelligence-profiles.ts
+      - server/src/services/integrations/feishu/inbound-dispatcher-db.ts
       - server/resources/bundled-skills/browser/SKILL.md
       - cli/src/agent-v1-mcp-server.ts
       - cli/src/commands/client/browser.ts
       - ui/src/context/SidePanelContext.tsx
+      - ui/src/components/DesktopBrowserLinkBridge.tsx
+      - ui/src/lib/browser-side-panel.ts
+      - ui/src/lib/desktop-browser-link-router.ts
       - ui/src/pages/Chat.side-panel.tsx
       - ui/src/pages/InstanceBrowserSettings.tsx
       - ui/src/components/BrowserDataImportDialog.tsx
@@ -500,8 +527,29 @@ contracts:
       - desktop/src/browser-profile.test.ts
       - desktop/src/browser-ipc.test.ts
       - desktop/src/browser-webview-policy.test.ts
+      - desktop/src/browser-import-snapshot.test.ts
+      - desktop/src/browser-import-sources.test.ts
+      - desktop/src/browser-cookie-import-worker.test.ts
       - desktop/src/browser-cookie-import.test.ts
+      - desktop/src/browser-cookie-db.test.ts
+      - desktop/src/browser-cookie-crypto-macos.test.ts
+      - desktop/src/browser-keychain-macos.test.ts
+      - desktop/src/desktop-quit-flow.test.ts
+      - desktop/src/navigation-guard.test.ts
+      - desktop/src/preload.browser.test.ts
+      - desktop/src/browser-agent-electron.test.ts
+      - desktop/src/browser-agent-refs.test.ts
+      - desktop/src/browser-agent-tabs.test.ts
+      - desktop/src/browser-broker-registration.test.ts
+      - desktop/src/browser-broker-server.test.ts
+      - desktop/src/browser-popup-rate-limit.test.ts
+      - desktop/src/browser-runtime-lifecycle.test.ts
       - server/src/__tests__/browser-routes.test.ts
+      - server/src/__tests__/auth-middleware.test.ts
+      - server/src/__tests__/model-fallback.test.ts
+      - server/src/__tests__/chat-assistant.test.ts
+      - server/src/__tests__/organization-intelligence-profiles.test.ts
+      - server/src/__tests__/agent-integration-feishu-db-dispatcher.test.ts
       - server/src/services/browser-broker.test.ts
       - server/src/__tests__/agent-run-context.test.ts
       - server/src/__tests__/organization-skills-reference.test.ts
@@ -509,6 +557,11 @@ contracts:
       - cli/src/__tests__/browser-command.test.ts
       - ui/src/pages/InstanceBrowserSettings.test.tsx
       - ui/src/components/BrowserDataImportDialog.test.tsx
+      - ui/src/components/DesktopBrowserLinkBridge.test.tsx
+      - ui/src/context/SidePanelContext.test.tsx
+      - ui/src/lib/browser-side-panel.test.ts
+      - ui/src/lib/desktop-browser-link-router.test.ts
+      - tests/e2e/built-in-browser.spec.ts
       - tests/e2e/chat-side-panel.spec.ts
       - desktop/scripts/smoke.mjs
     related_plans:
@@ -522,13 +575,16 @@ contracts:
       - server/resources/bundled-skills/browser/SKILL.md
       - server/src/routes/agents.ts
       - server/src/services/agent-run-context.ts
+      - server/src/services/browser-capability.ts
       - server/src/services/agent-enabled-skills.ts
       - server/src/services/knowledge-portability/organization-skills.ts
+      - server/src/services/runtime-kernel/model-fallback.ts
       - server/src/services/knowledge-portability/organization-skills.catalog.ts
       - packages/shared/src/organization-skill-reference.ts
       - ui/src/pages/AgentDetail.skills.tsx
     related_tests:
       - server/src/__tests__/agent-run-context.test.ts
+      - server/src/__tests__/model-fallback.test.ts
       - server/src/__tests__/organization-skills-reference.test.ts
       - server/src/__tests__/organization-skills-prune.test.ts
       - desktop/scripts/smoke.mjs
@@ -912,6 +968,11 @@ contracts:
       - desktop/src/browser-ipc.ts
       - desktop/src/browser-profile.ts
       - desktop/src/browser-webview-policy.ts
+      - desktop/src/browser-popup-rate-limit.ts
+      - desktop/src/navigation-guard.ts
+      - ui/src/components/DesktopBrowserLinkBridge.tsx
+      - ui/src/lib/browser-side-panel.ts
+      - ui/src/lib/desktop-browser-link-router.ts
       - ui/src/lib/side-panel-targets.ts
       - ui/src/context/SidePanelContext.tsx
       - ui/src/components/CommentThread.tsx
@@ -926,11 +987,17 @@ contracts:
       - desktop/src/browser-ipc.test.ts
       - desktop/src/browser-profile.test.ts
       - desktop/src/browser-webview-policy.test.ts
+      - desktop/src/browser-popup-rate-limit.test.ts
+      - desktop/src/navigation-guard.test.ts
+      - ui/src/components/DesktopBrowserLinkBridge.test.tsx
+      - ui/src/lib/browser-side-panel.test.ts
+      - ui/src/lib/desktop-browser-link-router.test.ts
       - ui/src/lib/side-panel-targets.test.ts
       - ui/src/components/InlineEditor.test.tsx
       - ui/src/components/Layout.test.ts
       - ui/src/context/SidePanelContext.test.tsx
       - ui/src/pages/Chat.attachment-preview.test.tsx
+      - tests/e2e/built-in-browser.spec.ts
       - tests/e2e/chat-side-panel.spec.ts
     related_plans:
       - doc/plans/2026-07-01-global-side-panel-workbench.md
@@ -1213,6 +1280,7 @@ contracts:
       - ui/src/context/ThemeContext.test.tsx
       - ui/src/pages/InstanceAppearanceSettings.test.tsx
       - ui/src/pages/InstanceBrowserSettings.test.tsx
+      - tests/e2e/built-in-browser.spec.ts
       - tests/e2e/settings-appearance.spec.ts
       - tests/e2e/settings-sidebar.spec.ts
     related_plans:

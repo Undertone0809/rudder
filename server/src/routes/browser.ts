@@ -1,10 +1,11 @@
 import type { Db } from "@rudderhq/db";
 import { heartbeatRuns } from "@rudderhq/db";
 import type { DeploymentMode, InstanceBrowserSettings } from "@rudderhq/shared";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { forbidden, unprocessable } from "../errors.js";
+import { logger } from "../middleware/logger.js";
 import {
   BROWSER_ACTIONS,
   BrowserBrokerError,
@@ -13,6 +14,7 @@ import {
   type BrowserBrokerRegistry,
   type BrowserRuntimeIdentity,
 } from "../services/browser-broker.js";
+import { resolveBrowserCapability } from "../services/browser-capability.js";
 import { instanceSettingsService, logActivity } from "../services/index.js";
 import { assertInstanceAdmin } from "./authz.js";
 
@@ -89,6 +91,15 @@ function requireAgentBrowserIdentity(req: Request, res: Response): BrowserRuntim
   if (req.actor.type !== "agent" || !req.actor.orgId || !req.actor.agentId) {
     throw forbidden("Agent access required");
   }
+  if (req.actor.source !== "agent_jwt") {
+    sendBrowserError(
+      res,
+      403,
+      "browser_run_credential_required",
+      "Rudder Browser tools require a run-scoped runtime credential.",
+    );
+    return null;
+  }
   if (!req.actor.runId) {
     sendBrowserError(res, 400, "browser_run_required", "Rudder Browser tools require a runtime-owned run ID.");
     return null;
@@ -112,8 +123,12 @@ function safeOrigin(value: unknown): string | null {
 
 function browserBrokerStatus(code: string): number {
   if (code === "browser_unavailable") return 503;
+  if (code === "browser_disabled") return 409;
+  if (code === "browser_tab_limit") return 429;
+  if (code === "browser_timeout") return 504;
+  if (code === "browser_result_too_large") return 413;
   if (code === "browser_tab_forbidden") return 403;
-  if (code === "browser_tab_not_found") return 404;
+  if (code === "browser_tab_not_found" || code === "browser_ref_not_found") return 404;
   if (code === "browser_invalid_argument" || code === "browser_unsafe_url") return 422;
   return 502;
 }
@@ -168,7 +183,15 @@ export function browserRoutes(db: Db, options: BrowserRoutesOptions) {
   });
 
   router.post("/browser/:action", async (req, res) => {
-    requireLocalBrowser(options.deploymentMode);
+    if (options.deploymentMode !== "local_trusted") {
+      sendBrowserError(
+        res,
+        403,
+        "browser_runtime_unsupported",
+        "Rudder Browser tools are available only in local_trusted mode.",
+      );
+      return;
+    }
     const identity = requireAgentBrowserIdentity(req, res);
     if (!identity) return;
 
@@ -185,8 +208,22 @@ export function browserRoutes(db: Db, options: BrowserRoutesOptions) {
     const actionArgs = parsed.data as Record<string, unknown>;
 
     const browserSettings = await getBrowserSettings();
-    if (!browserSettings.enabled) {
+    const browserCapability = resolveBrowserCapability({
+      deploymentMode: options.deploymentMode,
+      browserEnabled: browserSettings.enabled,
+      agentRuntimeType: req.actor.adapterType,
+    });
+    if (!browserCapability.instanceEligible) {
       sendBrowserError(res, 409, "browser_disabled", "Rudder Browser is disabled in Settings.");
+      return;
+    }
+    if (!browserCapability.runEligible) {
+      sendBrowserError(
+        res,
+        403,
+        "browser_runtime_unsupported",
+        "The current Agent runtime does not support Rudder Browser tools.",
+      );
       return;
     }
     if (!registry.isAvailable()) {
@@ -204,11 +241,42 @@ export function browserRoutes(db: Db, options: BrowserRoutesOptions) {
       return;
     }
 
+    const requestedTabId = typeof actionArgs.tabId === "string" ? actionArgs.tabId : identity.runId;
+    const requestedOrigin = safeOrigin(actionArgs.url);
+    await recordActivity({
+      orgId: identity.orgId,
+      actorType: "agent",
+      actorId: identity.agentId,
+      agentId: identity.agentId,
+      runId: identity.runId,
+      action: `agent.browser.${action}.requested`,
+      entityType: "browser_tab",
+      entityId: requestedTabId,
+      details: {
+        action,
+        status: "requested",
+        ...(requestedOrigin ? { origin: requestedOrigin } : {}),
+      },
+    });
+
     let result: unknown;
     try {
       result = await registry.forward({ identity, action, args: actionArgs });
     } catch (error) {
       if (error instanceof BrowserBrokerError) {
+        void recordActivity({
+          orgId: identity.orgId,
+          actorType: "agent",
+          actorId: identity.agentId,
+          agentId: identity.agentId,
+          runId: identity.runId,
+          action: `agent.browser.${action}.failed`,
+          entityType: "browser_tab",
+          entityId: requestedTabId,
+          details: { action, status: "failed", code: error.code },
+        }).catch((activityError) => {
+          logger.warn({ err: activityError, action, runId: identity.runId }, "failed to record Browser action failure");
+        });
         sendBrowserError(res, browserBrokerStatus(error.code), error.code, error.message);
         return;
       }
@@ -223,21 +291,26 @@ export function browserRoutes(db: Db, options: BrowserRoutesOptions) {
       : typeof resultRecord.tabId === "string"
         ? resultRecord.tabId
         : identity.runId;
-    const origin = safeOrigin(actionArgs.url) ?? safeOrigin(resultRecord.url);
-    await recordActivity({
-      orgId: identity.orgId,
-      actorType: "agent",
-      actorId: identity.agentId,
-      agentId: identity.agentId,
-      runId: identity.runId,
-      action: `agent.browser.${action}`,
-      entityType: "browser_tab",
-      entityId: tabId,
-      details: {
-        action,
-        ...(origin ? { origin } : {}),
-      },
-    });
+    const origin = requestedOrigin ?? safeOrigin(resultRecord.url);
+    void recordActivity({
+        orgId: identity.orgId,
+        actorType: "agent",
+        actorId: identity.agentId,
+        agentId: identity.agentId,
+        runId: identity.runId,
+        action: `agent.browser.${action}`,
+        entityType: "browser_tab",
+        entityId: tabId,
+        details: {
+          action,
+          status: "completed",
+          ...(origin ? { origin } : {}),
+        },
+      }).catch((error) => {
+      // The durable intent prevents an unlogged side effect. Returning the
+      // successful Broker result avoids an unsafe Agent retry.
+      logger.warn({ err: error, action, runId: identity.runId }, "failed to record Browser action completion");
+      });
     res.json(result ?? {});
   });
 

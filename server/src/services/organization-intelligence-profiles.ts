@@ -17,6 +17,8 @@ const AGENT_ONLY_CONFIG_KEYS = new Set([
   "instructionsEntryFile",
   "instructionsBundleMode",
   "agentsMdPath",
+  "rudderBrowserEnabled",
+  "rudderBrowserCapability",
   "rudderSkillSync",
   "paperclipSkillSync",
   "rudderRuntimeSkills",

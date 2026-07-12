@@ -15,7 +15,8 @@ trying to read browser profile data directly.
 2. Call `rudder_browser_read` before interacting. Use only element references
    returned by the latest read result.
 3. Call `rudder_browser_click` or `rudder_browser_type` for one clear action.
-   Leave `submit` false unless submitting is explicitly intended.
+   Leave `submit` false unless submitting is explicitly intended. Every click
+   or type invalidates the snapshot refs, so read again before another action.
 4. Read again after navigation or mutation. Capture a screenshot when visual
    evidence matters.
 5. Close tabs that are no longer needed.
@@ -37,6 +38,12 @@ trying to read browser profile data directly.
   in Settings. If it returns `browser_unavailable`, report that Rudder Desktop
   is not connected. Do not work around either state with another browser unless
   the user explicitly asks for that alternative.
+- If a tool returns `browser_runtime_unsupported`, report that the current
+  runtime cannot control Rudder Browser. Do not simulate Browser control with
+  shell requests or another browser.
+- If a ref is stale, covered, disabled, or changed, call `rudder_browser_read`
+  again instead of guessing. If a tab reaches a timeout or disappears, list
+  tabs before retrying so a late action is not duplicated.
 
 Read [references/tool-contract.md](references/tool-contract.md) when exact tool
 arguments, result fields, or stable error meanings are needed.

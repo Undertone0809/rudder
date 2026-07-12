@@ -1,4 +1,5 @@
 import {
+  RUDDER_MCP_MANAGED_ENV_KEYS,
   RUDDER_MCP_SERVER_NAME,
   applyRudderBrowserCapabilityEnv,
   pickRudderMcpManagedEnv,
@@ -57,6 +58,7 @@ const DEFAULT_RUDDER_INSTANCE_ID = "default";
 const CLAUDE_PROTECTED_ENV_KEYS = new Set([
   "AGENT_HOME",
   "HOME",
+  ...RUDDER_MCP_MANAGED_ENV_KEYS,
   "RUDDER_AGENT_ROOT",
   "RUDDER_OPERATOR_HOME",
   "USERPROFILE",
@@ -370,8 +372,6 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
 
   const envConfig = parseObject(config.env);
-  const hasExplicitApiKey =
-    typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
   env.RUDDER_RUN_ID = runId;
 
@@ -504,7 +504,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     onLog: input.onLog,
   });
 
-  if (!hasExplicitApiKey && authToken) {
+  if (authToken) {
     env.RUDDER_API_KEY = authToken;
   }
   await writeManagedClaudeMcpConfig(managedHome, pickRudderMcpManagedEnv(env));

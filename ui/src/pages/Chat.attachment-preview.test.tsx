@@ -224,6 +224,9 @@ vi.mock("@tanstack/react-query", () => ({
         error: null,
       };
     }
+    if (queryKey[0] === "instance" && queryKey[1] === "browser-settings") {
+      return { data: { enabled: true, openLinksIn: "built_in" }, isPending: false, isLoading: false, error: null };
+    }
     if (queryKey[0] === "instance") {
       return { data: { nickname: "" }, isPending: false, isLoading: false, error: null };
     }
@@ -1158,13 +1161,22 @@ beforeEach(() => {
     configurable: true,
     value: scrollIntoViewMock,
   });
+  Object.defineProperty(window, "desktopShell", {
+    configurable: true,
+    value: {
+      getBrowserPartition: vi.fn(async () => "persist:rudder-browser-v1-test"),
+      openExternal: vi.fn(async () => undefined),
+      forceOpenExternal: vi.fn(async () => undefined),
+      setSidePanelCloseShortcutActive: vi.fn(async () => undefined),
+    },
+  });
 });
 
 afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
-  document.body.innerHTML = "";
   delete (window as typeof window & { desktopShell?: unknown }).desktopShell;
+  document.body.innerHTML = "";
   vi.unstubAllGlobals();
 });
 
@@ -1896,7 +1908,7 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
 
-    let sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     expect(sidePanel).not.toBeNull();
     expect(sidePanel?.textContent).toContain("Library root");
     expect(sidePanel?.textContent).toContain("1 file · 4 folders");
@@ -2298,7 +2310,7 @@ describe("Chat Side Panel link handling", () => {
     const urlInput = sidePanel!.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]');
     expect(urlInput).not.toBeNull();
     await act(async () => {
-      urlInput!.value = "localhost:3100/api/health";
+      urlInput!.value = "localhost:4173/browser-fixture";
       urlInput!.dispatchEvent(new Event("input", { bubbles: true }));
       urlInput!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
       await Promise.resolve();
@@ -2308,7 +2320,8 @@ describe("Chat Side Panel link handling", () => {
     expect(sidePanel?.querySelector("[data-testid='chat-side-panel-browser-start']")).toBeNull();
     const webview = sidePanel?.querySelector<HTMLElement>("[data-testid='chat-side-panel-browser-webview']");
     expect(webview).not.toBeNull();
-    expect(webview?.getAttribute("src")).toBe("http://localhost:3100/api/health");
+    expect(webview?.getAttribute("src")).toBe("http://localhost:4173/browser-fixture");
+    expect(webview?.getAttribute("allowpopups")).toBe("true");
     expect(Array.from(sidePanel!.querySelectorAll<HTMLElement>("[data-testid='chat-side-panel-tab']")).at(0)?.textContent).toContain("localhost");
 
     const newBrowserTabButton = sidePanel!.querySelector<HTMLButtonElement>('button[aria-label="Open new browser tab"]');
@@ -2392,9 +2405,11 @@ describe("Chat Side Panel link handling", () => {
     expect(container.querySelector("[data-testid='chat-side-panel-browser-view']")).not.toBeNull();
 
     const readyUrl = vi.fn(() => "https://www.google.com/search?q=google");
+    const readyCanGoBack = vi.fn(() => true);
+    const readyCanGoForward = vi.fn(() => false);
     Object.assign(webview!, {
-      canGoBack: vi.fn(() => false),
-      canGoForward: vi.fn(() => false),
+      canGoBack: readyCanGoBack,
+      canGoForward: readyCanGoForward,
       getURL: readyUrl,
     });
 
@@ -2405,7 +2420,47 @@ describe("Chat Side Panel link handling", () => {
     });
 
     expect(readyUrl).toHaveBeenCalled();
+    expect(sidePanel?.querySelector<HTMLButtonElement>('button[aria-label="Back"]')?.disabled).toBe(false);
+
+    const titleEvent = Object.assign(new Event("page-title-updated"), { title: "Search results" });
+    await act(async () => {
+      webview!.dispatchEvent(titleEvent);
+      await Promise.resolve();
+    });
+
+    expect(sidePanel?.querySelector<HTMLButtonElement>('button[aria-label="Back"]')?.disabled).toBe(false);
+    expect(container.querySelector("[data-testid='chat-side-panel-tab']")?.textContent).toContain("Search results");
+    expect(container.querySelector("[data-testid='chat-side-panel-browser-webview']")).toBe(webview);
+
+    const inPageNavigation = Object.assign(new Event("did-navigate-in-page"), {
+      url: "https://example.org/redirected",
+    });
+    await act(async () => {
+      webview!.dispatchEvent(inPageNavigation);
+      await Promise.resolve();
+    });
+
+    expect(webview?.getAttribute("src")).toBe("https://example.org/redirected");
+    expect(container.querySelector("[data-testid='chat-side-panel-browser-webview']")).toBe(webview);
     expect(container.querySelector("[data-testid='chat-side-panel-browser-view']")).not.toBeNull();
+  });
+
+  it("hides Browser entry points outside the Desktop Browser capability", async () => {
+    delete (window as typeof window & { desktopShell?: unknown }).desktopShell;
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "browser-capability-message", body: "Open the side panel." })],
+    };
+
+    const { container } = renderChat();
+    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="Open Side Panel"]');
+    await act(async () => {
+      trigger?.click();
+      await Promise.resolve();
+    });
+
+    const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel?.textContent).toContain("Library");
+    expect(Array.from(sidePanel!.querySelectorAll("button")).some((button) => button.textContent?.includes("Browser"))).toBe(false);
   });
 
   it("closes the active Browser side panel tab when the webview receives Command+W", async () => {
@@ -2437,7 +2492,7 @@ describe("Chat Side Panel link handling", () => {
     sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     const urlInput = sidePanel!.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]');
     await act(async () => {
-      urlInput!.value = "localhost:3100/api/health";
+      urlInput!.value = "localhost:4173/browser-fixture";
       urlInput!.dispatchEvent(new Event("input", { bubbles: true }));
       urlInput!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
       await Promise.resolve();

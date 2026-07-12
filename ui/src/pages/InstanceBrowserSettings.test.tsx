@@ -55,13 +55,14 @@ const messages: Record<string, string> = {
   "browser.desktopUnavailable": "Rudder Desktop is required for importing or clearing browsing data.",
   "browser.import.title": "Import browser data",
   "browser.import.description": "Choose a browser profile and the data to import.",
+  "browser.import.disabledDescription": "Enable Rudder Browser before importing data.",
   "browser.import.source": "Browser profile",
   "browser.import.loadingSources": "Looking for browser profiles...",
   "browser.import.noSources": "No supported browser profiles found.",
   "browser.import.desktopUnavailable": "Browser data import is available only in Rudder Desktop.",
   "browser.import.dataTypes": "Data to import",
-  "browser.import.cookies": "Cookies and site data",
-  "browser.import.cookiesDescription": "Import supported signed-in website sessions.",
+  "browser.import.cookies": "Cookies",
+  "browser.import.cookiesDescription": "Import supported cookie-backed signed-in sessions.",
   "browser.import.passwords": "Passwords",
   "browser.import.passwordsDescription": "Saved-password import requires a future secure importer.",
   "browser.import.notAvailable": "Not available in this version",
@@ -86,12 +87,16 @@ vi.mock("@/context/I18nContext", () => ({
   }),
 }));
 
-let browserSettings = { enabled: true, openLinksIn: "built_in" as const };
+let browserSettings: {
+  enabled: boolean;
+  openLinksIn: "built_in" | "default_browser";
+} = { enabled: true, openLinksIn: "built_in" };
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 let queryClient: QueryClient | null = null;
 const clearBrowserData = vi.fn();
 const listBrowserImportSources = vi.fn();
+const importBrowserData = vi.fn();
 
 async function renderPage() {
   container = document.createElement("div");
@@ -133,8 +138,10 @@ beforeEach(() => {
   clearBrowserData.mockResolvedValue(undefined);
   listBrowserImportSources.mockReset();
   listBrowserImportSources.mockResolvedValue([]);
+  importBrowserData.mockReset();
   (window as typeof window & { desktopShell?: unknown }).desktopShell = {
     clearBrowserData,
+    importBrowserData,
     listBrowserImportSources,
   };
 });
@@ -208,5 +215,18 @@ describe("InstanceBrowserSettings", () => {
     const clearButton = Array.from(page.querySelectorAll("button"))
       .find((button) => button.textContent?.trim() === "Clear all browsing data");
     expect(clearButton?.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("disables import and explains the required enablement while Browser is off", async () => {
+    browserSettings = { enabled: false, openLinksIn: "default_browser" };
+    const page = await renderPage();
+
+    const importButton = Array.from(page.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Import...");
+    expect(importButton?.hasAttribute("disabled")).toBe(true);
+    expect(page.textContent).toContain("Enable Rudder Browser before importing data.");
+
+    act(() => importButton!.click());
+    expect(document.body.textContent).not.toContain("Import browser data");
   });
 });

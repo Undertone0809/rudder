@@ -34,6 +34,9 @@ type BrowserBrokerEnvelope = {
   error?: unknown;
 };
 
+// A 10 MB PNG expands to about 13.34 MB as Base64 before the JSON envelope.
+const DEFAULT_BROWSER_BROKER_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+
 export class BrowserBrokerError extends Error {
   readonly code: string;
 
@@ -91,14 +94,45 @@ function sanitizedBrokerFailure(payload: BrowserBrokerEnvelope, fallbackCode: st
   return new BrowserBrokerError(code, message);
 }
 
+async function readBoundedResponseBody(response: Response, maxBytes: number): Promise<string> {
+  const declaredLength = Number.parseInt(response.headers.get("content-length") ?? "", 10);
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new BrowserBrokerError("browser_broker_protocol_error", "Rudder Browser Desktop Broker response exceeded the size limit.");
+  }
+
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const parts: string[] = [];
+  let byteLength = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      byteLength += value.byteLength;
+      if (byteLength > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new BrowserBrokerError("browser_broker_protocol_error", "Rudder Browser Desktop Broker response exceeded the size limit.");
+      }
+      parts.push(decoder.decode(value, { stream: true }));
+    }
+    parts.push(decoder.decode());
+    return parts.join("");
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export type BrowserBrokerRegistry = ReturnType<typeof createBrowserBrokerRegistry>;
 
 export function createBrowserBrokerRegistry(options: {
   fetchImpl?: typeof fetch;
   requestTimeoutMs?: number;
+  maxResponseBytes?: number;
 } = {}) {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const requestTimeoutMs = options.requestTimeoutMs ?? 15_000;
+  const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_BROWSER_BROKER_MAX_RESPONSE_BYTES;
   let registration: BrowserBrokerRegistration | null = null;
 
   return {
@@ -126,36 +160,53 @@ export function createBrowserBrokerRegistry(options: {
       }
 
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
-      let response: Response;
+      let timeout: NodeJS.Timeout | null = null;
+      const deadline = new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          controller.abort();
+          reject(new BrowserBrokerError("browser_unavailable", "Rudder Browser Desktop Broker timed out."));
+        }, requestTimeoutMs);
+      });
+      const request = async () => {
+        let response: Response;
+        try {
+          response = await fetchImpl(current.endpoint, {
+            method: "POST",
+            redirect: "error",
+            headers: {
+              accept: "application/json",
+              authorization: `Bearer ${current.token}`,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify(command),
+            signal: controller.signal,
+          });
+        } catch {
+          throw new BrowserBrokerError("browser_unavailable", "Rudder Browser Desktop Broker could not be reached.");
+        }
+
+        let payload: BrowserBrokerEnvelope;
+        try {
+          payload = JSON.parse(await readBoundedResponseBody(response, maxResponseBytes)) as BrowserBrokerEnvelope;
+        } catch (error) {
+          if (error instanceof BrowserBrokerError) throw error;
+          if (controller.signal.aborted) {
+            throw new BrowserBrokerError("browser_unavailable", "Rudder Browser Desktop Broker timed out.");
+          }
+          throw new BrowserBrokerError("browser_broker_protocol_error", "Rudder Browser Desktop Broker returned an invalid response.");
+        }
+
+        if (!response.ok || payload.ok !== true) {
+          throw sanitizedBrokerFailure(payload, "browser_broker_error", "Rudder Browser action failed.");
+        }
+        return payload.result ?? {};
+      };
+
       try {
-        response = await fetchImpl(current.endpoint, {
-          method: "POST",
-          headers: {
-            accept: "application/json",
-            authorization: `Bearer ${current.token}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(command),
-          signal: controller.signal,
-        });
-      } catch {
-        throw new BrowserBrokerError("browser_unavailable", "Rudder Browser Desktop Broker could not be reached.");
+        return await Promise.race([request(), deadline]);
       } finally {
-        clearTimeout(timeout);
+        if (timeout) clearTimeout(timeout);
       }
-
-      let payload: BrowserBrokerEnvelope;
-      try {
-        payload = JSON.parse(await response.text()) as BrowserBrokerEnvelope;
-      } catch {
-        throw new BrowserBrokerError("browser_broker_protocol_error", "Rudder Browser Desktop Broker returned an invalid response.");
-      }
-
-      if (!response.ok || payload.ok !== true) {
-        throw sanitizedBrokerFailure(payload, "browser_broker_error", "Rudder Browser action failed.");
-      }
-      return payload.result ?? {};
     },
   };
 }

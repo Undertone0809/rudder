@@ -43,6 +43,43 @@ describe("Rudder Browser IPC", () => {
     expect(importer.importBrowserData).toHaveBeenCalledWith({ sourceId: "opaque-source", importCookies: true });
   });
 
+  it("preserves the sanitized source-open error code across the import IPC channel", async () => {
+    const handlers = new Map<string, (event: { sender: unknown }, ...args: unknown[]) => unknown>();
+    const ipcMain = {
+      handle: (channel: string, handler: (event: { sender: unknown }, ...args: unknown[]) => unknown) => {
+        handlers.set(channel, handler);
+      },
+    };
+    const mainRenderer = { id: "main-renderer" };
+    const sourceOpenResult = {
+      status: "failed" as const,
+      importedCount: 0,
+      skippedCount: 0,
+      failedCount: 1,
+      errors: [{
+        errorCode: "BROWSER_SOURCE_OPEN",
+        message: "Close the source browser and try the import again.",
+      }],
+    };
+    registerBrowserIpcHandlers(ipcMain, {
+      getMainRenderer: () => mainRenderer,
+      controller: {
+        getPartition: () => "persist:rudder-browser-v1-safe",
+        clearBrowserData: async () => undefined,
+        setEnabled: async () => undefined,
+      },
+      importer: {
+        listBrowserImportSources: async () => [],
+        importBrowserData: async () => sourceOpenResult,
+      },
+    });
+
+    await expect(handlers.get(BROWSER_IPC_CHANNELS.importData)?.(
+      { sender: mainRenderer },
+      { sourceId: "opaque-source", importCookies: true },
+    )).resolves.toEqual(sourceOpenResult);
+  });
+
   it("rejects every Browser handler from non-main renderer senders", async () => {
     const handlers = new Map<string, (event: { sender: unknown }, ...args: unknown[]) => unknown>();
     const ipcMain = {

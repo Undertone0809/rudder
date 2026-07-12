@@ -201,6 +201,11 @@ export type DesktopBrowserResetEvent = {
   available: boolean;
 };
 
+export type DesktopWebLinkRequest = {
+  url: string;
+  source: "link" | "browser_popup";
+};
+
 export type DesktopShellApi = {
   getBootState(): Promise<DesktopBootState>;
   onBootState(listener: (state: DesktopBootState) => void): () => void;
@@ -235,6 +240,8 @@ export type DesktopShellApi = {
   getSystemPermissions?(): Promise<DesktopSystemPermissions>;
   sendFeedback(): Promise<void>;
   openExternal(target: string): Promise<void>;
+  forceOpenExternal?(target: string): Promise<void>;
+  onOpenWebLink?(listener: (request: DesktopWebLinkRequest) => void): () => void;
   openNotificationSettings(): Promise<OpenNotificationSettingsResult>;
   setBadgeCount(count: number): Promise<void>;
   showNotification(payload: DesktopNotificationPayload): Promise<void>;

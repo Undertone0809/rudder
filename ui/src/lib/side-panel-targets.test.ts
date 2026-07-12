@@ -96,8 +96,8 @@ describe("side panel targets", () => {
     expect(sidePanelTargetKey(libraryDocumentTarget)).toBe("library-document:doc-1");
     expect(sidePanelFullPageHref(libraryDocumentTarget)).toBe("/library?document=doc-1");
 
-    const browserTarget = { kind: "browser", url: "https://example.com", label: "example.com" } as const;
-    expect(sidePanelTargetKey(browserTarget)).toBe("browser:https://example.com");
+    const browserTarget = { kind: "browser", url: "https://example.com", label: "example.com", tabId: "browser-1" } as const;
+    expect(sidePanelTargetKey(browserTarget)).toBe("browser-tab:browser-1");
     expect(sidePanelFullPageHref(browserTarget)).toBe("https://example.com");
 
     const issuePlaceholder = { kind: "placeholder", targetKind: "issue", label: "Issue" } as const;
