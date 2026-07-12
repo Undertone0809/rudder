@@ -483,6 +483,7 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
 
     const collapseButton = document.querySelector("[aria-label='Collapse workspace sidebar']") as HTMLButtonElement | null;
     expect(collapseButton).not.toBeNull();
+    expect(collapseButton?.querySelector(".lucide-panel-left")).not.toBeNull();
 
     act(() => {
       collapseButton?.click();

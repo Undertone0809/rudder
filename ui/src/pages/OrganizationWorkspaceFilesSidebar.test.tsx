@@ -340,6 +340,7 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     );
     expect(collapseButton).not.toBeNull();
     expect(collapseButton?.getAttribute("aria-label")).toBe("Hide Library sidebar");
+    expect(collapseButton?.querySelector(".lucide-panel-left")).not.toBeNull();
 
     act(() => {
       collapseButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));

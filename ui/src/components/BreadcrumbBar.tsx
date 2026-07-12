@@ -24,7 +24,7 @@ import { PluginLauncherOutlet, usePluginLaunchers } from "@/plugins/launchers";
 import { PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
 import type { Issue, IssueSearchField } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
-import { CircleHelp, Menu, PanelLeftOpen, Plus, Search } from "lucide-react";
+import { CircleHelp, Menu, PanelLeft, Plus, Search } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useOrganization } from "../context/OrganizationContext";
@@ -281,7 +281,7 @@ export function BreadcrumbBar({
       aria-label="Open context sidebar"
       title="Open context sidebar"
     >
-      <PanelLeftOpen className="h-4 w-4" />
+      <PanelLeft className="h-4 w-4" />
     </Button>
   ) : null;
 

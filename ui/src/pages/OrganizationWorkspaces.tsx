@@ -59,7 +59,7 @@ import {
   Loader2,
   MoreHorizontal,
   PackageOpen,
-  PanelLeftClose,
+  PanelLeft,
   Pencil,
   Plus,
   Terminal,
@@ -3741,7 +3741,7 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
                     aria-label="Hide Library sidebar"
                     data-testid="org-workspaces-hide-sidebar-button"
                   >
-                    <PanelLeftClose className="h-3.5 w-3.5" />
+                    <PanelLeft className="h-3.5 w-3.5" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>Hide Library sidebar</TooltipContent>

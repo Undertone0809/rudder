@@ -123,6 +123,7 @@ describe("BreadcrumbBar", () => {
     const html = renderToStaticMarkup(<BreadcrumbBar variant="card" />);
 
     expect(html).toContain("Open context sidebar");
+    expect(html).toContain("lucide-panel-left");
   });
 
   it("uses the Linear source header without native issue actions", () => {

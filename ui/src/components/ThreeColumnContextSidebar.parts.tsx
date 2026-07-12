@@ -14,7 +14,7 @@ import {
   ChevronUp,
   Eye,
   EyeOff,
-  PanelLeftClose,
+  PanelLeft,
   Plus,
   UserRound
 } from "lucide-react";
@@ -141,7 +141,7 @@ export function ContextColumnHeader({
           className="desktop-window-no-drag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[background-color,color] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)] hover:text-foreground"
           onClick={() => setSidebarOpen(false)}
         >
-          <PanelLeftClose className="h-4 w-4" />
+          <PanelLeft className="h-4 w-4" />
         </button>
       ) : null}
     </header>

@@ -30,8 +30,7 @@ import {
   FolderOpen,
   MessageSquare,
   MoreHorizontal,
-  PanelRightClose,
-  PanelRightOpen,
+  PanelRight,
   Pause,
   Pencil,
   Play,
@@ -1058,7 +1057,7 @@ export function Automations() {
                 window.requestAnimationFrame(() => collapseDetailButtonRef.current?.focus());
               }}
             >
-              <PanelRightOpen className="h-4 w-4" />
+              <PanelRight className="h-4 w-4" />
             </Button>
           ) : !automationId && selectedOrganizationId ? (
             <Button type="button" size="sm" className="px-4" onClick={() => openComposer()}>
@@ -1350,7 +1349,7 @@ export function Automations() {
                 window.requestAnimationFrame(() => expandDetailButtonRef.current?.focus());
               }}
             >
-              <PanelRightClose className="h-4 w-4" />
+              <PanelRight className="h-4 w-4" />
             </Button>
             <Button type="button" size="sm" className="px-4" onClick={() => openComposer()}>
               <Plus className="mr-1.5 h-3.5 w-3.5" />
