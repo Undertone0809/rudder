@@ -42,7 +42,8 @@ related_code:
   - ui/src/lib/desktop-browser-link-router.ts
   - ui/src/pages/Chat.side-panel.tsx
   - ui/src/pages/InstanceBrowserSettings.tsx
-commit_refs: []
+commit_refs:
+  - 5d44a2b29cf30fc69f2201b695076bc3e7e69c94
 updated_at: 2026-07-12
 ---
 
