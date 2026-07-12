@@ -101,6 +101,18 @@ jobs:
           {
             "redirects": [
               {
+                "source": "/",
+                "has": [{ "type": "host", "value": "doc.rudder.zeeland.studio" }],
+                "destination": "https://docs.rudderhq.dev/",
+                "permanent": true
+              },
+              {
+                "source": "/:path*",
+                "has": [{ "type": "host", "value": "doc.rudder.zeeland.studio" }],
+                "destination": "https://docs.rudderhq.dev/:path*",
+                "permanent": true
+              },
+              {
                 "source": "/home",
                 "destination": "/",
                 "permanent": true
