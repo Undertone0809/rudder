@@ -182,7 +182,7 @@ jobs:
           }
           fs.writeFileSync(analyticsFile, source.split(placeholder).join(measurementId));
 
-          const analyticsTag = '<script src="/ga.js" defer></script>';
+          const analyticsTag = `<script src="/ga.js?v=${encodeURIComponent(measurementId)}" defer></script>`;
           let injectedHtmlCount = 0;
 
           function injectAnalyticsTag(dir) {
@@ -283,7 +283,7 @@ jobs:
           analytics_source="$(curl -fsSL -H 'Cache-Control: no-cache' "https://$DOCS_PRODUCTION_DOMAIN/ga.js")"
           page_source="$(curl -fsSL -H 'Cache-Control: no-cache' "https://$DOCS_PRODUCTION_DOMAIN/")"
           grep -F 'G-7LFL6GL5QZ' <<< "$analytics_source" >/dev/null
-          grep -F '<script src="/ga.js" defer></script>' <<< "$page_source" >/dev/null
+          grep -F '<script src="/ga.js?v=G-7LFL6GL5QZ" defer></script>' <<< "$page_source" >/dev/null
           if grep -F '__RUDDER_GA_MEASUREMENT_ID__' <<< "$analytics_source" >/dev/null; then
             echo "Production docs analytics still contains the measurement placeholder" >&2
             exit 1
