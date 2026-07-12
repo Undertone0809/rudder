@@ -57,6 +57,8 @@ edit_policy: user_confirmed_only
   placeholders without replacing the current route.
 - `MESSENGER.ATTENTION.001`: Messenger aggregates chat, issue, approval, and
   run attention without becoming the source of every domain rule.
+- `MESSENGER.THREAD.PREVIEW.001`: delayed Chat and Issue detail cards expose
+  truncated context while remaining mutually exclusive with row action menus.
 - `MESSENGER.CUSTOM.GROUPS.001`: Messenger custom groups organize chat, issue,
   approval, and synthetic attention rows while preserving each row's native
   navigation, read state, attention semantics, and pin ordering.

@@ -200,7 +200,25 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
 });
 
 vi.mock("@/components/ui/dropdown-menu", () => ({
-  DropdownMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenu: ({
+    children,
+    open,
+    onOpenChange,
+  }: {
+    children: ReactNode;
+    open?: boolean;
+    onOpenChange?: (open: boolean) => void;
+  }) => (
+    <div
+      data-dropdown-state={open ? "open" : "closed"}
+      onClickCapture={(event) => {
+        const label = (event.target as HTMLElement).closest("button")?.getAttribute("aria-label");
+        if (label?.endsWith("actions")) onOpenChange?.(!open);
+      }}
+    >
+      {children}
+    </div>
+  ),
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
   DropdownMenuContent: ({ children, className }: { children: ReactNode; className?: string }) => <div className={className}>{children}</div>,
   DropdownMenuItem: ({
@@ -591,6 +609,143 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(issuePreview?.textContent).toContain("RUD-42");
     expect(issuePreview?.textContent).toContain("todo");
     expect(issuePreview?.textContent).toContain("medium");
+  });
+
+  it.each([
+    {
+      actionsLabel: "Chat actions",
+      previewTestId: "messenger-thread-preview-chat-chat-1",
+      rowTestId: "messenger-thread-chat-chat-1",
+    },
+    {
+      actionsLabel: "Thread actions",
+      previewTestId: "messenger-thread-preview-issue-issue-1",
+      rowTestId: "messenger-thread-issue-issue-1",
+    },
+  ])("hides the $actionsLabel preview while its menu is open", ({ actionsLabel, previewTestId, rowTestId }) => {
+    vi.useFakeTimers();
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        ...baseModel().threadSummaries,
+        {
+          threadKey: "issue:issue-1",
+          kind: "issues",
+          title: "RUD-42 · Preview menu suppression",
+          preview: "Followed",
+          subtitle: "todo",
+          href: "/messenger/issues/RUD-42",
+          latestActivityAt: "2026-04-11T09:35:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+          metadata: {
+            splitIssue: true,
+            issueId: "issue-1",
+            issueIdentifier: "RUD-42",
+            description: "The preview must not compete with the actions menu.",
+            status: "todo",
+            priority: "medium",
+          },
+        },
+      ],
+    };
+
+    const { container } = renderSidebar();
+    const row = container.querySelector<HTMLElement>(`[data-testid="${rowTestId}"]`);
+    expect(row).not.toBeNull();
+
+    act(() => {
+      row!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(document.querySelector(`[data-testid="${previewTestId}"]`)).not.toBeNull();
+
+    const actions = Array.from(row!.querySelectorAll("button"))
+      .find((button) => button.getAttribute("aria-label") === actionsLabel);
+    expect(actions).toBeTruthy();
+    act(() => {
+      actions!.click();
+    });
+
+    expect(row!.querySelector('[data-dropdown-state="open"]')).not.toBeNull();
+    expect(document.querySelector(`[data-testid="${previewTestId}"]`)).toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(2_000);
+      row!.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+      row!.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
+    });
+    expect(document.querySelector(`[data-testid="${previewTestId}"]`)).toBeNull();
+
+    act(() => {
+      actions!.click();
+      vi.advanceTimersByTime(2_000);
+    });
+    expect(row!.querySelector('[data-dropdown-state="open"]')).toBeNull();
+    expect(document.querySelector(`[data-testid="${previewTestId}"]`)).toBeNull();
+
+    act(() => {
+      row!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      row!.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(document.querySelector(`[data-testid="${previewTestId}"]`)).not.toBeNull();
+  });
+
+  it("cancels a pending preview timer when chat actions open", () => {
+    vi.useFakeTimers();
+    const { container } = renderSidebar();
+    const row = container.querySelector<HTMLElement>('[data-testid="messenger-thread-chat-chat-1"]');
+    const actions = row?.querySelector<HTMLButtonElement>('button[aria-label="Chat actions"]');
+    expect(row).not.toBeNull();
+    expect(actions).not.toBeNull();
+
+    act(() => {
+      row!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(500);
+      actions!.click();
+      vi.advanceTimersByTime(1_000);
+    });
+
+    expect(row!.querySelector('[data-dropdown-state="open"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="messenger-thread-preview-chat-chat-1"]')).toBeNull();
+  });
+
+  it("requires a post-menu blur before restored keyboard focus can reopen a chat preview", () => {
+    const { container } = renderSidebar();
+    const row = container.querySelector<HTMLElement>('[data-testid="messenger-thread-chat-chat-1"]');
+    const actions = row?.querySelector<HTMLButtonElement>('button[aria-label="Chat actions"]');
+    expect(row).not.toBeNull();
+    expect(actions).not.toBeNull();
+
+    act(() => {
+      actions!.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    });
+    expect(document.querySelector('[data-testid="messenger-thread-preview-chat-chat-1"]')).not.toBeNull();
+
+    act(() => {
+      actions!.click();
+    });
+    act(() => {
+      actions!.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+    act(() => {
+      actions!.click();
+    });
+    act(() => {
+      actions!.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    });
+    expect(document.querySelector('[data-testid="messenger-thread-preview-chat-chat-1"]')).toBeNull();
+
+    act(() => {
+      actions!.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+    act(() => {
+      actions!.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    });
+    expect(document.querySelector('[data-testid="messenger-thread-preview-chat-chat-1"]')).not.toBeNull();
   });
 
   afterEach(() => {

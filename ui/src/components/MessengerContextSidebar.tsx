@@ -894,6 +894,7 @@ function MessengerThreadPreview({
   title,
   description,
   metadata,
+  suppressed = false,
   children,
 }: {
   threadKey: string;
@@ -901,12 +902,20 @@ function MessengerThreadPreview({
   title: string;
   description: string | null;
   metadata?: Array<string | null | undefined>;
+  suppressed?: boolean;
   children: ReactElement;
 }) {
   const [open, setOpen] = useState(false);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressedRef = useRef(suppressed);
+  const reentryRequiredRef = useRef(false);
+  const pointerLeftRef = useRef(false);
+  const pointerMovedDuringSuppressionRef = useRef(false);
+  const keyboardBlurredRef = useRef(false);
   const detailLines = metadata?.filter((value): value is string => Boolean(value?.trim())) ?? [];
+
+  suppressedRef.current = suppressed;
 
   const clearTimer = (ref: typeof hoverTimerRef) => {
     if (ref.current) clearTimeout(ref.current);
@@ -915,18 +924,67 @@ function MessengerThreadPreview({
   const showNow = () => {
     clearTimer(hoverTimerRef);
     clearTimer(closeTimerRef);
+    if (suppressedRef.current || reentryRequiredRef.current) return;
     setOpen(true);
   };
   const scheduleOpen = () => {
     clearTimer(hoverTimerRef);
     clearTimer(closeTimerRef);
+    if (suppressedRef.current || reentryRequiredRef.current) return;
     hoverTimerRef.current = setTimeout(showNow, MESSENGER_THREAD_PREVIEW_HOVER_DELAY_MS);
+  };
+  const handleMouseEnter = () => {
+    scheduleOpen();
+  };
+  const handleMouseMove = () => {
+    if (suppressedRef.current) {
+      pointerMovedDuringSuppressionRef.current = true;
+      return;
+    }
+    if (!reentryRequiredRef.current || !pointerLeftRef.current) return;
+    reentryRequiredRef.current = false;
+    pointerLeftRef.current = false;
+    scheduleOpen();
   };
   const scheduleClose = () => {
     clearTimer(hoverTimerRef);
     clearTimer(closeTimerRef);
     closeTimerRef.current = setTimeout(() => setOpen(false), MESSENGER_THREAD_PREVIEW_CLOSE_DELAY_MS);
   };
+
+  const handleMouseLeave = () => {
+    if (
+      reentryRequiredRef.current
+      && (!suppressedRef.current || pointerMovedDuringSuppressionRef.current)
+    ) {
+      pointerLeftRef.current = true;
+    }
+    scheduleClose();
+  };
+
+  const handleBlur = () => {
+    if (!suppressedRef.current && reentryRequiredRef.current) keyboardBlurredRef.current = true;
+    scheduleClose();
+  };
+
+  const handleFocus = () => {
+    if (!suppressedRef.current && keyboardBlurredRef.current) {
+      reentryRequiredRef.current = false;
+      keyboardBlurredRef.current = false;
+    }
+    showNow();
+  };
+
+  useEffect(() => {
+    if (!suppressed) return;
+    reentryRequiredRef.current = true;
+    pointerLeftRef.current = false;
+    pointerMovedDuringSuppressionRef.current = false;
+    keyboardBlurredRef.current = false;
+    clearTimer(hoverTimerRef);
+    clearTimer(closeTimerRef);
+    setOpen(false);
+  }, [suppressed]);
 
   useEffect(() => () => {
     clearTimer(hoverTimerRef);
@@ -935,13 +993,14 @@ function MessengerThreadPreview({
 
   return (
     <TooltipProvider delayDuration={MESSENGER_THREAD_PREVIEW_HOVER_DELAY_MS} skipDelayDuration={0}>
-      <Tooltip open={open}>
+      <Tooltip open={open && !suppressed}>
         <TooltipTrigger
           asChild
-          onMouseEnter={scheduleOpen}
-          onMouseLeave={scheduleClose}
-          onFocusCapture={showNow}
-          onBlurCapture={scheduleClose}
+          onMouseEnter={handleMouseEnter}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+          onFocusCapture={handleFocus}
+          onBlurCapture={handleBlur}
         >
           {children}
         </TooltipTrigger>
@@ -1465,6 +1524,7 @@ function ChatThreadRow({
         agent?.name ? `Agent: ${agent.name}` : null,
         timeLabel,
       ]}
+      suppressed={actionsOpen}
     >
     <div
       data-testid={`messenger-thread-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
@@ -1821,6 +1881,7 @@ function ThreadRow({
         typeof thread.metadata.priority === "string" ? `Priority: ${thread.metadata.priority}` : null,
         thread.latestActivityAt ? relativeTime(new Date(thread.latestActivityAt), { compactDate: true }) : null,
       ] : [thread.latestActivityAt ? relativeTime(new Date(thread.latestActivityAt), { compactDate: true }) : null]}
+      suppressed={actionsOpen}
     >
     <div
       data-testid={`messenger-thread-${sanitizeThreadKey(thread.threadKey)}`}

@@ -12,6 +12,7 @@ contract_ids:
   - CHAT.THREAD.MANIFEST.001
   - CHAT.SIDE.PANEL.001
   - MESSENGER.ATTENTION.001
+  - MESSENGER.THREAD.PREVIEW.001
   - MESSENGER.CUSTOM.GROUPS.001
   - IM.FEISHU.001
 related_code:
@@ -94,6 +95,7 @@ related_tests:
   - packages/shared/src/website-icons.test.ts
   - tests/e2e/markdown-website-link-rendering.spec.ts
   - tests/e2e/messenger-contract.spec.ts
+  - tests/e2e/messenger-hover-preview.spec.ts
   - tests/e2e/chat-edit-stream-layout.spec.ts
   - tests/e2e/chat-fork.spec.ts
   - tests/e2e/chat-rich-references.spec.ts
@@ -1180,6 +1182,43 @@ Evidence:
 - Messenger contract E2E covers ordering, previews, read state, groups,
   redirects, empty state, pin/archive/delete, issue notifications, approvals,
   and automation-created issue attention.
+
+## MESSENGER.THREAD.PREVIEW.001
+
+Why:
+
+- Compact Messenger rows truncate long titles and summaries. Operators need a
+  lightweight way to inspect the full Chat context or Issue description before
+  deciding whether to open the thread.
+
+Product model:
+
+- Hovering a Messenger Chat or split Issue row for one second opens a detail
+  card beside the directory without navigating away from the current task.
+- Chat cards show the full display title and available summary or latest
+  preview. Split Issue cards show the full title, description, identifier,
+  status, and priority when those values exist.
+- Keyboard focus may disclose the same detail card without imposing the mouse
+  hover delay.
+
+Invariants:
+
+- A row actions menu and its detail card must never be visible at the same
+  time. Opening Chat actions or Issue thread actions immediately dismisses the
+  card and cancels any pending disclosure timer.
+- The detail card remains suppressed for the lifetime of the actions menu.
+- Closing the menu does not reopen the card under a stationary pointer or
+  restored trigger focus. Pointer users must leave and hover the row again for
+  one second; keyboard users must move focus away and return.
+- The card is supplemental disclosure only. It must not change read state,
+  thread state, issue state, navigation, or action availability.
+
+Evidence:
+
+- Messenger sidebar component tests cover delayed disclosure, Chat and Issue
+  content, pending-timer cancellation, menu suppression, and re-entry.
+- Messenger hover-preview E2E covers the rendered delay, full content,
+  viewport placement, menu mutual exclusion, and post-menu re-entry.
 
 ## MESSENGER.CUSTOM.GROUPS.001
 

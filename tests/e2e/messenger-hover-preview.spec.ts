@@ -59,6 +59,16 @@ test("shows delayed detail previews for Messenger chat and issue rows", async ({
   await expect(chatPreview).toContainText(chatTitle);
   await expect(chatPreview).toContainText(chatSummary);
 
+  await chatRow.getByRole("button", { name: "Chat actions" }).click();
+  await expect(page.locator(".messenger-thread-actions-menu")).toBeVisible();
+  await expect(chatPreview).toBeHidden();
+  await page.waitForTimeout(1_200);
+  await expect(chatPreview).toBeHidden();
+  await page.locator(".messenger-thread-actions-menu").getByRole("menuitem", { name: "Pin", exact: true }).click();
+  await expect(page.locator(".messenger-thread-actions-menu")).toBeHidden();
+  await page.waitForTimeout(1_200);
+  await expect(chatPreview).toBeHidden();
+
   const issueRow = page.getByTestId(threadTestId(`issue:${issue.id}`));
   const issuePreview = page.getByTestId(`messenger-thread-preview-issue-${issue.id}`);
   await issueRow.hover();
@@ -68,6 +78,20 @@ test("shows delayed detail previews for Messenger chat and issue rows", async ({
   await expect(issuePreview).toContainText(issue.identifier ?? "Issue");
   await expect(issuePreview).toContainText("Status: todo");
   await expect(issuePreview).toContainText("Priority: high");
+
+  await issueRow.getByRole("button", { name: "Thread actions" }).click();
+  await expect(page.locator(".messenger-thread-actions-menu")).toBeVisible();
+  await expect(issuePreview).toBeHidden();
+  await page.waitForTimeout(1_200);
+  await expect(issuePreview).toBeHidden();
+
+  await page.screenshot({ path: "/tmp/rudder-messenger-preview-actions-menu.png", fullPage: true });
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(1_200);
+  await expect(issuePreview).toBeHidden();
+  await page.mouse.move(900, 120);
+  await issueRow.hover();
+  await expect(issuePreview).toBeVisible({ timeout: 3_000 });
 
   const geometry = await page.evaluate(({ rowId, previewId }) => {
     const row = document.querySelector(`[data-testid="${rowId}"]`);
