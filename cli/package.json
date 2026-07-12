@@ -57,7 +57,7 @@
     "@rudderhq/run-intelligence-core": "workspace:*",
     "@rudderhq/server": "workspace:*",
     "@types/node": "^22.19.15",
-    "drizzle-orm": "0.38.4",
+    "drizzle-orm": "0.45.2",
     "embedded-postgres": "18.1.0-beta.16",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"

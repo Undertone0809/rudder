@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockDb = vi.hoisted(() => ({
-  existingBinding: null as { conversationId: string } | null,
+  existingBinding: null as { conversationId: string; createdAt: Date } | null,
   select: vi.fn(),
   insert: vi.fn(),
 }));
@@ -77,20 +77,23 @@ const insertNewBinding = {
   values: vi.fn(() => returningNewBinding),
 };
 
-function selectExistingBinding() {
-  const existingRows = mockDb.existingBinding
-    ? [{ ...mockDb.existingBinding, createdAt: new Date() }]
-    : [];
-  return {
-    from: vi.fn(() => ({
-      innerJoin: vi.fn(() => ({
-        where: vi.fn(async () => existingRows),
-      })),
-      where: vi.fn(() => ({
-        limit: vi.fn(async () => []),
-      })),
-    })),
+function selectRows(rows: unknown[]) {
+  const query = {
+    from: vi.fn(() => query),
+    innerJoin: vi.fn(() => query),
+    where: vi.fn(() => query),
+    limit: vi.fn(() => query),
+    then: (
+      resolve: (value: unknown[]) => unknown,
+      reject: (reason: unknown) => unknown,
+    ) => Promise.resolve(rows).then(resolve, reject),
   };
+  return query;
+}
+
+function selectExistingBinding(fields: Record<string, unknown>) {
+  const isBindingLookup = Object.prototype.hasOwnProperty.call(fields, "conversationId");
+  return selectRows(isBindingLookup && mockDb.existingBinding ? [mockDb.existingBinding] : []);
 }
 
 function integration() {
@@ -183,7 +186,7 @@ describe("Feishu DB dispatcher chat title generation", () => {
     const { createFeishuInboundDispatcherDbDeps } = await import(
       "../services/integrations/feishu/inbound-dispatcher-db.js"
     );
-    mockDb.existingBinding = { conversationId: "conversation-1" };
+    mockDb.existingBinding = { conversationId: "conversation-1", createdAt: new Date() };
     const deps = createFeishuInboundDispatcherDbDeps(mockDb as never, {
       enqueueAgentRun: false,
       createOutboundPlaceholder: false,

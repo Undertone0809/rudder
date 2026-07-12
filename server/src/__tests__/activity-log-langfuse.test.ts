@@ -83,9 +83,11 @@ describe("activity log Langfuse export", () => {
     const runId = "11111111-1111-4111-8111-111111111111";
     const values = vi
       .fn()
-      .mockRejectedValueOnce(Object.assign(new Error("missing heartbeat run"), {
-        code: "23503",
-        constraint_name: "activity_log_run_id_heartbeat_runs_id_fk",
+      .mockRejectedValueOnce(Object.assign(new Error("Failed query"), {
+        cause: Object.assign(new Error("missing heartbeat run"), {
+          code: "23503",
+          constraint_name: "activity_log_run_id_heartbeat_runs_id_fk",
+        }),
       }))
       .mockResolvedValueOnce(undefined);
     const db = {

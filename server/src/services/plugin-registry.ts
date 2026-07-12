@@ -22,6 +22,7 @@ import type {
 } from "@rudderhq/shared";
 import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { conflict, notFound } from "../errors.js";
+import { isPostgresError } from "./postgres-errors.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -32,10 +33,7 @@ import { conflict, notFound } from "../errors.js";
  * `plugins_plugin_key_idx` unique index.
  */
 function isPluginKeyConflict(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  const err = error as { code?: string; constraint?: string; constraint_name?: string };
-  const constraint = err.constraint ?? err.constraint_name;
-  return err.code === "23505" && constraint === "plugins_plugin_key_idx";
+  return isPostgresError(error, "23505", "plugins_plugin_key_idx");
 }
 
 // ---------------------------------------------------------------------------

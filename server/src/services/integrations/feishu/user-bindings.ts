@@ -1,10 +1,7 @@
 import type { Db } from "@rudderhq/db";
 import { agentIntegrationUserBindings, organizationMemberships } from "@rudderhq/db";
 import { and, eq, isNull, or } from "drizzle-orm";
-
-function isUniqueViolation(error: unknown) {
-  return (error as { code?: unknown }).code === "23505";
-}
+import { isPostgresError } from "../../postgres-errors.js";
 
 export function feishuIntegrationUserBindingService(db: Db) {
   return {
@@ -62,7 +59,7 @@ export function feishuIntegrationUserBindingService(db: Db) {
           .returning()
           .then((rows) => rows[0] ?? null);
       } catch (error) {
-        if (!isUniqueViolation(error)) throw error;
+        if (!isPostgresError(error, "23505")) throw error;
         return db
           .select()
           .from(agentIntegrationUserBindings)
