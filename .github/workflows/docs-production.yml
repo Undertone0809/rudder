@@ -132,6 +132,7 @@ jobs:
           vercel env pull "$env_file" \
             --yes \
             --environment=production \
+            --cwd "$RUNNER_TEMP/rudder-docs-export" \
             --scope "$VERCEL_SCOPE" \
             --token "$VERCEL_TOKEN"
 
@@ -167,8 +168,7 @@ jobs:
           const measurementId = values.RUDDER_GA_MEASUREMENT_ID;
 
           if (!measurementId) {
-            console.log("RUDDER_GA_MEASUREMENT_ID is not set in the Vercel production environment; docs analytics remains disabled.");
-            process.exit(0);
+            throw new Error("RUDDER_GA_MEASUREMENT_ID is not set in the Vercel production environment");
           }
 
           if (!/^G-[A-Z0-9]+$/.test(measurementId || "")) {
@@ -181,6 +181,31 @@ jobs:
             throw new Error("GA measurement placeholder was not found in ga.js");
           }
           fs.writeFileSync(analyticsFile, source.split(placeholder).join(measurementId));
+
+          const analyticsTag = `<script src="/ga.js?v=${encodeURIComponent(measurementId)}" defer></script>`;
+          let injectedHtmlCount = 0;
+
+          function injectAnalyticsTag(dir) {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const filePath = path.join(dir, entry.name);
+              if (entry.isDirectory()) {
+                injectAnalyticsTag(filePath);
+                continue;
+              }
+              if (!entry.name.endsWith(".html")) continue;
+              const html = fs.readFileSync(filePath, "utf8");
+              if (html.includes(analyticsTag)) continue;
+              if (!html.includes("</head>")) {
+                continue;
+              }
+              fs.writeFileSync(filePath, html.replace("</head>", `${analyticsTag}</head>`));
+              injectedHtmlCount += 1;
+            }
+          }
+          injectAnalyticsTag(exportDir);
+          if (injectedHtmlCount === 0) {
+            throw new Error("Analytics tag was not injected into any exported HTML page");
+          }
 
           function assertHtmlFlightPayloadsRemainUntouched(dir) {
             for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -247,13 +272,22 @@ jobs:
           hosts="$DOCS_PRODUCTION_DOMAIN,$DOCS_PRODUCTION_ALIASES"
           for attempt in {1..12}; do
             if DOCS_HEALTH_HOSTS="$hosts" node scripts/check-docs-public-health.mjs; then
-              exit 0
+              break
             fi
             echo "Waiting for docs production domains to serve the new alias ($attempt/12)..."
             sleep 5
           done
 
           DOCS_HEALTH_HOSTS="$hosts" node scripts/check-docs-public-health.mjs
+
+          analytics_source="$(curl -fsSL -H 'Cache-Control: no-cache' "https://$DOCS_PRODUCTION_DOMAIN/ga.js")"
+          page_source="$(curl -fsSL -H 'Cache-Control: no-cache' "https://$DOCS_PRODUCTION_DOMAIN/")"
+          grep -F 'G-7LFL6GL5QZ' <<< "$analytics_source" >/dev/null
+          grep -F '<script src="/ga.js?v=G-7LFL6GL5QZ" defer></script>' <<< "$page_source" >/dev/null
+          if grep -F '__RUDDER_GA_MEASUREMENT_ID__' <<< "$analytics_source" >/dev/null; then
+            echo "Production docs analytics still contains the measurement placeholder" >&2
+            exit 1
+          fi
 
       - name: Create docs release tag
         run: |
