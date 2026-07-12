@@ -2436,6 +2436,123 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(text.indexOf("Manual second pinned group")).toBeLessThan(text.indexOf("Manual first regular group"));
   });
 
+  it("reorders pinned custom groups within the pinned domain", async () => {
+    customGroupList = [
+      {
+        id: "group-1",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "First pinned group",
+        icon: "folder::amber",
+        sortOrder: 0,
+        collapsed: false,
+        pinnedAt: "2026-04-11T09:40:00.000Z",
+        createdAt: "2026-04-11T09:40:00.000Z",
+        updatedAt: "2026-04-11T09:40:00.000Z",
+        entries: [],
+      },
+      {
+        id: "group-2",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Second pinned group",
+        icon: "folder::teal",
+        sortOrder: 1,
+        collapsed: false,
+        pinnedAt: "2026-04-11T09:30:00.000Z",
+        createdAt: "2026-04-11T09:30:00.000Z",
+        updatedAt: "2026-04-11T09:30:00.000Z",
+        entries: [],
+      },
+      {
+        id: "group-3",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Regular group",
+        icon: "folder::slate",
+        sortOrder: 2,
+        collapsed: false,
+        pinnedAt: null,
+        createdAt: "2026-04-11T09:20:00.000Z",
+        updatedAt: "2026-04-11T09:20:00.000Z",
+        entries: [],
+      },
+    ];
+    messengerModel = { ...baseModel(), threadSummaries: [] };
+
+    renderSidebar();
+
+    await act(async () => {
+      dndMockState.onDragStart?.({ active: { id: "custom-group:group-2" } });
+      dndMockState.onDragOver?.({
+        active: { id: "custom-group:group-2" },
+        over: { id: "custom-group:group-1" },
+      });
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector('[data-testid="messenger-insertion-line-before"]')).toBeTruthy();
+
+    await act(async () => {
+      dndMockState.onDragEnd?.({
+        active: { id: "custom-group:group-2" },
+        over: { id: "custom-group:group-1" },
+      });
+      await Promise.resolve();
+    });
+
+    expect(mockReorderCustomGroups).toHaveBeenCalledWith("org-1", ["group-2", "group-1"]);
+  });
+
+  it("does not reorder custom groups across the pin boundary", async () => {
+    customGroupList = [
+      {
+        id: "group-1",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Pinned group",
+        icon: "folder::amber",
+        sortOrder: 0,
+        collapsed: false,
+        pinnedAt: "2026-04-11T09:40:00.000Z",
+        createdAt: "2026-04-11T09:40:00.000Z",
+        updatedAt: "2026-04-11T09:40:00.000Z",
+        entries: [],
+      },
+      {
+        id: "group-2",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Regular group",
+        icon: "folder::slate",
+        sortOrder: 1,
+        collapsed: false,
+        pinnedAt: null,
+        createdAt: "2026-04-11T09:30:00.000Z",
+        updatedAt: "2026-04-11T09:30:00.000Z",
+        entries: [],
+      },
+    ];
+    messengerModel = { ...baseModel(), threadSummaries: [] };
+
+    renderSidebar();
+
+    await act(async () => {
+      dndMockState.onDragStart?.({ active: { id: "custom-group:group-1" } });
+      dndMockState.onDragOver?.({
+        active: { id: "custom-group:group-1" },
+        over: { id: "custom-group:group-2" },
+      });
+      dndMockState.onDragEnd?.({
+        active: { id: "custom-group:group-1" },
+        over: { id: "custom-group:group-2" },
+      });
+      await Promise.resolve();
+    });
+
+    expect(mockReorderCustomGroups).not.toHaveBeenCalled();
+  });
+
   it("reorders loose chats instead of creating a group when one loose chat is dropped on another", async () => {
     const storage = installLocalStorage();
     messengerModel = {

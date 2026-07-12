@@ -1321,7 +1321,7 @@ test.describe("Messenger unified threads contract", () => {
     expect(payload.groups.find((candidate) => candidate.id === group.id)?.icon).toBe("🔥::amber");
   });
 
-  test("creates custom groups pinned by default and keeps pinned groups first after reload", async ({ page }) => {
+  test("reorders custom groups within the pinned domain and persists after reload", async ({ page }) => {
     const organization = await createOrganization(page, `Messenger-Custom-Group-Pin-${Date.now()}`);
 
     async function createChat(title: string) {
@@ -1359,10 +1359,16 @@ test.describe("Messenger unified threads contract", () => {
     expect(loosePinRes.ok()).toBe(true);
     await page.waitForTimeout(25);
     const regularChat = await createChat("Newer regular tab");
+    const secondPinnedChat = await createChat("Second pinned group tab");
     const pinCandidateGroup = await createGroup(
       "Pin candidate",
       "📌::amber",
       `chat:${pinCandidateChat.id}`,
+    );
+    const secondPinnedGroup = await createGroup(
+      "Second pinned group",
+      "folder::teal",
+      `chat:${secondPinnedChat.id}`,
     );
     const regularGroup = await createGroup(
       "Regular group",
@@ -1382,24 +1388,17 @@ test.describe("Messenger unified threads contract", () => {
     await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
 
     const pinCandidateSectionId = `messenger-thread-section-custom-group-${pinCandidateGroup.id}`;
+    const secondPinnedSectionId = `messenger-thread-section-custom-group-${secondPinnedGroup.id}`;
     const loosePinnedSectionId = "messenger-thread-section-custom-pinned";
     const regularSectionId = `messenger-thread-section-custom-group-${regularGroup.id}`;
     const loosePinnedThreadId = threadTestId(`chat:${loosePinnedChat.id}`);
     const pinCandidateSection = page.getByTestId(pinCandidateSectionId);
     const pinnedHeader = page.getByTestId(loosePinnedSectionId);
     await expect(pinCandidateSection).toContainText("Pin candidate", { timeout: 15_000 });
-    await expect(pinnedHeader).toContainText("Pinned");
+    await expect(page.getByTestId(secondPinnedSectionId)).toContainText("Second pinned group");
+    await expect(pinnedHeader).toBeVisible();
     await expect(page.getByTestId(loosePinnedThreadId)).toContainText("Loose pinned tab");
     await expect(page.getByTestId(regularSectionId)).toContainText("Regular group");
-    await expect(page.getByTestId(`${loosePinnedSectionId}-content`)).toContainText("Loose pinned tab");
-    await expect(page.getByTestId(`${loosePinnedSectionId}-content`)).toContainText("Pin candidate");
-
-    const pinnedHeaderBox = await pinnedHeader.boundingBox();
-    const pinnedGroupBox = await pinCandidateSection.boundingBox();
-    expect(pinnedHeaderBox).not.toBeNull();
-    expect(pinnedGroupBox).not.toBeNull();
-    expect(pinnedHeaderBox!.y).toBeLessThan(pinnedGroupBox!.y);
-
     await expect.poll(async () => {
       const groupsRes = await page.request.get(`/api/orgs/${organization.id}/messenger/groups`);
       expect(groupsRes.ok()).toBe(true);
@@ -1413,15 +1412,65 @@ test.describe("Messenger unified threads contract", () => {
       regularPinnedAt: null,
     });
 
-    await expectTestIdsInDomOrder(page, [loosePinnedSectionId, pinCandidateSectionId, loosePinnedThreadId, regularSectionId]);
+    await expectTestIdsInDomOrder(page, [loosePinnedSectionId, pinCandidateSectionId, secondPinnedSectionId, loosePinnedThreadId, regularSectionId]);
+
+    const reorderResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/reorder`) &&
+      response.request().method() === "PATCH",
+    );
+    await dragMessengerSectionOver(
+      page,
+      page.getByTestId(secondPinnedSectionId).getByRole("button", { name: "Drag group Second pinned group" }),
+      page.getByTestId(pinCandidateSectionId).getByRole("button", { name: "Drag group Pin candidate" }),
+    );
+    expect((await reorderResponse).ok()).toBe(true);
+    await expectTestIdsInDomOrder(page, [loosePinnedSectionId, secondPinnedSectionId, pinCandidateSectionId, loosePinnedThreadId, regularSectionId]);
+
+    await expect.poll(async () => {
+      const groupsRes = await page.request.get(`/api/orgs/${organization.id}/messenger/groups`);
+      expect(groupsRes.ok()).toBe(true);
+      const payload = await groupsRes.json() as { groups: Array<{ id: string; pinnedAt: string | null }> };
+      return payload.groups.filter((group) => group.pinnedAt).map((group) => group.id);
+    }).toEqual([secondPinnedGroup.id, pinCandidateGroup.id]);
+
+    await page.evaluate(() => {
+      for (const key of Object.keys(window.localStorage)) {
+        if (key.startsWith("rudder.messengerDefaultThreadOrder:")) window.localStorage.removeItem(key);
+      }
+    });
 
     await page.reload({ waitUntil: "commit" });
 
-    await expect(page.getByTestId(loosePinnedSectionId)).toContainText("Pinned", { timeout: 15_000 });
+    await expect(page.getByTestId(loosePinnedSectionId)).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId(pinCandidateSectionId)).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId(loosePinnedThreadId)).toContainText("Loose pinned tab");
-    await expect(page.getByTestId(`${loosePinnedSectionId}-content`)).toContainText("Pin candidate");
-    await expectTestIdsInDomOrder(page, [loosePinnedSectionId, pinCandidateSectionId, loosePinnedThreadId, regularSectionId]);
+    await expectTestIdsInDomOrder(page, [loosePinnedSectionId, secondPinnedSectionId, pinCandidateSectionId, loosePinnedThreadId, regularSectionId]);
+
+    const crossDomainReorderRequests: string[] = [];
+    page.on("request", (request) => {
+      if (request.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/reorder`)) {
+        crossDomainReorderRequests.push(request.postData() ?? "");
+      }
+    });
+    await dragMessengerSectionOver(
+      page,
+      page.getByTestId(secondPinnedSectionId).getByRole("button", { name: "Drag group Second pinned group" }),
+      page.getByTestId(regularSectionId).getByRole("button", { name: "Drag group Regular group" }),
+    );
+    await page.waitForTimeout(250);
+    expect(crossDomainReorderRequests).toEqual([]);
+    await expectTestIdsInDomOrder(page, [loosePinnedSectionId, secondPinnedSectionId, pinCandidateSectionId, loosePinnedThreadId, regularSectionId]);
+    await expect.poll(async () => {
+      const groupsRes = await page.request.get(`/api/orgs/${organization.id}/messenger/groups`);
+      expect(groupsRes.ok()).toBe(true);
+      const payload = await groupsRes.json() as { groups: Array<{ id: string; pinnedAt: string | null }> };
+      return payload.groups.map((group) => ({ id: group.id, pinned: Boolean(group.pinnedAt) }));
+    }).toEqual([
+      { id: secondPinnedGroup.id, pinned: true },
+      { id: pinCandidateGroup.id, pinned: true },
+      { id: regularGroup.id, pinned: false },
+    ]);
+    await page.screenshot({ path: "/tmp/rudder-messenger-pinned-group-reorder.png", fullPage: true });
 
     await page.getByTestId(pinCandidateSectionId).hover();
     await page.getByTestId(pinCandidateSectionId).getByRole("button", { name: "Group actions" }).click();

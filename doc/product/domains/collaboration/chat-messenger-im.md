@@ -1237,6 +1237,9 @@ Flow:
    pin/unpin, archive/delete where supported, and preview-changing source
    events, update or refetch the group's hydrated rows so grouped badges do not
    diverge from loose rows.
+8. The operator may reorder custom groups within the pinned or unpinned domain.
+   Rudder persists that domain-local order and restores it on reload without
+   moving the group across the pin boundary.
 
 Invariants:
 
@@ -1256,6 +1259,10 @@ Invariants:
 - Pinned custom groups render inside the `Pinned` section immediately under
   the section header and before loose pinned threads. Unpinned groups and loose
   unpinned issue, chat, approval, and synthetic attention rows follow.
+- Pinning assigns a custom group to the pinned ordering domain; it does not lock
+  the group's position. Pinned groups remain draggable relative to other pinned
+  groups, and unpinned groups remain draggable relative to other unpinned
+  groups. Group reordering must not move a group across the pin boundary.
 - Pinning a custom group does not pin every member individually, and pinning a
   member does not remove it from its group.
 - Removing an item from a group returns that item to the loose Messenger
@@ -1284,8 +1291,8 @@ Evidence:
   regenerated output is unusable.
 - Messenger E2E covers aggregate issue grouping, split issue grouping,
   synthetic membership, drag/drop grouping, row-action group creation, and
-  custom group pin/order behavior, including pinned groups rendering above
-  loose pinned threads after reload.
+  custom group pin/order behavior, including pinned-domain group reordering and
+  pinned groups rendering above loose pinned threads after reload.
 
 ## IM.FEISHU.001
 

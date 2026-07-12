@@ -2786,7 +2786,9 @@ export function MessengerContextSidebar() {
         }) satisfies OrganizedThreadSection);
       const topLevelSections = sortCustomLayoutSections(
         [...groupSections, ...ungroupedSections].sort(compareCustomLayoutSections),
-        defaultThreadOrderKeys,
+        defaultThreadOrderKeys.length > 0
+          ? defaultThreadOrderKeys
+          : groupSections.map((section) => section.key),
       );
       const pinnedGroupSections = topLevelSections.filter((section) => section.isPinned);
       const remainingTopLevelSections = topLevelSections.filter((section) => !section.isPinned);
@@ -3216,6 +3218,39 @@ export function MessengerContextSidebar() {
       const activeGroupId = customEntryGroupByThreadKey.get(activeThreadKey) ?? null;
       const overEntryGroupId = overIsThread ? customEntryGroupByThreadKey.get(overThreadKey) ?? null : undefined;
       const overGroupId = customGroupIdFromSectionKey(overThreadKey) ?? overEntryGroupId;
+      const activeSectionGroupId = customGroupIdFromSectionKey(activeThreadKey);
+      const overSectionGroupId = customGroupIdFromSectionKey(overThreadKey);
+      if (activeSectionGroupId && overSectionGroupId) {
+        const activeGroup = customGroups.find((group) => group.id === activeSectionGroupId);
+        const overGroup = customGroups.find((group) => group.id === overSectionGroupId);
+        if (!activeGroup || !overGroup || Boolean(activeGroup.pinnedAt) !== Boolean(overGroup.pinnedAt)) return;
+        const domainSectionKeys = activeGroup.pinnedAt
+          ? organizedThreadSections
+            .find((section) => section.key === "custom:pinned")
+            ?.childSections?.map((section) => section.key).filter((key) => Boolean(customGroupIdFromSectionKey(key))) ?? []
+          : organizedThreadSections
+            .map((section) => section.key)
+            .filter((key) => Boolean(customGroupIdFromSectionKey(key)));
+        const oldIndex = domainSectionKeys.indexOf(activeThreadKey);
+        const newIndex = domainSectionKeys.indexOf(overThreadKey);
+        if (oldIndex !== -1 && newIndex !== -1) {
+          const movedSectionKeys = arrayMove(domainSectionKeys, oldIndex, newIndex);
+          if (defaultThreadOrderStorageKey) {
+            const nextOrderKeys = nextDefaultThreadOrderKeysAfterMove(
+              domainSectionKeys,
+              defaultThreadOrderKeys,
+              oldIndex,
+              newIndex,
+            );
+            setDefaultThreadOrderKeys(nextOrderKeys);
+            writeStringList(defaultThreadOrderStorageKey, nextOrderKeys);
+          }
+          reorderCustomGroupsMutation.mutate(
+            movedSectionKeys.map(customGroupIdFromSectionKey).filter((id): id is string => Boolean(id)),
+          );
+        }
+        return;
+      }
       if (
         activeIsThread
         && overIsThread
@@ -3348,7 +3383,7 @@ export function MessengerContextSidebar() {
     if (projectOrderStorageKey) {
       writeProjectOrder(projectOrderStorageKey, nextProjectOrderIds);
     }
-  }, [assignCustomGroupEntryMutation, customEntryGroupByThreadKey, defaultThreadOrderKeys, defaultThreadOrderStorageKey, effectiveThreadOrganizationRule, messengerThreadGroupOrderStorageKey, organizedThreadSections, projectOrderIds, projectOrderStorageKey, removeCustomGroupEntryMutation, reorderCustomGroupEntriesMutation, reorderCustomGroupsMutation, resetThreadDragState]);
+  }, [assignCustomGroupEntryMutation, customEntryGroupByThreadKey, customGroups, defaultThreadOrderKeys, defaultThreadOrderStorageKey, effectiveThreadOrganizationRule, messengerThreadGroupOrderStorageKey, organizedThreadSections, projectOrderIds, projectOrderStorageKey, removeCustomGroupEntryMutation, reorderCustomGroupEntriesMutation, reorderCustomGroupsMutation, resetThreadDragState]);
 
   const handleShowMoreThreadSection = (section: OrganizedThreadSection, visibleCount: number) => {
     if (visibleCount < section.entries.length) {
@@ -3647,9 +3682,15 @@ export function MessengerContextSidebar() {
     };
     const sectionInsertionPlacement: MessengerInsertionPlacement = (() => {
       if (!draggingThreadId || dragOverId !== section.key || dragIntent !== "reorder-group") return null;
-      const sectionKeys = organizedThreadSections
-        .filter((candidate) => candidate.key !== "custom:pinned")
-        .map((candidate) => candidate.key);
+      const activeGroupId = customGroupIdFromSectionKey(draggingThreadId);
+      const activeGroup = activeGroupId ? customGroups.find((group) => group.id === activeGroupId) : null;
+      const sectionKeys = activeGroup?.pinnedAt
+        ? organizedThreadSections
+          .find((candidate) => candidate.key === "custom:pinned")
+          ?.childSections?.map((candidate) => candidate.key).filter((key) => Boolean(customGroupIdFromSectionKey(key))) ?? []
+        : organizedThreadSections
+          .filter((candidate) => candidate.key !== "custom:pinned")
+          .map((candidate) => candidate.key);
       const activeIndex = sectionKeys.indexOf(draggingThreadId);
       const overIndex = sectionKeys.indexOf(section.key);
       if (activeIndex === -1 || overIndex === -1 || activeIndex === overIndex) return null;
@@ -3680,14 +3721,25 @@ export function MessengerContextSidebar() {
       && !customGroup
       && (section.label === null || isPinnedCustomSection)
       && visibleEntries.length === 1;
+    const childSectionKeys = section.childSections
+      ?.filter((childSection) => Boolean(customGroupIdFromSectionKey(childSection.key)))
+      .map((childSection) => childSection.key) ?? [];
     const renderedChildSections = section.childSections?.length ? (
-      <div className="flex flex-col gap-1">
-        {section.childSections.map((childSection) => (
-          <div key={childSection.key} className="flex shrink-0 flex-col gap-1">
-            {renderThreadSection(childSection)}
-          </div>
-        ))}
-      </div>
+      <SortableContext items={childSectionKeys} strategy={verticalListSortingStrategy}>
+        <div className="flex flex-col gap-1">
+          {section.childSections.map((childSection) => (
+            childSectionKeys.includes(childSection.key) ? (
+              <SortableThreadSection key={childSection.key} id={childSection.key}>
+                {(childDragHandleProps, childDragging) => renderThreadSection(childSection, childDragHandleProps, childDragging)}
+              </SortableThreadSection>
+            ) : (
+              <div key={childSection.key} className="flex shrink-0 flex-col gap-1">
+                {renderThreadSection(childSection)}
+              </div>
+            )
+          ))}
+        </div>
+      </SortableContext>
     ) : null;
     const renderedEntries = canSortCustomEntries ? (
       <SortableContext
