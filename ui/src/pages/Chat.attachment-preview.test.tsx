@@ -2513,7 +2513,7 @@ describe("Chat Side Panel link handling", () => {
 
     expect(shortcut.defaultPrevented).toBe(true);
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(0);
-    expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Open a panel");
+    expect(container.querySelector("[data-testid='chat-side-panel']")).toBeNull();
   });
 
   it("uses a mobile overlay Side Panel without removing the Chat composer", async () => {

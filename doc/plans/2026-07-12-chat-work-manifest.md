@@ -25,11 +25,13 @@ related_code:
   - ui/src/api/chats.ts
   - ui/src/pages/Chat.work-manifest.tsx
   - ui/src/pages/Chat.tsx
+  - ui/src/context/SidePanelContext.tsx
   - doc/product/domains/collaboration/chat-messenger-im.md
   - doc/product/domains/library-and-context/documents-and-work-products.md
   - tests/e2e/chat-work-manifest.spec.ts
 commit_refs:
   - "feat: add chat work manifest"
+  - "fix: polish chat work manifest interactions"
 updated_at: 2026-07-12
 ---
 
@@ -76,7 +78,7 @@ Affected contracts:
 - `packages/shared/src/types/chat.ts`: public manifest item, section, project roll-up, and response contracts.
 - `server/src/services/chat-work-manifest.ts`: reconcile current active messages and list current/project manifest state.
 - `server/src/routes/chats.ts`: organization-scoped `GET /api/chats/:id/work-manifest` endpoint.
-- `ui/src/pages/Chat.work-manifest.tsx`: isolated responsive shelf, section rows, origin labels, counts, and empty/error states.
+- `ui/src/pages/Chat.work-manifest.tsx`: isolated responsive shelf, section rows, website details, counts, and empty/error states.
 - `ui/src/pages/Chat.tsx`: query integration, current-message jump handler, and Side Panel target delegation.
 - `tests/e2e/chat-work-manifest.spec.ts`: real Chat workflow for Sources, Outputs, References, deduplication, project separation, and responsive behavior.
 
@@ -143,7 +145,7 @@ export function preferChatWorkManifestCategory(
 
 - [x] **Step 2: Verify tests fail**
 
-Run: `pnpm --filter @rudderhq/shared test -- chat-work-manifest.test.ts`
+Run: `pnpm exec vitest run packages/shared/src/chat-work-manifest.test.ts`
 
 Expected: FAIL because the module and exports do not exist.
 
@@ -153,7 +155,7 @@ Strip fenced and inline code before parsing. Reuse `parseLibraryEntryMentionHref
 
 - [x] **Step 4: Verify shared tests pass**
 
-Run: `pnpm --filter @rudderhq/shared test -- chat-work-manifest.test.ts`
+Run: `pnpm exec vitest run packages/shared/src/chat-work-manifest.test.ts`
 
 Expected: PASS.
 
@@ -184,7 +186,7 @@ Cover:
 
 - [x] **Step 2: Verify service tests fail**
 
-Run: `pnpm --filter @rudderhq/server test -- chat-work-manifest.test.ts`
+Run: `pnpm exec vitest run server/src/__tests__/chat-work-manifest.test.ts`
 
 Expected: FAIL because the schema and service do not exist.
 
@@ -220,7 +222,7 @@ Read only non-superseded user/assistant messages. Build candidates from message 
 
 - [x] **Step 6: Verify service tests pass**
 
-Run: `pnpm --filter @rudderhq/server test -- chat-work-manifest.test.ts`
+Run: `pnpm exec vitest run server/src/__tests__/chat-work-manifest.test.ts`
 
 Expected: PASS.
 
@@ -238,7 +240,7 @@ Add cases for board access, missing Chat, cross-organization denial, empty manif
 
 - [x] **Step 2: Verify route tests fail**
 
-Run: `pnpm --filter @rudderhq/server test -- chat-routes.test.ts -t "work manifest"`
+Run: `pnpm exec vitest run server/src/__tests__/chat-routes.test.ts -t "work manifest"`
 
 Expected: FAIL with route not found.
 
@@ -254,7 +256,7 @@ The route must call the existing `assertConversationAccess`, reconcile the curre
 
 - [x] **Step 4: Verify API tests pass**
 
-Run: `pnpm --filter @rudderhq/server test -- chat-routes.test.ts -t "work manifest"`
+Run: `pnpm exec vitest run server/src/__tests__/chat-routes.test.ts -t "work manifest"`
 
 Expected: PASS.
 
@@ -267,11 +269,11 @@ Expected: PASS.
 
 - [x] **Step 1: Write failing component tests**
 
-Cover section ordering, maximum visible rows, `View all`, empty/loading/error states, origin labels, Source add action, Project roll-up separation, wide shelf visibility, compact trigger, and hiding while Side Panel is open.
+Cover section ordering, maximum visible rows, `View all`, hidden empty/loading states, visible request errors, website URL/icon rows, Source add action, Project roll-up separation, wide shelf visibility, compact trigger, and hiding while Side Panel is open.
 
 - [x] **Step 2: Verify component tests fail**
 
-Run: `pnpm --filter @rudderhq/ui test -- Chat.work-manifest.test.tsx`
+Run: `pnpm exec vitest run ui/src/pages/Chat.work-manifest.test.tsx`
 
 Expected: FAIL because the component does not exist.
 
@@ -300,7 +302,7 @@ Fetch only for a selected native or readable Chat. Internal Library targets call
 
 - [x] **Step 5: Verify component and existing Chat tests pass**
 
-Run: `pnpm --filter @rudderhq/ui test -- Chat.work-manifest.test.tsx Chat.test.tsx Chat.attachment-preview.test.tsx`
+Run: `pnpm exec vitest run ui/src/pages/Chat.work-manifest.test.tsx ui/src/pages/Chat.attachment-preview.test.tsx`
 
 Expected: PASS.
 
@@ -315,7 +317,7 @@ Create one project with attached context, two project Chats, user attachments an
 
 - [x] **Step 2: Verify the desktop workflow**
 
-At `1440x900`, assert that the current Chat shelf shows Outputs/Sources/References, excludes Browser, deduplicates URLs, labels provenance, keeps Project assets separate, opens a Library Output in Side Panel, and returns after closing the panel.
+At `1440x900`, assert that the current Chat shelf shows Outputs/Sources/References, excludes Browser, deduplicates URLs, shows website URL/icon details, keeps Project assets separate, opens a Library Output in Side Panel, and returns after closing the panel.
 
 - [x] **Step 3: Verify the narrow workflow**
 
@@ -340,9 +342,9 @@ Save final desktop, narrow, and Side Panel-open screenshots under `/tmp/rudder-c
 
 ```bash
 pnpm product-logic:check
-pnpm --filter @rudderhq/shared test -- chat-work-manifest.test.ts
-pnpm --filter @rudderhq/server test -- chat-work-manifest.test.ts
-pnpm --filter @rudderhq/ui test -- Chat.work-manifest.test.tsx
+pnpm exec vitest run packages/shared/src/chat-work-manifest.test.ts
+pnpm exec vitest run server/src/__tests__/chat-work-manifest.test.ts server/src/__tests__/chat-routes.test.ts
+pnpm exec vitest run ui/src/pages/Chat.work-manifest.test.tsx ui/src/context/SidePanelContext.test.tsx
 pnpm test:e2e -- tests/e2e/chat-work-manifest.spec.ts
 ```
 
@@ -381,9 +383,46 @@ Expected: the feature commit is present on the current remote branch without unr
 
 ## Completion Evidence
 
-- `pnpm product-logic:check`: passed with 68 registered contracts.
-- Focused shared, server, route, and UI suites: 14 tests passed; the database service suite includes an empty-current-Chat Project roll-up regression.
-- `pnpm test:e2e -- tests/e2e/chat-work-manifest.spec.ts`: passed against the real server and embedded PostgreSQL flow.
-- Desktop, compact, and Side Panel screenshots were captured and inspected under `/tmp/rudder-chat-work-manifest/`; the desktop layout reserves a non-overlapping right rail.
-- `pnpm lint`, `pnpm -r typecheck`, and `pnpm build`: passed.
-- `pnpm test:run`: executed but did not finish green. Twenty database suites exhausted concurrent embedded PostgreSQL initialization, and two existing Library Side Panel assertions failed identically on detached baseline `3772fd0d8`; the new Manifest compatibility failure found in the first run was fixed and its focused tests pass.
+## Follow-up Interaction Polish (2026-07-12)
+
+- [x] Move Work rail spacing inside the message/composer content so the Chat
+  scrollbar remains on the workspace's outer right edge.
+- [x] Hide the Work surface while loading and when the current thread and Project
+  roll-up contain no items.
+- [x] Add a header icon that animates the wide Work shelf between open and
+  collapsed states while preserving the compact trigger on narrow layouts.
+- [x] Close the Side Panel when its final tab is explicitly closed, including
+  button, keyboard, Browser-webview, and Desktop-forwarded close paths.
+- [x] Remove redundant origin labels from rows; show normalized URL text and the
+  existing website icon/fallback for external websites.
+- [x] Synchronize `CHAT.THREAD.MANIFEST.001` and `CHAT.SIDE.PANEL.001`.
+- [x] Run writer verification, black-box verifier, final reviewers, and reconcile
+  any blockers before marking this plan completed.
+
+- `pnpm product-logic:check`: passed with 68 registered contracts after
+  synchronizing confirmed-empty, request-error, collapse, website-row, and
+  final-tab behavior.
+- Focused Work manifest and Side Panel context suites: 18 tests passed. The
+  selected Chat regression passed 79 of 81 tests; the two Library Side Panel
+  failures were reproduced independently of this change on detached baseline
+  `3772fd0d8`.
+- `pnpm test:e2e -- tests/e2e/chat-work-manifest.spec.ts`: passed against the
+  real server/API/Vite/Chromium path using disposable external PostgreSQL
+  `rudder_e2e_manifest_polish_2245`. The scenario covers outer-edge scrollbar
+  geometry, non-overlap, website URL/icons, animated collapse/restore,
+  collapsed click-through, final-tab Side Panel closure, compact layout,
+  confirmed empty/loading absence, and collapsed-Chat to visible-503-Chat
+  recovery. The disposable database was dropped after the final verifier and
+  reviewer gates completed.
+- Desktop, compact, and Side Panel screenshots were captured and inspected
+  under `/tmp/rudder-chat-work-manifest/`.
+- `pnpm lint`, `pnpm -r typecheck`, and `pnpm build`: passed. `pnpm test:run`
+  completed with 3,932 passed, 13 failed, and 2 skipped tests. The failures were
+  outside this change's affected paths; they included the two detached-baseline
+  Library assertions plus unrelated route/onboarding/automation and
+  resource-sensitive timing suites.
+- Independent black-box verifier: final `PASS`, including the cross-Chat error
+  disclosure transition and original workflow regression. Final reviewers:
+  functional trust `accept`, adversarial `accept`, and heuristic/product-systems
+  `accept` after the error visibility, pointer hit-testing, accessibility, and
+  stale-plan findings were reconciled.

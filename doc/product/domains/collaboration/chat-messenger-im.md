@@ -797,9 +797,12 @@ them through `CONTEXT.RESOURCES.001`.
    edited visible messages, but it does not silently delete a durable Output
    merely because the message that announced it was refreshed.
 9. The API returns the current Chat sections plus a separate Project id/count.
-10. Wide Chat renders the compact shelf; narrow Chat exposes the same data from
-    a compact Work trigger. Opening an internal target reuses Side Panel behavior
-    from `CHAT.SIDE.PANEL.001`.
+10. When at least one current-thread item or non-empty Project roll-up exists,
+    wide Chat renders the compact shelf and a header icon that animates the shelf
+    between open and collapsed states; narrow Chat exposes the same data from a
+    compact Work trigger. An empty manifest renders no Work control or shelf.
+    Opening an internal target reuses Side Panel behavior from
+    `CHAT.SIDE.PANEL.001`.
 
 ## Decision Table
 
@@ -813,22 +816,32 @@ them through `CONTEXT.RESOURCES.001`.
 | Answer is refreshed or edited | Prior message becomes superseded | Stale derived References disappear; durable Outputs remain inspectable | Refresh must not erase a real artifact | Service tests |
 | Chat is forked | Copied historical assistant rows have no producing Run id | Sources can be re-derived; copied rows do not gain Output ownership | Fork must not claim the source thread's Outputs as newly produced | Fork/service tests |
 | Chat has a linked Project | Other Project conversations contain manifest rows | Current rows stay unchanged; separate Project count is shown | Project rows must not mix into current Chat sections | API and E2E |
-| No items exist | Reconciliation returns no candidates | Quiet empty Work state with Add Source affordance | UI must not invent Create Site/Browser capability | Component/E2E tests |
+| No items exist | Reconciliation returns no candidates and the Project roll-up is empty | No Work control or empty shelf is rendered | UI must not reserve space or invent Create Site/Browser capability | Component/E2E tests |
+| Manifest request fails | Current manifest state cannot be confirmed | Show the compact Work error state instead of treating the result as empty | Operators must be able to distinguish retrieval failure from confirmed absence | Component/E2E tests |
 
 ## Actor-Visible Input
 
 The operator sees the selected Chat, its normal transcript/composer, and a Work
 surface containing only Outputs, Sources, References, and a separate Project
-assets row when Project context exists. Each row exposes a readable title, type
-icon, and origin label such as the operator, replying Agent, Run, or Project.
+assets row when Project context exists. Each row exposes a readable title and
+type icon. Website rows expose the normalized URL and website icon instead of a
+generic link icon or redundant `From Agent` origin label.
 
 ## Operator-Visible Output
 
-- Wide desktop: a compact top-right shelf with bounded rows and counts.
+- Wide desktop: a compact top-right shelf with bounded rows and counts, plus a
+  header icon that collapses or restores the shelf with a short transition.
+- Empty state: no Work shelf, count, trigger, or reserved rail is rendered.
+- Error state: a compact Work error remains visible so retrieval failure is not
+  mistaken for confirmed absence.
 - Narrow desktop/mobile: a compact Work count trigger that opens the same list.
+- Chat scrolling: the message scrollbar remains attached to the outer right
+  edge of the Chat workspace while content spacing keeps messages and the
+  composer clear of an open Work shelf.
 - Internal Library targets: existing Side Panel preview behavior.
-- External websites: existing safe link routing under
-  `CHAT.WEBSITE.LINK.ICON.001` and `CHAT.SIDE.PANEL.001`.
+- External websites: normalized URL text and website icon/fallback behavior from
+  `CHAT.WEBSITE.LINK.ICON.001`, with safe link routing under
+  `CHAT.SIDE.PANEL.001`.
 - Provenance action: jump to the source message when a message id exists.
 - Side Panel open: the compact shelf yields to the workbench and returns when
   the panel is hidden.
@@ -847,7 +860,8 @@ to reconcile the projection.
    - Trigger: user uploads screenshots and asks an Agent to produce a report.
    - Expected state/action: screenshots are Sources, the Run-backed report is an
      Output, and visible final-answer websites are References.
-   - Visible output: three sections with provenance and no duplicate URLs.
+   - Visible output: three sections with no duplicate URLs; website rows show
+     their URL and website icon.
    - Evidence: manifest rows, message/attachment ids, producing Run id, E2E.
 2. Project-scoped Chat:
    - Trigger: Chat selects a Project whose resources are injected into a Run.
@@ -858,7 +872,7 @@ to reconcile the projection.
 3. Recommendation without production:
    - Trigger: assistant final answer links an external product website.
    - Expected state/action: the site appears as a Reference.
-   - Visible output: site title/icon and Agent/message provenance.
+   - Visible output: site title, normalized URL, and website icon.
    - Evidence: visible assistant body and normalized manifest row.
 4. Hidden exploration link:
    - Trigger: a tool result or reasoning entry contains a URL absent from visible
@@ -958,6 +972,10 @@ Product model:
   until the app session ends.
 - Hiding the Side Panel is a visibility action, not a tab-destruction action.
   The operator must explicitly close a tab to remove it from the current item.
+- Closing the final tab removes that tab and closes the Side Panel. The empty
+  picker remains available when the operator explicitly opens an empty panel or
+  uses the add-tab affordance, but is not left behind as a side effect of closing
+  the final tab.
 - When the Side Panel has an active tab, the close-tab keyboard shortcut
   (`Command+W` on macOS, `Ctrl+W` on non-macOS shells) closes that active tab
   before the shell or browser can treat the shortcut as a window/tab close. The
@@ -999,8 +1017,8 @@ Flow:
    description, status, priority, assignee, reviewer, project, goal, parent, or
    automation status edits, call the same domain APIs and show errors in the
    panel instead of silently ignoring failures.
-9. Closing a tab focuses a neighboring tab or returns the panel to the empty
-   picker state.
+9. Closing a tab focuses a neighboring tab. Closing the final tab removes it and
+   closes the Side Panel instead of leaving an empty picker open.
 10. Pressing the close-tab keyboard shortcut while an active Side Panel tab is
    present follows the same close behavior as the tab's close button and
    prevents the host window from handling that shortcut.
@@ -1091,7 +1109,8 @@ Evidence:
   actions that return to the empty picker without opening a dropdown menu,
   directly editable issue title/description fields, rendered/editable issue
   assignee metadata, issue and automation compact views, Library previews,
-  close-tab keyboard shortcuts, and browser placeholder behavior.
+  close-tab keyboard shortcuts, final-tab panel closure, and browser placeholder
+  behavior.
 - Layout tests cover Side Panel context keys for Messenger chat and issue
   routes, and Side Panel E2E covers hiding/reopening tabs in one Messenger item,
   switching to an item with no panel history without inheriting tabs, and

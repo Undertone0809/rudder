@@ -209,8 +209,8 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
       const closingIndex = current.tabs.findIndex((candidate) => sidePanelTargetKey(candidate) === key);
       const nextTabs = current.tabs.filter((candidate) => sidePanelTargetKey(candidate) !== key);
       if (nextTabs.length === 0) {
-        setOpen(true);
-        return { activeKey: null, hasPanelState: true, open: true, tabs: [] };
+        setOpen(false);
+        return { activeKey: null, hasPanelState: true, open: false, tabs: [] };
       }
       if (current.activeKey !== key) return { ...current, tabs: nextTabs };
       const fallbackTarget = nextTabs[Math.min(Math.max(closingIndex, 0), nextTabs.length - 1)] ?? nextTabs.at(-1) ?? null;

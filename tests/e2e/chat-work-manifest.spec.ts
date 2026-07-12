@@ -61,6 +61,22 @@ test.describe("Chat Work Manifest", () => {
     });
     expect(otherChatRes.ok(), await otherChatRes.text()).toBe(true);
     const otherChat = await otherChatRes.json() as { id: string };
+    const emptyChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Empty manifest chat",
+        preferredAgentId: agent.id,
+      },
+    });
+    expect(emptyChatRes.ok(), await emptyChatRes.text()).toBe(true);
+    const emptyChat = await emptyChatRes.json() as { id: string };
+    const errorChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Unavailable manifest chat",
+        preferredAgentId: agent.id,
+      },
+    });
+    expect(errorChatRes.ok(), await errorChatRes.text()).toBe(true);
+    const errorChat = await errorChatRes.json() as { id: string };
 
     const resourceId = randomUUID();
     await e2eDb.insert(organizationResources).values({
@@ -134,12 +150,40 @@ test.describe("Chat Work Manifest", () => {
     await expect(shelf).toContainText("Sources");
     await expect(shelf).toContainText("References");
     await expect(shelf).toContainText("report.md");
-    await expect(shelf).toContainText("From Agent");
+    await expect(shelf).not.toContainText("From Agent");
+    await expect(shelf).toContainText("https://reference.example/docs");
+    await expect(shelf.getByRole("button", { name: /reference\.example/ }).locator("[data-website-icon]"))
+      .toBeVisible();
     await expect(shelf).toContainText("Project work");
     await expect(shelf).not.toContainText("Project research source");
     await expect(shelf).not.toContainText("stale.example");
     await expect(shelf).not.toContainText("Browser");
-    await expect(shelf.getByText("source.example", { exact: false })).toHaveCount(1);
+    await expect(shelf.getByRole("button", { name: /source\.example https:\/\/source\.example\/research/ }))
+      .toHaveCount(1);
+
+    const [scrollBox, workspaceBox] = await Promise.all([
+      page.getByTestId("chat-messages-scroll-region").boundingBox(),
+      page.getByTestId("workspace-main-card").boundingBox(),
+    ]);
+    expect(scrollBox).not.toBeNull();
+    expect(workspaceBox).not.toBeNull();
+    expect(Math.abs((scrollBox!.x + scrollBox!.width) - (workspaceBox!.x + workspaceBox!.width))).toBeLessThanOrEqual(2);
+
+    const wideToggle = page.getByTestId("chat-work-manifest-wide-toggle");
+    const widePanel = page.getByTestId("chat-work-manifest-wide-panel");
+    await expect(wideToggle).toBeVisible();
+    const widePanelBox = await widePanel.boundingBox();
+    expect(widePanelBox).not.toBeNull();
+    await wideToggle.click();
+    await expect(widePanel).toHaveAttribute("data-state", "closed");
+    await expect(widePanel).toHaveAttribute("aria-hidden", "true");
+    const collapsedShelfInterceptsPointer = await page.evaluate(({ x, y }) => {
+      return Boolean(document.elementFromPoint(x, y)?.closest("[data-testid='chat-work-manifest']"));
+    }, { x: widePanelBox!.x + 12, y: widePanelBox!.y + 56 });
+    expect(collapsedShelfInterceptsPointer).toBe(false);
+    await wideToggle.click();
+    await expect(widePanel).toHaveAttribute("data-state", "open");
+    await expect(shelf).toBeVisible();
     await page.screenshot({ path: `${screenshotDir}/desktop.png`, fullPage: true });
 
     await shelf.getByText("report.md", { exact: true }).click();
@@ -149,7 +193,8 @@ test.describe("Chat Work Manifest", () => {
     await expect(page.getByTestId("chat-work-manifest")).toHaveCount(0);
     await page.screenshot({ path: `${screenshotDir}/side-panel.png`, fullPage: true });
 
-    await sidePanel.getByLabel("Close Side Panel").click();
+    await sidePanel.getByTestId("chat-side-panel-tab-close").click();
+    await expect(sidePanel).toHaveCount(0);
     await page.setViewportSize({ width: 1024, height: 768 });
     const trigger = page.getByTestId("chat-work-manifest-trigger");
     await expect(trigger).toBeVisible();
@@ -165,5 +210,28 @@ test.describe("Chat Work Manifest", () => {
     expect(composerBox).not.toBeNull();
     expect(panelBox!.y + panelBox!.height).toBeLessThanOrEqual(composerBox!.y);
     await page.screenshot({ path: `${screenshotDir}/compact.png`, fullPage: true });
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${emptyChat.id}`);
+    await expect(page.getByTestId("chat-work-manifest")).toHaveCount(0);
+    await expect(page.getByTestId("chat-work-manifest-wide-toggle")).toHaveCount(0);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    await expect(wideToggle).toBeVisible();
+    await wideToggle.click();
+    await expect(widePanel).toHaveAttribute("data-state", "closed");
+
+    await page.route(`**/api/chats/${errorChat.id}/work-manifest`, async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Manifest unavailable" }),
+      });
+    });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${errorChat.id}`);
+    const errorShelf = page.getByRole("complementary", { name: "Work manifest" });
+    await expect(errorShelf).toBeVisible();
+    await expect(errorShelf).toContainText("Manifest unavailable");
+    await expect(wideToggle).toHaveAttribute("aria-expanded", "true");
   });
 });
