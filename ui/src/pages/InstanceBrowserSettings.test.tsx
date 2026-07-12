@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { en } from "@/i18n/locales/en";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -39,7 +40,7 @@ const messages: Record<string, string> = {
   "browser.enable.toggle": "Enable Rudder Browser",
   "browser.links.title": "Open web links from Rudder in",
   "browser.links.description": "This preference is independent of Browser access for Agents.",
-  "browser.links.builtIn": "Rudder Browser",
+  "browser.links.builtIn": en["browser.links.builtIn"],
   "browser.links.default": "Default browser",
   "browser.data.title": "Browsing data",
   "browser.data.description": "Manage the instance-wide Browser profile.",
@@ -162,12 +163,14 @@ describe("InstanceBrowserSettings", () => {
 
     const toggle = page.querySelector('button[role="switch"][aria-label="Enable Rudder Browser"]');
     const builtIn = Array.from(page.querySelectorAll("button"))
-      .find((button) => button.textContent?.trim() === "Rudder Browser");
+      .find((button) => button.textContent?.trim() === "Rudder Built-in Browser");
     const defaultBrowser = Array.from(page.querySelectorAll("button"))
       .find((button) => button.textContent?.trim() === "Default browser");
 
     expect(toggle?.getAttribute("aria-checked")).toBe("true");
     expect(builtIn?.getAttribute("aria-pressed")).toBe("true");
+    expect(builtIn?.classList.contains("whitespace-nowrap")).toBe(true);
+    expect(builtIn?.parentElement?.classList.contains("w-[20rem]")).toBe(true);
     expect(page.textContent).toContain("shared by every organization and Agent");
 
     act(() => toggle!.dispatchEvent(new MouseEvent("click", { bubbles: true })));

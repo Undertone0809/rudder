@@ -48,7 +48,7 @@ export const en = {
   "browser.enable.toggle": "Enable Rudder Browser",
   "browser.links.title": "Open web links from Rudder in",
   "browser.links.description": "This preference is independent of Browser access for Agents.",
-  "browser.links.builtIn": "Rudder Browser",
+  "browser.links.builtIn": "Rudder Built-in Browser",
   "browser.links.default": "Default browser",
   "browser.data.title": "Browsing data",
   "browser.data.description": "Manage the instance-wide Browser profile.",

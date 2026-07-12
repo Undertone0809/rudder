@@ -154,7 +154,7 @@ export function InstanceBrowserSettings() {
           title={t("browser.links.title")}
           description={t("browser.links.description")}
           action={
-            <div className="grid w-[15rem] grid-cols-2 overflow-hidden rounded-[var(--control-radius)] border border-border/80 bg-muted/30 p-0.5">
+            <div className="grid w-[20rem] grid-cols-2 overflow-hidden rounded-[var(--control-radius)] border border-border/80 bg-muted/30 p-0.5">
               {([
                 ["built_in", t("browser.links.builtIn")],
                 ["default_browser", t("browser.links.default")],
@@ -165,7 +165,7 @@ export function InstanceBrowserSettings() {
                   aria-pressed={settings.openLinksIn === value}
                   disabled={updateMutation.isPending}
                   onClick={() => updateMutation.mutate({ openLinksIn: value })}
-                  className="h-8 rounded-[calc(var(--control-radius)-2px)] px-2 text-[12px] font-medium text-muted-foreground transition-colors aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm disabled:opacity-50"
+                  className="h-8 whitespace-nowrap rounded-[calc(var(--control-radius)-2px)] px-2 text-[12px] font-medium text-muted-foreground transition-colors aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm disabled:opacity-50"
                 >
                   {label}
                 </button>
