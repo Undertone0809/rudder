@@ -694,6 +694,13 @@
       "when": 1783792908315,
       "tag": "0098_cool_menace",
       "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1783851776626,
+      "tag": "0099_chat_work_manifest",
+      "breakpoints": true
     }
   ]
 }

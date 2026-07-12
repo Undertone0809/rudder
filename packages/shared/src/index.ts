@@ -1,4 +1,11 @@
 export {
+  extractVisibleChatWorkTargets,
+  normalizeChatWorkExternalUrl,
+  preferChatWorkManifestCategory,
+  type ChatWorkManifestCategory,
+  type ExtractedChatWorkTarget
+} from "./chat-work-manifest.js";
+export {
   AGENT_AVATAR_BACKGROUND_PRESET_IDS, AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX, AGENT_ICON_NAMES, AGENT_INTEGRATION_CHAT_TYPES, AGENT_INTEGRATION_DROP_REASONS, AGENT_INTEGRATION_OUTBOUND_STATUSES, AGENT_INTEGRATION_PROVIDERS, AGENT_INTEGRATION_PROVIDER_REGIONS, AGENT_INTEGRATION_STATUSES, AGENT_INTEGRATION_TRANSPORTS, AGENT_ROLES,
   AGENT_ROLE_LABELS, AGENT_RUNTIME_TYPES, AGENT_RUN_CONCURRENCY_DEFAULT, AGENT_RUN_CONCURRENCY_MAX, AGENT_RUN_CONCURRENCY_MIN, AGENT_RUN_SCENES, AGENT_RUN_TARGET_TYPES, AGENT_STATUSES, APPROVAL_STATUSES, APPROVAL_TYPES, AUTH_BASE_URL_MODES, AUTOMATION_CATCH_UP_POLICIES, AUTOMATION_CONCURRENCY_POLICIES, AUTOMATION_OUTPUT_MODES, AUTOMATION_RUN_SOURCES, AUTOMATION_RUN_STATUSES, AUTOMATION_STATUSES, AUTOMATION_TRIGGER_KINDS,
   AUTOMATION_TRIGGER_SIGNING_MODES, BILLING_TYPES, BUDGET_INCIDENT_RESOLUTION_ACTIONS, BUDGET_INCIDENT_STATUSES, BUDGET_METRICS, BUDGET_SCOPE_TYPES, BUDGET_THRESHOLD_TYPES, BUDGET_WINDOW_KINDS, CALENDAR_EVENT_KINDS,
@@ -74,13 +81,12 @@ export type {
   ChatAskUserQuestion,
   ChatAskUserRequest, ChatAttachment,
   ChatContextLink, ChatConversation, ChatLinkedEntity, ChatMessage, ChatOperationProposalDecision, ChatOperationProposalDecisionAction,
-  ChatOperationProposalDecisionStatus, ChatPrimaryIssueSummary, ChatQueueClaimResponse, ChatQueueSnapshot, ChatQueuedMessage, ChatQueuedMessagePayload, ChatQueuedMessageStatus, ChatRichReference,
-  ChatRichReferenceDisplay,
+  ChatOperationProposalDecisionStatus, ChatPrimaryIssueSummary, ChatQueueClaimResponse, ChatQueueSnapshot, ChatQueuedMessage, ChatQueuedMessagePayload, ChatQueuedMessageStatus, ChatRichReference, ChatRichReferenceDisplay,
   ChatRuntimeDescriptor, ChatSteerResponse, ChatSteerResult, ChatStreamAckEvent,
   ChatStreamAssistantDeltaEvent,
   ChatStreamAssistantStateEvent, ChatStreamErrorEvent,
   ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTodoItem,
-  ChatStreamTranscriptTodoItemStatus, ChatTranscriptSummary, CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent,
+  ChatStreamTranscriptTodoItemStatus, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestTargetType, CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent,
   CostSummary,
   CostTrendPoint, CostWindowSpendRow, CreateOrganizationResourceRequest, CreateProjectInlineResourceInput, DashboardSummary, DocumentFormat, EnvBinding, ExecutionLangfuseLink, ExecutionObservabilityContext,
   ExecutionObservabilitySurface, ExecutionWorkspace, ExecutionWorkspaceMode, ExecutionWorkspaceProviderType, ExecutionWorkspaceStatus, ExecutionWorkspaceStrategy, ExecutionWorkspaceStrategyType, FeishuIntegrationSettings, FinanceByBiller,

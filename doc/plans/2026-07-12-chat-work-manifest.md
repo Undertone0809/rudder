@@ -2,7 +2,7 @@
 title: Chat Work Manifest
 date: 2026-07-12
 kind: implementation
-status: in_progress
+status: completed
 area: chat
 entities:
   - messenger_chat
@@ -28,7 +28,8 @@ related_code:
   - doc/product/domains/collaboration/chat-messenger-im.md
   - doc/product/domains/library-and-context/documents-and-work-products.md
   - tests/e2e/chat-work-manifest.spec.ts
-commit_refs: []
+commit_refs:
+  - "feat: add chat work manifest"
 updated_at: 2026-07-12
 ---
 
@@ -89,19 +90,19 @@ Affected contracts:
 - Modify: `doc/product/surfaces/surface-domain-map.md`
 - Modify: `doc/product/registry.yml`
 
-- [ ] **Step 1: Add the owning contract**
+- [x] **Step 1: Add the owning contract**
 
 Add `CHAT.THREAD.MANIFEST.001` with Why, Product model, Flow, Invariants, and Evidence. State the three categories, project separation, provenance rules, visible-message boundary, structured Output evidence, reconciliation behavior, category precedence, and exclusion of Browser/tool history.
 
-- [ ] **Step 2: Synchronize adjacent contracts**
+- [x] **Step 2: Synchronize adjacent contracts**
 
 Add explicit cross-references to Chat lifecycle, Side Panel, work products, and Project Context. Preserve the rule that an external manifest Reference is not a Project Context Resource until an operator explicitly attaches it.
 
-- [ ] **Step 3: Register traceability**
+- [x] **Step 3: Register traceability**
 
 Add the new contract to `doc/product/registry.yml` with the exact code and test paths in this plan, and map it in the collaboration README and surface-domain map.
 
-- [ ] **Step 4: Run the registry gate**
+- [x] **Step 4: Run the registry gate**
 
 Run: `pnpm product-logic:check`
 
@@ -115,7 +116,7 @@ Expected: PASS with `CHAT.THREAD.MANIFEST.001` present in the registry and docum
 - Modify: `packages/shared/src/types/chat.ts`
 - Modify: `packages/shared/src/index.ts`
 
-- [ ] **Step 1: Write failing extraction tests**
+- [x] **Step 1: Write failing extraction tests**
 
 Cover Markdown links, bare HTTP(S) URLs, links inside inline/fenced code, trailing punctuation, duplicate canonical URLs, Library entry/file references, image Markdown exclusion, and category priority.
 
@@ -140,17 +141,17 @@ export function preferChatWorkManifestCategory(
 ): ChatWorkManifestCategory;
 ```
 
-- [ ] **Step 2: Verify tests fail**
+- [x] **Step 2: Verify tests fail**
 
 Run: `pnpm --filter @rudderhq/shared test -- chat-work-manifest.test.ts`
 
 Expected: FAIL because the module and exports do not exist.
 
-- [ ] **Step 3: Implement the pure extractor**
+- [x] **Step 3: Implement the pure extractor**
 
 Strip fenced and inline code before parsing. Reuse `parseLibraryEntryMentionHref` and `parseLibraryFileMentionHref`, normalize HTTP(S) URLs with the standard `URL` API, remove fragments, lowercase hostnames, remove default ports, and keep path/query identity.
 
-- [ ] **Step 4: Verify shared tests pass**
+- [x] **Step 4: Verify shared tests pass**
 
 Run: `pnpm --filter @rudderhq/shared test -- chat-work-manifest.test.ts`
 
@@ -165,7 +166,7 @@ Expected: PASS.
 - Create: `server/src/services/chat-work-manifest.ts`
 - Create: `server/src/__tests__/chat-work-manifest.test.ts`
 
-- [ ] **Step 1: Write failing service tests**
+- [x] **Step 1: Write failing service tests**
 
 Cover:
 
@@ -181,13 +182,13 @@ Cover:
 - forked copied assistant messages with `runId = null` do not become Outputs;
 - organization boundaries are enforced.
 
-- [ ] **Step 2: Verify service tests fail**
+- [x] **Step 2: Verify service tests fail**
 
 Run: `pnpm --filter @rudderhq/server test -- chat-work-manifest.test.ts`
 
 Expected: FAIL because the schema and service do not exist.
 
-- [ ] **Step 3: Add the durable schema**
+- [x] **Step 3: Add the durable schema**
 
 Create `chat_work_manifest_items` with:
 
@@ -200,13 +201,13 @@ createdAt, updatedAt
 
 Add a unique index on `(conversation_id, target_key)`, an organization/conversation/category index, and an organization/project/category index. Foreign keys must cascade with organization/conversation and set optional provenance fields to null.
 
-- [ ] **Step 4: Generate the migration**
+- [x] **Step 4: Generate the migration**
 
 Run: `pnpm db:generate -- --name chat_work_manifest`
 
 Expected: `packages/db/src/migrations/0099_chat_work_manifest.sql` plus updated Drizzle metadata.
 
-- [ ] **Step 5: Implement reconciliation**
+- [x] **Step 5: Implement reconciliation**
 
 `chatWorkManifestService(db)` exposes:
 
@@ -217,7 +218,7 @@ getConversationManifest(conversationId: string): Promise<ChatWorkManifestRespons
 
 Read only non-superseded user/assistant messages. Build candidates from message attachments, visible body targets, Library artifact references, and eligible Project resources. Upsert the preferred candidate for each target key, delete stale non-Output derived rows, and preserve durable Output rows.
 
-- [ ] **Step 6: Verify service tests pass**
+- [x] **Step 6: Verify service tests pass**
 
 Run: `pnpm --filter @rudderhq/server test -- chat-work-manifest.test.ts`
 
@@ -231,17 +232,17 @@ Expected: PASS.
 - Modify: `ui/src/api/chats.ts`
 - Modify: `ui/src/lib/queryKeys.ts`
 
-- [ ] **Step 1: Write failing route tests**
+- [x] **Step 1: Write failing route tests**
 
 Add cases for board access, missing Chat, cross-organization denial, empty manifest, populated sections, and project roll-up counts.
 
-- [ ] **Step 2: Verify route tests fail**
+- [x] **Step 2: Verify route tests fail**
 
 Run: `pnpm --filter @rudderhq/server test -- chat-routes.test.ts -t "work manifest"`
 
 Expected: FAIL with route not found.
 
-- [ ] **Step 3: Add the route and client**
+- [x] **Step 3: Add the route and client**
 
 Add:
 
@@ -251,7 +252,7 @@ GET /api/chats/:id/work-manifest
 
 The route must call the existing `assertConversationAccess`, reconcile the current conversation, and return typed sections plus `{ projectId, totalCount }`. Add `chatsApi.getWorkManifest(chatId)` and `queryKeys.chats.workManifest(orgId, chatId)`.
 
-- [ ] **Step 4: Verify API tests pass**
+- [x] **Step 4: Verify API tests pass**
 
 Run: `pnpm --filter @rudderhq/server test -- chat-routes.test.ts -t "work manifest"`
 
@@ -264,17 +265,17 @@ Expected: PASS.
 - Create: `ui/src/pages/Chat.work-manifest.test.tsx`
 - Modify: `ui/src/pages/Chat.tsx`
 
-- [ ] **Step 1: Write failing component tests**
+- [x] **Step 1: Write failing component tests**
 
 Cover section ordering, maximum visible rows, `View all`, empty/loading/error states, origin labels, Source add action, Project roll-up separation, wide shelf visibility, compact trigger, and hiding while Side Panel is open.
 
-- [ ] **Step 2: Verify component tests fail**
+- [x] **Step 2: Verify component tests fail**
 
 Run: `pnpm --filter @rudderhq/ui test -- Chat.work-manifest.test.tsx`
 
 Expected: FAIL because the component does not exist.
 
-- [ ] **Step 3: Implement the isolated component**
+- [x] **Step 3: Implement the isolated component**
 
 Expose:
 
@@ -293,11 +294,11 @@ interface ChatWorkManifestProps {
 
 Use one compact surface with full-width section bands, restrained borders, existing radius tokens, Lucide icons, stable row heights, accessible labels, and no nested cards.
 
-- [ ] **Step 4: Integrate with Chat**
+- [x] **Step 4: Integrate with Chat**
 
 Fetch only for a selected native or readable Chat. Internal Library targets call `openSidePanelTargetForContext`; external URLs keep safe external navigation; provenance actions call the existing `jumpToChatMessage`; `Add source` opens the current composer file/options flow; Project roll-up navigates to the linked Project detail.
 
-- [ ] **Step 5: Verify component and existing Chat tests pass**
+- [x] **Step 5: Verify component and existing Chat tests pass**
 
 Run: `pnpm --filter @rudderhq/ui test -- Chat.work-manifest.test.tsx Chat.test.tsx Chat.attachment-preview.test.tsx`
 
@@ -308,25 +309,25 @@ Expected: PASS.
 **Files:**
 - Create: `tests/e2e/chat-work-manifest.spec.ts`
 
-- [ ] **Step 1: Seed a production-shaped Chat**
+- [x] **Step 1: Seed a production-shaped Chat**
 
 Create one project with attached context, two project Chats, user attachments and URLs, assistant final links, one Agent-generated attachment, one Run-backed Library artifact reference, duplicates, and a superseded assistant variant.
 
-- [ ] **Step 2: Verify the desktop workflow**
+- [x] **Step 2: Verify the desktop workflow**
 
 At `1440x900`, assert that the current Chat shelf shows Outputs/Sources/References, excludes Browser, deduplicates URLs, labels provenance, keeps Project assets separate, opens a Library Output in Side Panel, and returns after closing the panel.
 
-- [ ] **Step 3: Verify the narrow workflow**
+- [x] **Step 3: Verify the narrow workflow**
 
 At `1024x768`, assert that the floating shelf is replaced by the compact Work count trigger and that opening it does not overlap the composer or transcript.
 
-- [ ] **Step 4: Run the E2E**
+- [x] **Step 4: Run the E2E**
 
 Run: `pnpm test:e2e -- tests/e2e/chat-work-manifest.spec.ts`
 
 Expected: PASS.
 
-- [ ] **Step 5: Capture screenshots outside the repository**
+- [x] **Step 5: Capture screenshots outside the repository**
 
 Save final desktop, narrow, and Side Panel-open screenshots under `/tmp/rudder-chat-work-manifest/` and inspect them for overlap, truncation, dark/light readability, and correct object framing.
 
@@ -335,7 +336,7 @@ Save final desktop, narrow, and Side Panel-open screenshots under `/tmp/rudder-c
 **Files:**
 - Modify: `doc/plans/2026-07-12-chat-work-manifest.md`
 
-- [ ] **Step 1: Run focused gates**
+- [x] **Step 1: Run focused gates**
 
 ```bash
 pnpm product-logic:check
@@ -347,7 +348,7 @@ pnpm test:e2e -- tests/e2e/chat-work-manifest.spec.ts
 
 Expected: all PASS.
 
-- [ ] **Step 2: Run repository gates**
+- [x] **Step 2: Run repository gates**
 
 ```bash
 pnpm lint
@@ -358,11 +359,11 @@ pnpm build
 
 Expected: all PASS. Report any unrelated pre-existing failure with the exact command and evidence.
 
-- [ ] **Step 3: Update plan metadata**
+- [x] **Step 3: Update plan metadata**
 
 Set plan `status: completed`, update `updated_at`, and add the final Conventional Commit subject to `commit_refs`.
 
-- [ ] **Step 4: Commit only this feature**
+- [x] **Step 4: Commit only this feature**
 
 Stage the plan, Product Logic files, manifest schema/migration/shared/server/UI files, focused tests, and E2E. Do not stage the existing release workflow, Side Panel polish, local-file-preview, or screenshot changes that predated this task.
 
@@ -372,8 +373,17 @@ Commit message:
 feat: add chat work manifest
 ```
 
-- [ ] **Step 5: Push the current branch**
+- [x] **Step 5: Push the current branch**
 
-Run: `git push origin codex/automation-three-column-detail`
+Run: `git push origin codex/chat-work-manifest`
 
 Expected: the feature commit is present on the current remote branch without unrelated dirty files in the commit.
+
+## Completion Evidence
+
+- `pnpm product-logic:check`: passed with 68 registered contracts.
+- Focused shared, server, route, and UI suites: 14 tests passed; the database service suite includes an empty-current-Chat Project roll-up regression.
+- `pnpm test:e2e -- tests/e2e/chat-work-manifest.spec.ts`: passed against the real server and embedded PostgreSQL flow.
+- Desktop, compact, and Side Panel screenshots were captured and inspected under `/tmp/rudder-chat-work-manifest/`; the desktop layout reserves a non-overlapping right rail.
+- `pnpm lint`, `pnpm -r typecheck`, and `pnpm build`: passed.
+- `pnpm test:run`: executed but did not finish green. Twenty database suites exhausted concurrent embedded PostgreSQL initialization, and two existing Library Side Panel assertions failed identically on detached baseline `3772fd0d8`; the new Manifest compatibility failure found in the first run was fixed and its focused tests pass.

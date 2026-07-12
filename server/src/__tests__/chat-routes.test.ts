@@ -124,6 +124,11 @@ const mockChatAgentRuns = vi.hoisted(() => ({
   linkAssistantMessage: vi.fn(),
 }));
 
+const mockChatWorkManifest = vi.hoisted(() => ({
+  reconcileConversation: vi.fn(),
+  getConversationManifest: vi.fn(),
+}));
+
 const mockStorage = vi.hoisted(() => ({
   putFile: vi.fn(),
   deleteObject: vi.fn(),
@@ -193,6 +198,10 @@ vi.mock("../services/chat-assistant.js", () => ({
 
 vi.mock("../services/chat-agent-runs.js", () => ({
   chatAgentRunService: () => mockChatAgentRuns,
+}));
+
+vi.mock("../services/chat-work-manifest.js", () => ({
+  chatWorkManifestService: () => mockChatWorkManifest,
 }));
 
 vi.mock("../langfuse.js", () => ({
@@ -352,6 +361,15 @@ describe("chat routes", () => {
     mockChatAssistantService.enrichConversation.mockImplementation(async (conversation) => conversation);
     mockChatAssistantService.enrichConversations.mockImplementation(async (conversations) => conversations);
     mockChatAgentRuns.linkAssistantMessage.mockResolvedValue(null);
+    mockChatWorkManifest.reconcileConversation.mockResolvedValue(undefined);
+    mockChatWorkManifest.getConversationManifest.mockResolvedValue({
+      conversationId: "chat-1",
+      totalCount: 0,
+      outputs: [],
+      sources: [],
+      references: [],
+      project: null,
+    });
     mockChatAssistantService.getChatAssistantAvailability.mockResolvedValue({
       available: true,
       sourceType: "agent",
@@ -521,6 +539,38 @@ describe("chat routes", () => {
       "user-1",
     );
     expect(mockChatAssistantService.enrichConversations).toHaveBeenCalled();
+  });
+
+  it("returns the reconciled work manifest for an accessible chat", async () => {
+    mockChatService.getById.mockResolvedValue(createConversation());
+    mockChatWorkManifest.getConversationManifest.mockResolvedValue({
+      conversationId: "chat-1",
+      totalCount: 1,
+      outputs: [{ id: "manifest-1", category: "output", title: "report.md" }],
+      sources: [],
+      references: [],
+      project: { id: "project-1", totalCount: 3 },
+    });
+
+    const res = await request(createApp()).get("/api/chats/chat-1/work-manifest");
+
+    expect(res.status).toBe(200);
+    expect(mockChatWorkManifest.reconcileConversation).toHaveBeenCalledWith("chat-1");
+    expect(mockChatWorkManifest.getConversationManifest).toHaveBeenCalledWith("chat-1");
+    expect(res.body).toMatchObject({
+      conversationId: "chat-1",
+      totalCount: 1,
+      project: { id: "project-1", totalCount: 3 },
+    });
+  });
+
+  it("returns 404 for a missing chat work manifest", async () => {
+    mockChatService.getById.mockResolvedValue(null);
+
+    const res = await request(createApp()).get("/api/chats/missing/work-manifest");
+
+    expect(res.status).toBe(404);
+    expect(mockChatWorkManifest.reconcileConversation).not.toHaveBeenCalled();
   });
 
   it("updates chat unread state through the user-state endpoint", async () => {

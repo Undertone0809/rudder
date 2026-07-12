@@ -9,6 +9,7 @@ contract_ids:
   - CHAT.FORK.001
   - CHAT.RICH.REFERENCE.RENDERING.001
   - CHAT.WEBSITE.LINK.ICON.001
+  - CHAT.THREAD.MANIFEST.001
   - CHAT.SIDE.PANEL.001
   - MESSENGER.ATTENTION.001
   - MESSENGER.CUSTOM.GROUPS.001
@@ -20,14 +21,17 @@ related_code:
   - packages/db/src/schema/chat_conversations.ts
   - packages/db/src/schema/chat_messages.ts
   - packages/db/src/schema/chat_generations.ts
+  - packages/db/src/schema/chat_work_manifest_items.ts
   - packages/db/src/schema/agent_integrations.ts
   - packages/shared/src/constants.ts
   - packages/shared/src/types/chat.ts
   - packages/shared/src/project-mentions.ts
+  - packages/shared/src/chat-work-manifest.ts
   - server/src/routes/chats.ts
   - server/src/routes/chats.stream-routes.ts
   - server/src/services/product-intelligence.ts
   - server/src/services/chats.ts
+  - server/src/services/chat-work-manifest.ts
   - server/src/services/chat-agent-runs.ts
   - server/src/services/messenger.ts
   - server/src/services/organization-intelligence-profiles.ts
@@ -48,6 +52,7 @@ related_code:
   - ui/src/components/MilkdownMarkdownEditor.tsx
   - ui/src/components/MessengerContextSidebar.tsx
   - ui/src/pages/Chat.side-panel.tsx
+  - ui/src/pages/Chat.work-manifest.tsx
   - ui/src/pages/Chat.tsx
   - ui/src/pages/Chat.messages.tsx
   - ui/src/pages/Messenger.tsx
@@ -60,6 +65,7 @@ related_tests:
   - desktop/src/browser-profile.test.ts
   - desktop/src/browser-webview-policy.test.ts
   - server/src/__tests__/chat-routes.test.ts
+  - server/src/__tests__/chat-work-manifest.test.ts
   - server/src/__tests__/chat-assistant.test.ts
   - server/src/__tests__/messenger-service.test.ts
   - server/src/__tests__/product-intelligence.test.ts
@@ -89,6 +95,7 @@ related_tests:
   - tests/e2e/chat-fork.spec.ts
   - tests/e2e/chat-rich-references.spec.ts
   - tests/e2e/chat-side-panel.spec.ts
+  - tests/e2e/chat-work-manifest.spec.ts
   - tests/e2e/agent-detail-feishu-integration.spec.ts
   - tests/e2e/feishu-source-badges.spec.ts
 edit_policy: user_confirmed_only
@@ -114,6 +121,9 @@ Product model:
   projects, resources, approvals, or automation runs.
 - Messages have role, status, body, attachments, rich references, structured
   payloads, and optional run attribution.
+- A conversation Work manifest reconciles inspectable Outputs, Sources, and
+  References from the active visible message branch and durable production
+  evidence under `CHAT.THREAD.MANIFEST.001`.
 - Chat-native assistant turns that invoke runtimes are Agent Runs under
   `RUN.CHAT.AGENT.001`.
 - A completed assistant answer may be refreshed as another variant of the same
@@ -217,6 +227,8 @@ Invariants:
   queued follow-up mutations through the same fork-to-continue boundary as
   normal local chat mutation APIs.
 - Agent attribution is visible enough to navigate from message to run/agent.
+- Work-manifest reconciliation must not read hidden reasoning, transcript tool
+  payloads, stdout, or stderr as user-visible Sources or References.
 
 Evidence:
 
@@ -701,6 +713,208 @@ Evidence:
 - Website-link E2E covers real issue-page rendering, favicon-provider fallback,
   inline wrapping, and internal-link no-fetch behavior.
 
+## CHAT.THREAD.MANIFEST.001
+
+## Contract Summary
+
+Messenger Chat exposes a compact, conversation-scoped Work manifest that keeps
+the current thread's inspectable Outputs, Sources, and References visible
+without requiring the operator to search the transcript. Project assets remain
+a separate roll-up and never silently mix into the current Chat sections.
+
+## Intent / User Job
+
+An operator returning to a long or active Chat needs to answer four questions
+quickly: what this thread produced, what input it used, which external sites the
+visible conversation cited, and whether the linked Project has additional work
+assets. The manifest is an index into durable work and provenance, not a second
+chat transcript or a generic bookmark manager.
+
+## Why / Design Reasoning
+
+The manifest is a typed, durable projection rather than a client-only Markdown
+scan. A client-only list cannot reliably distinguish an Agent-created artifact
+from a recommended website, becomes inconsistent after edits and refreshed
+answers, and cannot enforce organization or Project boundaries. The alternative
+of placing every Project item directly in Chat creates noise and obscures which
+thread actually produced or used an object.
+
+Output classification is intentionally strict. An arbitrary assistant URL is a
+Reference, not an Output. An Output requires structured production evidence so
+Rudder does not overclaim work completion. References remain informational and
+do not become Project Context Resources until the operator explicitly admits
+them through `CONTEXT.RESOURCES.001`.
+
+## Actors / Objects / State
+
+- Board operator: reads the manifest, adds a Source, opens an item, jumps to its
+  source message, or follows the Project roll-up.
+- Chat conversation: organization-scoped thread and optional Project context.
+- Chat message: active, non-superseded user or assistant visible body, optional
+  Run id, replying Agent id, and attachments.
+- Manifest item: category, target type/key, title, URL or internal locator,
+  status, source role, message/Run/Agent/user provenance, Project id, metadata,
+  and timestamps.
+- Output: Agent-created Chat attachment or Run-backed assistant Library artifact
+  under the guarded `artifacts/...` output namespace.
+- Source: user attachment, user-provided URL or Library reference, or a Project
+  Context Resource eligible for a project-scoped Chat Run.
+- Reference: deduplicated external HTTP(S) website in a visible user or assistant
+  message that is not promoted by the category precedence rules.
+- Project roll-up: count and navigation for manifest items belonging to other
+  conversations linked to the same Project.
+
+## Entry Points / Inputs
+
+- `GET /api/chats/:id/work-manifest` for the selected Chat.
+- User message bodies and user-created Chat attachments.
+- Completed assistant message bodies, Run attribution, replying Agent identity,
+  and Agent-created Chat attachments.
+- `library-entry://` and `library-file://` references in visible message bodies.
+- The Chat's explicit Project context and that Project's attached resources.
+- Chat edit, refresh/variant, fork, attachment, and message supersession state.
+
+## Product Logic Flow
+
+1. The operator opens a Chat and Rudder requests its Work manifest.
+2. Rudder verifies Chat access through the same organization boundary as normal
+   Chat reads.
+3. Reconciliation reads active, non-superseded user and assistant messages and
+   their attachments. Transcript entries, reasoning, tool results, stdout, and
+   stderr are excluded.
+4. User attachments, user Library references, and user HTTP(S) links become
+   Source candidates. Agent-created attachments become Output candidates.
+5. An assistant Library reference becomes an Output only when it has a producing
+   Run id and resolves under `artifacts/...`; other assistant HTTP(S) links are
+   Reference candidates.
+6. When the Chat has explicit Project context and a project-scoped assistant Run,
+   attached Project Context Resources become Source candidates because they were
+   eligible for that run.
+7. Rudder canonicalizes target keys, removes URL fragments/default ports,
+   deduplicates candidates, and applies `output > source > reference` so one
+   target appears once in its strongest supported category.
+8. Reconciliation removes stale derived Sources/References from superseded or
+   edited visible messages, but it does not silently delete a durable Output
+   merely because the message that announced it was refreshed.
+9. The API returns the current Chat sections plus a separate Project id/count.
+10. Wide Chat renders the compact shelf; narrow Chat exposes the same data from
+    a compact Work trigger. Opening an internal target reuses Side Panel behavior
+    from `CHAT.SIDE.PANEL.001`.
+
+## Decision Table
+
+| Case | Conditions | Product result | Must not happen | Evidence |
+| --- | --- | --- | --- | --- |
+| User supplies a file or website | Active user message attachment or visible HTTP(S) URL | One Source with user/message provenance | The input must not be labeled as Agent Output | Service tests and Chat Work Manifest E2E |
+| Agent creates a Chat attachment | Assistant attachment has Agent creator provenance | One Output with Agent/message/Run provenance where available | It must not be downgraded to a Reference | Service tests and E2E |
+| Agent links a produced Library artifact | Assistant message has a Run id and `artifacts/...` Library target | One Output that opens through Library Side Panel | A normal external link must not satisfy this rule | Extraction/service tests |
+| Agent recommends a website | Visible assistant HTTP(S) link with no production evidence | One Reference | Rudder must not claim the website was created by the Run | Extraction/service tests |
+| Link appears in tool history only | URL exists only in transcript, reasoning, stdout, or stderr | No manifest item | Tool exploration must not pollute the visible manifest | Service tests |
+| Answer is refreshed or edited | Prior message becomes superseded | Stale derived References disappear; durable Outputs remain inspectable | Refresh must not erase a real artifact | Service tests |
+| Chat is forked | Copied historical assistant rows have no producing Run id | Sources can be re-derived; copied rows do not gain Output ownership | Fork must not claim the source thread's Outputs as newly produced | Fork/service tests |
+| Chat has a linked Project | Other Project conversations contain manifest rows | Current rows stay unchanged; separate Project count is shown | Project rows must not mix into current Chat sections | API and E2E |
+| No items exist | Reconciliation returns no candidates | Quiet empty Work state with Add Source affordance | UI must not invent Create Site/Browser capability | Component/E2E tests |
+
+## Actor-Visible Input
+
+The operator sees the selected Chat, its normal transcript/composer, and a Work
+surface containing only Outputs, Sources, References, and a separate Project
+assets row when Project context exists. Each row exposes a readable title, type
+icon, and origin label such as the operator, replying Agent, Run, or Project.
+
+## Operator-Visible Output
+
+- Wide desktop: a compact top-right shelf with bounded rows and counts.
+- Narrow desktop/mobile: a compact Work count trigger that opens the same list.
+- Internal Library targets: existing Side Panel preview behavior.
+- External websites: existing safe link routing under
+  `CHAT.WEBSITE.LINK.ICON.001` and `CHAT.SIDE.PANEL.001`.
+- Provenance action: jump to the source message when a message id exists.
+- Side Panel open: the compact shelf yields to the workbench and returns when
+  the panel is hidden.
+
+## Persisted Evidence
+
+`chat_work_manifest_items` stores organization/conversation/Project scope,
+category, target identity, title/URL, status, source role, message id, Run id,
+Agent/user provenance, metadata, and timestamps. Chat messages, attachments,
+context links, and Project resource attachments remain the source evidence used
+to reconcile the projection.
+
+## Canonical Scenarios
+
+1. Research Chat with report and citations:
+   - Trigger: user uploads screenshots and asks an Agent to produce a report.
+   - Expected state/action: screenshots are Sources, the Run-backed report is an
+     Output, and visible final-answer websites are References.
+   - Visible output: three sections with provenance and no duplicate URLs.
+   - Evidence: manifest rows, message/attachment ids, producing Run id, E2E.
+2. Project-scoped Chat:
+   - Trigger: Chat selects a Project whose resources are injected into a Run.
+   - Expected state/action: eligible Project resources appear as Sources; other
+     Project thread items remain behind the Project roll-up.
+   - Visible output: current Chat sections plus `Project assets <count>`.
+   - Evidence: context link, project resource attachments, manifest rows.
+3. Recommendation without production:
+   - Trigger: assistant final answer links an external product website.
+   - Expected state/action: the site appears as a Reference.
+   - Visible output: site title/icon and Agent/message provenance.
+   - Evidence: visible assistant body and normalized manifest row.
+4. Hidden exploration link:
+   - Trigger: a tool result or reasoning entry contains a URL absent from visible
+     user/assistant bodies.
+   - Expected state/action: no manifest item is created.
+   - Visible output: no change to Work.
+   - Evidence: exclusion test.
+
+## Invariants / Non-Goals
+
+- Organization access is enforced before reconciliation or listing.
+- Current Chat items and Project roll-up items remain visibly separate.
+- One target appears once per conversation under its strongest supported
+  category.
+- Outputs require structured production evidence and persist across answer
+  refreshes unless explicitly hidden/archived by a future governed flow.
+- Manifest References are not automatically attached to Project Context.
+- V1 does not aggregate Browser sessions, crawl tool history, implement generic
+  bookmarks, create Sites/documents, or replace Library/Issue work products.
+
+## Drift Boundaries
+
+Update this contract when categories, production evidence, reconciliation,
+Project roll-up scope, provenance, responsive visibility, or item-open behavior
+changes. Parser implementation, row-limit constants, icon choices, and query
+batching may change without a contract edit when the visible semantics and
+invariants remain intact.
+
+## Traceability
+
+Related plans:
+
+- `doc/plans/2026-07-12-chat-work-manifest.md`
+
+Related code:
+
+- `packages/db/src/schema/chat_work_manifest_items.ts`
+- `packages/shared/src/chat-work-manifest.ts`
+- `server/src/services/chat-work-manifest.ts`
+- `server/src/routes/chats.ts`
+- `ui/src/pages/Chat.work-manifest.tsx`
+- `ui/src/pages/Chat.tsx`
+
+Related tests:
+
+- `packages/shared/src/chat-work-manifest.test.ts`
+- `server/src/__tests__/chat-work-manifest.test.ts`
+- `server/src/__tests__/chat-routes.test.ts`
+- `ui/src/pages/Chat.work-manifest.test.tsx`
+- `tests/e2e/chat-work-manifest.spec.ts`
+
+Known gaps:
+
+- Browser-session aggregation and direct document/Site creation are explicitly
+  excluded from V1.
+
 ## CHAT.SIDE.PANEL.001
 
 Why:
@@ -719,6 +933,8 @@ Product model:
 - Supported internal references can open or focus tabs in the Side Panel without
   replacing the current route on ordinary clicks. Modifier-click and unsupported
   links preserve normal navigation behavior.
+- Chat Work manifest internal targets use the same typed Side Panel target model;
+  the manifest is an index and does not create a second preview drawer.
 - Side Panel targets are typed objects: issue, automation, Library file,
   Library directory, chat, browser tab, and explicit placeholders for target
   classes that need a link/search before loading a concrete object.
