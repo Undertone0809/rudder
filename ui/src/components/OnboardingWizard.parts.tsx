@@ -2,7 +2,7 @@ import {
   type Organization
 } from "@rudderhq/shared";
 
-export type Step = 1 | 2 | 3 | 4;
+export type Step = 1 | 2;
 export type AdapterType =
   | "claude_local"
   | "codex_local"
@@ -15,17 +15,6 @@ export type AdapterType =
 
 export const DEFAULT_FIRST_AGENT_TITLE = "Operator Assistant";
 
-export const DEFAULT_TASK_TITLE = "Start your first real work loop";
-
-export const DEFAULT_TASK_DESCRIPTION = `Help the operator start the first real work loop.
-
-- review the organization goal
-- identify one bounded issue the operator wants to move
-- make the issue clear enough to assign
-- run or route the work when ready
-- leave evidence, validation, and the next review step`;
-
-export const ONBOARDING_PROJECT_NAME = "Getting Started";
 export const ONBOARDING_DRAFT_ORGANIZATION_STORAGE_KEY =
   "rudder.onboardingDraftOrganizationId";
 

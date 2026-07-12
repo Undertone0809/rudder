@@ -261,6 +261,8 @@ describe("OnboardingWizard runtime config", () => {
     await vi.waitFor(() => {
       expect(surface.textContent).toContain("Create your first agent");
     });
+    expect(surface.textContent).not.toContain("Task");
+    expect(surface.textContent).not.toContain("Launch");
 
     await act(async () => {
       click(findButton(surface, "Codex"));
@@ -293,7 +295,7 @@ describe("OnboardingWizard runtime config", () => {
     });
 
     await act(async () => {
-      click(findButton(surface, "Next"));
+      click(findButton(surface, "Create"));
       await flush();
     });
 
@@ -397,7 +399,7 @@ describe("OnboardingWizard runtime config", () => {
     });
 
     await act(async () => {
-      click(findButton(surface, "Next"));
+      click(findButton(surface, "Create"));
       await flush();
     });
 

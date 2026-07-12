@@ -20,15 +20,11 @@ import {
   ArrowRight,
   Bot,
   Building2,
-  Check,
   ChevronDown,
   Code,
-  FolderKanban,
   Gem,
-  ListTodo,
   Loader2,
   MousePointer2,
-  Rocket,
   Sparkles,
   Terminal,
   X
@@ -38,10 +34,8 @@ import { getUIAdapter } from "../agent-runtimes";
 import { agentsApi } from "../api/agents";
 import { ApiError } from "../api/client";
 import { goalsApi } from "../api/goals";
-import { issuesApi } from "../api/issues";
 import { onboardingApi } from "../api/onboarding";
 import { organizationsApi } from "../api/orgs";
-import { projectsApi } from "../api/projects";
 import { secretsApi } from "../api/secrets";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
@@ -72,10 +66,7 @@ import { AsciiArtAnimation } from "./AsciiArtAnimation";
 import { AdapterEnvironmentResult } from "./OnboardingWizard.environment";
 import {
   DEFAULT_FIRST_AGENT_TITLE,
-  DEFAULT_TASK_DESCRIPTION,
-  DEFAULT_TASK_TITLE,
   ONBOARDING_DRAFT_ORGANIZATION_STORAGE_KEY,
-  ONBOARDING_PROJECT_NAME,
   upsertOrganization,
   type AdapterType,
   type Step,
@@ -139,68 +130,30 @@ export function OnboardingWizard() {
     useState(false);
   const [unsetAnthropicLoading, setUnsetAnthropicLoading] = useState(false);
   const [showMoreAdapters, setShowMoreAdapters] = useState(false);
-  // Step 3
-  const [taskTitle, setTaskTitle] = useState(DEFAULT_TASK_TITLE);
-  const [taskDescription, setTaskDescription] = useState(
-    DEFAULT_TASK_DESCRIPTION
-  );
-  // Auto-grow textarea for task description
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftOrganizationIdRef = useRef<string | null>(null);
   const shouldCleanupDraftOrganizationRef = useRef(false);
   const hasAppliedInitialAgentNameRef = useRef(false);
-  const autoResizeTextarea = useCallback(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = el.scrollHeight + "px";
-  }, []);
   // Created entity IDs — pre-populate from existing organization when skipping step 1
   const [createdCompanyId, setCreatedCompanyId] = useState<string | null>(
     existingCompanyId ?? null
   );
-  const [createdCompanyName, setCreatedCompanyName] = useState<string | null>(
-    null
-  );
-  const [createdCompanyPrefix, setCreatedCompanyPrefix] = useState<
-    string | null
-  >(null);
   const [createdGoalId, setCreatedGoalId] = useState<string | null>(null);
   const [createdAgentId, setCreatedAgentId] = useState<string | null>(null);
-  const [createdAgentName, setCreatedAgentName] = useState<string | null>(null);
-  const [createdIssueRef, setCreatedIssueRef] = useState<string | null>(null);
   const [createdNewOrganizationInSession, setCreatedNewOrganizationInSession] =
     useState(false);
-  const createdCompany = useMemo(
-    () =>
-      createdCompanyId
-        ? organizations.find((organization) => organization.id === createdCompanyId) ??
-          null
-        : null,
-    [createdCompanyId, organizations]
-  );
-  const resolvedCompanyName = createdCompany?.name ?? createdCompanyName ?? "";
-  const resolvedCompanyPrefix =
-    createdCompany?.issuePrefix ?? createdCompanyPrefix ?? null;
   const organizationReady = Boolean(createdCompanyId);
-  const agentReady = Boolean(createdAgentId);
   const syncOrganizationSnapshot = useCallback((organization: Organization) => {
     queryClient.setQueryData<Organization[]>(
       queryKeys.organizations.all,
       (current) => upsertOrganization(current, organization),
     );
   }, [queryClient]);
-  const taskReady = taskTitle.trim().length > 0;
   const canReturnToOrganizationStep = minimumStep === 1 && organizationReady;
-  const launchDescription =
-    "Everything is set up. Launching now will create the starter task, wake the agent, and open the issue.";
   const isStepUnlocked = useCallback(
     (targetStep: Step) => targetStep >= minimumStep && targetStep <= furthestStep,
     [furthestStep, minimumStep]
   );
   const previousStep = useMemo<Step | null>(() => {
-    if (step === 4) return 3;
-    if (step === 3) return 2;
     if (step === 2 && canReturnToOrganizationStep) return 1;
     return null;
   }, [canReturnToOrganizationStep, step]);
@@ -220,37 +173,17 @@ export function OnboardingWizard() {
     setFirstTimeUser(true);
     hasAppliedInitialAgentNameRef.current = false;
     setCreatedCompanyId(cId);
-    setCreatedCompanyName(null);
-    setCreatedCompanyPrefix(null);
     setCreatedGoalId(null);
     setCreatedAgentId(null);
-    setCreatedAgentName(null);
-    setCreatedIssueRef(null);
     setCreatedNewOrganizationInSession(false);
   }, [
     effectiveOnboardingOpen,
     effectiveOnboardingOptions.orgId,
   ]);
-  // Backfill issue prefix for an existing organization once organizations are loaded.
-  useEffect(() => {
-    if (!effectiveOnboardingOpen || !createdCompany) return;
-    if (!createdCompanyPrefix) setCreatedCompanyPrefix(createdCompany.issuePrefix);
-    if (!createdCompanyName) setCreatedCompanyName(createdCompany.name);
-  }, [
-    effectiveOnboardingOpen,
-    createdCompany,
-    createdCompanyName,
-    createdCompanyPrefix
-  ]);
-  // Resize textarea when step 3 is shown or description changes
-  useEffect(() => {
-    if (step === 3) autoResizeTextarea();
-  }, [step, taskDescription, autoResizeTextarea]);
   useEffect(() => {
     const shouldCleanup =
       createdNewOrganizationInSession &&
-      createdCompanyId !== null &&
-      createdIssueRef === null;
+      createdCompanyId !== null;
     draftOrganizationIdRef.current = shouldCleanup ? createdCompanyId : null;
     shouldCleanupDraftOrganizationRef.current = shouldCleanup;
     if (typeof window === "undefined") return;
@@ -260,7 +193,7 @@ export function OnboardingWizard() {
         createdCompanyId
       );
     }
-  }, [createdCompanyId, createdIssueRef, createdNewOrganizationInSession]);
+  }, [createdCompanyId, createdNewOrganizationInSession]);
   const cleanupDraftOrganization = useCallback(
     async (options?: { keepalive?: boolean }) => {
       const draftOrganizationId = draftOrganizationIdRef.current;
@@ -459,15 +392,9 @@ export function OnboardingWizard() {
     setAdapterEnvLoading(false);
     setForceUnsetAnthropicApiKey(false);
     setUnsetAnthropicLoading(false);
-    setTaskTitle(DEFAULT_TASK_TITLE);
-    setTaskDescription(DEFAULT_TASK_DESCRIPTION);
     setCreatedCompanyId(null);
-    setCreatedCompanyName(null);
-    setCreatedCompanyPrefix(null);
     setCreatedGoalId(null);
     setCreatedAgentId(null);
-    setCreatedAgentName(null);
-    setCreatedIssueRef(null);
     setCreatedNewOrganizationInSession(false);
   }
   async function handleClose() {
@@ -628,8 +555,6 @@ export function OnboardingWizard() {
         }
       }
       setCreatedCompanyId(organization.id);
-      setCreatedCompanyName(organization.name);
-      setCreatedCompanyPrefix(organization.issuePrefix);
       setCreatedNewOrganizationInSession(
         (current) => current || isCreatingOrganization
       );
@@ -669,23 +594,6 @@ export function OnboardingWizard() {
     } finally {
       setLoading(false);
     }
-  }
-  async function ensureGettingStartedProject(organizationId: string) {
-    const projects = await projectsApi.list(organizationId);
-    const existingProject = projects.find(
-      (project) =>
-        !project.archivedAt && project.name === ONBOARDING_PROJECT_NAME
-    );
-    if (existingProject) return existingProject;
-    const project = await projectsApi.create(organizationId, {
-      name: ONBOARDING_PROJECT_NAME,
-      status: "planned",
-      description: null,
-    });
-    queryClient.invalidateQueries({
-      queryKey: queryKeys.projects.list(organizationId)
-    });
-    return project;
   }
   async function seedGettingStartedOnboarding(organizationId: string, includeTutorial = true) {
     const result = await onboardingApi.seedGettingStarted(organizationId, {
@@ -755,7 +663,6 @@ export function OnboardingWizard() {
         ? await agentsApi.update(createdAgentId, agentPayload, createdCompanyId)
         : await agentsApi.create(createdCompanyId, agentPayload);
       setCreatedAgentId(agent.id);
-      setCreatedAgentName(agent.name);
       const organizationSnapshot = await organizationsApi.get(createdCompanyId);
       syncOrganizationSnapshot(organizationSnapshot);
       queryClient.invalidateQueries({
@@ -763,26 +670,21 @@ export function OnboardingWizard() {
       });
       if (createdNewOrganizationInSession) {
         await seedGettingStartedOnboarding(createdCompanyId, firstTimeUser);
-        shouldCleanupDraftOrganizationRef.current = false;
-        draftOrganizationIdRef.current = null;
-        if (typeof window !== "undefined") {
-          window.sessionStorage.removeItem(
-            ONBOARDING_DRAFT_ORGANIZATION_STORAGE_KEY
-          );
-        }
-        setSelectedOrganizationId(createdCompanyId);
-        markProductTourPending();
-        reset();
-        closeOnboarding();
-        navigate(
-          organizationSnapshot.issuePrefix
-            ? `/${organizationSnapshot.issuePrefix}${DEFAULT_ORGANIZATION_HOME_PATH}`
-            : DEFAULT_ORGANIZATION_HOME_PATH
-        );
-        return;
       }
-      setStep(3);
-      setFurthestStep((current) => (current > 3 ? current : 3));
+      shouldCleanupDraftOrganizationRef.current = false;
+      draftOrganizationIdRef.current = null;
+      if (typeof window !== "undefined") {
+        window.sessionStorage.removeItem(ONBOARDING_DRAFT_ORGANIZATION_STORAGE_KEY);
+      }
+      setSelectedOrganizationId(createdCompanyId);
+      markProductTourPending();
+      reset();
+      closeOnboarding();
+      navigate(
+        organizationSnapshot.issuePrefix
+          ? `/${organizationSnapshot.issuePrefix}${DEFAULT_ORGANIZATION_HOME_PATH}`
+          : DEFAULT_ORGANIZATION_HOME_PATH
+      );
     } catch (err) {
       setError(
         err instanceof Error
@@ -840,88 +742,11 @@ export function OnboardingWizard() {
       setUnsetAnthropicLoading(false);
     }
   }
-  async function handleStep3Next() {
-    if (!createdCompanyId) {
-      setError("Complete organization setup before continuing.");
-      setStep(1);
-      return;
-    }
-    if (!createdAgentId) {
-      setError("Create the agent before continuing to task setup.");
-      setStep(2);
-      return;
-    }
-    setError(null);
-    setStep(4);
-    setFurthestStep(4);
-  }
-  async function handleLaunch() {
-    if (!createdCompanyId) {
-      setError("Complete organization setup before launching.");
-      setStep(1);
-      return;
-    }
-    if (!createdAgentId) {
-      setError("Create the agent before launching.");
-      setStep(2);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      let issueRef = createdIssueRef;
-      if (!issueRef) {
-        let projectId: string | undefined;
-        if (createdNewOrganizationInSession) {
-          const onboardingProject = await ensureGettingStartedProject(
-            createdCompanyId
-          );
-          projectId = onboardingProject.id;
-        }
-        const issue = await issuesApi.create(createdCompanyId, {
-          title: taskTitle.trim(),
-          ...(taskDescription.trim()
-            ? { description: taskDescription.trim() }
-            : {}),
-          assigneeAgentId: createdAgentId,
-          status: "todo",
-          ...(projectId ? { projectId } : {})
-        });
-        issueRef = issue.identifier ?? issue.id;
-        setCreatedIssueRef(issueRef);
-        queryClient.invalidateQueries({
-          queryKey: queryKeys.issues.list(createdCompanyId)
-        });
-      }
-      shouldCleanupDraftOrganizationRef.current = false;
-      draftOrganizationIdRef.current = null;
-      if (typeof window !== "undefined") {
-        window.sessionStorage.removeItem(
-          ONBOARDING_DRAFT_ORGANIZATION_STORAGE_KEY
-        );
-      }
-      setSelectedOrganizationId(createdCompanyId);
-      markProductTourPending();
-      reset();
-      closeOnboarding();
-      navigate(
-        resolvedCompanyPrefix
-          ? `/${resolvedCompanyPrefix}/issues/${issueRef}`
-          : `/issues/${issueRef}`
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create task");
-    } finally {
-      setLoading(false);
-    }
-  }
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       if (step === 1 && organizationName.trim()) handleStep1Next();
       else if (step === 2) handleStep2Next();
-      else if (step === 3 && taskTitle.trim()) handleStep3Next();
-      else if (step === 4) handleLaunch();
     }
   }
   if (!effectiveOnboardingOpen) return null;
@@ -953,9 +778,7 @@ export function OnboardingWizard() {
                 {(
                   [
                     { step: 1 as Step, label: "Organization", icon: Building2 },
-                    { step: 2 as Step, label: "Agent", icon: Bot },
-                    { step: 3 as Step, label: "Task", icon: ListTodo },
-                    { step: 4 as Step, label: "Launch", icon: Rocket }
+                    { step: 2 as Step, label: "Agent", icon: Bot }
                   ] as const
                 ).map(({ step: s, label, icon: Icon }) => {
                   const unlocked = isStepUnlocked(s);
@@ -1259,91 +1082,6 @@ export function OnboardingWizard() {
                         } value={url} onChange={(e) => setUrl(e.target.value)} /> </div>
                   )} </div>
               )}
-              {step === 3 && (
-                <div className="space-y-5">
-                  <div className="flex items-center gap-3 mb-1">
-                    <div className="bg-muted/50 p-2">
-                      <ListTodo className="h-5 w-5 text-muted-foreground" /> </div>
-                    <div>
-                      <h3 className="font-medium">Give it something to do</h3>
-                      <p className="text-xs text-muted-foreground">
-                        Give your agent a small task to start with — a bug fix,
-                        a research question, writing a script.
-                      </p> </div> </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">
-                      Task title
-                    </label>
-                    <input className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50" placeholder="e.g. Research competitor pricing" value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)}
-                      autoFocus /> </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">
-                      Description (optional)
-                    </label>
-                    <textarea ref={textareaRef} className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50 resize-none min-h-[120px] max-h-[300px] overflow-y-auto" placeholder="Add more detail about what the agent should do..." value={taskDescription} onChange={(e) => setTaskDescription(e.target.value)} /> </div> </div>
-              )}
-              {step === 4 && (
-                <div className="space-y-5">
-                  <div className="flex items-center gap-3 mb-1">
-                    <div className="bg-muted/50 p-2">
-                      <Rocket className="h-5 w-5 text-muted-foreground" /> </div>
-                    <div>
-                      <h3 className="font-medium">Ready to launch</h3>
-                      <p className="text-xs text-muted-foreground">
-                        {launchDescription}
-                      </p> </div> </div>
-                  <div className="border border-border divide-y divide-border">
-                    <div data-testid="onboarding-launch-summary-organization" className="flex items-center gap-3 px-3 py-2.5" >
-                      <Building2 className="h-4 w-4 text-muted-foreground shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">
-                          {organizationReady
-                            ? resolvedCompanyName
-                            : "Organization setup incomplete"}
-                        </p>
-                        <p className="text-xs text-muted-foreground">Organization</p> </div>
-                      {organizationReady ? (
-                        <Check className="h-4 w-4 text-green-500 shrink-0" />
-                      ) : null} </div>
-                    <div className="flex items-center gap-3 px-3 py-2.5">
-                      <Bot className="h-4 w-4 text-muted-foreground shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">
-                          {agentReady ? ((createdAgentName ?? agentName.trim()) || "Agent") : "Agent setup incomplete"}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {agentReady
-                            ? getUIAdapter(agentRuntimeType).label
-                            : "Agent"}
-                        </p> </div>
-                      {agentReady ? (
-                        <Check className="h-4 w-4 text-green-500 shrink-0" />
-                      ) : null} </div>
-                    {createdNewOrganizationInSession ? (
-                      <div data-testid="onboarding-launch-summary-project" className="flex items-center gap-3 px-3 py-2.5" >
-                        <FolderKanban className="h-4 w-4 text-muted-foreground shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">
-                            {ONBOARDING_PROJECT_NAME}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            Project
-                          </p> </div>
-                        <Check className="h-4 w-4 text-green-500 shrink-0" /> </div>
-                    ) : null}
-                    <div data-testid="onboarding-launch-summary-task" className="flex items-center gap-3 px-3 py-2.5" >
-                      <ListTodo className="h-4 w-4 text-muted-foreground shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">
-                          {taskReady ? taskTitle : "Task setup incomplete"}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          Task
-                        </p> </div>
-                      {taskReady ? (
-                        <Check className="h-4 w-4 text-green-500 shrink-0" />
-                      ) : null} </div> </div> </div>
-              )}
               {error && (
                 <div className="mt-3">
                   <p className="text-xs text-destructive">{error}</p> </div>
@@ -1377,33 +1115,10 @@ export function OnboardingWizard() {
                       ) : (
                         <ArrowRight className="h-3.5 w-3.5 mr-1" />
                       )}
-                      {loading
-                        ? "Creating..."
-                        : createdNewOrganizationInSession
-                          ? "Create"
-                          : "Next"}
+                      {loading ? "Creating..." : "Create"}
                     </Button>
                   )}
-                  {step === 3 && (
-                    <Button size="sm" disabled={!taskTitle.trim() || loading} onClick={handleStep3Next} >
-                      {loading ? (
-                        <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-                      ) : (
-                        <ArrowRight className="h-3.5 w-3.5 mr-1" />
-                      )}
-                      {loading ? "Creating..." : "Next"}
-                    </Button>
-                  )}
-                  {step === 4 && (
-                    <Button size="sm" disabled={loading} onClick={handleLaunch}>
-                      {loading ? (
-                        <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-                      ) : (
-                        <ArrowRight className="h-3.5 w-3.5 mr-1" />
-                      )}
-                      {loading ? "Creating..." : "Create & Open Issue"}
-                    </Button>
-                  )} </div> </div> </div> </div>
+                </div> </div> </div> </div>
           <div className={cn(
               "hidden md:block overflow-hidden bg-[#1d1d1d] transition-[width,opacity] duration-500 ease-in-out",
               step === 1 ? "w-1/2 opacity-100" : "w-0 opacity-0"

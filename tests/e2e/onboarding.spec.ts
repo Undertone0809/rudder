@@ -1,7 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const SKIP_LLM = process.env.RUDDER_E2E_SKIP_LLM !== "false";
-
 const GETTING_STARTED_TITLES = [
   "👋 Welcome to Rudder — work with agents like a team",
   "1. Understand how Rudder work happens",
@@ -74,9 +72,8 @@ test.describe("Onboarding wizard", () => {
     await expectOnboardingStep(page, "Name your organization");
     await expect(page.getByRole("checkbox", { name: /new to Rudder/i })).toBeChecked();
 
-    await expect(
-      page.locator('[data-testid="onboarding-step-tab-4"]')
-    ).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Task", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Launch", exact: true })).toHaveCount(0);
 
     await page
       .locator('input[placeholder="Acme Corp"]')
@@ -92,10 +89,6 @@ test.describe("Onboarding wizard", () => {
       .fill(updatedOrganizationName);
     await page.getByRole("button", { name: "Next" }).click();
     await expectOnboardingStep(page, "Create your first agent");
-
-    await expect(
-      page.locator('[data-testid="onboarding-step-tab-3"]')
-    ).toBeDisabled();
 
     const onboardingNameInput = page.locator('input[placeholder="Agent name"]');
     await expect(page.getByText("Agent name", { exact: true })).toBeVisible();
@@ -407,8 +400,6 @@ test.describe("Onboarding wizard", () => {
     page,
   }) => {
     const organizationName = `E2E-Existing-${Date.now()}`;
-    const taskTitle = "E2E existing organization task";
-
     const createRes = await page.request.post("/api/orgs", {
       data: { name: organizationName },
     });
@@ -424,9 +415,8 @@ test.describe("Onboarding wizard", () => {
     await expect(onboardingNameInput).toHaveValue(/\S+/, { timeout: 15_000 });
     const agentName = await onboardingNameInput.inputValue();
 
-    await expect(
-      page.locator('[data-testid="onboarding-step-tab-4"]')
-    ).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Task", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Launch", exact: true })).toHaveCount(0);
 
     await page.getByRole("button", { name: "Codex" }).click();
     await expectSelectedCodexModel(page);
@@ -439,31 +429,11 @@ test.describe("Onboarding wizard", () => {
       page.getByText("Complete organization setup before testing the runtime.")
     ).toHaveCount(0);
 
-    await page.getByRole("button", { name: "Next" }).click();
-    await expectOnboardingStep(page, "Give it something to do");
-
-    const taskTitleInput = page.locator(
-      'input[placeholder="e.g. Research competitor pricing"]'
+    await page.getByText("Create", { exact: true }).click();
+    await expect(page).toHaveURL(
+      new RegExp(`/${escapeRegExp(organization.issuePrefix)}/messenger(?:/chat)?$`),
+      { timeout: 30_000 },
     );
-    await taskTitleInput.clear();
-    await taskTitleInput.fill(taskTitle);
-
-    await page.getByRole("button", { name: "Next" }).click();
-
-    await expectOnboardingStep(page, "Ready to launch");
-    await expect(
-      page.locator('[data-testid="onboarding-launch-summary-organization"]')
-    ).toContainText(organizationName);
-    await expect(
-      page.locator('[data-testid="onboarding-launch-summary-project"]')
-    ).toHaveCount(0);
-
-    await expect(
-      page.locator('[data-testid="onboarding-launch-summary-task"]')
-    ).toContainText(taskTitle);
-
-    await page.getByRole("button", { name: "Create & Open Issue" }).click();
-    await expect(page).toHaveURL(/\/issues\//, { timeout: 10_000 });
 
     const baseUrl = page.url().split("/").slice(0, 3).join("/");
     const agentsRes = await page.request.get(
@@ -476,28 +446,9 @@ test.describe("Onboarding wizard", () => {
     );
     expect(rootAgent).toBeTruthy();
 
-    const issuesRes = await page.request.get(
-      `${baseUrl}/api/orgs/${organization.id}/issues`
-    );
-    expect(issuesRes.ok()).toBe(true);
-    const issues = await issuesRes.json();
-    const task = issues.find(
-      (issue: { title: string }) => issue.title === taskTitle
-    );
-    expect(task).toBeTruthy();
-    expect(task.assigneeAgentId).toBe(rootAgent.id);
-    expect(task.projectId).toBeNull();
-
-    if (!SKIP_LLM) {
-      await expect(async () => {
-        const res = await page.request.get(`${baseUrl}/api/issues/${task.id}`);
-        const issue = await res.json();
-        expect(["in_progress", "done"]).toContain(issue.status);
-      }).toPass({ timeout: 120_000, intervals: [5_000] });
-    }
   });
 
-  test("new organization drafts are rolled back when onboarding closes before launch", async ({
+  test("new organization drafts are rolled back when onboarding closes before completion", async ({
     page,
   }) => {
     const organizationName = `E2E-Draft-Close-${Date.now()}`;
@@ -529,7 +480,7 @@ test.describe("Onboarding wizard", () => {
       .toBe(false);
   });
 
-  test("new organization drafts are rolled back on reload before launch", async ({
+  test("new organization drafts are rolled back on reload before completion", async ({
     page,
   }) => {
     const organizationName = `E2E-Draft-Reload-${Date.now()}`;
