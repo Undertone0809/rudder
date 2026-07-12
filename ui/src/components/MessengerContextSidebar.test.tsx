@@ -170,6 +170,7 @@ describe("MessengerContextSidebar", () => {
     const exactLabel = formatExactTimestamp("2026-04-11T09:40:00.000Z");
 
     expect(html).toContain("20m ago");
+    expect(html).toContain("lucide-panel-left");
     expect(html).not.toContain(`title="${exactLabel}"`);
     expect(html).not.toContain(`aria-label="${exactLabel}"`);
   });

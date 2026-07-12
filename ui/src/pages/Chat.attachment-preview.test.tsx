@@ -1189,6 +1189,7 @@ describe("Messenger sidebar controls", () => {
 
     expect(openButton).not.toBeNull();
     expect(openButton?.title).toBe("Open Messenger sidebar");
+    expect(openButton?.querySelector(".lucide-panel-left")).not.toBeNull();
 
     await act(async () => {
       openButton?.click();
@@ -2304,7 +2305,9 @@ describe("Chat Side Panel link handling", () => {
     expect(sidePanel?.className).toContain("motion-chat-side-panel");
     expect(sidePanel?.className).toContain("transition-[width,opacity,transform]");
     expect(container.querySelector('[data-testid="chat-side-panel-trigger"]')).toBeNull();
-    expect(sidePanel?.querySelector('[data-testid="chat-side-panel-collapse"]')).not.toBeNull();
+    const collapseButton = sidePanel?.querySelector('[data-testid="chat-side-panel-collapse"]');
+    expect(collapseButton).not.toBeNull();
+    expect(collapseButton?.querySelector(".lucide-panel-right")).not.toBeNull();
     expect(sidePanel?.querySelector('[data-testid="chat-side-panel-expand-toggle"]')).not.toBeNull();
 
     const urlInput = sidePanel!.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]');

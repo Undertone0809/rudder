@@ -111,7 +111,7 @@ import {
   Mail,
   MailOpen,
   MoreHorizontal,
-  PanelLeftOpen,
+  PanelLeft,
   PanelRight,
   Paperclip,
   Pencil,
@@ -1941,7 +1941,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           className="absolute left-3 top-3 z-30 inline-flex h-8 w-8 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
           onClick={() => setSidebarOpen(true)}
         >
-          <PanelLeftOpen className="h-4 w-4" aria-hidden />
+          <PanelLeft className="h-4 w-4" aria-hidden />
         </button>
       ) : null}
       <ChatAttachmentPreviewDialog

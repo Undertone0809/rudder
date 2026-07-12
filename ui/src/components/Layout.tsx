@@ -7,7 +7,7 @@ import { MarkdownMentionsProvider } from "@/context/MarkdownMentionsContext";
 import { useSidePanel } from "@/context/SidePanelContext";
 import { Link, Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, BookOpen, PanelLeftOpen, PanelRightOpen, Settings, X } from "lucide-react";
+import { ArrowLeft, BookOpen, PanelLeftOpen, PanelRight, Settings, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import { accessApi } from "../api/access";
 import { chatsApi } from "../api/chats";
@@ -461,7 +461,7 @@ function DesktopSidePanelSlot({
           aria-label="Open Side Panel"
           title="Open Side Panel"
         >
-          <PanelRightOpen className="h-4 w-4" />
+          <PanelRight className="h-4 w-4" />
         </Button>
       </div> : null}
       {panelVisible && !expandedVisible ? <div
