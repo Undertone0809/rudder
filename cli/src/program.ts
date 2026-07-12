@@ -7,6 +7,7 @@ import { registerAgentCommands } from "./commands/client/agent.js";
 import { registerApprovalCommands } from "./commands/client/approval.js";
 import { registerClientAuthCommands } from "./commands/client/auth.js";
 import { registerAutomationCommands } from "./commands/client/automation.js";
+import { registerBrowserCommands } from "./commands/client/browser.js";
 import { registerChatCommands } from "./commands/client/chat.js";
 import { registerCompanyCommands } from "./commands/client/company.js";
 import { registerContextCommands } from "./commands/client/context.js";
@@ -213,6 +214,7 @@ export function createProgram(): Command {
   registerSkillCommands(program);
   registerLibraryCommands(program);
   registerAutomationCommands(program);
+  registerBrowserCommands(program);
   registerChatCommands(program);
   registerRunsCommands(program);
   registerLazyWorktreeCommands(program);

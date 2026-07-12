@@ -12,3 +12,9 @@ describe("queryKeys agent runs", () => {
     expect(queryKeys.heartbeats("org-1")).toEqual(queryKeys.agentRuns("org-1"));
   });
 });
+
+describe("queryKeys instance Browser settings", () => {
+  it("uses a stable instance-scoped key", () => {
+    expect(queryKeys.instance.browserSettings).toEqual(["instance", "browser-settings"]);
+  });
+});

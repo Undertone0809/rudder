@@ -1,11 +1,41 @@
 import type { BrowserWindowConstructorOptions, OpenDialogOptions, WebContents } from "electron";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, session, shell, systemPreferences, Tray } from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveDesktopAppName } from "./app-identity.js";
 import { createBootScreenHtml, createRendererRecoveryScreenHtml } from "./boot-screen.js";
+import { createElectronBrowserAgentTabFactory } from "./browser-agent-electron.js";
+import { BrowserAgentError, createBrowserAgentTabController } from "./browser-agent-tabs.js";
+import {
+  isDesktopBrowserRunActive,
+  readDesktopBrowserSettings,
+  registerDesktopBrowserBroker,
+  unregisterDesktopBrowserBroker,
+} from "./browser-broker-registration.js";
+import { startBrowserBrokerServer } from "./browser-broker-server.js";
+import { runBrowserCookieImportWorker } from "./browser-cookie-import-worker.js";
+import { createBrowserCookieImporter, type BrowserDataImportResult } from "./browser-cookie-import.js";
+import {
+  cleanupStaleBrowserImportTempDirectories,
+  deriveBrowserImportOwnerId,
+} from "./browser-import-snapshot.js";
+import { createBrowserImportSourceRegistry, type BrowserImportSource } from "./browser-import-sources.js";
+import { registerBrowserIpcHandlers } from "./browser-ipc.js";
+import { createBrowserPopupRateLimiter } from "./browser-popup-rate-limit.js";
+import {
+  createBrowserProfileController,
+  deriveBrowserPartition,
+  type BrowserProfileController,
+} from "./browser-profile.js";
+import { createDesktopBrowserRuntimeLifecycle } from "./browser-runtime-lifecycle.js";
+import {
+  createBrowserGuestRegistry,
+  installBrowserSessionPolicy,
+  installBrowserWebviewPolicy,
+  installDefaultWindowOpenDenyPolicy,
+} from "./browser-webview-policy.js";
 import { ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
 import { runDesktopCliMode } from "./cli-runner.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
@@ -14,14 +44,18 @@ import {
   listWorkspaceLaunchTargets,
   openWorkspace,
   openWorkspaceFileInIde,
+  openWorkspaceFileLocation,
   type DesktopFileLaunchTargetId,
   type DesktopWorkspaceLaunchTargetId,
 } from "./ide-opener.js";
+import { previewLocalFile } from "./local-file-preview.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
 import {
   canOpenBlockedNavigationExternally,
+  classifyBlockedDesktopNavigation,
   collectDesktopNavigationOrigins,
   isAllowedDesktopNavigation,
+  sanitizeDesktopNavigationForLog,
 } from "./navigation-guard.js";
 import {
   consumePostUpdateReloadMarker,
@@ -42,6 +76,7 @@ import {
   type DesktopReleaseNotes,
 } from "./release-notes.js";
 import {
+  resolveDesktopOrganizationWorkspaceAllowedRoots,
   resolveDesktopOrganizationWorkspaceHomeEnv,
   resolveExternalRuntimeServerEntrypoint,
   resolveSharedRudderHomeDir,
@@ -363,6 +398,7 @@ if (desktopUserDataOverride) {
 const initialPaths = resolveSharedInstancePaths(initialProfile.instanceId);
 
 let mainWindow: BrowserWindow | null = null;
+let currentMainRenderer: WebContents | null = null;
 let residentTray: Tray | null = null;
 let sidePanelCloseShortcutActive = false;
 let residentControlsAvailable = false;
@@ -374,6 +410,15 @@ let currentAppearance: DesktopAppearance = resolveAppearanceForThemePreference(
   nativeTheme.shouldUseDarkColors,
 );
 const sidePanelCloseShortcutWebContents = new WeakSet<WebContents>();
+const browserGuestRegistry = createBrowserGuestRegistry();
+const acceptBrowserPopup = createBrowserPopupRateLimiter();
+let browserProfileController: BrowserProfileController | null = null;
+let browserAgentTabController: ReturnType<typeof createBrowserAgentTabController> | null = null;
+let browserRuntimeLifecycle: ReturnType<typeof createDesktopBrowserRuntimeLifecycle> | null = null;
+let browserCookieImporter: {
+  listBrowserImportSources(): Promise<BrowserImportSource[]>;
+  importBrowserData(input: { sourceId: string; importCookies: true }): Promise<BrowserDataImportResult>;
+} | null = null;
 let currentBootState: BootState = {
   stage: "starting",
   message: "Resolving shared local Rudder instance…",
@@ -424,6 +469,7 @@ const desktopQuitFlow = createDesktopQuitFlow({
   getMainWindow: () => mainWindow,
   setMainWindow: (value) => { mainWindow = value; },
   getServerHandle: () => serverHandle,
+  prepareForQuit: () => browserProfileController?.shutdown() ?? Promise.resolve(),
   stopLocalRudder,
   destroyResidentTray: () => { residentTray?.destroy(); residentTray = null; },
 });
@@ -591,6 +637,137 @@ function applyDesktopEnvironment(): LocalEnvProfile {
   return profile;
 }
 
+function requireBrowserProfileController(): BrowserProfileController {
+  if (!browserProfileController) {
+    throw new Error("Rudder Browser profile has not been initialized.");
+  }
+  return browserProfileController;
+}
+
+function requireBrowserCookieImporter() {
+  if (!browserCookieImporter) {
+    throw new Error("Rudder Browser data import has not been initialized.");
+  }
+  return browserCookieImporter;
+}
+
+function requireBrowserRuntimeLifecycle() {
+  if (!browserRuntimeLifecycle) {
+    throw new Error("Rudder Browser runtime has not been initialized.");
+  }
+  return browserRuntimeLifecycle;
+}
+
+function getCurrentMainRenderer(): WebContents | null {
+  if (!currentMainRenderer || currentMainRenderer.isDestroyed()) return null;
+  return currentMainRenderer;
+}
+
+function collectBrowserControlPlaneOrigins(...additionalOrigins: Array<string | null | undefined>): string[] {
+  const configuredPort = process.env.PORT?.trim();
+  const configuredOrigin = configuredPort ? `http://127.0.0.1:${configuredPort}` : null;
+  return collectDesktopNavigationOrigins(
+    ...additionalOrigins,
+    configuredOrigin,
+    resolveDesktopAppBaseUrl(),
+    currentBootState.runtime?.apiUrl,
+    serverHandle?.apiUrl,
+    lastKnownAppUrl,
+  );
+}
+
+function routeDesktopWebLink(url: string, source: "link" | "browser_popup"): void {
+  if (source === "browser_popup" && !acceptBrowserPopup()) return;
+  const renderer = getCurrentMainRenderer();
+  if (renderer?.getURL().startsWith("http")) {
+    renderer.send("desktop:open-web-link", { url, source });
+    return;
+  }
+  shell.openExternal(url).catch((error) => {
+    console.warn(
+      "[rudder-desktop] failed to open routed web link externally",
+      sanitizeDesktopNavigationForLog(url),
+      error,
+    );
+  });
+}
+
+async function closeAllBrowserGuests(): Promise<void> {
+  await browserAgentTabController?.closeAll();
+  await browserGuestRegistry.closeAll();
+}
+
+function initializeBrowserProfile(instanceRoot: string): void {
+  const partition = deriveBrowserPartition(instanceRoot);
+  const importOwnerId = deriveBrowserImportOwnerId(partition);
+  if (browserProfileController) {
+    if (browserProfileController.getPartition() !== partition) {
+      throw new Error("Rudder Browser profile cannot change instances after Desktop startup.");
+    }
+    return;
+  }
+
+  const browserSession = session.fromPartition(partition);
+  installBrowserSessionPolicy(browserSession, {
+    getControlPlaneOrigins: collectBrowserControlPlaneOrigins,
+  });
+  const controller = createBrowserProfileController({
+    partition,
+    session: browserSession,
+    closeBrowserGuests: closeAllBrowserGuests,
+    broadcastReset: (event) => {
+      getCurrentMainRenderer()?.send("desktop:browser-reset", event);
+    },
+  });
+  browserProfileController = controller;
+  const agentTabs = createBrowserAgentTabController({
+    createTab: createElectronBrowserAgentTabFactory({
+      partition,
+      createWindow: (windowOptions) => new BrowserWindow(windowOptions),
+      registerGuest: browserGuestRegistry.register,
+      getControlPlaneOrigins: collectBrowserControlPlaneOrigins,
+    }),
+    getControlPlaneOrigins: collectBrowserControlPlaneOrigins,
+  });
+  browserAgentTabController = agentTabs;
+  browserRuntimeLifecycle = createDesktopBrowserRuntimeLifecycle({
+    tabs: agentTabs,
+    getProfileEnabled: () => controller.getState().enabled,
+    setProfileEnabled: (enabled) => controller.setEnabled(enabled),
+    execute: async (command) => {
+      if (typeof command.deadlineAt === "number" && command.deadlineAt <= Date.now()) {
+        throw new BrowserAgentError("browser_timeout", "Browser action expired before execution.");
+      }
+      const state = controller.getState();
+      if (!state.enabled) {
+        throw new BrowserAgentError("browser_disabled", "Rudder Browser is disabled in Settings.");
+      }
+      if (!state.available) {
+        throw new BrowserAgentError("browser_unavailable", "Rudder Browser is temporarily unavailable.");
+      }
+      return agentTabs.execute(command);
+    },
+    startBroker: startBrowserBrokerServer,
+    registerBroker: registerDesktopBrowserBroker,
+    unregisterBroker: unregisterDesktopBrowserBroker,
+    readSettings: readDesktopBrowserSettings,
+    isRunActive: isDesktopBrowserRunActive,
+    sweepIntervalMs: 5_000,
+    onWarning: (message, error) => console.warn(`[rudder-desktop] ${message}`, error),
+  });
+  const sourceRegistry = createBrowserImportSourceRegistry();
+  browserCookieImporter = createBrowserCookieImporter({
+    sourceRegistry,
+    cookies: {
+      get: () => browserSession.cookies.get({}),
+      set: (details) => browserSession.cookies.set(details),
+      flushStore: () => browserSession.cookies.flushStore(),
+    },
+    runWorker: (source, signal) => runBrowserCookieImportWorker(source, { ownerId: importOwnerId, signal }),
+    runExclusive: (operation) => controller.runExclusive(operation),
+  });
+}
+
 function updateBootState(nextState: Partial<BootState> & Pick<BootState, "stage" | "message">): void {
   currentBootState = {
     ...currentBootState,
@@ -712,9 +889,16 @@ function installRendererRecoveryHandlers(window: BrowserWindow, initialUrl: stri
   const handleBlockedNavigation = (targetUrl: string) => {
     if (isAllowedDesktopNavigation(targetUrl, allowedOrigins(), { allowInternalProtocols: false })) return false;
 
-    if (canOpenBlockedNavigationExternally(targetUrl)) {
+    const classification = classifyBlockedDesktopNavigation(targetUrl);
+    if (classification === "browser_router") {
+      routeDesktopWebLink(targetUrl, "link");
+    } else if (classification === "external") {
       shell.openExternal(targetUrl).catch((error) => {
-        console.warn("[rudder-desktop] failed to open external navigation", targetUrl, error);
+        console.warn(
+          "[rudder-desktop] failed to open external navigation",
+          sanitizeDesktopNavigationForLog(targetUrl),
+          error,
+        );
       });
     }
     return true;
@@ -724,12 +908,22 @@ function installRendererRecoveryHandlers(window: BrowserWindow, initialUrl: stri
     if (handleBlockedNavigation(url)) return { action: "deny" };
 
     window.loadURL(url).catch((error) => {
-      console.warn("[rudder-desktop] failed to load same-origin navigation", url, error);
+      console.warn(
+        "[rudder-desktop] failed to load same-origin navigation",
+        sanitizeDesktopNavigationForLog(url),
+        error,
+      );
     });
     return { action: "deny" };
   });
 
   window.webContents.on("will-navigate", (event, targetUrl) => {
+    if (handleBlockedNavigation(targetUrl)) {
+      event.preventDefault();
+    }
+  });
+
+  window.webContents.on("will-redirect", (event, targetUrl) => {
     if (handleBlockedNavigation(targetUrl)) {
       event.preventDefault();
     }
@@ -791,6 +985,7 @@ function installMainWindowSidePanelCloseShortcutHandler(window: BrowserWindow): 
 }
 
 async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
+  const browserProfile = requireBrowserProfileController();
   const preloadPath = path.resolve(MODULE_DIR, "preload.js");
   const macWindowEffects = process.platform === "darwin"
     ? resolveMacWindowEffects()
@@ -813,6 +1008,14 @@ async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
   if (process.platform !== "darwin") {
     window.setMenuBarVisibility(false);
   }
+
+  installBrowserWebviewPolicy(window.webContents, {
+    partition: browserProfile.getPartition(),
+    getControlPlaneOrigins: () => collectBrowserControlPlaneOrigins(initialUrl),
+    isBrowserAvailable: () => browserProfile.getState().available,
+    registerGuest: browserGuestRegistry.register,
+    openBrowserPopup: (url) => routeDesktopWebLink(url, "browser_popup"),
+  });
 
   window.once("ready-to-show", () => {
     window.show();
@@ -839,6 +1042,7 @@ async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
     updateResidentShellMenu();
   });
 
+  currentMainRenderer = window.webContents;
   await window.loadURL(initialUrl);
   return window;
 }
@@ -850,6 +1054,7 @@ async function replaceMainWindow(nextWindow: BrowserWindow): Promise<void> {
   }
 
   mainWindow = nextWindow;
+  currentMainRenderer = nextWindow.webContents;
   mainWindow.setTitle(APP_NAME);
 
   if (previousWindow && previousWindow !== nextWindow && !previousWindow.isDestroyed()) {
@@ -1177,10 +1382,7 @@ async function startLocalRudder(): Promise<void> {
       },
     });
 
-    if (serverHandle) {
-      await serverHandle.stop();
-      serverHandle = null;
-    }
+    await stopLocalRudder();
 
     try {
       const serverModule = await importServerModule();
@@ -1194,6 +1396,11 @@ async function startLocalRudder(): Promise<void> {
         takeoverOnVersionMismatch: true,
         ...serverRuntimeOptions(),
       });
+      try {
+        await requireBrowserRuntimeLifecycle().connect(serverHandle.apiUrl);
+      } catch (error) {
+        console.warn("[rudder-desktop] Browser Broker unavailable; continuing without Agent Browser control", error);
+      }
       const baseUrl = serverHandle.apiUrl.replace(/\/api$/, "");
       const runtimeLabel = serverHandle.runtime.mode === "attached"
         ? `Attached to ${serverHandle.runtime.ownerKind ?? "local"} runtime`
@@ -1307,13 +1514,24 @@ async function importCliModule(): Promise<CliModule> {
 }
 
 async function stopLocalRudder(): Promise<void> {
+  await browserRuntimeLifecycle?.disconnect();
   if (!serverHandle) return;
   const handle = serverHandle;
   serverHandle = null;
   await handle.stop();
 }
 
+function desktopWorkspaceFileAllowedRoots() {
+  const instanceId = process.env.RUDDER_INSTANCE_ID?.trim() || initialProfile.instanceId;
+  return resolveDesktopOrganizationWorkspaceAllowedRoots(process.env, instanceId);
+}
+
 function registerIpc(): void {
+  registerBrowserIpcHandlers(ipcMain, {
+    getMainRenderer: getCurrentMainRenderer,
+    controller: requireBrowserProfileController(),
+    importer: requireBrowserCookieImporter(),
+  });
   ipcMain.handle("desktop:get-boot-state", async () => {
     refreshDesktopSystemPermissions();
     return currentBootState;
@@ -1346,6 +1564,12 @@ function registerIpc(): void {
   ipcMain.handle("desktop:open-path", async (_event, targetPath: string) => {
     await shell.openPath(targetPath);
   });
+  ipcMain.handle("desktop:preview-local-file", async (event, targetPath: string) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+      throw new Error("Local file preview is only available to the main Rudder window.");
+    }
+    return await previewLocalFile(targetPath);
+  });
   ipcMain.handle("desktop:list-available-ides", async (): Promise<DesktopIdeTarget[]> => {
     return await listAvailableIdeTargets();
   });
@@ -1362,7 +1586,18 @@ function registerIpc(): void {
   ipcMain.handle(
     "desktop:open-workspace-file-in-ide",
     async (_event, payload: { rootPath: string; filePath: string; ideId?: DesktopFileLaunchTargetId }) => {
-      await openWorkspaceFileInIde(payload.rootPath, payload.filePath, payload.ideId);
+      await openWorkspaceFileInIde(payload.rootPath, payload.filePath, payload.ideId, {
+        allowedRootPaths: desktopWorkspaceFileAllowedRoots(),
+      });
+    },
+  );
+  ipcMain.handle(
+    "desktop:open-workspace-file-location",
+    async (_event, payload: { rootPath: string; filePath: string; targetId: DesktopWorkspaceLaunchTargetId }) => {
+      await openWorkspaceFileLocation(payload.rootPath, payload.filePath, payload.targetId, {
+        allowedRootPaths: desktopWorkspaceFileAllowedRoots(),
+        revealFile: async (absolutePath) => shell.showItemInFolder(absolutePath),
+      });
     },
   );
   ipcMain.handle("desktop:copy-text", async (_event, value: string) => {
@@ -1428,7 +1663,26 @@ function registerIpc(): void {
   ipcMain.handle("desktop:send-feedback", async () => {
     await shell.openExternal(createFeedbackMailtoUrl());
   });
-  ipcMain.handle("desktop:open-external", async (_event, target: string) => {
+  ipcMain.handle("desktop:open-external", async (event, target: string) => {
+    if (event.sender !== getCurrentMainRenderer()) {
+      throw new Error("External navigation is available only to the current Rudder renderer.");
+    }
+    if (classifyBlockedDesktopNavigation(target) === "browser_router") {
+      routeDesktopWebLink(target, "link");
+      return;
+    }
+    if (classifyBlockedDesktopNavigation(target) === "deny") {
+      throw new Error("This URL protocol cannot be opened from Rudder.");
+    }
+    await shell.openExternal(target);
+  });
+  ipcMain.handle("desktop:force-open-external", async (event, target: string) => {
+    if (event.sender !== getCurrentMainRenderer()) {
+      throw new Error("External navigation is available only to the current Rudder renderer.");
+    }
+    if (!canOpenBlockedNavigationExternally(target)) {
+      throw new Error("Only approved external URL protocols can be opened.");
+    }
     await shell.openExternal(target);
   });
   ipcMain.handle("desktop:pick-path", async (event, options: DesktopPathPickOptions): Promise<DesktopPathPickResult> => {
@@ -1538,6 +1792,16 @@ async function captureDesktopWindowIfRequested(): Promise<void> {
 async function bootstrap(): Promise<void> {
   const profile = applyDesktopEnvironment();
   const appName = applyDesktopAppIdentity(profile);
+  const instancePaths = resolveSharedInstancePaths(profile.instanceId);
+  const instanceRoot = instancePaths.instanceRoot
+    ?? path.resolve(resolveSharedRudderHomeDir(), "instances", profile.instanceId);
+  const browserImportOwnerId = deriveBrowserImportOwnerId(deriveBrowserPartition(instanceRoot));
+  try {
+    await cleanupStaleBrowserImportTempDirectories({ ownerId: browserImportOwnerId });
+  } catch (error) {
+    console.warn("[rudder-desktop] failed to clean stale Browser import data", error);
+  }
+  initializeBrowserProfile(instanceRoot);
   if (desktopDebugEnabled()) {
     console.info("[rudder-desktop] bootstrap:start", {
       profile: profile.name,
@@ -1587,7 +1851,7 @@ async function bootstrap(): Promise<void> {
   currentBootState = {
     ...currentBootState,
     capabilities: desktopCapabilities,
-    paths: resolveSharedInstancePaths(profile.instanceId),
+    paths: instancePaths,
     runtime: {
       ...currentBootState.runtime,
       localEnv: profile.name,
@@ -1652,6 +1916,7 @@ if (desktopCliArgv) {
     });
 
     app.on("web-contents-created", (_event, contents) => {
+      installDefaultWindowOpenDenyPolicy(contents);
       installSidePanelCloseShortcutHandler(contents);
     });
 

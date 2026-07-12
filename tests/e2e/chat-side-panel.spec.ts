@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { chatMessages, createDb } from "../../packages/db/src/index.ts";
 import { E2E_DATABASE_URL } from "./support/e2e-env";
@@ -26,6 +26,61 @@ function buildAutomationMentionHref(automationId: string, title?: string | null)
 
 function buildLibraryDirectoryMentionHref(directoryPath: string) {
   return `library-directory://directory?p=${encodeURIComponent(directoryPath)}`;
+}
+
+async function installDesktopShellFileLauncherStub(page: Page) {
+  await page.addInitScript(() => {
+    const fileLocationCalls: Array<{ rootPath: string; filePath: string; targetId: string }> = [];
+    Object.defineProperty(window, "__rudderFileLocationCalls", {
+      configurable: true,
+      value: fileLocationCalls,
+    });
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: {
+        listWorkspaceLaunchTargets: async () => [
+          { id: "vscode", label: "VS Code", kind: "ide" },
+          { id: "terminal", label: "Terminal", kind: "terminal" },
+          { id: "finder", label: "Finder", kind: "folder" },
+        ],
+        openWorkspaceFileInIde: async () => {},
+        openWorkspaceFileLocation: async (rootPath: string, filePath: string, targetId: string) => {
+          fileLocationCalls.push({ rootPath, filePath, targetId });
+        },
+        setSidePanelCloseShortcutActive: async () => {},
+      },
+    });
+  });
+}
+
+async function installBrowserDesktopStub(page: Page) {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: {
+        getBrowserPartition: async () => "persist:rudder-browser-v1-chat-e2e",
+        openExternal: async () => {},
+        forceOpenExternal: async () => {},
+        setSidePanelCloseShortcutActive: async () => {},
+        onCloseSidePanelActiveTab: () => () => {},
+        onBrowserReset: () => () => {},
+      },
+    });
+  });
+}
+
+async function installEnabledBrowserSettingsStub(page: Page) {
+  await page.route("**/api/instance/settings/browser", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      contentType: "application/json",
+      json: { enabled: true, openLinksIn: "built_in" },
+      status: 200,
+    });
+  });
 }
 
 test.describe("Chat Side Panel", () => {
@@ -109,6 +164,196 @@ test.describe("Chat Side Panel", () => {
       path: testInfo.outputPath("chat-side-panel-expanded-issue-detail.png"),
       fullPage: true,
     });
+  });
+
+  test("opens a Library document with Desktop app, Finder, and Terminal targets", async ({ page }, testInfo) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Chat-Side-Panel-File-Launcher-${Date.now()}` },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const libraryFilePath = `docs/file-launcher-${Date.now()}.md`;
+    const libraryFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: {
+        filePath: libraryFilePath,
+        content: "# OpenClaw and Hermes Agent SEO competitor research\n\nOpen this document outside Rudder.",
+      },
+    });
+    expect(libraryFileRes.ok(), await libraryFileRes.text()).toBe(true);
+    const libraryFile = await libraryFileRes.json() as { markdownLink: string };
+    const libraryFileName = libraryFilePath.split("/").at(-1) ?? libraryFilePath;
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Library file launcher host chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: `Open ${libraryFile.markdownLink} beside this chat.`,
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await installDesktopShellFileLauncherStub(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(assistantMessage).toContainText(libraryFileName, { timeout: 15_000 });
+    await assistantMessage.getByRole("link", { name: libraryFileName }).click();
+    const sidePanel = page.getByTestId("chat-side-panel");
+    const documentTitle = sidePanel.getByRole("heading", {
+      name: "OpenClaw and Hermes Agent SEO competitor research",
+      exact: true,
+    });
+    await expect(documentTitle).toBeVisible();
+
+    const libraryOpenIn = sidePanel.getByRole("button", { name: "Open Library document in another app" });
+    await expect(libraryOpenIn).toBeVisible();
+    const [titleBox, openInBox] = await Promise.all([
+      documentTitle.boundingBox(),
+      libraryOpenIn.boundingBox(),
+    ]);
+    expect(titleBox).not.toBeNull();
+    expect(openInBox).not.toBeNull();
+    expect(Math.abs((titleBox?.y ?? 0) - (openInBox?.y ?? 0))).toBeLessThanOrEqual(2);
+    expect((openInBox?.y ?? 0) + (openInBox?.height ?? 0)).toBeLessThanOrEqual(
+      (titleBox?.y ?? 0) + (titleBox?.height ?? 0),
+    );
+    await libraryOpenIn.click();
+    await expect(page.getByRole("menuitem", { name: "Default app" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "VS Code" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Finder" })).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath("chat-side-panel-library-open-in-menu.png"),
+      fullPage: true,
+    });
+    await page.getByRole("menuitem", { name: "Terminal" }).click();
+    await expect(page.getByText("Opened in Terminal")).toBeVisible();
+    await expect.poll(() => page.evaluate(() => (
+      window as typeof window & {
+        __rudderFileLocationCalls?: Array<{ rootPath: string; filePath: string; targetId: string }>;
+      }
+    ).__rudderFileLocationCalls ?? [])).toEqual([
+      expect.objectContaining({ filePath: libraryFilePath, targetId: "terminal" }),
+    ]);
+
+    await page.screenshot({
+      path: testInfo.outputPath("chat-side-panel-library-open-in.png"),
+      fullPage: true,
+    });
+  });
+
+  test("reuses the Automation detail UI in the Side Panel", async ({ page }, testInfo) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Chat-Side-Panel-Automation-${Date.now()}` },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Side Panel Automation Agent",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: { model: "gpt-5.4" },
+      },
+    });
+    expect(agentRes.ok(), await agentRes.text()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+
+    const automationRes = await page.request.post(`/api/orgs/${organization.id}/automations`, {
+      data: {
+        title: "Shared Side Panel automation detail",
+        description: "This Automation uses the same detail UI in Messenger and the workspace.",
+        assigneeAgentId: agent.id,
+        priority: "medium",
+        outputMode: "chat_output",
+      },
+    });
+    expect(automationRes.ok(), await automationRes.text()).toBe(true);
+    const automation = await automationRes.json() as { id: string; title: string };
+    const triggerRes = await page.request.post(`/api/automations/${automation.id}/triggers`, {
+      data: {
+        kind: "schedule",
+        label: "weekday verification",
+        cronExpression: "0 9 * * 1-5",
+        timezone: "Asia/Shanghai",
+      },
+    });
+    expect(triggerRes.ok(), await triggerRes.text()).toBe(true);
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Automation detail host chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: `Inspect [${automation.title}](${buildAutomationMentionHref(automation.id, automation.title)}) beside this chat.`,
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    const hostChatPath = `/${organization.issuePrefix}/messenger/chat/${chat.id}`;
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(hostChatPath);
+
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(assistantMessage).toContainText(automation.title, { timeout: 15_000 });
+    await assistantMessage.locator('a[data-mention-kind="automation"]').click();
+
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(page).toHaveURL(new RegExp(`${chat.id}$`));
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await expect(sidePanel.getByTestId("chat-side-panel-automation-view")).toBeVisible();
+    await expect(sidePanel.getByTestId("automation-detail-shell")).toBeVisible();
+    await expect(sidePanel).toContainText(automation.title);
+    await expect(sidePanel).toContainText("Details");
+    await expect(sidePanel).toContainText("Frequency");
+    await expect(sidePanel).toContainText("Previous runs");
+    await expect(sidePanel.getByLabel("Pause automation")).toBeVisible();
+    await sidePanel.getByRole("button", { name: "Automation actions" }).click();
+    await expect(page.getByRole("menuitem", { name: "Run now" })).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    await page.screenshot({
+      path: testInfo.outputPath("chat-side-panel-shared-automation-detail.png"),
+      fullPage: true,
+    });
+
+    await sidePanel.getByLabel("Close automation detail").click();
+    await expect(sidePanel.getByTestId("automation-detail-shell")).toHaveCount(0);
   });
 
   test("opens issue, automation, library, and chat references in the Side Panel without replacing the Chat route", async ({ page }, testInfo) => {
@@ -843,6 +1088,8 @@ test.describe("Chat Side Panel", () => {
   });
 
   test("opens the global empty Side Panel picker from a non-reference page", async ({ page }) => {
+    await installBrowserDesktopStub(page);
+    await installEnabledBrowserSettingsStub(page);
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Global-Side-Panel-${Date.now()}` },
     });
@@ -863,7 +1110,6 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Open a panel");
     await expect(sidePanel).toContainText("Browser");
     await expect(sidePanel).toContainText("Library");
-    await expect(sidePanel).toContainText("Issue");
     await expect(page.getByTestId("side-panel-resizer")).toBeVisible();
     await expect(sidePanel.locator(".workspace-main-card")).toHaveCount(2);
 
@@ -906,8 +1152,8 @@ test.describe("Chat Side Panel", () => {
     await expect(page.getByTestId("side-panel-expanded-overlay")).toHaveCount(0);
     await expect(page.getByTestId("side-panel-resizer")).toBeVisible();
 
-    await sidePanel.getByRole("button", { name: /Issue/ }).click();
-    await expect(sidePanel).toContainText("Open an issue link");
+    await sidePanel.getByRole("button", { name: /Browser/ }).click();
+    await expect(sidePanel).toContainText("Start browsing");
     await expect(sidePanel.getByRole("link", { name: "Full page" })).toHaveCount(0);
 
     await sidePanel.getByTestId("chat-side-panel-add-tab").click();
@@ -915,7 +1161,6 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Open a panel");
     await expect(sidePanel).toContainText("Browser");
     await expect(sidePanel).toContainText("Library");
-    await expect(sidePanel).toContainText("Issue");
 
     await sidePanel.getByRole("button", { name: /Library/ }).click();
     await expect(sidePanel).toContainText("Library root");
@@ -927,7 +1172,7 @@ test.describe("Chat Side Panel", () => {
     await page.mouse.down();
     await page.mouse.move(page.viewportSize()!.width - 16, collapseStart!.y + collapseStart!.height / 2, { steps: 8 });
     await page.mouse.up();
-    await expect(sidePanel).toHaveCount(0);
+    await expect(sidePanel).toBeHidden();
     await page.getByTestId("side-panel-hover-edge").hover();
     await expect(page.getByTestId("global-side-panel-trigger")).toBeVisible();
   });
@@ -1023,6 +1268,11 @@ test.describe("Chat Side Panel", () => {
   });
 
   test("opens a Browser side panel tab with URL navigation controls", async ({ page }) => {
+    await installBrowserDesktopStub(page);
+    const browserSettings = await page.request.patch("/api/instance/settings/browser", {
+      data: { enabled: true, openLinksIn: "built_in" },
+    });
+    expect(browserSettings.ok(), await browserSettings.text()).toBe(true);
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Global-Side-Panel-Browser-${Date.now()}` },
     });
@@ -1056,22 +1306,48 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel.getByTestId("chat-side-panel-browser-view")).toBeVisible();
     await expect(sidePanel).toContainText("Start browsing");
 
-    const targetUrl = "http://localhost:3100/api/health";
-    await sidePanel.getByLabel("Browser URL").fill("localhost:3100/api/health");
+    const targetUrl = "http://localhost:4173/browser-fixture";
+    await sidePanel.getByLabel("Browser URL").fill("localhost:4173/browser-fixture");
     await sidePanel.getByLabel("Browser URL").press("Enter");
 
     const webview = sidePanel.getByTestId("chat-side-panel-browser-webview");
     await expect(webview).toHaveAttribute("src", targetUrl);
     await expect(sidePanel.getByTestId("chat-side-panel-browser-start")).toHaveCount(0);
     await expect(sidePanel.getByTestId("chat-side-panel-tab").first()).toContainText("localhost");
+    await webview.evaluate((element) => {
+      Object.assign(element, { __rudderKeepaliveMarker: "browser-guest-1" });
+    });
+    const browserTabId = await webview.getAttribute("data-browser-tab-id");
+    expect(browserTabId).toBeTruthy();
+    const stableWebview = sidePanel.locator(`webview[data-browser-tab-id="${browserTabId}"]`);
+
+    await sidePanel.getByLabel("Expand Side Panel").click();
+    await expect(page.getByTestId("side-panel-expanded-overlay")).toBeVisible();
+    await expect.poll(() => stableWebview.evaluate((element) => (
+      element as HTMLElement & { __rudderKeepaliveMarker?: string }
+    ).__rudderKeepaliveMarker)).toBe("browser-guest-1");
+    await sidePanel.getByLabel("Restore Side Panel width").click();
+    await expect(page.getByTestId("side-panel-expanded-overlay")).toHaveCount(0);
+    await expect.poll(() => stableWebview.evaluate((element) => (
+      element as HTMLElement & { __rudderKeepaliveMarker?: string }
+    ).__rudderKeepaliveMarker)).toBe("browser-guest-1");
 
     await sidePanel.getByLabel("Open new browser tab").click();
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
     await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toContainText("New tab");
 
     await sidePanel.getByLabel("Close Side Panel").click();
-    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+    await expect(page.getByTestId("chat-side-panel")).toBeHidden();
+    await expect(stableWebview).toHaveCount(1);
+    await expect.poll(() => stableWebview.evaluate((element) => (
+      element as HTMLElement & { __rudderKeepaliveMarker?: string }
+    ).__rudderKeepaliveMarker)).toBe("browser-guest-1");
     await expect(page.getByTestId("chat-side-panel-trigger")).toHaveAttribute("aria-pressed", "false");
+    await page.getByTestId("chat-side-panel-trigger").click();
+    await expect(page.getByTestId("chat-side-panel")).toBeVisible();
+    await expect.poll(() => stableWebview.evaluate((element) => (
+      element as HTMLElement & { __rudderKeepaliveMarker?: string }
+    ).__rudderKeepaliveMarker)).toBe("browser-guest-1");
   });
 
   test("scales the Side Panel proportionally when the app width changes", async ({ page }) => {

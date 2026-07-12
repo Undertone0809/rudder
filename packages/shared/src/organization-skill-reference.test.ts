@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  RUDDER_BUNDLED_SKILL_SLUGS,
   buildOrganizationSkillSearchText,
   formatOrganizationSkillPublicRef,
+  getActiveRudderBundledSkillSlugs,
   getBundledRudderSkillSlug,
   normalizeOrganizationSkillKey,
   resolveOrganizationSkillReference,
@@ -72,6 +74,19 @@ const bundledSkill: OrganizationSkillListItem = {
 };
 
 describe("organization-skill-reference", () => {
+  it("keeps Browser known but activates it only with the instance capability", () => {
+    expect(RUDDER_BUNDLED_SKILL_SLUGS).toContain("browser");
+    expect(getActiveRudderBundledSkillSlugs(false)).not.toContain("browser");
+    expect(getActiveRudderBundledSkillSlugs(true)).toEqual([
+      "para-memory-files",
+      "rudder",
+      "rudder-create-agent",
+      "rudder-create-plugin",
+      "skill-creator",
+      "browser",
+    ]);
+  });
+
   it("formats scope-aware public refs", () => {
     expect(formatOrganizationSkillPublicRef(organizationSkill, organizationContext)).toBe("org/acme/alpha-test");
     expect(formatOrganizationSkillPublicRef(organizationSkill, agentContext)).toBe("org/acme/builder/alpha-test");

@@ -35,13 +35,18 @@ contracts:
     docs:
       - doc/product/domains/issues/surfaces.md
     related_code:
+      - packages/db/src/schema/issues.ts
+      - packages/shared/src/validators/issue.ts
       - ui/src/components/InlineEditor.tsx
+      - ui/src/components/NewIssueDialog.tsx
+      - ui/src/lib/new-issue-dialog.ts
       - ui/src/index.css
       - ui/src/pages/IssueDetail.tsx
       - ui/src/pages/Issues.tsx
     related_tests:
       - ui/src/components/InlineEditor.test.tsx
       - ui/src/pages/IssueDetail.test.tsx
+      - tests/e2e/codex-model-order.spec.ts
       - tests/e2e/issue-detail-toolbar-actions.spec.ts
       - tests/e2e/issue-board-display-properties.spec.ts
     related_plans:
@@ -104,11 +109,15 @@ contracts:
     docs:
       - doc/product/domains/execution/agent-runs.md
     related_code:
+      - packages/db/src/schema/issues.ts
       - server/src/services/runtime-kernel/heartbeat.execute.ts
+      - server/src/services/runtime-kernel/heartbeat.sessions.ts
       - server/src/services/runtime-kernel/model-fallback.ts
     related_tests:
       - server/src/__tests__/heartbeat-observability.test.ts
       - server/src/__tests__/heartbeat-process-recovery.test.ts
+      - server/src/__tests__/heartbeat-workspace-preflight.test.ts
+      - tests/e2e/codex-model-order.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
   RUN.ADMISSION.001:
@@ -352,22 +361,45 @@ contracts:
     docs:
       - doc/product/domains/agents/identity-config.md
     related_code:
+      - packages/agent-runtime-utils/src/rudder-mcp.ts
+      - packages/agent-runtimes/claude-local/src/server/execute.ts
+      - packages/agent-runtimes/codex-local/src/index.ts
+      - packages/agent-runtimes/codex-local/src/server/execute.ts
+      - packages/agent-runtimes/opencode-local/src/server/execute.ts
+      - packages/agent-runtimes/pi-local/src/server/execute.ts
       - packages/shared/src/types/agent.ts
+      - server/src/agent-runtimes/codex-models.ts
       - server/src/agent-runtimes/registry.ts
       - server/src/routes/agents.ts
       - server/src/services/agent-runtime-availability.ts
       - server/src/services/runtime-kernel/heartbeat.execute.ts
       - ui/src/api/agents.ts
       - ui/src/components/AgentConfigForm.advanced.tsx
+      - ui/src/components/AgentConfigForm.environment.tsx
+      - ui/src/components/AgentConfigForm.helpers.tsx
       - ui/src/components/AgentConfigForm.tsx
+      - ui/src/components/NewIssueDialog.tsx
+      - ui/src/lib/runtime-models.ts
+      - ui/src/lib/runtime-thinking-effort.ts
     related_tests:
+      - server/src/__tests__/claude-local-execute.test.ts
+      - server/src/__tests__/codex-local-execute.test.ts
+      - server/src/__tests__/opencode-local-execute.test.ts
+      - server/src/__tests__/pi-local-execute.test.ts
+      - server/src/__tests__/adapter-models.test.ts
       - server/src/__tests__/agent-runtime-availability.test.ts
       - server/src/__tests__/agent-run-context.test.ts
       - server/src/__tests__/heartbeat-process-recovery.test.ts
+      - ui/src/components/agent-config-defaults.test.ts
       - ui/src/components/AgentConfigForm.advanced.test.tsx
+      - ui/src/components/AgentConfigForm.helpers.test.ts
+      - ui/src/components/AgentConfigForm.model-dropdown.test.tsx
+      - ui/src/lib/runtime-models.test.ts
       - tests/e2e/agent-config-advanced-options.spec.ts
+      - tests/e2e/codex-model-order.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-07-12-built-in-browser.md
   AGENT.RUNTIME.PERMISSIONS.001:
     owner: product
     domain: agents
@@ -375,6 +407,7 @@ contracts:
     docs:
       - doc/product/domains/agents/runtime-platform-permissions.md
     related_code:
+      - packages/agent-runtime-utils/src/rudder-mcp.ts
       - packages/agent-runtime-utils/src/server-utils.cli.ts
       - packages/agent-runtimes/claude-local/src/server/execute.ts
       - packages/agent-runtimes/codex-local/src/server/codex-home.ts
@@ -383,6 +416,7 @@ contracts:
       - packages/agent-runtimes/gemini-local/src/server/execute.ts
       - packages/agent-runtimes/opencode-local/src/server/execute.ts
       - packages/agent-runtimes/pi-local/src/server/execute.ts
+      - server/src/services/agent-run-context.ts
       - server/src/services/managed-workspace-preflight.ts
       - desktop/scripts/after-pack.mjs
     related_tests:
@@ -394,8 +428,11 @@ contracts:
       - server/src/__tests__/opencode-local-execute.test.ts
       - server/src/__tests__/pi-local-execute.test.ts
       - server/src/__tests__/managed-workspace-preflight.test.ts
+      - server/src/__tests__/agent-run-context.test.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-06-26-local-runtime-operator-home-default.md
+      - doc/plans/2026-07-12-built-in-browser.md
   AGENT.CONTROL.TOOLS.001:
     owner: product
     domain: agents
@@ -407,6 +444,7 @@ contracts:
       - cli/src/agent-v1-registry.ts
       - cli/src/agent-v1-mcp-server.ts
       - cli/src/program.ts
+      - cli/src/commands/client/browser.ts
       - packages/agent-runtime-utils/src/rudder-mcp.ts
       - packages/agent-runtime-utils/src/rudder-mcp-server.ts
       - packages/agent-runtime-utils/src/types.ts
@@ -414,31 +452,139 @@ contracts:
       - packages/agent-runtimes/codex-local/src/server/execute.ts
       - packages/agent-runtimes/opencode-local/src/server/execute.ts
       - packages/agent-runtimes/pi-local/src/server/execute.ts
+      - server/src/services/browser-capability.ts
+      - server/src/services/runtime-kernel/model-fallback.ts
+      - server/src/routes/browser.ts
+      - server/src/services/browser-broker.ts
+      - server/resources/bundled-skills/browser/SKILL.md
       - server/resources/bundled-skills/rudder/SKILL.md
       - server/resources/bundled-skills/rudder/references/cli-reference.md
     related_tests:
+      - cli/src/__tests__/browser-command.test.ts
       - cli/src/__tests__/agent-v1-registry.test.ts
       - cli/src/__tests__/agent-v1-mcp-server.test.ts
       - server/src/__tests__/claude-local-execute.test.ts
       - server/src/__tests__/codex-local-execute.test.ts
       - server/src/__tests__/opencode-local-execute.test.ts
       - server/src/__tests__/pi-local-execute.test.ts
+      - server/src/__tests__/browser-routes.test.ts
+      - server/src/__tests__/model-fallback.test.ts
+      - server/src/services/browser-broker.test.ts
       - tests/e2e/agent-detail-integrations-tab.spec.ts
     related_plans:
       - doc/plans/2026-06-30-agent-v1-mcp-tools.md
+      - doc/plans/2026-07-12-built-in-browser.md
+  AGENT.BROWSER.001:
+    owner: product
+    domain: agents
+    status: active
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/agents/built-in-browser.md
+    related_code:
+      - desktop/src/browser-profile.ts
+      - desktop/src/browser-ipc.ts
+      - desktop/src/browser-webview-policy.ts
+      - desktop/src/browser-import-snapshot.ts
+      - desktop/src/browser-import-sources.ts
+      - desktop/src/browser-cookie-import-worker.ts
+      - desktop/src/browser-cookie-import.ts
+      - desktop/src/browser-cookie-db.ts
+      - desktop/src/browser-cookie-crypto-macos.ts
+      - desktop/src/browser-keychain-macos.ts
+      - desktop/src/desktop-quit-flow.ts
+      - desktop/src/navigation-guard.ts
+      - desktop/src/preload.ts
+      - desktop/src/browser-agent-electron.ts
+      - desktop/src/browser-agent-tabs.ts
+      - desktop/src/browser-broker-registration.ts
+      - desktop/src/browser-broker-server.ts
+      - desktop/src/browser-popup-rate-limit.ts
+      - desktop/src/browser-runtime-lifecycle.ts
+      - desktop/src/main.ts
+      - server/src/services/instance-settings.ts
+      - server/src/services/browser-broker.ts
+      - server/src/services/browser-capability.ts
+      - server/src/middleware/auth.ts
+      - server/src/routes/browser.ts
+      - server/src/services/agent-run-context.ts
+      - server/src/services/knowledge-portability/organization-skills.ts
+      - server/src/services/runtime-kernel/model-fallback.ts
+      - server/src/services/chat-assistant.ts
+      - server/src/services/organization-intelligence-profiles.ts
+      - server/src/services/integrations/feishu/inbound-dispatcher-db.ts
+      - server/resources/bundled-skills/browser/SKILL.md
+      - cli/src/agent-v1-mcp-server.ts
+      - cli/src/commands/client/browser.ts
+      - ui/src/context/SidePanelContext.tsx
+      - ui/src/components/DesktopBrowserLinkBridge.tsx
+      - ui/src/lib/browser-side-panel.ts
+      - ui/src/lib/desktop-browser-link-router.ts
+      - ui/src/pages/Chat.side-panel.tsx
+      - ui/src/pages/InstanceBrowserSettings.tsx
+      - ui/src/components/BrowserDataImportDialog.tsx
+    related_tests:
+      - desktop/src/browser-profile.test.ts
+      - desktop/src/browser-ipc.test.ts
+      - desktop/src/browser-webview-policy.test.ts
+      - desktop/src/browser-import-snapshot.test.ts
+      - desktop/src/browser-import-sources.test.ts
+      - desktop/src/browser-cookie-import-worker.test.ts
+      - desktop/src/browser-cookie-import.test.ts
+      - desktop/src/browser-cookie-db.test.ts
+      - desktop/src/browser-cookie-crypto-macos.test.ts
+      - desktop/src/browser-keychain-macos.test.ts
+      - desktop/src/desktop-quit-flow.test.ts
+      - desktop/src/navigation-guard.test.ts
+      - desktop/src/preload.browser.test.ts
+      - desktop/src/browser-agent-electron.test.ts
+      - desktop/src/browser-agent-refs.test.ts
+      - desktop/src/browser-agent-tabs.test.ts
+      - desktop/src/browser-broker-registration.test.ts
+      - desktop/src/browser-broker-server.test.ts
+      - desktop/src/browser-popup-rate-limit.test.ts
+      - desktop/src/browser-runtime-lifecycle.test.ts
+      - server/src/__tests__/browser-routes.test.ts
+      - server/src/__tests__/auth-middleware.test.ts
+      - server/src/__tests__/model-fallback.test.ts
+      - server/src/__tests__/chat-assistant.test.ts
+      - server/src/__tests__/organization-intelligence-profiles.test.ts
+      - server/src/__tests__/agent-integration-feishu-db-dispatcher.test.ts
+      - server/src/services/browser-broker.test.ts
+      - server/src/__tests__/agent-run-context.test.ts
+      - server/src/__tests__/organization-skills-reference.test.ts
+      - cli/src/__tests__/agent-v1-mcp-server.test.ts
+      - cli/src/__tests__/browser-command.test.ts
+      - ui/src/pages/InstanceBrowserSettings.test.tsx
+      - ui/src/components/BrowserDataImportDialog.test.tsx
+      - ui/src/components/DesktopBrowserLinkBridge.test.tsx
+      - ui/src/context/SidePanelContext.test.tsx
+      - ui/src/lib/browser-side-panel.test.ts
+      - ui/src/lib/desktop-browser-link-router.test.ts
+      - tests/e2e/built-in-browser.spec.ts
+      - tests/e2e/chat-side-panel.spec.ts
+      - desktop/scripts/smoke.mjs
+    related_plans:
+      - doc/plans/2026-07-12-built-in-browser.md
   AGENT.SKILLS.001:
     owner: product
     domain: agents
     docs:
       - doc/product/domains/agents/skills-and-inbox.md
     related_code:
+      - server/resources/bundled-skills/browser/SKILL.md
       - server/src/routes/agents.ts
+      - server/src/services/agent-run-context.ts
+      - server/src/services/browser-capability.ts
       - server/src/services/agent-enabled-skills.ts
       - server/src/services/knowledge-portability/organization-skills.ts
+      - server/src/services/runtime-kernel/model-fallback.ts
       - server/src/services/knowledge-portability/organization-skills.catalog.ts
       - packages/shared/src/organization-skill-reference.ts
       - ui/src/pages/AgentDetail.skills.tsx
     related_tests:
+      - server/src/__tests__/agent-run-context.test.ts
+      - server/src/__tests__/model-fallback.test.ts
       - server/src/__tests__/organization-skills-reference.test.ts
       - server/src/__tests__/organization-skills-prune.test.ts
       - desktop/scripts/smoke.mjs
@@ -446,6 +592,7 @@ contracts:
       - tests/e2e/organization-agent-skills.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-07-12-built-in-browser.md
   AGENT.SKILL.TELEMETRY.001:
     owner: product
     domain: agents
@@ -552,14 +699,17 @@ contracts:
       - server/src/services/organization-workspace-browser.ts
       - ui/src/pages/OrganizationResources.tsx
       - ui/src/pages/OrganizationWorkspaces.tsx
+      - ui/src/pages/Chat.side-panel.tsx
       - desktop/src/ide-opener.ts
     related_tests:
       - server/src/__tests__/home-paths.test.ts
       - server/src/__tests__/library-path-markdown.test.ts
       - server/src/__tests__/organization-workspace-browser.test.ts
       - desktop/src/ide-opener.test.ts
+      - ui/src/pages/Chat.attachment-preview.test.tsx
       - ui/src/pages/OrganizationWorkspaceFilesSidebar.test.tsx
       - ui/src/pages/OrganizationWorkspaces.scrollbars.test.tsx
+      - tests/e2e/chat-side-panel.spec.ts
       - tests/e2e/organization-workspaces-launcher.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
@@ -815,6 +965,14 @@ contracts:
     docs:
       - doc/product/domains/collaboration/chat-messenger-im.md
     related_code:
+      - desktop/src/browser-ipc.ts
+      - desktop/src/browser-profile.ts
+      - desktop/src/browser-webview-policy.ts
+      - desktop/src/browser-popup-rate-limit.ts
+      - desktop/src/navigation-guard.ts
+      - ui/src/components/DesktopBrowserLinkBridge.tsx
+      - ui/src/lib/browser-side-panel.ts
+      - ui/src/lib/desktop-browser-link-router.ts
       - ui/src/lib/side-panel-targets.ts
       - ui/src/context/SidePanelContext.tsx
       - ui/src/components/CommentThread.tsx
@@ -826,15 +984,26 @@ contracts:
       - ui/src/pages/IssueDetail.tsx
       - desktop/scripts/smoke.mjs
     related_tests:
+      - desktop/src/browser-ipc.test.ts
+      - desktop/src/browser-profile.test.ts
+      - desktop/src/browser-webview-policy.test.ts
+      - desktop/src/browser-popup-rate-limit.test.ts
+      - desktop/src/navigation-guard.test.ts
+      - ui/src/components/DesktopBrowserLinkBridge.test.tsx
+      - ui/src/lib/browser-side-panel.test.ts
+      - ui/src/lib/desktop-browser-link-router.test.ts
       - ui/src/lib/side-panel-targets.test.ts
       - ui/src/components/InlineEditor.test.tsx
       - ui/src/components/Layout.test.ts
+      - ui/src/context/SidePanelContext.test.tsx
       - ui/src/pages/Chat.attachment-preview.test.tsx
+      - tests/e2e/built-in-browser.spec.ts
       - tests/e2e/chat-side-panel.spec.ts
     related_plans:
       - doc/plans/2026-07-01-global-side-panel-workbench.md
       - doc/plans/2026-07-07-messenger-side-panel-session-state.md
       - doc/plans/2026-06-30-chat-side-panel.md
+      - doc/plans/2026-07-12-built-in-browser.md
   MESSENGER.ATTENTION.001:
     owner: product
     domain: collaboration
@@ -1086,6 +1255,8 @@ contracts:
     docs:
       - doc/product/domains/organizations-and-goals/settings-onboarding-portability.md
     related_code:
+      - desktop/src/browser-ipc.ts
+      - desktop/src/browser-profile.ts
       - packages/db/src/schema/instance_settings.ts
       - packages/db/src/schema/operator_profiles.ts
       - packages/db/src/schema/organization_intelligence_profiles.ts
@@ -1096,19 +1267,25 @@ contracts:
       - ui/index.html
       - ui/src/context/ThemeContext.tsx
       - ui/src/pages/InstanceAppearanceSettings.tsx
+      - ui/src/pages/InstanceBrowserSettings.tsx
       - ui/src/pages/InstanceSettings.tsx
       - ui/src/pages/OrganizationSettings.tsx
     related_tests:
+      - desktop/src/browser-ipc.test.ts
+      - desktop/src/browser-profile.test.ts
       - server/src/__tests__/instance-settings-service.test.ts
       - server/src/__tests__/instance-settings-routes.test.ts
       - server/src/__tests__/operator-profile-service.test.ts
       - server/src/__tests__/organization-intelligence-profiles.test.ts
       - ui/src/context/ThemeContext.test.tsx
       - ui/src/pages/InstanceAppearanceSettings.test.tsx
+      - ui/src/pages/InstanceBrowserSettings.test.tsx
+      - tests/e2e/built-in-browser.spec.ts
       - tests/e2e/settings-appearance.spec.ts
       - tests/e2e/settings-sidebar.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-07-12-built-in-browser.md
   ORG.ONBOARDING.001:
     owner: product
     domain: organizations-and-goals

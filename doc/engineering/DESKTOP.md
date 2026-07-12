@@ -163,9 +163,89 @@ target path, and permission-oriented recovery guidance. On Windows, that
 guidance includes choosing a writable workspace home or running Rudder as
 administrator when local folder policy requires elevated access.
 
-Electron `userData` now stores only desktop-shell preferences such as window state. It is not the source of truth for Rudder config, database, or storage.
-Desktop also stores per-version release-note acknowledgement state there so a
-completed update can show the current version's changelog once after restart.
+Electron `userData` stores desktop-shell preferences such as window state and
+the local Rudder Browser profile. Browser data uses a dedicated persistent
+partition named from a SHA-256 hash of the canonical absolute instance root.
+It is shared across organizations attached to that local instance, isolated
+from both the main Rudder renderer session and Browser profiles for other
+instance roots, and does not expose the instance path in the partition name.
+The Browser partition is separate from shell preferences even though both live
+under Electron `userData`. Neither is the source of truth for Rudder config,
+database, server-backed Browser settings, or organization storage. Desktop also
+stores per-version release-note acknowledgement state there so a completed
+update can show the current version's changelog once after restart.
+
+### Browser data import
+
+The first Browser data importer is a macOS Desktop capability for cookies from
+Google Chrome, Microsoft Edge, and Brave profiles. Discovery reads only each
+browser's `Local State` profile index. The renderer receives opaque source ids,
+profile labels, and supported data types; it never receives source paths,
+Keychain values, Cookie database rows, or decrypted cookie values.
+
+Import requires the source browser to be closed. Desktop verifies that the
+source Cookie database is not open, copies `Cookies` and any matching WAL/SHM
+files into a mode-`0700` temporary directory owned by the opaque Browser
+instance id and a live process marker, and rejects source changes during the
+copy. Normal completion, failure, cancellation, and graceful quit terminate the
+worker before removing the snapshot. After a crash, startup reaps only marked
+directories owned by the same canonical instance and current OS user whose
+owner process is no longer alive; it preserves live and foreign-instance
+imports. If the database is open, the dialog tells the operator to close the
+selected browser and retry while keeping source paths and raw worker errors out
+of the renderer. SQLite parsing and macOS Chromium `v10` decryption run in a
+worker thread. Linux `v11`, partitioned cookies that Electron cannot represent,
+malformed rows, and expired cookies are reported as skipped instead of being
+silently weakened. Existing Rudder Browser cookies win on identity collisions,
+and successful imports are flushed to the instance-scoped Browser partition.
+
+Saved-password import is not part of this implementation. Automated tests must
+use synthetic profiles and must not inspect a contributor's real browser data or
+Keychain.
+
+### Browser Broker and lifecycle
+
+Agent Browser tools do not connect directly to Electron. After the local API is
+healthy, Desktop starts a loopback-only Broker with a random in-memory bearer
+credential and registers that endpoint with the local server. The server keeps
+the registration only in memory, derives organization, agent, and run identity
+from the authenticated runtime request, checks the live Browser setting and
+active run, records a durable action intent, and then forwards one bounded
+high-level Browser command. Response deadlines include body consumption and
+Broker responses have a byte limit.
+Desktop rejects redirects on all Broker registration, unregister, settings, and
+run-liveness requests, and the server rejects redirects when forwarding commands
+to Desktop, so credentials and Browser command bodies stay on their literal
+loopback endpoints.
+
+The Browser capability is available only in `local_trusted` deployments.
+Organization skill inventory additionally requires the live Browser setting;
+run materialization requires `claude_local`, `codex_local`, `opencode_local`, or
+`pi_local`. Runtime fallback recomputes the skill, capability flag, and tools as
+one unit so an unsupported runtime cannot retain a partial Browser promise.
+
+Desktop owns Agent Browser windows and their leases. Commands for one run are
+serialized per tab, each run may own at most eight tabs, the process may own at
+most 32 Agent tabs, and an absolute command deadline closes a timed-out tab. The
+operator Side Panel separately permits eight Browser tabs per context. At that
+limit, ordinary Rudder links reuse an existing tab; popup and explicit new-tab
+requests are discarded. Popup admission is also limited to eight requests per
+rolling ten-second window. A periodic sweep synchronizes the instance Browser
+setting and closes tabs for runs that are no longer active.
+Disabling Browser or clearing its data closes admission, operator tabs, and
+Agent tabs immediately, even when an already-admitted import is still running.
+Clear then waits for that import and uses Electron's exhaustive `clearData()`
+session removal before flushing the profile. Runtime restart, Desktop
+disconnect, and app quit stop command admission, close Agent tabs, unregister
+the current credential, and stop the loopback Broker. App quit also aborts any
+active import worker and waits for its temporary snapshot cleanup before
+stopping the local runtime. Broker credentials, leases, and tabs never persist
+across Desktop restarts.
+
+V1 keeps one active in-memory Broker registration. Another same-instance
+`local_trusted` instance-admin Desktop/client may replace it; token-matched
+unregister prevents stale shutdown from removing the replacement, but a Broker
+generation/owner handshake is deferred.
 
 Published CLI and Desktop starts install the server runtime into a versioned
 cache under `~/.rudder/runtimes/<version>`. Rudder automatically prunes old
@@ -212,7 +292,10 @@ RUDDER_LOCAL_ENV=prod_local \
 pnpm --filter @rudderhq/desktop smoke
 ```
 
-`RUDDER_HOME` controls shared Rudder state. `RUDDER_DESKTOP_USER_DATA_DIR` only controls Electron shell preferences.
+`RUDDER_HOME` controls shared Rudder state. `RUDDER_DESKTOP_USER_DATA_DIR`
+controls Electron-local state: shell preferences and the instance-keyed Rudder
+Browser partition. Browser data remains a distinct partition and is not stored
+inside the shell preference files.
 Use `RUDDER_ORGANIZATION_WORKSPACE_HOME` when a smoke or manual run needs an
 isolated organization workspace root outside the user's Documents folder.
 

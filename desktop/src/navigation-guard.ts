@@ -48,3 +48,25 @@ export function canOpenBlockedNavigationExternally(targetUrl: string): boolean {
     return false;
   }
 }
+
+export function sanitizeDesktopNavigationForLog(targetUrl: string): string {
+  try {
+    const parsed = new URL(targetUrl.trim());
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") return parsed.origin;
+    return EXTERNAL_OPEN_PROTOCOLS.has(parsed.protocol) ? "non-web URL" : "invalid URL";
+  } catch {
+    return "invalid URL";
+  }
+}
+
+export function classifyBlockedDesktopNavigation(
+  targetUrl: string,
+): "browser_router" | "external" | "deny" {
+  try {
+    const protocol = new URL(targetUrl.trim()).protocol;
+    if (protocol === "http:" || protocol === "https:") return "browser_router";
+    return EXTERNAL_OPEN_PROTOCOLS.has(protocol) ? "external" : "deny";
+  } catch {
+    return "deny";
+  }
+}

@@ -4,6 +4,8 @@ import {
   DEFAULT_SETTINGS_PATH,
   INSTANCE_SETTINGS_ABOUT_PATH,
   INSTANCE_SETTINGS_APPEARANCE_PATH,
+  INSTANCE_SETTINGS_BROWSER_PATH,
+  INSTANCE_SETTINGS_GENERAL_PATH,
   INSTANCE_SETTINGS_LANGFUSE_PATH,
   INSTANCE_SETTINGS_NOTIFICATIONS_PATH,
   INSTANCE_SETTINGS_PROFILE_PATH,
@@ -27,6 +29,9 @@ describe("normalizeRememberedInstanceSettingsPath", () => {
     );
     expect(normalizeRememberedInstanceSettingsPath("/instance/settings/appearance")).toBe(
       INSTANCE_SETTINGS_APPEARANCE_PATH,
+    );
+    expect(normalizeRememberedInstanceSettingsPath("/instance/settings/browser?source=desktop#data")).toBe(
+      `${INSTANCE_SETTINGS_BROWSER_PATH}?source=desktop#data`,
     );
     expect(normalizeRememberedInstanceSettingsPath("/instance/settings/notifications")).toBe(
       INSTANCE_SETTINGS_NOTIFICATIONS_PATH,
@@ -56,9 +61,22 @@ describe("normalizeRememberedInstanceSettingsPath", () => {
     expect(normalizeRememberedInstanceSettingsPath("/instance/settings/notifications", false)).toBe(
       INSTANCE_SETTINGS_PROFILE_PATH,
     );
+    expect(normalizeRememberedInstanceSettingsPath(INSTANCE_SETTINGS_BROWSER_PATH, false)).toBe(
+      INSTANCE_SETTINGS_PROFILE_PATH,
+    );
     expect(normalizeRememberedInstanceSettingsPath("/instance/settings/plugins/example", false)).toBe(
       INSTANCE_SETTINGS_PROFILE_PATH,
     );
+  });
+
+  it("does not restore Browser settings for authenticated instance admins", () => {
+    expect(
+      normalizeRememberedInstanceSettingsPath(
+        "/instance/settings/browser?source=remembered#data",
+        true,
+        "authenticated",
+      ),
+    ).toBe(INSTANCE_SETTINGS_GENERAL_PATH);
   });
 });
 
@@ -76,6 +94,9 @@ describe("normalizeRememberedSettingsPath", () => {
     expect(normalizeRememberedSettingsPath("/instance/settings/general")).toBe("/instance/settings/general");
     expect(normalizeRememberedSettingsPath("/instance/settings/appearance")).toBe(
       INSTANCE_SETTINGS_APPEARANCE_PATH,
+    );
+    expect(normalizeRememberedSettingsPath(INSTANCE_SETTINGS_BROWSER_PATH)).toBe(
+      INSTANCE_SETTINGS_BROWSER_PATH,
     );
     expect(normalizeRememberedSettingsPath("/instance/settings/notifications")).toBe(
       INSTANCE_SETTINGS_NOTIFICATIONS_PATH,
@@ -101,6 +122,12 @@ describe("normalizeRememberedSettingsPath", () => {
     );
     expect(normalizeRememberedSettingsPath("/instance/settings/notifications", false)).toBe(
       INSTANCE_SETTINGS_PROFILE_PATH,
+    );
+  });
+
+  it("drops the unified remembered Browser target in authenticated deployments", () => {
+    expect(normalizeRememberedSettingsPath(INSTANCE_SETTINGS_BROWSER_PATH, true, "authenticated")).toBe(
+      DEFAULT_SETTINGS_PATH,
     );
   });
 });

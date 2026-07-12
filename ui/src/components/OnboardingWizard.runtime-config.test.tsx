@@ -253,6 +253,23 @@ describe("OnboardingWizard runtime config", () => {
     document.body.innerHTML = "";
   });
 
+  it("defaults Codex onboarding to GPT-5.6-sol", async () => {
+    const { OnboardingWizard } = await import("./OnboardingWizard");
+    await render(<OnboardingWizard />);
+    const surface = document.body;
+
+    await vi.waitFor(() => {
+      expect(surface.textContent).toContain("Create your first agent");
+    });
+
+    await act(async () => {
+      click(findButton(surface, "Codex"));
+      await flush();
+    });
+
+    expect(findButton(surface, "GPT-5.6-sol")).toBeTruthy();
+  });
+
   it("creates the default Claude agent with auto permission mode instead of dangerous bypass", async () => {
     vi.mocked(agentsApi.testEnvironment).mockResolvedValue({
       agentRuntimeType: "claude_local",

@@ -1,7 +1,7 @@
 import { agentsApi } from "@/api/agents";
 import { authApi } from "@/api/auth";
-import { automationsApi } from "@/api/automations";
 import { chatsApi } from "@/api/chats";
+import { instanceSettingsApi } from "@/api/instanceSettings";
 import { issuesApi } from "@/api/issues";
 import { organizationsApi } from "@/api/orgs";
 import { AgentIcon } from "@/components/AgentIconPicker";
@@ -12,13 +12,27 @@ import { MarkdownBody } from "@/components/MarkdownBody";
 import { PriorityIcon } from "@/components/PriorityIcon";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { useSidePanel } from "@/context/SidePanelContext";
+import { MAX_BROWSER_TABS_PER_CONTEXT, useSidePanel } from "@/context/SidePanelContext";
+import { useToast } from "@/context/ToastContext";
 import { useOperatorDisplayName } from "@/hooks/useOperatorDisplayName";
+import {
+  BROWSER_SIDE_PANEL_BLANK_URL as CHAT_SIDE_PANEL_BROWSER_BLANK_URL,
+  browserSidePanelLabel as chatSidePanelBrowserLabel,
+  createBrowserSidePanelTarget as createChatSidePanelBrowserTarget,
+  normalizeBrowserSidePanelUrl as normalizeChatSidePanelBrowserUrl,
+} from "@/lib/browser-side-panel";
+import { readDesktopShell, type DesktopFileLaunchTargetId, type DesktopWorkspaceLaunchTarget } from "@/lib/desktop-shell";
 import { queryKeys } from "@/lib/queryKeys";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
-import type { Agent, Automation, AutomationDetail, AutomationRunSummary, AutomationTrigger, Issue, IssueComment, OrganizationWorkspaceFileDetail, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
+import type { Agent, Issue, IssueComment, OrganizationWorkspaceFileDetail, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -26,8 +40,6 @@ import {
   Bot,
   Box,
   Boxes,
-  CalendarClock,
-  CheckCircle2,
   ChevronDown,
   ChevronRight,
   Circle,
@@ -36,6 +48,7 @@ import {
   FileCode2,
   FileText,
   Folder,
+  FolderOpen,
   Globe2,
   Image as ImageIcon,
   Loader2,
@@ -44,14 +57,14 @@ import {
   Minimize2,
   PackageOpen,
   PanelRightClose,
-  Play,
   Plus,
   RotateCw,
+  Terminal,
   UserRound,
   X
 } from "lucide-react";
 import { createElement, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { formatAutomationTimestamp, runSourceLabel, runStatusTitle, summarizeTrigger } from "./AutomationDetail.parts";
+import { AutomationDetail } from "./AutomationDetail";
 import { conversationDisplayTitle } from "./Chat.parts";
 import { IssueDetail } from "./IssueDetail";
 
@@ -74,8 +87,6 @@ const CHAT_SIDE_PANEL_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([
   ".txt",
   ".text",
 ]);
-const CHAT_SIDE_PANEL_BROWSER_BLANK_URL = "about:blank";
-
 type BrowserWebviewElement = HTMLElement & {
   canGoBack?: () => boolean;
   canGoForward?: () => boolean;
@@ -121,73 +132,11 @@ function humanizeSidePanelToken(value: string | null | undefined, fallback = "-"
   return trimmed.replace(/_/g, " ");
 }
 
-function createChatSidePanelBrowserTarget(url = CHAT_SIDE_PANEL_BROWSER_BLANK_URL): Extract<SidePanelTarget, { kind: "browser" }> {
-  return {
-    kind: "browser",
-    url,
-    label: chatSidePanelBrowserLabel(url),
-    tabId: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-  };
-}
-
-function chatSidePanelBrowserLabel(url: string) {
-  const trimmed = url.trim();
-  if (!trimmed || trimmed === CHAT_SIDE_PANEL_BROWSER_BLANK_URL) return "New tab";
-  if (trimmed.startsWith("data:")) return "Data URL";
-  try {
-    const parsed = new URL(trimmed);
-    return parsed.hostname || parsed.protocol.replace(":", "") || "Browser";
-  } catch {
-    return trimmed;
-  }
-}
-
-function normalizeChatSidePanelBrowserUrl(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return CHAT_SIDE_PANEL_BROWSER_BLANK_URL;
-  if (/^(about|data|file|https?):/i.test(trimmed)) return trimmed;
-  if (/\s/.test(trimmed)) return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
-  if (/^(localhost|\d{1,3}(?:\.\d{1,3}){3})(:\d+)?(\/.*)?$/i.test(trimmed)) {
-    return `http://${trimmed}`;
-  }
-  if (trimmed.includes(".")) {
-    return `https://${trimmed}`;
-  }
-  return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
-}
-
-function sidePanelDate(value: Date | string | null | undefined, fallback = "-") {
-  if (!value) return fallback;
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    }).format(new Date(value));
-  } catch {
-    return fallback;
-  }
-}
-
-function SidePanelDetailRow({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="grid grid-cols-[76px_minmax(0,1fr)] items-center gap-3 text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <div className="min-w-0 text-right text-foreground">{children}</div>
-    </div>
-  );
-}
-
 function SidePanelEmptyState({
+  browserAvailable,
   onOpenTarget,
 }: {
+  browserAvailable: boolean;
   onOpenTarget: (target: SidePanelTarget) => void;
 }) {
   const targets: Array<{
@@ -196,12 +145,12 @@ function SidePanelEmptyState({
     icon: typeof Compass;
     target: SidePanelTarget;
   }> = [
-    {
+    ...(browserAvailable ? [{
       label: "Browser",
       description: "Keep a browser tab beside the current workspace.",
       icon: Compass,
       target: createChatSidePanelBrowserTarget(),
-    },
+    }] : []),
     {
       label: "Library",
       description: "Browse workspace files with the Library tree.",
@@ -238,9 +187,11 @@ function SidePanelEmptyState({
 }
 
 function SidePanelPlaceholderView({
+  browserAvailable,
   target,
   onOpenTarget,
 }: {
+  browserAvailable: boolean;
   target: Extract<SidePanelTarget, { kind: "placeholder" }>;
   onOpenTarget: (target: SidePanelTarget) => void;
 }) {
@@ -273,6 +224,7 @@ function SidePanelPlaceholderView({
       ],
     },
   }[target.targetKind];
+  const actions = config.actions.filter((action) => browserAvailable || action.target.kind !== "browser");
   const Icon = config.icon;
 
   return (
@@ -284,7 +236,7 @@ function SidePanelPlaceholderView({
         <h3 className="mt-3 text-base font-semibold text-foreground">{config.title}</h3>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">{config.body}</p>
         <div className="mt-5 flex flex-wrap justify-center gap-2">
-          {config.actions.map((action) => (
+          {actions.map((action) => (
             <Button key={action.label} type="button" variant="outline" size="sm" onClick={() => onOpenTarget(action.target)}>
               {action.label}
             </Button>
@@ -454,151 +406,6 @@ function ChatIssueSidePanelView({
           </aside>
         ) : null}
       </div>
-    </div>
-  );
-}
-
-function automationNextTrigger(automation: AutomationDetail): AutomationTrigger | null {
-  return [...automation.triggers]
-    .filter((trigger) => trigger.enabled)
-    .sort((a, b) => {
-      const aTime = a.nextRunAt ? new Date(a.nextRunAt).getTime() : Number.POSITIVE_INFINITY;
-      const bTime = b.nextRunAt ? new Date(b.nextRunAt).getTime() : Number.POSITIVE_INFINITY;
-      return aTime - bTime;
-    })[0] ?? automation.triggers[0] ?? null;
-}
-
-function ChatAutomationSidePanelView({
-  automation,
-  onRun,
-  runs,
-  onUpdate,
-  running,
-  updating,
-}: {
-  automation: AutomationDetail;
-  onRun: () => Promise<unknown>;
-  runs: AutomationRunSummary[];
-  onUpdate: (data: Record<string, unknown>) => Promise<Automation | AutomationDetail>;
-  running: boolean;
-  updating: boolean;
-}) {
-  const [error, setError] = useState<string | null>(null);
-  const nextTrigger = automationNextTrigger(automation);
-  const latestRun = runs[0] ?? automation.recentRuns[0] ?? null;
-  const active = automation.status === "active";
-  const projectLabel = automation.project?.name ?? "No project";
-  const modelLabel = automation.assignee ? `${automation.assignee.name}` : "No assignee";
-  const visibleRuns = runs.length > 0 ? runs : automation.recentRuns;
-  const toggleStatus = async () => {
-    setError(null);
-    try {
-      await onUpdate({ status: active ? "paused" : "active" });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not update this automation.");
-    }
-  };
-  const runNow = async () => {
-    setError(null);
-    try {
-      await onRun();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not run this automation.");
-    }
-  };
-
-  return (
-    <div className="flex min-h-full flex-col" data-testid="chat-side-panel-automation-view">
-      <div className="space-y-4 border-b border-[color:var(--border-soft)] pb-4">
-        <div className="flex items-start gap-3">
-          <h3 className="min-w-0 flex-1 text-lg font-semibold leading-7 text-foreground">{automation.title}</h3>
-          <span className={cn(
-            "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-xs",
-            active ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" : "bg-[color:var(--surface-active)] text-muted-foreground",
-          )}>
-            <span className={cn("h-1.5 w-1.5 rounded-full", active ? "bg-emerald-500" : "bg-muted-foreground/60")} />
-            {active ? "Active" : "Paused"}
-          </span>
-        </div>
-        {automation.description ? (
-          <p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{automation.description}</p>
-        ) : null}
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Button type="button" variant="outline" size="xs" onClick={() => void toggleStatus()} disabled={updating}>
-            {updating ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
-            {active ? "Pause" : "Resume"}
-          </Button>
-          <Button type="button" variant="outline" size="xs" onClick={() => void runNow()} disabled={running}>
-            {running ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
-            {running ? "Starting..." : "Run now"}
-          </Button>
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-[color:var(--surface-active)] px-2 py-1">
-            <Bot className="h-3 w-3" />
-            {automation.outputMode === "chat_output" ? "Sends to chat" : "Tracks issue"}
-          </span>
-        </div>
-        {error ? (
-          <div role="alert" className="rounded-[var(--radius-md)] border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {error}
-          </div>
-        ) : null}
-      </div>
-
-      <section className="space-y-2 border-b border-[color:var(--border-soft)] py-4">
-        <h4 className="text-sm font-semibold text-foreground">Status</h4>
-        <SidePanelDetailRow label="Status">
-          <span className="truncate">{active ? "Active" : "Paused"}</span>
-        </SidePanelDetailRow>
-        <SidePanelDetailRow label="Next run">
-          <span className="truncate">{formatAutomationTimestamp(nextTrigger?.nextRunAt, "-")}</span>
-        </SidePanelDetailRow>
-        <SidePanelDetailRow label="Last ran">
-          <span className="truncate">{formatAutomationTimestamp(latestRun?.triggeredAt, "-")}</span>
-        </SidePanelDetailRow>
-      </section>
-
-      <section className="space-y-2 border-b border-[color:var(--border-soft)] py-4">
-        <h4 className="text-sm font-semibold text-foreground">Details</h4>
-        <SidePanelDetailRow label="Runs in">
-          <span className="truncate">{automation.outputMode === "chat_output" ? "Chat" : "Issue"}</span>
-        </SidePanelDetailRow>
-        <SidePanelDetailRow label="Project">
-          <span className="truncate">{projectLabel}</span>
-        </SidePanelDetailRow>
-        <SidePanelDetailRow label="Repeats">
-          <span className="truncate">{summarizeTrigger(nextTrigger)}</span>
-        </SidePanelDetailRow>
-        <SidePanelDetailRow label="Model">
-          <span className="truncate">{modelLabel}</span>
-        </SidePanelDetailRow>
-      </section>
-
-      <section className="flex min-h-[12rem] flex-1 flex-col py-4">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <h4 className="text-sm font-semibold text-foreground">Previous runs</h4>
-          <span className="text-xs text-muted-foreground">{visibleRuns.length}</span>
-        </div>
-        {visibleRuns.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No runs yet.</p>
-        ) : (
-          <div className="space-y-2">
-            {visibleRuns.slice(0, 12).map((run) => (
-              <div key={run.id} className="grid grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-2 text-sm">
-                {run.status === "running" ? (
-                  <CalendarClock className="h-3.5 w-3.5 text-blue-500" />
-                ) : (
-                  <Circle className={cn("h-2.5 w-2.5 fill-current", run.status === "failed" ? "text-red-500" : "text-muted-foreground")} />
-                )}
-                <div className="min-w-0">
-                  <div className="truncate text-foreground">{runStatusTitle(run.status)}</div>
-                  <div className="truncate text-xs text-muted-foreground">{runSourceLabel(run.source)}</div>
-                </div>
-                <span className="text-xs text-muted-foreground">{sidePanelDate(run.triggeredAt)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
     </div>
   );
 }
@@ -856,10 +663,125 @@ function ChatSidePanelLibraryFileView({
 }: {
   libraryFile: OrganizationWorkspaceFileDetail;
 }) {
+  const { pushToast } = useToast();
   const markdown = isChatSidePanelWorkspaceMarkdownFile(libraryFile.filePath, libraryFile.contentType);
+  const [launchTargets, setLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
+  const [openingTargetId, setOpeningTargetId] = useState<string | null>(null);
+  const desktopShell = readDesktopShell();
+  const canOpenFile = Boolean(libraryFile.rootPath && desktopShell?.openWorkspaceFileInIde);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!canOpenFile || !desktopShell?.listWorkspaceLaunchTargets) {
+      setLaunchTargets([]);
+      return undefined;
+    }
+    void desktopShell.listWorkspaceLaunchTargets()
+      .then((targets) => {
+        if (!cancelled) setLaunchTargets(targets);
+      })
+      .catch(() => {
+        if (!cancelled) setLaunchTargets([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canOpenFile, desktopShell]);
+
+  const visibleTargets = launchTargets.filter((target) => (
+    (target.kind === "ide" && target.id !== "xcode")
+    || ((target.kind === "terminal" || target.kind === "folder") && Boolean(desktopShell?.openWorkspaceFileLocation))
+  ));
+
+  const openTarget = async (target: { id: DesktopFileLaunchTargetId | DesktopWorkspaceLaunchTarget["id"]; label: string; kind: "app" | DesktopWorkspaceLaunchTarget["kind"] }) => {
+    if (!libraryFile.rootPath || !desktopShell) return;
+    setOpeningTargetId(target.id);
+    try {
+      if (target.kind === "app" || target.kind === "ide") {
+        await desktopShell.openWorkspaceFileInIde(
+          libraryFile.rootPath,
+          libraryFile.filePath,
+          target.id as DesktopFileLaunchTargetId,
+        );
+      } else {
+        await desktopShell.openWorkspaceFileLocation?.(
+          libraryFile.rootPath,
+          libraryFile.filePath,
+          target.id as DesktopWorkspaceLaunchTarget["id"],
+        );
+      }
+      pushToast({ title: `Opened in ${target.label}`, tone: "success" });
+    } catch (error) {
+      pushToast({
+        title: `Could not open in ${target.label}`,
+        body: error instanceof Error ? error.message : "Try another app.",
+        tone: "error",
+      });
+    } finally {
+      setOpeningTargetId(null);
+    }
+  };
+
+  const targetIcon = (target: DesktopWorkspaceLaunchTarget | { id: "defaultApp"; kind: "app" }) => {
+    if ("iconDataUrl" in target && target.iconDataUrl) {
+      return <img src={target.iconDataUrl} alt="" className="h-4 w-4 object-contain" />;
+    }
+    if (target.kind === "terminal") return <Terminal className="h-4 w-4" />;
+    if (target.kind === "folder") return <FolderOpen className="h-4 w-4" />;
+    if (target.kind === "ide") return <FileCode2 className="h-4 w-4" />;
+    return <ExternalLink className="h-4 w-4" />;
+  };
+
+  const openInMenu = canOpenFile ? (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 gap-1 px-2"
+          aria-label="Open Library document in another app"
+          title="Open in another app"
+        >
+          <ExternalLink className="h-4 w-4" />
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuItem
+          disabled={openingTargetId !== null}
+          onSelect={() => void openTarget({ id: "defaultApp", label: "Default app", kind: "app" })}
+        >
+          {targetIcon({ id: "defaultApp", kind: "app" })}
+          <span>Default app</span>
+        </DropdownMenuItem>
+        {visibleTargets.map((target) => (
+          <DropdownMenuItem
+            key={target.id}
+            disabled={openingTargetId !== null}
+            onSelect={() => void openTarget(target)}
+          >
+            {targetIcon(target)}
+            <span>{target.label}</span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  ) : null;
+  const showMarkdownHeaderAction = Boolean(
+    canOpenFile
+      && libraryFile.previewKind === "text"
+      && libraryFile.content !== null
+      && markdown,
+  );
 
   return (
     <div className="flex min-h-full flex-col" data-testid="chat-side-panel-library-file-view">
+      {openInMenu && !showMarkdownHeaderAction ? (
+        <div className="flex shrink-0 justify-end px-1 pt-2" data-testid="chat-side-panel-library-open-in">
+          {openInMenu}
+        </div>
+      ) : null}
       <div className="shrink-0 rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3 text-sm">
         <div className="font-mono text-xs text-muted-foreground">{libraryFile.filePath}</div>
         <div className="mt-2 text-xs text-muted-foreground">
@@ -869,9 +791,17 @@ function ChatSidePanelLibraryFileView({
       </div>
       {libraryFile.previewKind === "text" && libraryFile.content !== null ? (
         markdown ? (
-          <article className="min-w-0 flex-1 px-1 py-5" data-testid="chat-side-panel-library-markdown-preview">
+          <article className="relative min-w-0 flex-1 px-1 py-5" data-testid="chat-side-panel-library-markdown-preview">
+            {showMarkdownHeaderAction ? (
+              <div className="absolute right-1 top-5 z-10" data-testid="chat-side-panel-library-open-in">
+                {openInMenu}
+              </div>
+            ) : null}
             <MarkdownBody
-              className="rudder-library-document-editor rudder-side-panel-library-document text-[15px] leading-7 text-foreground"
+              className={cn(
+                "rudder-library-document-editor rudder-side-panel-library-document text-[15px] leading-7 text-foreground",
+                showMarkdownHeaderAction && "rudder-side-panel-library-document--with-header-action",
+              )}
               enableCodeBlockCopy
             >
               {libraryFile.content}
@@ -890,12 +820,16 @@ function ChatSidePanelLibraryFileView({
 }
 
 function ChatSidePanelBrowserView({
+  active,
+  canOpenNewTab,
   target,
   targetKey,
   onOpenTarget,
   onReplaceTarget,
   onCloseTarget,
 }: {
+  active: boolean;
+  canOpenNewTab: boolean;
   target: Extract<SidePanelTarget, { kind: "browser" }>;
   targetKey: string;
   onOpenTarget: (target: SidePanelTarget) => void;
@@ -950,9 +884,9 @@ function ChatSidePanelBrowserView({
     setTitle(target.label);
     setAddressValue(target.url === CHAT_SIDE_PANEL_BROWSER_BLANK_URL ? "" : target.url);
     setLoadError(null);
-    webviewReadyRef.current = false;
-    setNavigationState({ canGoBack: false, canGoForward: false });
-  }, [target.label, target.url]);
+    if (webviewReadyRef.current) updateNavigationState();
+    else setNavigationState({ canGoBack: false, canGoForward: false });
+  }, [target.label, target.url, updateNavigationState]);
 
   useEffect(() => {
     const webview = webviewRef.current;
@@ -1047,11 +981,21 @@ function ChatSidePanelBrowserView({
 
   const openExternal = () => {
     if (isBlank) return;
+    const desktopShell = readDesktopShell();
+    if (desktopShell) {
+      void (desktopShell.forceOpenExternal?.(currentUrl) ?? desktopShell.openExternal(currentUrl));
+      return;
+    }
     window.open(currentUrl, "_blank", "noopener,noreferrer");
   };
 
   return (
-    <div className="flex min-h-full flex-col" data-testid="chat-side-panel-browser-view">
+    <div
+      className="flex min-h-full flex-col"
+      data-testid={active ? "chat-side-panel-browser-view" : "chat-side-panel-browser-view-hidden"}
+      data-browser-tab-id={target.tabId}
+      data-active={active ? "true" : "false"}
+    >
       <div className="flex shrink-0 items-center gap-1 border-b border-[color:var(--border-soft)] bg-[color:var(--surface-panel)] px-2 py-2">
         <Button
           type="button"
@@ -1104,6 +1048,8 @@ function ChatSidePanelBrowserView({
           variant="ghost"
           size="icon-xs"
           aria-label="Open new browser tab"
+          title={canOpenNewTab ? "Open new browser tab" : "Browser tab limit reached"}
+          disabled={!canOpenNewTab}
           onClick={() => onOpenTarget(createChatSidePanelBrowserTarget())}
         >
           <Plus className="h-3.5 w-3.5" />
@@ -1141,7 +1087,11 @@ function ChatSidePanelBrowserView({
           ref: handleWebviewRef,
           src: currentUrl,
           className: "min-h-[52vh] flex-1 bg-[color:var(--surface-panel)]",
-          "data-testid": "chat-side-panel-browser-webview",
+          "data-testid": active ? "chat-side-panel-browser-webview" : "chat-side-panel-browser-webview-hidden",
+          "data-browser-tab-id": target.tabId,
+          "data-active": active ? "true" : "false",
+          // Lets Electron surface requests to the main-process handler, which
+          // always denies native windows before routing approved URLs.
           allowpopups: "true",
         })}
       </div>
@@ -1173,12 +1123,30 @@ export function ChatSidePanel({
   const operatorDisplayName = useOperatorDisplayName();
   const { openTarget } = sidePanel;
 
-  useEffect(() => {
-    if (!target) return;
-    openTarget(target);
-  }, [openTarget, target]);
-
   const visibleTabs = sidePanel.tabs;
+  const browserTargets = useMemo(
+    () => visibleTabs.filter((candidate): candidate is Extract<SidePanelTarget, { kind: "browser" }> => candidate.kind === "browser"),
+    [visibleTabs],
+  );
+  const desktopBrowserAvailable = Boolean(readDesktopShell()?.getBrowserPartition);
+  const browserSettingsQuery = useQuery({
+    queryKey: queryKeys.instance.browserSettings,
+    queryFn: () => instanceSettingsApi.getBrowser(),
+    enabled: desktopBrowserAvailable,
+  });
+  const browserAvailable = desktopBrowserAvailable && browserSettingsQuery.data?.enabled === true;
+  useEffect(() => {
+    if (!target || (target.kind === "browser" && !browserAvailable)) return;
+    openTarget(target);
+  }, [browserAvailable, openTarget, target]);
+
+  useEffect(() => {
+    const browserUnavailable = !desktopBrowserAvailable || browserSettingsQuery.data?.enabled === false;
+    if (!browserUnavailable) return;
+    for (const browserTarget of browserTargets) {
+      sidePanel.closeTarget(sidePanelTargetKey(browserTarget));
+    }
+  }, [browserSettingsQuery.data?.enabled, browserTargets, desktopBrowserAvailable, sidePanel]);
   const activeTarget = useMemo(() => {
     if (visibleTabs.length === 0) return null;
     if (sidePanel.activeKey === null) return null;
@@ -1251,40 +1219,6 @@ export function ChatSidePanel({
     queryFn: () => chatsApi.listMessages(chatTarget!.conversationId),
     enabled: !!selectedOrganizationId && !!chatTarget,
   });
-  const automationQuery = useQuery({
-    queryKey: queryKeys.automations.detail(automationTarget?.automationId ?? "__none__"),
-    queryFn: () => automationsApi.get(automationTarget!.automationId),
-    enabled: !!automationTarget,
-  });
-  const automationRunsQuery = useQuery({
-    queryKey: queryKeys.automations.runs(automationTarget?.automationId ?? "__none__"),
-    queryFn: () => automationsApi.listRuns(automationTarget!.automationId),
-    enabled: !!automationTarget,
-  });
-  const updateAutomationMutation = useMutation({
-    mutationFn: ({ automationId, data }: { automationId: string; data: Record<string, unknown> }) =>
-      automationsApi.update(automationId, data),
-    onSuccess: (updatedAutomation) => {
-      queryClient.setQueryData(queryKeys.automations.detail(updatedAutomation.id), (current: AutomationDetail | undefined) =>
-        current ? { ...current, ...updatedAutomation } : updatedAutomation,
-      );
-      void queryClient.invalidateQueries({ queryKey: ["automations"] });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.automations.runs(updatedAutomation.id) });
-      void queryClient.invalidateQueries({ queryKey: ["messenger"] });
-    },
-  });
-  const runAutomationMutation = useMutation({
-    mutationFn: (automationId: string) => automationsApi.run(automationId),
-    onSuccess: (run, automationId) => {
-      queryClient.setQueryData(queryKeys.automations.runs(automationId), (current: AutomationRunSummary[] | undefined) =>
-        current ? [run, ...current] : [run],
-      );
-      void queryClient.invalidateQueries({ queryKey: queryKeys.automations.detail(automationId) });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.automations.runs(automationId) });
-      void queryClient.invalidateQueries({ queryKey: ["automations"] });
-      void queryClient.invalidateQueries({ queryKey: ["messenger"] });
-    },
-  });
   const libraryFileQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFile(selectedOrganizationId ?? "__none__", libraryFilePreviewPath ?? ""),
     queryFn: () => organizationsApi.readWorkspaceFile(selectedOrganizationId!, libraryFilePreviewPath!),
@@ -1296,29 +1230,29 @@ export function ChatSidePanel({
     enabled: !!selectedOrganizationId && !!libraryDirectoryTarget,
   });
 
-  if (!sidePanel.open && !exiting) return null;
+  if (!sidePanel.open && !exiting && browserTargets.length === 0) return null;
 
   const loading = Boolean(
     (issueTarget && issueQuery.isPending)
       || (chatTarget && (chatQuery.isPending || chatMessagesQuery.isPending))
-      || (automationTarget && (automationQuery.isPending || automationRunsQuery.isPending))
       || (libraryFilePreviewPath && libraryFileQuery.isPending)
       || (libraryDirectoryTarget && libraryDirectoryQuery.isPending),
   );
-  const error = issueQuery.error ?? issueCommentsQuery.error ?? agentsQuery.error ?? sessionQuery.error ?? chatQuery.error ?? chatMessagesQuery.error ?? automationQuery.error ?? automationRunsQuery.error ?? libraryFileQuery.error ?? libraryDirectoryQuery.error;
+  const error = issueQuery.error ?? issueCommentsQuery.error ?? agentsQuery.error ?? sessionQuery.error ?? chatQuery.error ?? chatMessagesQuery.error ?? libraryFileQuery.error ?? libraryDirectoryQuery.error;
   const issue = issueTarget ? issueQuery.data : null;
   const issueComments = issueTarget ? (issueCommentsQuery.data ?? []) : [];
   const currentUserId = sessionQuery.data?.user?.id ?? sessionQuery.data?.session?.userId ?? null;
   const agentMap = new Map((agentsQuery.data ?? []).map((agent) => [agent.id, agent]));
   const chat = chatTarget ? chatQuery.data : null;
   const chatMessages = chatTarget ? (chatMessagesQuery.data ?? []) : [];
-  const automation = automationTarget ? automationQuery.data : null;
-  const automationRuns = automationTarget ? (automationRunsQuery.data ?? []) : [];
   const libraryFile = libraryFilePreviewPath ? libraryFileQuery.data : null;
   const libraryDirectory = libraryDirectoryTarget ? libraryDirectoryQuery.data : null;
   const activeTargetKey = activeTarget ? sidePanelTargetKey(activeTarget) : "empty";
 
-  const openSidePanelTarget = (nextTarget: SidePanelTarget) => sidePanel.openTarget(nextTarget);
+  const openSidePanelTarget = (nextTarget: SidePanelTarget) => {
+    if (nextTarget.kind === "browser" && !browserAvailable) return;
+    sidePanel.openTarget(nextTarget);
+  };
   const replaceSidePanelTarget = (key: string, nextTarget: SidePanelTarget) => sidePanel.replaceTarget(key, nextTarget);
 
   const closeSidePanelTab = (tab: SidePanelTarget) => sidePanel.closeTarget(sidePanelTargetKey(tab));
@@ -1331,7 +1265,6 @@ export function ChatSidePanel({
 
   return (
     <aside
-      key={activeTargetKey}
       data-testid="chat-side-panel"
       className={cn(
         "motion-chat-side-panel flex min-h-0 w-full shrink-0 flex-col gap-1.5 bg-transparent",
@@ -1342,6 +1275,7 @@ export function ChatSidePanel({
             : "md:w-[min(420px,36vw)] transition-[width,opacity,transform] duration-300 ease-out motion-reduce:transition-none",
         exiting && "translate-x-4 scale-[0.985] opacity-0",
         resizing && "transition-none",
+        !sidePanel.open && !exiting && "hidden",
       )}
       style={desktopPanelStyle}
       aria-label="Side Panel"
@@ -1435,11 +1369,28 @@ export function ChatSidePanel({
       <div className="workspace-main-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]">
         <div className={cn(
           "scrollbar-auto-hide min-h-0 flex-1",
-          browserTarget || issueTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
+          browserTarget || issueTarget || automationTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
           issueTarget && !browserTarget && "px-4 py-4",
         )} data-testid="chat-side-panel-scroll-body">
-          {!activeTarget ? (
-            <SidePanelEmptyState onOpenTarget={openSidePanelTarget} />
+          {browserTargets.map((target) => {
+            const targetKey = sidePanelTargetKey(target);
+            const active = targetKey === activeTargetKey;
+            return (
+              <div key={targetKey} className={cn("h-full min-h-0", active ? "block" : "hidden")} aria-hidden={!active}>
+                <ChatSidePanelBrowserView
+                  active={active}
+                  canOpenNewTab={browserTargets.length < MAX_BROWSER_TABS_PER_CONTEXT}
+                  target={target}
+                  targetKey={targetKey}
+                  onOpenTarget={openSidePanelTarget}
+                  onReplaceTarget={replaceSidePanelTarget}
+                  onCloseTarget={closeSidePanelTab}
+                />
+              </div>
+            );
+          })}
+          {browserTarget ? null : !activeTarget ? (
+            <SidePanelEmptyState browserAvailable={browserAvailable} onOpenTarget={openSidePanelTarget} />
           ) : loading ? (
             <LoadingPanelBody />
           ) : error ? (
@@ -1470,17 +1421,17 @@ export function ChatSidePanel({
                 }}
               />
             )
-          ) : automationTarget && automation ? (
-            <ChatAutomationSidePanelView
-              automation={automation}
-              runs={automationRuns}
-              running={runAutomationMutation.isPending}
-              updating={updateAutomationMutation.isPending}
-              onRun={() => runAutomationMutation.mutateAsync(automation.id)}
-              onUpdate={(data) => updateAutomationMutation.mutateAsync({ automationId: automation.id, data })}
-            />
+          ) : automationTarget ? (
+            <div className="h-full min-h-0" data-testid="chat-side-panel-automation-view">
+              <AutomationDetail
+                key={automationTarget.automationId}
+                automationId={automationTarget.automationId}
+                embedded
+                onClose={() => closeSidePanelTab(automationTarget)}
+              />
+            </div>
           ) : placeholderTarget ? (
-            <SidePanelPlaceholderView target={placeholderTarget} onOpenTarget={openSidePanelTarget} />
+            <SidePanelPlaceholderView browserAvailable={browserAvailable} target={placeholderTarget} onOpenTarget={openSidePanelTarget} />
           ) : chatTarget ? (
             <div className="space-y-4" data-testid="chat-side-panel-chat-view">
               <div className="rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3">
@@ -1518,14 +1469,6 @@ export function ChatSidePanel({
                 />
               </div>
             </div>
-          ) : browserTarget ? (
-            <ChatSidePanelBrowserView
-              target={browserTarget}
-              targetKey={activeTargetKey}
-              onOpenTarget={openSidePanelTarget}
-              onReplaceTarget={replaceSidePanelTarget}
-              onCloseTarget={closeSidePanelTab}
-            />
           ) : (
             <p className="text-sm text-muted-foreground">Open this target in the full page for details.</p>
           )}

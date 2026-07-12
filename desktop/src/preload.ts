@@ -1,5 +1,9 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import type { BrowserDataImportResult } from "./browser-cookie-import.js";
+import type { BrowserImportSource } from "./browser-import-sources.js";
+import type { DesktopBrowserResetEvent } from "./browser-profile.js";
 import { readDesktopCapabilities, type DesktopCapabilities } from "./desktop-capabilities.js";
+import type { DesktopLocalFilePreview } from "./local-file-preview.js";
 import type { DesktopSystemPermissions } from "./system-permissions.js";
 
 type BootState = {
@@ -190,6 +194,8 @@ contextBridge.exposeInMainWorld("desktopShell", {
     };
   },
   openPath: (targetPath: string) => ipcRenderer.invoke("desktop:open-path", targetPath),
+  previewLocalFile: (targetPath: string) =>
+    ipcRenderer.invoke("desktop:preview-local-file", targetPath) as Promise<DesktopLocalFilePreview>,
   listAvailableIdes: () => ipcRenderer.invoke("desktop:list-available-ides") as Promise<DesktopIdeTarget[]>,
   listWorkspaceLaunchTargets: () =>
     ipcRenderer.invoke("desktop:list-workspace-launch-targets") as Promise<DesktopWorkspaceLaunchTarget[]>,
@@ -197,6 +203,8 @@ contextBridge.exposeInMainWorld("desktopShell", {
     ipcRenderer.invoke("desktop:open-workspace", { rootPath, targetId }) as Promise<void>,
   openWorkspaceFileInIde: (rootPath: string, filePath: string, ideId?: DesktopFileLaunchTargetId) =>
     ipcRenderer.invoke("desktop:open-workspace-file-in-ide", { rootPath, filePath, ideId }) as Promise<void>,
+  openWorkspaceFileLocation: (rootPath: string, filePath: string, targetId: DesktopWorkspaceLaunchTarget["id"]) =>
+    ipcRenderer.invoke("desktop:open-workspace-file-location", { rootPath, filePath, targetId }) as Promise<void>,
   copyText: (value: string) => ipcRenderer.invoke("desktop:copy-text", value),
   copyImage: (payload: DesktopImageDataPayload) => ipcRenderer.invoke("desktop:copy-image", payload),
   showImageInFolder: (payload: DesktopImageDataPayload) => ipcRenderer.invoke("desktop:show-image-in-folder", payload),
@@ -255,6 +263,16 @@ contextBridge.exposeInMainWorld("desktopShell", {
     ipcRenderer.invoke("desktop:get-system-permissions") as Promise<DesktopSystemPermissions>,
   sendFeedback: () => ipcRenderer.invoke("desktop:send-feedback") as Promise<void>,
   openExternal: (target: string) => ipcRenderer.invoke("desktop:open-external", target) as Promise<void>,
+  forceOpenExternal: (target: string) => ipcRenderer.invoke("desktop:force-open-external", target) as Promise<void>,
+  onOpenWebLink: (listener: (request: { url: string; source: "link" | "browser_popup" }) => void) => {
+    const wrapped = (_event: IpcRendererEvent, request: { url: string; source: "link" | "browser_popup" }) => {
+      listener(request);
+    };
+    ipcRenderer.on("desktop:open-web-link", wrapped);
+    return () => {
+      ipcRenderer.removeListener("desktop:open-web-link", wrapped);
+    };
+  },
   openNotificationSettings: () =>
     ipcRenderer.invoke("desktop:open-notification-settings") as Promise<OpenNotificationSettingsResult>,
   setBadgeCount: (count: number) => invokeOptionalDesktopChannel("badgeCount", "desktop:set-badge-count", count),
@@ -262,6 +280,25 @@ contextBridge.exposeInMainWorld("desktopShell", {
     invokeOptionalDesktopChannel("notifications", "desktop:show-notification", payload),
   pickPath: (options: DesktopPathPickOptions) =>
     ipcRenderer.invoke("desktop:pick-path", options) as Promise<DesktopPathPickResult>,
+  listBrowserImportSources: () =>
+    ipcRenderer.invoke("desktop:list-browser-import-sources") as Promise<BrowserImportSource[]>,
+  importBrowserData: (input: { sourceId: string; importCookies: true }) =>
+    ipcRenderer.invoke("desktop:import-browser-data", input) as Promise<BrowserDataImportResult>,
+  getBrowserPartition: () =>
+    ipcRenderer.invoke("desktop:get-browser-partition") as Promise<string>,
+  clearBrowserData: () =>
+    ipcRenderer.invoke("desktop:clear-browser-data") as Promise<void>,
+  setBrowserEnabled: (enabled: boolean) =>
+    ipcRenderer.invoke("desktop:set-browser-enabled", enabled) as Promise<void>,
+  onBrowserReset: (listener: (event: DesktopBrowserResetEvent) => void) => {
+    const wrapped = (_event: IpcRendererEvent, payload: DesktopBrowserResetEvent) => {
+      listener(payload);
+    };
+    ipcRenderer.on("desktop:browser-reset", wrapped);
+    return () => {
+      ipcRenderer.removeListener("desktop:browser-reset", wrapped);
+    };
+  },
 });
 
 declare global {
@@ -270,10 +307,12 @@ declare global {
       getBootState(): Promise<BootState>;
       onBootState(listener: (state: BootState) => void): () => void;
       openPath(targetPath: string): Promise<void>;
+      previewLocalFile(targetPath: string): Promise<DesktopLocalFilePreview>;
       listAvailableIdes(): Promise<DesktopIdeTarget[]>;
       listWorkspaceLaunchTargets(): Promise<DesktopWorkspaceLaunchTarget[]>;
       openWorkspace(rootPath: string, targetId?: DesktopWorkspaceLaunchTarget["id"]): Promise<void>;
       openWorkspaceFileInIde(rootPath: string, filePath: string, ideId?: DesktopFileLaunchTargetId): Promise<void>;
+      openWorkspaceFileLocation(rootPath: string, filePath: string, targetId: DesktopWorkspaceLaunchTarget["id"]): Promise<void>;
       copyText(value: string): Promise<void>;
       copyImage(payload: DesktopImageDataPayload): Promise<void>;
       showImageInFolder(payload: DesktopImageDataPayload): Promise<void>;
@@ -298,10 +337,18 @@ declare global {
       getSystemPermissions(): Promise<DesktopSystemPermissions>;
       sendFeedback(): Promise<void>;
       openExternal(target: string): Promise<void>;
+      forceOpenExternal(target: string): Promise<void>;
+      onOpenWebLink(listener: (request: { url: string; source: "link" | "browser_popup" }) => void): () => void;
       openNotificationSettings(): Promise<OpenNotificationSettingsResult>;
       setBadgeCount(count: number): Promise<void>;
       showNotification(payload: DesktopInboxNotificationPayload): Promise<void>;
       pickPath(options: DesktopPathPickOptions): Promise<DesktopPathPickResult>;
+      listBrowserImportSources(): Promise<BrowserImportSource[]>;
+      importBrowserData(input: { sourceId: string; importCookies: true }): Promise<BrowserDataImportResult>;
+      getBrowserPartition(): Promise<string>;
+      clearBrowserData(): Promise<void>;
+      setBrowserEnabled(enabled: boolean): Promise<void>;
+      onBrowserReset(listener: (event: DesktopBrowserResetEvent) => void): () => void;
     };
   }
 }

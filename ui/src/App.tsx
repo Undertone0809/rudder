@@ -7,10 +7,12 @@ import { accessApi } from "./api/access";
 import { agentsApi } from "./api/agents";
 import { authApi } from "./api/auth";
 import { healthApi } from "./api/health";
+import { DesktopBrowserLinkBridge } from "./components/DesktopBrowserLinkBridge";
 import { DesktopReleaseNotesDialog } from "./components/DesktopReleaseNotesDialog";
 import { DesktopUpdatePromptBridge } from "./components/DesktopUpdatePromptBridge";
 import { DesktopUpdateStatusCard } from "./components/DesktopUpdateStatusCard";
 import { DesktopSettingsModalFrame, Layout } from "./components/Layout";
+import { LocalTrustedSettingsRoute } from "./components/LocalTrustedSettingsRoute";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 import { ProductTourOverlay } from "./components/ProductTourOverlay";
 import { ToastViewport } from "./components/ToastViewport";
@@ -52,6 +54,7 @@ import { GoalDetail } from "./pages/GoalDetail";
 import { Goals } from "./pages/Goals";
 import { InstanceAboutSettings } from "./pages/InstanceAboutSettings";
 import { InstanceAppearanceSettings } from "./pages/InstanceAppearanceSettings";
+import { InstanceBrowserSettings } from "./pages/InstanceBrowserSettings";
 import { InstanceGeneralSettings } from "./pages/InstanceGeneralSettings";
 import { InstanceLangfuseSettings } from "./pages/InstanceLangfuseSettings";
 import { InstanceNotificationsSettings } from "./pages/InstanceNotificationsSettings";
@@ -301,8 +304,13 @@ function InstanceSettingsRedirect({ requestedPath }: { requestedPath?: string })
     queryFn: () => accessApi.getCurrentBoardAccess(),
     retry: false,
   });
+  const healthQuery = useQuery({
+    queryKey: queryKeys.health,
+    queryFn: () => healthApi.get(),
+    retry: false,
+  });
 
-  if (boardAccessQuery.isLoading) {
+  if (boardAccessQuery.isLoading || healthQuery.isLoading) {
     return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">{t("common.loading")}</div>;
   }
 
@@ -313,6 +321,7 @@ function InstanceSettingsRedirect({ requestedPath }: { requestedPath?: string })
       : normalizeRememberedInstanceSettingsPath(
           `${requestedPath}${location.search}${location.hash}`,
           canManageAdminSettings,
+          healthQuery.data?.deploymentMode ?? "authenticated",
         )
     : resolveDefaultInstanceSettingsPath(canManageAdminSettings);
 
@@ -538,6 +547,7 @@ export function App() {
   return (
     <>
       <SidePanelProvider>
+      <DesktopBrowserLinkBridge />
       <Routes location={showDesktopSettingsOverlay ? settingsOverlayBackgroundPath! : location}>
         <Route path="auth" element={<AuthPage />} />
         <Route path="board-claim/:token" element={<BoardClaimPage />} />
@@ -554,6 +564,14 @@ export function App() {
             <Route path="shortcuts" element={<InstanceShortcutsSettings />} />
             <Route path="general" element={<InstanceGeneralSettings />} />
             <Route path="appearance" element={<InstanceAppearanceSettings />} />
+            <Route
+              path="browser"
+              element={
+                <LocalTrustedSettingsRoute>
+                  <InstanceBrowserSettings />
+                </LocalTrustedSettingsRoute>
+              }
+            />
             <Route path="notifications" element={<InstanceNotificationsSettings />} />
             <Route path="langfuse" element={<InstanceLangfuseSettings />} />
             <Route path="about" element={<InstanceAboutSettings />} />
@@ -617,6 +635,14 @@ export function App() {
               <Route path="shortcuts" element={<InstanceShortcutsSettings />} />
               <Route path="general" element={<InstanceGeneralSettings />} />
               <Route path="appearance" element={<InstanceAppearanceSettings />} />
+              <Route
+                path="browser"
+                element={
+                  <LocalTrustedSettingsRoute>
+                    <InstanceBrowserSettings />
+                  </LocalTrustedSettingsRoute>
+                }
+              />
               <Route path="notifications" element={<InstanceNotificationsSettings />} />
               <Route path="langfuse" element={<InstanceLangfuseSettings />} />
               <Route path="about" element={<InstanceAboutSettings />} />

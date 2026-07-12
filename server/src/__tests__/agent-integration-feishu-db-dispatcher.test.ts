@@ -63,6 +63,22 @@ import {
 } from "../services/integrations/feishu/runtime.js";
 import { feishuIntegrationUserBindingService } from "../services/integrations/feishu/user-bindings.js";
 
+const mockFeishuSessionSummaryExecute = vi.hoisted(() => vi.fn());
+
+vi.mock("../agent-runtimes/registry.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../agent-runtimes/registry.js")>();
+  return {
+    ...actual,
+    findServerAdapter: (agentRuntimeType: string) => agentRuntimeType === "pi_local"
+      ? {
+        type: "pi_local",
+        execute: mockFeishuSessionSummaryExecute,
+        testEnvironment: vi.fn(),
+      }
+      : actual.findServerAdapter(agentRuntimeType),
+  };
+});
+
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
   start(): Promise<void>;
@@ -213,6 +229,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
   }, 20_000);
 
   afterEach(async () => {
+    mockFeishuSessionSummaryExecute.mockReset();
     clearActiveChatGenerationsForTest();
     await db.delete(agentIntegrationOutboundMessages);
     await db.delete(agentIntegrationInboundAudit);
@@ -863,6 +880,85 @@ describe("Feishu inbound dispatcher DB deps", () => {
       },
     });
     expect(seeded.agentId).toEqual(expect.any(String));
+  });
+
+  it("fails closed for persisted Browser capability in Feishu agent-runtime session summaries", async () => {
+    const browserSkill = {
+      key: "bundled:rudder/browser",
+      runtimeName: "browser",
+      source: "/tmp/browser",
+    };
+    const rudderSkill = {
+      key: "bundled:rudder/rudder",
+      runtimeName: "rudder",
+      source: "/tmp/rudder",
+    };
+    await seedIntegration({
+      agentRuntimeType: "pi_local",
+      agentRuntimeConfig: {
+        model: "test-model",
+        rudderBrowserEnabled: true,
+        rudderBrowserCapability: {
+          instanceEligible: true,
+          runtimeSkillEntries: [browserSkill],
+        },
+        rudderSkillSync: { desiredSkills: [browserSkill.key, rudderSkill.key] },
+        paperclipSkillSync: { desiredSkills: [browserSkill.key, rudderSkill.key] },
+        rudderRuntimeSkills: [browserSkill, rudderSkill],
+        paperclipRuntimeSkills: [browserSkill, rudderSkill],
+      },
+    });
+    mockFeishuSessionSummaryExecute.mockResolvedValueOnce({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: "Safe agent runtime session summary",
+    });
+    const deps = createFeishuInboundDispatcherDbDeps(db, {
+      startTitleGeneration: false,
+      productIntelligence: {
+        execute: vi.fn().mockRejectedValue(new Error("Smart summary unavailable")),
+      },
+    });
+    const first = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_daily_browser_capability_seed",
+        eventId: "event_daily_browser_capability_seed",
+        body: "yesterday browser work",
+        receivedAt: new Date("2026-06-18T08:00:00.000Z"),
+      }),
+      deps,
+    );
+    expect(first.status).toBe("accepted");
+    if (first.status !== "accepted") throw new Error("Expected first message to be accepted");
+    await db
+      .update(chatConversations)
+      .set({ createdAt: sql`'2026-06-18T08:00:00.000Z'::timestamptz` })
+      .where(eq(chatConversations.id, first.conversationId));
+
+    const next = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_daily_browser_capability_next",
+        eventId: "event_daily_browser_capability_next",
+        body: "today browser work",
+        receivedAt: new Date("2026-06-19T08:00:01.000Z"),
+      }),
+      deps,
+    );
+
+    expect(next.status).toBe("accepted");
+    expect(mockFeishuSessionSummaryExecute).toHaveBeenCalledTimes(1);
+    const invocation = mockFeishuSessionSummaryExecute.mock.calls[0]?.[0];
+    for (const runtimeConfig of [invocation.config, invocation.agent.agentRuntimeConfig]) {
+      expect(runtimeConfig).not.toHaveProperty("rudderBrowserCapability");
+      expect(runtimeConfig).toMatchObject({
+        rudderBrowserEnabled: false,
+        rudderSkillSync: { desiredSkills: [rudderSkill.key] },
+        paperclipSkillSync: { desiredSkills: [rudderSkill.key] },
+        rudderRuntimeSkills: [rudderSkill],
+        paperclipRuntimeSkills: [rudderSkill],
+      });
+    }
   });
 
   it("uses a deterministic summary when Smart Intelligence and agent runtime summaries are unavailable", async () => {

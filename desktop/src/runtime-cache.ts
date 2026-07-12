@@ -45,6 +45,21 @@ export function resolveDesktopOrganizationWorkspaceHomeEnv(
   return resolveDefaultOrganizationWorkspaceHomeDir(instanceId, homeDir);
 }
 
+export function resolveDesktopOrganizationWorkspaceAllowedRoots(
+  env: NodeJS.ProcessEnv,
+  instanceId: string,
+  homeDir: string = os.homedir(),
+): string[] {
+  const explicitWorkspaceHome = env.RUDDER_ORGANIZATION_WORKSPACE_HOME?.trim();
+  if (explicitWorkspaceHome) {
+    return [resolveSharedRudderHomeDir({ RUDDER_HOME: explicitWorkspaceHome }, homeDir)];
+  }
+  if (env.RUDDER_HOME?.trim()) {
+    return [path.resolve(resolveSharedRudderHomeDir(env, homeDir), "instances", instanceId, "organizations")];
+  }
+  return [resolveDefaultOrganizationWorkspaceHomeDir(instanceId, homeDir)];
+}
+
 export function resolveExternalRuntimeServerEntrypoint(options: {
   version: string;
   env?: NodeJS.ProcessEnv;

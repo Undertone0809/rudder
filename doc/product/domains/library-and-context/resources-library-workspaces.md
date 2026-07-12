@@ -26,6 +26,8 @@ related_code:
   - server/src/services/agent-run-context.ts
   - ui/src/pages/OrganizationResources.tsx
   - ui/src/pages/OrganizationWorkspaces.tsx
+  - ui/src/pages/Chat.side-panel.tsx
+  - desktop/src/ide-opener.ts
   - ui/src/pages/OrganizationWorkspaceBackups.tsx
   - ui/src/components/ProjectResourcesPanel.tsx
 related_tests:
@@ -40,6 +42,7 @@ related_tests:
   - ui/src/pages/OrganizationWorkspaceFilesSidebar.test.tsx
   - tests/e2e/organization-workspaces-launcher.spec.ts
   - tests/e2e/workspace-shell.spec.ts
+  - tests/e2e/chat-side-panel.spec.ts
   - tests/e2e/workspace-backups.spec.ts
 edit_policy: user_confirmed_only
 ---
@@ -108,12 +111,17 @@ Product model:
 - Operators and agents can list, read, create, update, delete, rename, and link
   allowed files.
 - In Desktop shells, operators can launch the organization workspace in detected
-  local IDE, terminal, or folder targets, and can open individual files in the
-  system default app or detected IDE targets.
-- Individual file rows expose this through an `Open In` action. `Default app`
+  local IDE, terminal, or folder targets. Individual Library file rows can open
+  the file in the system default app or a detected IDE. Messenger document
+  previews additionally let operators reveal the current file in the platform
+  file browser or open its containing directory in a detected terminal.
+- Individual file rows and Messenger document previews expose file targets
+  through an `Open In` action. `Default app`
   is a file-safe target that delegates to the operating system's configured
   default app for that file type; detected IDEs such as Cursor or VS Code remain
-  explicit file targets.
+  explicit file targets. In Messenger document previews, folder and terminal
+  entries are containing-directory targets: folder targets reveal the file,
+  while terminal targets use the file's parent directory as cwd.
 - Protected roots such as agent instruction, skills, and managed directories
   are excluded from normal mentionable Library surfaces unless an explicit
   management flow owns them.
@@ -147,9 +155,15 @@ Invariants:
 - Desktop launchers are operator-local conveniences. They must not bypass
   Library path validation, expose protected paths as ordinary entries, or imply
   that browser/server deployments can open files on the operator machine.
-- File launcher menus should expose file-safe targets only. Workspace-level
-  terminal or folder launch targets remain workspace launch actions, not
-  per-file open actions.
+- Messenger file launcher menus distinguish file-open targets from
+  containing-directory targets. Default apps and IDEs receive the validated file
+  path; folder targets reveal that file and terminal targets receive its parent
+  directory as cwd.
+- Desktop bridge handlers must require the renderer-provided root to resolve
+  inside the configured organization workspace home, then resolve both the root
+  and file through filesystem real paths before opening either the file or its
+  containing directory. Renderer-provided absolute roots and symlink targets are
+  not trusted.
 - The per-file `Default app` target must remain a Desktop bridge action, not a
   server-side filesystem open. It is unavailable in non-Desktop shells that
   cannot access the operator's local default application registry.
@@ -162,9 +176,13 @@ Evidence:
 - Library path markdown tests cover reference generation.
 - Organization workspace browser tests cover path safety and browser behavior.
 - Desktop launcher unit and E2E coverage checks detected workspace targets,
-  default-app/file target behavior, and Library sidebar launcher placement.
+  default-app/IDE file targets, containing-directory folder/terminal targets,
+  path-escape rejection, and Library sidebar launcher placement.
 - Organization workspace sidebar component tests cover the visible `Open In`
   label and `Default app` file target.
+- Messenger Side Panel component and E2E coverage prove a Library document can
+  use the same Desktop launcher menu and route terminal/folder actions through
+  the validated containing-directory bridge.
 
 ## WORKSPACE.PROJECT.001
 

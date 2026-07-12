@@ -1,6 +1,7 @@
 import type { Db } from "@rudderhq/db";
 import {
   instancePathPickerRequestSchema,
+  patchInstanceBrowserSettingsSchema,
   patchInstanceGeneralSettingsSchema,
   patchInstanceLangfuseSettingsSchema,
   patchInstanceNotificationSettingsSchema,
@@ -55,6 +56,12 @@ function assertCanManageInstanceSettings(req: Request) {
 function assertLocalLangfuseSettings(deploymentMode: DeploymentMode) {
   if (deploymentMode !== "local_trusted") {
     throw unprocessable("Langfuse settings are only available in local_trusted mode.");
+  }
+}
+
+function assertLocalBrowserSettings(deploymentMode: DeploymentMode) {
+  if (deploymentMode !== "local_trusted") {
+    throw unprocessable("Browser settings are only available in local_trusted mode.");
   }
 }
 
@@ -144,10 +151,47 @@ export function instanceSettingsRoutes(
     res.json(await svc.getGeneral());
   });
 
+  router.get("/instance/settings/browser", async (req, res) => {
+    assertCanManageInstanceSettings(req);
+    assertLocalBrowserSettings(opts.deploymentMode);
+    res.json(await svc.getBrowser());
+  });
+
   router.get("/instance/settings/notifications", async (req, res) => {
     assertCanManageInstanceSettings(req);
     res.json(await svc.getNotifications());
   });
+
+  router.patch(
+    "/instance/settings/browser",
+    validate(patchInstanceBrowserSettingsSchema),
+    async (req, res) => {
+      assertCanManageInstanceSettings(req);
+      assertLocalBrowserSettings(opts.deploymentMode);
+      const updated = await svc.updateBrowser(req.body);
+      const actor = getActorInfo(req);
+      const orgIds = await svc.listCompanyIds();
+      await Promise.all(
+        orgIds.map((orgId) =>
+          logActivity(db, {
+            orgId,
+            actorType: actor.actorType,
+            actorId: actor.actorId,
+            agentId: actor.agentId,
+            runId: actor.runId,
+            action: "instance.settings.browser_updated",
+            entityType: "instance_settings",
+            entityId: updated.id,
+            details: {
+              settings: updated.browser,
+              changedKeys: Object.keys(req.body).sort(),
+            },
+          }),
+        ),
+      );
+      res.json(updated.browser);
+    },
+  );
 
   router.patch(
     "/instance/settings/general",

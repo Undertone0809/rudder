@@ -52,7 +52,12 @@ export const RUDDER_BUNDLED_SKILL_SLUGS = [
   "rudder-create-agent",
   "rudder-create-plugin",
   "skill-creator",
+  "browser",
 ] as const;
+
+export function getActiveRudderBundledSkillSlugs(browserEnabled: boolean): string[] {
+  return RUDDER_BUNDLED_SKILL_SLUGS.filter((slug) => slug !== "browser" || browserEnabled);
+}
 
 const RUDDER_BUNDLED_SKILL_KEYS = new Set(
   RUDDER_BUNDLED_SKILL_SLUGS.map((slug) => `rudder/${slug}`),

@@ -4,11 +4,12 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const appExitMock = vi.hoisted(() => vi.fn());
+const appQuitMock = vi.hoisted(() => vi.fn());
 
 vi.mock("electron", () => ({
   app: {
     exit: appExitMock,
-    quit: vi.fn(),
+    quit: appQuitMock,
   },
   dialog: {
     showMessageBox: vi.fn(),
@@ -32,6 +33,42 @@ async function readQuitResponse(responsePath: string) {
 describe("desktop quit flow update handoff", () => {
   beforeEach(() => {
     appExitMock.mockReset();
+    appQuitMock.mockReset();
+  });
+
+  it("waits for Browser import cancellation cleanup before stopping the runtime", async () => {
+    let finishBrowserCleanup!: () => void;
+    const browserCleanup = new Promise<void>((resolve) => {
+      finishBrowserCleanup = resolve;
+    });
+    const lifecycle: string[] = [];
+    const prepareForQuit = vi.fn(async () => {
+      lifecycle.push("browser:cleanup:start");
+      await browserCleanup;
+      lifecycle.push("browser:cleanup:end");
+    });
+    const stopLocalRudder = vi.fn(async () => {
+      lifecycle.push("runtime:stop");
+    });
+    const quitFlow = createDesktopQuitFlow({
+      appName: "Rudder",
+      getMainWindow: () => null,
+      setMainWindow: vi.fn(),
+      getServerHandle: () => null,
+      prepareForQuit,
+      stopLocalRudder,
+      destroyResidentTray: vi.fn(),
+    });
+
+    const quitting = quitFlow.beginQuitFlow();
+    await vi.waitFor(() => expect(prepareForQuit).toHaveBeenCalledTimes(1));
+    expect(stopLocalRudder).not.toHaveBeenCalled();
+    expect(appQuitMock).not.toHaveBeenCalled();
+
+    finishBrowserCleanup();
+    await quitting;
+    expect(lifecycle).toEqual(["browser:cleanup:start", "browser:cleanup:end", "runtime:stop"]);
+    expect(appQuitMock).toHaveBeenCalledTimes(1);
   });
 
   it("cancels active runs before confirming a forced update quit", async () => {

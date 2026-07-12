@@ -448,11 +448,36 @@ describe("Automations", () => {
     expect(scheduleInput?.value).toBe("0 9 * * 1-5");
 
     expect(document.body.textContent).toContain("Track as issue");
-    expect(document.body.textContent).not.toContain("Run output");
-    expect(document.body.textContent).not.toContain("Send to chat");
-    expect(document.body.textContent).not.toContain("New chat per run");
     expect(document.body.textContent).toContain("Create");
     expect(runbookInput?.value).toContain("board-tracked work");
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes("Track as issue"))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("Send to chat");
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes("Post each run to a new chat"))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(runbookInput?.value).toContain("each run's final result to a new Rudder chat");
+    expect(runbookInput?.value).not.toContain("board-tracked work so the result can be reviewed");
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes("Post each run to a new chat"))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(runbookInput?.value.match(/each run's final result to a new Rudder chat/g)).toHaveLength(1);
 
     await act(async () => {
       Array.from(document.body.querySelectorAll("button"))
@@ -465,6 +490,43 @@ describe("Automations", () => {
     expect(runbookInput?.value).toContain("Review today's work across issues, comments, chats, and runs");
     expect(runbookInput?.value).toContain("Recommended next tasks");
     expect(runbookInput?.value).toContain("Needs my review");
+  });
+
+  it("defaults new custom automations to chat output and allows switching output method", async () => {
+    renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const headerContainer = renderHeaderActions();
+    await act(async () => {
+      headerContainer.querySelector("button")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const outputButton = document.body.querySelector(
+      '[data-testid="automation-create-output-mode"]',
+    ) as HTMLButtonElement | null;
+    expect(outputButton?.textContent).toContain("Send to chat");
+    expect(document.body.textContent).toContain("New chat per run");
+
+    await act(async () => {
+      outputButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const trackAsIssueOption = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Each run opens board-tracked work"));
+    expect(trackAsIssueOption).toBeTruthy();
+
+    await act(async () => {
+      trackAsIssueOption?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(outputButton?.textContent).toContain("Track as issue");
+    expect(document.body.textContent).not.toContain("New chat per run");
   });
 
   it("opens the composer from the header as a blank prompt input", async () => {
@@ -512,8 +574,19 @@ describe("Automations", () => {
     const runbookInput = document.querySelector('textarea[aria-label="Instructions"]') as HTMLTextAreaElement | null;
     expect(titleInput?.value).toBe("日会");
     expect(runbookInput?.value).toContain("上一个工作日以来更新的进行中任务");
-    expect(runbookInput?.value).toContain("创建或更新 board 可跟踪任务");
-    expect(runbookInput?.value).not.toContain("Rudder chat");
+    expect(runbookInput?.value).toContain("发送到新的 Rudder chat");
+    expect(document.body.textContent).toContain("发送到聊天");
+
+    await act(async () => {
+      (document.body.querySelector('[data-testid="automation-create-output-mode"]') as HTMLButtonElement | null)
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("运行输出");
+    expect(document.body.textContent).toContain("每次运行创建可跟踪任务");
+    expect(document.body.textContent).toContain("每次运行发布到新聊天");
+    expect(document.body.textContent).toContain("每次运行新建聊天");
   });
 
   it("renders last run with trigger source, status, timestamp, and destination", async () => {
@@ -542,6 +615,59 @@ describe("Automations", () => {
     expect(container.textContent).not.toContain("Archived");
   });
 
+  it("filters automations by active and paused status", async () => {
+    automationListState.items = [
+      automation,
+      {
+        ...automation,
+        id: "auto-2",
+        title: "Paused weekly review",
+        status: "paused",
+      },
+    ];
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("flomo memo export");
+    expect(container.textContent).toContain("Paused weekly review");
+
+    await act(async () => {
+      (Array.from(container.querySelectorAll("button"))
+        .find((button) => button.textContent === "Active") as HTMLButtonElement | undefined)?.focus();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("flomo memo export");
+    expect(container.textContent).not.toContain("Paused weekly review");
+
+    await act(async () => {
+      (Array.from(container.querySelectorAll("button"))
+        .find((button) => button.textContent === "Paused") as HTMLButtonElement | undefined)?.focus();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).not.toContain("flomo memo export");
+    expect(container.textContent).toContain("Paused weekly review");
+  });
+
+  it("shows a filtered empty result without replacing it with onboarding templates", async () => {
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+      (Array.from(container.querySelectorAll("button"))
+        .find((button) => button.textContent === "Paused") as HTMLButtonElement | undefined)?.focus();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("No paused automations");
+    expect(container.textContent).not.toContain("No automations yet");
+    expect(container.querySelector('[data-testid="automation-template-grid"]')).toBeNull();
+  });
+
   it("keeps the selected automation in the list and closes its detail back to the index route", async () => {
     automationRouteState.automationId = "auto-1";
     const container = renderPage();
@@ -552,12 +678,28 @@ describe("Automations", () => {
 
     const selectedRow = container.querySelector('tr[data-selected="true"]');
     expect(selectedRow?.getAttribute("aria-current")).toBe("page");
+    expect(container.querySelector('[data-testid="automations-table-surface"]')?.className).toContain("rounded-[var(--radius-md)]");
+    expect(selectedRow?.className).toContain("[&>td:first-child]:rounded-l-[var(--radius-sm)]");
     expect(container.querySelector('[data-testid="mock-automation-detail"]')?.textContent).toContain("auto-1");
 
     await act(async () => {
       Array.from(container.querySelectorAll("button"))
         .find((button) => button.textContent === "Close automation detail")
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith("/automations");
+  });
+
+  it("closes a selected detail when it is outside the chosen status filter", async () => {
+    automationRouteState.automationId = "auto-1";
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+      (Array.from(container.querySelectorAll("button"))
+        .find((button) => button.textContent === "Paused") as HTMLButtonElement | undefined)?.focus();
+      await Promise.resolve();
     });
 
     expect(mockNavigate).toHaveBeenCalledWith("/automations");
@@ -640,7 +782,7 @@ describe("Automations", () => {
       title: "帮我 flomo 打 tag",
       projectId: null,
       assigneeAgentId: "agent-1",
-      outputMode: "track_issue",
+      outputMode: "chat_output",
       chatConversationId: null,
       notifyOnIssueCreated: false,
     }));

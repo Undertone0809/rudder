@@ -144,6 +144,19 @@ export type DesktopImageDataPayload = {
   base64: string;
 };
 
+export type DesktopLocalFilePreview = {
+  canonicalPath: string;
+  fileName: string;
+  parentPath: string;
+  contentType: string;
+  previewKind: "markdown" | "csv" | "text" | "image" | "pdf";
+  content: string | null;
+  base64: string | null;
+  sizeBytes: number;
+  modifiedAt: string;
+  truncated: boolean;
+};
+
 export type DesktopIdeTarget = {
   id: "cursor" | "vscode" | "windsurf" | "zed" | "webstorm" | "intellij";
   label: string;
@@ -158,14 +171,51 @@ export type DesktopWorkspaceLaunchTarget = {
   iconDataUrl?: string;
 };
 
+export type DesktopBrowserImportSource = {
+  id: string;
+  displayName: string;
+  browserName: string;
+  profileName: string;
+  supported: {
+    cookies: boolean;
+    passwords: boolean;
+  };
+};
+
+export type DesktopBrowserImportError = {
+  errorCode: string;
+  message: string;
+};
+
+export type DesktopBrowserImportResult = {
+  status: "succeeded" | "partial" | "failed";
+  importedCount: number;
+  skippedCount: number;
+  failedCount: number;
+  errors?: DesktopBrowserImportError[];
+};
+
+export type DesktopBrowserResetEvent = {
+  reason: "clear" | "disabled";
+  enabled: boolean;
+  available: boolean;
+};
+
+export type DesktopWebLinkRequest = {
+  url: string;
+  source: "link" | "browser_popup";
+};
+
 export type DesktopShellApi = {
   getBootState(): Promise<DesktopBootState>;
   onBootState(listener: (state: DesktopBootState) => void): () => void;
   openPath(targetPath: string): Promise<void>;
+  previewLocalFile(targetPath: string): Promise<DesktopLocalFilePreview>;
   listAvailableIdes(): Promise<DesktopIdeTarget[]>;
   listWorkspaceLaunchTargets?(): Promise<DesktopWorkspaceLaunchTarget[]>;
   openWorkspace?(rootPath: string, targetId?: DesktopWorkspaceLaunchTarget["id"]): Promise<void>;
   openWorkspaceFileInIde(rootPath: string, filePath: string, ideId?: DesktopFileLaunchTargetId): Promise<void>;
+  openWorkspaceFileLocation?(rootPath: string, filePath: string, targetId: DesktopWorkspaceLaunchTarget["id"]): Promise<void>;
   copyText(value: string): Promise<void>;
   copyImage?(payload: DesktopImageDataPayload): Promise<void>;
   showImageInFolder?(payload: DesktopImageDataPayload): Promise<void>;
@@ -190,10 +240,18 @@ export type DesktopShellApi = {
   getSystemPermissions?(): Promise<DesktopSystemPermissions>;
   sendFeedback(): Promise<void>;
   openExternal(target: string): Promise<void>;
+  forceOpenExternal?(target: string): Promise<void>;
+  onOpenWebLink?(listener: (request: DesktopWebLinkRequest) => void): () => void;
   openNotificationSettings(): Promise<OpenNotificationSettingsResult>;
   setBadgeCount(count: number): Promise<void>;
   showNotification(payload: DesktopNotificationPayload): Promise<void>;
   pickPath(options: DesktopPathPickOptions): Promise<DesktopPathPickResult>;
+  listBrowserImportSources?(): Promise<DesktopBrowserImportSource[]>;
+  importBrowserData?(input: { sourceId: string; importCookies: true }): Promise<DesktopBrowserImportResult>;
+  getBrowserPartition?(): Promise<string>;
+  clearBrowserData?(): Promise<void>;
+  setBrowserEnabled?(enabled: boolean): Promise<void>;
+  onBrowserReset?(listener: (event: DesktopBrowserResetEvent) => void): () => void;
 };
 
 export function readDesktopShell(): DesktopShellApi | null {

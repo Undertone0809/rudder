@@ -18,9 +18,12 @@ export {
   resolveOrganizationStorageKey
 } from "./organization-storage.js";
 export {
+  RUDDER_BROWSER_MCP_TOOL_COUNT,
   RUDDER_MCP_MANAGED_ENV_KEYS,
   RUDDER_MCP_SERVER_NAME,
   RUDDER_MCP_TOOL_COUNT,
+  applyRudderBrowserCapabilityEnv,
+  filterRudderMcpToolsForBrowserCapability,
   pickRudderMcpManagedEnv,
   rudderMcpCliCommand,
   rudderMcpRuntimeMetadata,

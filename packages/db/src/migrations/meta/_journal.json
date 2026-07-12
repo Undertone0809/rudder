@@ -687,6 +687,13 @@
       "when": 1783612800000,
       "tag": "0097_feishu_integration_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1783792908315,
+      "tag": "0098_cool_menace",
+      "breakpoints": true
     }
   ]
 }

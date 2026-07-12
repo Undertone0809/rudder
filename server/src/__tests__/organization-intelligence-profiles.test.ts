@@ -13,6 +13,11 @@ describe("organization intelligence profiles", () => {
       modelReasoningEffort: "medium",
       promptTemplate: "{{issue.title}}",
       instructionsFilePath: "/agent/SOUL.md",
+      rudderBrowserEnabled: true,
+      rudderBrowserCapability: {
+        instanceEligible: true,
+        runtimeSkillEntries: [{ key: "bundled:rudder/browser" }],
+      },
       rudderRuntimeSkills: [{ key: "rudder" }],
       workspaceStrategy: { type: "git_worktree" },
       cwd: "/repo",

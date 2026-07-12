@@ -1998,6 +1998,21 @@ describe("chatAssistantService operator profile prompt injection", () => {
   });
 
   it("repairs a completed chat reply internally when the adapter exits successfully without the result sentinel", async () => {
+    const browserSkill = { key: "bundled:rudder/browser", runtimeName: "browser", source: "/tmp/browser" };
+    mockRunContextService.prepareRuntimeConfig.mockResolvedValueOnce({
+      resolvedConfig: { model: "gpt-5.4" },
+      runtimeConfig: {
+        model: "gpt-5.4",
+        rudderBrowserEnabled: true,
+        rudderBrowserCapability: { instanceEligible: true, runtimeSkillEntries: [browserSkill] },
+        rudderSkillSync: { desiredSkills: [browserSkill.key] },
+        paperclipSkillSync: { desiredSkills: [browserSkill.key] },
+        rudderRuntimeSkills: [browserSkill],
+        paperclipRuntimeSkills: [browserSkill],
+      },
+      runtimeSkillEntries: [browserSkill],
+      secretKeys: new Set(),
+    });
     const svc = chatAssistantService({} as any);
 
     mockAdapter.execute
@@ -2050,6 +2065,18 @@ describe("chatAssistantService operator profile prompt injection", () => {
       },
     });
     expect(mockAdapter.execute).toHaveBeenCalledTimes(2);
+    for (const [input] of mockAdapter.execute.mock.calls) {
+      expect(input.config).not.toHaveProperty("rudderBrowserCapability");
+      expect(input.agent.agentRuntimeConfig).not.toHaveProperty("rudderBrowserCapability");
+      expect(input.config).toMatchObject({
+        rudderBrowserEnabled: true,
+        rudderSkillSync: { desiredSkills: [browserSkill.key] },
+        paperclipSkillSync: { desiredSkills: [browserSkill.key] },
+        rudderRuntimeSkills: [browserSkill],
+        paperclipRuntimeSkills: [browserSkill],
+      });
+      expect(input.agent.agentRuntimeConfig).toEqual(input.config);
+    }
     expect(mockAdapter.execute.mock.calls[1]?.[0]?.context?.chatPrompt).toContain("Rudder internal repair request:");
     expect(mockAdapter.execute.mock.calls[1]?.[0]?.context?.chatPrompt).toContain("Your previous chat turn ended without the required Rudder result sentinel.");
     expect(mockAdapter.execute.mock.calls[1]?.[0]?.context).toMatchObject({

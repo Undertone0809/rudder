@@ -1,5 +1,7 @@
 import {
+  RUDDER_MCP_MANAGED_ENV_KEYS,
   RUDDER_MCP_SERVER_NAME,
+  applyRudderBrowserCapabilityEnv,
   pickRudderMcpManagedEnv,
   resolveOrganizationStorageKey,
   rudderMcpRuntimeMetadata,
@@ -56,6 +58,7 @@ const DEFAULT_RUDDER_INSTANCE_ID = "default";
 const CLAUDE_PROTECTED_ENV_KEYS = new Set([
   "AGENT_HOME",
   "HOME",
+  ...RUDDER_MCP_MANAGED_ENV_KEYS,
   "RUDDER_AGENT_ROOT",
   "RUDDER_OPERATOR_HOME",
   "USERPROFILE",
@@ -164,7 +167,7 @@ async function writePrivateJsonFile(filePath: string, value: unknown): Promise<v
   await fs.chmod(filePath, 0o600);
 }
 
-async function resolveRudderMcpServerConfig(managedEnv: RudderMcpManagedEnv = {}): Promise<Record<string, unknown>> {
+export async function resolveRudderMcpServerConfig(managedEnv: RudderMcpManagedEnv = {}): Promise<Record<string, unknown>> {
   const rudderMcp = await resolveRudderMcpCliCommand(__moduleDir);
   const env = {
     ...(rudderMcp.env ?? {}),
@@ -285,6 +288,7 @@ interface ClaudeExecutionInput {
 }
 
 interface ClaudeRuntimeConfig {
+  browserEnabled: boolean;
   command: string;
   cwd: string;
   workspaceId: string | null;
@@ -368,8 +372,6 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
 
   const envConfig = parseObject(config.env);
-  const hasExplicitApiKey =
-    typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
   env.RUDDER_RUN_ID = runId;
 
@@ -481,6 +483,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     if (CLAUDE_PROTECTED_ENV_KEYS.has(key)) continue;
     if (typeof value === "string") env[key] = value;
   }
+  const browserEnabled = applyRudderBrowserCapabilityEnv(env, config);
 
   const sourceEnv = { ...process.env };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
@@ -501,7 +504,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     onLog: input.onLog,
   });
 
-  if (!hasExplicitApiKey && authToken) {
+  if (authToken) {
     env.RUDDER_API_KEY = authToken;
   }
   await writeManagedClaudeMcpConfig(managedHome, pickRudderMcpManagedEnv(env));
@@ -525,6 +528,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   const permissionMode = resolveClaudePermissionMode(config);
 
   return {
+    browserEnabled,
     command,
     cwd,
     workspaceId,
@@ -600,6 +604,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     onLog,
   });
   const {
+    browserEnabled,
     command,
     cwd,
     workspaceId,
@@ -814,7 +819,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         promptMetrics,
         loadedSkills,
         realizedSkills: loadedSkills,
-        rudderMcp: rudderMcpRuntimeMetadata(),
+        rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled }),
         context,
       });
     }

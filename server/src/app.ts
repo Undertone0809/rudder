@@ -3,6 +3,7 @@ import type express from "express";
 import { createHttpApp } from "./bootstrap/create-http-app.js";
 import { createPluginHostRuntime } from "./bootstrap/plugin-host-runtime.js";
 import type { RudderAppOptions } from "./bootstrap/types.js";
+import { configureBrowserCapabilityDeployment } from "./services/browser-capability.js";
 export { resolveViteHmrPort } from "./bootstrap/create-http-app.js";
 
 export interface RudderAppHandle {
@@ -14,6 +15,7 @@ export async function createRudderApp(
   db: Db,
   opts: RudderAppOptions,
 ) {
+  configureBrowserCapabilityDeployment(db, opts.deploymentMode);
   const pluginRuntime = createPluginHostRuntime(db, opts);
   const app = await createHttpApp(db, opts, pluginRuntime);
   await pluginRuntime.start();

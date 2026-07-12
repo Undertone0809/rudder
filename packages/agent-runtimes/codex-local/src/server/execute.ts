@@ -1,4 +1,6 @@
 import {
+  RUDDER_MCP_MANAGED_ENV_KEYS,
+  applyRudderBrowserCapabilityEnv,
   inferOpenAiCompatibleBiller,
   pickRudderMcpManagedEnv,
   rudderMcpRuntimeMetadata,
@@ -58,6 +60,7 @@ const CODEX_PROTECTED_ENV_KEYS = new Set([
   "AGENT_HOME",
   "CODEX_HOME",
   "HOME",
+  ...RUDDER_MCP_MANAGED_ENV_KEYS,
   "RUDDER_AGENT_ROOT",
   "RUDDER_OPERATOR_HOME",
   "USERPROFILE",
@@ -356,8 +359,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     description: entry.description ?? null,
   }));
   const skillBoundaryPrompt = renderCodexRudderSkillBoundaryPrompt(loadedSkills);
-  const hasExplicitApiKey =
-    typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
   env.CODEX_HOME = effectiveCodexHome;
   env.HOME = operatorHome;
@@ -466,13 +467,14 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   for (const [k, v] of Object.entries(envConfig)) {
     if (typeof v === "string" && !CODEX_PROTECTED_ENV_KEYS.has(k)) env[k] = v;
   }
+  const browserEnabled = applyRudderBrowserCapabilityEnv(env, config);
   env.CODEX_HOME = effectiveCodexHome;
   env.HOME = operatorHome;
   env.USERPROFILE = process.env.USERPROFILE ?? operatorHome;
   env.AGENT_HOME = effectiveAgentHome;
   env.RUDDER_AGENT_ROOT = effectiveAgentHome;
   env.RUDDER_OPERATOR_HOME = operatorHome;
-  if (!hasExplicitApiKey && authToken) {
+  if (authToken) {
     env.RUDDER_API_KEY = authToken;
   }
   await realizeManagedCodexSkillEntries(
@@ -670,7 +672,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         promptMetrics,
         loadedSkills,
         realizedSkills: loadedSkills,
-        rudderMcp: rudderMcpRuntimeMetadata(),
+        rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled }),
         context,
       });
     }

@@ -26,7 +26,7 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
         ? { type: "board", userId: "local-board", isInstanceAdmin: true, source: "local_implicit" }
         : { type: "none", source: "none" };
 
-    const runIdHeader = req.header("x-rudder-run-id");
+    const runIdHeader = req.header("x-rudder-run-id")?.trim() || undefined;
     const agentContextHeader = req.header("x-rudder-agent-id")?.trim() || undefined;
 
     const authHeader = req.header("authorization");
@@ -139,12 +139,25 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
         return;
       }
 
+      if (runIdHeader && runIdHeader !== claims.run_id) {
+        res.status(403).json({
+          error: "Agent run header does not match the signed runtime context",
+          code: "agent_run_context_mismatch",
+          details: {
+            signedRunId: claims.run_id,
+            requestedRunId: runIdHeader,
+          },
+        });
+        return;
+      }
+
       req.actor = {
         type: "agent",
         agentId: claims.sub,
         orgId: claims.org_id,
         keyId: undefined,
-        runId: runIdHeader || claims.run_id || undefined,
+        runId: claims.run_id,
+        adapterType: claims.adapter_type,
         source: "agent_jwt",
       };
       if (rejectAgentContextMismatch(req, res, agentContextHeader)) return;

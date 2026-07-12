@@ -7,6 +7,7 @@ export type AgentCliCapabilityCategory =
   | "runs"
   | "approval"
   | "skill"
+  | "browser"
   | "user"
   | "library";
 export type AgentCliCapabilityContract = "agent-v1" | "compat";
@@ -662,6 +663,102 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     attachesRunIdWhenAvailable: true,
   },
   {
+    id: "browser.tabs",
+    command: "rudder browser tabs",
+    category: "browser",
+    description: "List Browser tabs owned by the current Rudder agent run.",
+    mutating: false,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: false,
+  },
+  {
+    id: "browser.open",
+    command: "rudder browser open <url>",
+    category: "browser",
+    description: "Open a run-owned tab in the Rudder Browser.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "browser.navigate",
+    command: "rudder browser navigate <tab-id> <url>",
+    category: "browser",
+    description: "Navigate a run-owned Rudder Browser tab.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "browser.read",
+    command: "rudder browser read <tab-id>",
+    category: "browser",
+    description: "Read a structured snapshot from a run-owned Rudder Browser tab.",
+    mutating: false,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: false,
+  },
+  {
+    id: "browser.click",
+    command: "rudder browser click <tab-id> <ref>",
+    category: "browser",
+    description: "Click an element reference returned by Rudder Browser read.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "browser.type",
+    command: "rudder browser type <tab-id> <ref> --text <text>",
+    category: "browser",
+    description: "Type into an element reference in a run-owned Rudder Browser tab.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "browser.screenshot",
+    command: "rudder browser screenshot <tab-id>",
+    category: "browser",
+    description: "Capture a screenshot of a run-owned Rudder Browser tab.",
+    mutating: false,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: false,
+  },
+  {
+    id: "browser.close",
+    command: "rudder browser close <tab-id>",
+    category: "browser",
+    description: "Close a run-owned Rudder Browser tab.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
     id: "automation.list",
     command: "rudder automation list --org-id <id>",
     category: "automation",
@@ -1044,6 +1141,7 @@ const CATEGORY_TITLES: Record<AgentCliCapabilityCategory, string> = {
   runs: "Runs",
   approval: "Approval",
   skill: "Skill",
+  browser: "Browser",
   user: "User",
   library: "Library",
 };
@@ -1130,6 +1228,12 @@ function mcpInputSchemaForCapability(id: string): AgentV1McpToolManifestEntry["i
   if (id.startsWith("skill.")) {
     add("skill", mcpString("Organization skill id."));
     add("path", mcpString("Skill package file path, such as SKILL.md."));
+  }
+  if (id.startsWith("browser.")) {
+    add("url", mcpString("HTTP or HTTPS URL."));
+    add("tabId", mcpString("Run-owned Rudder Browser tab id."));
+    add("ref", mcpString("Element reference returned by rudder_browser_read."));
+    add("text", mcpString("Text to enter into the referenced element."));
   }
   if (id.startsWith("automation.")) {
     add("automation", mcpString("Automation id."));
@@ -1247,7 +1351,7 @@ function mcpInputSchemaForCapability(id: string): AgentV1McpToolManifestEntry["i
   })) {
     add(key, mcpStringArray(description));
   }
-  for (const key of ["clearTitle", "clearCapabilities", "clearDescription", "clearReportsTo", "enable", "enabled", "disabled", "reopen", "planMode", "includeTranscript", "includeOutput", "includeOutputs", "notifyOnIssueCreated", "errorsOnly", "chronological", "narrative"]) {
+  for (const key of ["clearTitle", "clearCapabilities", "clearDescription", "clearReportsTo", "enable", "enabled", "disabled", "reopen", "planMode", "includeTranscript", "includeOutput", "includeOutputs", "notifyOnIssueCreated", "errorsOnly", "chronological", "narrative", "submit"]) {
     add(key, mcpBoolean(`Boolean option ${key}.`));
   }
 
@@ -1260,8 +1364,10 @@ function mcpInputSchemaForCapability(id: string): AgentV1McpToolManifestEntry["i
 
 export function buildAgentV1McpToolsManifest(
   contract: AgentCliCapabilityContract | "all" = "agent-v1",
+  options: { browserEnabled?: boolean } = {},
 ): AgentV1McpToolsManifest {
-  const capabilities = buildAgentCliCapabilitiesManifest(contract).capabilities;
+  const capabilities = buildAgentCliCapabilitiesManifest(contract).capabilities
+    .filter((entry) => options.browserEnabled !== false || entry.category !== "browser");
 
   return {
     schema: "rudder.agent-mcp-tools/v1",

@@ -84,7 +84,7 @@ export type {
   HeartbeatRecoveryTrigger, HeartbeatRun, HeartbeatRunContextSnapshot, HeartbeatRunEvent, HeartbeatRunRecoveryContext, InstanceSchedulerHeartbeatAgent
 } from "./heartbeat.js";
 export type {
-  InstanceGeneralSettings, InstanceLangfuseSettings, InstanceLocale, InstanceNotificationSettings, InstancePathPickerRequest,
+  InstanceBrowserSettings, InstanceGeneralSettings, InstanceLangfuseSettings, InstanceLocale, InstanceNotificationSettings, InstancePathPickerRequest,
   InstancePathPickerResult,
   InstancePathPickerSelectionType,
   InstanceSettings, OperatorProfileSettings

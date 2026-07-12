@@ -1,4 +1,5 @@
 import type {
+  InstanceBrowserSettings,
   InstanceGeneralSettings,
   InstanceLangfuseSettings,
   InstanceNotificationSettings,
@@ -6,6 +7,7 @@ import type {
   InstancePathPickerResult,
   KeyboardShortcutSettings,
   OperatorProfileSettings,
+  PatchInstanceBrowserSettings,
   PatchInstanceGeneralSettings,
   PatchInstanceLangfuseSettings,
   PatchInstanceNotificationSettings,
@@ -15,6 +17,10 @@ import type {
 import { api } from "./client";
 
 export const instanceSettingsApi = {
+  getBrowser: () =>
+    api.get<InstanceBrowserSettings>("/instance/settings/browser"),
+  updateBrowser: (patch: PatchInstanceBrowserSettings) =>
+    api.patch<InstanceBrowserSettings>("/instance/settings/browser", patch),
   getProfile: () =>
     api.get<OperatorProfileSettings>("/instance/settings/profile"),
   updateProfile: (patch: PatchOperatorProfileSettings) =>

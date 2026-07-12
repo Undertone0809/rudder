@@ -15,6 +15,13 @@ import {
 } from "../home-paths.js";
 import { agentInstructionsService } from "./agent-instructions.js";
 import { agentStartupContextService } from "./agent-startup-context.js";
+import {
+  type BrowserCapabilityServiceOptions,
+  isBrowserSkillSelectionKey,
+  resolveBrowserCapability,
+  resolveBrowserCapabilityDeployment,
+} from "./browser-capability.js";
+import { instanceSettingsService } from "./instance-settings.js";
 import { customIntegrationService } from "./integrations/custom-integrations.js";
 import { organizationSkillService } from "./organization-skills.js";
 import { listProjectResourceAttachments } from "./resource-catalog.js";
@@ -455,10 +462,15 @@ async function resolveProjectLibraryContext(
   };
 }
 
-export function agentRunContextService(db: Db) {
+export function agentRunContextService(
+  db: Db,
+  options: BrowserCapabilityServiceOptions = {},
+) {
+  const deploymentMode = resolveBrowserCapabilityDeployment(db, options.deploymentMode);
   const instructions = agentInstructionsService();
+  const instanceSettings = instanceSettingsService(db);
   const secretsSvc = secretService(db);
-  const organizationSkills = organizationSkillService(db);
+  const organizationSkills = organizationSkillService(db, { deploymentMode });
   const startupContextSvc = agentStartupContextService(db);
 
   async function prepareRuntimeConfig(input: {
@@ -473,7 +485,13 @@ export function agentRunContextService(db: Db) {
         input.agent.orgId,
         baseConfig,
       );
-    const desiredSkills = await organizationSkills.getEnabledSkillKeysForAgent(
+    const browserSettings = await instanceSettings.getBrowser();
+    const browserCapability = resolveBrowserCapability({
+      deploymentMode,
+      browserEnabled: browserSettings.enabled,
+      agentRuntimeType: input.agent.agentRuntimeType,
+    });
+    const resolvedDesiredSkills = await organizationSkills.getEnabledSkillKeysForAgent(
       input.agent.orgId,
       {
         id: input.agent.id,
@@ -482,19 +500,34 @@ export function agentRunContextService(db: Db) {
         agentRuntimeConfig: baseConfig,
       },
     );
-    const runtimeSkillEntries =
+    const instanceDesiredSkills = browserCapability.instanceEligible
+      ? resolvedDesiredSkills
+      : resolvedDesiredSkills.filter((key) => !isBrowserSkillSelectionKey(key));
+    const resolvedRuntimeSkillEntries =
       await organizationSkills.listRealizedSkillEntriesForAgent(
         input.agent.orgId,
         input.agent.id,
         input.agent.agentRuntimeType,
         resolvedConfig,
-        desiredSkills,
+        instanceDesiredSkills,
       );
+    const browserRuntimeSkillEntries = browserCapability.instanceEligible
+      ? resolvedRuntimeSkillEntries.filter((entry) => isBrowserSkillSelectionKey(entry.key))
+      : [];
+    // A supported fallback needs the instance-level source even when the primary runtime is ineligible.
+    const runtimeSkillEntries = browserCapability.runEligible
+      ? resolvedRuntimeSkillEntries
+      : resolvedRuntimeSkillEntries.filter((entry) => !isBrowserSkillSelectionKey(entry.key));
     const desiredRuntimeSkills = runtimeSkillEntries.map((entry) => entry.key);
     return {
       resolvedConfig,
       runtimeConfig: {
         ...resolvedConfig,
+        rudderBrowserEnabled: browserCapability.runEligible,
+        rudderBrowserCapability: {
+          instanceEligible: browserCapability.instanceEligible,
+          runtimeSkillEntries: browserRuntimeSkillEntries,
+        },
         rudderSkillSync: { desiredSkills: desiredRuntimeSkills },
         paperclipSkillSync: { desiredSkills: desiredRuntimeSkills },
         rudderRuntimeSkills: runtimeSkillEntries,

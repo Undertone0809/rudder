@@ -53,6 +53,7 @@ const payload = {
     ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL ?? null,
     DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY ?? null,
     RUDDER_CLAUDE_HOME: process.env.RUDDER_CLAUDE_HOME ?? null,
+    RUDDER_API_KEY: process.env.RUDDER_API_KEY ?? null,
     RUDDER_OPERATOR_HOME: process.env.RUDDER_OPERATOR_HOME ?? null,
     RUDDER_RUNTIME_TMPDIR: runtimeTmpDir,
     PATH: process.env.PATH ?? null,
@@ -635,6 +636,13 @@ describe("claude execute", { timeout: 20_000 }, () => {
           cwd: workspace,
           env: {
             HOME: root,
+            RUDDER_AGENT_ID: "stale-agent",
+            RUDDER_API_KEY: "stale-agent-key",
+            RUDDER_API_URL: "https://stale.example.invalid",
+            RUDDER_BROWSER_ENABLED: "true",
+            RUDDER_ORG_ID: "stale-organization",
+            RUDDER_PROJECT_LIBRARY_PATH: "stale/project-library",
+            RUDDER_RUN_ID: "stale-run",
             RUDDER_TEST_CAPTURE_PATH: capturePath,
           },
           promptTemplate: "Follow the rudder heartbeat.",
@@ -667,6 +675,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
           USERPROFILE: string | null;
           CLAUDE_CONFIG_DIR: string | null;
           RUDDER_CLAUDE_HOME: string | null;
+          RUDDER_API_KEY: string | null;
           RUDDER_OPERATOR_HOME: string | null;
           RUDDER_RUNTIME_TMPDIR: string | null;
           PATH: string | null;
@@ -693,6 +702,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
       expect(capture.env.RUDDER_CLAUDE_HOME).toBe(managedHome);
       expect(capture.env.RUDDER_RUNTIME_TMPDIR).toBe(runtimeTmpDir);
       expect(capture.env.CLAUDE_CONFIG_DIR).toBe(managedConfigDir);
+      expect(capture.env.RUDDER_API_KEY).toBe("run-jwt-token");
       await expectNoOperatorHomeSentinelsInManagedHome(managedHome);
       expect(capture.runtimeTmpExists).toBe(true);
       expect(capture.managedClaudeConfigDir).toBe(managedConfigDir);
@@ -751,8 +761,15 @@ describe("claude execute", { timeout: 20_000 }, () => {
         RUDDER_ORG_ID: "organization-1",
         RUDDER_AGENT_ID: "agent-3",
         RUDDER_RUN_ID: "run-3",
+        RUDDER_BROWSER_ENABLED: "false",
         RUDDER_PROJECT_LIBRARY_PATH: "projects/product",
       });
+      expect(capture.managedClaudeMcpConfig).not.toContain("stale-agent-key");
+      expect(capture.managedClaudeMcpConfig).not.toContain("stale.example.invalid");
+      expect(capture.managedClaudeMcpConfig).not.toContain("stale-organization");
+      expect(capture.managedClaudeMcpConfig).not.toContain('"RUDDER_AGENT_ID": "stale-agent"');
+      expect(capture.managedClaudeMcpConfig).not.toContain("stale-run");
+      expect(capture.managedClaudeMcpConfig).not.toContain("stale/project-library");
       expect(managedSettings.permissions).toBeUndefined();
       expect(capture.managedClaudeJsonPath).toContain("/.rudder/instances/default/organizations/organization-1/claude-home/.claude.json");
       expect(capture.managedClaudeJsonExists).toBe(false);

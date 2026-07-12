@@ -40,7 +40,7 @@ test.describe("Agent detail integrations tab", () => {
     await expect(page.getByRole("heading", { name: "Productivity" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Developer" })).toBeVisible();
     await expect(page.getByText("Rudder MCP tools", { exact: true })).toHaveCount(0);
-    await expect(page.getByText("rudder-control-plane · 69 tools · runtime-managed auth")).toHaveCount(0);
+    await expect(page.getByText("rudder-control-plane · 77 tools · runtime-managed auth")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Rudder MCP tools are built in" })).toHaveCount(0);
     await expect(page.getByText("Custom API", { exact: true })).toBeVisible();
     await expect(page.getByText("MCP Server", { exact: true })).toBeVisible();
@@ -83,7 +83,7 @@ test.describe("Agent detail integrations tab", () => {
     await expect(page.getByRole("heading", { name: "Built-in" })).toBeVisible();
     await expect(page.getByText("Rudder MCP tools", { exact: true })).toBeVisible();
     await expect(page.locator('img[src="/rudder-logo.png"]')).toBeVisible();
-    await expect(page.getByText("69 exposed")).toBeVisible();
+    await expect(page.getByText("77 exposed")).toBeVisible();
     await expect(page.getByText("Runtime managed")).toBeVisible();
     await expect(page.getByText("No user credential")).toBeVisible();
     await expect(page.getByText("rudder_agent_me", { exact: true })).toBeVisible();

@@ -1,6 +1,8 @@
 import {
   RUDDER_MCP_MANAGED_ENV_KEYS,
   RUDDER_MCP_SERVER_NAME,
+  applyRudderBrowserCapabilityEnv,
+  filterRudderMcpToolsForBrowserCapability,
   inferOpenAiCompatibleBiller,
   rudderMcpRuntimeMetadata,
   type AgentRuntimeExecutionContext,
@@ -279,11 +281,29 @@ function renderJsonForTs(value: unknown): string {
     .replace(/\u2029/g, "\\u2029");
 }
 
-type RudderMcpToolManifestEntry = {
+export type RudderMcpToolManifestEntry = {
   name: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
 };
+
+export function resolvePiRudderMcpToolEntries(
+  manifestTools: RudderMcpToolManifestEntry[],
+  browserEnabled: boolean,
+): RudderMcpToolManifestEntry[] {
+  const tools = manifestTools.length > 0
+    ? manifestTools
+    : RUDDER_AGENT_V1_MCP_TOOL_NAMES.map((name) => ({
+        name,
+        description: `Rudder Agent V1 control-plane tool ${name}. Runtime identity and authorization are injected by Rudder; do not pass orgId, agentId, runId, apiBase, or apiKey.`,
+        inputSchema: {
+          type: "object",
+          additionalProperties: true,
+          properties: {},
+        },
+      }));
+  return filterRudderMcpToolsForBrowserCapability(tools, browserEnabled);
+}
 
 async function loadRudderMcpToolsManifest(input: {
   command: string;
@@ -348,6 +368,7 @@ async function loadRudderMcpToolsManifest(input: {
 }
 
 async function ensurePiRudderToolsExtension(input: {
+  browserEnabled: boolean;
   homeDir: string;
   moduleDir: string;
   runtimeEnv: Record<string, string>;
@@ -370,17 +391,7 @@ async function ensurePiRudderToolsExtension(input: {
     env: commandEnv,
     runtimeEnv: input.runtimeEnv,
   });
-  const toolEntries = manifest.tools.length > 0
-    ? manifest.tools
-    : RUDDER_AGENT_V1_MCP_TOOL_NAMES.map((name) => ({
-        name,
-        description: `Rudder Agent V1 control-plane tool ${name}. Runtime identity and authorization are injected by Rudder; do not pass orgId, agentId, runId, apiBase, or apiKey.`,
-        inputSchema: {
-          type: "object",
-          additionalProperties: true,
-          properties: {},
-        },
-      }));
+  const toolEntries = resolvePiRudderMcpToolEntries(manifest.tools, input.browserEnabled);
   const toolNames = toolEntries.map((entry) => entry.name);
   const source = `import { spawn } from "node:child_process";
 import { Type } from "@earendil-works/pi-ai";
@@ -774,6 +785,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (PI_PROTECTED_ENV_KEYS.has(key)) continue;
     if (typeof value === "string") env[key] = value;
   }
+  const browserEnabled = applyRudderBrowserCapabilityEnv(env, config);
   env.HOME = operatorHome;
   env.USERPROFILE = operatorHome;
   env.PI_CODING_AGENT_DIR = path.join(managedHome, ".pi", "agent");
@@ -796,6 +808,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
   );
   const rudderPiExtensionPath = await ensurePiRudderToolsExtension({
+    browserEnabled,
     homeDir: managedHome,
     moduleDir: __moduleDir,
     runtimeEnv,
@@ -1001,6 +1014,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         realizedSkills: loadedSkills,
         rudderMcp: rudderMcpRuntimeMetadata({
           available: false,
+          browserEnabled,
           fallbackReason: "Pi CLI does not expose a supported MCP server configuration surface; Rudder tools are injected through a managed Pi extension.",
         }),
         rudderNativeTools: {

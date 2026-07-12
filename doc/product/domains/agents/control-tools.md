@@ -10,6 +10,7 @@ related_code:
   - cli/src/agent-v1-registry.ts
   - cli/src/agent-v1-mcp-server.ts
   - cli/src/program.ts
+  - cli/src/commands/client/browser.ts
   - packages/agent-runtime-utils/src/rudder-mcp.ts
   - packages/agent-runtime-utils/src/rudder-mcp-server.ts
   - packages/agent-runtime-utils/src/types.ts
@@ -17,18 +18,25 @@ related_code:
   - packages/agent-runtimes/codex-local/src/server/execute.ts
   - packages/agent-runtimes/opencode-local/src/server/execute.ts
   - packages/agent-runtimes/pi-local/src/server/execute.ts
+  - server/src/routes/browser.ts
+  - server/src/services/browser-broker.ts
+  - server/resources/bundled-skills/browser/SKILL.md
   - server/resources/bundled-skills/rudder/SKILL.md
   - server/resources/bundled-skills/rudder/references/cli-reference.md
 related_tests:
+  - cli/src/__tests__/browser-command.test.ts
   - cli/src/__tests__/agent-v1-registry.test.ts
   - cli/src/__tests__/agent-v1-mcp-server.test.ts
   - server/src/__tests__/claude-local-execute.test.ts
   - server/src/__tests__/codex-local-execute.test.ts
   - server/src/__tests__/opencode-local-execute.test.ts
   - server/src/__tests__/pi-local-execute.test.ts
+  - server/src/__tests__/browser-routes.test.ts
+  - server/src/services/browser-broker.test.ts
   - tests/e2e/agent-detail-integrations-tab.spec.ts
 related_plans:
   - doc/plans/2026-06-30-agent-v1-mcp-tools.md
+  - doc/plans/2026-07-12-built-in-browser.md
 edit_policy: user_confirmed_only
 ---
 
@@ -40,8 +48,9 @@ edit_policy: user_confirmed_only
 
 Rudder exposes a first-party `rudder-control-plane` MCP server for supported
 agent runtimes. The server presents the stable `agent-v1` command contract as
-typed MCP tools using `rudder_<capability_id>` names, dispatches core
-control-plane tools directly through Rudder's runtime API context when
+typed MCP tools using `rudder_<capability_id>` names, conditionally projects
+the Built-in Browser tool set from trusted runtime capability state, dispatches
+core control-plane tools directly through Rudder's runtime API context when
 supported, falls back to the existing Rudder CLI command path for remaining
 capabilities, and gets organization, agent, run, API, and project-library
 identity only from runtime-owned environment.
@@ -49,8 +58,9 @@ identity only from runtime-owned environment.
 ### Intent / User Job
 
 Runtime agents need a reliable control-plane tool surface for issue, run,
-chat, automation, library, approval, skill, and agent operations. Operators
-need this surface to be typed, auditable, and scoped to the current run instead
+chat, automation, library, approval, skill, agent, and bounded Browser
+operations. Operators need this surface to be typed, auditable, and scoped to
+the current run instead
 of relying on model-invented shell commands or user/home MCP configuration.
 
 ### Why / Design Reasoning
@@ -83,12 +93,20 @@ current run.
 - Runtime MCP identity: environment values such as `RUDDER_API_URL`,
   `RUDDER_API_KEY`, `RUDDER_ORG_ID`, `RUDDER_AGENT_ID`, `RUDDER_RUN_ID`, and
   `RUDDER_PROJECT_LIBRARY_PATH`.
+- Browser capability state: the runtime-managed `RUDDER_BROWSER_ENABLED` flag
+  controls manifest projection, while the Browser API independently enforces
+  the live instance setting and active-run/tab ownership on every call.
 
 ### Entry Points / Inputs
 
 - `rudder mcp-server` runs the first-party MCP server over stdio.
 - `tools/list` returns the `agent-v1` MCP tool manifest for
   `rudder-control-plane`.
+- When Built-in Browser is enabled for a supported local run, the manifest also
+  exposes `rudder_browser_tabs`, `rudder_browser_open`,
+  `rudder_browser_navigate`, `rudder_browser_read`, `rudder_browser_click`,
+  `rudder_browser_type`, `rudder_browser_screenshot`, and
+  `rudder_browser_close`.
 - `tools/call` maps a `rudder_<capability_id>` tool call to direct runtime API
   dispatch for supported core tools or to a CLI-backed invocation plan for
   remaining capabilities, then returns JSON/structured MCP content.
@@ -104,7 +122,8 @@ current run.
 
 1. Rudder builds the stable `agent-v1` capability registry.
 2. The MCP manifest converts each `agent-v1` capability id into a stable tool
-   name such as `rudder_issue_checkout`.
+   name such as `rudder_issue_checkout`; it includes the eight Browser tools
+   only when trusted run context marks Built-in Browser enabled.
 3. A supported runtime invocation prepares managed MCP server config or a
    runtime-managed native tool bridge for `rudder-control-plane`.
 4. Runtime-owned environment supplies API URL, agent token, organization id,
@@ -123,6 +142,9 @@ current run.
 11. When MCP/native tool exposure is unavailable or a transport/configuration
    error blocks the tool, the bundled CLI reference remains the agent fallback
    path.
+12. Browser calls additionally verify the live setting, active run, safe web
+    URL, and run-owned tab before forwarding an allowed action to the in-memory
+    Desktop Broker. A stale manifest cannot bypass live disablement.
 
 ### Decision Table
 
@@ -136,14 +158,21 @@ current run.
 | Direct runtime API dispatch succeeds | MCP/native tool result returns structured JSON content without shelling out to the Rudder CLI. |
 | Direct dispatch is not implemented for the capability and CLI invocation succeeds with JSON output | MCP result returns structured JSON content. |
 | Direct API dispatch, CLI invocation, or native bridge invocation fails | Tool result is marked error with a stable Rudder diagnostic code or safe error text. |
+| Browser capability is enabled for a supported local run | Manifest exposes exactly the eight `rudder_browser_*` tools; Browser API derives identity and enforces the live setting and tab lease. |
+| Browser is disabled after run start | Browser tools disappear from future manifests/runs and current calls fail with `browser_disabled`; active leases are revoked. |
+| Desktop Browser Broker is unavailable | Browser call fails with `browser_unavailable` instead of hanging or falling back to an uncontrolled browser. |
+| Browser tab belongs to another organization, agent, or run | Call is rejected without revealing tab or page data. |
 | Agent Detail Discover is open | Built-in Rudder MCP tools are not shown as connectable integrations. |
 | Agent Detail Manage is open and runtime metadata says MCP is available | Built-in Rudder MCP tools may be shown as a read-only runtime-managed row. |
 
 ### Actor-Visible Input
 
 The runtime agent sees typed tool names and JSON schemas for the `agent-v1`
-capabilities. The agent does not provide organization, agent, run, API, or auth
-identity; those come from Rudder-managed runtime environment.
+capabilities. When enabled, the Browser surface accepts bounded URL, tab,
+structured element-reference, text, and screenshot inputs; it never accepts
+raw cookie access or arbitrary script execution. The agent does not provide
+organization, agent, run, API, Broker, or auth identity; those come from
+Rudder-managed runtime environment.
 
 ### Operator-Visible Output
 
@@ -168,6 +197,8 @@ Evidence can include:
   while Rudder-owned MCP config or native bridge config is injected
 - Agent Detail E2E proving the read-only Manage row is visible only where
   applicable
+- Browser route/Broker activity showing action and sanitized origin without
+  query tokens, cookies, typed values, screenshots, or page content
 
 ### Canonical Scenarios
 
@@ -183,6 +214,9 @@ Evidence can include:
   writes an adapter-managed `rudder-control-plane` Pi extension, exposes the
   same `rudder_<capability_id>` tool names to the model, and records
   `rudderNativeTools` metadata with `transport: "pi_extension"`.
+- A Browser-enabled local run receives the conditional Browser skill and eight
+  Browser tools. It opens a run-owned tab, reads and interacts through bounded
+  actions, and cannot access a tab leased to another run.
 - A model attempts to override `orgId`, `agentId`, `runId`, `apiKey`, or
   authorization inside tool arguments. The tool call is rejected before CLI
   invocation.
@@ -201,6 +235,9 @@ Evidence can include:
   into the Rudder-run tool surface.
 - Native bridges must preserve runtime-managed identity and must not bake API
   keys, organization ids, agent ids, or run ids into generated extension source.
+- Browser tool projection is not authorization. Every Browser call must enforce
+  current enablement, active-run identity, safe protocols, and exact tab lease;
+  Broker credentials must remain outside model-visible config and arguments.
 - The current contract does not promise remote MCP discovery for custom
   integrations, external tool dispatch, or plugin tool semantics.
 
@@ -215,7 +252,10 @@ semantics, or related traceability.
 ### Traceability
 
 - Plan: `doc/plans/2026-06-30-agent-v1-mcp-tools.md`
+- Plan: `doc/plans/2026-07-12-built-in-browser.md`
 - Related active contracts:
+  - `AGENT.BROWSER.001` for Browser settings, profile, tab lease, and lifecycle
+    semantics.
   - `AGENT.CUSTOM.INTEGRATIONS.001` for the Agent Detail Integrations Manage
     visibility of the built-in row and custom integration separation.
   - `AGENT.INSTRUCTIONS.001` for runtime prompt and fallback reference loading.

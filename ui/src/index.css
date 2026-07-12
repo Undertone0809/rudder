@@ -3211,6 +3211,10 @@ button[draggable="false"] {
   padding-bottom: 1rem;
 }
 
+.rudder-side-panel-library-document--with-header-action > :first-child:is(h1, h2) {
+  padding-right: 5rem;
+}
+
 @container (max-width: 1080px) {
   .rudder-library-document-layout--with-outline {
     max-width: 880px;

@@ -376,6 +376,87 @@ describe("heartbeat managed workspace preflight", () => {
     await expect(fs.stat(path.join(agentHome, "skills")).then((stat) => stat.isDirectory())).resolves.toBe(true);
   });
 
+  it("applies issue runtime overrides only while the agent remains the assignee", async () => {
+    const agent = await seedAgentFixture({
+      model: "agent-default-model",
+      modelReasoningEffort: "high",
+      search: true,
+    });
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      orgId: agent.orgId,
+      title: "Use an issue-specific runtime profile",
+      status: "backlog",
+      priority: "high",
+      assigneeAgentId: agent.agentId,
+      assigneeAgentRuntimeOverrides: {
+        agentRuntimeConfig: {
+          model: "issue-override-model",
+          modelReasoningEffort: "ultra",
+        },
+      },
+    });
+
+    const invokedConfigs: Array<Record<string, unknown>> = [];
+    mockRuntimeAdapter.execute.mockImplementation(async (ctx) => {
+      invokedConfigs.push({ ...ctx.config });
+      return {
+        summary: "runtime override observed",
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      };
+    });
+
+    const assignedRun = await heartbeatService(db).wakeup(agent.agentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      reason: "test_issue_runtime_override_assigned",
+      contextSnapshot: {
+        issueId,
+        taskKey: `issue:${issueId}:assigned`,
+      },
+    });
+
+    expect(assignedRun?.id).toBeTruthy();
+    await waitForCondition(async () => (await getRun(assignedRun!.id))?.status === "succeeded");
+    await waitForCondition(async () => (await getAgent(agent.agentId))?.status === "idle");
+    expect(invokedConfigs[0]).toEqual(expect.objectContaining({
+      model: "issue-override-model",
+      modelReasoningEffort: "ultra",
+      search: true,
+    }));
+
+    await db
+      .update(issues)
+      .set({ assigneeAgentId: null })
+      .where(eq(issues.id, issueId));
+
+    const reassignedRun = await heartbeatService(db).wakeup(agent.agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "test_issue_runtime_override_reassigned",
+      contextSnapshot: {
+        issueId,
+        taskKey: `issue:${issueId}:reassigned`,
+      },
+    });
+
+    expect(reassignedRun?.id).toBeTruthy();
+    await waitForCondition(async () => (await getRun(reassignedRun!.id))?.status === "succeeded");
+    await waitForCondition(async () => (await getAgent(agent.agentId))?.status === "idle");
+    expect(invokedConfigs[1]).toEqual(expect.objectContaining({
+      model: "agent-default-model",
+      modelReasoningEffort: "high",
+      search: true,
+    }));
+    expect(invokedConfigs[1]).not.toEqual(expect.objectContaining({
+      model: "issue-override-model",
+    }));
+  });
+
   it("persists forbidden runtime skill marker evidence from adapter output", async () => {
     const forbiddenMarker = "ZST646_FORBIDDEN_GLOBAL_SKILL_LOADED";
     const { agentId } = await seedAgentFixture({

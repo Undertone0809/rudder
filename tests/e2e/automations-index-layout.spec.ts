@@ -112,6 +112,92 @@ async function createCiWebhookAutomationFixture(page: Page) {
 }
 
 test.describe("Automations index layout", () => {
+  test("filters the list by all, active, and paused status", async ({ page }) => {
+    const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: { name: `Automations-Filters-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = (await orgRes.json()) as { id: string; issuePrefix: string };
+    const agentRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Automation Filter Agent",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: { model: "gpt-5.4" },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = (await agentRes.json()) as { id: string };
+
+    const activeRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/automations`, {
+      data: {
+        title: "Active daily review",
+        description: "Active filter fixture.",
+        assigneeAgentId: agent.id,
+        priority: "medium",
+      },
+    });
+    expect(activeRes.ok()).toBe(true);
+
+    const pausedRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/automations`, {
+      data: {
+        title: "Paused weekly review",
+        description: "Paused filter fixture.",
+        assigneeAgentId: agent.id,
+        priority: "medium",
+      },
+    });
+    expect(pausedRes.ok()).toBe(true);
+    const pausedAutomation = (await pausedRes.json()) as { id: string };
+    const pauseRes = await page.request.patch(`${E2E_BASE_URL}/api/automations/${pausedAutomation.id}`, {
+      data: { status: "paused" },
+    });
+    expect(pauseRes.ok(), await pauseRes.text()).toBe(true);
+
+    await selectOrganization(page, organization.id);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/automations`);
+
+    const statusTabs = page.getByRole("tablist", { name: "Automation status" });
+    const tableSurface = page.getByTestId("automations-table-surface");
+    await expect(statusTabs.getByRole("tab", { name: "All" })).toHaveAttribute("aria-selected", "true");
+    await expect(tableSurface.getByText("Active daily review", { exact: true })).toBeVisible();
+    await expect(tableSurface.getByText("Paused weekly review", { exact: true })).toBeVisible();
+    await page.screenshot({ path: "/tmp/rudder-automation-status-tabs.png", fullPage: true });
+
+    await expect(tableSurface).toBeVisible();
+    expect(await tableSurface.evaluate((element) => Number.parseFloat(getComputedStyle(element).borderTopLeftRadius))).toBeGreaterThan(0);
+
+    await tableSurface.getByText("Active daily review", { exact: true }).click();
+    const selectedRow = page.locator('tr[data-selected="true"]');
+    const firstSelectedCell = selectedRow.locator("td").first();
+    expect(await firstSelectedCell.evaluate((element) => Number.parseFloat(getComputedStyle(element).borderTopLeftRadius))).toBeGreaterThan(0);
+
+    const detailHeader = page.getByTestId("automation-detail-panel-header");
+    await expect(detailHeader).toBeVisible();
+    expect(await detailHeader.evaluate((element) => Number.parseFloat(getComputedStyle(element).borderTopLeftRadius))).toBeGreaterThan(0);
+
+    await statusTabs.getByRole("tab", { name: "All" }).focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(statusTabs.getByRole("tab", { name: "Active" })).toHaveAttribute("aria-selected", "true");
+    await expect(tableSurface.getByText("Active daily review", { exact: true })).toBeVisible();
+    await expect(tableSurface.getByText("Paused weekly review", { exact: true })).toHaveCount(0);
+
+    await statusTabs.getByRole("tab", { name: "Paused" }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/automations$`));
+    await expect(page.getByTestId("automation-detail-pane")).toHaveCount(0);
+    await expect(tableSurface.getByText("Active daily review", { exact: true })).toHaveCount(0);
+    await expect(tableSurface.getByText("Paused weekly review", { exact: true })).toBeVisible();
+
+    await tableSurface.getByText("Paused weekly review", { exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/automations/${pausedAutomation.id}$`));
+    await expect(page.getByTestId("automation-detail-pane")).toBeVisible();
+    await tableSurface.getByRole("switch", { name: "Enable Paused weekly review" }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/automations$`));
+    await expect(page.getByTestId("automation-detail-pane")).toHaveCount(0);
+    await expect(page.getByText("No paused automations", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("automation-template-grid")).toHaveCount(0);
+  });
+
   test("uses the outer list card and places the create action in its header", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 900 });
 
@@ -122,6 +208,15 @@ test.describe("Automations index layout", () => {
     });
     expect(orgRes.ok()).toBe(true);
     const organization = (await orgRes.json()) as { id: string; issuePrefix: string };
+    const agentRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Automation Output Agent",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: { model: "gpt-5.4" },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
 
     await selectOrganization(page, organization.id);
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/automations`);
@@ -182,9 +277,31 @@ test.describe("Automations index layout", () => {
 
     await createButton.click();
     await expect(page.getByPlaceholder("Automation title")).toBeVisible();
+    const outputMethod = page.getByTestId("automation-create-output-mode");
+    await expect(outputMethod).toContainText("Send to chat");
+    await expect(page.getByTestId("automation-create-chat-destination")).toContainText("New chat per run");
+    await outputMethod.click();
+    await page.getByRole("button", { name: /Track as issue/ }).click();
+    await expect(outputMethod).toContainText("Track as issue");
+    await expect(page.getByTestId("automation-create-chat-destination")).toHaveCount(0);
     await expect(page.getByRole("button", { name: /Delivery rules/ })).toBeVisible();
     await expect(page.getByText("Every day at 09:00")).toBeVisible();
     await expect(page.getByTestId("automation-composer-shell")).toBeVisible();
+    await page.getByPlaceholder("Automation title").fill("Persist tracked output");
+    await page.getByRole("button", { name: /^Assignee$/ }).click();
+    await page.getByRole("button", { name: /Automation Output Agent/ }).click();
+    await page.keyboard.press("Escape");
+    await page.screenshot({
+      path: testInfo.outputPath("automation-output-method-track-issue.png"),
+      fullPage: true,
+    });
+    await page.getByRole("button", { name: /^Create$/ }).click();
+    await expect(page.getByText("Persist tracked output", { exact: true })).toBeVisible();
+    const automationsRes = await page.request.get(`${E2E_BASE_URL}/api/orgs/${organization.id}/automations`);
+    expect(automationsRes.ok()).toBe(true);
+    const createdAutomation = ((await automationsRes.json()) as Array<{ title: string; outputMode: string }>)
+      .find((automation) => automation.title === "Persist tracked output");
+    expect(createdAutomation?.outputMode).toBe("track_issue");
   });
 
   test("applies the documentation check template from the composer header", async ({ page }, testInfo) => {
@@ -318,7 +435,7 @@ test.describe("Automations index layout", () => {
     await expect(page.getByRole("button", { name: /Send to chat/ })).toBeEnabled();
     await page.getByRole("button", { name: /Send to chat/ }).click();
     await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("each run's final result to a new Rudder chat");
-    await expect(page.getByRole("button", { name: /Create automation/ })).toBeDisabled();
+    await expect(page.getByRole("button", { name: /^Create$/ })).toBeDisabled();
 
     await page.screenshot({
       path: testInfo.outputPath("automations-template-composer.png"),

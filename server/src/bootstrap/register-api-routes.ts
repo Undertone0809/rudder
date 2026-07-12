@@ -7,6 +7,7 @@ import { agentRoutes } from "../routes/agents.js";
 import { approvalRoutes } from "../routes/approvals.js";
 import { assetRoutes } from "../routes/assets.js";
 import { automationRoutes } from "../routes/automations.js";
+import { browserRoutes } from "../routes/browser.js";
 import { calendarRoutes } from "../routes/calendar.js";
 import { chatRoutes } from "../routes/chats.js";
 import { costRoutes } from "../routes/costs.js";
@@ -73,6 +74,7 @@ export function registerApiRoutes(
   api.use(sidebarBadgeRoutes(db));
   api.use(websiteMetadataRoutes());
   api.use(instanceSettingsRoutes(db, { deploymentMode: opts.deploymentMode }));
+  api.use(browserRoutes(db, { deploymentMode: opts.deploymentMode }));
   api.use(
     pluginRoutes(
       db,

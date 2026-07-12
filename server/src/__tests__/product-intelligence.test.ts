@@ -176,6 +176,11 @@ describe("product intelligence execution", () => {
           promptTemplate: "Search issues",
           command: "claude",
           model: "claude-sonnet-4-6",
+          rudderBrowserEnabled: false,
+          rudderSkillSync: undefined,
+          paperclipSkillSync: undefined,
+          rudderRuntimeSkills: [],
+          paperclipRuntimeSkills: [],
         },
       }),
     );

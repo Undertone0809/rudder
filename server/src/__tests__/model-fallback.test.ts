@@ -145,6 +145,27 @@ describe("executeAdapterWithModelFallbacks", () => {
     const ctx = baseContext({
       model: "gpt-primary",
       promptTemplate: "Keep going",
+      rudderBrowserEnabled: true,
+      rudderBrowserCapability: {
+        instanceEligible: true,
+        runtimeSkillEntries: [
+          { key: "bundled:rudder/browser", runtimeName: "browser", source: "/tmp/browser" },
+        ],
+      },
+      rudderSkillSync: {
+        desiredSkills: ["bundled:rudder/browser", "bundled:rudder/rudder"],
+      },
+      paperclipSkillSync: {
+        desiredSkills: ["bundled:rudder/browser", "bundled:rudder/rudder"],
+      },
+      rudderRuntimeSkills: [
+        { key: "bundled:rudder/browser", runtimeName: "browser", source: "/tmp/browser" },
+        { key: "bundled:rudder/rudder", runtimeName: "rudder", source: "/tmp/rudder" },
+      ],
+      paperclipRuntimeSkills: [
+        { key: "bundled:rudder/browser", runtimeName: "browser", source: "/tmp/browser" },
+        { key: "bundled:rudder/rudder", runtimeName: "rudder", source: "/tmp/rudder" },
+      ],
       modelFallbacks: [
         {
           agentRuntimeType: "claude_local",
@@ -171,6 +192,10 @@ describe("executeAdapterWithModelFallbacks", () => {
           promptTemplate: "Keep going",
           effort: "high",
           command: "claude",
+          rudderBrowserEnabled: true,
+          rudderRuntimeSkills: expect.arrayContaining([
+            expect.objectContaining({ key: "bundled:rudder/browser" }),
+          ]),
         }),
         runtime: expect.objectContaining({ sessionId: null }),
       }),
@@ -185,6 +210,220 @@ describe("executeAdapterWithModelFallbacks", () => {
         }),
       }),
     );
+  });
+
+  it("fails closed when Browser-shaped user config lacks trusted capability metadata", async () => {
+    const adapter: ServerAgentRuntimeModule = {
+      type: "codex_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({ model: "gpt-primary" })),
+    };
+    const browserSkill = {
+      key: "bundled:rudder/browser",
+      runtimeName: "browser",
+      source: "/tmp/browser",
+    };
+    const rudderSkill = {
+      key: "bundled:rudder/rudder",
+      runtimeName: "rudder",
+      source: "/tmp/rudder",
+    };
+    const ctx = baseContext({
+      model: "gpt-primary",
+      rudderBrowserEnabled: true,
+      rudderSkillSync: { desiredSkills: [browserSkill.key, rudderSkill.key] },
+      paperclipSkillSync: { desiredSkills: [browserSkill.key, rudderSkill.key] },
+      rudderRuntimeSkills: [browserSkill, rudderSkill],
+      paperclipRuntimeSkills: [browserSkill, rudderSkill],
+    });
+
+    await executeAdapterWithModelFallbacks(adapter, ctx);
+
+    const projectedConfig = vi.mocked(adapter.execute).mock.calls[0]?.[0].config;
+    expect(projectedConfig).toMatchObject({
+      rudderBrowserEnabled: false,
+      rudderSkillSync: { desiredSkills: [rudderSkill.key] },
+      paperclipSkillSync: { desiredSkills: [rudderSkill.key] },
+      rudderRuntimeSkills: [rudderSkill],
+      paperclipRuntimeSkills: [rudderSkill],
+    });
+    expect(projectedConfig).not.toHaveProperty("rudderBrowserCapability");
+  });
+
+  it("does not let fallback attempt config elevate Browser eligibility", async () => {
+    const primaryAdapter: ServerAgentRuntimeModule = {
+      type: "codex_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({ exitCode: 1, errorMessage: "primary failed" })),
+    };
+    const fallbackAdapter: ServerAgentRuntimeModule = {
+      type: "claude_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async (ctx) => result({ model: String(ctx.config.model) })),
+    };
+    const browserSkill = {
+      key: "bundled:rudder/browser",
+      runtimeName: "browser",
+      source: "/tmp/browser",
+    };
+    const rudderSkill = {
+      key: "bundled:rudder/rudder",
+      runtimeName: "rudder",
+      source: "/tmp/rudder",
+    };
+    const ctx = baseContext({
+      model: "gpt-primary",
+      rudderSkillSync: { desiredSkills: [rudderSkill.key] },
+      paperclipSkillSync: { desiredSkills: [rudderSkill.key] },
+      rudderRuntimeSkills: [rudderSkill],
+      paperclipRuntimeSkills: [rudderSkill],
+      modelFallbacks: [{
+        agentRuntimeType: "claude_local",
+        model: "claude-backup",
+        config: {
+          rudderBrowserEnabled: true,
+          rudderBrowserCapability: {
+            instanceEligible: true,
+            runtimeSkillEntries: [browserSkill],
+          },
+          rudderSkillSync: { desiredSkills: [browserSkill.key, rudderSkill.key] },
+          paperclipSkillSync: { desiredSkills: [browserSkill.key, rudderSkill.key] },
+          rudderRuntimeSkills: [browserSkill, rudderSkill],
+          paperclipRuntimeSkills: [browserSkill, rudderSkill],
+        },
+      }],
+    });
+
+    await executeAdapterWithModelFallbacks(primaryAdapter, ctx, {
+      resolveAdapter: (agentRuntimeType) => agentRuntimeType === "claude_local" ? fallbackAdapter : null,
+    });
+
+    const fallbackConfig = vi.mocked(fallbackAdapter.execute).mock.calls[0]?.[0].config;
+    expect(fallbackConfig).toMatchObject({
+      rudderBrowserEnabled: false,
+      rudderSkillSync: { desiredSkills: [rudderSkill.key] },
+      paperclipSkillSync: { desiredSkills: [rudderSkill.key] },
+      rudderRuntimeSkills: [rudderSkill],
+      paperclipRuntimeSkills: [rudderSkill],
+    });
+    expect(fallbackConfig).not.toHaveProperty("rudderBrowserCapability");
+  });
+
+  it("projects an instance-eligible Browser onto a supported fallback from an unsupported primary runtime", async () => {
+    const primaryAdapter: ServerAgentRuntimeModule = {
+      type: "gemini_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({ exitCode: 1, errorMessage: "gemini unavailable" })),
+    };
+    const fallbackAdapter: ServerAgentRuntimeModule = {
+      type: "codex_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async (ctx) => result({ model: String(ctx.config.model) })),
+    };
+    const browserSkill = {
+      key: "bundled:rudder/browser",
+      runtimeName: "browser",
+      source: "/tmp/browser",
+    };
+    const rudderSkill = {
+      key: "bundled:rudder/rudder",
+      runtimeName: "rudder",
+      source: "/tmp/rudder",
+    };
+    const ctx = baseContext({
+      model: "gemini-primary",
+      rudderBrowserEnabled: false,
+      rudderBrowserCapability: {
+        instanceEligible: true,
+        runtimeSkillEntries: [browserSkill],
+      },
+      rudderSkillSync: { desiredSkills: [rudderSkill.key] },
+      paperclipSkillSync: { desiredSkills: [rudderSkill.key] },
+      rudderRuntimeSkills: [rudderSkill],
+      paperclipRuntimeSkills: [rudderSkill],
+      modelFallbacks: [{ agentRuntimeType: "codex_local", model: "gpt-backup" }],
+    });
+    ctx.agent = { ...ctx.agent, agentRuntimeType: "gemini_local" };
+
+    await executeAdapterWithModelFallbacks(primaryAdapter, ctx, {
+      resolveAdapter: (agentRuntimeType) => agentRuntimeType === "codex_local" ? fallbackAdapter : null,
+    });
+
+    const primaryConfig = vi.mocked(primaryAdapter.execute).mock.calls[0]?.[0].config;
+    expect(primaryConfig).toMatchObject({
+      rudderBrowserEnabled: false,
+      rudderSkillSync: { desiredSkills: [rudderSkill.key] },
+      paperclipSkillSync: { desiredSkills: [rudderSkill.key] },
+      rudderRuntimeSkills: [rudderSkill],
+      paperclipRuntimeSkills: [rudderSkill],
+    });
+    expect(primaryConfig).not.toHaveProperty("rudderBrowserCapability");
+
+    const fallbackConfig = vi.mocked(fallbackAdapter.execute).mock.calls[0]?.[0].config;
+    expect(fallbackConfig).toMatchObject({
+      rudderBrowserEnabled: true,
+      rudderSkillSync: { desiredSkills: [rudderSkill.key, browserSkill.key] },
+      paperclipSkillSync: { desiredSkills: [rudderSkill.key, browserSkill.key] },
+      rudderRuntimeSkills: [rudderSkill, browserSkill],
+      paperclipRuntimeSkills: [rudderSkill, browserSkill],
+    });
+    expect(fallbackConfig).not.toHaveProperty("rudderBrowserCapability");
+  });
+
+  it("removes Browser skill and tools when a fallback switches to an unsupported runtime", async () => {
+    const primaryAdapter: ServerAgentRuntimeModule = {
+      type: "codex_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({ exitCode: 1, errorMessage: "codex unavailable" })),
+    };
+    const fallbackAdapter: ServerAgentRuntimeModule = {
+      type: "gemini_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async (ctx) => result({ model: String(ctx.config.model) })),
+    };
+    const ctx = baseContext({
+      model: "gpt-primary",
+      rudderBrowserEnabled: true,
+      rudderBrowserCapability: {
+        instanceEligible: true,
+        runtimeSkillEntries: [
+          { key: "bundled:rudder/browser", runtimeName: "browser", source: "/tmp/browser" },
+        ],
+      },
+      rudderSkillSync: {
+        desiredSkills: ["bundled:rudder/browser", "bundled:rudder/rudder"],
+      },
+      paperclipSkillSync: {
+        desiredSkills: ["bundled:rudder/browser", "bundled:rudder/rudder"],
+      },
+      rudderRuntimeSkills: [
+        { key: "bundled:rudder/browser", runtimeName: "browser", source: "/tmp/browser" },
+        { key: "bundled:rudder/rudder", runtimeName: "rudder", source: "/tmp/rudder" },
+      ],
+      paperclipRuntimeSkills: [
+        { key: "bundled:rudder/browser", runtimeName: "browser", source: "/tmp/browser" },
+        { key: "bundled:rudder/rudder", runtimeName: "rudder", source: "/tmp/rudder" },
+      ],
+      modelFallbacks: [{ agentRuntimeType: "gemini_local", model: "gemini-backup" }],
+    });
+
+    await executeAdapterWithModelFallbacks(primaryAdapter, ctx, {
+      resolveAdapter: (agentRuntimeType) => agentRuntimeType === "gemini_local" ? fallbackAdapter : null,
+      createAuthToken: (agentRuntimeType) => `token:${agentRuntimeType}`,
+    });
+
+    const fallbackConfig = vi.mocked(fallbackAdapter.execute).mock.calls[0]?.[0].config;
+    expect(fallbackConfig).toMatchObject({
+      rudderBrowserEnabled: false,
+      rudderSkillSync: { desiredSkills: ["bundled:rudder/rudder"] },
+      paperclipSkillSync: { desiredSkills: ["bundled:rudder/rudder"] },
+    });
+    expect(fallbackConfig?.rudderRuntimeSkills).toEqual([
+      expect.objectContaining({ key: "bundled:rudder/rudder" }),
+    ]);
+    expect(fallbackConfig?.paperclipRuntimeSkills).toEqual([
+      expect.objectContaining({ key: "bundled:rudder/rudder" }),
+    ]);
   });
 
   it("does not retry when no fallback models are configured", async () => {

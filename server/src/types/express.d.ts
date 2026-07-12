@@ -16,6 +16,7 @@ type RequestActor = {
   companyId?: string | undefined;
   keyId?: string | undefined;
   runId?: string | undefined;
+  adapterType?: string | undefined;
 };
 
 declare global {

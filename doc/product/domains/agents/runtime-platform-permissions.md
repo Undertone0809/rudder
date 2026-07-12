@@ -7,6 +7,7 @@ spec_depth: logic_contract
 contract_ids:
   - AGENT.RUNTIME.PERMISSIONS.001
 related_code:
+  - packages/agent-runtime-utils/src/rudder-mcp.ts
   - packages/agent-runtime-utils/src/server-utils.cli.ts
   - packages/agent-runtimes/claude-local/src/server/execute.ts
   - packages/agent-runtimes/codex-local/src/server/codex-home.ts
@@ -15,6 +16,7 @@ related_code:
   - packages/agent-runtimes/gemini-local/src/server/execute.ts
   - packages/agent-runtimes/opencode-local/src/server/execute.ts
   - packages/agent-runtimes/pi-local/src/server/execute.ts
+  - server/src/services/agent-run-context.ts
   - server/src/services/managed-workspace-preflight.ts
   - desktop/scripts/after-pack.mjs
 related_tests:
@@ -26,9 +28,11 @@ related_tests:
   - server/src/__tests__/opencode-local-execute.test.ts
   - server/src/__tests__/pi-local-execute.test.ts
   - server/src/__tests__/managed-workspace-preflight.test.ts
+  - server/src/__tests__/agent-run-context.test.ts
 related_plans:
   - doc/plans/2026-06-21-product-logic-registry.md
   - doc/plans/2026-06-26-local-runtime-operator-home-default.md
+  - doc/plans/2026-07-12-built-in-browser.md
 edit_policy: user_confirmed_only
 ---
 
@@ -85,6 +89,12 @@ preferred behavior is a platform-safe substitute such as a directory junction
 or copied directory. If a substitute is impossible or unsafe, the run should
 produce a clear permission/configuration error before provider execution.
 
+Built-in Browser adds a separate host-data boundary. Supported local runtimes
+may receive a managed capability flag and high-level Browser tools, but they do
+not receive the Browser profile path, cookies, Desktop Broker credential, or
+permission to discover Browser state from the operator home. The shared website
+profile belongs to Desktop, not to adapter-managed runtime state.
+
 ## Actors / Objects / State
 
 - Operator: the human whose machine, local CLIs, provider credentials, and
@@ -109,6 +119,11 @@ produce a clear permission/configuration error before provider execution.
 - Platform capability: filesystem and process capability that differs by OS,
   including symlink privileges, path syntax, case behavior, home variables,
   executable lookup, process termination, and installer/package copying.
+- Browser capability input: Rudder-owned enabled state projected as managed
+  runtime environment/config for supported `local_trusted` adapters.
+- Agent Browser lease: Desktop-owned, in-memory tab control scoped to the
+  authenticated organization, agent, run, and tab, independent of child
+  process filesystem access.
 
 ## Entry Points / Inputs
 
@@ -121,7 +136,8 @@ produce a clear permission/configuration error before provider execution.
   modes that do not run the child process with operator `HOME`.
 - Desktop packaging and update flows that copy app resources across platforms.
 - Environment inputs including `HOME`, `USERPROFILE`, `RUDDER_HOME`,
-  `RUDDER_OPERATOR_HOME`, provider-specific home variables, and `PATH`/`Path`.
+  `RUDDER_OPERATOR_HOME`, provider-specific home variables,
+  `RUDDER_BROWSER_ENABLED`, and `PATH`/`Path`.
 
 ## Product Logic Flow
 
@@ -140,7 +156,9 @@ produce a clear permission/configuration error before provider execution.
    For local trusted adapters, `HOME` and `USERPROFILE` default to the
    operator home. Provider-specific home variables may point at
    adapter-managed runtime state. On all platforms, `PATH`/`Path` lookup must
-   preserve command resolution.
+   preserve command resolution. For supported Browser-capable local adapters,
+   Rudder sets or removes `RUDDER_BROWSER_ENABLED` from trusted run context
+   after user environment merging; agent or user config cannot override it.
 
 4. Rudder materializes runtime skills using an adapter-supported mechanism:
    native provider config, symlink, directory junction, copied directory,
@@ -201,6 +219,8 @@ produce a clear permission/configuration error before provider execution.
 | Explicit non-default credential bridge | A legacy or non-default mode cannot use operator `HOME` as child home | Bridge only selected entries or use command shims; preserve managed-state boundaries and logs | Bridge must not become the default for local trusted adapters | Credential bridge utility tests and adapter-specific opt-in evidence |
 | Windows home environment | Runtime sets child process home on Windows | `HOME`, `USERPROFILE`, and provider-specific home variables match the selected managed/operator-home semantics | Child process must not read credentials from a different home because only one variable was updated | Adapter env construction tests and command metadata |
 | Desktop resource packaging | Packaged app copies resources on Windows | Packaging may dereference symlinks into real files/directories | Runtime skill injection must not assume packaging fallback also protects run-time temp dirs | Desktop packaging code and separate runtime adapter tests |
+| Built-in Browser enabled for supported local adapter | Trusted run context enables Browser | Managed MCP/native config receives only the capability flag and runtime-owned tool identity | Adapter must not receive Browser profile paths, cookies, Broker credentials, or an agent-overridable enable flag | Adapter execute and run-context tests |
+| Browser disabled or runtime unsupported | Live setting is off, runtime is remote, or no secure managed tool path exists | Remove the managed Browser flag/tools or report capability unavailable | Inherited env or user MCP config must not expose stale Browser control | Negative adapter and MCP manifest tests |
 
 ## Actor-Visible Input
 
@@ -224,6 +244,9 @@ Actor-visible input is the resulting provider environment:
   runtime state path
 - cwd and workspace paths point at the verified execution workspace, fallback
   workspace, or agent home chosen for the run
+- when Browser is enabled for a supported local run, managed config exposes the
+  conditional Browser skill/tools without exposing profile storage, cookies,
+  Keychain material, or Desktop Broker credentials
 
 If a required permission cannot be repaired or substituted, the actor should
 not receive a normal work prompt. The run should fail with configuration or
@@ -263,6 +286,9 @@ Evidence can include:
   isolation, absence of default broad credential/tooling bridges, legacy
   generic bridge pruning, symlink repair, and adapter-specific local runtime
   execution
+- trusted run-context and adapter evidence for conditional Browser capability
+  projection; Browser profile contents and Broker credentials are deliberately
+  absent from persisted runtime evidence
 
 ## Canonical Scenarios
 
@@ -302,6 +328,14 @@ Evidence can include:
      message.
    - Evidence: workspace preflight test and run error metadata.
 
+5. Browser capability cannot be forged:
+   - Trigger: agent config or inherited user environment sets
+     `RUDDER_BROWSER_ENABLED` while the instance capability is disabled.
+   - Expected state/action: Rudder removes or overwrites the value after merge
+     and does not expose Browser tools; live calls remain rejected.
+   - Visible output: no Browser tool surface or a stable disabled error.
+   - Evidence: run-context, adapter, and MCP manifest negative tests.
+
 ## Invariants / Non-Goals
 
 - Platform-specific filesystem operations must be hidden behind runtime
@@ -322,6 +356,10 @@ Evidence can include:
   `AGENT.RUNTIME.ADAPTERS.001`.
 - This contract does not require every optional skill source to be usable on
   every platform; unavailable sources must be represented honestly.
+- Browser website identity may be shared across organizations by
+  `AGENT.BROWSER.001`, but its profile data and Broker credential must never be
+  copied into operator home, adapter-managed runtime state, prompts, or model
+  tool arguments.
 
 ## Drift Boundaries
 
@@ -335,6 +373,8 @@ Requires updating this contract:
 - broadening or narrowing default operator-home behavior, credential bridge
   entries, shim commands, or allowed host-home access
 - changing permission/preflight error semantics for managed workspaces
+- changing who can set the managed Browser capability flag or exposing Browser
+  profile/Broker state to a runtime process
 
 Does not require updating this contract:
 
@@ -350,10 +390,12 @@ Related plans:
 
 - `doc/plans/2026-06-21-product-logic-registry.md`
 - `doc/plans/2026-06-26-local-runtime-operator-home-default.md`
+- `doc/plans/2026-07-12-built-in-browser.md`
 
 Related code:
 
 - `packages/agent-runtime-utils/src/server-utils.cli.ts`
+- `packages/agent-runtime-utils/src/rudder-mcp.ts`
 - `packages/agent-runtimes/claude-local/src/server/execute.ts`
 - `packages/agent-runtimes/codex-local/src/server/codex-home.ts`
 - `packages/agent-runtimes/codex-local/src/server/execute.ts`
@@ -362,6 +404,7 @@ Related code:
 - `packages/agent-runtimes/opencode-local/src/server/execute.ts`
 - `packages/agent-runtimes/pi-local/src/server/execute.ts`
 - `server/src/services/managed-workspace-preflight.ts`
+- `server/src/services/agent-run-context.ts`
 - `desktop/scripts/after-pack.mjs`
 
 Related tests:
@@ -374,6 +417,7 @@ Related tests:
 - `server/src/__tests__/opencode-local-execute.test.ts`
 - `server/src/__tests__/pi-local-execute.test.ts`
 - `server/src/__tests__/managed-workspace-preflight.test.ts`
+- `server/src/__tests__/agent-run-context.test.ts`
 
 Known gaps:
 

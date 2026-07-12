@@ -10,6 +10,10 @@ import {
   isSuccessfulRuntimeResult,
   type ModelAttemptSpec,
 } from "@rudderhq/agent-runtime-utils";
+import {
+  isBrowserSkillSelectionKey,
+  isSupportedBrowserRuntimeType,
+} from "../browser-capability.js";
 
 interface ModelFallbackExecutionOptions {
   resolveAdapter?: (agentRuntimeType: string) => ServerAgentRuntimeModule | null;
@@ -29,7 +33,144 @@ const SHARED_ATTEMPT_CONFIG_KEYS = [
   "paperclipSkillSync",
   "rudderRuntimeSkills",
   "paperclipRuntimeSkills",
+  "rudderBrowserEnabled",
 ];
+
+type BrowserCapabilitySource = {
+  instanceEligible: boolean;
+  runtimeSkillEntries: unknown[];
+};
+
+function filterBrowserSkillList(value: unknown): unknown[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry) => {
+    if (typeof entry === "string") return !isBrowserSkillSelectionKey(entry);
+    if (!entry || typeof entry !== "object") return true;
+    return !isBrowserSkillSelectionKey((entry as { key?: unknown }).key);
+  });
+}
+
+function filterBrowserSkillSync(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  return {
+    ...record,
+    desiredSkills: filterBrowserSkillList(record.desiredSkills),
+  };
+}
+
+function selectBrowserSkillEntries(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry) => (
+    Boolean(entry)
+    && typeof entry === "object"
+    && isBrowserSkillSelectionKey((entry as { key?: unknown }).key)
+  ));
+}
+
+function resolveBrowserCapabilitySource(
+  baseConfig: Record<string, unknown>,
+): BrowserCapabilitySource {
+  const configured = baseConfig.rudderBrowserCapability;
+  if (configured && typeof configured === "object" && !Array.isArray(configured)) {
+    const record = configured as Record<string, unknown>;
+    return {
+      instanceEligible: record.instanceEligible === true,
+      runtimeSkillEntries: selectBrowserSkillEntries(record.runtimeSkillEntries),
+    };
+  }
+
+  return {
+    instanceEligible: false,
+    runtimeSkillEntries: [],
+  };
+}
+
+function addBrowserSkillList(value: unknown, browserSkillEntries: unknown[]) {
+  return [
+    ...(Array.isArray(value) ? filterBrowserSkillList(value) : []),
+    ...browserSkillEntries,
+  ];
+}
+
+function addBrowserSkillSync(value: unknown, browserSkillKeys: string[]) {
+  const record = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  return {
+    ...record,
+    desiredSkills: [
+      ...(Array.isArray(record.desiredSkills)
+        ? filterBrowserSkillList(record.desiredSkills)
+        : []),
+      ...browserSkillKeys,
+    ],
+  };
+}
+
+function projectBrowserCapabilityForAttempt(
+  config: Record<string, unknown>,
+  source: BrowserCapabilitySource,
+  agentRuntimeType: string,
+) {
+  return projectBrowserCapability(
+    config,
+    source.instanceEligible && isSupportedBrowserRuntimeType(agentRuntimeType),
+    source.runtimeSkillEntries,
+  );
+}
+
+function projectBrowserCapability(
+  config: Record<string, unknown>,
+  browserEnabled: boolean,
+  browserSkillEntries: unknown[],
+) {
+  const { rudderBrowserCapability: _rudderBrowserCapability, ...publicConfig } = config;
+  if (browserEnabled) {
+    const browserSkillKeys = browserSkillEntries
+      .map((entry) => (entry as { key?: unknown }).key)
+      .filter((key): key is string => typeof key === "string");
+    return {
+      ...publicConfig,
+      rudderBrowserEnabled: true,
+      rudderSkillSync: addBrowserSkillSync(publicConfig.rudderSkillSync, browserSkillKeys),
+      paperclipSkillSync: addBrowserSkillSync(publicConfig.paperclipSkillSync, browserSkillKeys),
+      rudderRuntimeSkills: addBrowserSkillList(
+        publicConfig.rudderRuntimeSkills,
+        browserSkillEntries,
+      ),
+      paperclipRuntimeSkills: addBrowserSkillList(
+        publicConfig.paperclipRuntimeSkills,
+        browserSkillEntries,
+      ),
+    };
+  }
+  return {
+    ...publicConfig,
+    rudderBrowserEnabled: false,
+    rudderSkillSync: filterBrowserSkillSync(publicConfig.rudderSkillSync),
+    paperclipSkillSync: filterBrowserSkillSync(publicConfig.paperclipSkillSync),
+    rudderRuntimeSkills: filterBrowserSkillList(publicConfig.rudderRuntimeSkills),
+    paperclipRuntimeSkills: filterBrowserSkillList(publicConfig.paperclipRuntimeSkills),
+  };
+}
+
+export function sanitizeUntrustedRuntimeConfig(
+  config: Record<string, unknown>,
+): Record<string, unknown> {
+  return projectBrowserCapability(config, false, []);
+}
+
+export function projectPrimaryRuntimeConfig(
+  config: Record<string, unknown>,
+  agentRuntimeType: string,
+): Record<string, unknown> {
+  return projectBrowserCapabilityForAttempt(
+    config,
+    resolveBrowserCapabilitySource(config),
+    agentRuntimeType,
+  );
+}
 
 function clearRuntimeSession(runtime: AgentRuntimeState): AgentRuntimeState {
   return {
@@ -53,26 +194,30 @@ function buildAttemptConfig(
   baseConfig: Record<string, unknown>,
   attempt: ModelAttemptSpec,
   primaryRuntimeType: string,
+  attemptRuntimeType: string,
+  browserCapabilitySource: BrowserCapabilitySource,
 ): Record<string, unknown> {
-  if (!attempt.isFallback) return baseConfig;
-  if (attempt.agentRuntimeType === primaryRuntimeType) {
+  if (!attempt.isFallback) {
+    return projectPrimaryRuntimeConfig(baseConfig, attemptRuntimeType);
+  }
+  if (attemptRuntimeType === primaryRuntimeType) {
     const { modelFallbacks: _modelFallbacks, ...baseWithoutFallbacks } = baseConfig;
-    return {
+    return projectBrowserCapabilityForAttempt({
       ...baseWithoutFallbacks,
       ...(attempt.config ?? {}),
       model: attempt.model,
-    };
+    }, browserCapabilitySource, attemptRuntimeType);
   }
   const sharedConfig = Object.fromEntries(
     SHARED_ATTEMPT_CONFIG_KEYS
       .filter((key) => baseConfig[key] !== undefined)
       .map((key) => [key, baseConfig[key]]),
   );
-  return {
+  return projectBrowserCapabilityForAttempt({
     ...sharedConfig,
     ...(attempt.config ?? {}),
     model: attempt.model,
-  };
+  }, browserCapabilitySource, attemptRuntimeType);
 }
 
 function buildAttemptContext(
@@ -122,6 +267,8 @@ export async function executeAdapterWithModelFallbacks(
   options: ModelFallbackExecutionOptions = {},
 ): Promise<AgentRuntimeExecutionResult> {
   const attempts = buildModelAttemptSpecs(ctx.config, ctx.agent.agentRuntimeType);
+  // Resolve once so per-attempt config cannot escalate instance-level Browser eligibility.
+  const browserCapabilitySource = resolveBrowserCapabilitySource(ctx.config);
   let previousFailure: AgentRuntimeExecutionResult | Error | null = null;
 
   for (const attempt of attempts) {
@@ -143,7 +290,13 @@ export async function executeAdapterWithModelFallbacks(
     }
 
     try {
-      const attemptConfig = buildAttemptConfig(ctx.config, attempt, ctx.agent.agentRuntimeType ?? adapter.type);
+      const attemptConfig = buildAttemptConfig(
+        ctx.config,
+        attempt,
+        ctx.agent.agentRuntimeType ?? adapter.type,
+        attemptRuntimeType,
+        browserCapabilitySource,
+      );
       await options.onAttemptStart?.(attempt, attemptAdapter);
       const result = await attemptAdapter.execute({
         ...ctx,

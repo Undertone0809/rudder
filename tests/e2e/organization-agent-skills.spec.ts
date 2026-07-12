@@ -1,6 +1,7 @@
 import { expect, test, type Locator } from "@playwright/test";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { resolveOrganizationStorageKey } from "../../packages/agent-runtime-utils/src/organization-storage.ts";
 import { E2E_CLAUDE_STUB, E2E_CODEX_STUB, E2E_HOME, E2E_INSTANCE_ID } from "./support/e2e-env";
 
 async function resolveSingleAgentWorkspaceRoot(orgId: string) {
@@ -9,7 +10,7 @@ async function resolveSingleAgentWorkspaceRoot(orgId: string) {
     "instances",
     E2E_INSTANCE_ID,
     "organizations",
-    orgId,
+    resolveOrganizationStorageKey(orgId),
     "workspaces",
     "agents",
   );
@@ -27,8 +28,8 @@ async function resolveSingleAgentWorkspaceRoot(orgId: string) {
 
 async function writeCodexSkillCaptureStub(commandPath: string, capturePath: string) {
   const script = `#!/usr/bin/env node
-const fs = require("node:fs");
-const path = require("node:path");
+import fs from "node:fs";
+import path from "node:path";
 
 process.stdin.resume();
 process.stdin.on("end", () => {
@@ -806,7 +807,7 @@ test.describe("Organization and agent skills", () => {
       "instances",
       E2E_INSTANCE_ID,
       "organizations",
-      organization.id,
+      resolveOrganizationStorageKey(organization.id),
       "codex-home",
       "agents",
       agent.id,
@@ -832,7 +833,14 @@ test.describe("Organization and agent skills", () => {
       })
       .toEqual({
         codexHome: managedCodexHome,
-        rootEntries: ["rudder"],
+        rootEntries: [
+          "browser",
+          "para-memory-files",
+          "rudder",
+          "rudder-create-agent",
+          "rudder-create-plugin",
+          "skill-creator",
+        ],
         systemEntries: [],
       });
     await expect(fs.access(path.join(managedCodexHome, "skills", ".system"))).rejects.toMatchObject({

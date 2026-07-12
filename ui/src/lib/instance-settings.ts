@@ -2,6 +2,7 @@ export const INSTANCE_SETTINGS_PROFILE_PATH = "/instance/settings/profile";
 export const INSTANCE_SETTINGS_SHORTCUTS_PATH = "/instance/settings/shortcuts";
 export const INSTANCE_SETTINGS_GENERAL_PATH = "/instance/settings/general";
 export const INSTANCE_SETTINGS_APPEARANCE_PATH = "/instance/settings/appearance";
+export const INSTANCE_SETTINGS_BROWSER_PATH = "/instance/settings/browser";
 export const INSTANCE_SETTINGS_NOTIFICATIONS_PATH = "/instance/settings/notifications";
 export const INSTANCE_SETTINGS_LANGFUSE_PATH = "/instance/settings/langfuse";
 export const INSTANCE_SETTINGS_ABOUT_PATH = "/instance/settings/about";
@@ -20,6 +21,7 @@ export function resolveDefaultSettingsPath(_canManageAdminSettings: boolean): st
 export function normalizeRememberedInstanceSettingsPath(
   rawPath: string | null,
   canManageAdminSettings: boolean = true,
+  deploymentMode: "local_trusted" | "authenticated" = "local_trusted",
 ): string {
   const defaultPath = resolveDefaultInstanceSettingsPath(canManageAdminSettings);
   if (!rawPath) return defaultPath;
@@ -35,6 +37,12 @@ export function normalizeRememberedInstanceSettingsPath(
 
   if (pathname === INSTANCE_SETTINGS_SHORTCUTS_PATH) {
     return `${pathname}${search}${hash}`;
+  }
+
+  if (pathname === INSTANCE_SETTINGS_BROWSER_PATH) {
+    return canManageAdminSettings && deploymentMode === "local_trusted"
+      ? `${pathname}${search}${hash}`
+      : defaultPath;
   }
 
   if (
@@ -62,6 +70,7 @@ export function normalizeRememberedInstanceSettingsPath(
 export function normalizeRememberedSettingsPath(
   rawPath: string | null,
   canManageAdminSettings: boolean = true,
+  deploymentMode: "local_trusted" | "authenticated" = "local_trusted",
 ): string {
   if (!rawPath) return DEFAULT_SETTINGS_PATH;
 
@@ -109,7 +118,11 @@ export function normalizeRememberedSettingsPath(
     return INSTANCE_SETTINGS_PROFILE_PATH;
   }
 
-  const normalizedInstancePath = normalizeRememberedInstanceSettingsPath(rawPath, canManageAdminSettings);
+  const normalizedInstancePath = normalizeRememberedInstanceSettingsPath(
+    rawPath,
+    canManageAdminSettings,
+    deploymentMode,
+  );
   if (normalizedInstancePath !== resolveDefaultInstanceSettingsPath(canManageAdminSettings)) {
     return normalizedInstancePath;
   }

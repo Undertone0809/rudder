@@ -1,5 +1,10 @@
 export type InstanceLocale = "en" | "zh-CN";
 
+export interface InstanceBrowserSettings {
+  enabled: boolean;
+  openLinksIn: "built_in" | "default_browser";
+}
+
 export interface InstanceGeneralSettings {
   censorUsernameInLogs: boolean;
   showDeveloperDiagnostics: boolean;
@@ -68,6 +73,7 @@ export interface InstancePathPickerResult {
 
 export interface InstanceSettings {
   id: string;
+  browser: InstanceBrowserSettings;
   general: InstanceGeneralSettings;
   notifications: InstanceNotificationSettings;
   createdAt: Date;

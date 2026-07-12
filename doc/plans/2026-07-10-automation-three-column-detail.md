@@ -137,15 +137,15 @@ old detail page's internal main-plus-sidebar split inside the third column.
 
 ## Contract Impact
 
-This work changes presentation and navigation, not Automation domain semantics.
-It remains aligned with:
+This work changes visible presentation and navigation, not Automation schema,
+scheduler, permission, or output-routing semantics. Because the route-driven
+master-detail behavior is an operator workflow that should not regress, the
+implemented behavior is synchronized into the existing Product Logic Registry:
 
 - `AUTOMATION.DEFINITION.001`, which requires detail to show definition,
   trigger, output, and state.
 - `AUTOMATION.RUN.001`, which requires detail to show run history and terminal
   evidence.
-
-No semantic edit to `doc/product/**` is required for this implementation.
 
 ## Implementation Shape
 
@@ -189,7 +189,8 @@ No semantic edit to `doc/product/**` is required for this implementation.
 - No Automation schema, API, scheduler, permission, or output-routing change.
 - No rewrite of the Automation creation composer.
 - No generic global side-panel framework migration.
-- No semantic change to guarded Product Logic Registry documents.
+- No new Product Logic contract ID; the approved interaction is recorded under
+  the existing `AUTOMATION.DEFINITION.001` contract.
 - No attempt to reproduce Codex branding or visual tokens; only its detail
   hierarchy and master-detail interaction are adopted within Rudder's design
   system.

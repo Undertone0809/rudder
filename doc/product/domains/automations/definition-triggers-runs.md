@@ -41,6 +41,8 @@ Product model:
 - It may bind to project, goal, parent issue, and assignee agent.
 - It has status such as active, paused, or archived.
 - Output mode is either tracked issue or chat output.
+- The create composer defaults custom automations to chat output and lets the
+  operator explicitly switch between chat output and tracked issue output.
 - Agent actors can manage only automations they are allowed to own.
 - `/automations` and `/automations/:automationId` are one route-driven
   master-detail workspace. On wide screens the primary rail, Automation list,
@@ -50,18 +52,25 @@ Product model:
 Flow:
 
 1. Operator or agent creates automation with prompt, owner, context, trigger,
-   and output mode.
+   and an explicitly visible output mode; custom drafts start with chat output.
 2. Server validates organization boundary, assignee, project/goal/parent issue,
    status, and permissions.
 3. Selecting a row updates the route, marks that row as current, and opens or
    swaps the detail inspector in place without discarding the list on wide
    screens.
-4. Automation detail shows definition, trigger, output, run history, and state.
-5. Closing detail returns to `/automations`; deleting the selected Automation
+4. The populated list defaults to `All` and lets the operator filter by
+   `Active` or `Paused` using accessible tabs. A filtered view shows only the
+   matching definitions and uses a filter-specific empty state rather than the
+   first-use template gallery.
+5. If the selected Automation no longer belongs to the active filter because
+   the operator changed filters or changed its status, the workspace closes the
+   stale detail and returns to `/automations`.
+6. Automation detail shows definition, trigger, output, run history, and state.
+7. Closing detail returns to `/automations`; deleting the selected Automation
    also returns to the remaining list.
-6. A direct link opens the same workspace. Invalid direct links stay inside a
+8. A direct link opens the same workspace. Invalid direct links stay inside a
    closable detail error state so the operator can recover to the list.
-7. Pausing stops new dispatch while preserving definition and history.
+9. Pausing stops new dispatch while preserving definition and history.
 
 Invariants:
 
@@ -74,6 +83,9 @@ Invariants:
   the operator's reduced-motion preference.
 - Row toggles and action menus must not accidentally select a different detail.
   The selected row remains visibly and accessibly current.
+- Status tabs must support pointer and keyboard activation, keep their selected
+  state aligned with the visible rows, and never leave a detail open for an
+  Automation excluded by the current filter.
 - Narrow detail must provide a close/back path and must not introduce
   horizontal document overflow.
 
@@ -84,8 +96,10 @@ Evidence:
   evidence for definition validation and permission boundaries.
 - `tests/e2e/automations-index-layout.spec.ts` and
   `tests/e2e/automation-detail-layout.spec.ts` prove list/detail selection,
-  in-place swapping, direct-link recovery, responsive one-pane fallback,
-  definition editing, and run-history affordances.
+  status filtering and keyboard activation, filtered empty states, selected
+  detail reconciliation after filter or status changes, in-place swapping,
+  direct-link recovery, responsive one-pane fallback, definition editing, and
+  run-history affordances.
 - Known gap: this contract records product behavior; it does not replace
   automation output proof, which belongs to `AUTOMATION.OUTPUT.001`.
 

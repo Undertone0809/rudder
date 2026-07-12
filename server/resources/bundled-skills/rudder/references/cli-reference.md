@@ -59,6 +59,14 @@ Direct API fallback is allowed for heartbeat close-out only when a required CLI 
 | `rudder_skill_import` | `rudder skill import --org-id <id> --source <source>` | Import a skill package into the organization skill library. | yes | required | no | attached when available |
 | `rudder_skill_scan_local` | `rudder skill scan-local --org-id <id> [--roots <csv>]` | Scan local roots for skill packages and import new ones. | yes | required | no | attached when available |
 | `rudder_skill_scan_projects` | `rudder skill scan-projects --org-id <id> [--project-ids <csv>] [--workspace-ids <csv>]` | Scan the org workspace and any legacy project workspace records for skill packages and import new ones. | yes | required | no | attached when available |
+| `rudder_browser_tabs` | `rudder browser tabs` | List Browser tabs owned by the current Rudder agent run. | no | required | required | required |
+| `rudder_browser_open` | `rudder browser open <url>` | Open a run-owned tab in the Rudder Browser. | yes | required | required | required |
+| `rudder_browser_navigate` | `rudder browser navigate <tab-id> <url>` | Navigate a run-owned Rudder Browser tab. | yes | required | required | required |
+| `rudder_browser_read` | `rudder browser read <tab-id>` | Read a structured snapshot from a run-owned Rudder Browser tab. | no | required | required | required |
+| `rudder_browser_click` | `rudder browser click <tab-id> <ref>` | Click an element reference returned by Rudder Browser read. | yes | required | required | required |
+| `rudder_browser_type` | `rudder browser type <tab-id> <ref> --text <text>` | Type into an element reference in a run-owned Rudder Browser tab. | yes | required | required | required |
+| `rudder_browser_screenshot` | `rudder browser screenshot <tab-id>` | Capture a screenshot of a run-owned Rudder Browser tab. | no | required | required | required |
+| `rudder_browser_close` | `rudder browser close <tab-id>` | Close a run-owned Rudder Browser tab. | yes | required | required | required |
 | `rudder_automation_list` | `rudder automation list --org-id <id>` | List automations for an organization with compact local filters. | no | required | no | no |
 | `rudder_automation_get` | `rudder automation get <automation-id>` | Read one automation detail including triggers and recent runs. | no | no | no | no |
 | `rudder_automation_runs` | `rudder automation runs <automation-id>` | List recent runs for one automation. | no | no | no | no |
