@@ -17,7 +17,7 @@ const ONBOARDING_PROJECT_DESCRIPTION = `Learn how Rudder works by completing one
 
 This project is not a generic product tour. It teaches the core Rudder workflow:
 
-chat → issue → agent execution → activity → review → context → real work.
+choose Chat or an issue → agent execution → inspectable results → review → context → better work.
 
 Complete the core issues to experience the basic loop. Then use the next issues to bring real work and reusable context into Rudder.`;
 
@@ -41,8 +41,8 @@ You are not just prompting a bot here. You are setting up a working relationship
 
 In Rudder:
 
-- Chat is for quick questions, clarification, and routing.
-- Issues are where durable work happens.
+- Chat moves tasks forward through an ongoing conversation.
+- Issues move tasks forward through structured status, ownership, and review.
 - Projects group related work.
 - Agents have roles, responsibilities, and execution boundaries.
 - Agents can build durable memory through shared context and instructions.
@@ -83,11 +83,13 @@ const ONBOARDING_ISSUES: OnboardingIssueTemplate[] = [
 
 The main surfaces are Chat, Issues, Projects, and Activity.
 
-Chat is for quick questions, clarification, and routing. Use it when you are still figuring out what you want, or when the request is too small to become durable work.
+Chat is a conversation-driven way to work. Use it to clarify, execute, refine, and complete a task in one ongoing thread.
 
-Issues are for work that should be tracked. Use an issue when something needs an owner, status, context, execution, review, or a durable result.
+Issues are a structure-driven way to work. Use an issue when explicit owner, status, priority, dependencies, acceptance criteria, or review state will help.
 
-Projects group related issues. Use a project when several pieces of work belong together and you want to see their progress in one place.
+Both can carry real agent work from request to result. Creating an issue adds coordination structure; it does not make a Chat task more real.
+
+Projects group related chats and issues. Use a project when several pieces of work belong together and you want to see their progress in one place.
 
 Activity shows what happened. Use it to understand progress, failures, status changes, comments, and agent actions.
 
@@ -101,8 +103,8 @@ Try it now:
 
 You’ll know it worked when:
 
-- You know when to use chat.
-- You know why durable work should live on an issue.
+- You know that Chat and issues can both move tasks forward.
+- You know when structured issue fields will help.
 - You know where project-level work is grouped.
 - You know where to look when you want to understand what changed.
 
@@ -114,10 +116,10 @@ Next step: ask your agent one quick question.`,
     priority: "high",
     group: "core",
     nextTitle: "3. Create and run your first agent issue",
-    chatPrompt: "What can you help me with in this workspace, and what is a good first issue for us to try in Rudder?",
-    description: `Start by talking to your agent before giving it durable work.
+    chatPrompt: "What can you help me accomplish in this workspace, and what is a good first task for us to try in Chat?",
+    description: `Start by moving one small task forward with your agent in Chat.
 
-In human teams, you often ask a teammate a quick question before assigning them a full task. Rudder works the same way. Chat is the lightweight place to ask, clarify, and get oriented.
+Chat is not only a place to ask questions before real work starts. It is a conversation-driven task surface where you can clarify a request, run the work, inspect results, and keep refining the outcome.
 
 Try it now:
 
@@ -127,8 +129,8 @@ Try it now:
 Good examples:
 
 - “What can you help me with in this workspace?”
-- “How should I give you a task in Rudder?”
-- “What is a good first issue for us to try?”
+- “Help me complete one small task in this workspace.”
+- “What is a good first task for us to try in Chat?”
 - “What information do you need from me before you can work well?”
 
 3. Read the agent’s reply.
@@ -140,7 +142,7 @@ You’ll know it worked when:
 
 - Your agent replies in chat.
 - You understand something about the agent’s role or how to work with it.
-- You have experienced the difference between a quick chat and tracked work.
+- You have experienced conversation-driven task work.
 
 Next step: create and run your first agent issue.`,
   },
@@ -151,17 +153,18 @@ Next step: create and run your first agent issue.`,
     group: "core",
     nextTitle: "4. Review the result and close the loop",
     chatPrompt: "Help me turn this into a small first Rudder issue: Summarize how Rudder works in 5 bullets and suggest one useful next step for a new user.",
-    description: `Chat is useful for figuring things out. Issues are where work becomes durable.
+    description: `You have now seen how Chat can move a task forward conversationally. Issues offer a second, structure-driven way to work.
 
-A request should usually become an issue when it needs:
+Use an issue when the task benefits from:
 
 - an owner
 - a status
-- context that should not be lost
-- agent execution
-- review
-- a clear result
-- a follow-up path
+- explicit priority or dependencies
+- acceptance criteria
+- structured review
+- a shared queue or handoff path
+
+Creating an issue adds this coordination structure. It is not required merely because a task is executable, important, long-running, or worth revisiting.
 
 Now create your first small agent issue.
 
@@ -309,7 +312,7 @@ Next step: bring one real task into Rudder.`,
     priority: "high",
     group: "recommended",
     nextTitle: "8. Link this work to a goal",
-    description: `Now bring one real task into Rudder.
+    description: `Now bring one real task into Rudder using Chat or an issue.
 
 Choose something real, but keep it small. The goal is not to migrate your entire workflow at once. The goal is to let Rudder take responsibility for one piece of work and leave a result you can review.
 
@@ -318,11 +321,10 @@ Pick a task that is useful, safe for an agent to attempt, easy for you to review
 Try it now:
 
 1. Choose one real task from your current work.
-2. Create a new issue for it.
+2. Choose Chat for a conversation-driven workflow, or create an issue for structured tracking.
 3. Include what you want done, why it matters, relevant context, what a good result looks like, and what the agent should avoid.
 4. Attach or mention any relevant files, links, or context.
-5. Assign the issue to your agent when it is ready.
-6. Move it to Todo to start the work.
+5. Start the agent in Chat, or assign and move the issue to Todo when it is ready.
 
 Good first real tasks:
 
@@ -334,9 +336,9 @@ Good first real tasks:
 
 You’ll know it worked when:
 
-- One real task exists as a Rudder issue.
-- The issue has enough context for an agent to start.
-- The task is assigned or ready to assign.
+- One real task is moving through a Rudder Chat or issue.
+- The chosen work surface has enough context for an agent to start.
+- The task is running or ready to run.
 - You know what result you expect to review.
 
 Next step: continue with the Advanced Getting Started issues when you are ready.`,
@@ -349,17 +351,17 @@ Next step: continue with the Advanced Getting Started issues when you are ready.
     nextTitle: "9. Capture one reusable workflow",
     description: `Rudder work should eventually answer one question: why does this task exist?
 
-You do not need to define a perfect company goal on day one. It is normal for goals to become clearer after you have run a few issues. But once real work starts moving, it should connect back to a larger direction.
+You do not need to define a perfect company goal on day one. It is normal for goals to become clearer after you have run a few tasks through Chat or issues. But once real work starts moving, it should connect back to a larger direction.
 
 Try it now:
 
 1. Open the real task you created.
 2. Ask: “What larger outcome does this support?”
 3. Create a simple goal, or choose an existing one.
-4. Link the issue or project to that goal.
+4. Link the issue to that goal, or link the Chat's project to the goal.
 5. Leave a short note explaining why this work matters.
 
-You’ll know it worked when at least one real issue is linked to a goal and the goal explains why the work matters.`,
+You’ll know it worked when a real Chat or issue is connected to a goal directly or through its project, and the goal explains why the work matters.`,
   },
   {
     title: "9. Capture one reusable workflow",

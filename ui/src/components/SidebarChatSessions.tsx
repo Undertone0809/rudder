@@ -37,7 +37,7 @@ function conversationSubtitle(conversation: ChatConversation): string {
   if (conversation.chatRuntime.model) {
     return `${conversation.chatRuntime.sourceLabel} · ${conversation.chatRuntime.model}`;
   }
-  return formatMessengerPreview(conversation.summary) || "Clarify, route, or convert to issue";
+  return formatMessengerPreview(conversation.summary) || "Execute, refine, or add issue structure";
 }
 
 function ConversationRow({

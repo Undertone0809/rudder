@@ -151,9 +151,9 @@ Related tests:
 
 Why:
 
-- Chat is an intake and lightweight execution surface. When a chat assistant
-  turn invokes a runtime, it must be inspectable as a run rather than buried
-  inside a message stream.
+- Chat is a conversation-driven execution surface. When a chat assistant turn
+  invokes a runtime, it must be inspectable as a run rather than buried inside
+  a message stream.
 
 Flow:
 
@@ -190,8 +190,8 @@ Flow:
 
 Invariants:
 
-- A chat-native run is not an issue-backed run unless the workflow explicitly
-  converts or proposes tracked issue work.
+- A chat-native run is a first-class task run. It is not issue-backed unless the
+  operator explicitly creates or links structured issue work.
 - Chat run audit must preserve conversation and message identity.
 - Internal repair prompts, repair protocol text, and repair transcript logs must
   not be surfaced as normal assistant chat content.

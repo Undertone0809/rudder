@@ -678,7 +678,7 @@ export const en = {
   "productTour.checklist.title": "Complete your first work loop",
   "productTour.checklist.workspace": "Read the control plane",
   "productTour.checklist.create": "Create a small task",
-  "productTour.checklist.issues": "Track issue state",
+  "productTour.checklist.issues": "Use issue structure",
   "productTour.checklist.inspect": "Inspect work output",
   "productTour.checklist.settings": "Find the tour again",
   "productTour.stepCounter": "{{current}} / {{total}}",
@@ -687,10 +687,10 @@ export const en = {
     "The rail keeps the main work surfaces close: Messenger, Dashboard, Issues, Agents, Organization, Automations, and Calendar. Use it to move between action, inspection, and review.",
   "productTour.step.create.title": "Start with one task an agent can actually move",
   "productTour.step.create.body":
-    "The create menu is where new chats, issues, agents, and projects begin. For the first loop, create a small issue with a clear boundary and a result you can review.",
-  "productTour.step.issues.title": "Issues are the executable units of work",
+    "The create menu is where new chats, issues, agents, and projects begin. For the first loop, choose a small Chat or issue with a clear boundary and a result you can review.",
+  "productTour.step.issues.title": "Issues add explicit workflow structure",
   "productTour.step.issues.body":
-    "The Issue surface shows what is waiting, active, blocked, or done. This is where agent work becomes trackable instead of staying inside a chat thread.",
+    "The Issue surface shows what is waiting, active, blocked, or done. Chat is the parallel conversational path; use an issue when ownership, status, priority, dependencies, or review should be explicit.",
   "productTour.step.inspect.title": "Inspect the work before you approve or continue",
   "productTour.step.inspect.body":
     "The Dashboard shows the current page, detail views, transcripts, outputs, and approvals. Rudder should make it clear what happened and what needs your intervention.",

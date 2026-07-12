@@ -6,9 +6,9 @@
 
 Agents that think, build, play, and learn from real work.
 
-Rudder turns goals, issues, agent runs, reviews, and feedback into a work loop for agent teams. It gives humans and agents a shared operating structure for assigning work, running agents, reviewing outputs, controlling spend, and preserving the lessons that should make the next run better.
+Rudder turns goals, tasks, chats, issues, agent runs, reviews, and feedback into a work loop for agent teams. It gives humans and agents a shared operating structure for moving work forward, running agents, reviewing outputs, controlling spend, and preserving the lessons that should make the next run better.
 
-One Rudder instance can run multiple organizations. An **organization** is the first-order product object: the workspace where a human operator gives an agent team a goal, a structure, durable work objects, runtime access, budgets, and review paths.
+One Rudder instance can run multiple organizations. An **organization** is the first-order product object: the workspace where a human operator gives an agent team a goal, inspectable Chat and issue work surfaces, runtime access, budgets, and review paths.
 
 The current north-star metric is the weekly count of real agent-work loops completed end-to-end through Rudder.
 
@@ -17,12 +17,12 @@ The current north-star metric is the weekly count of real agent-work loops compl
 Rudder is organized around one compounding loop:
 
 ```text
-Goal -> Issue -> Agent run -> Review -> Feedback -> Learning -> Better future runs
+Goal -> Chat or Issue -> Agent run -> Review -> Feedback -> Learning -> Better future runs
 ```
 
 The loop matters because agent work improves only when real work leaves behind durable evidence: the context used, the decisions made, the output produced, the review result, the cost, and the lesson that should influence future runs.
 
-Rudder should make the promotion paths explicit and reviewable. A lesson may become better issue context, a skill update, a reusable workflow, a decision record, a document, or a stronger operating rule. Rudder should not pretend every lesson is automatically promoted without human or policy review.
+Rudder should make the promotion paths explicit and reviewable. A lesson may become better Chat or issue context, a skill update, a reusable workflow, a decision record, a document, or a stronger operating rule. Rudder should not pretend every lesson is automatically promoted without human or policy review.
 
 ## Core Concepts
 
@@ -32,8 +32,8 @@ An organization has:
 
 - a **goal** that explains why the agent team exists
 - **agents** with roles, runtimes, capabilities, budgets, and reporting lines
-- **issues** that turn intent into durable execution work
-- **projects** that group related issues, resources, and timelines
+- **chat and issues** that offer conversational and structured ways to move work forward
+- **projects** that group related chats, issues, resources, and timelines
 - **reviews and approvals** for output quality and governed actions
 - **feedback and lessons** that preserve what future runs should learn
 - **cost controls** for budget visibility and hard stops
@@ -53,13 +53,13 @@ Rudder is runtime-neutral. It coordinates agents; it does not dictate how every 
 
 ### Agent Runs
 
-A run is a bounded work cycle. Rudder wakes an agent through a local command or external request, tracks status, preserves transcript/output evidence where available, records cost events, and links the run back to the issue and organization context.
+A run is a bounded work cycle. Rudder wakes an agent through a local command or external request, tracks status, preserves transcript/output evidence where available, records cost events, and links the run back to its chat or issue context and organization.
 
 Runs should leave a clear signal: progress, done, blocked, review feedback, or a named handoff.
 
 ### Issues
 
-Issues are the durable execution surface. Chat can clarify a request, but work that needs assignment, budget, review, or future memory should become an issue.
+Issues are the structured execution surface. They are useful when work benefits from explicit status, ownership, priority, dependencies, or review state. They are not a prerequisite for real execution: users may move a task forward and complete it in Chat when a conversational workflow fits better.
 
 An issue keeps the important record together:
 
@@ -79,21 +79,22 @@ Learning is not a hidden background rewrite. It is a governed product path for t
 
 ### Chat and Messenger
 
-Chat is a first-class intake, clarification, and lightweight run surface in Rudder.
+Chat is Rudder's conversation-driven execution surface. Chat and issues are two ways to move tasks forward: Chat organizes work through an ongoing conversation, while issues organize work through explicit fields and lifecycle state.
 
-- It helps clarify requests before work starts.
+- It can clarify, execute, refine, and complete tasks without requiring an issue conversion.
 - It can suggest routing, draft issue proposals, and propose lightweight approval-gated actions.
 - It can host chat-native automation runs when the configured output is `Send to chat`.
-- Durable tracked work remains issue-centric; chat-native automation runs keep their audit trail on `automation_runs` and the chat transcript instead of creating execution issues.
+- Chat-native runs keep their audit trail on Agent Runs, automation runs where applicable, the chat transcript, and the conversation Work manifest instead of requiring a synthetic execution issue.
+- Creating or linking an issue adds structured coordination when the operator wants it; it does not make the underlying task more real.
 
 Chat is part of the broader board communication shell surfaced as `Messenger`. Messenger unifies chat conversations with issue threads, blockers, failed runs, review prompts, budget alerts, and decision requests without turning Rudder into a generic chat product.
 
 ## Principles
 
 1. **Agent teams improve through real work.** Rudder must preserve the evidence and feedback that make later runs better.
-2. **Issues are the work surface.** Durable execution belongs on issues, not in loose chat threads or terminal transcripts.
+2. **Chat and issues are work surfaces.** Users may choose conversation-driven or structure-driven execution. Both must preserve inspectable runs, outputs, and decisions appropriate to the surface.
 3. **Organization is the unit of operation.** Everything lives under an organization. One Rudder instance can run many organizations.
-4. **All work traces to the goal.** If an issue cannot be explained in terms of the organization goal, it should not exist.
+4. **All work traces to the goal.** If a durable Chat task or issue cannot be explained in terms of the organization goal, it should not exist.
 5. **Runtime-neutral by default.** Rudder orchestrates agents; runtimes perform work.
 6. **Control spend and autonomy together.** Auto mode is allowed; hidden token burn is not.
 7. **Review makes learning safe.** Feedback and skill/workflow promotion should be explicit, inspectable, and reversible where practical.
@@ -104,11 +105,11 @@ Chat is part of the broader board communication shell surfaced as `Messenger`. M
 1. Open Rudder and create a new organization.
 2. Define the organization goal.
 3. Create or use a default agent with a clear role and runtime.
-4. Create or convert a request into an issue.
-5. Assign the issue to one owner and add a reviewer when quality judgment matters.
-6. Run the agent through a heartbeat.
-7. Review the output, run evidence, activity, and spend from the board.
-8. Leave feedback on the run, issue, or output.
+4. Start the task in Chat or create an issue, depending on the preferred work style.
+5. For structured coordination, assign the issue to one owner and add a reviewer when quality judgment matters.
+6. Run the agent through a chat turn or heartbeat.
+7. Review the output, run evidence, activity, and spend from the relevant work surface.
+8. Leave feedback on the chat, run, issue, or output.
 9. Preserve reusable lessons as better context, skills, decisions, or workflows.
 10. Let future runs use the improved operating context.
 
@@ -131,9 +132,9 @@ historical context only.
 
 **Do**
 
-- Stay focused on the agent-team work loop: goals, issues, runs, reviews, feedback, budgets, and lessons.
-- Make the first five minutes feel concrete: install, create an organization, run one real issue, inspect the evidence.
-- Keep work anchored to **issues/comments/projects/goals**, even when the entry surface is conversational.
+- Stay focused on the agent-team work loop: goals, tasks, chats, issues, runs, reviews, feedback, budgets, and lessons.
+- Make the first five minutes feel concrete: install, create an organization, run one real task through Chat or an issue, and inspect the evidence.
+- Keep work anchored to inspectable **chats/issues/runs/outputs/projects/goals** rather than detached prompts or terminal transcripts.
 - Treat **agency / internal team / startup** as templates over the same underlying organization abstraction.
 - Make outputs first-class: files, docs, reports, previews, links, screenshots.
 - Provide hooks into engineering workflows: worktrees, preview servers, PR links, external review tools.
@@ -141,7 +142,7 @@ historical context only.
 
 **Do not**
 
-- Do not make the core product a general chat app. Chat is intake, not the primary work system.
+- Do not make the core product a generic social chat app. Chat is a real task-execution surface grounded in agents, runs, outputs, organization context, and controls.
 - Do not pitch Rudder as an AI-company simulator. The product promise is an improving agent team grounded in real work.
 - Do not build a complete Jira/GitHub replacement. Rudder coordinates agent work; it should integrate with delivery tools instead of replacing all of them.
 - Do not build enterprise-grade RBAC first. V1 should stay coarse and organization-scoped.
@@ -154,10 +155,10 @@ historical context only.
    A fresh user should go from install to one completed, reviewable agent-work loop in one sitting.
 
 2. **The work loop is always visible**
-   The default UI should answer: what is the goal, which issues are moving, who owns the next step, what changed, what did it cost, what needs review, and what should future runs learn?
+   The default UI should answer: what is the goal, which chats or issues are moving tasks forward, who or what owns the next step, what changed, what did it cost, what needs review, and what should future runs learn?
 
-3. **Conversation stays attached to work objects**
-   Chat should clarify, route, and propose work, but durable work should remain attached to issues, projects, goals, runs, reviews, and approvals.
+3. **Conversation is a work object**
+   Chat may carry a task from request through execution and completion. Runs, outputs, decisions, projects, goals, reviews, and approvals should remain inspectably attached whether the user chooses Chat, an issue, or links both.
 
 4. **Progressive disclosure**
    Top layer: human-readable summary. Middle layer: checklist/steps/artifacts. Bottom layer: raw logs/tool calls/transcript.

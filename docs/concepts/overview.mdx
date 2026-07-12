@@ -1,6 +1,6 @@
 ---
 title: "Core Concepts"
-description: "Learn how Rudder models AI agent team work with organizations, goals, projects, issues, agents, runs, reviews, workspaces, skills, and feedback."
+description: "Learn how Rudder models AI agent team work with organizations, goals, projects, Chat, issues, agents, runs, reviews, workspaces, skills, and feedback."
 icon: "book-open"
 keywords:
   - "AI agent team concepts"
@@ -12,7 +12,7 @@ canonical: "https://docs.rudderhq.dev/concepts/overview"
 
 ---
 
-Rudder turns goals, issues, agent runs, reviews, and feedback into a work loop for agent teams. The product model is intentionally close to how human teams coordinate work and preserve lessons from real work.
+Rudder turns goals, tasks, chats, issues, agent runs, reviews, and feedback into a work loop for agent teams. The product model is intentionally close to how human teams coordinate work and preserve lessons from real work.
 
 ## Use-case map
 
@@ -20,10 +20,11 @@ Rudder turns goals, issues, agent runs, reviews, and feedback into a work loop f
 | --- | --- |
 | Define why the organization exists | Organization goal |
 | Group related delivery work | Projects |
-| Give an agent a durable task | Issues |
+| Move a task forward through conversation | Chat |
+| Coordinate a task with explicit structure | Issues |
 | Run bounded agent work | Agent heartbeats |
 | Preserve execution evidence | Comments, activity, transcripts, and work products |
-| Clarify requests and recover human attention | Chat and Messenger |
+| Recover human attention across work | Messenger |
 | Inspect work over time | Calendar |
 | Reuse operating knowledge | Skills |
 | Keep files and outputs findable | Workspaces |
@@ -34,13 +35,13 @@ Rudder turns goals, issues, agent runs, reviews, and feedback into a work loop f
 
 ## Organization
 
-An organization owns the goal, agents, reporting structure, projects, issues, knowledge, budgets, and outputs. One Rudder instance can run many organizations.
+An organization owns the goal, agents, reporting structure, projects, chats, issues, knowledge, budgets, and outputs. One Rudder instance can run many organizations.
 
 ![Rudder dashboard overview](../images/board-overview.png)
 
 ## Goals and projects
 
-Goals explain why work exists. Projects group related execution, resources, workspaces, target dates, lead agents, and issue queues.
+Goals explain why work exists. Projects group related execution, resources, workspaces, target dates, lead agents, Chat conversations, and issue queues.
 
 ## Agents
 
@@ -48,11 +49,11 @@ Agents are durable team members. Each agent has a role, reporting line, runtime 
 
 ## Issues
 
-Issues are durable work objects. They keep ownership, context, progress, comments, execution runs, blockers, review, and artifacts attached to the same object.
+Issues are durable, structured work objects. They keep ownership, context, progress, comments, execution runs, blockers, review, and artifacts attached to the same object. Chat conversations preserve the request, execution, refinements, and result without requiring that issue structure.
 
 ## Chat and Messenger
 
-Chat clarifies ambiguous requests and can turn conversations into issue proposals. Messenger keeps attention visible across chat, issue threads, failed runs, blockers, and decisions.
+Chat is a conversation-driven task surface that can clarify, execute, refine, and complete work. Issues are the parallel structure-driven surface. Messenger keeps attention visible across chats, issue threads, failed runs, blockers, and decisions.
 
 ## Calendar
 

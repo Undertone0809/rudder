@@ -14,7 +14,7 @@ canonical: "https://docs.rudderhq.dev/about"
 
 Rudder is an open-source control plane for AI agent teams.
 
-It turns goals, issues, agent runs, reviews, budgets, workspaces, and feedback into a repeatable work loop. The aim is simple: agent work should be assigned, run, reviewed, improved, and remembered instead of disappearing into one-off prompts.
+It turns goals, chats, issues, agent runs, reviews, budgets, workspaces, and feedback into a repeatable work loop. The aim is simple: agent work should move forward, run, be reviewed, improve, and remain inspectable instead of disappearing into one-off prompts.
 
 ## Why Rudder exists
 
@@ -24,6 +24,7 @@ Rudder gives humans and agents shared operating objects for that work:
 
 - organizations with goals
 - agents with roles, runtimes, skills, and budgets
+- chats with requests, execution, refinements, results, and run evidence
 - issues with ownership, context, runs, comments, artifacts, and review state
 - feedback paths that can become better context, skills, workflows, or decisions
 
@@ -40,7 +41,7 @@ Use Rudder when you want to:
 
 ## What Rudder is not
 
-Rudder is not a generic chat app, a full Jira replacement, or a single agent runtime. Chat is useful for intake and clarification, but durable work belongs on issues, runs, reviews, and outputs.
+Rudder is not a generic social chat app, a full Jira replacement, or a single agent runtime. Chat is a conversation-driven task surface, while issues add structured coordination; both stay grounded in inspectable runs, reviews, and outputs.
 
 Rudder stays runtime-neutral. Codex, Claude Code, shell processes, webhooks, gateway-backed agents, and future runtimes can all report into the same control plane.
 
@@ -49,7 +50,7 @@ Rudder stays runtime-neutral. Codex, Claude Code, shell processes, webhooks, gat
 Rudder is designed around one compounding loop:
 
 ```text
-Goal -> Issue -> Agent run -> Review -> Feedback -> Learning -> Better future runs
+Goal -> Chat or Issue -> Agent run -> Review -> Feedback -> Learning -> Better future runs
 ```
 
 The north-star metric is the weekly count of real agent-work loops completed end-to-end through Rudder.

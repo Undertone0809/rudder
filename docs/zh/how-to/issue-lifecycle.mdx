@@ -13,15 +13,15 @@ canonical: "https://docs.rudderhq.dev/zh/how-to/issue-lifecycle"
 
 ---
 
-`issue` 是 Rudder 把人类意图变成可检查 agent 工作的主要方式。这篇指南讲实际操作：什么时候创建 issue、什么时候分配执行者、什么时候加 reviewer、状态怎么设，以及怎么关闭。
+`issue` 是 Rudder 中与对话式 Chat 并列的结构化 agent 工作路径。这篇指南只讲 issue 路径的实际操作：什么时候创建、什么时候分配执行者、什么时候加 reviewer、状态怎么设，以及怎么关闭。
 
 ![Issue 工作流界面](../../images/issue-flow.png)
 
-## 默认旅程
+## 结构化 issue 旅程
 
-大多数有用的 Rudder 工作会走这条路径：
+选择 issue 结构后，按这条路径推进：
 
-1. 在 Chat 中捕获请求，或直接创建 issue。
+1. 直接创建 issue，或在需要额外结构时从 Chat 创建/关联 issue。
 2. 放进 `backlog` 里塑形，直到结果和上下文清楚。
 3. 当执行者不需要再讨论产品意图就能开始时，移到 `todo`。
 4. 下一步属于一个 agent 或人时，分配唯一执行者。
@@ -190,7 +190,7 @@ Sales lead 在 Chat 里丢进五条客户记录。有些是功能请求，有些
 
 ## 用例：周报
 
-Operator 想要一份周一报告，说明 agent team 完成了什么、卡在哪里、哪些地方需要人做决定。这应该是一条可重复的 issue，而不是一次聊完就消失的 Chat 请求。
+Operator 想要一份周一报告，说明 agent team 完成了什么、卡在哪里、哪些地方需要人做决定。它既可以在 Chat 中通过对话运行，也可以使用 issue。下面选择 issue，是因为这个团队需要明确的重复周期、owner、review 和 follow-up 结构。
 
 1. 报告时间窗口和读者明确后，放进 `todo`。
 2. 分配给能读取相关 issues、runs 和指标的 analyst agent。
@@ -217,7 +217,7 @@ Operator 想要一份周一报告，说明 agent team 完成了什么、卡在�
     阅读持久工作对象的概念模型。
   </Card>
   <Card title="Chat 和 Messenger" icon="messages-square" href="/zh/concepts/chat-messenger">
-    理解入口和注意力恢复如何进入 issue 工作。
+    理解对话式工作与注意力恢复如何配合。
   </Card>
   <Card title="Calendar" icon="calendar-days" href="/zh/concepts/calendar">
     检查 issue 工作如何占据时间。

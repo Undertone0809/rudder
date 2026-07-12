@@ -471,6 +471,48 @@ describe("IssuesList", () => {
     expect(container.textContent).toContain("Project grouped issue");
   });
 
+  it("describes Chat and issue structure as parallel onboarding workflows", () => {
+    window.localStorage.setItem(
+      "test:issues:org-1",
+      JSON.stringify({ groupBy: "none", viewMode: "list" }),
+    );
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssuesList
+          issues={[
+            issueFixture({
+              id: "getting-started-core",
+              projectId: "getting-started",
+              title: "1. Understand how Rudder work happens",
+            }),
+          ]}
+          projects={[{ id: "getting-started", name: "Getting Started" }]}
+          projectId="getting-started"
+          viewStateKey="test:issues"
+          toolbarMode="hidden"
+          onUpdateIssue={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain(
+      "choose Chat or issue structure, execute work, review results, and add project context",
+    );
+    expect(container.textContent).not.toContain("chat → issue");
+  });
+
   it("moves zero-issue statuses into a hidden rail while keeping lane creation available", () => {
     window.localStorage.setItem(
       "test:issues:org-1",

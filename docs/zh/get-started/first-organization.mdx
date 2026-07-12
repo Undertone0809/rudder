@@ -13,9 +13,9 @@ canonical: "https://docs.rudderhq.dev/zh/get-started/first-organization"
 
 ---
 
-组织是 Rudder 的第一层工作空间。人类在组织里定方向，把请求沉淀成 issue，并用评论、运行记录、评审和时间线留下可检查的工作记录。
+组织是 Rudder 的第一层工作空间。人类在组织里定方向，通过 Chat 或 issue 推进任务，并用对话、评论、运行记录、评审和时间线留下可检查的工作记录。
 
-这篇指南不列功能清单。新组织会带一个默认 Operator Assistant，你可以先用它跑完第一条有用流程：创建组织、把请求写成 issue、分配执行者、运行 agent、检查证据，再用 Messenger 回看发生了什么。
+这篇指南不列功能清单。新组织会带一个默认 Operator Assistant，你可以先用它跑完第一条有用流程：创建组织、选择对话式或结构化工作方式、运行 agent、检查证据，再用 Messenger 查看哪里需要注意。
 
 ![第一个组织工作循环](../../images/first-organization-loop-zh.svg)
 
@@ -34,7 +34,7 @@ npx @rudderhq/cli@latest start
 - “为优化文档截图写一个小型任务计划。”
 - “review 这个产品页面，列出发布前必须修改的点。”
 
-目标不是“点完所有按钮”。你要创建一个能分配、能执行、能评审、能留下记录的工作对象。在 Rudder 里，这个对象叫 `issue`。
+目标不是“点完所有按钮”。你要通过一个可检查的工作对象完成任务。在 Rudder 里，这个对象可以是 Chat 对话，也可以是 `issue`。
 
 ## 1. 围绕真实目标创建组织
 
@@ -56,9 +56,11 @@ npx @rudderhq/cli@latest start
 
 ![Rudder 仪表盘概览](../../images/board-overview.png)
 
-## 2. 执行前先创建 issue
+## 2. 选择 Chat 或 issue
 
-`issue` 是 Rudder 里的持久执行界面。Chat 可以用来澄清问题，但真正会消耗 agent 时间、预算或评审注意力的工作，应该先变成 issue。
+Chat 和 issue 都可以把真实 agent 工作从请求推进到结果。Chat 由对话驱动；`issue` 增加结构化状态、owner、优先级、依赖和 review 状态。根据任务特点和你的偏好选择即可。
+
+这篇指南使用 issue 来讲解结构化流程。你也可以直接在 Chat 中运行同一个小任务；agent 花费时间或产出持久结果，并不意味着必须转换成 issue。
 
 ![Issue 看板](../../images/first-organization-issue-board.png)
 
@@ -161,21 +163,21 @@ Agent heartbeat 会唤醒 agent，让它检查分配给自己的 issue，推进�
 
 如果 run 结束但没有证据，这项工作就不可检查。让 agent 补一条关闭评论，或者把 issue 移到 `blocked`，写清下一步归谁。
 
-## 7. Chat 用来接收请求，不替代工作记录
+## 7. 把 Chat 作为任务工作方式
 
-请求还停留在对话阶段时，用 Chat。它适合解释模糊请求、补上下文、选择 agent，并生成 issue 提案。
+偏好通过持续对话推进任务时，用 Chat。它可以解释请求、补上下文、选择 agent、运行工作、检查产物并继续调整结果，不要求先创建 issue。
 
 ![Chat issue 提案](../../images/chat-create-issue-proposal.png)
 
 好的模式是：
 
-1. 在 Chat 里输入混乱请求。
-2. 让选中的 agent 追问或生成 issue 提案。
-3. 批准或编辑这个提案。
-4. 执行生成出来的 issue。
-5. 后续决策继续记录在 issue 上。
+1. 在 Chat 里输入请求。
+2. 让选中的 agent 澄清并开始工作。
+3. 在对话中检查 run 和产物。
+4. 继续调整或完成任务。
+5. 只有需要结构化协作时，才创建或关联 issue。
 
-如果一段对话重要到需要分配、消耗预算、评审或未来回看，就把它转成 issue。
+创建 issue 是增加字段和团队协作结构，不是让任务取得“真实工作”身份。团队策略仍然可以要求受治理流程使用 issue。
 
 ## 8. 用 Messenger 恢复注意力
 
@@ -191,7 +193,7 @@ Messenger 用来发现什么需要人类注意：回复、issue 线程、失败�
 - review 决定在等待
 - Chat 创建的 issue 提案需要接受或编辑
 
-Messenger 应该把你带回持久对象。如果下一步是真正的工作，就记录到 issue 上。
+Messenger 应该把你带回原生承载下一步的对象，无论它是 Chat、issue、run、review 还是 approval。
 
 ## 9. 把重复指令沉淀成技能
 
@@ -206,12 +208,12 @@ Messenger 应该把你带回持久对象。如果下一步是真正的工作，�
 当你能追踪下面这条链路时，第一个组织就真的跑起来了：
 
 1. 人类提出目标。
-2. 请求变成 issue。
-3. 一个 assignee 拥有下一步。
+2. 任务通过 Chat 或 issue 推进。
+3. 选择的界面保留请求和上下文。
 4. agent run 留下证据。
-5. reviewer 或 owner 接受、阻塞或要求修改。
+5. 需要时由 reviewer 或 owner 接受、阻塞或要求修改。
 6. Messenger 显示注意力需求。
-7. issue 保留最终记录。
+7. Chat 或 issue 保留最终记录和关联产物。
 
 ## 下一步
 

@@ -13,7 +13,7 @@ canonical: "https://docs.rudderhq.dev/zh/concepts/overview"
 
 ---
 
-Rudder 把目标、issue、agent run、review 和 feedback 串成 agent team 的工作循环。它的产品模型贴近人类团队协调工作、沉淀经验的方式。
+Rudder 把目标、任务、Chat、issue、agent run、review 和 feedback 串成 agent team 的工作循环。它的产品模型贴近人类团队协调工作、沉淀经验的方式。
 
 ## 场景地图
 
@@ -21,10 +21,11 @@ Rudder 把目标、issue、agent run、review 和 feedback 串成 agent team 的
 | --- | --- |
 | 定义组织为什么存在 | 组织目标 |
 | 组织一组相关交付工作 | 项目 |
-| 给 agent 一个持久 issue | 任务 |
+| 通过持续对话推进任务 | Chat |
+| 用明确结构协调任务 | Issue |
 | 运行一次有边界的 agent 工作 | Agent heartbeat |
 | 保存执行证据 | 评论、活动、transcript 和工作产物 |
-| 澄清请求并恢复人类注意力 | Chat 和 Messenger |
+| 找回分散在工作中的注意力 | Messenger |
 | 按时间检查工作 | Calendar |
 | 复用操作知识 | 技能 |
 | 让文件和输出可查找 | 工作区 |
@@ -35,13 +36,13 @@ Rudder 把目标、issue、agent run、review 和 feedback 串成 agent team 的
 
 ## 组织
 
-组织拥有目标、agent、汇报结构、项目、issue、知识、预算和输出。一个 Rudder 实例可以管理多个组织。
+组织拥有目标、agent、汇报结构、项目、Chat、issue、知识、预算和输出。一个 Rudder 实例可以管理多个组织。
 
 ![Rudder 仪表盘概览](../../images/board-overview.png)
 
 ## 目标和项目
 
-目标解释工作为什么存在。项目把相关执行、资源、工作区、目标日期、负责人 agent 和 issue 队列放在一起。
+目标解释工作为什么存在。项目把相关执行、资源、工作区、目标日期、负责人 agent、Chat 对话和 issue 队列放在一起。
 
 ## Agents
 
@@ -49,11 +50,11 @@ Agent 是稳定的团队成员。每个 agent 都有角色、汇报线、运行�
 
 ## 任务
 
-任务是持久工作对象，在产品里对应 `issue`。它把归属、上下文、进展、评论、运行、阻塞、评审和产物放在同一个对象上。
+Chat 和 issue 都能承载任务。Chat 通过持续对话组织执行；`issue` 用明确字段把归属、上下文、进展、评论、运行、阻塞、评审和产物放在同一个结构化对象上。
 
 ## Chat 和 Messenger
 
-Chat 用来澄清模糊请求，也可以把对话变成 issue 提案。Messenger 把 chat、issue 线程、失败运行、阻塞和决策请求放进同一个注意力入口。
+Chat 是由对话驱动的任务界面，可以澄清、执行、调整并完成工作；issue 是与它并列的结构化任务界面。Messenger 把 Chat、issue 线程、失败运行、阻塞和决策请求放进同一个注意力入口。
 
 ## Calendar
 

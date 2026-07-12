@@ -59,15 +59,16 @@ test.describe("Product tour", () => {
 
     for (const title of [
       "Start with one task an agent can actually move",
-      "Issues are the executable units of work",
+      "Issues add explicit workflow structure",
       "Inspect the work before you approve or continue",
       "You can replay this tour from Settings",
     ]) {
       await page.getByRole("button", { name: "Next" }).click();
       await expect(page.getByRole("dialog", { name: title })).toBeVisible();
-      if (title === "Issues are the executable units of work") {
+      if (title === "Issues add explicit workflow structure") {
         await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues$`));
         await expect(page.getByRole("heading", { name: "Issue Tracker" })).toBeVisible();
+        await expect(page.getByText(/Chat is the parallel conversational path/i)).toBeVisible();
       }
     }
 
@@ -121,15 +122,16 @@ test.describe("Product tour", () => {
 
     for (const title of [
       "Start with one task an agent can actually move",
-      "Issues are the executable units of work",
+      "Issues add explicit workflow structure",
       "Inspect the work before you approve or continue",
       "You can replay this tour from Settings",
     ]) {
       await page.getByRole("button", { name: "Next" }).click();
       await expect(page.getByRole("dialog", { name: title })).toBeVisible();
-      if (title === "Issues are the executable units of work") {
+      if (title === "Issues add explicit workflow structure") {
         await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues$`));
         await expect(page.getByRole("heading", { name: "Issue Tracker" })).toBeVisible();
+        await expect(page.getByText(/Chat is the parallel conversational path/i)).toBeVisible();
       }
       await expectTourChromeSeparated(page);
     }

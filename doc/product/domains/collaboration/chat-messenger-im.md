@@ -110,9 +110,9 @@ edit_policy: user_confirmed_only
 
 Why:
 
-- Chat is where humans clarify intent, run lightweight assistant turns, draft
-  issue/automation proposals, and attach context before work becomes durable
-  tracked execution.
+- Chat is a conversation-driven task execution surface. Humans can clarify,
+  execute, refine, and complete real work in Chat without first converting the
+  conversation into an issue.
 - Issue proposal drafting is operator-intent gated. A chat assistant may draft
   an issue proposal only when the latest operator-authored user request
   explicitly asks to create an issue, convert the chat to an issue, or draft an
@@ -129,6 +129,9 @@ Product model:
   evidence under `CHAT.THREAD.MANIFEST.001`.
 - Chat-native assistant turns that invoke runtimes are Agent Runs under
   `RUN.CHAT.AGENT.001`.
+- Chat and issues are parallel ways to move tasks forward. Chat organizes work
+  through an ongoing conversation; issues add explicit status, ownership,
+  priority, dependencies, and review structure.
 - A completed assistant answer may be refreshed as another variant of the same
   chat turn. The visible branch controls let the operator compare prior and
   refreshed variants without creating a new conversation.
@@ -150,8 +153,9 @@ Product model:
 - The current runtime does not accept mid-run steering for queued follow-ups.
   A steering attempt records a fallback reason and leaves the follow-up queued
   for normal delivery.
-- Durable tracked work remains issue-centric unless the configured flow is
-  explicitly chat-native, such as automation `chat_output`.
+- Chat-native work remains inspectable through the conversation, Agent Runs,
+  Work manifest, and linked outputs. Creating or linking an issue is optional
+  structured coordination, not a prerequisite for real or durable work.
 
 Flow:
 
@@ -161,10 +165,10 @@ Flow:
 3. Server persists user message and context links.
 4. If a runtime assistant is invoked, Rudder creates a chat Agent Run and
    streams/persists assistant messages.
-5. Chat can convert or propose conversion into issue/automation/approval work
-   when the operator asks for that conversion/proposal path. The assistant must
-   not emit an issue proposal merely because the work is large, durable,
-   assignable, or issue-shaped.
+5. Chat can continue executing the task conversationally or create/link an
+   issue, automation, or approval when the operator asks for that additional
+   structure. The assistant must not emit an issue proposal merely because the
+   work is large, durable, assignable, or issue-shaped.
 6. When the operator refreshes a completed assistant answer, Rudder reuses the
    original turn context, creates a new turn variant, and surfaces branch
    controls for moving between variants.
@@ -195,6 +199,9 @@ Invariants:
 - Assistant-created issue proposals must be grounded in an explicit latest
   operator-authored request for issue creation, chat-to-issue conversion, or
   issue-proposal drafting.
+- A task becoming executable, long-running, expensive, reviewable, or worth
+  revisiting must not by itself force Chat to create an issue. Policy may still
+  require structured issue fields for governed team workflows.
 - When an assistant turn is stopped before completion, the chat may show only
   already streamed user-visible assistant text as a partial reply. It must not
   fill the bubble from provider reasoning/thinking events or incomplete runtime
@@ -935,7 +942,7 @@ Why:
 - Operators often need to inspect or lightly operate on a referenced issue,
   automation, Library file, directory, chat, or browser-like target while keeping
   their current work surface in view.
-- Chat remains an intake and coordination surface, but references should not
+- Chat remains a task execution and coordination surface, but references should not
   force route replacement when the user's job is quick context inspection or a
   small adjacent edit.
 

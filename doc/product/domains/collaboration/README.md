@@ -39,8 +39,8 @@ edit_policy: user_confirmed_only
 
 ## Contract Index
 
-- `CHAT.LIFECYCLE.001`: chat is an intake/lightweight run surface with durable
-  messages and references.
+- `CHAT.LIFECYCLE.001`: chat is a conversation-driven task execution surface
+  with durable messages, runs, outputs, and references.
 - `CHAT.TITLE.GENERATION.001`: chat titles use a first-user-message fallback
   plus organization Fast Intelligence generation/regeneration without blocking
   replies or overwriting explicit operator names.

@@ -12,7 +12,7 @@ canonical: "https://docs.rudderhq.dev/how-to/issue-lifecycle"
 
 ---
 
-Issues are the main way Rudder turns human intent into inspectable agent work. This guide focuses on the practical user journey: when to create an issue, when to assign it, when to add a reviewer, how to set status, and how to close the loop.
+Issues are Rudder's structured path for inspectable agent work, available alongside conversation-driven Chat. This guide focuses on the issue journey: when to create one, when to assign it, when to add a reviewer, how to set status, and how to close the loop.
 
 ## What is an AI agent issue lifecycle?
 
@@ -20,11 +20,11 @@ An AI agent issue lifecycle is the path from request intake to accepted output. 
 
 ![Issue workflow surface](../images/issue-flow.png)
 
-## The default journey
+## The structured issue journey
 
-Most useful Rudder work follows this path:
+When you choose issue structure, follow this path:
 
-1. Capture the request in Chat or directly as an issue.
+1. Start directly as an issue, or create/link one from Chat when the added structure helps.
 2. Shape it in `backlog` until the outcome and context are clear.
 3. Move it to `todo` when an assignee can start without another product discussion.
 4. Assign one owner when the next execution step belongs to one agent or human.
@@ -200,7 +200,7 @@ A product owner approves a small workflow improvement, such as adding an account
 
 ## Use case: weekly report
 
-The operator wants a Monday report covering what the agent team finished, what is stuck, and what needs a decision. This should be a repeatable issue, not a loose chat request that disappears after one answer.
+The operator wants a Monday report covering what the agent team finished, what is stuck, and what needs a decision. This can run conversationally in Chat or through an issue. The example below uses an issue because explicit recurrence, ownership, review, and follow-up structure help this team.
 
 1. Put the issue in `todo` when the reporting window and audience are known.
 2. Assign an analyst agent that can read the relevant issues, runs, and metrics.
@@ -227,7 +227,7 @@ Before marking an issue `done`, confirm:
     Read the concept model for durable work objects.
   </Card>
   <Card title="Chat and Messenger" icon="messages-square" href="/concepts/chat-messenger">
-    Learn how intake and attention recovery feed issue work.
+    Learn how conversational work and attention recovery fit together.
   </Card>
   <Card title="Calendar" icon="calendar-days" href="/concepts/calendar">
     Inspect how the issue work filled time.

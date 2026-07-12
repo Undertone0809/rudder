@@ -114,7 +114,7 @@ const onboardingGroupCopy: Record<(typeof onboardingGroupOrder)[number], { label
   },
   core: {
     label: "Core loop",
-    description: "Complete these issues to experience chat → issue → execution → review → project context."
+    description: "Complete these issues to choose Chat or issue structure, execute work, review results, and add project context."
   },
   recommended: {
     label: "Recommended next",

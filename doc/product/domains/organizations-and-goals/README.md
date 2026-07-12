@@ -22,7 +22,7 @@ edit_policy: user_confirmed_only
 - Organization mission and lifecycle as the top-level operating boundary.
 - Goal hierarchy, status, owner, and dependency protection.
 - Project identity, project-goal links, lead agent, status, and grouping of
-  issues/resources/workspaces.
+  chats/issues/resources/workspaces.
 
 ## Does Not Own
 
@@ -34,7 +34,7 @@ edit_policy: user_confirmed_only
 ## Contract Index
 
 - `ORG.GOAL.001`: goals explain why work exists and preserve hierarchy.
-- `ORG.PROJECT.001`: projects group goal-directed issues, resources, and
+- `ORG.PROJECT.001`: projects group goal-directed chats, issues, resources, and
   workspaces.
 - `ORG.SETTINGS.001`: settings persist instance/operator/organization behavior
   without crossing scopes.

@@ -9,7 +9,7 @@ This is the control-plane practice skill for agents working under Rudder. Rudder
 work is not only "run a command"; it is a governed loop:
 
 ```text
-Goal -> Issue -> Agent run -> Review -> Feedback -> Learning -> Better future runs
+Goal -> Plan -> Chat or Issue -> Agent run -> Review -> Feedback -> Learning -> Better future runs
 ```
 
 Runtime-owned heartbeat prompts provide the fixed heartbeat execution flow only
@@ -31,7 +31,10 @@ organization-skill operations.
 
 ## Control-Plane Rails
 
-- Always checkout before doing task work.
+- Chat and issues are parallel execution surfaces. Continue chat-scoped work in
+  Chat unless the operator explicitly asks for issue structure or team policy
+  requires governed issue fields.
+- For issue-scoped task work, always checkout before starting execution.
 - Never retry a `409` from checkout.
 - Never look for unassigned work.
 - In issue comments, use `[Agent Name](agent://agent-id?intent=wake)` only when

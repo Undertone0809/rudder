@@ -1,6 +1,6 @@
 ---
-title: "任务"
-description: "Agent 工作的持久执行对象。"
+title: "Issues（结构化任务）"
+description: "用明确归属、状态、上下文、运行、阻塞、评审和输出组织 agent 工作。"
 icon: "circle-check"
 keywords:
   - "AI agent 协作"
@@ -13,7 +13,7 @@ canonical: "https://docs.rudderhq.dev/zh/concepts/issues"
 
 ---
 
-任务在 Rudder 里对应 `issue`。它把意图、归属、状态、上下文、执行记录、评论、阻塞、评审和输出放在同一个对象上。
+Issue 是 Rudder 由结构驱动的任务界面。它用明确字段和生命周期状态，把意图、归属、状态、上下文、执行记录、评论、阻塞、评审和输出放在同一个对象上。
 
 ![任务工作流界面](../../images/issue-flow.png)
 
@@ -21,9 +21,9 @@ canonical: "https://docs.rudderhq.dev/zh/concepts/issues"
 
 ## 为什么任务重要
 
-长时间运行的 agent 工作需要一个固定位置。否则，决策、上下文、产物和评审证据会散在聊天 transcript 和终端输出里。
+团队协作经常需要结构化对象。没有明确状态时，跨多个任务扫描决定、上下文、产物和评审证据会变得困难。
 
-任务就是这个位置。
+Chat 是与它并列、由对话驱动的任务界面。需要 issue 提供的额外结构时再选择 issue；任务时长或重要性本身不会强制把 Chat 转成 issue。
 
 ## 常见使用场景
 
@@ -86,7 +86,7 @@ Reviewer 结论应结构化：通过、要求修改、需要跟进或阻塞。�
     学习什么时候分配、评审、阻塞和关闭工作。
   </Card>
   <Card title="Chat 和 Messenger" icon="messages-square" href="/zh/concepts/chat-messenger">
-    在工作进入 Todo 前，处理不明确的入口和决策关口。
+    比较由对话驱动的工作与结构化 issue 执行。
   </Card>
   <Card title="目标、项目和任务" icon="list-tree" href="/zh/concepts/goals-projects-issues">
     了解策略如何变成持久执行工作。

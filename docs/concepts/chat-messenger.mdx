@@ -1,6 +1,6 @@
 ---
 title: "Chat and Messenger"
-description: "Use Rudder Chat for intake and clarification, then use Messenger to recover attention for replies, blockers, failed runs, reviews, and decisions."
+description: "Use Chat to move tasks forward conversationally and Messenger to recover attention across chats, issues, runs, reviews, and decisions."
 icon: "messages-square"
 keywords:
   - "AI agent chat"
@@ -12,9 +12,9 @@ canonical: "https://docs.rudderhq.dev/concepts/chat-messenger"
 
 ---
 
-Chat and Messenger are one communication system with two jobs: Chat turns unclear intent into executable work, and Messenger brings attention back to the right thread, issue, run, or decision.
+Chat and Messenger are one communication system with two jobs: Chat is a conversation-driven way to move tasks from request to result, and Messenger brings attention back to the right chat, issue, run, or decision.
 
-Use Chat when the next step is still conversational. Use Messenger when something needs attention after work has started.
+Use Chat when you prefer to work through an ongoing conversation. Use Messenger when something anywhere in the work system needs your attention.
 
 ![Messenger attention surface](../images/messenger-approvals.png)
 
@@ -22,14 +22,14 @@ Use Chat when the next step is still conversational. Use Messenger when somethin
 
 | Surface | Use it for | Move forward by |
 | --- | --- | --- |
-| Chat | Intake, clarification, context gathering, and issue proposals | Creating or updating an issue when the request becomes executable |
+| Chat | Clarifying, executing, refining, and completing tasks through conversation | Continue in Chat, or create/link an issue when structured coordination helps |
 | Messenger | Replies, issue threads, failed runs, blockers, reviews, budget alerts, and decisions | Returning to the linked issue, run, or thread with a clear next action |
 
-The boundary is simple: Chat helps make the work clear. Messenger helps keep live work from losing human attention.
+The boundary is simple: Chat moves work forward. Messenger keeps active work from losing human attention.
 
-## When Chat should become an issue
+## When to add issue structure
 
-Convert a conversation into an issue when it needs any of these:
+Chat and issues are parallel task workflows, not consecutive stages. Create or link an issue when you want any of the following structure:
 
 - one owner to execute the next step
 - agent runtime budget
@@ -37,7 +37,7 @@ Convert a conversation into an issue when it needs any of these:
 - a recovery point after failure or blocking
 - a durable history the team can inspect later
 
-If the request can be answered immediately and creates no follow-up work, keep it in Chat. If it becomes work to assign, run, review, or revisit, create an issue.
+You may still continue the task in Chat. Creating an issue adds structured coordination; it does not make the task more real. Team policy may require issue fields for governed workflows.
 
 ![Chat issue proposal](../images/chat-create-issue-proposal.png)
 
@@ -45,27 +45,27 @@ If the request can be answered immediately and creates no follow-up work, keep i
 
 Messenger answers one operator question:
 
-> What needs my attention right now, and which durable work object does it belong to?
+> What needs my attention right now, and which native work object does it belong to?
 
 Use it to move from signal back to action:
 
 | Attention signal | Durable next step |
 | --- | --- |
-| Agent asks a question | Reply, then keep the decision on the issue |
-| Run fails | Open the linked issue or run and decide recovery |
+| Agent asks a question | Reply, then keep the decision in the originating Chat or linked issue |
+| Run fails | Open the linked Chat, issue, or run and decide recovery |
 | Work is blocked | Name the missing input or owner |
 | Review is waiting | Approve, request changes, or mark blocked |
-| Chat proposes an issue | Accept, edit, or reject before execution |
+| Chat proposes an issue | Accept, edit, or reject the optional structured work item |
 
-Messenger should not become a second task tracker. If a thread creates real work, put the next step on an issue.
+Messenger should not become a separate task system. Return the next step to the native Chat, issue, run, review, or approval that owns it.
 
 ## Anti-patterns
 
 Avoid using Chat or Messenger as:
 
 - a hidden backlog
-- a replacement for issue status
-- a place to run long work without ownership
+- a replacement for the native state of its chats, issues, runs, reviews, or approvals
+- a place where execution evidence has no durable source object
 - the only record of a review decision
 - a generic chat app disconnected from Rudder work
 
@@ -73,9 +73,9 @@ Avoid using Chat or Messenger as:
 
 <CardGroup cols={2}>
   <Card title="Issue Lifecycle Guide" icon="route" href="/how-to/issue-lifecycle">
-    Learn when a request is ready for assignment and review.
+    Learn how structured status, assignment, and review work.
   </Card>
   <Card title="Issues" icon="circle-check" href="/concepts/issues">
-    See the durable execution object Chat and Messenger point back to.
+    See the structured execution model available alongside Chat.
   </Card>
 </CardGroup>

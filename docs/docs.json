@@ -2,7 +2,7 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "Rudder",
-  "description": "Rudder is an open-source control plane for AI agent teams. It coordinates goals, issues, agent runs, reviews, budgets, workspaces, and feedback loops.",
+  "description": "Rudder is an open-source control plane for AI agent teams. It coordinates goals, conversational Chat, structured issues, agent runs, reviews, budgets, workspaces, and feedback loops.",
   "logo": "/logo.png",
   "favicon": "/favicon.svg",
   "icons": {

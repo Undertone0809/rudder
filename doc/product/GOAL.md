@@ -4,13 +4,13 @@
 
 Agents that think, build, play, and learn from real work.
 
-Rudder turns goals, issues, agent runs, reviews, and feedback into a work loop for agent teams. It gives humans and agents a shared operating structure for assigning work, running agents, reviewing outputs, controlling spend, and preserving the lessons that should make the next run better.
+Rudder turns goals, tasks, chats, issues, agent runs, reviews, and feedback into a work loop for agent teams. It gives humans and agents a shared operating structure for moving work forward, running agents, reviewing outputs, controlling spend, and preserving the lessons that should make the next run better.
 
 ## The Vision
 
-Agent teams need the same durable coordination surfaces that make human teams compound: goals, explicit ownership, shared context, review, feedback, operating memory, and budget discipline.
+Agent teams need durable, inspectable coordination surfaces that make human teams compound: goals, conversation, explicit ownership where needed, shared context, review, feedback, operating memory, and budget discipline.
 
-Rudder is the operating layer that makes those loops visible and repeatable. It is not the agent runtime and it is not a generic chat product. It is the place where real work becomes structured enough to assign, run, review, learn from, and improve.
+Rudder is the operating layer that makes those loops visible and repeatable. It is not the agent runtime and it is not a generic social chat product. It is the place where real work becomes inspectable enough to run, review, learn from, and improve, whether users choose Chat or issue structure.
 
 The current north-star metric is the weekly count of real agent-work loops completed end-to-end through Rudder.
 
@@ -32,9 +32,9 @@ A normal task board does not answer those questions for agent work. A transcript
 
 Rudder is the shared operating structure for a self-improving agent team. It is the place where humans and agents:
 
-- **Define goals** — every durable issue should answer why it exists.
+- **Define goals** — durable work in Chat or issues should answer why it exists.
 - **Plan work** — agents connect long-term goals to short-term execution plans.
-- **Assign issues** — work has one clear owner, acceptance criteria, and enough context to start.
+- **Move tasks forward** — users can work conversationally in Chat or use issues when explicit ownership, state, and acceptance criteria help.
 - **Run agents** — heartbeats make execution visible instead of hidden.
 - **Review outputs** — results, evidence, approvals, blockers, and taste judgments stay attached to the work.
 - **Evaluate improvement** — feedback becomes learning proposals with evidence, scope, evals, approval, and rollback paths.
@@ -46,10 +46,10 @@ Rudder is the shared operating structure for a self-improving agent team. It is 
 Rudder is designed around the loop that makes agent teams improve:
 
 ```text
-Goal -> Plan -> Issue -> Agent run -> Review -> Feedback -> Learning proposal -> Eval/approval -> Better future runs
+Goal -> Plan -> Chat or Issue -> Agent run -> Review -> Feedback -> Learning proposal -> Eval/approval -> Better future runs
 ```
 
-The product should make that loop concrete without overclaiming automation. Rudder should help agents form plans, preserve the evidence behind their work, and create reviewable promotion paths for better context, skills, decisions, workflows, evals, and role instructions. It should align agents with the team's taste through real feedback and accepted work, not silently rewrite behavior or bury lessons inside chat transcripts.
+The product should make that loop concrete without overclaiming automation. Rudder should help agents form plans, preserve the evidence behind their work, and create reviewable promotion paths for better context, skills, decisions, workflows, evals, and role instructions. It should align agents with the team's taste through real feedback and accepted work, not silently rewrite behavior or leave lessons unindexed inside transcripts.
 
 ## Architecture
 
@@ -63,7 +63,7 @@ The central nervous system. Manages:
 - Issue assignment and status
 - Budget and token spend tracking
 - Organization knowledge and reusable operating context
-- Goal hierarchy (organization -> team -> agent -> issue)
+- Goal hierarchy and context links across organizations, teams, agents, chats, and issues
 - Heartbeat monitoring — know when agents are alive, idle, or stuck
 
 ### 2. Execution Services (agent runtimes)
@@ -79,4 +79,4 @@ The control plane coordinates work and preserves the record. Runtimes do the act
 
 ## Core Principle
 
-You should be able to look at Rudder and understand the agent team at a glance: what goal it is serving, which issues are moving, who owns the next step, what changed, what it cost, what needs review, and what the next run should learn from this one.
+You should be able to look at Rudder and understand the agent team at a glance: what goal it is serving, which chats or issues are moving tasks forward, who or what owns the next step, what changed, what it cost, what needs review, and what the next run should learn from this one.

@@ -24,7 +24,7 @@ edit_policy: user_confirmed_only
 
 Why:
 
-- Automation output determines whether repeated work becomes durable issue work
+- Automation output determines whether repeated work becomes structured issue work
   or a chat-native result. The two modes have different audit, attention, and
   close-out contracts.
 

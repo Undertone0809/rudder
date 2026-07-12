@@ -1,6 +1,6 @@
 # Rudder Docs
 
-> Rudder is an open-source control plane for AI agent teams. It coordinates goals, issues, agent runs, reviews, budgets, workspaces, skills, and feedback loops so humans can run agent work with clear ownership and evidence.
+> Rudder is an open-source control plane for AI agent teams. It coordinates goals, conversational Chat, structured issues, agent runs, reviews, budgets, workspaces, skills, and feedback loops so humans can run agent work with clear context and evidence.
 
 Rudder is useful when agent work needs to be assigned, run, reviewed, budgeted, and improved over repeated loops. The product is local-first and supports local CLI-backed runtimes such as Codex and Claude Code, shell process runtimes, HTTP webhooks, and gateway-backed agents.
 
@@ -18,7 +18,7 @@ Rudder is useful when agent work needs to be assigned, run, reviewed, budgeted, 
 - [Core Concepts](https://docs.rudderhq.dev/concepts/overview): Organizations, goals, projects, issues, agents, runs, reviews, workspaces, skills, and feedback.
 - [Agents In Rudder](https://docs.rudderhq.dev/concepts/agents): Durable AI team members with roles, runtime configuration, capabilities, budgets, skills, and reporting boundaries.
 - [Issues For AI Agent Work](https://docs.rudderhq.dev/concepts/issues): Durable execution objects for context, ownership, status, runs, blockers, reviews, and outputs.
-- [Chat And Messenger For Agent Work](https://docs.rudderhq.dev/concepts/chat-messenger): Chat for intake and Messenger for attention recovery.
+- [Chat And Messenger For Agent Work](https://docs.rudderhq.dev/concepts/chat-messenger): Chat for conversation-driven task execution and Messenger for attention recovery.
 - [Workspaces For Agent Files And Outputs](https://docs.rudderhq.dev/concepts/workspaces): Project resources, agent-private files, organization artifacts, and durable outputs.
 - [Skills For Reusable Agent Workflows](https://docs.rudderhq.dev/concepts/skills): Reusable operating instructions for repeated agent workflows.
 

@@ -1,6 +1,6 @@
 ---
 title: "Create Your First Organization"
-description: "Run the first Rudder work loop: create an organization, define a goal, assign an issue, run an agent, review evidence, and preserve feedback."
+description: "Run the first Rudder work loop: create an organization, choose Chat or an issue, run an agent, review evidence, and preserve feedback."
 icon: "building-2"
 keywords:
   - "AI agent team workflow"
@@ -12,12 +12,12 @@ canonical: "https://docs.rudderhq.dev/get-started/first-organization"
 
 ---
 
-An organization is Rudder's first work surface. It is where humans set direction, turn requests into issues, and leave inspectable work records through comments, runs, reviews, and timelines.
+An organization is Rudder's first work surface. It is where humans set direction, move tasks forward through Chat or issues, and leave inspectable work records through conversations, comments, runs, reviews, and timelines.
 
 This guide is not a feature checklist. A new organization includes a default
 Operator Assistant, so you can use it to run the first useful loop: create the
-organization, write the request as an issue, assign an owner, run the agent,
-inspect the evidence, and use Messenger to understand what happened.
+organization, choose a conversational or structured workflow, run the agent,
+inspect the evidence, and use Messenger to understand what needs attention.
 
 ![First organization work loop](../images/first-organization-loop-en.svg)
 
@@ -36,7 +36,7 @@ Open the local app and keep one real piece of work in mind. A good first example
 - "Create a small issue plan for improving our docs screenshots."
 - "Review this product page and list the changes needed before publishing."
 
-The goal is not to click every button. You are creating a work object that can be assigned, executed, reviewed, and remembered. In Rudder, that object is an `issue`.
+The goal is not to click every button. You are completing a task through an inspectable work object. In Rudder, that can be a Chat conversation or an `issue`.
 
 ## 1. Create the organization around a real goal
 
@@ -59,9 +59,11 @@ The organization goal matters because issues, agents, projects, and review decis
 
 ![Rudder dashboard overview](../images/board-overview.png)
 
-## 2. Create an issue before execution starts
+## 2. Choose Chat or an issue
 
-An `issue` is Rudder's durable execution surface. Chat is useful for clarification, but work that will spend agent time, budget, or reviewer attention should become an issue first.
+Chat and issues can both carry real agent work from request to result. Chat is conversation-driven; an `issue` adds structured status, ownership, priority, dependencies, and review state. Choose the style that fits the task and your preference.
+
+This walkthrough uses an issue to teach the structured workflow. You can run the same small task in Chat instead, and you do not need to convert it merely because the agent spends time or produces a durable result.
 
 ![Issue board](../images/first-organization-issue-board.png)
 
@@ -166,21 +168,21 @@ After the run, check for evidence:
 
 If the run finished without evidence, the work is not inspectable. Ask the agent to add a close-out comment, or move the issue to `blocked` with a named next owner.
 
-## 7. Use Chat for intake, not as the work record
+## 7. Use Chat as a task workflow
 
-Use Chat when the request is still conversational. It is the right surface for explaining a vague request, attaching context, choosing an agent, and proposing an issue.
+Use Chat when you prefer to move the task forward through an ongoing conversation. It supports explaining the request, attaching context, choosing an agent, running the work, inspecting outputs, and refining the result without requiring an issue.
 
 ![Chat issue proposal](../images/chat-create-issue-proposal.png)
 
 A good pattern is:
 
-1. Start in Chat with the messy request.
-2. Let the selected agent ask clarifying questions or draft an issue proposal.
-3. Approve or edit the proposal.
-4. Execute the resulting issue.
-5. Keep follow-up decisions on the issue.
+1. Start in Chat with the request.
+2. Let the selected agent clarify and begin the work.
+3. Inspect the run and outputs in the conversation.
+4. Refine or complete the task in Chat.
+5. Create or link an issue only when you want structured coordination.
 
-If the conversation becomes important enough to assign, spend budget on, review, or revisit later, convert it into an issue.
+Creating an issue adds fields and team coordination; it does not make the task more real. A team policy may still require issue structure for governed workflows.
 
 ## 8. Use Messenger to recover attention
 
@@ -196,7 +198,7 @@ Use Messenger when:
 - an approval or review decision is waiting
 - a chat-created issue proposal needs to be accepted or edited
 
-Messenger should bring you back to the durable object. If the next action is real work, record it on the issue.
+Messenger should bring you back to the native object that owns the next action, whether that is a Chat, issue, run, review, or approval.
 
 ## 9. Promote repeated instructions into skills
 
@@ -211,12 +213,12 @@ Use issue instructions for one-off work. Use skills when the same workflow shoul
 Your first organization is working when you can trace this loop:
 
 1. A human states a goal.
-2. A request becomes an issue.
-3. One assignee owns the next step.
+2. A task moves forward through Chat or an issue.
+3. The chosen surface preserves the request and context.
 4. The agent run leaves evidence.
-5. A reviewer or owner accepts, blocks, or requests changes.
+5. A reviewer or owner accepts, blocks, or requests changes when needed.
 6. Messenger shows attention needs.
-7. The issue preserves the final record.
+7. The Chat or issue preserves the final record and linked outputs.
 
 ## Next steps
 
@@ -228,6 +230,6 @@ Your first organization is working when you can trace this loop:
     Add a new agent when you need a clear new responsibility and runtime.
   </Card>
   <Card title="Chat and Messenger" icon="messages-square" href="/concepts/chat-messenger">
-    Understand how conversational intake and attention recovery work together.
+    Understand how conversational task work and attention recovery fit together.
   </Card>
 </CardGroup>

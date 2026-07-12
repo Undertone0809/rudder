@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="780" viewBox="0 0 1440 780" role="img" aria-labelledby="title desc">
   <title id="title">Rudder 第一个组织的真实工作流程</title>
-  <desc id="desc">从一件真实任务开始：创建 issue、分配给默认 agent、运行 agent、检查证据，再把结论写回 issue。</desc>
+  <desc id="desc">从一件真实任务开始，选择 Chat 或 issue。这张图展示结构化 issue 路径：分配任务、运行 agent、检查证据，再记录结论。</desc>
   <defs>
     <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="130%">
       <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#0f172a" flood-opacity="0.10"/>
@@ -24,9 +24,9 @@
   <rect x="48" y="48" width="1344" height="684" rx="32" fill="#ffffff" stroke="#dbe3ea" stroke-width="2"/>
 
   <text x="86" y="116" class="title">第一个组织，先跑完一件真实工作</text>
-  <text x="86" y="158" class="subtitle">目标写清楚，issue 写清楚，再交给默认 agent。运行结束后，看证据，再决定通过、退回还是阻塞。</text>
+  <text x="86" y="158" class="subtitle">选择 Chat 或 issue 结构。本例分配 issue、运行 agent，再检查证据并作出决定。</text>
 
-  <text x="86" y="212" class="lane">主线：所有工作都回到 issue</text>
+  <text x="86" y="212" class="lane">结构化路径：ISSUE 增加协作结构</text>
 
   <g filter="url(#cardShadow)">
     <rect x="86" y="238" width="330" height="138" rx="22" fill="#ecfdf5" stroke="#99f6e4" stroke-width="2"/>
@@ -80,10 +80,10 @@
   <rect x="86" y="625" width="582" height="70" rx="20" fill="#f8fafc" stroke="#dbe3ea" stroke-width="2"/>
   <text x="116" y="655" class="pill">Messenger</text>
   <text x="220" y="655" class="small">看谁在等你：agent 提问、评审、阻塞、失败运行。</text>
-  <text x="116" y="680" class="small">点进去以后，还是回到对应的 issue。</text>
+  <text x="116" y="680" class="small">点进去以后，回到对应的 Chat 或 issue。</text>
 
   <rect x="710" y="625" width="630" height="70" rx="20" fill="#f8fafc" stroke="#dbe3ea" stroke-width="2"/>
   <text x="740" y="655" class="pill">Calendar</text>
-  <text x="832" y="655" class="small">回看 agent 什么时候跑、什么时候评审、时间花在哪些 issue 上。</text>
+  <text x="832" y="655" class="small">回看 agent 什么时候跑、什么时候评审、时间花在哪些工作上。</text>
   <text x="740" y="680" class="small">这里看的是实际工作历史，少靠手填日程。</text>
 </svg>

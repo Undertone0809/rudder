@@ -213,6 +213,15 @@ test.describe("Onboarding wizard", () => {
     const nextIssueTarget = issueByTitle.get("2. Ask your agent one quick question");
     expect(nextIssueSource).toBeTruthy();
     expect(nextIssueTarget).toBeTruthy();
+    expect(nextIssueSource?.description).toContain(
+      "Chat and issues can both move tasks forward",
+    );
+    expect(nextIssueSource?.description).toContain(
+      "Creating an issue adds coordination structure",
+    );
+    expect(issueByTitle.get("8. Link this work to a goal")?.description).toContain(
+      "a real Chat or issue is connected to a goal",
+    );
     const nextIssueHref = extractMarkdownHref(
       nextIssueSource?.description ?? "",
       "2. Ask your agent one quick question",
@@ -288,8 +297,14 @@ test.describe("Onboarding wizard", () => {
     expect(sidebarBadges.unreadTouchedIssues).toBe(0);
     expect(sidebarBadges.inbox).toBe(0);
 
+    await page.evaluate(() => {
+      window.localStorage.setItem("rudder.productTour.completed.v1", "true");
+      window.localStorage.removeItem("rudder.productTour.pendingAfterSetup.v1");
+    });
     await page.goto(`/${organization.issuePrefix}/issues?projectId=${gettingStartedProject.id}`);
     await expect(page.getByRole("heading", { name: "Issue Tracker" })).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("button", { name: "List view" }).click();
+    await expect(page.getByText(/choose Chat or issue structure/i)).toBeVisible();
     await expect(page.getByRole("link", { name: /Welcome to Rudder/ }).first()).toBeVisible();
     await expect(page.getByRole("link", { name: /Ask your agent one quick question/ }).first()).toBeVisible();
 

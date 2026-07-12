@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="780" viewBox="0 0 1440 780" role="img" aria-labelledby="title desc">
   <title id="title">Rudder first organization real work loop</title>
-  <desc id="desc">Start from one real task: create an issue, assign it to the default agent, run the agent, inspect evidence, and write the decision back to the issue.</desc>
+  <desc id="desc">Choose Chat or an issue for one real task. This diagram follows the structured issue path: assign the issue, run the agent, inspect evidence, and record the decision.</desc>
   <defs>
     <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="130%">
       <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#0f172a" flood-opacity="0.10"/>
@@ -24,9 +24,9 @@
   <rect x="48" y="48" width="1344" height="684" rx="32" fill="#ffffff" stroke="#dbe3ea" stroke-width="2"/>
 
   <text x="86" y="116" class="title">First organization: finish one real piece of work</text>
-  <text x="86" y="158" class="subtitle">Set the goal, write the issue, hand it to the default agent. After the run, inspect evidence and decide.</text>
+  <text x="86" y="158" class="subtitle">Choose Chat or issue structure. This example assigns an issue, runs the agent, then inspects evidence.</text>
 
-  <text x="86" y="212" class="lane">MAIN LINE: ALL WORK RETURNS TO THE ISSUE</text>
+  <text x="86" y="212" class="lane">STRUCTURED PATH: THE ISSUE ADDS COORDINATION</text>
 
   <g filter="url(#cardShadow)">
     <rect x="86" y="238" width="330" height="138" rx="22" fill="#ecfdf5" stroke="#99f6e4" stroke-width="2"/>
@@ -80,10 +80,10 @@
   <rect x="86" y="625" width="582" height="70" rx="20" fill="#f8fafc" stroke="#dbe3ea" stroke-width="2"/>
   <text x="116" y="655" class="pill">Messenger</text>
   <text x="220" y="655" class="small">See who is waiting: agent questions, reviews, blockers, failed runs.</text>
-  <text x="116" y="680" class="small">After you click through, return to the related issue.</text>
+  <text x="116" y="680" class="small">After you click through, return to the related Chat or issue.</text>
 
   <rect x="710" y="625" width="630" height="70" rx="20" fill="#f8fafc" stroke="#dbe3ea" stroke-width="2"/>
   <text x="740" y="655" class="pill">Calendar</text>
-  <text x="832" y="655" class="small">Review when agents ran, when review happened, and which issues used time.</text>
+  <text x="832" y="655" class="small">Review when agents ran, when review happened, and which work used time.</text>
   <text x="740" y="680" class="small">This is real work history, not a manually filled schedule.</text>
 </svg>

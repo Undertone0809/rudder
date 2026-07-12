@@ -617,7 +617,7 @@ export const zhCN: Messages = {
   "productTour.checklist.title": "完成首次工作闭环",
   "productTour.checklist.workspace": "读懂控制台",
   "productTour.checklist.create": "创建小任务",
-  "productTour.checklist.issues": "跟踪 issue 状态",
+  "productTour.checklist.issues": "使用 issue 结构",
   "productTour.checklist.inspect": "检查工作输出",
   "productTour.checklist.settings": "再次找到教程",
   "productTour.stepCounter": "{{current}} / {{total}}",
@@ -626,10 +626,10 @@ export const zhCN: Messages = {
     "主导航把关键工作面放在一起：Messenger、Dashboard、Issues、Agents、Organization、Automations 和 Calendar。用它在行动、检查和 review 之间切换。",
   "productTour.step.create.title": "从一个 agent 真能推进的小任务开始",
   "productTour.step.create.body":
-    "创建菜单是新聊天、issue、agent 和 project 的入口。第一次闭环建议创建边界清楚、结果可 review 的小 issue。",
-  "productTour.step.issues.title": "Issue 是可执行的工作单元",
+    "创建菜单是新 Chat、issue、agent 和 project 的入口。第一次闭环可以选择边界清楚、结果可 review 的小 Chat 或 issue。",
+  "productTour.step.issues.title": "Issue 增加明确的工作流结构",
   "productTour.step.issues.body":
-    "Issue 页面展示哪些工作在等待、执行、阻塞或完成。这里会把 agent work 从聊天内容变成可跟踪的状态。",
+    "Issue 页面展示哪些工作在等待、执行、阻塞或完成。Chat 是并列的对话式路径；需要明确 owner、状态、优先级、依赖或 review 时，再使用 issue。",
   "productTour.step.inspect.title": "先检查工作，再审批或继续推进",
   "productTour.step.inspect.body":
     "Dashboard 会展示当前页面、详情、transcript、产出和审批入口。Rudder 应该让你清楚看到发生了什么，以及哪里需要你介入。",

@@ -6,7 +6,7 @@ Agents that think, build, play, and learn from real work.
 
 [Website](https://rudderhq.dev) | [Docs](https://docs.rudderhq.dev)
 
-Rudder turns goals, issues, agent runs, reviews, and feedback into a work loop for agent teams. It gives humans and agents a shared operating structure for assigning work, running agents, reviewing outputs, controlling spend, and preserving the lessons that should make the next run better.
+Rudder turns goals, tasks, chats, issues, agent runs, reviews, and feedback into a work loop for agent teams. It gives humans and agents a shared operating structure for moving work forward, running agents, reviewing outputs, controlling spend, and preserving the lessons that should make the next run better.
 
 Rudder began as a fork of an early version of Paperclip. That gave the project a practical starting point for agent operations; Rudder is now evolving around a sharper product idea: agent teams improve when real work leaves behind durable context, decisions, feedback, and reusable operating patterns.
 
@@ -17,10 +17,10 @@ Rudder is built for the moment when agent work stops looking like a single promp
 Rudder is designed around the loop that makes agent work compound:
 
 ```text
-Goal -> Issue -> Agent run -> Review -> Feedback -> Learning -> Better future runs
+Goal -> Plan -> Chat or Issue -> Agent run -> Review -> Feedback -> Learning -> Better future runs
 ```
 
-The control plane matters because this loop needs structure. Goals explain why work exists. Issues make work durable. Heartbeats run agents in a visible way. Reviews and approvals keep autonomy governable. Feedback, comments, documents, run history, and skills give the team a place to keep what it learned.
+The control plane matters because this loop needs inspectable execution and the right amount of structure. Goals explain why work exists. Chat supports conversation-driven execution; issues add explicit coordination fields. Agent runs keep execution visible. Reviews and approvals keep autonomy governable. Feedback, comments, documents, run history, and skills give the team a place to keep what it learned.
 
 Rudder does not assume every lesson is automatically promoted into a new skill or workflow. The product direction is to make those promotion paths explicit, reviewable, and reusable instead of leaving them buried in chat transcripts or one-off prompts.
 
@@ -53,7 +53,7 @@ Rudder turns those coordination patterns into product primitives for agent teams
 - work belongs to an organization, not a loose thread
 - every issue should trace back to a goal
 - agents have roles, runtime config, reporting lines, and skills
-- chat helps clarify and route work, while durable execution stays attached to issues, approvals, outputs, and run history
+- chat and issues provide conversational and structured ways to move work forward, with execution attached to inspectable runs, outputs, reviews, and history
 - autonomy stays legible, governable, and budget-aware
 
 ## What Rudder Is
@@ -118,14 +118,14 @@ Rudder defaults to embedded PostgreSQL in development. If `DATABASE_URL` is unse
 2. Define the organization goal.
 3. Create or use a default agent with a clear role and runtime.
 4. Add more agents only when repeated work needs stable ownership.
-5. Create or convert work into issues.
-6. Let agents pick up work through heartbeat invocations.
+5. Choose Chat for conversation-driven execution or an issue for structured coordination.
+6. Let agents execute through Chat turns or issue heartbeat invocations.
 7. Review outputs, approvals, activity, and spend from the board.
-8. Leave feedback on the run, issue, or output.
+8. Leave feedback in the conversation, run, issue, or output.
 9. Preserve reusable lessons as better context, skills, decisions, or workflows.
 10. Future runs use the improved team context.
 
-Every durable piece of work should still answer one question: why does this issue exist? In Rudder, the intended answer is traceable all the way back to the organization goal.
+Every durable piece of work should still answer one question: why does this task exist? In Rudder, the answer should remain traceable from its Chat or issue context back to the organization goal.
 
 ## Contributing
 

@@ -30,10 +30,10 @@ edit_policy: user_confirmed_only
 
 Why:
 
-- A goal is the durable "why" for agent work. Without it, issues become a task
-  queue with no compounding product memory.
+- A goal is the durable "why" for agent work. Without it, tasks become a queue
+  with no compounding product memory.
 - Goal hierarchy lets the organization mission connect to project, team, agent,
-  and task-level work without forcing every issue to duplicate strategy text.
+  and task-level work without forcing every Chat or issue to duplicate strategy text.
 
 Product model:
 
@@ -69,8 +69,8 @@ Evidence:
 Why:
 
 - Projects are the practical grouping boundary between abstract goals and
-  execution objects. They collect issues, resources, workspaces, lead agents,
-  and timelines for one line of work.
+  execution objects. They collect chats, issues, resources, workspaces, lead
+  agents, and timelines for one line of work.
 
 Product model:
 
@@ -78,7 +78,7 @@ Product model:
 - A project may link to multiple goals while preserving legacy single-goal
   compatibility where code still carries `goalId`.
 - Projects have status, target date, lead agent, URL/shortname identity, visual
-  metadata, resources, workspaces, and issues.
+  metadata, resources, workspaces, chats, and issues.
 - Creating a project can initialize the project's Library layout so resources
   and outputs have a stable place.
 
@@ -94,7 +94,7 @@ Flow:
 Invariants:
 
 - Project identity must stay organization-scoped and URL-stable.
-- Project goal links must not imply execution state; issue and automation
+- Project goal links must not imply execution state; chat, issue, and automation
   contracts still own work progress.
 
 Evidence:

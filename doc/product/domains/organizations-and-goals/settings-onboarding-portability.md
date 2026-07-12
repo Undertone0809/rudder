@@ -198,6 +198,9 @@ Product model:
   issues start backlog.
 - Seeded issue descriptions may include next-issue links and chat CTA links that
   prefill a prompt, selected project, and first available agent.
+- Seeded guidance presents Chat and issues as parallel task workflows: Chat is
+  conversation-driven, while issues add structured tracking. It must not teach
+  that real or durable work requires conversion from Chat into an issue.
 - Invite landing surfaces can show onboarding skill/text instruction links for
   external agents.
 

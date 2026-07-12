@@ -11,10 +11,11 @@ This is a composed workflow view. It is not an owning source of behavior.
 
 Entry paths:
 
-- Issue-first work enters through issue creation, assignment, checkout, review,
-  or comment wake.
-- Chat/Messenger work can stay chat-native or convert/propose tracked issue
-  work; see `CHAT.LIFECYCLE.001`, `MESSENGER.ATTENTION.001`, and
+- Issue-first work uses structured state, assignment, checkout, review, or
+  comment wake.
+- Chat-first work can execute and complete conversationally or add/link issue
+  structure by operator choice; see `CHAT.LIFECYCLE.001`,
+  `MESSENGER.ATTENTION.001`, and
   `RUN.CHAT.AGENT.001`.
 - IM integrations such as Feishu enter through Messenger/chat binding and may
   create issue/run work; see `IM.FEISHU.001`.

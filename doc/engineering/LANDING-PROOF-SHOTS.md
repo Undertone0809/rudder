@@ -12,8 +12,8 @@ control plane.
 Each screenshot should answer one product claim:
 
 - work is happening
-- chat can turn requests into durable work
-- issues carry the execution loop
+- chat can carry tasks from request to result
+- issues add structured execution and review
 - humans remain in control at review time
 - agents operate as a team, not as isolated prompts
 - autonomy stays budget-visible
@@ -95,7 +95,7 @@ last two as secondary feature shots.
 | Shot | Surface | Product claim | Landing use |
 | --- | --- | --- | --- |
 | `dashboard-control-plane` | Dashboard | The organization is alive and legible | hero or top feature |
-| `chat-create-issue` | Messenger chat | Chat turns requests into tracked work | feature block |
+| `chat-create-issue` | Messenger chat | Chat can execute directly or add issue structure | feature block |
 | `issue-execution-loop` | Issue detail / issue thread | One issue closes end to end | feature block |
 | `approval-review` | Approval review block | Humans stay in control | feature block |
 | `heartbeats-team-ops` | Heartbeats | Agents operate as a team | feature block |
@@ -138,7 +138,8 @@ last two as secondary feature shots.
 ### 2. Chat Create Issue
 
 - Claim:
-  Chat is an intake surface that can convert a request into a durable issue.
+  Chat is a real task surface that can execute conversationally or add issue
+  structure when the operator asks for it.
 - Surface:
   Messenger chat thread
 - Primary crop:
@@ -148,7 +149,7 @@ last two as secondary feature shots.
   - a user request grounded in real work
   - assistant clarification or synthesis
   - a review block for issue creation
-  - a visible decision action that converts the proposal into durable work
+  - a visible decision action that adds structured issue tracking to the proposal
   - created issue confirmation with the new issue ID
 - Recommended user request:
   `Create an issue to ship the enterprise pricing comparison page before Friday. It needs competitor callouts, two customer proof points, and a draft CTA.`
@@ -168,7 +169,7 @@ last two as secondary feature shots.
   - a block that looks like generic message text instead of a reviewable object
   - empty left-thread lists that make the product feel inactive
 - Landing caption:
-  `Turn a request into tracked work without losing the conversation that created it.`
+  `Move work forward in Chat, and add structured tracking when the task needs it.`
 
 ### 3. Issue Execution Loop
 
