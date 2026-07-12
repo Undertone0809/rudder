@@ -849,6 +849,28 @@
   }
 }
 
+.motion-browser-link-pill {
+  position: absolute;
+  top: 2px;
+  left: 0;
+  height: 32px;
+  width: 0;
+  pointer-events: none;
+  z-index: 0;
+  border-radius: calc(var(--control-radius) - 2px);
+  background: var(--background);
+  box-shadow: var(--shadow-sm);
+  transform: translateX(0);
+  transition:
+    transform 250ms cubic-bezier(0.22, 1, 0.36, 1),
+    width 250ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, width;
+}
+
+.motion-browser-link-option {
+  transition: color 250ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .motion-list-enter,
   .motion-new-issue-created-banner,
@@ -892,6 +914,11 @@
   .motion-entity-preview-pop,
   .rudder-entity-preview-wrap > :is(a, button, [role="button"]),
   .motion-disclosure-icon {
+    transition: none !important;
+  }
+
+  .motion-browser-link-pill,
+  .motion-browser-link-option {
     transition: none !important;
   }
 

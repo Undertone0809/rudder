@@ -166,9 +166,13 @@ describe("InstanceBrowserSettings", () => {
       .find((button) => button.textContent?.trim() === "Rudder Built-in Browser");
     const defaultBrowser = Array.from(page.querySelectorAll("button"))
       .find((button) => button.textContent?.trim() === "Default browser");
+    const slidingPill = page.querySelector('[data-browser-link-pill="true"]');
 
     expect(toggle?.getAttribute("aria-checked")).toBe("true");
     expect(builtIn?.getAttribute("aria-pressed")).toBe("true");
+    expect(slidingPill?.getAttribute("aria-hidden")).toBe("true");
+    expect(slidingPill?.classList.contains("motion-browser-link-pill")).toBe(true);
+    expect(builtIn?.classList.contains("motion-browser-link-option")).toBe(true);
     expect(builtIn?.classList.contains("whitespace-nowrap")).toBe(true);
     expect(builtIn?.parentElement?.classList.contains("w-[20rem]")).toBe(true);
     expect(page.textContent).toContain("shared by every organization and Agent");

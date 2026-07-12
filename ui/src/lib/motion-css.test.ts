@@ -90,6 +90,15 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain("transform var(--motion-duration-standard) var(--motion-ease-enter)");
   });
 
+  it("slides the Browser link destination pill with reduced-motion coverage", () => {
+    const pill = motionCss.match(/\.motion-browser-link-pill \{[\s\S]*?\n\}/)?.[0] ?? "";
+
+    expect(pill).toContain("transform 250ms cubic-bezier(0.22, 1, 0.36, 1)");
+    expect(pill).toContain("width 250ms cubic-bezier(0.22, 1, 0.36, 1)");
+    expect(pill).toContain("will-change: transform, width");
+    expect(motionCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.motion-browser-link-pill,[\s\S]*?transition: none !important/);
+  });
+
   it("keeps organization structure edges stable while zooming", () => {
     expect(motionCss).toContain(".motion-org-edge");
     expect(motionCss).toContain("stroke-linecap: round");

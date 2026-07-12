@@ -18,7 +18,7 @@ import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import type { PatchInstanceBrowserSettings } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Database, Globe2, Import, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 export function InstanceBrowserSettings() {
   const { t } = useI18n();
@@ -29,6 +29,9 @@ export function InstanceBrowserSettings() {
   const [clearSucceeded, setClearSucceeded] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const linkOptionsRef = useRef<HTMLDivElement>(null);
+  const linkPillRef = useRef<HTMLSpanElement>(null);
+  const linkPillPositionedRef = useRef(false);
 
   useEffect(() => {
     setBreadcrumbs([
@@ -42,6 +45,32 @@ export function InstanceBrowserSettings() {
     queryFn: () => instanceSettingsApi.getBrowser(),
     staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
   });
+
+  useLayoutEffect(() => {
+    const options = linkOptionsRef.current;
+    const pill = linkPillRef.current;
+    if (!options || !pill) return;
+
+    const moveToActiveOption = (animate: boolean) => {
+      const activeOption = options.querySelector<HTMLButtonElement>('button[aria-pressed="true"]');
+      if (!activeOption) return;
+
+      if (!animate) pill.style.transition = "none";
+      pill.style.transform = `translateX(${activeOption.offsetLeft}px)`;
+      pill.style.width = `${activeOption.offsetWidth}px`;
+      if (!animate) {
+        void pill.offsetWidth;
+        pill.style.removeProperty("transition");
+      }
+    };
+
+    moveToActiveOption(linkPillPositionedRef.current);
+    linkPillPositionedRef.current = true;
+
+    const handleResize = () => moveToActiveOption(false);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [browserQuery.data?.openLinksIn]);
 
   const updateMutation = useMutation({
     mutationFn: (patch: PatchInstanceBrowserSettings) => instanceSettingsApi.updateBrowser(patch),
@@ -154,7 +183,16 @@ export function InstanceBrowserSettings() {
           title={t("browser.links.title")}
           description={t("browser.links.description")}
           action={
-            <div className="grid w-[20rem] grid-cols-2 overflow-hidden rounded-[var(--control-radius)] border border-border/80 bg-muted/30 p-0.5">
+            <div
+              ref={linkOptionsRef}
+              className="relative grid w-[20rem] grid-cols-2 overflow-hidden rounded-[var(--control-radius)] border border-border/80 bg-muted/30 p-0.5"
+            >
+              <span
+                ref={linkPillRef}
+                aria-hidden="true"
+                data-browser-link-pill="true"
+                className="motion-browser-link-pill"
+              />
               {([
                 ["built_in", t("browser.links.builtIn")],
                 ["default_browser", t("browser.links.default")],
@@ -165,7 +203,7 @@ export function InstanceBrowserSettings() {
                   aria-pressed={settings.openLinksIn === value}
                   disabled={updateMutation.isPending}
                   onClick={() => updateMutation.mutate({ openLinksIn: value })}
-                  className="h-8 whitespace-nowrap rounded-[calc(var(--control-radius)-2px)] px-2 text-[12px] font-medium text-muted-foreground transition-colors aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm disabled:opacity-50"
+                  className="motion-browser-link-option relative z-[1] h-8 whitespace-nowrap rounded-[calc(var(--control-radius)-2px)] px-2 text-[12px] font-medium text-muted-foreground aria-pressed:text-foreground disabled:opacity-50"
                 >
                   {label}
                 </button>
