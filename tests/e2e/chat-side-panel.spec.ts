@@ -1371,29 +1371,45 @@ test.describe("Chat Side Panel", () => {
     ).__rudderKeepaliveMarker)).toBe("browser-guest-1");
   });
 
-  test("scales the Side Panel proportionally when the app width changes", async ({ page }) => {
+  test("keeps the default Side Panel and main content at a 1:1 split while the app width changes", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Global-Side-Panel-Proportional-${Date.now()}` },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
 
+    await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
-    await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/${organization.issuePrefix}/dashboard`);
     await page.getByTestId("global-side-panel-trigger").click();
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
-    await expect.poll(async () => Math.round((await sidePanel.boundingBox())?.width ?? 0)).toBe(420);
+    await expect.poll(async () => {
+      const mainBox = await page.getByTestId("workspace-main-card").boundingBox();
+      const sidePanelBox = await sidePanel.boundingBox();
+      if (!mainBox || !sidePanelBox) return Number.POSITIVE_INFINITY;
+      return Math.abs(Math.round(mainBox.width - sidePanelBox.width));
+    }).toBeLessThanOrEqual(2);
 
     await page.setViewportSize({ width: 1200, height: 900 });
-    await expect.poll(async () => Math.round((await sidePanel.boundingBox())?.width ?? 0)).toBe(350);
+    await expect.poll(async () => {
+      const mainBox = await page.getByTestId("workspace-main-card").boundingBox();
+      const sidePanelBox = await sidePanel.boundingBox();
+      if (!mainBox || !sidePanelBox) return Number.POSITIVE_INFINITY;
+      return Math.abs(Math.round(mainBox.width - sidePanelBox.width));
+    }).toBeLessThanOrEqual(2);
 
     await page.setViewportSize({ width: 1440, height: 900 });
-    await expect.poll(async () => Math.round((await sidePanel.boundingBox())?.width ?? 0)).toBe(420);
+    await expect.poll(async () => {
+      const mainBox = await page.getByTestId("workspace-main-card").boundingBox();
+      const sidePanelBox = await sidePanel.boundingBox();
+      if (!mainBox || !sidePanelBox) return Number.POSITIVE_INFINITY;
+      return Math.abs(Math.round(mainBox.width - sidePanelBox.width));
+    }).toBeLessThanOrEqual(2);
+    await page.screenshot({ path: "/tmp/rudder-side-panel-equal-width.png", fullPage: true });
   });
 });

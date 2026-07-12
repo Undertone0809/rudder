@@ -1102,6 +1102,7 @@ function ChatSidePanelBrowserView({
 
 export function ChatSidePanel({
   desktopWidth,
+  equalWidth = false,
   expanded = false,
   exiting = false,
   onClose,
@@ -1111,6 +1112,7 @@ export function ChatSidePanel({
   selectedOrganizationId,
 }: {
   desktopWidth?: number;
+  equalWidth?: boolean;
   expanded?: boolean;
   exiting?: boolean;
   onClose?: () => void;
@@ -1264,13 +1266,19 @@ export function ChatSidePanel({
   const libraryDirectoryFileCount = libraryDirectoryEntries.filter((entry) => !entry.isDirectory).length;
   const libraryDirectoryFolderCount = libraryDirectoryEntries.length - libraryDirectoryFileCount;
   const isMobile = typeof window !== "undefined" && window.matchMedia?.("(max-width: 767px)").matches;
-  const desktopPanelStyle = !isMobile && desktopWidth && !expanded ? { width: desktopWidth } : undefined;
+  const desktopPanelStyle = !isMobile && !expanded
+    ? equalWidth
+      ? { flex: "1 1 0%", width: 0 }
+      : desktopWidth
+        ? { width: desktopWidth }
+        : undefined
+    : undefined;
 
   return (
     <aside
       data-testid="chat-side-panel"
       className={cn(
-        "motion-chat-side-panel flex min-h-0 w-full shrink-0 flex-col gap-1.5 bg-transparent",
+        "motion-chat-side-panel motion-panel-reveal flex min-h-0 w-full shrink-0 flex-col gap-1.5 bg-transparent",
         isMobile
           ? "fixed inset-x-3 bottom-3 top-[4.75rem] z-40"
           : expanded

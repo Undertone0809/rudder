@@ -62,7 +62,7 @@ import { WorktreeBanner } from "./WorktreeBanner";
 const INSTANCE_SETTINGS_MEMORY_KEY = "rudder.lastInstanceSettingsPath";
 const LAST_WORKSPACE_PATH_KEY = "rudder.lastWorkspacePath";
 const WORKSPACE_COLUMN_WIDTH_KEY_PREFIX = "rudder.workspace.contextWidth";
-const SIDE_PANEL_WIDTH_KEY = "rudder.workspace.sidePanelWidth";
+const SIDE_PANEL_WIDTH_KEY = "rudder.workspace.sidePanelWidth.v2";
 const SIDE_PANEL_DEFAULT_WIDTH = 420;
 const SIDE_PANEL_MIN_WIDTH = 340;
 const SIDE_PANEL_MAX_WIDTH = 560;
@@ -318,6 +318,13 @@ export function resolveProportionalSidePanelWidth(
   return clampSidePanelWidth(widthRatioValue * viewportWidth, viewportWidth);
 }
 
+export function resolveDefaultSidePanelWidth(
+  workspaceWidth: number,
+  viewportWidth: number | null = getCurrentViewportWidth(),
+): number {
+  return clampSidePanelWidth((workspaceWidth - 4) / 2, viewportWidth);
+}
+
 function widthRatio(value: number, viewportWidth: number | null = getCurrentViewportWidth()): number | null {
   if (viewportWidth === null || !Number.isFinite(viewportWidth) || viewportWidth <= 0) return null;
   return value / viewportWidth;
@@ -344,6 +351,13 @@ function DesktopSidePanelSlot({
 }) {
   const sidePanel = useSidePanel();
   const viewportWidth = useViewportWidth();
+  const workspaceAnchorRef = useRef<HTMLSpanElement>(null);
+  const [workspaceWidth, setWorkspaceWidth] = useState<number | null>(null);
+  const hasRememberedWidthRef = useRef(
+    typeof window !== "undefined" && window.localStorage.getItem(SIDE_PANEL_WIDTH_KEY) !== null,
+  );
+  const widthInitializedRef = useRef(hasRememberedWidthRef.current);
+  const [useEqualDefaultWidth, setUseEqualDefaultWidth] = useState(!hasRememberedWidthRef.current);
   const [sidePanelWidth, setSidePanelWidth] = useState(readRememberedSidePanelWidth);
   const sidePanelWidthRatioRef = useRef(widthRatio(sidePanelWidth));
   const [resizingSidePanel, setResizingSidePanel] = useState(false);
@@ -359,13 +373,30 @@ function DesktopSidePanelSlot({
   }, [onExpandedChange, sidePanel.open, sidePanelExpanded]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || !widthInitializedRef.current) return;
     try {
       window.localStorage.setItem(SIDE_PANEL_WIDTH_KEY, String(sidePanelWidth));
     } catch {
       // Ignore storage failures; width falls back to the default next time.
     }
   }, [sidePanelWidth]);
+
+  useLayoutEffect(() => {
+    const workspace = workspaceAnchorRef.current?.parentElement;
+    if (!workspace) return;
+    const updateWorkspaceWidth = () => setWorkspaceWidth(workspace.getBoundingClientRect().width);
+    updateWorkspaceWidth();
+    const observer = new ResizeObserver(updateWorkspaceWidth);
+    observer.observe(workspace);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (hasRememberedWidthRef.current || workspaceWidth === null || viewportWidth === null) return;
+    const defaultWidth = resolveDefaultSidePanelWidth(workspaceWidth, viewportWidth);
+    sidePanelWidthRatioRef.current = widthRatio(defaultWidth, viewportWidth);
+    setSidePanelWidth(defaultWidth);
+  }, [viewportWidth, workspaceWidth]);
 
   useEffect(() => {
     if (sidePanel.open || hasBrowserTabs) {
@@ -399,9 +430,25 @@ function DesktopSidePanelSlot({
     return clampedWidth;
   }, [viewportWidth]);
 
+  const resetSidePanelWidth = useCallback(() => {
+    setUseEqualDefaultWidth(true);
+    widthInitializedRef.current = false;
+    try {
+      window.localStorage.removeItem(SIDE_PANEL_WIDTH_KEY);
+    } catch {
+      // Ignore storage failures; the equal-width default still applies in memory.
+    }
+    const nextWidth = workspaceWidth === null
+      ? SIDE_PANEL_DEFAULT_WIDTH
+      : resolveDefaultSidePanelWidth(workspaceWidth, viewportWidth);
+    return setProportionalSidePanelWidth(nextWidth);
+  }, [setProportionalSidePanelWidth, viewportWidth, workspaceWidth]);
+
   const startSidePanelResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (!sidePanel.open) return;
     event.preventDefault();
+    setUseEqualDefaultWidth(false);
+    widthInitializedRef.current = true;
     const startX = event.clientX;
     const startWidth = sidePanelWidth;
     let latestWidth = startWidth;
@@ -422,7 +469,7 @@ function DesktopSidePanelSlot({
         collapsedByDrag = true;
         stopResizing();
         sidePanel.hidePanel();
-        setProportionalSidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH);
+        resetSidePanelWidth();
         return;
       }
       setProportionalSidePanelWidth(latestWidth);
@@ -436,13 +483,13 @@ function DesktopSidePanelSlot({
       window.removeEventListener("pointerup", stopResizing);
       if (!collapsedByDrag && latestWidth <= SIDE_PANEL_COLLAPSE_WIDTH) {
         sidePanel.hidePanel();
-        setProportionalSidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH);
+        resetSidePanelWidth();
       }
     };
 
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", stopResizing, { once: true });
-  }, [setProportionalSidePanelWidth, sidePanel, sidePanelWidth]);
+  }, [resetSidePanelWidth, setProportionalSidePanelWidth, sidePanel, sidePanelWidth]);
 
   const panelVisible = sidePanel.open || sidePanelExiting;
   const expandedVisible = panelVisible && sidePanelExpanded;
@@ -450,6 +497,7 @@ function DesktopSidePanelSlot({
 
   return (
     <>
+      <span ref={workspaceAnchorRef} className="hidden" aria-hidden="true" />
       {!panelVisible ? <div key="trigger" className="group absolute inset-y-1 right-0 z-20 w-7" data-testid="side-panel-hover-edge">
         <Button
           type="button"
@@ -490,15 +538,17 @@ function DesktopSidePanelSlot({
         <ChatSidePanel
           selectedOrganizationId={selectedOrganizationId}
           desktopWidth={expandedVisible ? undefined : sidePanelWidth}
+          equalWidth={!expandedVisible && useEqualDefaultWidth}
           expanded={expandedVisible}
           exiting={sidePanelExiting}
           resizing={resizingSidePanel}
           onClose={() => {
-            if (sidePanelExpanded) setProportionalSidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH);
+            if (sidePanelExpanded) resetSidePanelWidth();
             sidePanel.hidePanel();
           }}
           onToggleExpanded={() => {
-            setProportionalSidePanelWidth(sidePanelExpanded ? SIDE_PANEL_DEFAULT_WIDTH : expandedSidePanelWidth);
+            if (sidePanelExpanded) resetSidePanelWidth();
+            else setProportionalSidePanelWidth(expandedSidePanelWidth);
           }}
         />
       </div> : null}

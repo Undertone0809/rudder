@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   clampWorkspaceColumnWidth,
   getWorkspaceColumnMaxWidth,
+  resolveDefaultSidePanelWidth,
   resolveProportionalSidePanelWidth,
   resolveProportionalWorkspaceColumnWidth,
   resolveSidePanelContextKey,
@@ -42,6 +43,10 @@ describe("workspace context column sizing", () => {
 
     expect(resolveProportionalSidePanelWidth(ratio, 1200)).toBe(350);
     expect(resolveProportionalSidePanelWidth(ratio, 1440)).toBe(420);
+  });
+
+  it("defaults the side panel to half of the shared main workspace", () => {
+    expect(resolveDefaultSidePanelWidth(1204, 1440)).toBe(600);
   });
 
   it("keeps proportional side panel width inside min and viewport limits", () => {
