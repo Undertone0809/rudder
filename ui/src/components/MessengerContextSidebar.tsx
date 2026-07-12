@@ -21,6 +21,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useChatGenerations } from "@/context/ChatGenerationContext";
 import { useDialog } from "@/context/DialogContext";
 import { useOrganization } from "@/context/OrganizationContext";
@@ -28,7 +29,7 @@ import { useSidebar } from "@/context/SidebarContext";
 import { messengerThreadKindLabel, resolveMessengerRoute, useMessengerModel } from "@/hooks/useMessenger";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { isFeishuBackedConversation } from "@/lib/chat-source";
-import { displayChatTitle } from "@/lib/chat-title";
+import { displayChatTitle, isDefaultChatTitle } from "@/lib/chat-title";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
 import {
   archiveMessengerChatInCache,
@@ -107,7 +108,7 @@ import {
   UserPlus,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement, type ReactNode } from "react";
 
 type ThreadOrganizationRule = "latest" | "project" | "agent" | "kind" | "attention" | "custom";
 type MessengerThreadDensity = "comfortable" | "compact";
@@ -135,6 +136,8 @@ const MANAGED_GROUP_VISIBLE_INCREMENT = 10;
 const MESSENGER_AUTO_LOAD_RENDERED_THREAD_LIMIT = 160;
 const SELECTED_READ_EMPHASIS_HOLD_MS = 1200;
 const DELETE_AFTER_STOP_RETRY_DELAYS_MS = [120, 300, 700] as const;
+const MESSENGER_THREAD_PREVIEW_HOVER_DELAY_MS = 1_000;
+const MESSENGER_THREAD_PREVIEW_CLOSE_DELAY_MS = 120;
 const CUSTOM_GROUP_COLOR_OPTIONS = ["slate", "teal", "sky", "indigo", "amber", "rose", "red", "orange"] as const;
 type CustomGroupColor = (typeof CUSTOM_GROUP_COLOR_OPTIONS)[number];
 const CUSTOM_GROUP_ICON_SEPARATOR = "::";
@@ -885,6 +888,91 @@ function threadDisplayTitle(title: string) {
   return formatMessengerTitle(title, { max: 80 }) ?? title;
 }
 
+function MessengerThreadPreview({
+  threadKey,
+  eyebrow,
+  title,
+  description,
+  metadata,
+  children,
+}: {
+  threadKey: string;
+  eyebrow: string;
+  title: string;
+  description: string | null;
+  metadata?: Array<string | null | undefined>;
+  children: ReactElement;
+}) {
+  const [open, setOpen] = useState(false);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const detailLines = metadata?.filter((value): value is string => Boolean(value?.trim())) ?? [];
+
+  const clearTimer = (ref: typeof hoverTimerRef) => {
+    if (ref.current) clearTimeout(ref.current);
+    ref.current = null;
+  };
+  const showNow = () => {
+    clearTimer(hoverTimerRef);
+    clearTimer(closeTimerRef);
+    setOpen(true);
+  };
+  const scheduleOpen = () => {
+    clearTimer(hoverTimerRef);
+    clearTimer(closeTimerRef);
+    hoverTimerRef.current = setTimeout(showNow, MESSENGER_THREAD_PREVIEW_HOVER_DELAY_MS);
+  };
+  const scheduleClose = () => {
+    clearTimer(hoverTimerRef);
+    clearTimer(closeTimerRef);
+    closeTimerRef.current = setTimeout(() => setOpen(false), MESSENGER_THREAD_PREVIEW_CLOSE_DELAY_MS);
+  };
+
+  useEffect(() => () => {
+    clearTimer(hoverTimerRef);
+    clearTimer(closeTimerRef);
+  }, []);
+
+  return (
+    <TooltipProvider delayDuration={MESSENGER_THREAD_PREVIEW_HOVER_DELAY_MS} skipDelayDuration={0}>
+      <Tooltip open={open}>
+        <TooltipTrigger
+          asChild
+          onMouseEnter={scheduleOpen}
+          onMouseLeave={scheduleClose}
+          onFocusCapture={showNow}
+          onBlurCapture={scheduleClose}
+        >
+          {children}
+        </TooltipTrigger>
+        <TooltipContent
+          side="right"
+          align="start"
+          sideOffset={8}
+          collisionPadding={16}
+          data-testid={`messenger-thread-preview-${sanitizeThreadKey(threadKey)}`}
+          className="motion-entity-preview-pop z-[70] w-[min(22rem,calc(100vw-2rem))] space-y-2 rounded-[var(--radius-md)] border border-border/80 bg-[color:var(--surface-overlay)] px-3.5 py-3 text-left text-foreground shadow-[var(--shadow-lg)]"
+          onMouseEnter={showNow}
+          onMouseLeave={scheduleClose}
+        >
+          <div className="text-[11px] font-medium text-muted-foreground">{eyebrow}</div>
+          <div className="break-words text-[13px] font-semibold leading-5 text-foreground">{title}</div>
+          {description ? (
+            <div className="line-clamp-6 whitespace-pre-wrap break-words text-[12px] leading-5 text-foreground/78">
+              {description}
+            </div>
+          ) : null}
+          {detailLines.length > 0 ? (
+            <div className="flex flex-wrap gap-x-3 gap-y-1 border-t border-border/60 pt-2 text-[11px] text-muted-foreground">
+              {detailLines.map((line) => <span key={line}>{line}</span>)}
+            </div>
+          ) : null}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 interface ThreadGroup {
   key: string;
   label: string;
@@ -1368,6 +1456,16 @@ function ChatThreadRow({
   }, [generating, titleGenerating]);
 
   return (
+    <MessengerThreadPreview
+      threadKey={`chat:${conversation.id}`}
+      eyebrow="Chat"
+      title={isDefaultChatTitle(conversation.title) ? conversationDisplayTitle(conversation) : conversation.title}
+      description={conversationSubtitle(conversation)}
+      metadata={[
+        agent?.name ? `Agent: ${agent.name}` : null,
+        timeLabel,
+      ]}
+    >
     <div
       data-testid={`messenger-thread-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
       data-messenger-thread-key={`chat:${conversation.id}`}
@@ -1648,6 +1746,7 @@ function ChatThreadRow({
         </>
       )}
     </div>
+    </MessengerThreadPreview>
   );
 }
 
@@ -1708,6 +1807,21 @@ function ThreadRow({
   }, [activeExecutionRunId]);
 
   return (
+    <MessengerThreadPreview
+      threadKey={thread.threadKey}
+      eyebrow={thread.metadata?.splitIssue === true
+        ? typeof thread.metadata.issueIdentifier === "string" ? thread.metadata.issueIdentifier : "Issue"
+        : messengerThreadKindLabel(thread.kind)}
+      title={thread.title}
+      description={thread.metadata?.splitIssue === true && typeof thread.metadata.description === "string"
+        ? thread.metadata.description
+        : preview}
+      metadata={thread.metadata?.splitIssue === true ? [
+        issueStatus ? `Status: ${issueStatus.replace(/_/g, " ")}` : null,
+        typeof thread.metadata.priority === "string" ? `Priority: ${thread.metadata.priority}` : null,
+        thread.latestActivityAt ? relativeTime(new Date(thread.latestActivityAt), { compactDate: true }) : null,
+      ] : [thread.latestActivityAt ? relativeTime(new Date(thread.latestActivityAt), { compactDate: true }) : null]}
+    >
     <div
       data-testid={`messenger-thread-${sanitizeThreadKey(thread.threadKey)}`}
       data-messenger-thread-key={thread.threadKey}
@@ -1898,6 +2012,7 @@ function ThreadRow({
         </DropdownMenu>
       ) : null}
     </div>
+    </MessengerThreadPreview>
   );
 }
 
@@ -2049,7 +2164,7 @@ function chatConversationForThreadSummary(
       ...conversation,
       mutability,
       sourceMetadata,
-      title: thread.title,
+      title: thread.title.includes("…") ? conversation.title : thread.title,
       preferredAgentId: conversation.preferredAgentId ?? preferredAgentId,
       routedAgentId: conversation.routedAgentId ?? routedAgentId,
       chatRuntime: {

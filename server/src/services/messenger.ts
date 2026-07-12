@@ -147,6 +147,7 @@ type IssueThreadEntryRow = IssueUniverseRow & {
 type IssueUniverseRow = {
   id: string;
   title: string;
+  description: string | null;
   status: string;
   priority: string;
   projectId: string | null;
@@ -734,6 +735,7 @@ function splitIssueSummary(
       splitIssue: true,
       issueId: entry.issue.id,
       issueIdentifier: entry.issue.identifier,
+      description: entry.issue.description,
     },
   };
 }
@@ -1471,6 +1473,7 @@ export function messengerService(db: Db) {
         select
           issue_row.id as id,
           issue_row.title as title,
+          issue_row.description as description,
           issue_row.status as status,
           issue_row.priority as priority,
           issue_row.project_id as "projectId",
@@ -1684,6 +1687,7 @@ export function messengerService(db: Db) {
     const issue = {
       id: row.id,
       title: row.title,
+      description: row.description,
       status: row.status,
       priority: row.priority,
       projectId: row.projectId,

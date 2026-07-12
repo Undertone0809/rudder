@@ -398,6 +398,11 @@ function deferred<T>() {
 
 describe("MessengerContextSidebar chat actions", () => {
   beforeEach(() => {
+    vi.stubGlobal("ResizeObserver", class ResizeObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
     activeGeneratingChatIds = new Set();
     messengerRoute = { kind: "root" };
     chatList = [baseConversation()];
@@ -506,6 +511,86 @@ describe("MessengerContextSidebar chat actions", () => {
         writeText: clipboardWriteText,
       },
     });
+  });
+
+  it("reveals chat and issue details only after a one-second row hover", async () => {
+    vi.useFakeTimers();
+    chatList = [baseConversation({
+      title: "A chat title that is intentionally longer than the sidebar row can display",
+      summary: "The complete chat summary shown in the delayed preview card.",
+    })];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "chat:chat-1",
+          kind: "chat",
+          title: chatList[0].title,
+          preview: chatList[0].summary,
+          subtitle: null,
+          href: "/messenger/chat/chat-1",
+          latestActivityAt: "2026-04-11T09:40:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+        {
+          threadKey: "issue:issue-1",
+          kind: "issues",
+          title: "RUD-42 · An issue title that is intentionally longer than the sidebar row can display",
+          preview: "Followed",
+          subtitle: "todo",
+          href: "/messenger/issues/RUD-42",
+          latestActivityAt: "2026-04-11T09:35:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+          metadata: {
+            splitIssue: true,
+            issueId: "issue-1",
+            issueIdentifier: "RUD-42",
+            description: "The complete issue description shown in the delayed preview card.",
+            status: "todo",
+            priority: "medium",
+          },
+        },
+      ],
+    };
+
+    const { container } = renderSidebar();
+    const chatRow = container.querySelector<HTMLElement>('[data-testid="messenger-thread-chat-chat-1"]');
+    expect(chatRow).not.toBeNull();
+
+    act(() => {
+      chatRow!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(999);
+    });
+    expect(document.querySelector('[data-testid="messenger-thread-preview-chat-chat-1"]')).toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    const chatPreview = document.querySelector('[data-testid="messenger-thread-preview-chat-chat-1"]');
+    expect(chatPreview?.textContent).toContain(chatList[0].title);
+    expect(chatPreview?.textContent).toContain(chatList[0].summary);
+
+    act(() => {
+      chatRow!.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
+    });
+    const issueRow = container.querySelector<HTMLElement>('[data-testid="messenger-thread-issue-issue-1"]');
+    expect(issueRow).not.toBeNull();
+    act(() => {
+      issueRow!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(1_000);
+    });
+    const issuePreview = document.querySelector('[data-testid="messenger-thread-preview-issue-issue-1"]');
+    expect(issuePreview?.textContent).toContain("An issue title that is intentionally longer than the sidebar row can display");
+    expect(issuePreview?.textContent).toContain("The complete issue description shown in the delayed preview card.");
+    expect(issuePreview?.textContent).toContain("RUD-42");
+    expect(issuePreview?.textContent).toContain("todo");
+    expect(issuePreview?.textContent).toContain("medium");
   });
 
   afterEach(() => {
