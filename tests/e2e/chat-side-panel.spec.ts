@@ -1336,6 +1336,11 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
     await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toContainText("New tab");
 
+    const closeButtons = sidePanel.getByTestId("chat-side-panel-tab-close");
+    await expect(closeButtons.first()).toHaveCSS("opacity", "0");
+    await sidePanel.getByTestId("chat-side-panel-tab").first().hover();
+    await expect(closeButtons.first()).toHaveCSS("opacity", "1");
+
     const browserTabs = sidePanel.getByTestId("chat-side-panel-tab");
     await browserTabs.last().dragTo(browserTabs.first(), {
       targetPosition: { x: 2, y: 14 },

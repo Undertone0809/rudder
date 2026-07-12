@@ -952,6 +952,11 @@ Product model:
   choices, width/resizer behavior, and close/focus behavior. It does not become
   the owning domain for issue workflow, automation dispatch, Library path safety,
   Messenger attention, or chat lifecycle.
+- On desktop pointer surfaces, operators can drag a Side Panel tab label before
+  or after another tab to reorder the current context's tab strip without
+  changing the active target. The close affordance stays visually quiet until
+  its tab is hovered or receives keyboard focus, while its reserved width keeps
+  tab labels from shifting when the affordance appears.
 - In Messenger, panel tab state is session-scoped to the active work item when
   the item has a stable chat or issue identity. Chat conversations and concrete
   issue threads each keep their own in-memory Side Panel tabs and active tab
@@ -999,26 +1004,29 @@ Flow:
    description, status, priority, assignee, reviewer, project, goal, parent, or
    automation status edits, call the same domain APIs and show errors in the
    panel instead of silently ignoring failures.
-9. Closing a tab focuses a neighboring tab or returns the panel to the empty
+9. On desktop pointer surfaces, dragging a tab label onto the left or right half
+   of another tab moves it before or after that tab. Reordering changes only the
+   current Side Panel context's in-memory tab order and preserves the active tab.
+10. Closing a tab focuses a neighboring tab or returns the panel to the empty
    picker state.
-10. Pressing the close-tab keyboard shortcut while an active Side Panel tab is
+11. Pressing the close-tab keyboard shortcut while an active Side Panel tab is
    present follows the same close behavior as the tab's close button and
    prevents the host window from handling that shortcut.
-11. When the operator hides the panel and reopens it in the same Messenger chat
+12. When the operator hides the panel and reopens it in the same Messenger chat
    or issue context, Rudder restores that context's tabs and active tab.
-12. When the operator switches from one Messenger item to another, Rudder
+13. When the operator switches from one Messenger item to another, Rudder
    switches the Side Panel to the destination item's session state. If that
    destination has no session state, the panel stays or becomes closed by
    default.
-13. App restart may clear all Side Panel tab/session state; this contract does
+14. App restart may clear all Side Panel tab/session state; this contract does
    not require server persistence, cross-device sync, or localStorage recovery
    for tabs.
-14. Browser tabs normalize address-bar input into either a URL or search-query
+15. Browser tabs normalize address-bar input into either a URL or search-query
    navigation, keep back/forward/reload state scoped to the embedded browser,
    can open the current page externally as a secondary action, and route popup
    requests into another Browser tab instead of an unrestricted guest window
    while the Browser tab and popup limits permit it.
-15. Desktop routes ordinary external HTTP(S) links to a Browser Side Panel tab
+16. Desktop routes ordinary external HTTP(S) links to a Browser Side Panel tab
     when Browser is enabled and its instance preference is `built_in`. The
     `default_browser` preference, disabled state, and explicit `Open externally`
     action use the operating-system browser instead.
@@ -1089,6 +1097,7 @@ Evidence:
 - Layout tests cover shared shell behavior and panel framing decisions.
 - Chat attachment/side-panel tests cover tab behavior, empty state, add-tab
   actions that return to the empty picker without opening a dropdown menu,
+  desktop tab reordering, hover/focus close-affordance visibility,
   directly editable issue title/description fields, rendered/editable issue
   assignee metadata, issue and automation compact views, Library previews,
   close-tab keyboard shortcuts, and browser placeholder behavior.
