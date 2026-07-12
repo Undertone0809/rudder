@@ -325,6 +325,10 @@ export function resolveDefaultSidePanelWidth(
   return clampSidePanelWidth((workspaceWidth - 4) / 2, viewportWidth);
 }
 
+export function shouldAutoExpandSidePanel(panelWidth: number, workspaceWidth: number): boolean {
+  return panelWidth > workspaceWidth * (2 / 3);
+}
+
 function widthRatio(value: number, viewportWidth: number | null = getCurrentViewportWidth()): number | null {
   if (viewportWidth === null || !Number.isFinite(viewportWidth) || viewportWidth <= 0) return null;
   return value / viewportWidth;
@@ -363,9 +367,9 @@ function DesktopSidePanelSlot({
   const [resizingSidePanel, setResizingSidePanel] = useState(false);
   const [renderSidePanel, setRenderSidePanel] = useState(sidePanel.open);
   const [sidePanelExiting, setSidePanelExiting] = useState(false);
+  const [sidePanelExpanded, setSidePanelExpanded] = useState(false);
   const hasBrowserTabs = sidePanel.tabs.some((target) => target.kind === "browser");
   const expandedSidePanelWidth = clampSidePanelWidth(SIDE_PANEL_EXPANDED_WIDTH, viewportWidth);
-  const sidePanelExpanded = sidePanelWidth >= expandedSidePanelWidth - 1;
 
   useLayoutEffect(() => {
     onExpandedChange?.(sidePanel.open && sidePanelExpanded);
@@ -465,6 +469,11 @@ function DesktopSidePanelSlot({
     const onPointerMove = (moveEvent: PointerEvent) => {
       const deltaX = moveEvent.clientX - startX;
       latestWidth = startWidth - deltaX;
+      if (workspaceWidth !== null && shouldAutoExpandSidePanel(latestWidth, workspaceWidth)) {
+        stopResizing();
+        setSidePanelExpanded(true);
+        return;
+      }
       if (latestWidth <= SIDE_PANEL_COLLAPSE_WIDTH) {
         collapsedByDrag = true;
         stopResizing();
@@ -489,7 +498,7 @@ function DesktopSidePanelSlot({
 
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", stopResizing, { once: true });
-  }, [resetSidePanelWidth, setProportionalSidePanelWidth, sidePanel, sidePanelWidth]);
+  }, [resetSidePanelWidth, setProportionalSidePanelWidth, sidePanel, sidePanelWidth, workspaceWidth]);
 
   const panelVisible = sidePanel.open || sidePanelExiting;
   const expandedVisible = panelVisible && sidePanelExpanded;
@@ -543,12 +552,20 @@ function DesktopSidePanelSlot({
           exiting={sidePanelExiting}
           resizing={resizingSidePanel}
           onClose={() => {
-            if (sidePanelExpanded) resetSidePanelWidth();
+            if (sidePanelExpanded) {
+              setSidePanelExpanded(false);
+              resetSidePanelWidth();
+            }
             sidePanel.hidePanel();
           }}
           onToggleExpanded={() => {
-            if (sidePanelExpanded) resetSidePanelWidth();
-            else setProportionalSidePanelWidth(expandedSidePanelWidth);
+            if (sidePanelExpanded) {
+              setSidePanelExpanded(false);
+              resetSidePanelWidth();
+            } else {
+              setSidePanelExpanded(true);
+              setProportionalSidePanelWidth(expandedSidePanelWidth);
+            }
           }}
         />
       </div> : null}

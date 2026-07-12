@@ -6,6 +6,7 @@ import {
   resolveProportionalSidePanelWidth,
   resolveProportionalWorkspaceColumnWidth,
   resolveSidePanelContextKey,
+  shouldAutoExpandSidePanel,
   shouldUseFramelessWorkspaceMain,
 } from "./Layout";
 
@@ -47,6 +48,11 @@ describe("workspace context column sizing", () => {
 
   it("defaults the side panel to half of the shared main workspace", () => {
     expect(resolveDefaultSidePanelWidth(1204, 1440)).toBe(600);
+  });
+
+  it("only auto-expands after the side panel exceeds a 2:1 ratio over main content", () => {
+    expect(shouldAutoExpandSidePanel(800, 1200)).toBe(false);
+    expect(shouldAutoExpandSidePanel(801, 1200)).toBe(true);
   });
 
   it("keeps proportional side panel width inside min and viewport limits", () => {

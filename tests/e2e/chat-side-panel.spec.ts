@@ -1267,6 +1267,43 @@ test.describe("Chat Side Panel", () => {
     await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("inert", "");
   });
 
+  test("only auto-expands after a resize makes the Side Panel wider than 2:1", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Side-Panel-Auto-Expand-${Date.now()}` },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await page.getByTestId("side-panel-hover-edge").hover();
+    await page.getByTestId("global-side-panel-trigger").click();
+
+    const sidePanel = page.getByTestId("chat-side-panel");
+    const resizer = page.getByTestId("side-panel-resizer");
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    const stackBox = await page.getByTestId("workspace-main-panel-stack").boundingBox();
+    const resizerBox = await resizer.boundingBox();
+    expect(stackBox).not.toBeNull();
+    expect(resizerBox).not.toBeNull();
+
+    const pointerY = resizerBox!.y + resizerBox!.height / 2;
+    await page.mouse.move(resizerBox!.x + resizerBox!.width / 2, pointerY);
+    await page.mouse.down();
+    await page.mouse.move(stackBox!.x + stackBox!.width * 0.4, pointerY, { steps: 8 });
+    await expect(page.getByTestId("side-panel-expanded-overlay")).toHaveCount(0);
+    await expect(resizer).toBeVisible();
+
+    await page.mouse.move(stackBox!.x + stackBox!.width * 0.3, pointerY, { steps: 8 });
+    await expect(page.getByTestId("side-panel-expanded-overlay")).toBeVisible();
+    await expect(resizer).toHaveCount(0);
+    await page.mouse.up();
+  });
+
   test("opens a Browser side panel tab with URL navigation controls", async ({ page }) => {
     await installBrowserDesktopStub(page);
     const browserSettings = await page.request.patch("/api/instance/settings/browser", {
