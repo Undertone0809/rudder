@@ -140,6 +140,13 @@ test("renders known website icons without fetching metadata", async ({ page }) =
     "https://x.com/my_knn_totoro/status/2068910037238772102",
     "https://docs.feishu.cn/docx/example",
     "https://rudderhq.dev/docs",
+    "https://learn.chatgpt.com/docs/sandboxing/auto-review",
+    "https://platform.openai.com/docs",
+    "https://docs.anthropic.com/en/docs/overview",
+    "https://www.reddit.com/r/LocalLLaMA/",
+    "https://engineering.medium.com/post",
+    "https://news.ycombinator.com/item?id=1",
+    "https://linux.do/t/topic/1",
   ];
   const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
     data: {

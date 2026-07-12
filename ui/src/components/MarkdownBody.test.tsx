@@ -1789,7 +1789,7 @@ describe("MarkdownBody", () => {
     const container = render(
       <ThemeProvider>
         <MarkdownBody>
-          {"Read [tweet](https://x.com/my_knn_totoro/status/2068910037238772102), [Feishu](https://docs.feishu.cn/docx/example), and [Rudder](https://rudderhq.dev/docs)"}
+          {"Read [tweet](https://x.com/my_knn_totoro/status/2068910037238772102), [Feishu](https://docs.feishu.cn/docx/example), [Rudder](https://rudderhq.dev/docs), [ChatGPT](https://learn.chatgpt.com/docs/sandboxing/auto-review), [OpenAI](https://platform.openai.com/docs), [Reddit](https://www.reddit.com/r/LocalLLaMA/), [Medium](https://engineering.medium.com/post), [Hacker News](https://news.ycombinator.com/item?id=1), and [Linux.do](https://linux.do/t/topic/1)"}
         </MarkdownBody>
       </ThemeProvider>,
     );
@@ -1797,17 +1797,17 @@ describe("MarkdownBody", () => {
     const links = Array.from(container.querySelectorAll("a"));
     const logos = links.map((link) => link.querySelector("img.rudder-website-link-logo"));
     expect(entityPreviewApiMocks.getWebsiteMetadata).not.toHaveBeenCalled();
-    expect(links).toHaveLength(3);
-    expect(logos.map((logo) => logo?.getAttribute("src"))).toEqual([
-      expect.stringMatching(/^data:image\/(?:x-icon|png|svg\+xml);base64,/u),
-      expect.stringMatching(/^data:image\/svg\+xml;base64,/u),
-      expect.stringMatching(/^data:image\/x-icon;base64,/u),
-    ]);
+    expect(links).toHaveLength(9);
+    expect(logos.map((logo) => logo?.getAttribute("src"))).toEqual(
+      Array.from({ length: 9 }, () => expect.stringMatching(/^data:image\/(?:x-icon|png|svg\+xml);base64,/u)),
+    );
     for (const link of links) {
       expect(link.querySelector("img.rudder-website-link-logo")?.getAttribute("data-website-icon")).toBe("metadata");
       expect(link.querySelector("[data-website-icon='generic']")).toBeNull();
     }
-    expect(links.map((link) => link.textContent)).toEqual(["tweet", "Feishu", "Rudder"]);
+    expect(links.map((link) => link.textContent)).toEqual([
+      "tweet", "Feishu", "Rudder", "ChatGPT", "OpenAI", "Reddit", "Medium", "Hacker News", "Linux.do",
+    ]);
   });
 
   it("replaces the generic website icon only with fetched metadata icons", async () => {

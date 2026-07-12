@@ -30,7 +30,13 @@ describe("resolveKnownWebsiteIcon", () => {
     expect(resolveKnownWebsiteIcon("https://www.linkedin.com/pulse/post")?.siteName).toBe("LinkedIn");
     expect(resolveKnownWebsiteIcon("https://platform.openai.com/docs")?.siteName).toBe("OpenAI");
     expect(resolveKnownWebsiteIcon("https://chatgpt.com/c/example")?.siteName).toBe("ChatGPT");
+    expect(resolveKnownWebsiteIcon("https://learn.chatgpt.com/docs/sandboxing/auto-review")?.siteName).toBe("ChatGPT");
+    expect(resolveKnownWebsiteIcon("https://docs.anthropic.com/en/docs/overview")?.siteName).toBe("Anthropic");
     expect(resolveKnownWebsiteIcon("https://claude.ai/chat/example")?.siteName).toBe("Claude");
+    expect(resolveKnownWebsiteIcon("https://www.reddit.com/r/LocalLLaMA/")?.siteName).toBe("Reddit");
+    expect(resolveKnownWebsiteIcon("https://engineering.medium.com/post")?.siteName).toBe("Medium");
+    expect(resolveKnownWebsiteIcon("https://news.ycombinator.com/item?id=1")?.siteName).toBe("Hacker News");
+    expect(resolveKnownWebsiteIcon("https://linux.do/t/topic/1")?.siteName).toBe("Linux.do");
     expect(resolveKnownWebsiteIcon("https://www.figma.com/design/file")?.siteName).toBe("Figma");
     expect(resolveKnownWebsiteIcon("https://docs.feishu.cn/docx/example")?.siteName).toBe("Feishu");
     expect(resolveKnownWebsiteIcon("https://rudderhq.dev/docs")?.siteName).toBe("Rudder");
