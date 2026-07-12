@@ -185,6 +185,8 @@ export type DesktopBrowserImportSource = {
 export type DesktopBrowserImportError = {
   errorCode: string;
   message: string;
+  count: number;
+  kind: "skipped" | "failed";
 };
 
 export type DesktopBrowserImportResult = {

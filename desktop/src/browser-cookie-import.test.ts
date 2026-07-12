@@ -74,7 +74,12 @@ describe("Browser Cookie importer", () => {
       ],
       skippedCount: 2,
       failedCount: 1,
-      errors: [{ errorCode: "COOKIE_DECRYPT_FAILED", message: "A cookie could not be decrypted and was not imported." }],
+      errors: [{
+        errorCode: "COOKIE_DECRYPT_FAILED",
+        message: "A cookie could not be decrypted and was not imported.",
+        count: 1,
+        kind: "failed" as const,
+      }],
     }));
     const importer = createBrowserCookieImporter({
       sourceRegistry: {
@@ -124,8 +129,24 @@ describe("Browser Cookie importer", () => {
       skippedCount: 4,
       failedCount: 2,
       errors: [
-        { errorCode: "COOKIE_DECRYPT_FAILED", message: "A cookie could not be decrypted and was not imported." },
-        { errorCode: "COOKIE_WRITE_FAILED", message: "A cookie could not be written to the Rudder Browser." },
+        {
+          errorCode: "COOKIE_DECRYPT_FAILED",
+          message: "A cookie could not be decrypted and was not imported.",
+          count: 1,
+          kind: "failed",
+        },
+        {
+          errorCode: "COOKIE_ALREADY_EXISTS",
+          message: "A matching cookie already exists in the Rudder Browser and was preserved.",
+          count: 2,
+          kind: "skipped",
+        },
+        {
+          errorCode: "COOKIE_WRITE_FAILED",
+          message: "A cookie could not be written to the Rudder Browser.",
+          count: 1,
+          kind: "failed",
+        },
       ],
     });
     expect(JSON.stringify(result)).not.toContain("/private");
@@ -160,9 +181,12 @@ describe("Browser Cookie importer", () => {
     const result = await importer.importBrowserData({ sourceId: source.id, importCookies: true });
     expect(result.status).toBe("failed");
     expect(result.failedCount).toBe(25);
-    expect(result.errors).toHaveLength(20);
-    expect(new Set(result.errors?.map((error) => error.message)))
-      .toEqual(new Set(["A cookie could not be written to the Rudder Browser."]));
+    expect(result.errors).toEqual([{
+      errorCode: "COOKIE_WRITE_FAILED",
+      message: "A cookie could not be written to the Rudder Browser.",
+      count: 25,
+      kind: "failed",
+    }]);
   });
 
   it("rejects non-canonical source hosts before Electron can overwrite a canonical destination", async () => {
@@ -199,10 +223,12 @@ describe("Browser Cookie importer", () => {
       importedCount: 0,
       skippedCount: 4,
       failedCount: 0,
-      errors: Array.from({ length: 4 }, () => ({
+      errors: [{
         errorCode: "COOKIE_ROW_INVALID",
         message: "An invalid cookie row was skipped.",
-      })),
+        count: 4,
+        kind: "skipped",
+      }],
     });
     expect(set).not.toHaveBeenCalled();
   });

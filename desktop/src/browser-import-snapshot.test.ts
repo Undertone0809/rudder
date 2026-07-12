@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   cleanupStaleBrowserImportTempDirectories,
   createPrivateBrowserImportTempDirectory,
@@ -43,46 +44,31 @@ describe("Chromium Cookie database snapshots", () => {
       .toThrow("valid Rudder Browser partition");
   });
 
-  it("copies Cookies with WAL and SHM into private temporary storage", async () => {
+  it("creates a consistent private snapshot while the source database remains open", async () => {
     const root = await makeTempRoot();
     const sourcePath = path.join(root, "Cookies");
-    await fs.writeFile(sourcePath, "database");
-    await fs.writeFile(`${sourcePath}-wal`, "wal");
-    await fs.writeFile(`${sourcePath}-shm`, "shm");
+    const source = new DatabaseSync(sourcePath);
+    try {
+      source.exec("PRAGMA journal_mode = WAL; CREATE TABLE cookies(name TEXT); INSERT INTO cookies VALUES ('before');");
 
-    const snapshot = await createStableCookieDatabaseSnapshot({
-      sourcePath,
-      isAnyPathOpen: async () => false,
-    });
-    tempRoots.push(snapshot.tempDirectory);
+      const snapshot = await createStableCookieDatabaseSnapshot({ sourcePath });
+      tempRoots.push(snapshot.tempDirectory);
+      const copied = new DatabaseSync(snapshot.databasePath, { readOnly: true });
+      try {
+        expect(copied.prepare("SELECT name FROM cookies").all()).toEqual([{ name: "before" }]);
+      } finally {
+        copied.close();
+      }
+      expect(path.basename(snapshot.databasePath)).toBe("Cookies");
+      expect((await fs.stat(snapshot.tempDirectory)).mode & 0o777).toBe(0o700);
+      expect((await fs.stat(snapshot.databasePath)).mode & 0o777).toBe(0o600);
 
-    expect(path.basename(snapshot.databasePath)).toBe("Cookies");
-    expect(await fs.readFile(snapshot.databasePath, "utf8")).toBe("database");
-    expect(await fs.readFile(`${snapshot.databasePath}-wal`, "utf8")).toBe("wal");
-    expect(await fs.readFile(`${snapshot.databasePath}-shm`, "utf8")).toBe("shm");
-    expect((await fs.stat(snapshot.tempDirectory)).mode & 0o777).toBe(0o700);
-    expect((await fs.stat(snapshot.databasePath)).mode & 0o777).toBe(0o600);
-
-    await snapshot.cleanup();
-    await expect(fs.stat(snapshot.tempDirectory)).rejects.toThrow();
-  });
-
-  it("rejects open source databases before copying", async () => {
-    const root = await makeTempRoot();
-    const sourcePath = path.join(root, "Cookies");
-    await fs.writeFile(sourcePath, "database");
-    const copyFile = vi.fn(async () => undefined);
-
-    await expect(createStableCookieDatabaseSnapshot({
-      sourcePath,
-      isAnyPathOpen: async () => true,
-      copyFile,
-    })).rejects.toMatchObject({
-      name: "BrowserImportSourceOpenError",
-      code: "BROWSER_SOURCE_OPEN",
-      message: "Close the source browser before importing its data.",
-    });
-    expect(copyFile).not.toHaveBeenCalled();
+      source.exec("INSERT INTO cookies VALUES ('after')");
+      await snapshot.cleanup();
+      await expect(fs.stat(snapshot.tempDirectory)).rejects.toThrow();
+    } finally {
+      source.close();
+    }
   });
 
   it("rejects source snapshots that exceed the configured size limit", async () => {
@@ -93,62 +79,28 @@ describe("Chromium Cookie database snapshots", () => {
     await expect(createStableCookieDatabaseSnapshot({
       sourcePath,
       maxTotalBytes: 7n,
-      isAnyPathOpen: async () => false,
     })).rejects.toThrow("too large");
   });
 
-  it("rejects source changes during the copy and cleans its temporary directory", async () => {
+  it("cleans its temporary directory when the online backup fails", async () => {
     const root = await makeTempRoot();
     const sourcePath = path.join(root, "Cookies");
-    await fs.writeFile(sourcePath, "database");
+    const source = new DatabaseSync(sourcePath);
+    source.exec("CREATE TABLE cookies(name TEXT)");
+    source.close();
     let tempDirectory: string | null = null;
 
     await expect(createStableCookieDatabaseSnapshot({
       sourcePath,
-      isAnyPathOpen: async () => false,
       onTempDirectory: (value) => {
         tempDirectory = value;
       },
-      copyFile: async (source, destination) => {
-        await fs.copyFile(source, destination);
-        await fs.appendFile(source, "changed");
+      backupDatabase: async () => {
+        throw new Error("backup failed");
       },
-    })).rejects.toThrow("changed during import");
+    })).rejects.toThrow("backup failed");
     expect(tempDirectory).not.toBeNull();
     await expect(fs.stat(tempDirectory!)).rejects.toThrow();
-  });
-
-  it("rejects a WAL file created during the copy", async () => {
-    const root = await makeTempRoot();
-    const sourcePath = path.join(root, "Cookies");
-    await fs.writeFile(sourcePath, "database");
-
-    await expect(createStableCookieDatabaseSnapshot({
-      sourcePath,
-      isAnyPathOpen: async () => false,
-      copyFile: async (source, destination) => {
-        await fs.copyFile(source, destination);
-        await fs.writeFile(`${sourcePath}-wal`, "new-wal");
-      },
-    })).rejects.toThrow("changed during import");
-  });
-
-  it("passes the captured size to bounded copies when a source starts growing", async () => {
-    const root = await makeTempRoot();
-    const sourcePath = path.join(root, "Cookies");
-    await fs.writeFile(sourcePath, "database");
-    let capturedSize: bigint | null = null;
-
-    await expect(createStableCookieDatabaseSnapshot({
-      sourcePath,
-      isAnyPathOpen: async () => false,
-      copyFile: async (source, destination, expectedSize) => {
-        capturedSize = expectedSize;
-        await fs.copyFile(source, destination);
-        await fs.appendFile(source, "growing-after-open");
-      },
-    })).rejects.toThrow("changed during import");
-    expect(capturedSize).toBe(8n);
   });
 
   it("rejects symlinked Cookie databases", async () => {
@@ -160,7 +112,6 @@ describe("Chromium Cookie database snapshots", () => {
 
     await expect(createStableCookieDatabaseSnapshot({
       sourcePath,
-      isAnyPathOpen: async () => false,
     })).rejects.toThrow("regular file");
   });
 
@@ -172,7 +123,6 @@ describe("Chromium Cookie database snapshots", () => {
 
     await expect(createStableCookieDatabaseSnapshot({
       sourcePath,
-      isAnyPathOpen: async () => false,
       onTempDirectory: (value) => {
         tempDirectory = value;
         throw new Error("setup failed");

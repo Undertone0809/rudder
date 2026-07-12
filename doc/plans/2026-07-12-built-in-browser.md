@@ -233,8 +233,8 @@ all organizations and agents in the current Rudder instance.
   agent run.
 - Import is partial-success safe and does not overwrite existing Rudder Browser
   cookies.
-- An open source browser fails before copy with an actionable, sanitized close-
-  and-retry message. No source path or raw worker error reaches the renderer.
+- An open source browser remains usable while SQLite's online backup API creates
+  a consistent snapshot. No source path or raw worker error reaches the renderer.
 - Disable and clear revoke guests immediately rather than waiting behind an
   in-flight import; clear waits before final exhaustive session removal.
 - Graceful Desktop quit closes import admission, aborts the active import
@@ -286,9 +286,11 @@ all organizations and agents in the current Rudder instance.
 3. The operator chooses a browser profile and supported data types.
 4. Rudder explains that imported signed-in sessions become available to every
    organization and agent in this instance.
-5. The operator starts import. The source database is copied to a private,
-   instance-owned temporary directory before read access so the source browser
-   is not modified.
+5. The operator starts import without closing the source browser. Desktop uses
+   SQLite's online backup API to create a consistent private, instance-owned
+   snapshot while the source browser may continue reading and writing. Rudder
+   does not alter Cookie records or source DB/WAL contents; SQLite may update
+   transient shared-memory coordination metadata while opening the live database.
 6. Rudder imports valid cookies, preserves existing destination cookies, cleans
    temporary files on success, failure, cancellation, or graceful quit, and
    reports detailed counts.
@@ -452,8 +454,8 @@ The first source adapter targets macOS Chromium profiles such as Google Chrome,
 Microsoft Edge, and Brave Browser. It:
 
 1. reads profile display metadata;
-2. copies the selected profile's Cookies database and WAL companions to a
-   temporary directory;
+2. creates a consistent private snapshot with SQLite's online backup API while
+   the source browser remains open;
 3. asks macOS Keychain for the source browser's Safe Storage secret when needed;
 4. decrypts supported cookie formats locally;
 5. validates scheme, host, path, expiry, SameSite, and secure fields;
@@ -484,9 +486,11 @@ The Agent Browser route accepts only a run-scoped Agent JWT. A mismatched run
 header is rejected before run lookup, and a long-lived Agent API key cannot
 bootstrap Browser authority from an unsigned run header.
 
-The importer reads only the explicitly selected local profile. It does not
-modify the source browser, upload data, or persist raw cookie databases. Cookie
-values are written directly from Desktop main into Electron's cookie store.
+The importer reads only the explicitly selected local profile. It does not alter
+Cookie records or source DB/WAL contents, upload data, or persist raw cookie
+databases. SQLite may update transient shared-memory coordination metadata while
+opening the live database. Cookie values are written directly from Desktop main
+into Electron's cookie store.
 
 Imported authenticated sessions are deliberately shared across organizations.
 The Settings page and Import confirmation must disclose that trust decision.
@@ -510,7 +514,8 @@ The Settings page and Import confirmation must disclose that trust decision.
 
 - implement source discovery and macOS Chromium cookie import;
 - add fixture-based decryption/import tests and visible partial-success results;
-- verify source data is never modified or returned to the renderer.
+- verify source Cookie DB/WAL contents are unchanged and source data is never
+  returned to the renderer.
 
 ### Phase 4: Agent Capability
 
@@ -557,8 +562,7 @@ Agent paths.
    operator starts import.
 10. Import preserves existing cookies and reports valid, expired, malformed,
     unsupported-encryption, and write-failure results.
-    An open source browser produces an actionable sanitized close-and-retry
-    result.
+    An open WAL-mode source remains usable while the online snapshot is created.
 11. Browser skill is realized for every agent when enabled and absent when
     disabled.
 12. Browser tools derive identity from a run-scoped JWT, reject mismatched or
@@ -574,13 +578,20 @@ Agent paths.
     removes cookies, local storage, and CacheStorage through the real Electron
     partition.
 17. The Import dialog shows Cookies as supported, shows Passwords as unavailable,
-    and never sends a password-import field to Desktop.
-18. Graceful quit during import aborts the worker and waits until its raw
+    never sends a password-import field to Desktop, keeps actions within the
+    viewport, and groups expected skip reasons instead of rendering one red row
+    per Cookie.
+18. Desktop imports from a WAL-mode source database while its source connection
+    remains open, without asking the operator to close the source browser.
+19. Graceful quit during import aborts the worker and waits until its raw
     snapshot is removed before runtime shutdown.
-19. Startup removes dead same-instance import residue while preserving live
+20. Startup removes dead same-instance import residue while preserving live
     same-instance and foreign-instance temporary directories.
-20. Both Desktop-to-server lifecycle requests and server-to-Desktop Broker
+21. Both Desktop-to-server lifecycle requests and server-to-Desktop Broker
     command requests reject redirects before forwarding credentials or bodies.
+22. Online backup rejects oversized snapshots before import and after backup;
+    progress-based interruption for a source that grows past the limit during
+    backup remains a follow-up hardening item.
 
 ### Expected Results
 

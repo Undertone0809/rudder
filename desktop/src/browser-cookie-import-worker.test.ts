@@ -26,29 +26,12 @@ const keyUnavailable: ChromiumCookieDatabaseResult = {
   errors: [{
     errorCode: "COOKIE_KEY_UNAVAILABLE",
     message: "Encrypted cookies could not be read because browser key access was unavailable.",
+    count: 1,
+    kind: "failed",
   }],
 };
 
 describe("Browser Cookie import worker", () => {
-  it("returns a stable sanitized error when the source browser database is open", async () => {
-    const sourceOpenError = Object.assign(
-      new Error(`SQLITE_BUSY while opening ${source.cookieDatabasePath}`),
-      { code: "BROWSER_SOURCE_OPEN" },
-    );
-
-    await expect(processBrowserCookieImportSource(source, {
-      createSnapshot: async () => { throw sourceOpenError; },
-    })).resolves.toEqual({
-      cookies: [],
-      skippedCount: 0,
-      failedCount: 1,
-      errors: [{
-        errorCode: "BROWSER_SOURCE_OPEN",
-        message: "Close the source browser and try the import again.",
-      }],
-    });
-  });
-
   it("does not expose unknown worker failures", async () => {
     class FailedWorker extends EventEmitter {
       terminate = vi.fn(async () => 1);
@@ -82,7 +65,12 @@ describe("Browser Cookie import worker", () => {
       cookies: [],
       skippedCount: 1,
       failedCount: 0,
-      errors: [{ errorCode: "COOKIE_EXPIRED", message: "An expired cookie was skipped." }],
+      errors: [{
+        errorCode: "COOKIE_EXPIRED",
+        message: "An expired cookie was skipped.",
+        count: 1,
+        kind: "skipped",
+      }],
     };
     const readDatabase = vi.fn()
       .mockReturnValueOnce(keyUnavailable)

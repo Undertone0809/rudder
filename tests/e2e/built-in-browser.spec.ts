@@ -46,11 +46,16 @@ async function installBrowserDesktopStub(page: Page) {
           supported: { cookies: true, passwords: false },
         }],
         importBrowserData: async () => ({
-          status: "partial",
+          status: "succeeded",
           importedCount: 12,
           skippedCount: 2,
-          failedCount: 1,
-          errors: [{ errorCode: "COOKIE_PARTITIONED_UNSUPPORTED", message: "Partitioned cookie skipped." }],
+          failedCount: 0,
+          errors: [{
+            errorCode: "COOKIE_PARTITION_UNSUPPORTED",
+            message: "Partitioned cookies are not supported and were skipped.",
+            count: 2,
+            kind: "skipped",
+          }],
         }),
         clearBrowserData: async () => {
           clearCalls += 1;
@@ -132,6 +137,7 @@ test.describe("Built-in Browser", () => {
   });
 
   test("configures, imports, and clears the shared Browser profile", async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1100, height: 640 });
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Built-in Browser Settings ${Date.now()}` },
     });
@@ -143,7 +149,8 @@ test.describe("Built-in Browser", () => {
     const modal = page.getByTestId("settings-modal-shell");
     await modal.locator('a[href$="/instance/settings/browser"]').click();
     await expect(modal.getByRole("heading", { name: "Browser", level: 1 })).toBeVisible();
-    await expect(modal.getByRole("button", { name: "Rudder Browser" })).toHaveAttribute("aria-pressed", "true");
+    await expect(modal.getByRole("button", { name: "Rudder Built-in Browser" }))
+      .toHaveAttribute("aria-pressed", "true");
     await expect(modal.getByText(/shared by every organization and Agent/i)).toBeVisible();
 
     await modal.getByRole("button", { name: "Default browser" }).click();
@@ -160,11 +167,21 @@ test.describe("Built-in Browser", () => {
     await expect(importDialog.getByText("Not available in this version", { exact: true })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("built-in-browser-import-dialog.png"), fullPage: true });
     await importDialog.getByRole("button", { name: "Import", exact: true }).click();
-    await expect(importDialog.getByRole("status")).toContainText("Partial import");
+    await expect(importDialog.getByRole("status")).toContainText("Import complete");
     await expect(importDialog.getByRole("status")).toContainText("Imported 12");
     await expect(importDialog.getByRole("status")).toContainText("Skipped 2");
-    await expect(importDialog.getByRole("status")).toContainText("Failed 1");
-    await importDialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(importDialog.getByRole("status")).toContainText("Failed 0");
+    await expect(importDialog.getByRole("status")).toContainText("Skipped details");
+    await expect(importDialog.getByText("COOKIE_PARTITION_UNSUPPORTED", { exact: true })).toHaveCount(1);
+    await expect(importDialog.locator(".text-destructive")).toHaveCount(0);
+    const cancelButton = importDialog.getByRole("button", { name: "Cancel" });
+    await expect(cancelButton).toBeVisible();
+    const dialogBounds = await importDialog.boundingBox();
+    expect(dialogBounds).not.toBeNull();
+    expect(dialogBounds!.y).toBeGreaterThanOrEqual(0);
+    expect(dialogBounds!.y + dialogBounds!.height).toBeLessThanOrEqual(640);
+    await page.screenshot({ path: testInfo.outputPath("built-in-browser-import-result.png"), fullPage: true });
+    await cancelButton.click();
 
     await modal.getByRole("button", { name: "Clear all browsing data" }).click();
     const confirmDialog = page.getByRole("dialog", { name: "Clear all browsing data?" });

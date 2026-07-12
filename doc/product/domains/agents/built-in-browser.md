@@ -207,13 +207,14 @@ auditing remain inside existing boundaries.
    and sanitized origin, never credentials, query tokens, form values, cookies,
    or page content.
 8. On macOS, import discovery lists supported local Chromium profiles without
-   reading cookie values. After operator confirmation, Desktop copies the
-   selected cookie database, obtains required Keychain access, imports supported
-   cookies without replacing existing destination cookies, cleans temporary
-   copies, and reports imported, skipped, and failed counts. If the selected
-   source database is open, Rudder returns a stable sanitized failure and tells
-   the operator to close that source browser and retry without exposing a path
-   or raw cause.
+   reading cookie values. After operator confirmation, Desktop creates a
+   consistent private snapshot through SQLite's online backup API while the
+   source browser remains open, obtains required Keychain access, imports
+   supported cookies without replacing existing destination cookies, cleans the
+   snapshot, and reports imported, skipped, and failed counts with skip reasons
+   grouped separately from failures. The read-only snapshot path does not alter
+   Cookie records or source DB/WAL contents; SQLite may update transient
+   shared-memory coordination metadata while opening the live database.
 9. Disabling Browser immediately stops new import/control admission, closes
    operator and Agent Browser tabs, revokes leases, routes later links to the
    system browser, rejects current Browser tool calls, and removes the Browser
@@ -246,8 +247,8 @@ auditing remain inside existing boundaries.
 | Browser disabled | Capability is off at projection or call time | Remove the skill and tools from later run projections; reject current calls with `browser_disabled`; revoke tabs | A stale run snapshot must not retain control even if its static MCP discovery still lists Browser tools | Skill reconciliation, adapter, and route tests |
 | Operator tab capacity | Side Panel context already has eight Browser tabs | Ordinary Rudder links reuse an existing Browser tab; popup and explicit new-tab requests are discarded | Do not create an unbounded guest or native window | Side Panel capacity and popup tests |
 | Agent tab capacity | Run already has eight tabs or Desktop has 32 Agent tabs | Reject another open with `browser_tab_limit` until an owned tab closes | One run must not exhaust the Desktop with unbounded hidden tabs | Agent tab controller tests |
-| Cookie import | macOS supported Chromium source selected and operator confirms | Import supported cookies locally, preserve existing cookies, and report partial outcomes | Do not read before confirmation, modify the source, expose values, or claim password import | Desktop importer and dialog tests |
-| Source browser open | Selected Chromium Cookie database is held open | Reject before copying and tell the operator to close that browser and retry | Do not expose filesystem paths, raw worker errors, cookie data, or Keychain details | Snapshot, worker, IPC, preload, and dialog tests |
+| Cookie import | macOS supported Chromium source selected and operator confirms | Import supported cookies locally, preserve existing cookies, and report partial outcomes | Do not read before confirmation, alter source Cookie records or DB/WAL contents, expose values, or claim password import | Desktop importer and dialog tests |
+| Source browser open | Selected Chromium Cookie database is actively used in WAL mode | Create an online consistent snapshot and import without interrupting the source browser | Do not require browser shutdown, copy a torn database/WAL pair, alter source Cookie records or DB/WAL contents, or expose filesystem paths, cookie data, or Keychain details; transient SQLite shared-memory coordination updates are allowed | Snapshot, Desktop smoke, IPC, preload, and dialog tests |
 | Unsupported import | Non-macOS, unsupported encryption/data type, or password request | Show the capability as unavailable or count the item as unsupported/failed | Do not report unsupported data as imported | Importer and dialog tests |
 | Quit or crash during import | Desktop quits gracefully or a prior same-instance process crashed after creating a marked snapshot | Abort and await cleanup on graceful quit; reap dead same-instance residue on startup | Do not leave recoverable raw snapshots indefinitely or delete a live/foreign-instance snapshot | Profile, worker, snapshot, and quit-flow tests |
 | Clear data | Operator confirms shared-profile clear | Stop admission and close tabs immediately, then clear the whole Electron Browser session and preserve settings | Do not wait behind an import before revoking guests, clear only one storage subset/organization, or reset Browser preferences | Desktop profile tests and real Desktop smoke |

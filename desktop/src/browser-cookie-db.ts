@@ -26,6 +26,8 @@ export type ImportedChromiumCookie = {
 export type BrowserImportError = {
   errorCode: string;
   message: string;
+  count: number;
+  kind: "skipped" | "failed";
 };
 
 export type ChromiumCookieDatabaseResult = {
@@ -138,8 +140,16 @@ export function readChromiumCookieDatabase(input: {
   const report = (errorCode: string, failed = false) => {
     if (failed) result.failedCount += 1;
     else result.skippedCount += 1;
-    if (result.errors.length < MAX_REPORTED_ERRORS) {
-      result.errors.push({ errorCode, message: ERROR_MESSAGES[errorCode] ?? "A cookie could not be imported." });
+    const kind = failed ? "failed" : "skipped";
+    const existing = result.errors.find((error) => error.errorCode === errorCode && error.kind === kind);
+    if (existing) existing.count += 1;
+    else if (result.errors.length < MAX_REPORTED_ERRORS) {
+      result.errors.push({
+        errorCode,
+        message: ERROR_MESSAGES[errorCode] ?? "A cookie could not be imported.",
+        count: 1,
+        kind,
+      });
     }
   };
 

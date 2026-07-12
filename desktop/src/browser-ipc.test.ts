@@ -43,7 +43,7 @@ describe("Rudder Browser IPC", () => {
     expect(importer.importBrowserData).toHaveBeenCalledWith({ sourceId: "opaque-source", importCookies: true });
   });
 
-  it("preserves the sanitized source-open error code across the import IPC channel", async () => {
+  it("preserves aggregated import issues across the import IPC channel", async () => {
     const handlers = new Map<string, (event: { sender: unknown }, ...args: unknown[]) => unknown>();
     const ipcMain = {
       handle: (channel: string, handler: (event: { sender: unknown }, ...args: unknown[]) => unknown) => {
@@ -51,14 +51,16 @@ describe("Rudder Browser IPC", () => {
       },
     };
     const mainRenderer = { id: "main-renderer" };
-    const sourceOpenResult = {
-      status: "failed" as const,
-      importedCount: 0,
-      skippedCount: 0,
-      failedCount: 1,
+    const importResult = {
+      status: "succeeded" as const,
+      importedCount: 12,
+      skippedCount: 553,
+      failedCount: 0,
       errors: [{
-        errorCode: "BROWSER_SOURCE_OPEN",
-        message: "Close the source browser and try the import again.",
+        errorCode: "COOKIE_PARTITION_UNSUPPORTED",
+        message: "A partitioned cookie is not supported by this version of Rudder.",
+        count: 553,
+        kind: "skipped" as const,
       }],
     };
     registerBrowserIpcHandlers(ipcMain, {
@@ -70,14 +72,14 @@ describe("Rudder Browser IPC", () => {
       },
       importer: {
         listBrowserImportSources: async () => [],
-        importBrowserData: async () => sourceOpenResult,
+        importBrowserData: async () => importResult,
       },
     });
 
     await expect(handlers.get(BROWSER_IPC_CHANNELS.importData)?.(
       { sender: mainRenderer },
       { sourceId: "opaque-source", importCookies: true },
-    )).resolves.toEqual(sourceOpenResult);
+    )).resolves.toEqual(importResult);
   });
 
   it("rejects every Browser handler from non-main renderer senders", async () => {

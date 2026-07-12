@@ -25,13 +25,14 @@ const messages: Record<string, string> = {
   "browser.import.action": "Import",
   "browser.import.importing": "Importing...",
   "browser.import.failed": "Browser data import failed.",
-  "browser.import.sourceOpen": "Close {{browser}} completely, then try the import again.",
   "browser.import.result.imported": "Imported {{count}}",
   "browser.import.result.skipped": "Skipped {{count}}",
   "browser.import.result.failed": "Failed {{count}}",
   "browser.import.result.status.succeeded": "Import complete",
   "browser.import.result.status.partial": "Partial import",
   "browser.import.result.status.failed": "Import failed",
+  "browser.import.result.skippedReasons": "Skipped details",
+  "browser.import.result.failures": "Failures",
   "common.cancel": "Cancel",
 };
 
@@ -97,9 +98,10 @@ beforeEach(() => {
     skippedCount: 2,
     failedCount: 1,
     errors: [
-      { errorCode: "COOKIE_DECRYPT_FAILED", message: "One cookie could not be decrypted." },
+      { errorCode: "COOKIE_DECRYPT_FAILED", message: "One cookie could not be decrypted.", count: 1, kind: "failed" },
     ],
   });
+
   (window as typeof window & { desktopShell?: unknown }).desktopShell = {
     listBrowserImportSources: listSources,
     importBrowserData,
@@ -117,6 +119,45 @@ afterEach(() => {
 });
 
 describe("BrowserDataImportDialog", () => {
+  it("aggregates expected skips without flooding the dialog as destructive errors", async () => {
+    importBrowserData.mockResolvedValue({
+      status: "succeeded",
+      importedCount: 3009,
+      skippedCount: 671,
+      failedCount: 0,
+      errors: [
+        {
+          errorCode: "COOKIE_PARTITION_UNSUPPORTED",
+          message: "Partitioned cookies are not supported and were skipped.",
+          count: 553,
+          kind: "skipped",
+        },
+        {
+          errorCode: "COOKIE_EXPIRED",
+          message: "Expired cookies were skipped.",
+          count: 118,
+          kind: "skipped",
+        },
+      ],
+    });
+
+    renderDialog(true);
+    await flush();
+    const importButton = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Import");
+    act(() => importButton!.click());
+    await flush();
+
+    const resultStatus = document.body.querySelector('[role="status"]');
+    expect(resultStatus?.textContent).toContain("Import complete");
+    expect(resultStatus?.textContent).toContain("Skipped details");
+    expect(resultStatus?.textContent?.match(/COOKIE_PARTITION_UNSUPPORTED/g)).toHaveLength(1);
+    expect(resultStatus?.textContent).toContain("553");
+    expect(resultStatus?.querySelector(".text-destructive")).toBeNull();
+    expect(document.body.querySelector('[data-testid="browser-import-scroll-region"]')?.className)
+      .toContain("overflow-y-auto");
+  });
+
   it("discovers sources only after opening and marks password import unavailable", async () => {
     renderDialog(false);
     expect(listSources).not.toHaveBeenCalled();
@@ -158,33 +199,6 @@ describe("BrowserDataImportDialog", () => {
     expect(document.body.textContent).toContain("COOKIE_DECRYPT_FAILED");
     expect(document.body.textContent).toContain("One cookie could not be decrypted.");
     expect(document.body.textContent).not.toContain("opaque-profile-1");
-  });
-
-  it("instructs the user to close the selected source browser without exposing raw causes", async () => {
-    importBrowserData.mockResolvedValue({
-      status: "failed",
-      importedCount: 0,
-      skippedCount: 0,
-      failedCount: 1,
-      errors: [{
-        errorCode: "BROWSER_SOURCE_OPEN",
-        message: "SQLITE_BUSY at /Users/private/Chrome/Default/Network/Cookies",
-      }],
-    });
-
-    renderDialog(true);
-    await flush();
-
-    const importButton = Array.from(document.body.querySelectorAll("button"))
-      .find((button) => button.textContent?.trim() === "Import");
-    act(() => importButton!.click());
-    await flush();
-
-    const alert = document.body.querySelector('[role="alert"]');
-    expect(alert?.textContent).toBe("Close Google Chrome completely, then try the import again.");
-    expect(document.body.textContent).not.toContain("BROWSER_SOURCE_OPEN");
-    expect(document.body.textContent).not.toContain("/Users/private");
-    expect(document.body.querySelector('[role="status"]')).toBeNull();
   });
 
   it("keeps unknown import rejections generic", async () => {

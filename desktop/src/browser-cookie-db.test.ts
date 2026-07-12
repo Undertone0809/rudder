@@ -151,15 +151,18 @@ describe("Chromium Cookie database reader", () => {
     }]);
     expect(result.skippedCount).toBe(7);
     expect(result.failedCount).toBe(0);
-    expect(result.errors.map((error) => error.errorCode).sort()).toEqual([
-      "COOKIE_ENCRYPTION_UNSUPPORTED",
-      "COOKIE_EXPIRED",
-      "COOKIE_PARTITION_UNSUPPORTED",
-      "COOKIE_ROW_INVALID",
-      "COOKIE_ROW_INVALID",
-      "COOKIE_SAMESITE_INVALID",
-      "COOKIE_VALUE_AMBIGUOUS",
-    ].sort());
+    expect(result.errors.map((error) => ({
+      errorCode: error.errorCode,
+      count: error.count,
+      kind: error.kind,
+    })).sort((left, right) => left.errorCode.localeCompare(right.errorCode))).toEqual([
+      { errorCode: "COOKIE_ENCRYPTION_UNSUPPORTED", count: 1, kind: "skipped" },
+      { errorCode: "COOKIE_EXPIRED", count: 1, kind: "skipped" },
+      { errorCode: "COOKIE_PARTITION_UNSUPPORTED", count: 1, kind: "skipped" },
+      { errorCode: "COOKIE_ROW_INVALID", count: 2, kind: "skipped" },
+      { errorCode: "COOKIE_SAMESITE_INVALID", count: 1, kind: "skipped" },
+      { errorCode: "COOKIE_VALUE_AMBIGUOUS", count: 1, kind: "skipped" },
+    ].sort((left, right) => left.errorCode.localeCompare(right.errorCode)));
     key.fill(0);
   });
 
@@ -182,6 +185,8 @@ describe("Chromium Cookie database reader", () => {
     expect(result.errors).toEqual([{
       errorCode: "COOKIE_HOST_HASH_MISMATCH",
       message: "A cookie could not be verified and was not imported.",
+      count: 1,
+      kind: "failed",
     }]);
     expect(JSON.stringify(result)).not.toContain("wrong-host.test");
     expect(JSON.stringify(result)).not.toContain("secret-cookie-name");

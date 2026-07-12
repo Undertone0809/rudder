@@ -6,10 +6,8 @@ import {
   type ChromiumCookieDatabaseResult,
 } from "./browser-cookie-db.js";
 import {
-  BROWSER_SOURCE_OPEN_ERROR_CODE,
   createPrivateBrowserImportTempDirectory,
   createStableCookieDatabaseSnapshot,
-  isBrowserImportSourceOpenError,
   type BrowserCookieDatabaseSnapshot,
 } from "./browser-import-snapshot.js";
 import type { TrustedBrowserImportSource } from "./browser-import-sources.js";
@@ -34,21 +32,7 @@ export async function processBrowserCookieImportSource(
   const readDatabase = dependencies.readDatabase ?? readChromiumCookieDatabase;
   const readKeychain = dependencies.readKeychain ?? readMacBrowserKeychainPassword;
   const deriveKey = dependencies.deriveKey ?? deriveMacChromiumCookieKey;
-  let snapshot: BrowserCookieDatabaseSnapshot;
-  try {
-    snapshot = await createSnapshot({ sourcePath: source.cookieDatabasePath });
-  } catch (error) {
-    if (!isBrowserImportSourceOpenError(error)) throw error;
-    return {
-      cookies: [],
-      skippedCount: 0,
-      failedCount: 1,
-      errors: [{
-        errorCode: BROWSER_SOURCE_OPEN_ERROR_CODE,
-        message: "Close the source browser and try the import again.",
-      }],
-    };
-  }
+  const snapshot = await createSnapshot({ sourcePath: source.cookieDatabasePath });
   let password: Buffer | null = null;
   let key: Buffer | null = null;
   try {

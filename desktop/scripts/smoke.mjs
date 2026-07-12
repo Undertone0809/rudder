@@ -78,8 +78,8 @@ async function createSyntheticBrowserImportFixture(userDataDir) {
   }), { mode: 0o600 });
 
   const database = new DatabaseSync(cookieDatabasePath);
-  try {
-    database.exec(`
+  database.exec(`
+      PRAGMA journal_mode = WAL;
       CREATE TABLE meta(key LONGVARCHAR NOT NULL UNIQUE PRIMARY KEY, value LONGVARCHAR);
       INSERT INTO meta(key, value) VALUES ('version', '23'), ('last_compatible_version', '23');
       CREATE TABLE cookies(
@@ -99,33 +99,31 @@ async function createSyntheticBrowserImportFixture(userDataDir) {
         source_port INTEGER NOT NULL DEFAULT -1,
         last_update_utc INTEGER NOT NULL DEFAULT 0
       );
-    `);
-    const nowUnixSeconds = BigInt(Math.floor(Date.now() / 1000));
-    const futureExpiresUtc = windowsToUnixEpochMicroseconds + (nowUnixSeconds + 24n * 60n * 60n) * 1_000_000n;
-    const expiredExpiresUtc = windowsToUnixEpochMicroseconds + (nowUnixSeconds - 60n) * 1_000_000n;
-    const insertCookie = database.prepare(`
+  `);
+  const nowUnixSeconds = BigInt(Math.floor(Date.now() / 1000));
+  const futureExpiresUtc = windowsToUnixEpochMicroseconds + (nowUnixSeconds + 24n * 60n * 60n) * 1_000_000n;
+  const expiredExpiresUtc = windowsToUnixEpochMicroseconds + (nowUnixSeconds - 60n) * 1_000_000n;
+  const insertCookie = database.prepare(`
       INSERT INTO cookies(
         host_key, top_frame_site_key, name, value, encrypted_value, path,
         expires_utc, is_secure, is_httponly, has_expires, is_persistent,
         samesite, source_scheme, source_port, last_update_utc
       ) VALUES ('127.0.0.1', '', ?, ?, ?, '/', ?, ?, 1, 1, 1, 1, 0, -1, ?)
-    `);
-    const insert = ({ name, value = "", encryptedValue = Buffer.alloc(0), expiresUtc = futureExpiresUtc, secure = 0, updated = futureExpiresUtc }) => {
-      insertCookie.run(name, value, encryptedValue, expiresUtc, secure, updated);
-    };
-    insert({ name: browserImportSmokeCookieName, value: browserImportSmokeCookieValue });
-    insert({ name: browserImportDuplicateCookieName, value: browserImportDuplicateSourceValue });
-    insert({ name: browserImportExpiredCookieName, value: "expired", expiresUtc: expiredExpiresUtc });
-    insert({ name: browserImportMalformedCookieName, value: "invalid-secure-flag", secure: 2 });
-    insert({ name: browserImportEncryptedCookieName, encryptedValue: Buffer.from("v11synthetic") });
-  } finally {
-    database.close();
-  }
+  `);
+  const insert = ({ name, value = "", encryptedValue = Buffer.alloc(0), expiresUtc = futureExpiresUtc, secure = 0, updated = futureExpiresUtc }) => {
+    insertCookie.run(name, value, encryptedValue, expiresUtc, secure, updated);
+  };
+  insert({ name: browserImportSmokeCookieName, value: browserImportSmokeCookieValue });
+  insert({ name: browserImportDuplicateCookieName, value: browserImportDuplicateSourceValue });
+  insert({ name: browserImportExpiredCookieName, value: "expired", expiresUtc: expiredExpiresUtc });
+  insert({ name: browserImportMalformedCookieName, value: "invalid-secure-flag", secure: 2 });
+  insert({ name: browserImportEncryptedCookieName, encryptedValue: Buffer.from("v11synthetic") });
 
   return {
     cookieDatabasePath,
     homeDir,
     sourceDisplayName: "Google Chrome - Rudder Synthetic Profile",
+    close: () => database.close(),
   };
 }
 
@@ -725,19 +723,33 @@ async function verifySyntheticBrowserCookieImport(electronApp, page, fixture) {
   const sourceHashBefore = createHash("sha256")
     .update(await readFile(fixture.cookieDatabasePath))
     .digest("hex");
+  const sourceWalHashBefore = createHash("sha256")
+    .update(await readFile(`${fixture.cookieDatabasePath}-wal`))
+    .digest("hex");
 
   const imported = await page.evaluate((sourceId) => window.desktopShell.importBrowserData({
     sourceId,
     importCookies: true,
   }), source.id);
+  console.log("[desktop-smoke] synthetic Chromium import result", JSON.stringify({
+    status: imported.status,
+    importedCount: imported.importedCount,
+    skippedCount: imported.skippedCount,
+    failedCount: imported.failedCount,
+    errors: imported.errors,
+  }));
   assert.equal(imported.status, "succeeded");
   assert.equal(imported.importedCount, 1);
   assert.equal(imported.skippedCount, 4);
   assert.equal(imported.failedCount, 0);
   assert.deepEqual(
     new Set(imported.errors?.map((error) => error.errorCode)),
-    new Set(["COOKIE_EXPIRED", "COOKIE_ROW_INVALID", "COOKIE_ENCRYPTION_UNSUPPORTED"]),
-    "real Desktop import should report every unsupported synthetic row",
+    new Set(["COOKIE_EXPIRED", "COOKIE_ROW_INVALID", "COOKIE_ENCRYPTION_UNSUPPORTED", "COOKIE_ALREADY_EXISTS"]),
+    "real Desktop import should report every aggregated synthetic skip reason",
+  );
+  assert.ok(
+    imported.errors?.every((error) => error.kind === "skipped" && error.count === 1),
+    "real Desktop import should aggregate expected skips separately from failures",
   );
   assert.equal(
     (await readBrowserImportSmokeCookie(electronApp, page))?.value,
@@ -752,7 +764,12 @@ async function verifySyntheticBrowserCookieImport(electronApp, page, fixture) {
   assert.equal(
     createHash("sha256").update(await readFile(fixture.cookieDatabasePath)).digest("hex"),
     sourceHashBefore,
-    "real Desktop import must not modify the source Chromium Cookie database",
+    "real Desktop import must not modify the source Chromium Cookie database contents",
+  );
+  assert.equal(
+    createHash("sha256").update(await readFile(`${fixture.cookieDatabasePath}-wal`)).digest("hex"),
+    sourceWalHashBefore,
+    "real Desktop import must not modify the source Chromium Cookie WAL contents",
   );
 
   const repeated = await page.evaluate((sourceId) => window.desktopShell.importBrowserData({
@@ -1601,6 +1618,7 @@ async function runCleanScenario(mode) {
     throw error;
   } finally {
     await browserFixture.stop().catch(() => {});
+    browserImportFixture?.close();
   }
 }
 

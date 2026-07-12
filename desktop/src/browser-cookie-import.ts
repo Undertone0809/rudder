@@ -1,4 +1,8 @@
-import type { ChromiumCookieDatabaseResult, ImportedChromiumCookie } from "./browser-cookie-db.js";
+import type {
+  BrowserImportError,
+  ChromiumCookieDatabaseResult,
+  ImportedChromiumCookie,
+} from "./browser-cookie-db.js";
 import type { BrowserImportSource, TrustedBrowserImportSource } from "./browser-import-sources.js";
 
 export type BrowserDataImportResult = {
@@ -6,7 +10,7 @@ export type BrowserDataImportResult = {
   importedCount: number;
   skippedCount: number;
   failedCount: number;
-  errors?: Array<{ errorCode: string; message: string }>;
+  errors?: BrowserImportError[];
 };
 
 export type BrowserCookieSetDetails = {
@@ -22,6 +26,32 @@ export type BrowserCookieSetDetails = {
 };
 
 const MAX_REPORTED_ERRORS = 20;
+
+const IMPORT_MESSAGES: Record<string, string> = {
+  COOKIE_ALREADY_EXISTS: "A matching cookie already exists in the Rudder Browser and was preserved.",
+  COOKIE_ROW_INVALID: "An invalid cookie row was skipped.",
+  COOKIE_WRITE_FAILED: "A cookie could not be written to the Rudder Browser.",
+  COOKIE_FLUSH_FAILED: "Imported cookies could not be flushed to the Rudder Browser profile.",
+};
+
+function recordImportIssue(
+  errors: BrowserImportError[],
+  errorCode: string,
+  kind: BrowserImportError["kind"],
+  count = 1,
+): void {
+  const existing = errors.find((error) => error.errorCode === errorCode && error.kind === kind);
+  if (existing) {
+    existing.count += count;
+  } else if (errors.length < MAX_REPORTED_ERRORS) {
+    errors.push({
+      errorCode,
+      message: IMPORT_MESSAGES[errorCode] ?? "A cookie could not be imported.",
+      count,
+      kind,
+    });
+  }
+}
 
 type DestinationCookie = {
   name?: unknown;
@@ -124,7 +154,7 @@ export function createBrowserCookieImporter(options: {
         const workerResult = signal
           ? await options.runWorker(source, signal)
           : await options.runWorker(source);
-        const errors = workerResult.errors.slice(0, MAX_REPORTED_ERRORS);
+        const errors = workerResult.errors.map((error) => ({ ...error })).slice(0, MAX_REPORTED_ERRORS);
         let importedCount = 0;
         let skippedCount = workerResult.skippedCount;
         let failedCount = workerResult.failedCount;
@@ -146,21 +176,18 @@ export function createBrowserCookieImporter(options: {
           });
           if (!identity) {
             skippedCount += 1;
-            if (errors.length < MAX_REPORTED_ERRORS) {
-              errors.push({ errorCode: "COOKIE_ROW_INVALID", message: "An invalid cookie row was skipped." });
-            }
+            recordImportIssue(errors, "COOKIE_ROW_INVALID", "skipped");
             continue;
           }
           if (identities.has(identity)) {
             skippedCount += 1;
+            recordImportIssue(errors, "COOKIE_ALREADY_EXISTS", "skipped");
             continue;
           }
           const details = cookieSetDetails(cookie);
           if (!details) {
             skippedCount += 1;
-            if (errors.length < MAX_REPORTED_ERRORS) {
-              errors.push({ errorCode: "COOKIE_ROW_INVALID", message: "An invalid cookie row was skipped." });
-            }
+            recordImportIssue(errors, "COOKIE_ROW_INVALID", "skipped");
             continue;
           }
           try {
@@ -169,24 +196,14 @@ export function createBrowserCookieImporter(options: {
             importedCount += 1;
           } catch {
             failedCount += 1;
-            if (errors.length < MAX_REPORTED_ERRORS) {
-              errors.push({
-                errorCode: "COOKIE_WRITE_FAILED",
-                message: "A cookie could not be written to the Rudder Browser.",
-              });
-            }
+            recordImportIssue(errors, "COOKIE_WRITE_FAILED", "failed");
           }
         }
         try {
           await options.cookies.flushStore();
         } catch {
           failedCount += 1;
-          if (errors.length < MAX_REPORTED_ERRORS) {
-            errors.push({
-              errorCode: "COOKIE_FLUSH_FAILED",
-              message: "Imported cookies could not be flushed to the Rudder Browser profile.",
-            });
-          }
+          recordImportIssue(errors, "COOKIE_FLUSH_FAILED", "failed");
         }
 
         return {

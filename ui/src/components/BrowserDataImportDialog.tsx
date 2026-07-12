@@ -103,11 +103,7 @@ export function BrowserDataImportDialog({
         importCookies: true,
       });
       if (generationRef.current === generation) {
-        if (nextResult.errors?.some((item) => item.errorCode === "BROWSER_SOURCE_OPEN")) {
-          setError(t("browser.import.sourceOpen", { browser: selectedSource.browserName }));
-        } else {
-          setResult(nextResult);
-        }
+        setResult(nextResult);
       }
     } catch {
       if (generationRef.current === generation) setError(t("browser.import.failed"));
@@ -115,6 +111,9 @@ export function BrowserDataImportDialog({
       if (generationRef.current === generation) setImporting(false);
     }
   }
+
+  const skippedIssues = result?.errors?.filter((item) => item.kind === "skipped") ?? [];
+  const failedIssues = result?.errors?.filter((item) => item.kind === "failed") ?? [];
 
   return (
     <Dialog
@@ -125,7 +124,7 @@ export function BrowserDataImportDialog({
       }}
     >
       <DialogContent
-        className="gap-0 overflow-hidden p-0 sm:max-w-[34rem]"
+        className="flex max-h-[calc(100vh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-[34rem]"
         showCloseButton={false}
         onEscapeKeyDown={(event) => {
           if (importing) event.preventDefault();
@@ -141,7 +140,10 @@ export function BrowserDataImportDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-5 px-5 py-4">
+        <div
+          className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4"
+          data-testid="browser-import-scroll-region"
+        >
           <div className="space-y-2">
             <Label htmlFor="browser-import-source">{t("browser.import.source")}</Label>
             {loadingSources ? (
@@ -233,20 +235,41 @@ export function BrowserDataImportDialog({
                 <span>{t("browser.import.result.skipped", { count: result.skippedCount })}</span>
                 <span>{t("browser.import.result.failed", { count: result.failedCount })}</span>
               </div>
-              {result.errors?.length ? (
-                <ul className="space-y-1 text-[12px] leading-4 text-destructive">
-                  {result.errors.map((item, index) => (
-                    <li key={`${item.errorCode}-${index}`}>
-                      <span className="font-medium">{item.errorCode}</span>: {item.message}
-                    </li>
-                  ))}
-                </ul>
+              {skippedIssues.length ? (
+                <div className="space-y-1.5 text-[12px] leading-4 text-muted-foreground">
+                  <div className="font-medium text-foreground">{t("browser.import.result.skippedReasons")}</div>
+                  <ul className="space-y-1">
+                    {skippedIssues.map((item) => (
+                      <li key={`skipped-${item.errorCode}`} className="flex gap-2">
+                        <span className="min-w-0 flex-1">
+                          <span className="font-medium">{item.errorCode}</span>: {item.message}
+                        </span>
+                        <span className="shrink-0 tabular-nums">{item.count}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {failedIssues.length ? (
+                <div className="space-y-1.5 text-[12px] leading-4 text-destructive">
+                  <div className="font-medium">{t("browser.import.result.failures")}</div>
+                  <ul className="space-y-1">
+                    {failedIssues.map((item) => (
+                      <li key={`failed-${item.errorCode}`} className="flex gap-2">
+                        <span className="min-w-0 flex-1">
+                          <span className="font-medium">{item.errorCode}</span>: {item.message}
+                        </span>
+                        <span className="shrink-0 tabular-nums">{item.count}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               ) : null}
             </div>
           ) : null}
         </div>
 
-        <DialogFooter className="border-t border-border/70 px-5 py-3">
+        <DialogFooter className="shrink-0 border-t border-border/70 px-5 py-3">
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={importing}>
             {t("common.cancel")}
           </Button>

@@ -66,23 +66,25 @@ describe("Rudder Browser preload bridge", () => {
     expect(electronMocks.invoke).toHaveBeenNthCalledWith(6, "desktop:set-browser-enabled", "false");
   });
 
-  it("preserves structured source-open import failures from IPC", async () => {
-    const sourceOpenResult = {
-      status: "failed",
-      importedCount: 0,
-      skippedCount: 0,
-      failedCount: 1,
+  it("preserves structured aggregated import issues from IPC", async () => {
+    const importResult = {
+      status: "succeeded",
+      importedCount: 12,
+      skippedCount: 553,
+      failedCount: 0,
       errors: [{
-        errorCode: "BROWSER_SOURCE_OPEN",
-        message: "Close the source browser and try the import again.",
+        errorCode: "COOKIE_PARTITION_UNSUPPORTED",
+        message: "A partitioned cookie is not supported by this version of Rudder.",
+        count: 553,
+        kind: "skipped",
       }],
     };
-    electronMocks.invoke.mockResolvedValueOnce(sourceOpenResult);
+    electronMocks.invoke.mockResolvedValueOnce(importResult);
 
     await expect(desktopShell().importBrowserData({
       sourceId: "opaque-source",
       importCookies: true,
-    })).resolves.toEqual(sourceOpenResult);
+    })).resolves.toEqual(importResult);
   });
 
   it("subscribes and unsubscribes Browser reset listeners", () => {
