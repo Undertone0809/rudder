@@ -326,10 +326,6 @@ export function redactEnvValue(key: string, value: unknown, censorUsernameInLogs
   }
 }
 
-export function isMarkdown(pathValue: string) {
-  return pathValue.toLowerCase().endsWith(".md");
-}
-
 export function formatEnvForDisplay(envValue: unknown, censorUsernameInLogs: boolean): string {
   const env = asRecord(envValue);
   if (!env) return "<unable-to-parse>";
@@ -397,10 +393,9 @@ export function scrollToContainerBottom(container: ScrollContainer, behavior: Sc
   container.scrollTo({ top: container.scrollHeight, behavior });
 }
 
-export type AgentDetailView = "dashboard" | "instructions" | "configuration" | "skills" | "integrations" | "runs" | "budget";
+export type AgentDetailView = "dashboard" | "configuration" | "skills" | "integrations" | "runs" | "budget";
 
 export function parseAgentDetailView(value: string | null): AgentDetailView {
-  if (value === "instructions" || value === "prompts") return "instructions";
   if (value === "configure" || value === "configuration") return "configuration";
   if (value === "skills") return "skills";
   if (value === "integrations") return "integrations";
@@ -425,14 +420,6 @@ export function usageString(usage: Record<string, unknown> | null, ...keys: stri
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return null;
-}
-
-export function setsEqual<T>(left: Set<T>, right: Set<T>) {
-  if (left.size !== right.size) return false;
-  for (const value of left) {
-    if (!right.has(value)) return false;
-  }
-  return true;
 }
 
 export function runMetrics(run: HeartbeatRun) {
