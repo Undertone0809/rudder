@@ -10,7 +10,7 @@ export function PropertiesPanel() {
 
   return (
     <aside
-      className="hidden shrink-0 overflow-hidden border-l border-[color:var(--border-soft)] bg-transparent md:flex md:flex-col transition-[width,opacity] duration-200 ease-in-out"
+      className="motion-resize hidden shrink-0 overflow-hidden border-l border-[color:var(--border-soft)] bg-transparent md:flex md:flex-col"
       style={{ width: panelVisible ? 320 : 0, opacity: panelVisible ? 1 : 0 }}
     >
       <div className="w-80 flex-1 flex flex-col min-w-[320px]">

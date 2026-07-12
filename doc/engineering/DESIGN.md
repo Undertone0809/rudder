@@ -530,6 +530,24 @@ All non-essential motion must respect `prefers-reduced-motion`.
 Reduced-motion mode may keep color, border, icon, and text feedback, but should
 remove movement, pulsing, and repeated animation.
 
+### 14.4 Implementation Defaults
+
+New UI components must use the shared motion tokens and patterns in
+`ui/src/motion.css`; do not introduce component-local hardcoded durations,
+easing curves, or generic `transition: all` declarations.
+
+- Use the shared Dialog, Sheet, Popover, DropdownMenu, Tooltip, Collapsible,
+  Tabs, and Skeleton primitives so their default motion and reduced-motion
+  behavior is inherited automatically.
+- Use `.motion-resize` for structural width changes, `.motion-panel-reveal` for
+  panels entering a region, `.motion-grid-collapse` for custom grid-row
+  disclosures, and `.motion-content-reveal` when loaded content replaces a
+  skeleton in place.
+- Use `.motion-surface-pop` only for anchored floating surfaces. Centered
+  dialogs use `.motion-modal` so their positioning transform remains intact.
+- Every new non-essential animation must be added to the reduced-motion block
+  in `ui/src/motion.css` and covered by `ui/src/lib/motion-css.test.ts`.
+
 ## 15. Review Rubric
 
 Visible UI work should be reviewed against these six dimensions:

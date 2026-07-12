@@ -6,6 +6,142 @@
   --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --motion-ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
   --motion-ease-exit: cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-distance-small: 4px;
+  --motion-distance-medium: 8px;
+  --motion-blur-soft: 2px;
+}
+
+.motion-surface-pop {
+  transform-origin: var(--radix-popover-content-transform-origin, var(--radix-dropdown-menu-content-transform-origin, center));
+  will-change: opacity, transform, filter;
+}
+
+.motion-surface-pop:is([data-state="open"], [data-state="delayed-open"], [data-state="instant-open"]) {
+  animation: rudder-surface-pop-in var(--motion-duration-standard) var(--motion-ease-enter) both;
+}
+
+.motion-surface-pop[data-state="closed"] {
+  animation: rudder-surface-pop-out var(--motion-duration-fast) var(--motion-ease-exit) both;
+}
+
+.motion-modal {
+  will-change: opacity, scale, filter;
+}
+
+.motion-modal[data-state="open"] {
+  animation: rudder-modal-in var(--motion-duration-standard) var(--motion-ease-enter) both;
+}
+
+.motion-modal[data-state="closed"] {
+  animation: rudder-modal-out var(--motion-duration-fast) var(--motion-ease-exit) both;
+}
+
+.motion-panel-reveal {
+  animation: rudder-panel-reveal var(--motion-duration-emphasis) var(--motion-ease-enter) both;
+  will-change: opacity, transform, filter;
+}
+
+.motion-resize {
+  transition:
+    width var(--motion-duration-standard) var(--motion-ease-enter),
+    min-width var(--motion-duration-standard) var(--motion-ease-enter),
+    max-width var(--motion-duration-standard) var(--motion-ease-enter),
+    opacity var(--motion-duration-fast) var(--motion-ease-standard);
+  will-change: width, opacity;
+}
+
+.motion-tooltip {
+  transform-origin: var(--radix-tooltip-content-transform-origin, center);
+  will-change: opacity, transform;
+}
+
+.motion-tooltip:is([data-state="open"], [data-state="delayed-open"], [data-state="instant-open"], [data-visible="true"]) {
+  animation: rudder-tooltip-in var(--motion-duration-fast) var(--motion-ease-enter) both;
+}
+
+.motion-tooltip:is([data-state="closed"], [data-visible="false"]) {
+  animation: rudder-tooltip-out var(--motion-duration-instant) var(--motion-ease-exit) both;
+}
+
+.motion-accordion-content {
+  overflow: hidden;
+  will-change: height, opacity;
+}
+
+.motion-accordion-content[data-state="open"] {
+  animation: rudder-accordion-open var(--motion-duration-standard) var(--motion-ease-enter);
+}
+
+.motion-accordion-content[data-state="closed"] {
+  animation: rudder-accordion-close var(--motion-duration-fast) var(--motion-ease-exit);
+}
+
+.motion-grid-collapse {
+  transition:
+    grid-template-rows var(--motion-duration-standard) var(--motion-ease-enter),
+    margin-top var(--motion-duration-standard) var(--motion-ease-standard),
+    opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.motion-skeleton {
+  animation: rudder-skeleton-pulse 1600ms var(--motion-ease-standard) infinite;
+}
+
+.motion-content-reveal {
+  animation: rudder-content-reveal var(--motion-duration-emphasis) var(--motion-ease-enter) both;
+  will-change: opacity, transform, filter;
+}
+
+@keyframes rudder-surface-pop-in {
+  from { opacity: 0; filter: blur(var(--motion-blur-soft)); transform: translateY(calc(-1 * var(--motion-distance-small))) scale(0.97); }
+  to { opacity: 1; filter: blur(0); transform: translateY(0) scale(1); }
+}
+
+@keyframes rudder-surface-pop-out {
+  to { opacity: 0; filter: blur(1px); transform: translateY(calc(-1 * var(--motion-distance-small))) scale(0.99); }
+}
+
+@keyframes rudder-modal-in {
+  from { opacity: 0; filter: blur(var(--motion-blur-soft)); scale: 0.96; }
+  to { opacity: 1; filter: blur(0); scale: 1; }
+}
+
+@keyframes rudder-modal-out {
+  to { opacity: 0; filter: blur(1px); scale: 0.98; }
+}
+
+@keyframes rudder-panel-reveal {
+  from { opacity: 0; filter: blur(var(--motion-blur-soft)); transform: translateX(var(--motion-distance-medium)); }
+  to { opacity: 1; filter: blur(0); transform: translateX(0); }
+}
+
+@keyframes rudder-tooltip-in {
+  from { opacity: 0; transform: translateY(var(--motion-distance-small)) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes rudder-tooltip-out {
+  to { opacity: 0; transform: scale(0.98); }
+}
+
+@keyframes rudder-accordion-open {
+  from { height: 0; opacity: 0; }
+  to { height: var(--radix-collapsible-content-height); opacity: 1; }
+}
+
+@keyframes rudder-accordion-close {
+  from { height: var(--radix-collapsible-content-height); opacity: 1; }
+  to { height: 0; opacity: 0; }
+}
+
+@keyframes rudder-skeleton-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+@keyframes rudder-content-reveal {
+  from { opacity: 0; filter: blur(var(--motion-blur-soft)); transform: translateY(var(--motion-distance-small)); }
+  to { opacity: 1; filter: blur(0); transform: translateY(0); }
 }
 
 @property --motion-live-surface-angle {
@@ -872,6 +1008,13 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .motion-surface-pop,
+  .motion-modal,
+  .motion-panel-reveal,
+  .motion-tooltip,
+  .motion-accordion-content,
+  .motion-skeleton,
+  .motion-content-reveal,
   .motion-list-enter,
   .motion-new-issue-created-banner,
   .motion-state-flash,
@@ -902,6 +1045,8 @@
   }
 
   .motion-focus-ring,
+  .motion-resize,
+  .motion-grid-collapse,
   .motion-new-issue-dialog,
   .motion-kanban-lane,
   .motion-kanban-card,

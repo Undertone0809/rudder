@@ -2,6 +2,8 @@
 
 import { Collapsible as CollapsiblePrimitive } from "radix-ui";
 
+import { cn } from "@/lib/utils";
+
 function Collapsible({
   ...props
 }: React.ComponentProps<typeof CollapsiblePrimitive.Root>) {
@@ -20,11 +22,13 @@ function CollapsibleTrigger({
 }
 
 function CollapsibleContent({
+  className,
   ...props
 }: React.ComponentProps<typeof CollapsiblePrimitive.CollapsibleContent>) {
   return (
     <CollapsiblePrimitive.CollapsibleContent
       data-slot="collapsible-content"
+      className={cn("motion-accordion-content", className)}
       {...props}
     />
   )

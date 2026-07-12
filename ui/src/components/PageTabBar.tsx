@@ -70,7 +70,7 @@ export function PageTabBar({
                 <span>{item.label}</span>
                 <span
                   role="tooltip"
-                  className="pointer-events-none invisible absolute top-[calc(100%+0.375rem)] left-1/2 z-20 w-max -translate-x-1/2 rounded-md bg-foreground px-3 py-1.5 text-xs text-background opacity-0 shadow-sm transition-[opacity,visibility] group-hover/tab-trigger:visible group-hover/tab-trigger:opacity-100 group-focus-visible/tab-trigger:visible group-focus-visible/tab-trigger:opacity-100"
+                  className="motion-tooltip pointer-events-none invisible absolute top-[calc(100%+0.375rem)] left-1/2 z-20 w-max -translate-x-1/2 rounded-md bg-foreground px-3 py-1.5 text-xs text-background opacity-0 shadow-sm transition-[opacity,visibility] duration-[var(--motion-duration-fast)] group-hover/tab-trigger:visible group-hover/tab-trigger:opacity-100 group-focus-visible/tab-trigger:visible group-focus-visible/tab-trigger:opacity-100 motion-reduce:transition-none"
                 >
                   {item.tooltip}
                 </span>
@@ -84,7 +84,7 @@ export function PageTabBar({
       <span
         aria-hidden="true"
         className={cn(
-          "pointer-events-none absolute bottom-[-4px] left-0 h-0.5 rounded-full bg-foreground transition-[transform,width,opacity] duration-300 ease-out motion-reduce:transition-none",
+          "motion-resize pointer-events-none absolute bottom-[-4px] left-0 h-0.5 rounded-full bg-foreground",
           indicatorReady ? "opacity-100" : "opacity-0",
         )}
         style={indicatorStyle}

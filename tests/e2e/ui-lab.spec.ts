@@ -18,6 +18,24 @@ async function createUiLabOrganization(page: import("@playwright/test").Page) {
 }
 
 test.describe("UI Lab", () => {
+  test("applies shared motion defaults and honors reduced motion", async ({ page }) => {
+    const organization = await createUiLabOrganization(page);
+
+    await page.goto(`/${organization.issuePrefix}/ui-lab`);
+    await page.getByRole("button", { name: /Primitives/ }).click();
+    await page.getByRole("tab", { name: "Loading" }).click();
+
+    const skeleton = page.locator('[data-slot="skeleton"]').first();
+    await expect(skeleton).toBeVisible();
+    await expect(skeleton).toHaveClass(/motion-skeleton/);
+    await expect(skeleton).not.toHaveCSS("animation-name", "none");
+
+    await page.screenshot({ path: "/tmp/rudder-motion-defaults-ui-lab.png", fullPage: true });
+
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(skeleton).toHaveCSS("animation-name", "none");
+  });
+
   test("renders common components, coverage search, and legacy lab routes", async ({ page }) => {
     const organization = await createUiLabOrganization(page);
 

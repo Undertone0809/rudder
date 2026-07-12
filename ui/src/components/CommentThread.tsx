@@ -432,7 +432,7 @@ function AnimatedCommentBody({
     <div
       data-comment-body-collapsed={collapsed ? "true" : undefined}
       aria-hidden={collapsed}
-      className={`grid motion-safe:transition-[grid-template-rows,opacity,margin-top] motion-safe:duration-200 motion-safe:ease-out motion-reduce:transition-none ${collapsed ? "mt-0 grid-rows-[0fr] opacity-0" : "mt-2 grid-rows-[1fr] opacity-100"}`}
+      className={`motion-grid-collapse grid ${collapsed ? "mt-0 grid-rows-[0fr] opacity-0" : "mt-2 grid-rows-[1fr] opacity-100"}`}
       onTransitionEnd={(event) => {
         if (event.currentTarget !== event.target) return;
         if (collapsed) {
@@ -470,7 +470,7 @@ function AnimatedRunDetails({
       id={id}
       data-run-details
       aria-hidden={!expanded}
-      className={`grid motion-safe:transition-[grid-template-rows,opacity,margin-top] motion-safe:duration-200 motion-safe:ease-out motion-reduce:transition-none ${expanded ? "mt-3 grid-rows-[1fr] opacity-100" : "mt-0 grid-rows-[0fr] opacity-0"}`}
+      className={`motion-grid-collapse grid ${expanded ? "mt-3 grid-rows-[1fr] opacity-100" : "mt-0 grid-rows-[0fr] opacity-0"}`}
       onTransitionEnd={(event) => {
         if (event.currentTarget !== event.target) return;
         if (!expanded) {

@@ -49,9 +49,9 @@ export function CopyText({ text, children, className, containerClassName, ariaLa
       <span
         role="status"
         aria-live="polite"
+        data-visible={visible ? "true" : "false"}
         className={cn(
-          "pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 rounded-md bg-foreground text-background px-2 py-1 text-xs whitespace-nowrap transition-opacity duration-300",
-          visible ? "opacity-100" : "opacity-0",
+          "motion-tooltip pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 rounded-md bg-foreground text-background px-2 py-1 text-xs whitespace-nowrap",
         )}
       >
         {label}

@@ -61,7 +61,7 @@ export function DashboardDateRangeControl({
         <span
           aria-hidden="true"
           className={cn(
-            "pointer-events-none absolute bottom-1 left-0 top-1 rounded-full bg-background shadow-sm ring-1 ring-[color:var(--border-soft)] transition-[transform,width,opacity] duration-300 ease-out motion-reduce:transition-none",
+            "motion-resize pointer-events-none absolute bottom-1 left-0 top-1 rounded-full bg-background shadow-sm ring-1 ring-[color:var(--border-soft)]",
             indicatorReady ? "opacity-100" : "opacity-0",
           )}
           style={indicatorStyle}

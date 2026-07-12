@@ -4,6 +4,25 @@ import { describe, expect, it } from "vitest";
 const motionCss = readFileSync(new URL("../motion.css", import.meta.url), "utf8");
 
 describe("Motion V1 CSS", () => {
+  it("defines reusable motion patterns for new components", () => {
+    expect(motionCss).toContain("--motion-distance-small: 4px");
+    expect(motionCss).toContain("--motion-distance-medium: 8px");
+    expect(motionCss).toContain("--motion-blur-soft: 2px");
+    expect(motionCss).toContain(".motion-surface-pop");
+    expect(motionCss).toContain(".motion-panel-reveal");
+    expect(motionCss).toContain(".motion-resize");
+    expect(motionCss).toContain(".motion-tooltip");
+    expect(motionCss).toContain(".motion-accordion-content");
+    expect(motionCss).toContain(".motion-skeleton");
+    expect(motionCss).toContain(".motion-content-reveal");
+  });
+
+  it("disables reusable structural motion when reduced motion is requested", () => {
+    expect(motionCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.motion-surface-pop[\s\S]*?animation: none !important/);
+    expect(motionCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.motion-resize[\s\S]*?transition: none !important/);
+    expect(motionCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.motion-skeleton[\s\S]*?animation: none !important/);
+  });
+
   it("defines reduced-motion fallbacks for repeated product motion", () => {
     expect(motionCss).toContain("@media (prefers-reduced-motion: reduce)");
     expect(motionCss).toContain(".motion-live-surface::before");

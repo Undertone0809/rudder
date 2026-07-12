@@ -1323,7 +1323,7 @@ export function Automations() {
           aria-hidden={detailCollapsed || undefined}
           data-collapsed={detailCollapsed ? "true" : undefined}
           className={cn(
-            "workspace-main-card min-h-0 min-w-0 flex-1 overflow-hidden rounded-[var(--desktop-workspace-radius)] transition-[width,min-width,max-width,opacity,border-color] duration-300 ease-out motion-reduce:transition-none",
+            "motion-resize workspace-main-card min-h-0 min-w-0 flex-1 overflow-hidden rounded-[var(--desktop-workspace-radius)] transition-[border-color] duration-[var(--motion-duration-standard)]",
             detailCollapsed
               ? "min-[1100px]:pointer-events-none min-[1100px]:invisible min-[1100px]:w-0 min-[1100px]:min-w-0 min-[1100px]:max-w-0 min-[1100px]:flex-none min-[1100px]:border-0 min-[1100px]:opacity-0"
               : "min-[1100px]:w-[48%] min-[1100px]:min-w-[500px] min-[1100px]:max-w-[860px] min-[1100px]:shrink-0 min-[1100px]:opacity-100",
