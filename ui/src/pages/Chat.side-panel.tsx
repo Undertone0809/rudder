@@ -666,6 +666,10 @@ function ChatSidePanelLibraryFileView({
 }) {
   const { pushToast } = useToast();
   const markdown = isChatSidePanelWorkspaceMarkdownFile(libraryFile.filePath, libraryFile.contentType);
+  const pathSegments = libraryFile.filePath.split("/").filter(Boolean);
+  const visiblePathSegments = pathSegments.length > 3
+    ? ["…", ...pathSegments.slice(-2)]
+    : pathSegments;
   const [launchTargets, setLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
   const [openingTargetId, setOpeningTargetId] = useState<string | null>(null);
   const desktopShell = readDesktopShell();
@@ -744,7 +748,7 @@ function ChatSidePanelLibraryFileView({
           aria-label="Open Library document in another app"
           title="Open in another app"
         >
-          <ExternalLink className="h-4 w-4" />
+          <span>Open</span>
           <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
@@ -769,40 +773,47 @@ function ChatSidePanelLibraryFileView({
       </DropdownMenuContent>
     </DropdownMenu>
   ) : null;
-  const showMarkdownHeaderAction = Boolean(
-    canOpenFile
-      && libraryFile.previewKind === "text"
-      && libraryFile.content !== null
-      && markdown,
-  );
 
   return (
     <div className="flex min-h-full flex-col" data-testid="chat-side-panel-library-file-view">
-      {openInMenu && !showMarkdownHeaderAction ? (
-        <div className="flex shrink-0 justify-end px-1 pt-2" data-testid="chat-side-panel-library-open-in">
-          {openInMenu}
-        </div>
-      ) : null}
-      <div className="shrink-0 rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3 text-sm">
-        <div className="font-mono text-xs text-muted-foreground">{libraryFile.filePath}</div>
-        <div className="mt-2 text-xs text-muted-foreground">
-          {libraryFile.contentType ?? libraryFile.previewKind}
-          {libraryFile.truncated ? " · truncated" : ""}
-        </div>
+      <div
+        className="flex h-11 shrink-0 items-center gap-3 border-b border-[color:var(--border-soft)] px-1"
+        data-testid="chat-side-panel-library-file-toolbar"
+      >
+        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <nav
+          aria-label="Library file path"
+          className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden text-sm"
+          title={libraryFile.filePath}
+        >
+          {visiblePathSegments.map((segment, index) => {
+            const isFileName = index === visiblePathSegments.length - 1;
+            return (
+              <span key={`${segment}-${index}`} className="contents">
+                {index > 0 ? <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" aria-hidden="true" /> : null}
+                <span className={cn(
+                  "truncate",
+                  isFileName
+                    ? "max-w-[60%] shrink-0 font-medium text-foreground"
+                    : "min-w-0 text-muted-foreground",
+                )}>
+                  {segment}
+                </span>
+              </span>
+            );
+          })}
+        </nav>
+        {openInMenu ? (
+          <div className="shrink-0" data-testid="chat-side-panel-library-open-in">
+            {openInMenu}
+          </div>
+        ) : null}
       </div>
       {libraryFile.previewKind === "text" && libraryFile.content !== null ? (
         markdown ? (
-          <article className="relative min-w-0 flex-1 px-1 py-5" data-testid="chat-side-panel-library-markdown-preview">
-            {showMarkdownHeaderAction ? (
-              <div className="absolute right-1 top-5 z-10" data-testid="chat-side-panel-library-open-in">
-                {openInMenu}
-              </div>
-            ) : null}
+          <article className="min-w-0 flex-1 px-1 py-5" data-testid="chat-side-panel-library-markdown-preview">
             <MarkdownBody
-              className={cn(
-                "rudder-library-document-editor rudder-side-panel-library-document text-[15px] leading-7 text-foreground",
-                showMarkdownHeaderAction && "rudder-side-panel-library-document--with-header-action",
-              )}
+              className="rudder-library-document-editor rudder-side-panel-library-document text-[15px] leading-7 text-foreground"
               enableCodeBlockCopy
             >
               {libraryFile.content}
