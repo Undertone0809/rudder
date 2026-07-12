@@ -47,6 +47,9 @@ edit_policy: user_confirmed_only
 - `CHAT.RICH.REFERENCE.RENDERING.001`: markdown rich-reference tokens keep
   consistent labels, icon rhythm, baseline alignment, and truncation behavior
   across composers and read-only rendered markdown.
+- `CHAT.WEBSITE.LINK.ICON.001`: common websites use embedded recognizable icons
+  without metadata requests, while unlisted sites retain safe discovery and
+  generic-icon fallback.
 - `CHAT.THREAD.MANIFEST.001`: each Chat exposes a typed, provenance-preserving
   Outputs/Sources/References index with a separate Project roll-up.
 - `CHAT.SIDE.PANEL.001`: Side Panel is a global board workbench for opening

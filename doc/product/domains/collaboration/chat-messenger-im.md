@@ -27,6 +27,7 @@ related_code:
   - packages/shared/src/types/chat.ts
   - packages/shared/src/project-mentions.ts
   - packages/shared/src/chat-work-manifest.ts
+  - packages/shared/src/website-icons.ts
   - server/src/routes/chats.ts
   - server/src/routes/chats.stream-routes.ts
   - server/src/services/product-intelligence.ts
@@ -90,6 +91,8 @@ related_tests:
   - ui/src/pages/Chat.messages.test.tsx
   - server/src/__tests__/website-metadata.test.ts
   - server/src/__tests__/website-metadata-routes.test.ts
+  - packages/shared/src/website-icons.test.ts
+  - tests/e2e/markdown-website-link-rendering.spec.ts
   - tests/e2e/messenger-contract.spec.ts
   - tests/e2e/chat-edit-stream-layout.spec.ts
   - tests/e2e/chat-fork.spec.ts
@@ -661,7 +664,12 @@ Product model:
 - Rudder may resolve common public or first-party sites from an embedded
   known-icon cache that stores real website favicon/logo image assets as data
   URLs. This avoids repeated public-page fetches for frequently pasted sites
-  such as Feishu and Rudder-owned domains.
+  such as ChatGPT, OpenAI, Anthropic, Reddit, Medium, Hacker News, Linux.do,
+  Feishu, and Rudder-owned domains.
+- Known-icon entries may intentionally cover subdomains when one brand owns the
+  full hostname family, such as `learn.chatgpt.com`, `platform.openai.com`, and
+  `docs.anthropic.com`. Matching must still require the exact hostname or a dot
+  boundary before the registered hostname.
 - When no embedded known icon matches, Rudder discovers the website icon from
   the target page metadata, preferring declared favicon links such as
   `rel="icon"` or `rel="shortcut icon"`.
@@ -693,6 +701,9 @@ Invariants:
   product, not generated letter or abbreviation placeholders.
 - Known-icon hostname matching must stay explicit and narrow enough to avoid
   accidentally branding unrelated provider subdomains.
+- The embedded set is an optimization for common sites, not an exhaustive
+  website directory. Unlisted public sites continue through metadata discovery
+  and generic-icon fallback instead of requiring a bundled asset.
 - Same-origin Rudder app links remain internal navigation links and do not use
   website metadata discovery.
 - Unsafe or non-HTTP schemes are not fetched for metadata.
@@ -707,11 +718,13 @@ Evidence:
 - Website metadata service tests cover known-icon no-fetch behavior, favicon
   discovery, no-icon fallback, invalid declared icon fallback, and
   redirect-to-private rejection.
-- Markdown/body and chat message tests cover metadata icon rendering, generic
-  fallback, known Feishu/Rudder embedded icons, image-load failure fallback,
-  safe external-link attributes, and unchanged link text.
-- Website-link E2E covers real issue-page rendering, favicon-provider fallback,
-  inline wrapping, and internal-link no-fetch behavior.
+- Shared resolver, Markdown/body, and chat message tests cover common embedded
+  website icons, subdomain matching, metadata icon rendering, generic fallback,
+  image-load failure fallback, safe external-link attributes, and unchanged
+  link text.
+- Website-link E2E covers real issue-page rendering for embedded common-site
+  icons without metadata requests, favicon-provider fallback, inline wrapping,
+  and internal-link no-fetch behavior.
 
 ## CHAT.THREAD.MANIFEST.001
 
