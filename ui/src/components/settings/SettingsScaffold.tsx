@@ -42,6 +42,81 @@ export function SettingsDivider() {
   return <div className="border-t border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)]" />;
 }
 
+export function SettingsGroup({
+  variant = "default",
+  children,
+  className,
+  ...props
+}: HTMLAttributes<HTMLDivElement> & {
+  variant?: "default" | "feature";
+}) {
+  return (
+    <div
+      {...props}
+      data-slot="settings-group"
+      data-variant={variant}
+      className={cn(
+        "overflow-hidden rounded-[var(--radius-md)] border border-[color:color-mix(in_oklab,var(--border-soft)_92%,transparent)] [&>[data-slot=settings-item]+[data-slot=settings-item]]:border-t [&>[data-slot=settings-item]+[data-slot=settings-item]]:border-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)]",
+        variant === "feature"
+          ? "bg-[color:color-mix(in_oklab,var(--surface-elevated)_98%,transparent)]"
+          : "bg-[color:color-mix(in_oklab,var(--surface-inset)_72%,transparent)]",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+export function SettingsItem({
+  icon: Icon,
+  title,
+  description,
+  action,
+  headingLevel = 3,
+  className,
+}: {
+  icon?: LucideIcon;
+  title: string;
+  description?: ReactNode;
+  action?: ReactNode;
+  headingLevel?: 2 | 3;
+  className?: string;
+}) {
+  const Heading = headingLevel === 2 ? "h2" : "h3";
+
+  return (
+    <div
+      data-slot="settings-item"
+      className={cn(
+        "grid min-h-[4.5rem] grid-cols-1 items-center gap-3 px-4 py-3.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-5",
+        className,
+      )}
+    >
+      <div className="flex min-w-0 items-start gap-3">
+        {Icon ? (
+          <span className="flex size-10 shrink-0 items-center justify-center text-muted-foreground">
+            <Icon className="size-6" />
+          </span>
+        ) : null}
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <Heading className="text-[14px] font-medium text-foreground">{title}</Heading>
+          {description ? (
+            <div className="max-w-[38rem] text-[13px] leading-5 text-muted-foreground">
+              {description}
+            </div>
+          ) : null}
+        </div>
+      </div>
+      {action ? (
+        <div className="flex w-full shrink-0 items-center justify-start sm:w-auto sm:justify-end">
+          {action}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function SettingsSection({
   title,
   description,

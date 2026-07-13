@@ -30,6 +30,7 @@ vi.mock("@/context/DialogContext", () => ({
 const messages: Record<string, string> = {
   "common.systemSettings": "System settings",
   "common.browser": "Browser",
+  "common.general": "General",
   "browser.title": "Browser",
   "browser.description": "Control the built-in Browser and its shared browsing data.",
   "browser.loadFailed": "Failed to load Browser settings.",
@@ -158,23 +159,19 @@ afterEach(() => {
 });
 
 describe("InstanceBrowserSettings", () => {
-  it("shows default-on settings and patches enablement and link destination independently", async () => {
+  it("renders compact grouped settings and patches Agent access independently", async () => {
     const page = await renderPage();
 
     const toggle = page.querySelector('button[role="switch"][aria-label="Enable Browser access for Agents"]');
-    const builtIn = Array.from(page.querySelectorAll("button"))
-      .find((button) => button.textContent?.trim() === "Rudder Built-in Browser");
-    const defaultBrowser = Array.from(page.querySelectorAll("button"))
-      .find((button) => button.textContent?.trim() === "Default browser");
-    const slidingPill = page.querySelector('[data-browser-link-pill="true"]');
+    const linkDestination = page.querySelector('button[role="combobox"][aria-label="Open web links from Rudder in"]');
+    const groups = page.querySelectorAll('[data-slot="settings-group"]');
 
     expect(toggle?.getAttribute("aria-checked")).toBe("true");
-    expect(builtIn?.getAttribute("aria-pressed")).toBe("true");
-    expect(slidingPill?.getAttribute("aria-hidden")).toBe("true");
-    expect(slidingPill?.classList.contains("motion-browser-link-pill")).toBe(true);
-    expect(builtIn?.classList.contains("motion-browser-link-option")).toBe(true);
-    expect(builtIn?.classList.contains("whitespace-nowrap")).toBe(true);
-    expect(builtIn?.parentElement?.classList.contains("w-[20rem]")).toBe(true);
+    expect(linkDestination?.textContent).toContain("Rudder Built-in Browser");
+    expect(groups).toHaveLength(3);
+    expect(page.querySelectorAll('h2')).toHaveLength(3);
+    expect(page.textContent).toContain("General");
+    expect(page.textContent).toContain("Browsing data");
     expect(page.textContent).toContain("shared by every organization and Agent");
 
     act(() => toggle!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
@@ -183,10 +180,6 @@ describe("InstanceBrowserSettings", () => {
       expect(page.textContent).toContain("Agents lose Browser access. Existing browsing data is retained.");
     });
 
-    act(() => defaultBrowser!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    await waitFor(() => {
-      expect(apiMocks.updateBrowser).toHaveBeenCalledWith({ openLinksIn: "default_browser" });
-    });
   });
 
   it("opens import and confirms clear without changing Browser settings", async () => {

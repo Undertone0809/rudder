@@ -146,12 +146,30 @@ export function DesktopSettingsModalFrame({
   onClose: () => void;
 }) {
   const { t } = useI18n();
+  const { isMobile } = useSidebar();
+  const location = useLocation();
+  const [settingsNavigationOpen, setSettingsNavigationOpen] = useState(false);
   const mainScrollRef = useScrollbarActivityRef("workspace-main:settings-modal");
+  const settingsNavigationCloseRef = useRef<HTMLButtonElement | null>(null);
+  const settingsNavigationTriggerRef = useRef<HTMLButtonElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     shellRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    if (isMobile) setSettingsNavigationOpen(false);
+  }, [isMobile, location.pathname]);
+
+  useEffect(() => {
+    if (!isMobile) return;
+    if (settingsNavigationOpen) {
+      settingsNavigationCloseRef.current?.focus();
+    } else {
+      settingsNavigationTriggerRef.current?.focus();
+    }
+  }, [isMobile, settingsNavigationOpen]);
 
   return (
     <div
@@ -161,6 +179,11 @@ export function DesktopSettingsModalFrame({
       onKeyDown={(event) => {
         if (event.key !== "Escape") return;
         event.preventDefault();
+        if (isMobile && settingsNavigationOpen) {
+          event.stopPropagation();
+          setSettingsNavigationOpen(false);
+          return;
+        }
         onClose();
       }}
     >
@@ -171,12 +194,69 @@ export function DesktopSettingsModalFrame({
         aria-modal="true"
         aria-label={t("common.systemSettings")}
         tabIndex={-1}
-        className="settings-modal-shell flex min-h-0 w-full max-w-[1100px] overflow-hidden rounded-[12px]"
+        className="settings-modal-shell relative flex min-h-0 w-full max-w-[1100px] overflow-hidden rounded-[12px]"
         onClick={(event) => event.stopPropagation()}
       >
-        <SettingsSidebar showBackButton={false} variant="modal" />
-        <section className="settings-modal-main flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex h-12 shrink-0 items-center justify-end px-4">
+        {isMobile && settingsNavigationOpen ? (
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 z-10 bg-foreground/10 backdrop-blur-[1px]"
+            onClick={() => setSettingsNavigationOpen(false)}
+          />
+        ) : null}
+        <div
+          id="settings-modal-navigation"
+          data-testid="settings-modal-navigation"
+          aria-hidden={isMobile && !settingsNavigationOpen}
+          inert={isMobile && !settingsNavigationOpen ? true : undefined}
+          className={cn(
+            "z-20 shrink-0",
+            isMobile
+              ? "absolute inset-y-0 left-0 transition-transform duration-200 ease-out motion-reduce:transition-none"
+              : "relative",
+            isMobile && !settingsNavigationOpen && "pointer-events-none -translate-x-full",
+          )}
+          onClickCapture={(event) => {
+            if (isMobile && (event.target as Element).closest("a")) {
+              setSettingsNavigationOpen(false);
+            }
+          }}
+        >
+          {isMobile && settingsNavigationOpen ? (
+            <Button
+              ref={settingsNavigationCloseRef}
+              variant="ghost"
+              size="icon-sm"
+              className="absolute right-1 top-1 z-10 size-8 rounded-full text-muted-foreground"
+              onClick={() => setSettingsNavigationOpen(false)}
+              aria-label={`${t("common.closeSidebar")} (${t("common.systemSettings")})`}
+              title={t("common.closeSidebar")}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          ) : null}
+          <SettingsSidebar showBackButton={false} variant="modal" />
+        </div>
+        <section
+          className="settings-modal-main flex min-h-0 min-w-0 flex-1 flex-col"
+          inert={isMobile && settingsNavigationOpen ? true : undefined}
+        >
+          <div className="flex h-12 shrink-0 items-center justify-between px-4">
+            {isMobile ? (
+              <Button
+                ref={settingsNavigationTriggerRef}
+                variant="ghost"
+                size="icon-sm"
+                className="size-8 rounded-full text-muted-foreground"
+                onClick={() => setSettingsNavigationOpen(true)}
+                aria-expanded={settingsNavigationOpen}
+                aria-controls="settings-modal-navigation"
+                aria-label={t("common.openSidebar")}
+                title={t("common.openSidebar")}
+              >
+                <PanelLeft className="h-4 w-4" />
+              </Button>
+            ) : <span />}
             <Button
               variant="ghost"
               size="icon-sm"

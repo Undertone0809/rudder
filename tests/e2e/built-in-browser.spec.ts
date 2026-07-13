@@ -90,7 +90,10 @@ test.describe("Built-in Browser", () => {
 
   test("routes Rudder web links through live instance settings", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Built-in Browser Link Router ${Date.now()}` },
+      data: {
+        name: `Built-in Browser Link Router ${Date.now()}`,
+        issuePrefix: `BRL${Date.now().toString().slice(-6)}`,
+      },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { issuePrefix: string };
@@ -154,7 +157,10 @@ test.describe("Built-in Browser", () => {
   test("configures, imports, and clears the shared Browser profile", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1100, height: 640 });
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Built-in Browser Settings ${Date.now()}` },
+      data: {
+        name: `Built-in Browser Settings ${Date.now()}`,
+        issuePrefix: `BRS${Date.now().toString().slice(-6)}`,
+      },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { issuePrefix: string };
@@ -164,11 +170,56 @@ test.describe("Built-in Browser", () => {
     const modal = page.getByTestId("settings-modal-shell");
     await modal.locator('a[href$="/instance/settings/browser"]').click();
     await expect(modal.getByRole("heading", { name: "Browser", level: 1 })).toBeVisible();
-    await expect(modal.getByRole("button", { name: "Rudder Built-in Browser" }))
-      .toHaveAttribute("aria-pressed", "true");
-    await expect(modal.getByText(/shared by every organization and Agent/i)).toBeVisible();
+    const browserSettingsPage = modal.getByTestId("browser-settings-page");
+    await expect(browserSettingsPage.locator('[data-slot="settings-group"]')).toHaveCount(3);
+    const linkDestination = modal.getByRole("combobox", { name: "Open web links from Rudder in" });
+    await expect(linkDestination).toContainText("Rudder Built-in Browser");
+    const sharedDataDisclosure = modal.getByText(/shared by every organization and Agent/i);
+    await expect(sharedDataDisclosure).toBeVisible();
+    const disclosureBox = await sharedDataDisclosure.boundingBox();
+    const importButtonBox = await modal.getByRole("button", { name: "Import..." }).boundingBox();
+    expect(disclosureBox).not.toBeNull();
+    expect(importButtonBox).not.toBeNull();
+    expect(disclosureBox!.y).toBeLessThan(importButtonBox!.y);
+    expect(await browserSettingsPage.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath("built-in-browser-settings.png"), fullPage: true });
 
-    await modal.getByRole("button", { name: "Default browser" }).click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const settingsNavigation = modal.getByTestId("settings-modal-navigation");
+    await expect(settingsNavigation).toHaveAttribute("aria-hidden", "true");
+    await settingsNavigation.evaluate(async (element) => {
+      await Promise.all(element.getAnimations().map((animation) => animation.finished));
+    });
+    const mobileModalBox = await modal.boundingBox();
+    const mobileMainBox = await modal.locator(".settings-modal-main").boundingBox();
+    const hiddenNavigationBox = await settingsNavigation.boundingBox();
+    expect(mobileModalBox).not.toBeNull();
+    expect(mobileMainBox).not.toBeNull();
+    expect(hiddenNavigationBox).not.toBeNull();
+    expect(hiddenNavigationBox!.x + hiddenNavigationBox!.width)
+      .toBeLessThanOrEqual(mobileMainBox!.x + 0.5);
+    expect(await browserSettingsPage.evaluate((element) => ({
+      wideEnough: element.clientWidth >= 300,
+      noHorizontalOverflow: element.scrollWidth <= element.clientWidth,
+    }))).toEqual({ wideEnough: true, noHorizontalOverflow: true });
+    await page.screenshot({ path: testInfo.outputPath("built-in-browser-settings-mobile.png"), fullPage: true });
+    await modal.getByRole("button", { name: "Open sidebar" }).click();
+    await expect(settingsNavigation).toHaveAttribute("aria-hidden", "false");
+    await expect(modal.getByRole("button", { name: "Close sidebar (System settings)" })).toBeFocused();
+    await settingsNavigation.locator('a[href$="/instance/settings/browser"]').click();
+    await expect(settingsNavigation).toHaveAttribute("aria-hidden", "true");
+    await settingsNavigation.evaluate(async (element) => {
+      await Promise.all(element.getAnimations().map((animation) => animation.finished));
+    });
+    const closedNavigationBox = await settingsNavigation.boundingBox();
+    expect(closedNavigationBox).not.toBeNull();
+    expect(closedNavigationBox!.x + closedNavigationBox!.width)
+      .toBeLessThanOrEqual(mobileMainBox!.x + 0.5);
+    await expect(modal.getByRole("button", { name: "Open sidebar" })).toBeFocused();
+    await page.setViewportSize({ width: 1100, height: 640 });
+
+    await linkDestination.click();
+    await page.getByRole("option", { name: "Default browser" }).click();
     await expect.poll(async () => (await page.request.get("/api/instance/settings/browser")).json()).toMatchObject({
       enabled: true,
       openLinksIn: "default_browser",
@@ -246,7 +297,8 @@ test.describe("Built-in Browser", () => {
     await expect.poll(() => page.evaluate(() => (
       window as typeof window & { __rudderBrowserEnabledCalls: boolean[] }
     ).__rudderBrowserEnabledCalls)).toContain(false);
-    await modal.getByRole("button", { name: "Rudder Built-in Browser" }).click();
+    await linkDestination.click();
+    await page.getByRole("option", { name: "Rudder Built-in Browser" }).click();
     await expect.poll(async () => (await page.request.get("/api/instance/settings/browser")).json()).toMatchObject({
       enabled: false,
       openLinksIn: "built_in",

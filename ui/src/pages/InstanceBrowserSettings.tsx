@@ -2,13 +2,21 @@ import { instanceSettingsApi } from "@/api/instanceSettings";
 import { BrowserDataImportDialog } from "@/components/BrowserDataImportDialog";
 import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import {
-  SettingsDivider,
+  SettingsGroup,
+  SettingsItem,
   SettingsPageHeader,
-  SettingsRow,
   SettingsSection,
   SettingsToggle,
 } from "@/components/settings/SettingsScaffold";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useDialog } from "@/context/DialogContext";
 import { useI18n } from "@/context/I18nContext";
@@ -17,8 +25,8 @@ import { queryKeys } from "@/lib/queryKeys";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import type { PatchInstanceBrowserSettings } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Database, Globe2, Import, Trash2 } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { AppWindow, Database, Import, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
 
 export function InstanceBrowserSettings() {
   const { t } = useI18n();
@@ -29,9 +37,6 @@ export function InstanceBrowserSettings() {
   const [clearSucceeded, setClearSucceeded] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-  const linkOptionsRef = useRef<HTMLDivElement>(null);
-  const linkPillRef = useRef<HTMLSpanElement>(null);
-  const linkPillPositionedRef = useRef(false);
 
   useEffect(() => {
     setBreadcrumbs([
@@ -45,32 +50,6 @@ export function InstanceBrowserSettings() {
     queryFn: () => instanceSettingsApi.getBrowser(),
     staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
   });
-
-  useLayoutEffect(() => {
-    const options = linkOptionsRef.current;
-    const pill = linkPillRef.current;
-    if (!options || !pill) return;
-
-    const moveToActiveOption = (animate: boolean) => {
-      const activeOption = options.querySelector<HTMLButtonElement>('button[aria-pressed="true"]');
-      if (!activeOption) return;
-
-      if (!animate) pill.style.transition = "none";
-      pill.style.transform = `translateX(${activeOption.offsetLeft}px)`;
-      pill.style.width = `${activeOption.offsetWidth}px`;
-      if (!animate) {
-        void pill.offsetWidth;
-        pill.style.removeProperty("transition");
-      }
-    };
-
-    moveToActiveOption(linkPillPositionedRef.current);
-    linkPillPositionedRef.current = true;
-
-    const handleResize = () => moveToActiveOption(false);
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, [browserQuery.data?.openLinksIn]);
 
   const updateMutation = useMutation({
     mutationFn: (patch: PatchInstanceBrowserSettings) => instanceSettingsApi.updateBrowser(patch),
@@ -141,10 +120,17 @@ export function InstanceBrowserSettings() {
     }
   }
 
+  function handleLinkDestinationChange(openLinksIn: string) {
+    if (openLinksIn !== "built_in" && openLinksIn !== "default_browser") return;
+    updateMutation.mutate({ openLinksIn });
+  }
+
   return (
-    <div className="mx-auto max-w-4xl space-y-7 px-1 pb-6">
+    <div
+      data-testid="browser-settings-page"
+      className="mx-auto flex max-w-[47.5rem] flex-col gap-6 px-1 pb-6"
+    >
       <SettingsPageHeader
-        icon={Globe2}
         title={t("browser.title")}
         description={t("browser.description")}
       />
@@ -160,15 +146,14 @@ export function InstanceBrowserSettings() {
         </div>
       ) : null}
 
-      <SettingsDivider />
-
-      <SettingsSection title={t("browser.title")}>
-        <SettingsRow
+      <SettingsGroup variant="feature" data-testid="browser-access-group">
+        <SettingsItem
+          icon={AppWindow}
+          headingLevel={2}
           title={t("browser.enable.title")}
           description={settings.enabled
             ? t("browser.enable.enabledDescription")
             : t("browser.enable.disabledDescription")}
-          className="border-t-0 pt-0"
           action={
             <SettingsToggle
               checked={settings.enabled}
@@ -178,91 +163,87 @@ export function InstanceBrowserSettings() {
             />
           }
         />
+      </SettingsGroup>
 
-        <SettingsRow
-          title={t("browser.links.title")}
-          description={t("browser.links.description")}
-          action={
-            <div
-              ref={linkOptionsRef}
-              className="relative grid w-[20rem] grid-cols-2 overflow-hidden rounded-[var(--control-radius)] border border-border/80 bg-muted/30 p-0.5"
-            >
-              <span
-                ref={linkPillRef}
-                aria-hidden="true"
-                data-browser-link-pill="true"
-                className="motion-browser-link-pill"
-              />
-              {([
-                ["built_in", t("browser.links.builtIn")],
-                ["default_browser", t("browser.links.default")],
-              ] as const).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  aria-pressed={settings.openLinksIn === value}
-                  disabled={updateMutation.isPending}
-                  onClick={() => updateMutation.mutate({ openLinksIn: value })}
-                  className="motion-browser-link-option relative z-[1] h-8 whitespace-nowrap rounded-[calc(var(--control-radius)-2px)] px-2 text-[12px] font-medium text-muted-foreground aria-pressed:text-foreground disabled:opacity-50"
+      <SettingsSection title={t("common.general")}>
+        <SettingsGroup data-testid="browser-general-group">
+          <SettingsItem
+            title={t("browser.links.title")}
+            description={t("browser.links.description")}
+            action={
+              <Select
+                value={settings.openLinksIn}
+                disabled={updateMutation.isPending}
+                onValueChange={handleLinkDestinationChange}
+              >
+                <SelectTrigger
+                  size="sm"
+                  aria-label={t("browser.links.title")}
+                  className="w-full sm:w-[14.5rem]"
                 >
-                  {label}
-                </button>
-              ))}
-            </div>
-          }
-        />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent position="popper" align="end">
+                  <SelectGroup>
+                    <SelectItem value="built_in">{t("browser.links.builtIn")}</SelectItem>
+                    <SelectItem value="default_browser">{t("browser.links.default")}</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            }
+          />
+        </SettingsGroup>
       </SettingsSection>
 
-      <SettingsDivider />
-
-      <SettingsSection title={t("browser.data.title")} description={t("browser.data.description")}>
-        <div className="flex gap-2 rounded-[var(--radius-md)] border border-border/70 bg-muted/20 px-3 py-2.5 text-[13px] leading-5 text-muted-foreground">
-          <Database className="mt-0.5 h-4 w-4 shrink-0" />
+      <SettingsSection title={t("browser.data.title")}>
+        <div className="flex items-start gap-2 px-1 text-[12px] leading-4 text-muted-foreground">
+          <Database className="mt-px size-4 shrink-0" />
           <span>{t("browser.data.trustDisclosure")}</span>
         </div>
 
+        <SettingsGroup data-testid="browser-data-group">
+          <SettingsItem
+            title={t("browser.data.import")}
+            description={settings.enabled
+              ? t("browser.import.description")
+              : t("browser.import.disabledDescription")}
+            action={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!canImport || !settings.enabled}
+                onClick={() => setImportOpen(true)}
+              >
+                <Import data-icon="inline-start" />
+                {t("browser.data.import")}
+              </Button>
+            }
+          />
+
+          <SettingsItem
+            title={t("browser.data.clear")}
+            description={t("browser.data.clearDescription")}
+            action={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!canClear || clearing}
+                onClick={() => void handleClear()}
+              >
+                <Trash2 data-icon="inline-start" />
+                {clearing ? t("browser.data.clearing") : t("browser.data.clear")}
+              </Button>
+            }
+          />
+        </SettingsGroup>
+
         {nativeActionsUnavailable ? (
-          <p className="text-[12px] leading-4 text-muted-foreground">
+          <p className="px-1 text-[12px] leading-4 text-muted-foreground">
             {desktopShell ? t("browser.desktopActionsUnavailable") : t("browser.desktopUnavailable")}
           </p>
         ) : null}
-
-        <SettingsRow
-          title={t("browser.data.import")}
-          description={settings.enabled
-            ? t("browser.import.description")
-            : t("browser.import.disabledDescription")}
-          className="border-t-0 pt-0"
-          action={
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={!canImport || !settings.enabled}
-              onClick={() => setImportOpen(true)}
-            >
-              <Import className="h-4 w-4" />
-              {t("browser.data.import")}
-            </Button>
-          }
-        />
-
-        <SettingsRow
-          title={t("browser.data.clear")}
-          description={t("browser.data.clearDescription")}
-          action={
-            <Button
-              type="button"
-              variant="destructive"
-              size="sm"
-              disabled={!canClear || clearing}
-              onClick={() => void handleClear()}
-            >
-              <Trash2 className="h-4 w-4" />
-              {clearing ? t("browser.data.clearing") : t("browser.data.clear")}
-            </Button>
-          }
-        />
       </SettingsSection>
 
       <BrowserDataImportDialog open={importOpen} onOpenChange={setImportOpen} />
