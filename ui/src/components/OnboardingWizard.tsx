@@ -774,7 +774,10 @@ export function OnboardingWizard() {
               step === 1 ? "md:w-1/2" : "md:w-full"
             )} >
             <div className="w-full max-w-md mx-auto my-auto px-8 py-12 shrink-0">
-              <div className="flex items-center gap-0 mb-8 border-b border-border">
+              <div
+                className="grid grid-cols-2 mb-8 border-b border-border"
+                data-testid="onboarding-step-tabs"
+              >
                 {(
                   [
                     { step: 1 as Step, label: "Organization", icon: Building2 },
@@ -788,7 +791,7 @@ export function OnboardingWizard() {
                       setError(null);
                       setStep(s);
                     }} className={cn(
-                      "flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors",
+                      "flex w-full items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium border-b-2 -mb-px transition-colors",
                       s === step
                         ? "border-foreground text-foreground"
                         : unlocked
