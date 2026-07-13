@@ -1,3 +1,4 @@
+import { WebsiteLinkIcon } from "@/components/MarkdownBody";
 import { cn } from "@/lib/utils";
 import type { ChatWorkManifestItem, ChatWorkManifestResponse } from "@rudderhq/shared";
 import {
@@ -5,6 +6,7 @@ import {
   ChevronDown,
   FileOutput,
   Link2,
+  ListFilter,
   MessageSquare,
   Paperclip,
   Plus,
@@ -17,6 +19,7 @@ export interface ChatWorkManifestProps {
   loading: boolean;
   error: string | null;
   sidePanelOpen: boolean;
+  wideOpen: boolean;
   onOpenItem(item: ChatWorkManifestItem): void;
   onJumpToMessage(messageId: string): void;
   onAddSource(): void;
@@ -25,10 +28,53 @@ export interface ChatWorkManifestProps {
 
 const COLLAPSED_ROWS = 2;
 
-function originLabel(item: ChatWorkManifestItem) {
-  if (item.sourceRole === "project") return "From Project";
-  if (item.createdByAgentId || item.sourceRole === "assistant") return "From Agent";
-  return "From you";
+export function hasChatWorkManifestContent(manifest: ChatWorkManifestResponse | null | undefined) {
+  if (!manifest) return false;
+  const outputCount = Array.isArray(manifest.outputs) ? manifest.outputs.length : 0;
+  const sourceCount = Array.isArray(manifest.sources) ? manifest.sources.length : 0;
+  const referenceCount = Array.isArray(manifest.references) ? manifest.references.length : 0;
+  return outputCount + sourceCount + referenceCount > 0
+    || Boolean(manifest.project && manifest.project.totalCount > 0);
+}
+
+function websiteUrl(item: ChatWorkManifestItem) {
+  if (item.targetType !== "external_url" || !item.url) return null;
+  try {
+    const url = new URL(item.url);
+    return url.protocol === "http:" || url.protocol === "https:" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+export function ChatWorkManifestToggle({
+  open,
+  count,
+  onToggle,
+}: {
+  open: boolean;
+  count: number;
+  onToggle(): void;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid="chat-work-manifest-wide-toggle"
+      aria-label={open ? "Hide Work manifest" : "Show Work manifest"}
+      aria-pressed={open}
+      aria-expanded={open}
+      aria-controls="chat-work-manifest-wide-panel"
+      title={open ? "Hide Work manifest" : "Show Work manifest"}
+      className={cn(
+        "pointer-events-auto hidden h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 xl:inline-flex",
+        open && "bg-[color:var(--surface-active)] text-foreground",
+      )}
+      onClick={onToggle}
+    >
+      <ListFilter className="h-4 w-4" aria-hidden />
+      <span className="sr-only">Work {count}</span>
+    </button>
+  );
 }
 
 function ManifestRow({
@@ -40,7 +86,7 @@ function ManifestRow({
   onOpen(): void;
   onJump(): void;
 }) {
-  const ItemIcon = item.targetType === "external_url" ? Link2 : Paperclip;
+  const externalUrl = websiteUrl(item);
   return (
     <div className="group flex min-h-11 items-center gap-2 border-t border-border/55 px-3 first:border-t-0">
       <button
@@ -49,10 +95,18 @@ function ManifestRow({
         onClick={onOpen}
         title={item.title}
       >
-        <ItemIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+        {externalUrl ? (
+          <span className="shrink-0 text-sm text-muted-foreground">
+            <WebsiteLinkIcon url={externalUrl} />
+          </span>
+        ) : (
+          <Paperclip className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+        )}
         <span className="min-w-0 flex-1">
           <span className="block truncate text-xs font-medium text-foreground">{item.title}</span>
-          <span className="block truncate text-[11px] text-muted-foreground">{originLabel(item)}</span>
+          {externalUrl ? (
+            <span className="block truncate text-[11px] text-muted-foreground">{externalUrl.href}</span>
+          ) : null}
         </span>
       </button>
       {item.messageId ? (
@@ -126,23 +180,12 @@ function ManifestContent({
   onAddSource,
   onOpenProject,
 }: Omit<ChatWorkManifestProps, "sidePanelOpen">) {
-  if (loading) return <div className="px-3 py-6 text-center text-xs text-muted-foreground">Loading work...</div>;
+  if (loading) return null;
   if (error) return <div className="px-3 py-6 text-center text-xs text-destructive">{error}</div>;
   const outputs = Array.isArray(manifest?.outputs) ? manifest.outputs : [];
   const sources = Array.isArray(manifest?.sources) ? manifest.sources : [];
   const references = Array.isArray(manifest?.references) ? manifest.references : [];
-  const hasThreadItems = outputs.length + sources.length + references.length > 0;
-  if (!manifest || (!hasThreadItems && !manifest.project)) {
-    return (
-      <div className="px-3 py-6 text-center">
-        <p className="text-xs text-muted-foreground">No thread work yet</p>
-        <button type="button" className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-foreground hover:underline" onClick={onAddSource}>
-          <Plus className="size-3.5" aria-hidden="true" />
-          Add source
-        </button>
-      </div>
-    );
-  }
+  if (!manifest || !hasChatWorkManifestContent(manifest)) return null;
   return (
     <>
       <ManifestSection
@@ -183,11 +226,24 @@ function ManifestContent({
 
 export function ChatWorkManifest(props: ChatWorkManifestProps) {
   const [compactOpen, setCompactOpen] = useState(false);
-  if (props.sidePanelOpen) return null;
+  if (props.sidePanelOpen || props.loading || (!props.error && !hasChatWorkManifestContent(props.manifest))) return null;
   const count = props.manifest?.totalCount ?? 0;
   return (
-    <div className="relative z-20 shrink-0" data-testid="chat-work-manifest">
-      <aside className="hidden w-72 overflow-hidden rounded-md border border-border/75 bg-background/96 shadow-sm xl:block" aria-label="Work manifest">
+    <div className="pointer-events-none relative z-20 shrink-0" data-testid="chat-work-manifest">
+      <aside
+        className={cn(
+          "hidden w-72 origin-top-right overflow-hidden rounded-md border border-border/75 bg-background/96 shadow-sm transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none xl:block",
+          props.wideOpen
+            ? "pointer-events-auto translate-y-0 scale-100 opacity-100"
+            : "pointer-events-none -translate-y-1 scale-[0.98] opacity-0",
+        )}
+        id="chat-work-manifest-wide-panel"
+        aria-label="Work manifest"
+        aria-hidden={!props.wideOpen}
+        inert={props.wideOpen ? undefined : true}
+        data-testid="chat-work-manifest-wide-panel"
+        data-state={props.wideOpen ? "open" : "closed"}
+      >
         <div className="flex h-10 items-center border-b border-border/70 px-3">
           <span className="text-xs font-semibold text-foreground">Work</span>
           <span className="ml-1.5 text-[11px] tabular-nums text-muted-foreground">{count}</span>
@@ -200,7 +256,7 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
 
       <button
         type="button"
-        className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-foreground shadow-sm xl:hidden"
+        className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-foreground shadow-sm xl:hidden"
         onClick={() => setCompactOpen((value) => !value)}
         data-testid="chat-work-manifest-trigger"
         aria-expanded={compactOpen}
@@ -210,7 +266,7 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
       </button>
       {compactOpen ? (
         <div
-          className="absolute right-0 top-10 w-[min(20rem,calc(100vw-2rem))] overflow-hidden rounded-md border border-border bg-background shadow-lg xl:hidden"
+          className="pointer-events-auto absolute right-0 top-10 w-[min(20rem,calc(100vw-2rem))] overflow-hidden rounded-md border border-border bg-background shadow-lg xl:hidden"
           data-testid="chat-work-manifest-compact-panel"
         >
           <div className="flex h-10 items-center border-b border-border/70 px-3">

@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ChatWorkManifest } from "./Chat.work-manifest";
+import { ChatWorkManifest, ChatWorkManifestToggle } from "./Chat.work-manifest";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -65,14 +65,19 @@ const handlers = {
   onOpenProject: vi.fn(),
 };
 
+const wideProps = {
+  wideOpen: true,
+};
+
 describe("ChatWorkManifest", () => {
-  it("renders ordered sections, bounded rows, provenance, and a separate project roll-up", () => {
+  it("renders ordered sections, bounded rows, website details, and a separate project roll-up", () => {
     const container = render(
       <ChatWorkManifest
         manifest={manifest}
         loading={false}
         error={null}
         sidePanelOpen={false}
+        {...wideProps}
         {...handlers}
       />,
     );
@@ -81,25 +86,22 @@ describe("ChatWorkManifest", () => {
     expect(text.indexOf("Outputs")).toBeLessThan(text.indexOf("Sources"));
     expect(text.indexOf("Sources")).toBeLessThan(text.indexOf("References"));
     expect(text).toContain("Report.md");
-    expect(text).toContain("From Agent");
     expect(text).toContain("Brief.md");
     expect(text).not.toContain("Notes.txt");
     expect(text).toContain("View all 3");
     expect(text).toContain("Project work");
     expect(text).toContain("9 items");
     expect(text).not.toContain("Browser");
+    expect(text).not.toContain("From Agent");
+    expect(text).toContain("https://ref-1.example/");
+    expect(container.querySelector("[data-website-icon]")).not.toBeNull();
   });
 
-  it("shows loading, error, and empty states with a source action", () => {
+  it("does not render while loading or when thread and project work are empty", () => {
     const loading = render(
-      <ChatWorkManifest manifest={null} loading error={null} sidePanelOpen={false} {...handlers} />,
+      <ChatWorkManifest manifest={null} loading error={null} sidePanelOpen={false} {...wideProps} {...handlers} />,
     );
-    expect(loading.textContent).toContain("Loading work");
-    cleanup?.();
-    const failed = render(
-      <ChatWorkManifest manifest={null} loading={false} error="Unavailable" sidePanelOpen={false} {...handlers} />,
-    );
-    expect(failed.textContent).toContain("Unavailable");
+    expect(loading.querySelector("[data-testid='chat-work-manifest']")).toBeNull();
     cleanup?.();
     const empty = render(
       <ChatWorkManifest
@@ -107,18 +109,59 @@ describe("ChatWorkManifest", () => {
         loading={false}
         error={null}
         sidePanelOpen={false}
+        {...wideProps}
         {...handlers}
       />,
     );
-    const addButton = Array.from(empty.querySelectorAll("button")).find((button) => button.textContent?.includes("Add source"));
-    expect(addButton).toBeTruthy();
-    act(() => addButton?.click());
-    expect(handlers.onAddSource).toHaveBeenCalled();
+    expect(empty.querySelector("[data-testid='chat-work-manifest']")).toBeNull();
+  });
+
+  it("surfaces manifest request errors instead of treating them as empty", () => {
+    const container = render(
+      <ChatWorkManifest
+        manifest={null}
+        loading={false}
+        error="Manifest unavailable"
+        sidePanelOpen={false}
+        {...wideProps}
+        {...handlers}
+      />,
+    );
+    expect(container.querySelector("[data-testid='chat-work-manifest']")?.textContent).toContain("Manifest unavailable");
+  });
+
+  it("renders a controlled icon toggle and animatable wide state", () => {
+    const onToggle = vi.fn();
+    const toggle = render(<ChatWorkManifestToggle open count={manifest.totalCount} onToggle={onToggle} />);
+    const button = toggle.querySelector<HTMLButtonElement>("[data-testid='chat-work-manifest-wide-toggle']");
+    expect(button?.getAttribute("aria-pressed")).toBe("true");
+    expect(button?.getAttribute("aria-expanded")).toBe("true");
+    expect(button?.getAttribute("aria-controls")).toBe("chat-work-manifest-wide-panel");
+    act(() => button?.click());
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    cleanup?.();
+
+    const panel = render(
+      <ChatWorkManifest
+        manifest={manifest}
+        loading={false}
+        error={null}
+        sidePanelOpen={false}
+        wideOpen={false}
+        {...handlers}
+      />,
+    );
+    const shelf = panel.querySelector("[data-testid='chat-work-manifest-wide-panel']");
+    expect(panel.querySelector("[data-testid='chat-work-manifest']")?.className).toContain("pointer-events-none");
+    expect(shelf?.getAttribute("data-state")).toBe("closed");
+    expect(shelf?.getAttribute("aria-hidden")).toBe("true");
+    expect(shelf?.className).toContain("transition-");
+    expect(shelf?.className).toContain("pointer-events-none");
   });
 
   it("exposes a compact Work count trigger", () => {
     const container = render(
-      <ChatWorkManifest manifest={manifest} loading={false} error={null} sidePanelOpen={false} {...handlers} />,
+      <ChatWorkManifest manifest={manifest} loading={false} error={null} sidePanelOpen={false} {...wideProps} {...handlers} />,
     );
     const trigger = container.querySelector<HTMLButtonElement>("[data-testid='chat-work-manifest-trigger']");
     expect(trigger?.textContent).toContain("Work 6");
