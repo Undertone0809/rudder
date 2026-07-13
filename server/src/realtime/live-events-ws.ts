@@ -25,6 +25,7 @@ interface WsServer {
   clients: Set<WsSocket>;
   on(event: "connection", listener: (socket: WsSocket, req: IncomingMessage) => void): void;
   on(event: "close", listener: () => void): void;
+  close(callback: (error?: Error) => void): void;
   handleUpgrade(
     req: IncomingMessage,
     socket: Duplex,
@@ -48,6 +49,10 @@ interface UpgradeContext {
 
 interface IncomingMessageWithContext extends IncomingMessage {
   rudderUpgradeContext?: UpgradeContext;
+}
+
+export interface LiveEventsWebSocketRuntime {
+  close(): Promise<void>;
 }
 
 function hashToken(token: string) {
@@ -182,10 +187,24 @@ export function setupLiveEventsWebSocketServer(
     deploymentMode: DeploymentMode;
     resolveSessionFromHeaders?: (headers: Headers) => Promise<BetterAuthSessionResult | null>;
   },
-) {
+): LiveEventsWebSocketRuntime {
   const wss = new WebSocketServer({ noServer: true });
   const cleanupByClient = new Map<WsSocket, () => void>();
   const aliveByClient = new Map<WsSocket, boolean>();
+  const pendingUpgradeSockets = new Set<Duplex>();
+  let closing = false;
+  let closeInFlight: Promise<void> | null = null;
+
+  const cleanupClient = (socket: WsSocket) => {
+    const cleanup = cleanupByClient.get(socket);
+    cleanupByClient.delete(socket);
+    aliveByClient.delete(socket);
+    try {
+      cleanup?.();
+    } catch (err) {
+      logger.warn({ err }, "live websocket subscription cleanup failed");
+    }
+  };
 
   const pingInterval = setInterval(() => {
     for (const socket of wss.clients) {
@@ -218,10 +237,7 @@ export function setupLiveEventsWebSocketServer(
     });
 
     socket.on("close", () => {
-      const cleanup = cleanupByClient.get(socket);
-      if (cleanup) cleanup();
-      cleanupByClient.delete(socket);
-      aliveByClient.delete(socket);
+      cleanupClient(socket);
     });
 
     socket.on("error", (err: Error) => {
@@ -233,7 +249,11 @@ export function setupLiveEventsWebSocketServer(
     clearInterval(pingInterval);
   });
 
-  server.on("upgrade", (req, socket, head) => {
+  const handleUpgrade = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    if (closing) {
+      socket.destroy();
+      return;
+    }
     if (!req.url) {
       rejectUpgrade(socket, "400 Bad Request", "missing url");
       return;
@@ -246,11 +266,18 @@ export function setupLiveEventsWebSocketServer(
       return;
     }
 
+    const removePendingSocket = () => pendingUpgradeSockets.delete(socket);
+    pendingUpgradeSockets.add(socket);
+    socket.once("close", removePendingSocket);
     void authorizeUpgrade(db, req, orgId, url, {
       deploymentMode: opts.deploymentMode,
       resolveSessionFromHeaders: opts.resolveSessionFromHeaders,
     })
       .then((context) => {
+        if (closing) {
+          socket.destroy();
+          return;
+        }
         if (!context) {
           rejectUpgrade(socket, "403 Forbidden", "forbidden");
           return;
@@ -264,10 +291,51 @@ export function setupLiveEventsWebSocketServer(
         });
       })
       .catch((err) => {
+        if (closing) {
+          socket.destroy();
+          return;
+        }
         logger.error({ err, path: req.url }, "failed websocket upgrade authorization");
         rejectUpgrade(socket, "500 Internal Server Error", "upgrade failed");
+      })
+      .finally(() => {
+        pendingUpgradeSockets.delete(socket);
+        socket.off("close", removePendingSocket);
       });
-  });
+  };
 
-  return wss;
+  server.on("upgrade", handleUpgrade);
+
+  return {
+    close(): Promise<void> {
+      if (closeInFlight) return closeInFlight;
+      closing = true;
+      server.off("upgrade", handleUpgrade);
+      clearInterval(pingInterval);
+
+      for (const socket of pendingUpgradeSockets) {
+        socket.destroy();
+      }
+      pendingUpgradeSockets.clear();
+
+      for (const socket of wss.clients) {
+        try {
+          cleanupClient(socket);
+        } finally {
+          socket.terminate();
+        }
+      }
+
+      closeInFlight = new Promise<void>((resolve, reject) => {
+        wss.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+      return closeInFlight;
+    },
+  };
 }
