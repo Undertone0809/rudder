@@ -48,6 +48,23 @@ async function expectSelectedCodexModel(page: Page) {
   return model!.toLowerCase();
 }
 
+async function expectEvenOnboardingStepTabs(page: Page) {
+  const tabs = page.getByTestId("onboarding-step-tabs");
+  const organizationTab = page.getByTestId("onboarding-step-tab-1");
+  const agentTab = page.getByTestId("onboarding-step-tab-2");
+  const [tabsBox, organizationBox, agentBox] = await Promise.all([
+    tabs.boundingBox(),
+    organizationTab.boundingBox(),
+    agentTab.boundingBox(),
+  ]);
+
+  expect(tabsBox).not.toBeNull();
+  expect(organizationBox).not.toBeNull();
+  expect(agentBox).not.toBeNull();
+  expect(Math.abs(organizationBox!.width - agentBox!.width)).toBeLessThanOrEqual(1);
+  expect(Math.abs(organizationBox!.width + agentBox!.width - tabsBox!.width)).toBeLessThanOrEqual(1);
+}
+
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -71,6 +88,7 @@ test.describe("Onboarding wizard", () => {
 
     await expectOnboardingStep(page, "Name your organization");
     await expect(page.getByRole("checkbox", { name: /new to Rudder/i })).toBeChecked();
+    await expectEvenOnboardingStepTabs(page);
 
     await expect(page.getByRole("button", { name: "Task", exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Launch", exact: true })).toHaveCount(0);
@@ -82,6 +100,7 @@ test.describe("Onboarding wizard", () => {
     await page.getByRole("button", { name: "Next" }).click();
 
     await expectOnboardingStep(page, "Create your first agent");
+    await expectEvenOnboardingStepTabs(page);
     await page.getByRole("button", { name: "Back" }).click();
     await expectOnboardingStep(page, "Name your organization");
     await page
