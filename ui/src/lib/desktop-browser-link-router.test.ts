@@ -54,10 +54,27 @@ describe("Desktop Browser link router", () => {
     expect(forceOpenExternal).not.toHaveBeenCalled();
   });
 
-  it("uses the system browser when configured, disabled, or settings cannot be loaded", async () => {
+  it("keeps ordinary link routing independent from Agent Browser access", async () => {
+    const openBuiltIn = vi.fn();
+    const forceOpenExternal = vi.fn();
+
+    await expect(routeDesktopWebLink({
+      request: { url: "https://example.com", source: "link" },
+      getSettings: async () => ({ enabled: false, openLinksIn: "built_in" }),
+      openBuiltIn,
+      forceOpenExternal,
+    })).resolves.toBe("built_in");
+
+    expect(openBuiltIn).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "browser",
+      url: "https://example.com",
+    }));
+    expect(forceOpenExternal).not.toHaveBeenCalled();
+  });
+
+  it("uses the system browser when configured or settings cannot be loaded", async () => {
     for (const getSettings of [
       async () => ({ enabled: true, openLinksIn: "default_browser" as const }),
-      async () => ({ enabled: false, openLinksIn: "built_in" as const }),
       async () => { throw new Error("offline"); },
     ]) {
       const openBuiltIn = vi.fn();

@@ -34,10 +34,10 @@ const messages: Record<string, string> = {
   "browser.description": "Control the built-in Browser and its shared browsing data.",
   "browser.loadFailed": "Failed to load Browser settings.",
   "browser.updateFailed": "Failed to save Browser settings.",
-  "browser.enable.title": "Enable Rudder Browser",
+  "browser.enable.title": "Enable Browser access for Agents",
   "browser.enable.enabledDescription": "Agents can use Browser tools and the Browser skill.",
   "browser.enable.disabledDescription": "Agents lose Browser access. Existing browsing data is retained.",
-  "browser.enable.toggle": "Enable Rudder Browser",
+  "browser.enable.toggle": "Enable Browser access for Agents",
   "browser.links.title": "Open web links from Rudder in",
   "browser.links.description": "This preference is independent of Browser access for Agents.",
   "browser.links.builtIn": en["browser.links.builtIn"],
@@ -56,7 +56,7 @@ const messages: Record<string, string> = {
   "browser.desktopUnavailable": "Rudder Desktop is required for importing or clearing browsing data.",
   "browser.import.title": "Import browser data",
   "browser.import.description": "Choose a browser profile and the data to import.",
-  "browser.import.disabledDescription": "Enable Rudder Browser before importing data.",
+  "browser.import.disabledDescription": "Enable Browser access for Agents before importing data.",
   "browser.import.source": "Browser profile",
   "browser.import.loadingSources": "Looking for browser profiles...",
   "browser.import.noSources": "No supported browser profiles found.",
@@ -113,7 +113,7 @@ async function renderPage() {
     );
   });
   await waitFor(() => {
-    expect(container!.textContent).toContain("Enable Rudder Browser");
+    expect(container!.textContent).toContain("Enable Browser access for Agents");
   });
   return container;
 }
@@ -161,7 +161,7 @@ describe("InstanceBrowserSettings", () => {
   it("shows default-on settings and patches enablement and link destination independently", async () => {
     const page = await renderPage();
 
-    const toggle = page.querySelector('button[role="switch"][aria-label="Enable Rudder Browser"]');
+    const toggle = page.querySelector('button[role="switch"][aria-label="Enable Browser access for Agents"]');
     const builtIn = Array.from(page.querySelectorAll("button"))
       .find((button) => button.textContent?.trim() === "Rudder Built-in Browser");
     const defaultBrowser = Array.from(page.querySelectorAll("button"))
@@ -231,7 +231,7 @@ describe("InstanceBrowserSettings", () => {
     const importButton = Array.from(page.querySelectorAll("button"))
       .find((button) => button.textContent?.trim() === "Import...");
     expect(importButton?.hasAttribute("disabled")).toBe(true);
-    expect(page.textContent).toContain("Enable Rudder Browser before importing data.");
+    expect(page.textContent).toContain("Enable Browser access for Agents before importing data.");
 
     act(() => importButton!.click());
     expect(document.body.textContent).not.toContain("Import browser data");

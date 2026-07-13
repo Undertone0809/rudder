@@ -164,7 +164,7 @@ describe("Rudder Browser profile lifecycle", () => {
     expect(controller.getState()).toEqual({ enabled: true, available: true, clearing: false });
   });
 
-  it("disables and resets Browser guests without clearing profile data", async () => {
+  it("disables Agent Browser guests without resetting operator tabs or clearing profile data", async () => {
     const session = createSessionMock();
     const closeBrowserGuests = vi.fn(async () => undefined);
     const broadcastReset = vi.fn();
@@ -178,7 +178,9 @@ describe("Rudder Browser profile lifecycle", () => {
     await controller.setEnabled(false);
 
     expect(controller.getState()).toEqual({ enabled: false, available: false, clearing: false });
-    expect(broadcastReset).toHaveBeenCalledWith({ reason: "disabled", enabled: false, available: false });
+    expect(controller.isOperatorAvailable()).toBe(true);
+    expect(broadcastReset).not.toHaveBeenCalled();
+    expect(closeBrowserGuests).toHaveBeenCalledWith("agent");
     expect(closeBrowserGuests).toHaveBeenCalledTimes(1);
     expect(session.clearAuthCache).not.toHaveBeenCalled();
     expect(session.clearCache).not.toHaveBeenCalled();
@@ -187,7 +189,8 @@ describe("Rudder Browser profile lifecycle", () => {
 
     await controller.setEnabled(true);
     expect(controller.getState()).toEqual({ enabled: true, available: true, clearing: false });
-    expect(broadcastReset).toHaveBeenCalledTimes(1);
+    expect(controller.isOperatorAvailable()).toBe(true);
+    expect(broadcastReset).not.toHaveBeenCalled();
   });
 
   it("does not become available until an in-flight disable reset has finished", async () => {
@@ -277,7 +280,6 @@ describe("Rudder Browser profile lifecycle", () => {
     expect(lifecycle).toEqual(["import:start", "disable:end", "import:end", "clear:end"]);
     expect(broadcastReset.mock.calls.map(([event]) => event)).toEqual([
       { reason: "clear", enabled: true, available: false },
-      { reason: "disabled", enabled: false, available: false },
     ]);
   });
 
@@ -312,7 +314,7 @@ describe("Rudder Browser profile lifecycle", () => {
     expect(session.clearData).toHaveBeenCalledTimes(1);
   });
 
-  it("revokes Browser guests immediately when disable races an in-flight import", async () => {
+  it("revokes Agent guests without resetting operator tabs when disable races an in-flight import", async () => {
     const importGate = createDeferred();
     const closeBrowserGuests = vi.fn(async () => undefined);
     const broadcastReset = vi.fn();
@@ -330,8 +332,10 @@ describe("Rudder Browser profile lifecycle", () => {
     const disabling = controller.setEnabled(false);
 
     await vi.waitFor(() => expect(closeBrowserGuests).toHaveBeenCalledTimes(1));
-    expect(broadcastReset).toHaveBeenCalledWith({ reason: "disabled", enabled: false, available: false });
+    expect(closeBrowserGuests).toHaveBeenCalledWith("agent");
+    expect(broadcastReset).not.toHaveBeenCalled();
     expect(controller.getState()).toEqual({ enabled: false, available: false, clearing: false });
+    expect(controller.isOperatorAvailable()).toBe(true);
 
     importGate.resolve();
     await importing;

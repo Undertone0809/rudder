@@ -1,7 +1,6 @@
 import { agentsApi } from "@/api/agents";
 import { authApi } from "@/api/auth";
 import { chatsApi } from "@/api/chats";
-import { instanceSettingsApi } from "@/api/instanceSettings";
 import { issuesApi } from "@/api/issues";
 import { organizationsApi } from "@/api/orgs";
 import { AgentIcon } from "@/components/AgentIconPicker";
@@ -1145,24 +1144,18 @@ export function ChatSidePanel({
     [visibleTabs],
   );
   const desktopBrowserAvailable = Boolean(readDesktopShell()?.getBrowserPartition);
-  const browserSettingsQuery = useQuery({
-    queryKey: queryKeys.instance.browserSettings,
-    queryFn: () => instanceSettingsApi.getBrowser(),
-    enabled: desktopBrowserAvailable,
-  });
-  const browserAvailable = desktopBrowserAvailable && browserSettingsQuery.data?.enabled === true;
+  const browserAvailable = desktopBrowserAvailable;
   useEffect(() => {
     if (!target || (target.kind === "browser" && !browserAvailable)) return;
     openTarget(target);
   }, [browserAvailable, openTarget, target]);
 
   useEffect(() => {
-    const browserUnavailable = !desktopBrowserAvailable || browserSettingsQuery.data?.enabled === false;
-    if (!browserUnavailable) return;
+    if (desktopBrowserAvailable) return;
     for (const browserTarget of browserTargets) {
       sidePanel.closeTarget(sidePanelTargetKey(browserTarget));
     }
-  }, [browserSettingsQuery.data?.enabled, browserTargets, desktopBrowserAvailable, sidePanel]);
+  }, [browserTargets, desktopBrowserAvailable, sidePanel]);
   const activeTarget = useMemo(() => {
     if (visibleTabs.length === 0) return null;
     if (sidePanel.activeKey === null) return null;

@@ -27,6 +27,7 @@ export type BrowserProfileSession = {
 export type BrowserProfileController = {
   getPartition(): string;
   getState(): BrowserProfileState;
+  isOperatorAvailable(): boolean;
   runExclusive<T>(operation: (signal?: AbortSignal) => Promise<T>): Promise<T>;
   clearBrowserData(): Promise<void>;
   setEnabled(enabled: boolean): Promise<void>;
@@ -119,7 +120,7 @@ export function isAllowedBrowserBootstrapUrl(target: string, controlPlaneOrigins
 export function createBrowserProfileController(options: {
   partition: string;
   session: BrowserProfileSession;
-  closeBrowserGuests(): void | Promise<void>;
+  closeBrowserGuests(scope: "agent" | "all"): void | Promise<void>;
   broadcastReset(event: DesktopBrowserResetEvent): void | Promise<void>;
 }): BrowserProfileController {
   let enabled = true;
@@ -141,6 +142,7 @@ export function createBrowserProfileController(options: {
       && pendingEnables === 0,
     clearing: pendingClears > 0,
   });
+  const isOperatorAvailable = (): boolean => !shuttingDown && pendingClears === 0;
 
   const clearStoredData = async (): Promise<void> => {
     await options.session.clearAuthCache();
@@ -154,11 +156,16 @@ export function createBrowserProfileController(options: {
     return result;
   };
 
-  const revokeBrowserGuests = (reason: DesktopBrowserResetEvent["reason"]): Promise<void> => {
+  const revokeBrowserGuests = (
+    reason: DesktopBrowserResetEvent["reason"],
+    scope: "agent" | "all",
+  ): Promise<void> => {
     const resetEnabled = enabled;
     const operation = revocationQueue.then(async () => {
-      await options.broadcastReset({ reason, enabled: resetEnabled, available: false });
-      await options.closeBrowserGuests();
+      if (scope === "all") {
+        await options.broadcastReset({ reason, enabled: resetEnabled, available: false });
+      }
+      await options.closeBrowserGuests(scope);
     });
     revocationQueue = operation.catch(() => undefined);
     return operation;
@@ -185,7 +192,7 @@ export function createBrowserProfileController(options: {
     shuttingDown = true;
     enabled = false;
     for (const operation of admittedControlOperations) operation.abort();
-    const revocation = revokeBrowserGuests("disabled");
+    const revocation = revokeBrowserGuests("disabled", "all");
     shutdownInFlight = Promise.allSettled([lifecycleQueue, revocation]).then((results) => {
       const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
       if (failure) throw failure.reason;
@@ -196,13 +203,14 @@ export function createBrowserProfileController(options: {
   return {
     getPartition: () => options.partition,
     getState,
+    isOperatorAvailable,
     runExclusive,
     clearBrowserData: () => {
       if (shuttingDown) {
         return Promise.reject(new Error("Rudder Browser is unavailable during shutdown."));
       }
       pendingClears += 1;
-      const revocation = revokeBrowserGuests("clear");
+      const revocation = revokeBrowserGuests("clear", "all");
       const operation = enqueueLifecycle(async () => {
         await revocation;
         await clearStoredData();
@@ -226,7 +234,7 @@ export function createBrowserProfileController(options: {
       }
 
       pendingDisables += 1;
-      const operation = revokeBrowserGuests("disabled");
+      const operation = revokeBrowserGuests("disabled", "agent");
       const trackedOperation = operation.finally(() => {
         pendingDisables -= 1;
       });

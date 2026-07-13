@@ -29,10 +29,7 @@ export async function routeDesktopWebLink(options: {
     return "default_browser";
   }
 
-  if (settings.enabled && (
-    settings.openLinksIn === "built_in"
-    || request.source === "browser_popup"
-  )) {
+  if (settings.openLinksIn === "built_in" || request.source === "browser_popup") {
     options.openBuiltIn(createBrowserSidePanelTarget(request.url, {
       newTab: request.source === "browser_popup",
     }));

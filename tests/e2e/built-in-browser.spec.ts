@@ -32,7 +32,6 @@ async function installBrowserDesktopStub(page: Page) {
         getBrowserPartition: async () => "persist:rudder-browser-v1-e2e",
         setBrowserEnabled: async (enabled: boolean) => {
           enabledCalls.push(enabled);
-          if (!enabled) browserResetListener?.({ reason: "disabled", enabled: false, available: false });
         },
         onBrowserReset: (listener: typeof browserResetListener) => {
           browserResetListener = listener;
@@ -131,9 +130,11 @@ test.describe("Built-in Browser", () => {
     await page.evaluate(() => (
       window as typeof window & { __emitDesktopWebLink(request: DesktopWebLinkRequest): void }
     ).__emitDesktopWebLink({ url: "https://example.net/disabled", source: "link" }));
+    await expect(sidePanel.getByTestId("chat-side-panel-browser-webview"))
+      .toHaveAttribute("src", "https://example.net/disabled");
     await expect.poll(() => page.evaluate(() => (
       window as typeof window & { __rudderBrowserExternalUrls: string[] }
-    ).__rudderBrowserExternalUrls)).toContain("https://example.net/disabled");
+    ).__rudderBrowserExternalUrls)).not.toContain("https://example.net/disabled");
   });
 
   test("configures, imports, and clears the shared Browser profile", async ({ page }, testInfo) => {
@@ -192,7 +193,7 @@ test.describe("Built-in Browser", () => {
       window as typeof window & { __rudderBrowserClearCalls(): number }
     ).__rudderBrowserClearCalls())).toBe(1);
 
-    await modal.getByRole("switch", { name: "Enable Rudder Browser" }).click();
+    await modal.getByRole("switch", { name: "Enable Browser access for Agents" }).click();
     await expect.poll(async () => (await page.request.get("/api/instance/settings/browser")).json()).toMatchObject({
       enabled: false,
       openLinksIn: "default_browser",
@@ -200,7 +201,17 @@ test.describe("Built-in Browser", () => {
     await expect.poll(() => page.evaluate(() => (
       window as typeof window & { __rudderBrowserEnabledCalls: boolean[] }
     ).__rudderBrowserEnabledCalls)).toContain(false);
+    await modal.getByRole("button", { name: "Rudder Built-in Browser" }).click();
+    await expect.poll(async () => (await page.request.get("/api/instance/settings/browser")).json()).toMatchObject({
+      enabled: false,
+      openLinksIn: "built_in",
+    });
+    await page.evaluate(() => (
+      window as typeof window & { __emitDesktopWebLink(request: DesktopWebLinkRequest): void }
+    ).__emitDesktopWebLink({ url: "https://example.net/agent-disabled", source: "link" }));
+    await expect(page.getByTestId("chat-side-panel-browser-webview"))
+      .toHaveAttribute("src", "https://example.net/agent-disabled");
     await expect(modal.getByRole("button", { name: "Import..." })).toBeDisabled();
-    await expect(modal.getByText("Enable Rudder Browser before importing data.")).toBeVisible();
+    await expect(modal.getByText("Enable Browser access for Agents before importing data.")).toBeVisible();
   });
 });

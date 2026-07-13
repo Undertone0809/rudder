@@ -1016,8 +1016,9 @@ Product model:
   not automatically open a target-type menu; target choice belongs in the picker
   page so the operator can choose Browser, Library, Issue, or another supported
   target from the panel body.
-- In Rudder Desktop, an enabled Built-in Browser loads typed URLs and search
-  queries inside Side Panel Browser tabs on the dedicated instance profile.
+- In Rudder Desktop, the operator Built-in Browser loads typed URLs and search
+  queries inside Side Panel Browser tabs on the dedicated instance profile,
+  independently of Agent Browser access.
   Ordinary external HTTP(S) links use that target by default without replacing
   the current Rudder route. Unsupported shells or unavailable Browser
   capability must not perform an unsafe remote fetch by themselves.
@@ -1067,8 +1068,8 @@ Flow:
    requests into another Browser tab instead of an unrestricted guest window
    while the Browser tab and popup limits permit it.
 16. Desktop routes ordinary external HTTP(S) links to a Browser Side Panel tab
-    when Browser is enabled and its instance preference is `built_in`. The
-    `default_browser` preference, disabled state, and explicit `Open externally`
+    when its instance preference is `built_in`, independently of Agent Browser
+    access. The `default_browser` preference and explicit `Open externally`
     action use the operating-system browser instead.
 
 Invariants:
@@ -1120,8 +1121,9 @@ Invariants:
   most eight Browser popup requests in a rolling ten-second window.
 - Browser profile data is shared across organizations in one local instance,
   but Side Panel tab/session state continues to follow this contract's active
-  work-item rules. Disabling or clearing Browser closes Browser targets without
-  deleting unrelated Side Panel tabs.
+  work-item rules. Disabling Agent Browser access preserves operator Browser
+  targets; clearing Browser data closes those targets without deleting unrelated
+  Side Panel tabs.
 - On desktop and web shells, the Side Panel docks directly against the main
   workspace with only a narrow resize affordance between them. It must not leave
   a broad blank gutter that visually separates the panel from the current work

@@ -171,8 +171,9 @@ auditing remain inside existing boundaries.
 2. Desktop configures the dedicated persistent Browser partition and its guest
    policy before creating any operator or Agent Browser guest.
 3. An ordinary external web link opens or focuses a Browser Side Panel tab when
-   Browser is enabled and `openLinksIn` is `built_in`. The current Rudder route
-   stays in place. The explicit external command always uses the system browser.
+   `openLinksIn` is `built_in`, independently of whether Agent Browser access is
+   enabled. The current Rudder route stays in place. The explicit external
+   command always uses the system browser.
    Operator Browser popup requests are intercepted into another Side Panel tab
    instead of creating an unrestricted guest window, even when ordinary Rudder
    links are configured to use the system browser. Agent-page popups are
@@ -215,11 +216,12 @@ auditing remain inside existing boundaries.
    grouped separately from failures. The read-only snapshot path does not alter
    Cookie records or source DB/WAL contents; SQLite may update transient
    shared-memory coordination metadata while opening the live database.
-9. Disabling Browser immediately stops new import/control admission, closes
-   operator and Agent Browser tabs, revokes leases, routes later links to the
-   system browser, rejects current Browser tool calls, and removes the Browser
-   skill and tools from later run projections before waiting for any in-flight
-   import to finish. It preserves profile data and link preference for re-enable.
+9. Disabling Agent Browser access immediately stops new import/control admission,
+   closes Agent Browser tabs, revokes leases, rejects current Browser tool calls,
+   and removes the Browser skill and tools from later run projections before
+   waiting for any in-flight import to finish. It preserves operator Browser
+   tabs, profile data, and `openLinksIn`; ordinary operator links continue to
+   follow that independent destination preference while Agent access is off.
 10. Clearing Browser data immediately stops admission and closes all Browser
     tabs and leases, then waits for any admitted import and performs Electron's
     exhaustive session-data removal, including cookies, cache, local storage,
@@ -237,14 +239,14 @@ auditing remain inside existing boundaries.
 | Case | Conditions | Product result | Must not happen | Evidence |
 | --- | --- | --- | --- | --- |
 | Fresh Desktop instance | No saved Browser fields | Browser is enabled and Rudder web links use the Side Panel Browser | Legacy absence must not disable the capability or default links externally | Settings service/UI tests |
-| Built-in link | Enabled, `openLinksIn=built_in`, external HTTP(S) URL | Open or focus a Side Panel Browser tab and preserve the current Rudder route | Do not replace the Rudder route or open the system browser as the primary action | Side Panel E2E and Desktop smoke |
-| External preference or explicit escape | `openLinksIn=default_browser`, Browser disabled, or operator selects `Open externally` | Open through the operating-system browser | Do not silently reopen the URL inside Rudder | Settings and link-router evidence |
+| Built-in link | `openLinksIn=built_in`, external HTTP(S) URL, regardless of Agent Browser enablement | Open or focus a Side Panel Browser tab and preserve the current Rudder route | Do not replace the Rudder route or open the system browser because Agent Browser access is off | Side Panel E2E and Desktop smoke |
+| External preference or explicit escape | `openLinksIn=default_browser`, or operator selects `Open externally` | Open through the operating-system browser | Do not silently reopen the URL inside Rudder | Settings and link-router evidence |
 | Supported Agent call | Browser enabled, supported local runtime, run-scoped Agent JWT, active run, owned tab | Execute the bounded action through the authenticated Broker | Model arguments or unsigned headers must not override identity, credential, or lease ownership | Auth, route, Broker, MCP, and adapter tests |
 | Unsupported deployment or runtime | Deployment is not `local_trusted`, or adapter is not Claude/Codex/OpenCode/Pi local | Do not project a usable Browser capability; reject a stale unsupported-runtime API call with `browser_runtime_unsupported` | Skill, flag, and tools must not disagree or survive an ineligible fallback | Capability, organization skill, run-context, route, and fallback tests |
 | Forged run context | Agent JWT run header differs from its signed `run_id`, or a long-lived Agent key supplies a run header | Reject before run lookup or Broker dispatch | One run must not impersonate another run of the same Agent | Auth middleware and Browser route tests |
 | Cross-run tab call | Tab belongs to another org, agent, or run | Reject without revealing tab content | Shared cookies must not grant shared tab control | Browser route/Broker tests |
 | Browser unavailable | Enabled but no healthy local Desktop Broker | Return stable `browser_unavailable` | The run must not hang or receive a false success | Browser route tests |
-| Browser disabled | Capability is off at projection or call time | Remove the skill and tools from later run projections; reject current calls with `browser_disabled`; revoke tabs | A stale run snapshot must not retain control even if its static MCP discovery still lists Browser tools | Skill reconciliation, adapter, and route tests |
+| Agent Browser disabled | Capability is off at projection or call time | Remove the skill and tools from later run projections; reject current calls with `browser_disabled`; revoke Agent tabs while preserving operator tabs and link routing | A stale run snapshot must not retain control, and Agent enablement must not override `openLinksIn` | Skill reconciliation, adapter, link-router, Side Panel E2E, and Desktop smoke tests |
 | Operator tab capacity | Side Panel context already has eight Browser tabs | Ordinary Rudder links reuse an existing Browser tab; popup and explicit new-tab requests are discarded | Do not create an unbounded guest or native window | Side Panel capacity and popup tests |
 | Agent tab capacity | Run already has eight tabs or Desktop has 32 Agent tabs | Reject another open with `browser_tab_limit` until an owned tab closes | One run must not exhaust the Desktop with unbounded hidden tabs | Agent tab controller tests |
 | Cookie import | macOS supported Chromium source selected and operator confirms | Import supported cookies locally, preserve existing cookies, and report partial outcomes | Do not read before confirmation, alter source Cookie records or DB/WAL contents, expose values, or claim password import | Desktop importer and dialog tests |
@@ -312,10 +314,12 @@ organization, agent, run, API, or Broker credentials.
    - Evidence: Browser route and Broker isolation tests.
 
 4. Disable and re-enable:
-   - Trigger: operator disables Browser, later enables it again.
-   - Expected state/action: active tabs and leases close immediately; later
-     runs lose the skill/tools; saved website data returns on re-enable.
-   - Visible output: links use the system browser while disabled.
+   - Trigger: operator disables Agent Browser access, opens a Rudder web link,
+     then later enables Agent access again.
+   - Expected state/action: Agent tabs and leases close immediately; later runs
+     lose the skill/tools; operator tabs and saved website data remain available.
+   - Visible output: the link continues to follow the saved `openLinksIn`
+     preference while Agent access is disabled.
    - Evidence: settings, skill reconciliation, runtime, and Desktop tests.
 
 ### Invariants / Non-Goals
@@ -325,6 +329,9 @@ organization, agent, run, API, or Broker credentials.
 - `openLinksIn` controls operator link routing only. Selecting the system
   browser must not disable the Agent Browser skill or tools, and must not send
   popup requests from an already-open Rudder Browser tab to the system browser.
+- Agent Browser enablement controls Agent skill/tool and import admission only.
+  It must not close operator Browser tabs, hide the operator Browser target, or
+  override the independently persisted `openLinksIn` destination.
 - Tab/control identity is always `orgId + agentId + runId + tabId`; profile
   sharing never weakens run ownership.
 - Operator Browser capacity is eight tabs per Side Panel context. At capacity,

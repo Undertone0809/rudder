@@ -697,6 +697,10 @@ async function closeAllBrowserGuests(): Promise<void> {
   await browserGuestRegistry.closeAll();
 }
 
+async function closeAgentBrowserGuests(): Promise<void> {
+  await browserAgentTabController?.closeAll();
+}
+
 function initializeBrowserProfile(instanceRoot: string): void {
   const partition = deriveBrowserPartition(instanceRoot);
   const importOwnerId = deriveBrowserImportOwnerId(partition);
@@ -714,7 +718,9 @@ function initializeBrowserProfile(instanceRoot: string): void {
   const controller = createBrowserProfileController({
     partition,
     session: browserSession,
-    closeBrowserGuests: closeAllBrowserGuests,
+    closeBrowserGuests: (scope) => (
+      scope === "all" ? closeAllBrowserGuests() : closeAgentBrowserGuests()
+    ),
     broadcastReset: (event) => {
       getCurrentMainRenderer()?.send("desktop:browser-reset", event);
     },
@@ -1012,7 +1018,7 @@ async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
   installBrowserWebviewPolicy(window.webContents, {
     partition: browserProfile.getPartition(),
     getControlPlaneOrigins: () => collectBrowserControlPlaneOrigins(initialUrl),
-    isBrowserAvailable: () => browserProfile.getState().available,
+    isBrowserAvailable: () => browserProfile.isOperatorAvailable(),
     registerGuest: browserGuestRegistry.register,
     openBrowserPopup: (url) => routeDesktopWebLink(url, "browser_popup"),
   });

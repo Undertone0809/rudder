@@ -801,6 +801,41 @@ async function setBrowserEnabled(page, baseUrl, enabled) {
   return await response.json();
 }
 
+async function verifyOperatorBrowserRoutingWhileAgentAccessIsDisabled(page, baseUrl, companyId, fixtureUrl) {
+  await setBrowserEnabled(page, baseUrl, false);
+  await page.waitForFunction(() => (
+    document.querySelectorAll("[data-testid='chat-side-panel-browser-webview']").length > 0
+  ));
+  await verifyBrowserSkillState(baseUrl, companyId, false);
+
+  const disabledAgentLinkUrl = `${fixtureUrl}/agent-disabled-link`;
+  const routeBeforeDisabledAgentLink = page.url();
+  await page.evaluate((url) => {
+    const link = document.createElement("a");
+    link.dataset.testid = "desktop-smoke-disabled-agent-link";
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = "Disabled Agent Browser routing smoke link";
+    document.body.appendChild(link);
+  }, disabledAgentLinkUrl);
+  await page.getByTestId("desktop-smoke-disabled-agent-link").click();
+  await page.waitForFunction(({ expectedUrl }) => {
+    const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
+    if (!webview || typeof webview.getURL !== "function") return false;
+    try {
+      return webview.getURL() === expectedUrl;
+    } catch {
+      return false;
+    }
+  }, { expectedUrl: disabledAgentLinkUrl }, { timeout: 30_000 });
+  assert.equal(
+    page.url(),
+    routeBeforeDisabledAgentLink,
+    "operator link routing should remain internal while Agent Browser access is disabled",
+  );
+}
+
 async function readBrowserSettings(baseUrl) {
   const response = await fetch(`${baseUrl}/api/instance/settings/browser`);
   if (response.status !== 200) {
@@ -1488,15 +1523,16 @@ async function runCleanScenario(mode) {
       "Browser webview should write to the dedicated persistent profile",
     );
 
-    await setBrowserEnabled(firstRun.page, firstRun.baseUrl, false);
-    await firstRun.page.waitForFunction(() => (
-      document.querySelectorAll("[data-testid='chat-side-panel-browser-webview']").length === 0
-    ));
-    await verifyBrowserSkillState(firstRun.baseUrl, company.id, false);
+    await verifyOperatorBrowserRoutingWhileAgentAccessIsDisabled(
+      firstRun.page,
+      firstRun.baseUrl,
+      company.id,
+      browserFixture.url,
+    );
     assert.equal(
       (await readBrowserSmokeCookie(firstRun.electronApp, firstRun.page))?.value,
       browserSmokeCookieValue,
-      "disabling Browser should close guests without deleting shared profile data",
+      "disabling Agent Browser access should preserve operator tabs and shared profile data",
     );
 
     await setBrowserEnabled(firstRun.page, firstRun.baseUrl, true);
@@ -1626,6 +1662,7 @@ async function runBrowserScenario(mode) {
   const scenarioRoot = path.join(tmpRoot, "browser");
   const ports = await allocateSmokePorts();
   const run = await launchDesktop(scenarioRoot, mode, ports);
+  const fixture = await startBrowserSmokeFixture();
   try {
     const company = await createCompany(run.baseUrl);
     await verifyChatSidePanelBrowser(
@@ -1633,13 +1670,21 @@ async function runBrowserScenario(mode) {
       run.baseUrl,
       company.id,
       company.issuePrefix,
-      { electronApp: run.electronApp },
+      { electronApp: run.electronApp, fixture },
+    );
+    await verifyOperatorBrowserRoutingWhileAgentAccessIsDisabled(
+      run.page,
+      run.baseUrl,
+      company.id,
+      fixture.url,
     );
     await closeDesktop(run.electronApp);
   } catch (error) {
     console.error("[desktop-smoke] browser scenario failed", error);
     await closeDesktop(run.electronApp).catch(() => {});
     throw error;
+  } finally {
+    await fixture.stop().catch(() => {});
   }
 }
 

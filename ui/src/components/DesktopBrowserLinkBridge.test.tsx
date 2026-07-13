@@ -39,7 +39,7 @@ describe("DesktopBrowserLinkBridge", () => {
       openExternal: forceOpenExternal,
       forceOpenExternal,
     };
-    getBrowser.mockResolvedValue({ enabled: true, openLinksIn: "built_in" });
+    getBrowser.mockResolvedValue({ enabled: false, openLinksIn: "built_in" });
 
     const container = document.createElement("div");
     document.body.appendChild(container);
