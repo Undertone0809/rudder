@@ -14,6 +14,7 @@ import { DesktopUpdateStatusCard } from "./components/DesktopUpdateStatusCard";
 import { DesktopSettingsModalFrame, Layout } from "./components/Layout";
 import { LocalTrustedSettingsRoute } from "./components/LocalTrustedSettingsRoute";
 import { OnboardingWizard } from "./components/OnboardingWizard";
+import { PageSkeleton } from "./components/PageSkeleton";
 import { ProductTourOverlay } from "./components/ProductTourOverlay";
 import { ToastViewport } from "./components/ToastViewport";
 import { BreadcrumbProvider } from "./context/BreadcrumbContext";
@@ -41,7 +42,6 @@ import { legacySkillRouteToLibraryHref } from "./lib/skill-library-routes";
 import { agentUrl } from "./lib/utils";
 import { Activity } from "./pages/Activity";
 import { AgentDetail } from "./pages/AgentDetail";
-import { Agents } from "./pages/Agents";
 import { AuthPage } from "./pages/Auth";
 import { Automations } from "./pages/Automations";
 import { BoardClaimPage } from "./pages/BoardClaim";
@@ -173,15 +173,23 @@ function AgentsEntryRedirect() {
   });
 
   if (!organizationId || isLoading) {
-    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading agents…</div>;
+    return <AgentsEntrySkeleton />;
   }
 
   const targetAgent = agents ? pickAgentsEntryTarget(agents) : null;
   if (!targetAgent) {
-    return <Navigate to="/agents/all" replace />;
+    return <AgentsEntrySkeleton />;
   }
 
   return <Navigate to={`${agentUrl(targetAgent)}/dashboard`} replace />;
+}
+
+function AgentsEntrySkeleton() {
+  return (
+    <div data-testid="agents-entry-skeleton">
+      <PageSkeleton variant="detail" />
+    </div>
+  );
 }
 
 function boardRoutes() {
@@ -207,10 +215,10 @@ function boardRoutes() {
       <Route path="plugins/:pluginId" element={<PluginPage />} />
       <Route path="org" element={<OrgChart />} />
       <Route path="agents" element={<AgentsEntryRedirect />} />
-      <Route path="agents/all" element={<Agents />} />
-      <Route path="agents/active" element={<Agents />} />
-      <Route path="agents/paused" element={<Agents />} />
-      <Route path="agents/error" element={<Agents />} />
+      <Route path="agents/all" element={<Navigate to="/agents" replace />} />
+      <Route path="agents/active" element={<Navigate to="/agents" replace />} />
+      <Route path="agents/paused" element={<Navigate to="/agents" replace />} />
+      <Route path="agents/error" element={<Navigate to="/agents" replace />} />
       <Route path="agents/new" element={<NewAgent />} />
       <Route path="agents/:agentId" element={<AgentDetail />} />
       <Route path="agents/:agentId/:tab" element={<AgentDetail />} />

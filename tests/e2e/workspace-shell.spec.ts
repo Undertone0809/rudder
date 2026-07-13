@@ -389,10 +389,11 @@ test.describe("Workspace shell", () => {
     await expect.poll(async () => Math.round((await contextCard.boundingBox())?.width ?? 0)).toBe(360);
   });
 
-  test("renders agents as a rail plus dual workspace cards", async ({ page }, testInfo) => {
+  test("renders agent detail as a rail plus dual workspace cards", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Workspace-Shell-Agents-${Date.now()}`,
+        issuePrefix: "WSAGENT",
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -433,10 +434,9 @@ test.describe("Workspace shell", () => {
       });
     });
 
-    await gotoOrganizationPath(page, organization, "/agents/all");
+    await gotoOrganizationPath(page, organization, `/agents/${agent.id}/dashboard`);
 
     await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Agents", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Filters" })).toBeVisible();
     const sidebarAgentRow = page.getByTestId("workspace-sidebar").getByRole("link", { name: /Surface Hierarchy Agent/i });
     await expect(sidebarAgentRow).toBeVisible();
     await expect(sidebarAgentRow.getByText("1 live", { exact: true })).toBeVisible();

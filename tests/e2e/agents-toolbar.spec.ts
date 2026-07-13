@@ -6,10 +6,12 @@ test.describe("Agents workspace entry", () => {
     const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
       data: {
         name: `Agents-Toolbar-${Date.now()}`,
+        issuePrefix: "ATBAR",
       },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = (await orgRes.json()) as { id: string; issuePrefix: string };
+    const organization = (await orgRes.json()) as { id: string; issuePrefix: string; urlKey?: string };
+    const organizationRoutePattern = `${organization.issuePrefix}|${organization.urlKey ?? organization.issuePrefix}`;
 
     const engineerRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/agents`, {
       data: {
@@ -46,7 +48,7 @@ test.describe("Agents workspace entry", () => {
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/dashboard`);
     await page.getByTestId("primary-rail").getByRole("link", { name: "Agents" }).click();
 
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/agents/[^/]+/dashboard$`));
+    await expect(page).toHaveURL(new RegExp(`/(?:${organizationRoutePattern})/agents/[^/]+/dashboard$`));
     await expect(page.getByRole("heading", { name: "Nia", exact: true })).toBeVisible();
     await expect(page.getByTestId("workspace-context-header")).not.toHaveClass(/desktop-window-drag/);
     await expect(page.getByTestId("agents-views-section")).toHaveCount(0);
@@ -56,7 +58,7 @@ test.describe("Agents workspace entry", () => {
     await expect(page.getByText("Nia (CEO)", { exact: true })).toBeVisible();
 
     await page.getByRole("link", { name: "Toolbar Agent (Founding Engineer)", exact: true }).click();
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/agents/[^/]+/dashboard$`));
+    await expect(page).toHaveURL(new RegExp(`/(?:${organizationRoutePattern})/agents/[^/]+/dashboard$`));
     await expect(page.getByRole("heading", { name: "Toolbar Agent", exact: true })).toBeVisible();
 
     const teamCreateButton = page.getByRole("button", { name: "New agent" });
@@ -77,5 +79,31 @@ test.describe("Agents workspace entry", () => {
 
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/agents/${engineer.id}/configuration`);
     await expect(page.getByRole("heading", { name: "Toolbar Agent", exact: true })).toBeVisible();
+  });
+
+  test("shows only a skeleton when the organization has no visible agents", async ({ page }) => {
+    const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: {
+        name: `Agents-Empty-${Date.now()}`,
+        issuePrefix: "ATEMPTY",
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = (await orgRes.json()) as { id: string; issuePrefix: string; urlKey?: string };
+    const organizationRoutePattern = `${organization.issuePrefix}|${organization.urlKey ?? organization.issuePrefix}`;
+
+    await page.goto(E2E_BASE_URL);
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/agents/all`);
+
+    await expect(page).toHaveURL(new RegExp(`/(?:${organizationRoutePattern})/agents$`));
+    await expect(page.getByTestId("agents-entry-skeleton")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Filters" })).toHaveCount(0);
+    await expect(page.getByText("Nothing here yet", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Create your first agent to get started.", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("No Organization Structure defined.", { exact: true })).toHaveCount(0);
   });
 });
