@@ -172,7 +172,7 @@ test.describe("Chat Side Panel", () => {
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
-    const libraryFilePath = `docs/file-launcher-${Date.now()}.md`;
+    const libraryFilePath = `projects/competitor-research/exports/2026/07/file-launcher-${Date.now()}.md`;
     const libraryFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
       data: {
         filePath: libraryFilePath,
@@ -222,18 +222,40 @@ test.describe("Chat Side Panel", () => {
       exact: true,
     });
     await expect(documentTitle).toBeVisible();
+    const fileToolbar = sidePanel.getByTestId("chat-side-panel-library-file-toolbar");
+    const filePath = fileToolbar.getByRole("navigation", { name: "Library file path" });
+    await expect(filePath.getByText("…", { exact: true })).toBeVisible();
+    await expect(filePath.getByText("07", { exact: true })).toBeVisible();
+    const fileNameBreadcrumb = filePath.getByText(libraryFileName, { exact: true });
+    await expect(fileNameBreadcrumb).toBeVisible();
+    await expect(fileToolbar).not.toContainText("text/markdown");
 
     const libraryOpenIn = sidePanel.getByRole("button", { name: "Open Library document in another app" });
     await expect(libraryOpenIn).toBeVisible();
-    const [titleBox, openInBox] = await Promise.all([
-      documentTitle.boundingBox(),
+    await expect(libraryOpenIn).toHaveText("Open");
+    const [toolbarBox, pathBox, fileNameBox, openInBox, titleBox] = await Promise.all([
+      fileToolbar.boundingBox(),
+      filePath.boundingBox(),
+      fileNameBreadcrumb.boundingBox(),
       libraryOpenIn.boundingBox(),
+      documentTitle.boundingBox(),
     ]);
+    expect(toolbarBox).not.toBeNull();
+    expect(pathBox).not.toBeNull();
+    expect(fileNameBox).not.toBeNull();
     expect(titleBox).not.toBeNull();
     expect(openInBox).not.toBeNull();
-    expect(Math.abs((titleBox?.y ?? 0) - (openInBox?.y ?? 0))).toBeLessThanOrEqual(2);
-    expect((openInBox?.y ?? 0) + (openInBox?.height ?? 0)).toBeLessThanOrEqual(
-      (titleBox?.y ?? 0) + (titleBox?.height ?? 0),
+    expect(Math.abs(
+      ((pathBox?.y ?? 0) + (pathBox?.height ?? 0) / 2)
+      - ((openInBox?.y ?? 0) + (openInBox?.height ?? 0) / 2),
+    )).toBeLessThanOrEqual(2);
+    expect(fileNameBox?.x ?? 0).toBeGreaterThanOrEqual(pathBox?.x ?? 0);
+    expect((fileNameBox?.x ?? 0) + (fileNameBox?.width ?? 0)).toBeLessThanOrEqual(
+      (pathBox?.x ?? 0) + (pathBox?.width ?? 0) + 1,
+    );
+    expect(fileNameBox?.width ?? 0).toBeGreaterThan(40);
+    expect(titleBox?.y ?? 0).toBeGreaterThanOrEqual(
+      (toolbarBox?.y ?? 0) + (toolbarBox?.height ?? 0),
     );
     await libraryOpenIn.click();
     await expect(page.getByRole("menuitem", { name: "Default app" })).toBeVisible();
@@ -252,6 +274,11 @@ test.describe("Chat Side Panel", () => {
     ).__rudderFileLocationCalls ?? [])).toEqual([
       expect.objectContaining({ filePath: libraryFilePath, targetId: "terminal" }),
     ]);
+
+    await sidePanel.getByLabel("Expand Side Panel").click();
+    await expect(sidePanel.getByTestId("chat-side-panel-library-file-toolbar")).toBeVisible();
+    await expect(sidePanel.getByRole("navigation", { name: "Library file path" })).toContainText(libraryFileName);
+    await expect(sidePanel.getByRole("button", { name: "Open Library document in another app" })).toHaveText("Open");
 
     await page.screenshot({
       path: testInfo.outputPath("chat-side-panel-library-open-in.png"),

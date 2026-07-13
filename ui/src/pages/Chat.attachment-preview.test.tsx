@@ -2157,6 +2157,10 @@ describe("Chat Side Panel link handling", () => {
 
     const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="Open Library document in another app"]');
     expect(trigger).not.toBeNull();
+    expect(trigger?.textContent).toContain("Open");
+    const toolbar = container.querySelector<HTMLElement>("[data-testid='chat-side-panel-library-file-toolbar']");
+    expect(toolbar?.querySelector("nav[aria-label='Library file path']")?.textContent).toBe("reportsactivity.md");
+    expect(toolbar?.textContent).not.toContain("text/markdown");
     await act(async () => {
       trigger?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
       await Promise.resolve();
