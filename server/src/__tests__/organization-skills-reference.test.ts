@@ -386,6 +386,7 @@ describe("organization skill references", () => {
     });
     const second = await orgSvc.create({
       name: "Alpha Beta",
+      issuePrefix: "ALP2",
       description: "Second org",
       budgetMonthlyCents: 0,
       defaultChatIssueCreationMode: "manual_approval",

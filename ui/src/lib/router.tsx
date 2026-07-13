@@ -2,7 +2,7 @@ import { useOrganization } from "@/context/OrganizationContext";
 import {
   applyOrganizationPrefix,
   extractOrganizationPrefixFromPath,
-  normalizeOrganizationPrefix,
+  getOrganizationRouteKey,
 } from "@/lib/organization-routes";
 import * as React from "react";
 import type { NavigateOptions, To } from "react-router-dom";
@@ -29,13 +29,13 @@ function useActiveCompanyPrefix(): string | null {
   const location = RouterDom.useLocation();
 
   if (params.orgPrefix) {
-    return normalizeOrganizationPrefix(params.orgPrefix);
+    return params.orgPrefix.trim();
   }
 
   const pathPrefix = extractOrganizationPrefixFromPath(location.pathname);
   if (pathPrefix) return pathPrefix;
 
-  return selectedOrganization ? normalizeOrganizationPrefix(selectedOrganization.issuePrefix) : null;
+  return selectedOrganization ? getOrganizationRouteKey(selectedOrganization) : null;
 }
 
 export * from "react-router-dom";

@@ -34,6 +34,8 @@ edit_policy: user_confirmed_only
 
 ## Contract Index
 
+- `ISSUE.IDENTITY.001`: readable issue identifiers use an explicit organization
+  Issue Key while UUIDs and historical aliases preserve durable identity.
 - `ISSUE.STATE.001`: issue status lifecycle remains explicit and review-aware.
 - `ISSUE.HIERARCHY.001`: parent and sub-issue relationships preserve work
   context without crossing organization or cycle boundaries.

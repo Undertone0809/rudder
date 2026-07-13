@@ -1,10 +1,24 @@
 import { z } from "zod";
 import { CHAT_ISSUE_CREATION_MODES, ORGANIZATION_STATUSES } from "../constants.js";
+import {
+  ORGANIZATION_ISSUE_KEY_MAX_LENGTH,
+  ORGANIZATION_ISSUE_KEY_PATTERN,
+} from "../organization-issue-key.js";
 
 const logoAssetIdSchema = z.string().uuid().nullable().optional();
 const brandColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional();
+export const organizationIssueKeySchema = z.string()
+  .trim()
+  .min(1)
+  .max(ORGANIZATION_ISSUE_KEY_MAX_LENGTH)
+  .transform((value) => value.toUpperCase())
+  .refine((value) => ORGANIZATION_ISSUE_KEY_PATTERN.test(value), {
+    message: "Issue key must start with a letter and contain only letters and numbers",
+  });
+
 export const createOrganizationSchema = z.object({
   name: z.string().min(1),
+  issuePrefix: organizationIssueKeySchema.optional(),
   description: z.string().optional().nullable(),
   budgetMonthlyCents: z.number().int().nonnegative().optional().default(0),
   defaultChatIssueCreationMode: z.enum(CHAT_ISSUE_CREATION_MODES).optional().default("manual_approval"),

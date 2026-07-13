@@ -26,6 +26,7 @@ interface OrganizationContextValue {
   reloadOrganizations: () => Promise<void>;
   createOrganization: (data: {
     name: string;
+    issuePrefix?: string;
     description?: string | null;
     budgetMonthlyCents?: number;
   }) => Promise<Organization>;
@@ -89,6 +90,7 @@ export function OrganizationProvider({ children }: { children: ReactNode }) {
   const createMutation = useMutation({
     mutationFn: (data: {
       name: string;
+      issuePrefix?: string;
       description?: string | null;
       budgetMonthlyCents?: number;
     }) =>
@@ -102,6 +104,7 @@ export function OrganizationProvider({ children }: { children: ReactNode }) {
   const createOrganization = useCallback(
     async (data: {
       name: string;
+      issuePrefix?: string;
       description?: string | null;
       budgetMonthlyCents?: number;
     }) => {

@@ -24,6 +24,7 @@ import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useProjectOrder } from "../hooks/useProjectOrder";
+import { getOrganizationRouteKey } from "../lib/organization-routes";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, projectRouteRef } from "../lib/utils";
 import { BudgetSidebarMarker } from "./BudgetSidebarMarker";
@@ -216,7 +217,7 @@ export function SidebarProjects() {
                   key={project.id}
                   activeProjectRef={activeProjectRef}
                   orgId={selectedOrganizationId}
-                  orgPrefix={selectedOrganization?.issuePrefix ?? null}
+                  orgPrefix={selectedOrganization ? getOrganizationRouteKey(selectedOrganization) : null}
                   isMobile={isMobile}
                   project={project}
                   projectSidebarSlots={projectSidebarSlots}

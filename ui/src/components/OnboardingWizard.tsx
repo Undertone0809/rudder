@@ -11,6 +11,7 @@ import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
 import {
   AGENT_RUN_CONCURRENCY_DEFAULT,
+  deriveOrganizationIssueKey,
   type AgentRuntimeEnvironmentTestResult,
   type Organization,
 } from "@rudderhq/shared";
@@ -41,7 +42,7 @@ import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { parseOnboardingGoalInput } from "../lib/onboarding-goal";
 import { resolveRouteOnboardingOptions } from "../lib/onboarding-route";
-import { DEFAULT_ORGANIZATION_HOME_PATH } from "../lib/organization-routes";
+import { DEFAULT_ORGANIZATION_HOME_PATH, getOrganizationRouteKey } from "../lib/organization-routes";
 import { queryKeys } from "../lib/queryKeys";
 import {
   blockingRuntimeEnvironmentMessage,
@@ -104,6 +105,8 @@ export function OnboardingWizard() {
   const [modelOpen, setModelOpen] = useState(false);
   // Step 1
   const [organizationName, setCompanyName] = useState("");
+  const [organizationIssueKey, setOrganizationIssueKey] = useState("");
+  const [organizationIssueKeyEdited, setOrganizationIssueKeyEdited] = useState(false);
   const [companyGoal, setCompanyGoal] = useState("");
   const [firstTimeUser, setFirstTimeUser] = useState(true);
   // Step 2
@@ -375,6 +378,8 @@ export function OnboardingWizard() {
     setLoading(false);
     setError(null);
     setCompanyName("");
+    setOrganizationIssueKey("");
+    setOrganizationIssueKeyEdited(false);
     setCompanyGoal("");
     setFirstTimeUser(true);
     setAgentName("");
@@ -542,8 +547,12 @@ export function OnboardingWizard() {
       const organization = createdCompanyId
         ? await organizationsApi.update(createdCompanyId, {
             name: organizationName.trim(),
+            issuePrefix: organizationIssueKey,
           })
-        : await organizationsApi.create({ name: organizationName.trim() });
+        : await organizationsApi.create({
+            name: organizationName.trim(),
+            issuePrefix: organizationIssueKey,
+          });
       if (isCreatingOrganization) {
         draftOrganizationIdRef.current = organization.id;
         shouldCleanupDraftOrganizationRef.current = true;
@@ -682,7 +691,7 @@ export function OnboardingWizard() {
       closeOnboarding();
       navigate(
         organizationSnapshot.issuePrefix
-          ? `/${organizationSnapshot.issuePrefix}${DEFAULT_ORGANIZATION_HOME_PATH}`
+          ? `/${getOrganizationRouteKey(organizationSnapshot)}${DEFAULT_ORGANIZATION_HOME_PATH}`
           : DEFAULT_ORGANIZATION_HOME_PATH
       );
     } catch (err) {
@@ -820,8 +829,29 @@ export function OnboardingWizard() {
                       )} >
                       Organization name
                     </label>
-                    <input className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50" placeholder="Acme Corp" value={organizationName} onChange={(e) => setCompanyName(e.target.value)}
+                    <input className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50" placeholder="Acme Corp" value={organizationName} onChange={(e) => {
+                      const nextName = e.target.value;
+                      setCompanyName(nextName);
+                      if (!organizationIssueKeyEdited) setOrganizationIssueKey(deriveOrganizationIssueKey(nextName));
+                    }}
                       autoFocus /> </div>
+                  <div className="group">
+                    <label className="text-xs mb-1 block text-muted-foreground group-focus-within:text-foreground">
+                      Issue key
+                    </label>
+                    <input
+                      className="w-full rounded-md border border-border bg-transparent px-3 py-2 font-mono text-sm uppercase outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50"
+                      aria-label="Issue key"
+                      value={organizationIssueKey}
+                      onChange={(e) => {
+                        setOrganizationIssueKeyEdited(true);
+                        setOrganizationIssueKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12));
+                      }}
+                    />
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      Used in issue IDs, for example {organizationIssueKey || "ORG"}-1. It must be unique.
+                    </p>
+                  </div>
                   <div className="group">
                     <label className={cn(
                         "text-xs mb-1 block transition-colors",
@@ -1102,7 +1132,7 @@ export function OnboardingWizard() {
                   )} </div>
                 <div className="flex items-center gap-2">
                   {step === 1 && (
-                    <Button size="sm" disabled={!organizationName.trim() || loading} onClick={handleStep1Next} >
+                    <Button size="sm" disabled={!organizationName.trim() || (!createdCompanyId && !organizationIssueKey) || loading} onClick={handleStep1Next} >
                       {loading ? (
                         <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
                       ) : (

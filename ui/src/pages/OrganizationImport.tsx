@@ -1,11 +1,12 @@
 import { Button } from "@/components/ui/button";
 import type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
-import type {
-  OrganizationPortabilityAgentRuntimeOverride,
+import {
   OrganizationPortabilityCollisionStrategy,
   OrganizationPortabilityFileEntry,
   OrganizationPortabilityPreviewResult,
   OrganizationPortabilitySource,
+  deriveOrganizationIssueKey,
+  type OrganizationPortabilityAgentRuntimeOverride,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -41,7 +42,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { getAgentOrderStorageKey, writeAgentOrder } from "../lib/agent-order";
-import { DEFAULT_ORGANIZATION_HOME_PATH } from "../lib/organization-routes";
+import { DEFAULT_ORGANIZATION_HOME_PATH, getOrganizationRouteKey } from "../lib/organization-routes";
 import { getPortableFileDataUrl, getPortableFileText, isPortableImageFile } from "../lib/portable-files";
 import { getProjectOrderStorageKey, writeProjectOrder } from "../lib/project-order";
 import { queryKeys } from "../lib/queryKeys";
@@ -675,6 +676,8 @@ export function OrganizationImport() {
   // Target state
   const [targetMode, setTargetMode] = useState<"existing" | "new">("new");
   const [newOrganizationName, setNewOrganizationName] = useState("");
+  const [newOrganizationIssueKey, setNewOrganizationIssueKey] = useState("");
+  const [newOrganizationIssueKeyEdited, setNewOrganizationIssueKeyEdited] = useState(false);
 
   // Preview state
   const [importPreview, setImportPreview] =
@@ -736,13 +739,22 @@ export function OrganizationImport() {
         include: { organization: true, agents: true, projects: true, issues: true },
         target:
           targetMode === "new"
-            ? { mode: "new_organization", newOrganizationName: newOrganizationName || null }
+            ? {
+                mode: "new_organization",
+                newOrganizationName: newOrganizationName || null,
+                newOrganizationIssueKey: newOrganizationIssueKey || null,
+              }
             : { mode: "existing_organization", orgId: selectedOrganizationId! },
         collisionStrategy,
       });
     },
     onSuccess: (result) => {
       setImportPreview(result);
+      if (targetMode === "new" && !newOrganizationIssueKeyEdited) {
+        setNewOrganizationIssueKey(deriveOrganizationIssueKey(
+          newOrganizationName || result.manifest.organization?.name,
+        ));
+      }
 
       // Build conflicts and set default name overrides with prefix
       const conflicts = buildConflictList(result);
@@ -840,7 +852,11 @@ export function OrganizationImport() {
         include: { organization: true, agents: true, projects: true, issues: true },
         target:
           targetMode === "new"
-            ? { mode: "new_organization", newOrganizationName: newOrganizationName || null }
+            ? {
+                mode: "new_organization",
+                newOrganizationName: newOrganizationName || null,
+                newOrganizationIssueKey: newOrganizationIssueKey || null,
+              }
             : { mode: "existing_organization", orgId: selectedOrganizationId! },
         collisionStrategy,
         nameOverrides: buildFinalNameOverrides(),
@@ -870,7 +886,7 @@ export function OrganizationImport() {
         body: `${result.organization.name}: ${result.agents.length} agent${result.agents.length === 1 ? "" : "s"} processed.`,
       });
       // Force a fresh workspace load so newly imported agents are immediately visible.
-      window.location.assign(`/${importedOrganization.issuePrefix}${DEFAULT_ORGANIZATION_HOME_PATH}`);
+      window.location.assign(`/${getOrganizationRouteKey(importedOrganization)}${DEFAULT_ORGANIZATION_HOME_PATH}`);
     },
     onError: (err) => {
       pushToast({
@@ -1206,18 +1222,42 @@ export function OrganizationImport() {
         </Field>
 
         {targetMode === "new" && (
-          <Field
-            label="New organization name"
-            hint="Optional override. Leave blank to use the package name."
-          >
-            <input
-              className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
-              type="text"
-              value={newOrganizationName}
-              onChange={(e) => setNewOrganizationName(e.target.value)}
-              placeholder="Imported Organization"
-            />
-          </Field>
+          <div className="space-y-4">
+            <Field
+              label="New organization name"
+              hint="Optional override. Leave blank to use the package name."
+            >
+              <input
+                className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+                type="text"
+                value={newOrganizationName}
+                onChange={(e) => {
+                  const nextName = e.target.value;
+                  setNewOrganizationName(nextName);
+                  if (!newOrganizationIssueKeyEdited) {
+                    setNewOrganizationIssueKey(deriveOrganizationIssueKey(nextName));
+                  }
+                }}
+                placeholder="Imported Organization"
+              />
+            </Field>
+            <Field
+              label="New organization Issue Key"
+              hint="Used in imported issue IDs. Choose another key if the derived value is already in use."
+            >
+              <input
+                className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 font-mono text-sm uppercase outline-none"
+                type="text"
+                aria-label="New organization Issue Key"
+                value={newOrganizationIssueKey}
+                onChange={(e) => {
+                  setNewOrganizationIssueKeyEdited(true);
+                  setNewOrganizationIssueKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12));
+                }}
+                placeholder="ORG"
+              />
+            </Field>
+          </div>
         )}
 
         <Field
@@ -1308,7 +1348,12 @@ export function OrganizationImport() {
             <Button
               size="sm"
               onClick={() => importMutation.mutate()}
-              disabled={importMutation.isPending || hasErrors || selectedCount === 0}
+              disabled={
+                importMutation.isPending
+                || hasErrors
+                || selectedCount === 0
+                || (targetMode === "new" && !newOrganizationIssueKey)
+              }
             >
               <Download className="mr-1.5 h-3.5 w-3.5" />
               {importMutation.isPending

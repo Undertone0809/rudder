@@ -35,6 +35,7 @@ import {
   issueWorkProducts,
   joinRequests,
   labels,
+  organizationIssuePrefixAliases,
   organizationLogos,
   organizationMemberships,
   organizations,
@@ -47,15 +48,18 @@ import {
   workspaceOperations,
   workspaceRuntimeServices,
 } from "@rudderhq/db";
-import { deriveOrganizationUrlKey } from "@rudderhq/shared";
+import {
+  deriveOrganizationIssueKey,
+  deriveOrganizationUrlKey,
+  normalizeOrganizationIssueKey,
+} from "@rudderhq/shared";
 import { and, count, eq, gte, inArray, lt, sql } from "drizzle-orm";
-import { notFound, unprocessable } from "../errors.js";
+import { conflict, notFound, unprocessable } from "../errors.js";
 import { ensureOrganizationWorkspaceLayout, removeOrganizationStorage } from "../home-paths.js";
 import { logger } from "../middleware/logger.js";
 import { isPostgresError } from "./postgres-errors.js";
 
 export function organizationService(db: Db) {
-  const ISSUE_PREFIX_FALLBACK = "CMP";
   const DEFAULT_ISSUE_LABELS = [
     { name: "Bug", color: "#ef4444" },
     { name: "Feature", color: "#a855f7" },
@@ -82,9 +86,10 @@ export function organizationService(db: Db) {
     updatedAt: organizations.updatedAt,
   };
 
-  function enrichCompany<T extends { logoAssetId: string | null }>(organization: T) {
+  function enrichCompany<T extends { logoAssetId: string | null }>(organization: T, issuePrefixAliases: string[] = []) {
     return {
       ...organization,
+      issuePrefixAliases,
       workspace: null,
       logoUrl: organization.logoAssetId ? `/api/assets/${organization.logoAssetId}/content` : null,
     };
@@ -140,16 +145,6 @@ export function organizationService(db: Db) {
       .leftJoin(organizationLogos, eq(organizationLogos.orgId, organizations.id));
   }
 
-  function deriveIssuePrefixBase(name: string) {
-    const normalized = name.toUpperCase().replace(/[^A-Z]/g, "");
-    return normalized.slice(0, 3) || ISSUE_PREFIX_FALLBACK;
-  }
-
-  function suffixForAttempt(attempt: number) {
-    if (attempt <= 1) return "";
-    return "A".repeat(attempt - 1);
-  }
-
   function suffixForUrlKeyAttempt(attempt: number) {
     if (attempt <= 1) return "";
     return `-${attempt}`;
@@ -159,32 +154,64 @@ export function organizationService(db: Db) {
     return isPostgresError(error, "23505", constraintName);
   }
 
+  async function isRouteKeyOwnedByAnotherOrganization(
+    database: Pick<Db, "select">,
+    routeKey: string,
+    allowedOrgId?: string,
+  ) {
+    const organizationOwner = await database
+      .select({ id: organizations.id })
+      .from(organizations)
+      .where(sql`
+        lower(${organizations.urlKey}) = lower(${routeKey})
+        or lower(${organizations.issuePrefix}) = lower(${routeKey})
+      `)
+      .then((rows) => rows.find((row) => row.id !== allowedOrgId) ?? null);
+    if (organizationOwner) return true;
+
+    const aliasOwner = await database
+      .select({ orgId: organizationIssuePrefixAliases.orgId })
+      .from(organizationIssuePrefixAliases)
+      .where(sql`lower(${organizationIssuePrefixAliases.prefix}) = lower(${routeKey})`)
+      .then((rows) => rows.find((row) => row.orgId !== allowedOrgId) ?? null);
+    return Boolean(aliasOwner);
+  }
+
   async function createCompanyWithUniqueKeys(
     database: Pick<Db, "transaction">,
     data: typeof organizations.$inferInsert,
   ) {
-    const base = deriveIssuePrefixBase(data.name);
+    const issuePrefix = data.issuePrefix === undefined
+      ? deriveOrganizationIssueKey(data.name)
+      : normalizeOrganizationIssueKey(data.issuePrefix);
+    if (!issuePrefix) {
+      throw unprocessable("Issue key must start with a letter and contain only letters and numbers");
+    }
     const urlKeyBase = deriveOrganizationUrlKey(data.name);
     let suffix = 1;
     while (suffix < 10000) {
-      const candidate = `${base}${suffixForAttempt(suffix)}`;
       const candidateUrlKey = `${urlKeyBase}${suffixForUrlKeyAttempt(suffix)}`;
       try {
         const created = await database.transaction(async (tx) => {
+          await tx.execute(sql`select pg_advisory_xact_lock(hashtext('rudder:organization-issue-prefix'))`);
+          if (await isRouteKeyOwnedByAnotherOrganization(tx, issuePrefix)) {
+            throw conflict(`Issue key "${issuePrefix}" is already in use. Choose another key.`);
+          }
+          if (await isRouteKeyOwnedByAnotherOrganization(tx, candidateUrlKey)) {
+            return null;
+          }
           const rows = await tx
             .insert(organizations)
-            .values({ ...data, issuePrefix: candidate, urlKey: candidateUrlKey })
+            .values({ ...data, issuePrefix, urlKey: candidateUrlKey })
             .returning();
           return rows[0];
         });
-        return created;
+        if (created) return created;
       } catch (error) {
-        if (
-          !isUniqueConstraintConflict(error, "organizations_issue_prefix_idx")
-          && !isUniqueConstraintConflict(error, "organizations_url_key_idx")
-        ) {
-          throw error;
+        if (isUniqueConstraintConflict(error, "organizations_issue_prefix_idx")) {
+          throw conflict(`Issue key "${issuePrefix}" is already in use. Choose another key.`);
         }
+        if (!isUniqueConstraintConflict(error, "organizations_url_key_idx")) throw error;
       }
       suffix += 1;
     }
@@ -195,7 +222,16 @@ export function organizationService(db: Db) {
     list: async () => {
       const rows = await getCompanyQuery(db);
       const hydrated = await hydrateCompanySpend(rows);
-      return hydrated.map((row) => enrichCompany(row));
+      const aliases = await db
+        .select({ orgId: organizationIssuePrefixAliases.orgId, prefix: organizationIssuePrefixAliases.prefix })
+        .from(organizationIssuePrefixAliases);
+      const aliasesByOrg = new Map<string, string[]>();
+      for (const alias of aliases) {
+        const current = aliasesByOrg.get(alias.orgId) ?? [];
+        current.push(alias.prefix);
+        aliasesByOrg.set(alias.orgId, current);
+      }
+      return hydrated.map((row) => enrichCompany(row, aliasesByOrg.get(row.id) ?? []));
     },
 
     getById: async (id: string) => {
@@ -204,7 +240,11 @@ export function organizationService(db: Db) {
         .then((rows) => rows[0] ?? null);
       if (!row) return null;
       const [hydrated] = await hydrateCompanySpend([row], db);
-      return enrichCompany(hydrated);
+      const aliases = await db
+        .select({ prefix: organizationIssuePrefixAliases.prefix })
+        .from(organizationIssuePrefixAliases)
+        .where(eq(organizationIssuePrefixAliases.orgId, id));
+      return enrichCompany(hydrated, aliases.map((alias) => alias.prefix));
     },
 
     create: (data: typeof organizations.$inferInsert) =>
@@ -251,6 +291,7 @@ export function organizationService(db: Db) {
 
         const {
           logoAssetId,
+          issuePrefix: requestedIssuePrefixInput,
           urlKey: _ignoredUrlKey,
           workspace,
           ...companyPatch
@@ -259,6 +300,41 @@ export function organizationService(db: Db) {
           workspace?: unknown;
         };
         void workspace;
+
+        const requestedIssuePrefix = requestedIssuePrefixInput === undefined
+          ? undefined
+          : normalizeOrganizationIssueKey(requestedIssuePrefixInput);
+        if (requestedIssuePrefixInput !== undefined && !requestedIssuePrefix) {
+          throw unprocessable("Issue key must start with a letter and contain only letters and numbers");
+        }
+
+        if (requestedIssuePrefix && requestedIssuePrefix !== existing.issuePrefix) {
+          await tx.execute(sql`select pg_advisory_xact_lock(hashtext('rudder:organization-issue-prefix'))`);
+          if (await isRouteKeyOwnedByAnotherOrganization(tx, requestedIssuePrefix, id)) {
+            throw conflict(`Issue key "${requestedIssuePrefix}" is already in use. Choose another key.`);
+          }
+          const aliasOwner = await tx
+            .select({ orgId: organizationIssuePrefixAliases.orgId })
+            .from(organizationIssuePrefixAliases)
+            .where(eq(organizationIssuePrefixAliases.prefix, requestedIssuePrefix))
+            .then((rows) => rows[0] ?? null);
+          if (aliasOwner && aliasOwner.orgId !== id) {
+            throw conflict(`Issue key "${requestedIssuePrefix}" is already in use. Choose another key.`);
+          }
+          if (aliasOwner?.orgId === id) {
+            await tx
+              .delete(organizationIssuePrefixAliases)
+              .where(eq(organizationIssuePrefixAliases.prefix, requestedIssuePrefix));
+          }
+          await tx
+            .insert(organizationIssuePrefixAliases)
+            .values({ orgId: id, prefix: existing.issuePrefix })
+            .onConflictDoNothing({ target: organizationIssuePrefixAliases.prefix });
+          await tx
+            .update(issues)
+            .set({ identifier: sql`${requestedIssuePrefix} || '-' || ${issues.issueNumber}::text` })
+            .where(and(eq(issues.orgId, id), sql`${issues.issueNumber} is not null`));
+        }
 
         if (logoAssetId !== undefined && logoAssetId !== null) {
           const nextLogoAsset = await tx
@@ -276,6 +352,7 @@ export function organizationService(db: Db) {
           .update(organizations)
           .set({
             ...companyPatch,
+            ...(requestedIssuePrefix ? { issuePrefix: requestedIssuePrefix } : {}),
             updatedAt: new Date(),
           })
           .where(eq(organizations.id, id))
@@ -310,7 +387,11 @@ export function organizationService(db: Db) {
           logoAssetId: logoAssetId === undefined ? existing.logoAssetId : logoAssetId,
         }], tx);
 
-        return enrichCompany(hydrated);
+        const aliases = await tx
+          .select({ prefix: organizationIssuePrefixAliases.prefix })
+          .from(organizationIssuePrefixAliases)
+          .where(eq(organizationIssuePrefixAliases.orgId, id));
+        return enrichCompany(hydrated, aliases.map((alias) => alias.prefix));
       }),
 
     archive: (id: string) =>
@@ -372,6 +453,7 @@ export function organizationService(db: Db) {
         await tx.delete(organizationMemberships).where(eq(organizationMemberships.orgId, id));
         await tx.delete(issues).where(eq(issues.orgId, id));
         await tx.delete(organizationLogos).where(eq(organizationLogos.orgId, id));
+        await tx.delete(organizationIssuePrefixAliases).where(eq(organizationIssuePrefixAliases.orgId, id));
         await tx.delete(assets).where(eq(assets.orgId, id));
         await tx.delete(projectGoals).where(eq(projectGoals.orgId, id));
         await tx.delete(goals).where(eq(goals.orgId, id));

@@ -8,7 +8,7 @@ import { useSidebar } from "@/context/SidebarContext";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { sortOrganizationsByStoredOrder } from "@/lib/organization-order";
-import { DEFAULT_ORGANIZATION_HOME_PATH } from "@/lib/organization-routes";
+import { DEFAULT_ORGANIZATION_HOME_PATH, getOrganizationRouteKey } from "@/lib/organization-routes";
 import { getOrganizationSettingsPath } from "@/lib/organization-settings-path";
 import { RUDDER_DOCS_URL } from "@/lib/product-links";
 import { queryKeys } from "@/lib/queryKeys";
@@ -129,7 +129,7 @@ export function SettingsSidebar({
   }, [modalVariant]);
 
   function handleOrganizationSelect(organization: (typeof sidebarOrganizations)[number]) {
-    navigate(getOrganizationSettingsPath(organization.issuePrefix), overlayState ? { state: overlayState } : undefined);
+    navigate(getOrganizationSettingsPath(getOrganizationRouteKey(organization)), overlayState ? { state: overlayState } : undefined);
     if (isMobile) setSidebarOpen(false);
   }
 

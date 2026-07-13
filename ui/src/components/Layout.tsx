@@ -28,7 +28,7 @@ import {
   resolveDefaultSettingsPath,
 } from "../lib/instance-settings";
 import { resolveInAppBackStackTargetIndex } from "../lib/navigation-back-stack";
-import { DEFAULT_ORGANIZATION_HOME_PATH, findOrganizationByPrefix, toOrganizationRelativePath } from "../lib/organization-routes";
+import { DEFAULT_ORGANIZATION_HOME_PATH, findOrganizationByPrefix, getOrganizationRouteKey, toOrganizationRelativePath } from "../lib/organization-routes";
 import { shouldSyncOrganizationSelectionFromRoute } from "../lib/organization-selection";
 import { rememberPrimaryRailPath } from "../lib/primary-rail-memory";
 import { RUDDER_DOCS_URL } from "../lib/product-links";
@@ -767,9 +767,10 @@ export function Layout() {
       return;
     }
 
-    if (orgPrefix !== matchedOrganization.issuePrefix) {
+    const canonicalRouteKey = getOrganizationRouteKey(matchedOrganization);
+    if (orgPrefix.toLowerCase() !== canonicalRouteKey.toLowerCase()) {
       const suffix = location.pathname.replace(/^\/[^/]+/, "");
-      navigate(`/${matchedOrganization.issuePrefix}${suffix}${location.search}`, { replace: true });
+      navigate(`/${canonicalRouteKey}${suffix}${location.search}`, { replace: true });
       return;
     }
 

@@ -28,7 +28,7 @@ import {
   resolveDefaultInstanceSettingsPath,
 } from "./lib/instance-settings";
 import { shouldRedirectOrganizationlessRouteToOnboarding } from "./lib/onboarding-route";
-import { DEFAULT_ORGANIZATION_HOME_PATH, findOrganizationByPrefix } from "./lib/organization-routes";
+import { DEFAULT_ORGANIZATION_HOME_PATH, findOrganizationByPrefix, getOrganizationRouteKey } from "./lib/organization-routes";
 import { getOrganizationSettingsPath } from "./lib/organization-settings-path";
 import { queryKeys } from "./lib/queryKeys";
 import {
@@ -436,7 +436,7 @@ function OrganizationRootRedirect() {
     return <NoOrganizationsStartPage />;
   }
 
-  return <Navigate to={`/${targetOrganization.issuePrefix}${DEFAULT_ORGANIZATION_HOME_PATH}`} replace />;
+  return <Navigate to={`/${getOrganizationRouteKey(targetOrganization)}${DEFAULT_ORGANIZATION_HOME_PATH}`} replace />;
 }
 
 function UnprefixedBoardRedirect() {
@@ -463,7 +463,7 @@ function UnprefixedBoardRedirect() {
 
   return (
     <Navigate
-      to={`/${targetOrganization.issuePrefix}${location.pathname}${location.search}${location.hash}`}
+      to={`/${getOrganizationRouteKey(targetOrganization)}${location.pathname}${location.search}${location.hash}`}
       replace
     />
   );
@@ -505,7 +505,7 @@ function DesktopSettingsOverlayLayout() {
 
     if (selectedOrganization) {
       navigate(
-        getOrganizationSettingsPath(selectedOrganization.issuePrefix),
+        getOrganizationSettingsPath(getOrganizationRouteKey(selectedOrganization)),
         overlayState ? { replace: true, state: overlayState } : { replace: true },
       );
       return;

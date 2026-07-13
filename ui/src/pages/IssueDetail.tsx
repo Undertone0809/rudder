@@ -88,7 +88,7 @@ import { hasBrowserBackStackEntry, shouldHandleIssueDetailEscape } from "../lib/
 import { readIssueDetailBreadcrumb } from "../lib/issueDetailBreadcrumb";
 import { libraryCopy } from "../lib/library-copy";
 import { invalidateMessengerThreadSummaryQueries } from "../lib/messenger-query-cache";
-import { toOrganizationRelativePath } from "../lib/organization-routes";
+import { getOrganizationRouteKey, toOrganizationRelativePath } from "../lib/organization-routes";
 import { formatPriorityLabel } from "../lib/priorities";
 import { queryKeys } from "../lib/queryKeys";
 import { readRecentIssueIds, recordRecentIssue } from "../lib/recent-issues";
@@ -2580,7 +2580,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
                 slot={item.slot}
                 context={{
                   orgId: issue.orgId,
-                  orgPrefix: currentOrganization?.issuePrefix ?? null,
+                  orgPrefix: currentOrganization ? getOrganizationRouteKey(currentOrganization) : null,
                   projectId: issue.projectId ?? null,
                   entityId: issue.id,
                   entityType: "issue",

@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDialog } from "@/context/DialogContext";
 import { useI18n } from "@/context/I18nContext";
-import { toOrganizationRelativePath } from "@/lib/organization-routes";
+import { getOrganizationRouteKey, toOrganizationRelativePath } from "@/lib/organization-routes";
 import { queryKeys } from "@/lib/queryKeys";
 import { Link, useLocation, useNavigate } from "@/lib/router";
 import { cn } from "@/lib/utils";
@@ -150,9 +150,9 @@ export function BreadcrumbBar({
   const globalToolbarSlotContext = useMemo(
     () => ({
       orgId: selectedOrganizationId ?? null,
-      orgPrefix: selectedOrganization?.issuePrefix ?? null,
+      orgPrefix: selectedOrganization ? getOrganizationRouteKey(selectedOrganization) : null,
     }),
-    [selectedOrganizationId, selectedOrganization?.issuePrefix],
+    [selectedOrganizationId, selectedOrganization],
   );
 
   const globalToolbarSlots = <GlobalToolbarPlugins context={globalToolbarSlotContext} />;

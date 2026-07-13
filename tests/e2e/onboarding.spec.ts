@@ -133,10 +133,10 @@ test.describe("Onboarding wizard", () => {
       (org: { name: string }) => org.name === updatedOrganizationName
     );
     expect(organization).toBeTruthy();
-    expect(page.url()).toContain(`/${organization.issuePrefix}/messenger`);
+    expect(page.url()).toContain(`/${organization.urlKey}/messenger`);
     await page.goto("/");
     await expect(page).toHaveURL(
-      new RegExp(`/${escapeRegExp(organization.issuePrefix)}/messenger(?:/chat)?$`),
+      new RegExp(`/${escapeRegExp(organization.urlKey)}/messenger(?:/chat)?$`),
       { timeout: 15_000 },
     );
     expect(organization).not.toHaveProperty("defaultChatAgentRuntimeType");
@@ -240,14 +240,14 @@ test.describe("Onboarding wizard", () => {
     );
     const nextIssueUrl = new URL(nextIssueHref, baseUrl);
     expect(nextIssueUrl.pathname).toBe(
-      `/${organization.issuePrefix}/issues/${encodeURIComponent(nextIssueTarget!.identifier ?? nextIssueTarget!.id)}`,
+      `/${organization.urlKey}/issues/${encodeURIComponent(nextIssueTarget!.identifier ?? nextIssueTarget!.id)}`,
     );
     const chatIssue = issueByTitle.get("2. Ask your agent one quick question");
     expect(chatIssue).toBeTruthy();
     const chatIssueDescription = chatIssue?.description ?? "";
     const chatCtaHref = extractMarkdownHref(chatIssueDescription, "Start from this prompt");
     const chatCtaUrl = new URL(chatCtaHref, baseUrl);
-    expect(chatCtaUrl.pathname).toBe(`/${organization.issuePrefix}/messenger/chat`);
+    expect(chatCtaUrl.pathname).toBe(`/${organization.urlKey}/messenger/chat`);
     expect(chatIssueDescription).toContain(`projectId=${gettingStartedProject.id}`);
     expect(chatIssueDescription).toContain(`agentId=${rootAgent.id}`);
     expect(chatCtaUrl.searchParams.get("projectId")).toBe(gettingStartedProject.id);
@@ -313,7 +313,7 @@ test.describe("Onboarding wizard", () => {
       window.localStorage.setItem("rudder.productTour.completed.v1", "true");
       window.localStorage.removeItem("rudder.productTour.pendingAfterSetup.v1");
     });
-    await page.goto(`/${organization.issuePrefix}/issues?projectId=${gettingStartedProject.id}`);
+    await page.goto(`/${organization.urlKey}/issues?projectId=${gettingStartedProject.id}`);
     await expect(page.getByRole("heading", { name: "Issue Tracker" })).toBeVisible({ timeout: 15_000 });
     await page.getByRole("button", { name: "List view" }).click();
     await expect(page.getByText(/choose Chat or issue structure/i)).toBeVisible();
@@ -321,7 +321,7 @@ test.describe("Onboarding wizard", () => {
     await expect(page.getByRole("link", { name: /Ask your agent one quick question/ }).first()).toBeVisible();
 
     await page.goto(
-      `/${organization.issuePrefix}/issues/${encodeURIComponent(nextIssueSource!.identifier ?? nextIssueSource!.id)}`,
+      `/${organization.urlKey}/issues/${encodeURIComponent(nextIssueSource!.identifier ?? nextIssueSource!.id)}`,
     );
     await page.evaluate(() => {
       window.localStorage.setItem("rudder.productTour.completed.v1", "true");
@@ -336,7 +336,7 @@ test.describe("Onboarding wizard", () => {
     await nextIssueLink.click();
     await expect(page).toHaveURL(
       new RegExp(
-        `/${escapeRegExp(organization.issuePrefix)}/issues/${escapeRegExp(nextIssueTarget!.identifier ?? nextIssueTarget!.id)}$`,
+        `/${escapeRegExp(organization.urlKey)}/issues/${escapeRegExp(nextIssueTarget!.identifier ?? nextIssueTarget!.id)}$`,
       ),
       { timeout: 15_000 },
     );
@@ -344,13 +344,13 @@ test.describe("Onboarding wizard", () => {
       timeout: 15_000,
     });
 
-    await page.goto(`/${organization.issuePrefix}/issues/${encodeURIComponent(chatIssue!.identifier ?? chatIssue!.id)}`);
+    await page.goto(`/${organization.urlKey}/issues/${encodeURIComponent(chatIssue!.identifier ?? chatIssue!.id)}`);
     await expect(page.getByRole("heading", { name: chatIssue!.title })).toBeVisible({ timeout: 15_000 });
     const chatCta = page.getByRole("link", { name: "Start from this prompt" });
     await expect(chatCta).toHaveAttribute("href", chatCtaHref);
     await chatCta.click();
     await expect(page).toHaveURL(
-      new RegExp(`/${escapeRegExp(organization.issuePrefix)}/messenger/chat(?:\\?|$)`),
+      new RegExp(`/${escapeRegExp(organization.urlKey)}/messenger/chat(?:\\?|$)`),
       { timeout: 15_000 },
     );
     await expect(page.locator(".chat-composer")).toBeVisible({ timeout: 15_000 });
@@ -425,7 +425,7 @@ test.describe("Onboarding wizard", () => {
     expect(createRes.ok()).toBe(true);
     const organization = await createRes.json();
 
-    await page.goto(`/${organization.issuePrefix}/onboarding`);
+    await page.goto(`/${organization.urlKey}/onboarding`);
 
     await expectOnboardingStep(page, "Create your first agent");
     const onboardingNameInput = page.locator('input[placeholder="Agent name"]');
@@ -450,7 +450,7 @@ test.describe("Onboarding wizard", () => {
 
     await page.getByText("Create", { exact: true }).click();
     await expect(page).toHaveURL(
-      new RegExp(`/${escapeRegExp(organization.issuePrefix)}/messenger(?:/chat)?$`),
+      new RegExp(`/${escapeRegExp(organization.urlKey)}/messenger(?:/chat)?$`),
       { timeout: 30_000 },
     );
 

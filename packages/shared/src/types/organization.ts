@@ -113,6 +113,7 @@ export interface Organization {
   pauseReason: PauseReason | null;
   pausedAt: Date | null;
   issuePrefix: string;
+  issuePrefixAliases?: string[];
   issueCounter: number;
   budgetMonthlyCents: number;
   spentMonthlyCents: number;

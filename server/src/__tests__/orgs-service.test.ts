@@ -23,7 +23,7 @@ import {
   workspaceRuntimeServices,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -36,6 +36,7 @@ import {
   resolveOrganizationWorkspaceRoot,
 } from "../home-paths.js";
 import { agentService } from "../services/agents.js";
+import { issueService } from "../services/issues.js";
 import { organizationService } from "../services/orgs.js";
 
 type EmbeddedPostgresInstance = {
@@ -111,6 +112,7 @@ describe("organization service", () => {
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";
   let rudderHome = "";
+  let connectionString = "";
   const originalRudderHome = process.env.RUDDER_HOME;
   const originalRudderInstanceId = process.env.RUDDER_INSTANCE_ID;
 
@@ -120,6 +122,7 @@ describe("organization service", () => {
     process.env.RUDDER_INSTANCE_ID = "test-instance";
 
     const started = await startTempDatabase();
+    connectionString = started.connectionString;
     db = createDb(started.connectionString);
     agentSvc = agentService(db);
     orgSvc = organizationService(db);
@@ -597,5 +600,118 @@ describe("organization service", () => {
       .where(eq(labels.orgId, orgId));
 
     expect(createdLabels).toEqual([]);
+  });
+
+  it("preserves digits in generated issue keys and rejects explicit conflicts", async () => {
+    const first = await orgSvc.create({ name: "R6" });
+    const second = await orgSvc.create({ name: "R7" });
+    const normalized = await orgSvc.create({ name: "Lowercase key", issuePrefix: "  l9  " });
+
+    expect(first.issuePrefix).toBe("R6");
+    expect(second.issuePrefix).toBe("R7");
+    expect(normalized.issuePrefix).toBe("L9");
+
+    await expect(orgSvc.create({ name: "Another org", issuePrefix: "R6" }))
+      .rejects.toMatchObject({ status: 409, message: 'Issue key "R6" is already in use. Choose another key.' });
+    await expect(orgSvc.create({ name: "Invalid key", issuePrefix: "6R" }))
+      .rejects.toMatchObject({ status: 422 });
+    await expect(orgSvc.update(first.id, { issuePrefix: "not-valid" }))
+      .rejects.toMatchObject({ status: 422 });
+  });
+
+  it("keeps URL keys, current Issue Keys, and aliases unambiguous across organizations", async () => {
+    const canonical = await orgSvc.create({ name: "Acme" });
+    expect(canonical.urlKey).toBe("acme");
+    await expect(orgSvc.create({ name: "Conflicting key", issuePrefix: "ACME" }))
+      .rejects.toMatchObject({ status: 409 });
+
+    const routeHolder = await orgSvc.create({ name: "Route Holder", issuePrefix: "NOVA" });
+    await expect(orgSvc.update(routeHolder.id, { issuePrefix: "ACME" }))
+      .rejects.toMatchObject({ status: 409 });
+    const urlCollision = await orgSvc.create({ name: "Nova", issuePrefix: "NV2" });
+    expect(urlCollision.urlKey).toBe("nova-2");
+
+    await orgSvc.update(routeHolder.id, { issuePrefix: "NEXT" });
+    await expect(orgSvc.create({ name: "Alias conflict", issuePrefix: "NOVA" }))
+      .rejects.toMatchObject({ status: 409 });
+
+    await expect(db.insert(organizations).values({
+      name: "Direct collision",
+      urlKey: "next",
+      issuePrefix: "DIR",
+    })).rejects.toThrow();
+  });
+
+  it("serializes concurrent direct writes across the route-key namespace", async () => {
+    const competingDb = createDb(connectionString);
+    let releaseFirstTransaction!: () => void;
+    const holdFirstTransaction = new Promise<void>((resolve) => {
+      releaseFirstTransaction = resolve;
+    });
+    let firstInsertCompleted!: () => void;
+    const firstInsertReady = new Promise<void>((resolve) => {
+      firstInsertCompleted = resolve;
+    });
+
+    const firstWrite = db.transaction(async (tx) => {
+      await tx.insert(organizations).values({
+        name: "Concurrent canonical owner",
+        urlKey: "concurrent-route",
+        issuePrefix: "CCO",
+      });
+      firstInsertCompleted();
+      await holdFirstTransaction;
+    });
+
+    await firstInsertReady;
+    let competingTransactionStarted!: () => void;
+    const competingTransactionReady = new Promise<void>((resolve) => {
+      competingTransactionStarted = resolve;
+    });
+    const competingWrite = competingDb.transaction(async (tx) => {
+      await tx.execute(sql`select 1`);
+      competingTransactionStarted();
+      await tx.insert(organizations).values({
+        name: "Concurrent Issue Key owner",
+        urlKey: "different-route",
+        issuePrefix: "CONCURRENT-ROUTE",
+      });
+    });
+
+    await competingTransactionReady;
+    const settledBeforeRelease = await Promise.race([
+      competingWrite.then(() => true, () => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 50)),
+    ]);
+    expect(settledBeforeRelease).toBe(false);
+
+    releaseFirstTransaction();
+    await firstWrite;
+    await expect(competingWrite).rejects.toThrow(/route key|Issue Key/i);
+  });
+
+  it("migrates issue identifiers while resolving every historical prefix", async () => {
+    const organization = await orgSvc.create({ name: "R6" });
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      orgId: organization.id,
+      title: "Historical link",
+      issueNumber: 1,
+      identifier: "R6-1",
+    });
+
+    const migrated = await orgSvc.update(organization.id, { issuePrefix: "RDX" });
+    expect(migrated?.issuePrefix).toBe("RDX");
+    expect(migrated?.issuePrefixAliases).toEqual(["R6"]);
+
+    const issueSvc = issueService(db);
+    expect((await issueSvc.getByIdentifier("RDX-1"))?.id).toBe(issueId);
+    expect((await issueSvc.getByIdentifier("R6-1"))?.id).toBe(issueId);
+
+    const restored = await orgSvc.update(organization.id, { issuePrefix: "R6" });
+    expect(restored?.issuePrefix).toBe("R6");
+    expect(restored?.issuePrefixAliases).toEqual(["RDX"]);
+    expect((await issueSvc.getByIdentifier("RDX-1"))?.id).toBe(issueId);
   });
 });

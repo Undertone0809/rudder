@@ -5,7 +5,7 @@ import { useEffect } from "react";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useI18n } from "../context/I18nContext";
 import { useOrganization } from "../context/OrganizationContext";
-import { DEFAULT_ORGANIZATION_HOME_PATH } from "../lib/organization-routes";
+import { DEFAULT_ORGANIZATION_HOME_PATH, getOrganizationRouteKey } from "../lib/organization-routes";
 
 type NotFoundScope = "board" | "invalid_organization_prefix" | "global";
 
@@ -26,7 +26,7 @@ export function NotFoundPage({ scope = "global", requestedPrefix }: NotFoundPage
 
   const fallbackOrganization = selectedOrganization ?? organizations[0] ?? null;
   const homeHref = fallbackOrganization
-    ? `/${fallbackOrganization.issuePrefix}${DEFAULT_ORGANIZATION_HOME_PATH}`
+    ? `/${getOrganizationRouteKey(fallbackOrganization)}${DEFAULT_ORGANIZATION_HOME_PATH}`
     : DEFAULT_ORGANIZATION_HOME_PATH;
   const currentPath = `${location.pathname}${location.search}${location.hash}`;
   const normalizedPrefix = requestedPrefix?.toUpperCase();

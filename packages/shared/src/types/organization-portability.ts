@@ -243,6 +243,7 @@ export type OrganizationPortabilityImportTarget =
   | {
       mode: "new_organization";
       newOrganizationName?: string | null;
+      newOrganizationIssueKey?: string | null;
     }
   | {
       mode: "existing_organization";

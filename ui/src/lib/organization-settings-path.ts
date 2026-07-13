@@ -1,5 +1,3 @@
-import { normalizeOrganizationPrefix } from "./organization-routes";
-
-export function getOrganizationSettingsPath(issuePrefix: string): string {
-  return `/${normalizeOrganizationPrefix(issuePrefix)}/organization/settings`;
+export function getOrganizationSettingsPath(organizationRouteKey: string): string {
+  return `/${organizationRouteKey.trim()}/organization/settings`;
 }

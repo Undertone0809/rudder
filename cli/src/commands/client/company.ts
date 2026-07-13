@@ -49,6 +49,7 @@ interface CompanyImportOptions extends BaseClientOptions {
   target?: CompanyImportTargetMode;
   orgId?: string;
   newOrganizationName?: string;
+  newOrganizationIssueKey?: string;
   agents?: string;
   collision?: CompanyCollisionMode;
   ref?: string;
@@ -1170,6 +1171,7 @@ export function registerCompanyCommands(program: Command): void {
       .option("--target <mode>", "Target mode: new | existing")
       .option("-O, --org-id <id>", "Existing target organization ID")
       .option("--new-organization-name <name>", "Name override for --target new")
+      .option("--new-organization-issue-key <key>", "Issue Key override for --target new")
       .option("--agents <list>", "Comma-separated agent slugs to import, or all", "all")
       .option("--collision <mode>", "Collision strategy: rename | skip | replace", "rename")
       .option("--ref <value>", "Git ref to use for GitHub imports (branch, tag, or commit)")
@@ -1209,9 +1211,10 @@ export function registerCompanyCommands(program: Command): void {
                   orgId: existingTargetOrganizationId,
                 }
               : {
-                  mode: "new_organization" as const,
-                  newOrganizationName: opts.newOrganizationName?.trim() || null,
-                };
+                mode: "new_organization" as const,
+                newOrganizationName: opts.newOrganizationName?.trim() || null,
+                newOrganizationIssueKey: opts.newOrganizationIssueKey?.trim() || null,
+              };
 
           if (targetPayload.mode === "existing_organization" && !targetPayload.orgId) {
             throw new Error("Target existing organization requires --org-id (or context default orgId).");

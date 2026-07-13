@@ -7,7 +7,7 @@ import {
   isRememberableOrganizationPath,
   sanitizeRememberedPathForOrganization,
 } from "../lib/organization-page-memory";
-import { toOrganizationRelativePath } from "../lib/organization-routes";
+import { getOrganizationRouteKey, toOrganizationRelativePath } from "../lib/organization-routes";
 
 const STORAGE_KEY = "rudder.organizationPaths";
 
@@ -69,11 +69,12 @@ export function useOrganizationPageMemory() {
       const hasActiveSettingsOverlay = Boolean(readStoredSettingsOverlayBackgroundPath());
       if (!hasActiveSettingsOverlay && selectionSource !== "route_sync" && selectedOrganization) {
         const paths = getOrganizationPaths();
+        const organizationRouteKey = getOrganizationRouteKey(selectedOrganization);
         const targetPath = sanitizeRememberedPathForOrganization({
           path: paths[selectedOrganizationId],
-          organizationPrefix: selectedOrganization.issuePrefix,
+          organizationPrefix: organizationRouteKey,
         });
-        navigate(`/${selectedOrganization.issuePrefix}${targetPath}`, { replace: true });
+        navigate(`/${organizationRouteKey}${targetPath}`, { replace: true });
       }
     }
     prevOrganizationId.current = selectedOrganizationId;

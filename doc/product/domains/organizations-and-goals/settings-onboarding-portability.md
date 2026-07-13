@@ -4,11 +4,15 @@ domain: organizations-and-goals
 status: active
 coverage: detailed
 contract_ids:
+  - ORG.IDENTITY.001
   - ORG.SETTINGS.001
   - ORG.ONBOARDING.001
   - ORG.DESKTOP.RELEASE.NOTES.001
   - ORG.PORTABILITY.001
 related_code:
+  - packages/db/src/schema/organization_issue_prefix_aliases.ts
+  - packages/db/src/schema/organizations.ts
+  - packages/shared/src/organization-issue-key.ts
   - desktop/src/browser-ipc.ts
   - desktop/src/browser-profile.ts
   - desktop/src/main.ts
@@ -72,6 +76,67 @@ edit_policy: user_confirmed_only
 ---
 
 # Settings Onboarding And Portability
+
+## ORG.IDENTITY.001
+
+Why:
+
+- Organization display names, stable navigation, issue references, and
+  database ownership are different identity jobs. One mutable-looking prefix
+  must not silently control all four.
+
+Product model:
+
+- `organization.id` is the immutable internal UUID and organization-scope key.
+- `organization.urlKey` is the stable canonical organization route segment. It
+  is allocated at creation, resolves case-insensitively, and does not change
+  when the organization name or Issue Key changes.
+- `organization.name` is editable display text.
+- `organization.issuePrefix` is the operator-facing Issue Key used to form
+  readable issue identifiers. New organization creation shows this value,
+  derives a default that preserves letters and digits, and lets the operator
+  edit it before submission.
+- Across different organizations, canonical `urlKey` values, current Issue
+  Keys, and historical Issue Keys share one case-insensitive route namespace.
+  A value owned by one organization cannot be allocated to another organization
+  in any of those roles.
+
+Flow:
+
+1. The operator enters an organization name.
+2. UI derives and displays an editable Issue Key; for example, `R6` derives
+   `R6` and previews `R6-1`.
+3. Server validates the submitted key and rejects a current or historical
+   conflict with an actionable error. It must not silently append characters.
+4. Server allocates an independent stable `urlKey`; URL-key collisions may use
+   a numeric URL suffix without changing the submitted Issue Key.
+5. Organization navigation generates `/{urlKey}/...`. Current Issue Key and
+   historical Issue Key routes remain accepted during compatibility migration.
+6. An explicit settings change migrates the Issue Key and current issue
+   identifiers transactionally while preserving the previous key as an alias.
+
+Invariants:
+
+- Renaming an organization must not change `urlKey` or Issue Key implicitly.
+- Issue Key conflicts must be visible to the operator and require an explicit
+  alternative; repeated automatic `A` suffixes are prohibited.
+- URL-key allocation may add a numeric URL suffix when its preferred value is
+  already owned as a URL key, current Issue Key, or historical Issue Key.
+- Changing an Issue Key must not change organization UUID, issue UUIDs, or issue
+  numbers, and must not break old organization or issue links.
+- New canonical links use `urlKey`. Compatibility routes may resolve an active
+  or historical Issue Key but must converge on the stable organization route.
+
+Evidence:
+
+- `packages/shared/src/organization-issue-key.test.ts` covers numeric default
+  derivation and explicit key normalization.
+- `server/src/__tests__/orgs-service.test.ts` covers conflict rejection,
+  transactional migration, repeated migration, and historical issue lookup.
+- `ui/src/lib/organization-routes.test.ts` covers stable route generation and
+  historical organization-key resolution.
+- `tests/e2e/organization-issue-key.spec.ts` covers creation, migration,
+  stable navigation, and old-link compatibility on the rendered product path.
 
 ## ORG.SETTINGS.001
 
@@ -238,7 +303,7 @@ Invariants:
   non-Codex runtimes may still create disabled derived profile drafts for manual
   configuration when the relevant service path requests defaults.
 - Onboarding for a newly created organization must resolve to
-  `/{issuePrefix}/messenger`.
+  `/{urlKey}/messenger`.
 - Root app startup and organization-index entry must resolve to the selected or
   first available organization's Messenger route.
 - "Home", "workspace", and "back to workspace" fallbacks should use the
@@ -411,11 +476,18 @@ Flow:
 2. Export job builds files/manifest/readme with selected entities.
 3. Import preview parses source package and shows dependency tree.
 4. Operator selects entities and collision/secret strategy.
-5. Apply imports through domain services rather than raw DB writes.
+5. For a new-organization import, Rudder shows the fresh organization name and
+   Issue Key independently. The operator can correct the Issue Key without
+   changing the imported organization name.
+6. Apply imports through domain services rather than raw DB writes.
 
 Invariants:
 
 - Portability must preserve organization boundaries and avoid leaking secrets.
+- Importing into a new organization creates a fresh organization UUID,
+  canonical `urlKey`, and Issue Key. Historical aliases from the source are not
+  copied. A requested Issue Key that conflicts with any route identity owned by
+  another organization is rejected for explicit correction.
 - Import must be previewable before mutation.
 
 Evidence:

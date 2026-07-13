@@ -1395,9 +1395,9 @@ describe("organization portability", () => {
         'name: "ClaudeCoder"',
         "---",
         "",
-        "You write code.",
-        "",
-      ].join("\n"),
+          "You write code.",
+          "",
+        ].join("\n"),
       "projects/launch/PROJECT.md": [
         "---",
         'name: "Launch"',
@@ -1636,6 +1636,7 @@ describe("organization portability", () => {
       target: {
         mode: "new_organization",
         newOrganizationName: "Imported Rudder",
+        newOrganizationIssueKey: "IM7",
       },
       agents: "all",
       collisionStrategy: "rename",
@@ -1689,6 +1690,7 @@ describe("organization portability", () => {
       target: {
         mode: "new_organization",
         newOrganizationName: "Imported Rudder",
+        newOrganizationIssueKey: "IM7",
       },
       agents: "all",
       collisionStrategy: "rename",
@@ -1696,6 +1698,7 @@ describe("organization portability", () => {
 
     expect(companySvc.create).toHaveBeenCalledWith(expect.objectContaining({
       name: "Imported Rudder",
+      issuePrefix: "IM7",
       description: "Portable organization package",
     }));
     expect(agentSvc.create).toHaveBeenCalledWith("organization-imported", expect.objectContaining({

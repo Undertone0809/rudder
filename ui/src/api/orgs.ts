@@ -59,6 +59,7 @@ export const organizationsApi = {
     api.put<OrganizationIntelligenceProfile>(`/orgs/${orgId}/intelligence-profiles/${purpose}`, data),
   create: (data: {
     name: string;
+    issuePrefix?: string;
     description?: string | null;
     budgetMonthlyCents?: number;
   }) =>
@@ -69,6 +70,7 @@ export const organizationsApi = {
       Pick<
         Organization,
         | "name"
+        | "issuePrefix"
         | "description"
         | "status"
         | "budgetMonthlyCents"

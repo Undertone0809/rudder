@@ -36,7 +36,11 @@ function normalizeOrganizationRouteKey(value: string): string {
   return value.trim().toLowerCase();
 }
 
-export function findOrganizationByPrefix<T extends { issuePrefix: string; urlKey?: string | null }>(params: {
+export function getOrganizationRouteKey(organization: { urlKey?: string | null; issuePrefix: string }): string {
+  return organization.urlKey?.trim() || organization.issuePrefix;
+}
+
+export function findOrganizationByPrefix<T extends { issuePrefix: string; issuePrefixAliases?: string[]; urlKey?: string | null }>(params: {
   organizations: T[];
   organizationPrefix: string | null | undefined;
 }): T | null {
@@ -44,6 +48,7 @@ export function findOrganizationByPrefix<T extends { issuePrefix: string; urlKey
   const normalizedPrefix = normalizeOrganizationRouteKey(params.organizationPrefix);
   return params.organizations.find((organization) => {
     if (normalizeOrganizationRouteKey(organization.issuePrefix) === normalizedPrefix) return true;
+    if (organization.issuePrefixAliases?.some((alias) => normalizeOrganizationRouteKey(alias) === normalizedPrefix)) return true;
     if (typeof organization.urlKey === "string" && normalizeOrganizationRouteKey(organization.urlKey) === normalizedPrefix) {
       return true;
     }
@@ -85,7 +90,7 @@ export function extractOrganizationPrefixFromPath(pathname: string): string | nu
   if (GLOBAL_ROUTE_ROOTS.has(first) || BOARD_ROUTE_ROOTS.has(first)) {
     return null;
   }
-  return normalizeOrganizationPrefix(segments[0]!);
+  return segments[0]!.trim();
 }
 
 export function applyOrganizationPrefix(path: string, organizationPrefix: string | null | undefined): string {
@@ -94,7 +99,7 @@ export function applyOrganizationPrefix(path: string, organizationPrefix: string
   if (isGlobalPath(pathname)) return path;
   if (!organizationPrefix) return path;
 
-  const prefix = normalizeOrganizationPrefix(organizationPrefix);
+  const prefix = organizationPrefix.trim();
   const activePrefix = extractOrganizationPrefixFromPath(pathname);
   if (activePrefix) return path;
 

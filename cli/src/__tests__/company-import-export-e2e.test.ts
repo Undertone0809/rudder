@@ -363,7 +363,7 @@ describe("rudder org import/export e2e", () => {
   it("exports an organization package and imports it into new and existing organizations", async () => {
     expect(serverProcess).not.toBeNull();
 
-    const sourceOrganization = await api<{ id: string; name: string; issuePrefix: string }>(apiBase, "/api/orgs", {
+    const sourceOrganization = await api<{ id: string; name: string; issuePrefix: string; urlKey: string }>(apiBase, "/api/orgs", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: `CLI Export Source ${Date.now()}` }),
@@ -611,7 +611,8 @@ describe("rudder org import/export e2e", () => {
   it("round-trips an organization package with data fidelity", async () => {
     expect(serverProcess).not.toBeNull();
 
-    const sourceOrganization = await api<{ id: string; name: string; issuePrefix: string }>(apiBase, "/api/orgs", {
+    const importedOrganizationIssueKey = `XQ7${Date.now().toString().slice(-9)}`;
+    const sourceOrganization = await api<{ id: string; name: string; issuePrefix: string; urlKey: string }>(apiBase, "/api/orgs", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: `Roundtrip Source ${Date.now()}` }),
@@ -706,6 +707,8 @@ describe("rudder org import/export e2e", () => {
         sourceExportDir,
         "--target",
         "new",
+        "--new-organization-issue-key",
+        importedOrganizationIssueKey,
         "--include",
         "organization,agents,projects,issues",
         "--collision",
@@ -798,11 +801,13 @@ describe("rudder org import/export e2e", () => {
     const reexportKeys = Object.keys(reexportFiles).sort();
 
     const sourcePrefix = sourceOrganization.issuePrefix.toLowerCase();
-    const importedOrgDetail = await api<{ issuePrefix: string }>(
+    const importedOrgDetail = await api<{ issuePrefix: string; urlKey: string }>(
       apiBase,
       `/api/orgs/${imported.organization.id}`,
     );
     const importedPrefix = importedOrgDetail.issuePrefix.toLowerCase();
+    const normalizeOrganizationIdentity = (content: string) => content
+      .replaceAll(importedOrgDetail.urlKey, sourceOrganization.urlKey);
 
     const isGeneratedOrCollisionDependentPath = (filePath: string) => {
       return filePath.startsWith("skills/") || filePath.startsWith("tasks/");
@@ -820,7 +825,7 @@ describe("rudder org import/export e2e", () => {
 
       if (filePath === ".rudder.yaml") {
         const normalizeYaml = (content: string, fromPrefix: string, toPrefix: string) =>
-          content
+          normalizeOrganizationIdentity(content)
             .replace(new RegExp(fromPrefix, "gi"), toPrefix)
             .split("\n")
             .filter((line) => line.trim() !== "")
@@ -828,6 +833,8 @@ describe("rudder org import/export e2e", () => {
         expect(normalizeYaml(reexportContent!, importedPrefix, sourcePrefix)).toBe(
           normalizeYaml(sourceContent, sourcePrefix, sourcePrefix),
         );
+      } else if (filePath === "ORGANIZATION.md") {
+        expect(normalizeOrganizationIdentity(reexportContent!)).toBe(sourceContent);
       } else {
         expect(reexportContent!).toBe(sourceContent);
       }

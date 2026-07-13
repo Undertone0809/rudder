@@ -112,6 +112,7 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
       const created = await organizations.create({
         name: organizationName,
         urlKey: deriveOrganizationUrlKey(organizationName),
+        issuePrefix: input.target.newOrganizationIssueKey ?? undefined,
         description: include.organization ? (sourceManifest.organization?.description ?? null) : null,
         brandColor: include.organization ? (sourceManifest.organization?.brandColor ?? null) : null,
         budgetMonthlyCents: 0,

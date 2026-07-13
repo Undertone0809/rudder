@@ -3,6 +3,7 @@ import {
   applyOrganizationPrefix,
   extractOrganizationPrefixFromPath,
   findOrganizationByPrefix,
+  getOrganizationRouteKey,
   toOrganizationRelativePath,
 } from "./organization-routes";
 
@@ -77,6 +78,21 @@ describe("organization-routes", () => {
         organizationPrefix: "RUDDER",
       }),
     ).toEqual(organizations[0]);
+  });
+
+  it("uses urlKey for canonical routes and resolves historical issue keys", () => {
+    const organization = {
+      id: "org_1",
+      issuePrefix: "R6",
+      issuePrefixAliases: ["RAAAAA"],
+      urlKey: "r6-team",
+    };
+
+    expect(getOrganizationRouteKey(organization)).toBe("r6-team");
+    expect(applyOrganizationPrefix("/messenger", getOrganizationRouteKey(organization)))
+      .toBe("/r6-team/messenger");
+    expect(findOrganizationByPrefix({ organizations: [organization], organizationPrefix: "raaaaa" }))
+      .toEqual(organization);
   });
 
   it("returns null when the prefix is missing or unknown", () => {

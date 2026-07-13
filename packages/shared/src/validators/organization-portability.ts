@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { organizationIssueKeySchema } from "./organization.js";
 
 export const portabilityIncludeSchema = z
   .object({
@@ -184,6 +185,7 @@ export const portabilityTargetSchema = z.discriminatedUnion("mode", [
   z.object({
     mode: z.literal("new_organization"),
     newOrganizationName: z.string().min(1).optional().nullable(),
+    newOrganizationIssueKey: organizationIssueKeySchema.optional().nullable(),
   }),
   z.object({
     mode: z.literal("existing_organization"),

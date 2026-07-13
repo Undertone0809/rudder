@@ -33,6 +33,8 @@ edit_policy: user_confirmed_only
 
 ## Contract Index
 
+- `ORG.IDENTITY.001`: organization UUID, stable URL key, display name, and Issue
+  Key have separate responsibilities with compatibility-preserving migration.
 - `ORG.GOAL.001`: goals explain why work exists and preserve hierarchy.
 - `ORG.PROJECT.001`: projects group goal-directed chats, issues, resources, and
   workspaces.

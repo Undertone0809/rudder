@@ -17,6 +17,7 @@ import { agentRunsApi } from "../api/agent-runs";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useInboxBadge } from "../hooks/useInboxBadge";
+import { getOrganizationRouteKey } from "../lib/organization-routes";
 import { queryKeys } from "../lib/queryKeys";
 import { OrganizationSwitcher } from "./OrganizationSwitcher";
 import { SidebarAgents } from "./SidebarAgents";
@@ -46,7 +47,7 @@ export function MobileWorkspaceDrawer() {
 
   const pluginContext = {
     orgId: selectedOrganizationId,
-    orgPrefix: selectedOrganization?.issuePrefix ?? null,
+    orgPrefix: selectedOrganization ? getOrganizationRouteKey(selectedOrganization) : null,
   };
 
   return (

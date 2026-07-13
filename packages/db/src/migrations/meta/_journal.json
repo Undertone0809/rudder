@@ -701,6 +701,13 @@
       "when": 1783851776626,
       "tag": "0099_chat_work_manifest",
       "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1783928221647,
+      "tag": "0100_mean_richard_fisk",
+      "breakpoints": true
     }
   ]
 }

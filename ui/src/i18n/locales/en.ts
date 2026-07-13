@@ -199,6 +199,8 @@ export const en = {
   "organizationSettings.section.dangerZone": "Danger Zone",
   "organizationSettings.general.name.label": "Organization name",
   "organizationSettings.general.name.hint": "The display name for your organization.",
+  "organizationSettings.general.issueKey.label": "Issue key",
+  "organizationSettings.general.issueKey.hint": "Used in issue IDs. Changing it updates current IDs while old links remain valid.",
   "organizationSettings.general.description.label": "Description",
   "organizationSettings.general.description.hint": "Optional description shown in the organization profile.",
   "organizationSettings.general.description.placeholder": "Optional organization description",

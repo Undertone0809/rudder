@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { semanticBadgeToneClasses } from "@/components/ui/semanticTones";
 import { Tabs } from "@/components/ui/tabs";
-import { applyOrganizationPrefix, findOrganizationByPrefix } from "@/lib/organization-routes";
+import { applyOrganizationPrefix, findOrganizationByPrefix, getOrganizationRouteKey } from "@/lib/organization-routes";
 import { Navigate, useLocation, useNavigate, useParams } from "@/lib/router";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
 import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
@@ -93,7 +93,10 @@ export function ProjectDetail() {
   const projectLookupRef = project?.id ?? routeProjectRef;
   const resolvedCompanyId = project?.orgId ?? selectedOrganizationId;
   const resolvedOrganizationPrefix = useMemo(
-    () => organizations.find((organization) => organization.id === resolvedCompanyId)?.issuePrefix ?? orgPrefix ?? null,
+    () => {
+      const organization = organizations.find((candidate) => candidate.id === resolvedCompanyId);
+      return organization ? getOrganizationRouteKey(organization) : orgPrefix ?? null;
+    },
     [organizations, orgPrefix, resolvedCompanyId],
   );
   const projectIssuesPath = useMemo(

@@ -66,6 +66,7 @@ export { messengerCustomGroupEntries, messengerCustomGroups } from "./messenger_
 export { messengerThreadUserStates } from "./messenger_thread_user_states.js";
 export { operatorProfiles } from "./operator_profiles.js";
 export { organizationIntelligenceProfiles } from "./organization_intelligence_profiles.js";
+export { organizationIssuePrefixAliases } from "./organization_issue_prefix_aliases.js";
 export { organizationLogos } from "./organization_logos.js";
 export { organizationMemberships } from "./organization_memberships.js";
 export { organizationResources } from "./organization_resources.js";

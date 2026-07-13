@@ -1,7 +1,11 @@
 type OnboardingRouteOrganization = {
   id: string;
   issuePrefix: string;
+  issuePrefixAliases?: string[];
+  urlKey?: string | null;
 };
+
+import { findOrganizationByPrefix } from "./organization-routes";
 
 export function isOnboardingPath(pathname: string): boolean {
   const segments = pathname.split("/").filter(Boolean);
@@ -33,11 +37,10 @@ export function resolveRouteOnboardingOptions(params: {
     return { initialStep: 1 };
   }
 
-  const matchedOrganization =
-    organizations.find(
-      (organization) =>
-        organization.issuePrefix.toUpperCase() === effectiveOrgPrefix.toUpperCase(),
-    ) ?? null;
+  const matchedOrganization = findOrganizationByPrefix({
+    organizations,
+    organizationPrefix: effectiveOrgPrefix,
+  });
 
   if (!matchedOrganization) {
     return { initialStep: 1 };

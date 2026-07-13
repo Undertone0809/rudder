@@ -1,4 +1,21 @@
 contracts:
+  ISSUE.IDENTITY.001:
+    owner: product
+    domain: issues
+    spec_depth: compact
+    docs:
+      - doc/product/domains/issues/identity.md
+    related_code:
+      - packages/db/src/schema/issues.ts
+      - packages/db/src/schema/organization_issue_prefix_aliases.ts
+      - server/src/services/issues.ts
+      - server/src/services/orgs.ts
+    related_tests:
+      - packages/shared/src/organization-issue-key.test.ts
+      - server/src/__tests__/orgs-service.test.ts
+      - tests/e2e/organization-issue-key.spec.ts
+    related_plans:
+      - doc/plans/2026-07-13-organization-issue-key-identity.md
   ISSUE.STATE.001:
     owner: product
     domain: issues
@@ -1320,6 +1337,31 @@ contracts:
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-07-12-built-in-browser.md
+  ORG.IDENTITY.001:
+    owner: product
+    domain: organizations-and-goals
+    spec_depth: compact
+    docs:
+      - doc/product/domains/organizations-and-goals/settings-onboarding-portability.md
+    related_code:
+      - packages/db/src/schema/organization_issue_prefix_aliases.ts
+      - packages/db/src/schema/organizations.ts
+      - packages/shared/src/organization-issue-key.ts
+      - server/src/services/knowledge-portability/organization-portability.import.ts
+      - server/src/services/orgs.ts
+      - ui/src/components/OnboardingWizard.tsx
+      - ui/src/lib/organization-routes.ts
+      - ui/src/pages/OrganizationSettings.tsx
+    related_tests:
+      - packages/shared/src/organization-issue-key.test.ts
+      - packages/shared/src/validators/organization-portability.test.ts
+      - server/src/__tests__/orgs-service.test.ts
+      - cli/src/__tests__/company-import-export-e2e.test.ts
+      - ui/src/lib/organization-routes.test.ts
+      - ui/src/lib/organization-settings-patch.test.ts
+      - tests/e2e/organization-issue-key.spec.ts
+    related_plans:
+      - doc/plans/2026-07-13-organization-issue-key-identity.md
   ORG.ONBOARDING.001:
     owner: product
     domain: organizations-and-goals

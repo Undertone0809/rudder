@@ -22,6 +22,7 @@ import {
   issueReadStates,
   issues,
   labels,
+  organizationIssuePrefixAliases,
   organizationMemberships,
   organizations,
   projectWorkspaces,
@@ -768,11 +769,32 @@ export function issueService(db: Db) {
     },
 
     getByIdentifier: async (identifier: string) => {
-      const row = await db
+      const normalizedIdentifier = identifier.toUpperCase();
+      let row = await db
         .select()
         .from(issues)
-        .where(eq(issues.identifier, identifier.toUpperCase()))
+        .where(eq(issues.identifier, normalizedIdentifier))
         .then((rows) => rows[0] ?? null);
+      if (!row) {
+        const match = normalizedIdentifier.match(/^([A-Z][A-Z0-9]*)-(\d+)$/);
+        if (match) {
+          const alias = await db
+            .select({ orgId: organizationIssuePrefixAliases.orgId })
+            .from(organizationIssuePrefixAliases)
+            .where(eq(organizationIssuePrefixAliases.prefix, match[1]!))
+            .then((rows) => rows[0] ?? null);
+          if (alias) {
+            row = await db
+              .select()
+              .from(issues)
+              .where(and(
+                eq(issues.orgId, alias.orgId),
+                eq(issues.issueNumber, Number(match[2])),
+              ))
+              .then((rows) => rows[0] ?? null);
+          }
+        }
+      }
       if (!row) return null;
       const [enriched] = await withIssueLabels(db, [row]);
       return enriched;

@@ -2,6 +2,7 @@ import { pluginsApi } from "@/api/plugins";
 import { Button } from "@/components/ui/button";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useOrganization } from "@/context/OrganizationContext";
+import { findOrganizationByPrefix, getOrganizationRouteKey } from "@/lib/organization-routes";
 import { queryKeys } from "@/lib/queryKeys";
 import { Link, Navigate, useParams } from "@/lib/router";
 import { PluginSlotMount } from "@/plugins/slots";
@@ -28,8 +29,10 @@ export function PluginPage() {
   const { setBreadcrumbs } = useBreadcrumbs();
   const routeOrganization = useMemo(() => {
     if (!routeOrganizationPrefix) return null;
-    const requested = routeOrganizationPrefix.toUpperCase();
-    return organizations.find((c) => c.issuePrefix.toUpperCase() === requested) ?? null;
+    return findOrganizationByPrefix({
+      organizations,
+      organizationPrefix: routeOrganizationPrefix,
+    });
   }, [organizations, routeOrganizationPrefix]);
   const hasInvalidOrganizationPrefix = Boolean(routeOrganizationPrefix) && !routeOrganization;
 
@@ -40,7 +43,11 @@ export function PluginPage() {
   }, [routeOrganization, routeOrganizationPrefix, selectedOrganizationId]);
 
   const orgPrefix = useMemo(
-    () => (resolvedOrganizationId ? organizations.find((c) => c.id === resolvedOrganizationId)?.issuePrefix ?? null : null),
+    () => {
+      if (!resolvedOrganizationId) return null;
+      const organization = organizations.find((candidate) => candidate.id === resolvedOrganizationId);
+      return organization ? getOrganizationRouteKey(organization) : null;
+    },
     [organizations, resolvedOrganizationId],
   );
 

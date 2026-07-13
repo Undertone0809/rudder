@@ -8,7 +8,8 @@ import { isFeishuBackedConversation } from "@/lib/chat-source";
 import { formatDisplayPath } from "@/lib/display-path";
 import { normalizeIssueLabelName, pickIssueLabelColor } from "@/lib/issue-labels";
 import { invalidateMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache";
-import { applyOrganizationPrefix, DEFAULT_ORGANIZATION_HOME_PATH } from "@/lib/organization-routes";
+import { applyOrganizationPrefix, DEFAULT_ORGANIZATION_HOME_PATH, getOrganizationRouteKey } from "@/lib/organization-routes";
+import { buildOrganizationGeneralPatch } from "@/lib/organization-settings-patch";
 import { getOrganizationSettingsPath } from "@/lib/organization-settings-path";
 import { Link, useLocation, useNavigate } from "@/lib/router";
 import {
@@ -65,6 +66,7 @@ export function OrganizationSettings() {
     ?? DEFAULT_ORGANIZATION_HOME_PATH;
   // General settings local state
   const [organizationName, setOrganizationName] = useState("");
+  const [issuePrefix, setIssuePrefix] = useState("");
   const [description, setDescription] = useState("");
   const [brandColor, setBrandColor] = useState("");
   const [logoUrl, setLogoUrl] = useState("");
@@ -81,6 +83,7 @@ export function OrganizationSettings() {
   useEffect(() => {
     if (!viewedOrganization) return;
     setOrganizationName(viewedOrganization.name);
+    setIssuePrefix(viewedOrganization.issuePrefix);
     setDescription(viewedOrganization.description ?? "");
     setBrandColor(viewedOrganization.brandColor ?? "");
     setLogoUrl(viewedOrganization.logoUrl ?? "");
@@ -103,6 +106,7 @@ export function OrganizationSettings() {
   const generalDirty =
     !!viewedOrganization &&
     (organizationName !== viewedOrganization.name ||
+      issuePrefix !== viewedOrganization.issuePrefix ||
       description !== (viewedOrganization.description ?? "") ||
       brandColor !== (viewedOrganization.brandColor ?? ""));
 
@@ -113,6 +117,7 @@ export function OrganizationSettings() {
   const generalMutation = useMutation({
     mutationFn: (data: {
       name: string;
+      issuePrefix?: string;
       description: string | null;
       brandColor: string | null;
     }) => organizationsApi.update(viewedOrganizationId!, data),
@@ -388,11 +393,14 @@ export function OrganizationSettings() {
   }
 
   function handleSaveGeneral() {
-    generalMutation.mutate({
+    if (!viewedOrganization) return;
+    generalMutation.mutate(buildOrganizationGeneralPatch({
       name: organizationName.trim(),
-      description: description.trim() || null,
-      brandColor: brandColor || null,
-    });
+      issuePrefix,
+      persistedIssuePrefix: viewedOrganization.issuePrefix,
+      description,
+      brandColor,
+    }));
   }
 
   function updateLabelDraft(id: string, patch: Partial<{ name: string; color: string }>) {
@@ -447,7 +455,7 @@ export function OrganizationSettings() {
         ? currentOrganization
         : nextAvailableOrganization;
     const nextViewedOrganizationPath = nextViewedOrganization
-      ? getOrganizationSettingsPath(nextViewedOrganization.issuePrefix)
+      ? getOrganizationSettingsPath(getOrganizationRouteKey(nextViewedOrganization))
       : null;
 
     archiveMutation.mutate({
@@ -457,10 +465,11 @@ export function OrganizationSettings() {
     });
   }
 
-  const organizationLibraryPath = applyOrganizationPrefix("/library", viewedOrganization.issuePrefix);
+  const organizationRouteKey = getOrganizationRouteKey(viewedOrganization);
+  const organizationLibraryPath = applyOrganizationPrefix("/library", organizationRouteKey);
   const organizationWorkspaceBackupsPath = applyOrganizationPrefix(
     "/workspaces/backups",
-    viewedOrganization.issuePrefix,
+    organizationRouteKey,
   );
   const workspaceRootDisplayPath = workspaceRootQuery.data?.rootPath
     ? formatDisplayPath(workspaceRootQuery.data.rootPath)
@@ -488,6 +497,18 @@ export function OrganizationSettings() {
               type="text"
               value={organizationName}
               onChange={(e) => setOrganizationName(e.target.value)}
+            />
+          </Field>
+          <Field
+            label={t("organizationSettings.general.issueKey.label")}
+            hint={t("organizationSettings.general.issueKey.hint")}
+          >
+            <input
+              className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 font-mono text-sm uppercase outline-none"
+              type="text"
+              aria-label={t("organizationSettings.general.issueKey.label")}
+              value={issuePrefix}
+              onChange={(e) => setIssuePrefix(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12))}
             />
           </Field>
           <Field
@@ -627,7 +648,7 @@ export function OrganizationSettings() {
           <Button
             size="sm"
             onClick={handleSaveGeneral}
-            disabled={generalMutation.isPending || !organizationName.trim()}
+            disabled={generalMutation.isPending || !organizationName.trim() || !issuePrefix.trim()}
           >
             {generalMutation.isPending ? t("organizationSettings.save.saving") : t("organizationSettings.save.button")}
           </Button>
@@ -1063,7 +1084,7 @@ export function OrganizationSettings() {
           <p className="text-sm text-muted-foreground">
             {t("organizationSettings.packages.description.before")}{" "}
             <Link
-              to={applyOrganizationPrefix("/org", viewedOrganization.issuePrefix)}
+              to={applyOrganizationPrefix("/org", organizationRouteKey)}
               className="underline hover:text-foreground"
             >
               {t("organizationSettings.packages.structureLink")}
@@ -1072,13 +1093,13 @@ export function OrganizationSettings() {
           </p>
           <div className="mt-3 flex items-center gap-2">
             <Button size="sm" variant="outline" asChild>
-              <Link to={applyOrganizationPrefix("/organization/export", viewedOrganization.issuePrefix)}>
+              <Link to={applyOrganizationPrefix("/organization/export", organizationRouteKey)}>
                 <Download className="mr-1.5 h-3.5 w-3.5" />
                 {t("organizationSettings.packages.export")}
               </Link>
             </Button>
             <Button size="sm" variant="outline" asChild>
-              <Link to={applyOrganizationPrefix("/organization/import", viewedOrganization.issuePrefix)}>
+              <Link to={applyOrganizationPrefix("/organization/import", organizationRouteKey)}>
                 <Upload className="mr-1.5 h-3.5 w-3.5" />
                 {t("organizationSettings.packages.import")}
               </Link>

@@ -60,7 +60,7 @@ export {
 } from "./organization-skill.js";
 export {
   copyOrganizationWorkspaceEntrySchema, createOrganizationSchema, createOrganizationWorkspaceDirectorySchema,
-  createOrganizationWorkspaceFileSchema, moveOrganizationWorkspaceEntrySchema, renameOrganizationWorkspaceEntrySchema, updateOrganizationBrandingSchema, updateOrganizationSchema, updateOrganizationWorkspaceFileSchema, type CopyOrganizationWorkspaceEntry, type CreateOrganization, type CreateOrganizationWorkspaceDirectory,
+  createOrganizationWorkspaceFileSchema, moveOrganizationWorkspaceEntrySchema, organizationIssueKeySchema, renameOrganizationWorkspaceEntrySchema, updateOrganizationBrandingSchema, updateOrganizationSchema, updateOrganizationWorkspaceFileSchema, type CopyOrganizationWorkspaceEntry, type CreateOrganization, type CreateOrganizationWorkspaceDirectory,
   type CreateOrganizationWorkspaceFile, type MoveOrganizationWorkspaceEntry, type RenameOrganizationWorkspaceEntry, type UpdateOrganization,
   type UpdateOrganizationBranding, type UpdateOrganizationWorkspaceFile
 } from "./organization.js";

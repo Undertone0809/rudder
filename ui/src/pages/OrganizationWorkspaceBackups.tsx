@@ -24,7 +24,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useDialog } from "../context/DialogContext";
 import { useToast } from "../context/ToastContext";
 import { useViewedOrganization } from "../hooks/useViewedOrganization";
-import { applyOrganizationPrefix } from "../lib/organization-routes";
+import { applyOrganizationPrefix, getOrganizationRouteKey } from "../lib/organization-routes";
 import { queryKeys } from "../lib/queryKeys";
 import { Link, useSearchParams } from "../lib/router";
 
@@ -138,7 +138,10 @@ export function OrganizationWorkspaceBackups() {
     setBreadcrumbs([{ label: "Workspace backups" }]);
   }, [setBreadcrumbs]);
 
-  const libraryHref = applyOrganizationPrefix("/library", viewedOrganization?.issuePrefix);
+  const libraryHref = applyOrganizationPrefix(
+    "/library",
+    viewedOrganization ? getOrganizationRouteKey(viewedOrganization) : null,
+  );
 
   useEffect(() => {
     if (!viewedOrganization) {
