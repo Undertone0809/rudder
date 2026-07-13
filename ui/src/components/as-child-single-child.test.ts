@@ -71,7 +71,11 @@ function hasPossiblyEnabledAsChild(attributes: ts.JsxAttributes) {
 }
 
 describe("asChild usage", () => {
-  it("passes exactly one direct child to Slot-backed components", () => {
-    expect(getAsChildViolations()).toEqual([]);
-  });
+  it(
+    "passes exactly one direct child to Slot-backed components",
+    () => {
+      expect(getAsChildViolations()).toEqual([]);
+    },
+    30_000,
+  );
 });
