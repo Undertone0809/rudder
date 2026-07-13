@@ -28,10 +28,15 @@ const messages: Record<string, string> = {
   "browser.import.result.imported": "Imported {{count}}",
   "browser.import.result.skipped": "Skipped {{count}}",
   "browser.import.result.failed": "Failed {{count}}",
+  "browser.import.result.importedLabel": "Imported",
+  "browser.import.result.skippedLabel": "Skipped",
+  "browser.import.result.failedLabel": "Failed",
   "browser.import.result.status.succeeded": "Import complete",
   "browser.import.result.status.partial": "Partial import",
   "browser.import.result.status.failed": "Import failed",
   "browser.import.result.skippedReasons": "Skipped details",
+  "browser.import.result.skippedReasonCount": "{{count}} reason",
+  "browser.import.result.skippedReasonsCount": "{{count}} reasons",
   "browser.import.result.failures": "Failures",
   "common.cancel": "Cancel",
 };
@@ -149,11 +154,25 @@ describe("BrowserDataImportDialog", () => {
     await flush();
 
     const resultStatus = document.body.querySelector('[role="status"]');
+    const resultPanel = document.body.querySelector('[data-testid="browser-import-result-panel"]');
     expect(resultStatus?.textContent).toContain("Import complete");
-    expect(resultStatus?.textContent).toContain("Skipped details");
-    expect(resultStatus?.textContent?.match(/COOKIE_PARTITION_UNSUPPORTED/g)).toHaveLength(1);
-    expect(resultStatus?.textContent).toContain("553");
-    expect(resultStatus?.querySelector(".text-destructive")).toBeNull();
+    expect(resultPanel?.textContent).toContain("Skipped details");
+    expect(resultStatus?.querySelector('[data-testid="browser-import-result-imported"]')?.textContent).toBe("3,009");
+    expect(resultStatus?.querySelector('[data-testid="browser-import-result-skipped"]')?.textContent).toBe("671");
+    expect(resultPanel?.textContent).not.toContain("COOKIE_PARTITION_UNSUPPORTED");
+
+    const skippedDetailsTrigger = resultPanel?.querySelector<HTMLButtonElement>(
+      '[data-testid="browser-import-skipped-details-trigger"]',
+    );
+    expect(skippedDetailsTrigger?.getAttribute("aria-expanded")).toBe("false");
+    expect(skippedDetailsTrigger?.textContent).toContain("2 reasons");
+    act(() => skippedDetailsTrigger!.click());
+    await flush();
+
+    expect(resultPanel?.textContent?.match(/COOKIE_PARTITION_UNSUPPORTED/g)).toHaveLength(1);
+    expect(resultPanel?.textContent).toContain("553");
+    expect(resultPanel?.querySelectorAll('[data-testid="browser-import-skipped-detail"]')).toHaveLength(2);
+    expect(resultPanel?.querySelector(".text-destructive")).toBeNull();
     expect(document.body.querySelector('[data-testid="browser-import-scroll-region"]')?.className)
       .toContain("overflow-y-auto");
   });
@@ -190,9 +209,9 @@ describe("BrowserDataImportDialog", () => {
       sourceId: "opaque-profile-1",
       importCookies: true,
     });
-    expect(document.body.textContent).toContain("Imported 3");
-    expect(document.body.textContent).toContain("Skipped 2");
-    expect(document.body.textContent).toContain("Failed 1");
+    expect(document.body.querySelector('[aria-label="Imported 3"]')).not.toBeNull();
+    expect(document.body.querySelector('[aria-label="Skipped 2"]')).not.toBeNull();
+    expect(document.body.querySelector('[aria-label="Failed 1"]')).not.toBeNull();
     const resultStatus = document.body.querySelector('[role="status"]');
     expect(resultStatus).not.toBeNull();
     expect(resultStatus!.textContent).toContain("Partial import");

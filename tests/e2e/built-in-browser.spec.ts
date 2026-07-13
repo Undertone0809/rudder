@@ -46,15 +46,29 @@ async function installBrowserDesktopStub(page: Page) {
         }],
         importBrowserData: async () => ({
           status: "succeeded",
-          importedCount: 12,
-          skippedCount: 2,
+          importedCount: 313,
+          skippedCount: 3484,
           failedCount: 0,
-          errors: [{
-            errorCode: "COOKIE_PARTITION_UNSUPPORTED",
-            message: "Partitioned cookies are not supported and were skipped.",
-            count: 2,
-            kind: "skipped",
-          }],
+          errors: [
+            {
+              errorCode: "COOKIE_EXPIRED",
+              message: "An expired cookie was skipped.",
+              count: 84,
+              kind: "skipped",
+            },
+            {
+              errorCode: "COOKIE_PARTITION_UNSUPPORTED",
+              message: "A partitioned cookie is not supported by this version of Rudder.",
+              count: 565,
+              kind: "skipped",
+            },
+            {
+              errorCode: "COOKIE_ALREADY_EXISTS",
+              message: "A matching cookie already exists in the Rudder Browser and was preserved.",
+              count: 2835,
+              kind: "skipped",
+            },
+          ],
         }),
         clearBrowserData: async () => {
           clearCalls += 1;
@@ -169,11 +183,40 @@ test.describe("Built-in Browser", () => {
     await page.screenshot({ path: testInfo.outputPath("built-in-browser-import-dialog.png"), fullPage: true });
     await importDialog.getByRole("button", { name: "Import", exact: true }).click();
     await expect(importDialog.getByRole("status")).toContainText("Import complete");
-    await expect(importDialog.getByRole("status")).toContainText("Imported 12");
-    await expect(importDialog.getByRole("status")).toContainText("Skipped 2");
-    await expect(importDialog.getByRole("status")).toContainText("Failed 0");
-    await expect(importDialog.getByRole("status")).toContainText("Skipped details");
+    await expect(importDialog.getByLabel("Imported 313")).toBeVisible();
+    await expect(importDialog.getByLabel("Skipped 3484")).toBeVisible();
+    await expect(importDialog.getByLabel("Failed 0")).toBeVisible();
+    const skippedDetails = importDialog.getByTestId("browser-import-skipped-details-trigger");
+    await expect(skippedDetails).toHaveAttribute("aria-expanded", "false");
+    await expect(skippedDetails).toContainText("3 reasons");
+    await expect(importDialog.getByText("COOKIE_PARTITION_UNSUPPORTED", { exact: true })).toHaveCount(0);
+    await skippedDetails.click();
+    await expect(skippedDetails).toHaveAttribute("aria-expanded", "true");
+    const skippedDetailsContent = importDialog.getByTestId("browser-import-skipped-details-content");
+    await skippedDetailsContent.evaluate(async (element) => {
+      await Promise.all(element.getAnimations().map((animation) => animation.finished));
+    });
     await expect(importDialog.getByText("COOKIE_PARTITION_UNSUPPORTED", { exact: true })).toHaveCount(1);
+    const skippedRows = importDialog.getByTestId("browser-import-skipped-detail");
+    await expect(skippedRows).toHaveCount(3);
+    const renderedSkippedRows = await skippedRows.all();
+    for (const row of renderedSkippedRows) {
+      const layout = await row.evaluate((element) => {
+        const reason = element.firstElementChild?.getBoundingClientRect();
+        const count = element.lastElementChild?.getBoundingClientRect();
+        const bounds = element.getBoundingClientRect();
+        return {
+          overflows: element.scrollWidth > element.clientWidth,
+          reasonEndsBeforeCount: Boolean(reason && count && reason.right <= count.left),
+          countStaysInside: Boolean(count && count.right <= bounds.right + 0.5),
+        };
+      });
+      expect(layout).toEqual({
+        overflows: false,
+        reasonEndsBeforeCount: true,
+        countStaysInside: true,
+      });
+    }
     await expect(importDialog.locator(".text-destructive")).toHaveCount(0);
     const cancelButton = importDialog.getByRole("button", { name: "Cancel" });
     await expect(cancelButton).toBeVisible();
@@ -181,6 +224,8 @@ test.describe("Built-in Browser", () => {
     expect(dialogBounds).not.toBeNull();
     expect(dialogBounds!.y).toBeGreaterThanOrEqual(0);
     expect(dialogBounds!.y + dialogBounds!.height).toBeLessThanOrEqual(640);
+    await page.setViewportSize({ width: 1100, height: 760 });
+    await importDialog.getByTestId("browser-import-result-panel").scrollIntoViewIfNeeded();
     await page.screenshot({ path: testInfo.outputPath("built-in-browser-import-result.png"), fullPage: true });
     await cancelButton.click();
 

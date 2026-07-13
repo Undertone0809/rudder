@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -15,7 +16,15 @@ import {
   type DesktopBrowserImportResult,
   type DesktopBrowserImportSource,
 } from "@/lib/desktop-shell";
-import { CircleAlert, Cookie, KeyRound } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  CircleAlert,
+  Cookie,
+  KeyRound,
+  TriangleAlert,
+  XCircle,
+} from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 export function BrowserDataImportDialog({
@@ -220,46 +229,148 @@ export function BrowserDataImportDialog({
           ) : null}
 
           {result ? (
-            <div role="status" aria-live="polite" className="space-y-2 rounded-[var(--radius-md)] border border-border/70 bg-muted/25 px-3 py-2.5">
-              <div className="text-[13px] font-medium text-foreground">
-                {t(
-                  result.status === "succeeded"
-                    ? "browser.import.result.status.succeeded"
-                    : result.status === "partial"
-                      ? "browser.import.result.status.partial"
-                      : "browser.import.result.status.failed",
-                )}
-              </div>
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-foreground">
-                <span>{t("browser.import.result.imported", { count: result.importedCount })}</span>
-                <span>{t("browser.import.result.skipped", { count: result.skippedCount })}</span>
-                <span>{t("browser.import.result.failed", { count: result.failedCount })}</span>
-              </div>
-              {skippedIssues.length ? (
-                <div className="space-y-1.5 text-[12px] leading-4 text-muted-foreground">
-                  <div className="font-medium text-foreground">{t("browser.import.result.skippedReasons")}</div>
-                  <ul className="space-y-1">
-                    {skippedIssues.map((item) => (
-                      <li key={`skipped-${item.errorCode}`} className="flex gap-2">
-                        <span className="min-w-0 flex-1">
-                          <span className="font-medium">{item.errorCode}</span>: {item.message}
-                        </span>
-                        <span className="shrink-0 tabular-nums">{item.count}</span>
-                      </li>
-                    ))}
-                  </ul>
+            <div
+              data-testid="browser-import-result-panel"
+              className="overflow-hidden rounded-[var(--radius-md)] border border-border/70 bg-muted/20"
+            >
+              <div role="status" aria-live="polite">
+                <div className="flex items-center gap-2 px-3 py-2.5">
+                  {result.status === "succeeded" ? (
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" aria-hidden />
+                  ) : result.status === "partial" ? (
+                    <TriangleAlert className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+                  ) : (
+                    <XCircle className="h-4 w-4 shrink-0 text-destructive" aria-hidden />
+                  )}
+                  <div className="text-[13px] font-medium text-foreground">
+                    {t(
+                      result.status === "succeeded"
+                        ? "browser.import.result.status.succeeded"
+                        : result.status === "partial"
+                          ? "browser.import.result.status.partial"
+                          : "browser.import.result.status.failed",
+                    )}
+                  </div>
                 </div>
+
+                <dl className="grid grid-cols-3 divide-x divide-border/60 border-y border-border/60 bg-background/30">
+                  <div
+                    className="min-w-0 px-3 py-2"
+                    aria-label={t("browser.import.result.imported", { count: result.importedCount })}
+                  >
+                    <dt className="truncate text-[11px] leading-4 text-muted-foreground">
+                      {t("browser.import.result.importedLabel")}
+                    </dt>
+                    <dd
+                      className="mt-0.5 text-base font-semibold leading-5 tabular-nums text-foreground"
+                      data-testid="browser-import-result-imported"
+                    >
+                      {result.importedCount.toLocaleString()}
+                    </dd>
+                  </div>
+                  <div
+                    className="min-w-0 px-3 py-2"
+                    aria-label={t("browser.import.result.skipped", { count: result.skippedCount })}
+                  >
+                    <dt className="truncate text-[11px] leading-4 text-muted-foreground">
+                      {t("browser.import.result.skippedLabel")}
+                    </dt>
+                    <dd
+                      className="mt-0.5 text-base font-semibold leading-5 tabular-nums text-amber-700 dark:text-amber-400"
+                      data-testid="browser-import-result-skipped"
+                    >
+                      {result.skippedCount.toLocaleString()}
+                    </dd>
+                  </div>
+                  <div
+                    className="min-w-0 px-3 py-2"
+                    aria-label={t("browser.import.result.failed", { count: result.failedCount })}
+                  >
+                    <dt className="truncate text-[11px] leading-4 text-muted-foreground">
+                      {t("browser.import.result.failedLabel")}
+                    </dt>
+                    <dd
+                      className={
+                        result.failedCount > 0
+                          ? "mt-0.5 text-base font-semibold leading-5 tabular-nums text-destructive"
+                          : "mt-0.5 text-base font-semibold leading-5 tabular-nums text-foreground"
+                      }
+                      data-testid="browser-import-result-failed"
+                    >
+                      {result.failedCount.toLocaleString()}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
+
+              {skippedIssues.length ? (
+                <Collapsible>
+                  <CollapsibleTrigger
+                    className="group flex w-full items-center gap-2 px-3 py-2.5 text-left text-[12px] font-medium text-foreground outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
+                    data-testid="browser-import-skipped-details-trigger"
+                  >
+                    <span className="flex-1">{t("browser.import.result.skippedReasons")}</span>
+                    <span className="tabular-nums text-muted-foreground">
+                      {t(
+                        skippedIssues.length === 1
+                          ? "browser.import.result.skippedReasonCount"
+                          : "browser.import.result.skippedReasonsCount",
+                        { count: skippedIssues.length },
+                      )}
+                    </span>
+                    <ChevronDown
+                      className="motion-disclosure-icon h-3.5 w-3.5 shrink-0 text-muted-foreground group-data-[state=open]:rotate-180"
+                      aria-hidden
+                    />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent
+                    className="border-t border-border/60"
+                    data-testid="browser-import-skipped-details-content"
+                  >
+                    <ul className="divide-y divide-border/60">
+                      {skippedIssues.map((item) => (
+                        <li
+                          key={`skipped-${item.errorCode}`}
+                          className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 px-3 py-2.5"
+                          data-testid="browser-import-skipped-detail"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-[12px] leading-4 text-foreground">{item.message}</p>
+                            <code className="mt-0.5 block break-all font-mono text-[10px] leading-4 text-muted-foreground">
+                              {item.errorCode}
+                            </code>
+                          </div>
+                          <span className="min-w-10 text-right text-[13px] font-medium leading-5 tabular-nums text-foreground">
+                            {item.count.toLocaleString()}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </CollapsibleContent>
+                </Collapsible>
               ) : null}
+
               {failedIssues.length ? (
-                <div className="space-y-1.5 text-[12px] leading-4 text-destructive">
-                  <div className="font-medium">{t("browser.import.result.failures")}</div>
-                  <ul className="space-y-1">
+                <div className="border-t border-border/60">
+                  <div className="flex items-center gap-2 px-3 py-2.5 text-[12px] font-medium text-destructive">
+                    <CircleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                    <span>{t("browser.import.result.failures")}</span>
+                  </div>
+                  <ul className="divide-y divide-border/60 border-t border-border/60">
                     {failedIssues.map((item) => (
-                      <li key={`failed-${item.errorCode}`} className="flex gap-2">
-                        <span className="min-w-0 flex-1">
-                          <span className="font-medium">{item.errorCode}</span>: {item.message}
+                      <li
+                        key={`failed-${item.errorCode}`}
+                        className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 px-3 py-2.5"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-[12px] leading-4 text-destructive">{item.message}</p>
+                          <code className="mt-0.5 block break-all font-mono text-[10px] leading-4 text-muted-foreground">
+                            {item.errorCode}
+                          </code>
+                        </div>
+                        <span className="min-w-10 text-right text-[13px] font-medium leading-5 tabular-nums text-destructive">
+                          {item.count.toLocaleString()}
                         </span>
-                        <span className="shrink-0 tabular-nums">{item.count}</span>
                       </li>
                     ))}
                   </ul>
