@@ -8,23 +8,6 @@ import { errorHandler } from "../middleware/index.js";
 import { chatRoutes } from "../routes/chats.js";
 import { claimChatGeneration, clearActiveChatGenerationsForTest, hasActiveChatGeneration } from "../services/chat-generation-locks.js";
 
-const mockWithExecutionObservation = vi.hoisted(() => vi.fn(async (_context, _input, fn) => fn(null)));
-const mockObserveExecutionEvent = vi.hoisted(() => vi.fn().mockResolvedValue(null));
-const mockUpdateExecutionObservation = vi.hoisted(() => vi.fn());
-const mockUpdateExecutionTraceIO = vi.hoisted(() => vi.fn());
-const mockEmitExecutionTranscriptTree = vi.hoisted(() =>
-  vi.fn(() => ({
-    turnCount: 0,
-    toolCount: 0,
-    eventCount: 0,
-    finalOutput: null,
-    finalModel: null,
-    finalUsage: null,
-    finalSessionId: null,
-    hasError: false,
-  })),
-);
-
 const mockChatService = vi.hoisted(() => ({
   list: vi.fn(),
   getById: vi.fn(),
@@ -204,17 +187,6 @@ vi.mock("../services/chat-work-manifest.js", () => ({
   chatWorkManifestService: () => mockChatWorkManifest,
 }));
 
-vi.mock("../langfuse.js", () => ({
-  withExecutionObservation: mockWithExecutionObservation,
-  observeExecutionEvent: mockObserveExecutionEvent,
-  updateExecutionObservation: mockUpdateExecutionObservation,
-  updateExecutionTraceIO: mockUpdateExecutionTraceIO,
-}));
-
-vi.mock("../langfuse-transcript.js", () => ({
-  emitExecutionTranscriptTree: mockEmitExecutionTranscriptTree,
-}));
-
 function createConversation(overrides: Partial<Record<string, unknown>> = {}) {
   const now = new Date("2026-03-26T08:00:00.000Z");
   return {
@@ -340,20 +312,6 @@ describe("chat routes", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     clearActiveChatGenerationsForTest();
-    mockWithExecutionObservation.mockImplementation(async (_context, _input, fn) => fn(null));
-    mockObserveExecutionEvent.mockResolvedValue(null);
-    mockUpdateExecutionObservation.mockResolvedValue(undefined);
-    mockUpdateExecutionTraceIO.mockResolvedValue(undefined);
-    mockEmitExecutionTranscriptTree.mockImplementation(() => ({
-      turnCount: 0,
-      toolCount: 0,
-      eventCount: 0,
-      finalOutput: null,
-      finalModel: null,
-      finalUsage: null,
-      finalSessionId: null,
-      hasError: false,
-    }));
     mockCompanyService.getById.mockResolvedValue({
       id: "organization-1",
       defaultChatIssueCreationMode: "manual_approval",
@@ -1465,32 +1423,6 @@ describe("chat routes", () => {
         approvalId: "approval-1",
       }),
     );
-    expect(mockWithExecutionObservation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        surface: "chat_turn",
-        rootExecutionId: "10000000-0000-4000-8000-000000000001",
-        trigger: "assistant_reply",
-        runtime: "codex_local",
-      }),
-      expect.objectContaining({
-        name: "chat_turn",
-        asType: "agent",
-      }),
-      expect.any(Function),
-    );
-    expect(mockObserveExecutionEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        surface: "chat_turn",
-        rootExecutionId: "10000000-0000-4000-8000-000000000001",
-      }),
-      expect.objectContaining({
-        name: "chat.reply.persisted",
-        metadata: expect.objectContaining({
-          assistantKind: "issue_proposal",
-          approvalId: "approval-1",
-        }),
-      }),
-    );
     expect(res.body.messages).toHaveLength(2);
   });
 
@@ -1548,16 +1480,6 @@ describe("chat routes", () => {
         kind: "ask_user",
         approvalId: null,
         structuredPayload: askUserPayload,
-      }),
-    );
-    expect(mockObserveExecutionEvent).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        name: "chat.reply.persisted",
-        metadata: expect.objectContaining({
-          assistantKind: "ask_user",
-          approvalId: null,
-        }),
       }),
     );
     expect(res.body.messages).toHaveLength(2);
@@ -2611,7 +2533,7 @@ describe("chat routes", () => {
     expect(prompt.length).toBeLessThan(2200);
   });
 
-  it("does not use process transcript text as failed non-stream observation output", async () => {
+  it("does not use process transcript text as the failed non-stream message body", async () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Need help");
     const failedMessage = {
@@ -2678,23 +2600,6 @@ describe("chat routes", () => {
           },
         },
         transcript: [expect.objectContaining({ kind: "assistant", text: "I will inspect the issue first." })],
-      }),
-    );
-    expect(mockEmitExecutionTranscriptTree).toHaveBeenCalledWith(expect.objectContaining({
-      fallbackResult: {
-        output: "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.",
-        subtype: "failed",
-        isError: true,
-      },
-      transcript: [expect.objectContaining({ kind: "assistant", text: "I will inspect the issue first." })],
-    }));
-    expect(mockUpdateExecutionObservation).toHaveBeenLastCalledWith(
-      null,
-      expect.objectContaining({ status: "failed" }),
-      expect.objectContaining({
-        output: "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.",
-        level: "ERROR",
-        statusMessage: "failed",
       }),
     );
   });
@@ -2925,7 +2830,7 @@ describe("chat routes", () => {
     expect(mockChatAgentRuns.linkAssistantMessage).toHaveBeenCalledWith("chat-run-1", "chat-1", "message-assistant");
   });
 
-  it("records the runtime instruction into Langfuse chat-turn input when adapter metadata is available", async () => {
+  it("accepts assistant runtimes that provide optional invocation metadata", async () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Need help");
     const assistantMessage = createMessage("message-assistant", "assistant", "message", "Working on it");
@@ -2943,16 +2848,6 @@ describe("chat routes", () => {
       "## Conversation input",
       "{}",
     ].join("\n");
-    const persistedRuntimePrompt = [
-      "You are Chat Specialist, replying inside Rudder's chat scene.",
-      "",
-      "## Recent Rudder Context",
-      "",
-      "#### today memory: 2026-06-19.md",
-      "## Conversation input",
-      "{}",
-    ].join("\n");
-
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.listMessages.mockResolvedValue([userMessage]);
     mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
@@ -2965,10 +2860,10 @@ describe("chat routes", () => {
         commandNotes: ["Loaded agent instructions from /tmp/agent-instructions.md"],
         loadedSkills: [
           {
-            key: "langfuse",
-            runtimeName: "langfuse",
-            name: "Langfuse",
-            description: "Trace and eval instrumentation",
+            key: "analysis",
+            runtimeName: "analysis",
+            name: "Analysis",
+            description: "Analysis helpers",
           },
           {
             key: "checks",
@@ -3001,56 +2896,7 @@ describe("chat routes", () => {
       .send({ body: "Need help" });
 
     expect(res.status).toBe(201);
-    expect(mockUpdateExecutionObservation).toHaveBeenCalledWith(
-      null,
-      expect.objectContaining({
-        surface: "chat_turn",
-        metadata: expect.objectContaining({
-          runtimeCommand: "codex",
-          runtimePromptCaptured: true,
-          loadedSkillCount: 2,
-          loadedSkillKeys: ["langfuse", "checks"],
-          loadedSkills: [
-            {
-              key: "langfuse",
-              runtimeName: "langfuse",
-              name: "Langfuse",
-              description: "Trace and eval instrumentation",
-            },
-            {
-              key: "checks",
-              runtimeName: "checks",
-              name: "Checks",
-              description: "Verification helpers",
-            },
-          ],
-        }),
-      }),
-      expect.objectContaining({
-        input: expect.objectContaining({
-          body: "Need help",
-          instruction: persistedRuntimePrompt,
-          promptMetrics: {
-            promptChars: 85,
-          },
-        }),
-      }),
-    );
-    expect(mockEmitExecutionTranscriptTree).toHaveBeenCalledWith(expect.objectContaining({
-      fallbackResult: expect.objectContaining({
-        output: "Working on it",
-        subtype: "completed",
-        isError: false,
-      }),
-      initialTurnInput: persistedRuntimePrompt,
-      transcript: [],
-    }));
-    const observationCalls = JSON.stringify(mockUpdateExecutionObservation.mock.calls);
-    const transcriptCalls = JSON.stringify(mockEmitExecutionTranscriptTree.mock.calls);
-    expect(observationCalls).not.toContain("Chat startup memory signal");
-    expect(observationCalls).not.toContain("private chat snippet");
-    expect(transcriptCalls).not.toContain("Chat startup memory signal");
-    expect(transcriptCalls).not.toContain("private chat snippet");
+    expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledOnce();
   });
 
   it("streams ack, transcript entries, deltas, and final persisted messages", async () => {
@@ -3181,18 +3027,6 @@ describe("chat routes", () => {
       }),
     );
     expect(mockChatAgentRuns.linkAssistantMessage).toHaveBeenCalledWith("chat-run-stream-1", "chat-1", "message-assistant");
-    expect(mockEmitExecutionTranscriptTree).toHaveBeenCalledWith(expect.objectContaining({
-      fallbackResult: {
-        output: "Streaming reply",
-        subtype: "completed",
-        isError: false,
-      },
-      initialTurnInput: runtimePrompt,
-      transcript: [
-        expect.objectContaining({ kind: "thinking", text: "Inspecting current request" }),
-        expect.objectContaining({ kind: "tool_call", name: "read_file" }),
-      ],
-    }));
   });
 
   it("does not persist process transcript text as the failed stream message body", async () => {
@@ -3258,22 +3092,6 @@ describe("chat routes", () => {
           },
         },
         transcript: [expect.objectContaining({ kind: "assistant", text: "I will inspect the issue first." })],
-      }),
-    );
-    expect(mockEmitExecutionTranscriptTree).toHaveBeenCalledWith(expect.objectContaining({
-      fallbackResult: {
-        output: "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.",
-        subtype: "failed",
-        isError: true,
-      },
-    }));
-    expect(mockUpdateExecutionObservation).toHaveBeenLastCalledWith(
-      null,
-      expect.objectContaining({ status: "failed" }),
-      expect.objectContaining({
-        output: "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.",
-        level: "ERROR",
-        statusMessage: "failed",
       }),
     );
   });
@@ -3868,7 +3686,7 @@ describe("chat routes", () => {
     expect(hasActiveChatGeneration("chat-1")).toBe(true);
   });
 
-  it("traces manual chat-to-issue conversion as a chat action", async () => {
+  it("converts a chat proposal to an issue and wakes the assignee", async () => {
     const conversation = createConversation();
     const proposalMessageId = "10000000-0000-4000-8000-000000000099";
     const issue = {
@@ -3899,31 +3717,6 @@ describe("chat routes", () => {
       .send({ messageId: proposalMessageId });
 
     expect(res.status).toBe(201);
-    expect(mockWithExecutionObservation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        surface: "chat_action",
-        rootExecutionId: proposalMessageId,
-        trigger: "convert_to_issue",
-      }),
-      expect.objectContaining({
-        name: "chat:convert_to_issue",
-        asType: "tool",
-      }),
-      expect.any(Function),
-    );
-    expect(mockObserveExecutionEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        surface: "chat_action",
-        rootExecutionId: proposalMessageId,
-      }),
-      expect.objectContaining({
-        name: "chat.issue.created",
-        metadata: expect.objectContaining({
-          issueId: "issue-1",
-          issueIdentifier: "ISS-1",
-        }),
-      }),
-    );
     expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
       "agent-1",
       expect.objectContaining({
@@ -3978,7 +3771,7 @@ describe("chat routes", () => {
     expect(mockChatService.convertToIssue).not.toHaveBeenCalled();
   });
 
-  it("traces operation proposal resolution as a chat action", async () => {
+  it("resolves an operation proposal", async () => {
     const conversation = createConversation();
     const resolvedMessage = {
       ...createMessage("message-op", "assistant", "operation_proposal", "Rename the organization"),
@@ -4019,32 +3812,6 @@ describe("chat routes", () => {
       .send({ action: "approve", decisionNote: "Apply it" });
 
     expect(res.status).toBe(201);
-    expect(mockWithExecutionObservation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        surface: "chat_action",
-        rootExecutionId: "message-op",
-        trigger: "resolve_operation_proposal",
-      }),
-      expect.objectContaining({
-        name: "chat:resolve_operation_proposal",
-        asType: "tool",
-      }),
-      expect.any(Function),
-    );
-    expect(mockObserveExecutionEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        surface: "chat_action",
-        rootExecutionId: "message-op",
-      }),
-      expect.objectContaining({
-        name: "chat.operation_proposal.resolved",
-        metadata: expect.objectContaining({
-          action: "approve",
-          messageId: "message-op",
-          systemMessageId: "message-system-op",
-        }),
-      }),
-    );
   });
 
   it("rejects operation proposal resolution for Feishu-bound chat conversations", async () => {

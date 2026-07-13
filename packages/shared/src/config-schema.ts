@@ -99,15 +99,6 @@ export const secretsConfigSchema = z.object({
   }),
 });
 
-export const langfuseConfigSchema = z.object({
-  installed: z.boolean().optional(),
-  enabled: z.boolean().default(false),
-  baseUrl: z.string().url().default("http://localhost:3000"),
-  publicKey: z.string().optional(),
-  secretKey: z.string().optional(),
-  environment: z.string().optional(),
-});
-
 export const rudderConfigSchema = z
   .object({
     $meta: configMetaSchema,
@@ -138,7 +129,6 @@ export const rudderConfigSchema = z
         keyFilePath: "~/.rudder/instances/default/secrets/master.key",
       },
     }),
-    langfuse: langfuseConfigSchema.optional(),
   })
   .superRefine((value, ctx) => {
     if (value.server.deploymentMode === "local_trusted") {
@@ -187,7 +177,6 @@ export type StorageLocalDiskConfig = z.infer<typeof storageLocalDiskConfigSchema
 export type StorageS3Config = z.infer<typeof storageS3ConfigSchema>;
 export type SecretsConfig = z.infer<typeof secretsConfigSchema>;
 export type SecretsLocalEncryptedConfig = z.infer<typeof secretsLocalEncryptedConfigSchema>;
-export type LangfuseConfig = z.infer<typeof langfuseConfigSchema>;
 export type AuthConfig = z.infer<typeof authConfigSchema>;
 export type ConfigMeta = z.infer<typeof configMetaSchema>;
 export type DatabaseBackupConfig = z.infer<typeof databaseBackupConfigSchema>;

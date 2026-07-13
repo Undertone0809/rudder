@@ -6,7 +6,6 @@ import {
   INSTANCE_SETTINGS_APPEARANCE_PATH,
   INSTANCE_SETTINGS_BROWSER_PATH,
   INSTANCE_SETTINGS_GENERAL_PATH,
-  INSTANCE_SETTINGS_LANGFUSE_PATH,
   INSTANCE_SETTINGS_NOTIFICATIONS_PATH,
   INSTANCE_SETTINGS_PROFILE_PATH,
   INSTANCE_SETTINGS_SHORTCUTS_PATH,
@@ -35,9 +34,6 @@ describe("normalizeRememberedInstanceSettingsPath", () => {
     );
     expect(normalizeRememberedInstanceSettingsPath("/instance/settings/notifications")).toBe(
       INSTANCE_SETTINGS_NOTIFICATIONS_PATH,
-    );
-    expect(normalizeRememberedInstanceSettingsPath("/instance/settings/langfuse")).toBe(
-      INSTANCE_SETTINGS_LANGFUSE_PATH,
     );
     expect(normalizeRememberedInstanceSettingsPath("/instance/settings/about")).toBe(
       INSTANCE_SETTINGS_ABOUT_PATH,
@@ -101,7 +97,6 @@ describe("normalizeRememberedSettingsPath", () => {
     expect(normalizeRememberedSettingsPath("/instance/settings/notifications")).toBe(
       INSTANCE_SETTINGS_NOTIFICATIONS_PATH,
     );
-    expect(normalizeRememberedSettingsPath("/instance/settings/langfuse")).toBe(INSTANCE_SETTINGS_LANGFUSE_PATH);
     expect(normalizeRememberedSettingsPath("/instance/settings/about")).toBe(INSTANCE_SETTINGS_ABOUT_PATH);
     expect(normalizeRememberedSettingsPath("/instance/settings/shortcuts", false)).toBe(
       INSTANCE_SETTINGS_SHORTCUTS_PATH,

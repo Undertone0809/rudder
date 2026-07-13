@@ -717,7 +717,6 @@ describe("CLI automation/chat/runs parity", () => {
         agentName: "Wesley",
         issue: { id: "issue-1", identifier: "ZST-1", title: "Optimize skill" },
         bundle: { agentRuntimeType: "codex_local" },
-        langfuse: { traceUrl: "http://localhost:3000/project/test/traces/trace-1" },
         errorSummary: "adapter_error",
         skillEvidence: {
           evidenceType: "used",
@@ -767,7 +766,6 @@ describe("CLI automation/chat/runs parity", () => {
         agentName: "Wesley",
         issue: { id: "issue-1", identifier: "ZST-1", title: "Optimize skill" },
         bundle: { agentRuntimeType: "codex_local" },
-        langfuse: null,
         errorSummary: null,
         skillEvidence: {
           evidenceType: "loaded",

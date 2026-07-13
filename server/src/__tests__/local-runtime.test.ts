@@ -3,11 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  normalizeLangfuseEnvironmentName,
   readLocalRuntimeDescriptor,
   removeLocalRuntimeDescriptorIfOwned,
   resolveEffectiveLocalEnvName,
-  resolveLangfuseEnvironmentName,
   resolveLocalRuntimePaths,
   writeLocalRuntimeDescriptor,
 } from "../local-runtime.js";
@@ -31,17 +29,6 @@ describe("local runtime helpers", () => {
     expect(resolveEffectiveLocalEnvName("dev", undefined)).toBe("dev");
     expect(resolveEffectiveLocalEnvName("e2e", undefined)).toBe("e2e");
     expect(resolveEffectiveLocalEnvName("custom-instance", undefined)).toBeNull();
-  });
-
-  it("normalizes Langfuse environments to stable stage labels", () => {
-    expect(normalizeLangfuseEnvironmentName("local")).toBe("prod");
-    expect(normalizeLangfuseEnvironmentName("default")).toBe("prod");
-    expect(normalizeLangfuseEnvironmentName("prod_local")).toBe("prod");
-    expect(normalizeLangfuseEnvironmentName("development")).toBe("dev");
-    expect(normalizeLangfuseEnvironmentName("test")).toBe("e2e");
-    expect(normalizeLangfuseEnvironmentName("staging")).toBe("staging");
-    expect(resolveLangfuseEnvironmentName(undefined, "prod_local")).toBe("prod");
-    expect(resolveLangfuseEnvironmentName(undefined, "dev")).toBe("dev");
   });
 
   it("round-trips runtime descriptors inside the instance runtime directory", async () => {

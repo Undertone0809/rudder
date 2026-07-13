@@ -1,10 +1,8 @@
-import { LangfuseClient } from "@langfuse/client";
 import type { ObservedRunDetail } from "@rudderhq/run-intelligence-core";
 import {
   appendCreateAgentBenchmarkMetadata,
   buildCreateAgentBenchmarkMetadata,
   CREATE_AGENT_LOCAL_JUDGE_VERSION,
-  createAgentEvalCheckToScoreValue,
   evaluateCreateAgentBenchmark,
   parseCreateAgentCase,
   type CreateAgentBenchmarkMetadata,
@@ -40,7 +38,6 @@ const defaultCasesDir = path.join(repoRoot, "benchmark", "create-agent", "cases"
 const defaultSetsDir = path.join(repoRoot, "benchmark", "create-agent", "sets");
 const defaultArtifactsDir = path.join(repoRoot, ".artifacts", "create-agent-benchmark");
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
-const DEFAULT_JUDGE_PROMPT_NAME = "judge-create-agent";
 const DEFAULT_JUDGE_MODEL = "gpt-5-mini";
 
 interface BenchmarkCreateAgentBaseOptions extends BaseClientOptions {
@@ -52,9 +49,7 @@ interface BenchmarkCreateAgentBaseOptions extends BaseClientOptions {
   fixture?: string[];
   waitTimeoutSec?: string;
   pollIntervalMs?: string;
-  syncLangfuse?: boolean;
   judge?: boolean;
-  queueId?: string;
   judgeModel?: string;
 }
 
@@ -63,7 +58,6 @@ interface BenchmarkRunSetOptions extends BenchmarkCreateAgentBaseOptions {
   continueOnError?: boolean;
 }
 interface BenchmarkRescoreOptions extends BenchmarkCreateAgentBaseOptions {}
-interface BenchmarkSyncOptions extends BenchmarkCreateAgentBaseOptions {}
 interface BenchmarkReportOptions extends BaseClientOptions {
   markdown?: boolean;
 }
@@ -87,19 +81,10 @@ interface StoredCreateAgentBenchmarkResult {
   createdAgents: CreateAgentCapturedAgent[];
   createdApprovals: CreateAgentCapturedApproval[];
   evaluation: CreateAgentEvalResult;
-  langfuse: {
-    traceId: string | null;
-    traceUrl: string | null;
-    scoreSync: "pending" | "synced" | "skipped" | "failed";
-    scoreSyncError: string | null;
-    annotationQueueId: string | null;
-  };
 }
 
 type JsonRecord = Record<string, unknown>;
 type CreateAgentCheckEntries = Array<[keyof CreateAgentEvalResult["checks"], CreateAgentEvalCheck]>;
-type LangfuseCliScoreValue = string | number;
-type LangfuseCliScoreDataType = "BOOLEAN" | "NUMERIC" | "CATEGORICAL";
 
 function asString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
@@ -107,19 +92,6 @@ function asString(value: unknown): string | null {
 
 function getCheckEntries(checks: CreateAgentEvalResult["checks"]): CreateAgentCheckEntries {
   return Object.entries(checks) as CreateAgentCheckEntries;
-}
-
-function normalizeLangfuseScoreValue(value: boolean | string): {
-  value: LangfuseCliScoreValue;
-  dataType: LangfuseCliScoreDataType;
-} {
-  if (typeof value === "boolean") {
-    return { value: value ? 1 : 0, dataType: "BOOLEAN" };
-  }
-  if (!Number.isNaN(Number(value)) && value !== "uncertain" && value !== "not_applicable") {
-    return { value: Number(value), dataType: "NUMERIC" };
-  }
-  return { value, dataType: "CATEGORICAL" };
 }
 
 function parseNumber(value: string | undefined, fallback: number): number {
@@ -328,7 +300,6 @@ function buildMarkdownReport(result: StoredCreateAgentBenchmarkResult): string {
     `- Issue: ${result.issue.identifier ?? result.issue.id}`,
     `- Classification: \`${result.evaluation.finalClassification}\``,
     `- Reviewer status: \`${result.evaluation.reviewerStatus}\``,
-    `- Langfuse trace: ${result.langfuse.traceUrl ?? "(none)"}`,
     `- Runner timeout: \`${result.runner?.waitTimedOut === true ? "timed_out" : "completed"}\``,
     ``,
     `## Deterministic Checks`,
@@ -377,63 +348,6 @@ function promptContextForJudge(result: StoredCreateAgentBenchmarkResult): string
   return JSON.stringify(payload, null, 2);
 }
 
-async function fetchLangfusePrompt(): Promise<{ version: string; prompt: string }> {
-  const host = process.env.LANGFUSE_HOST?.trim() || process.env.LANGFUSE_BASE_URL?.trim();
-  const publicKey = process.env.LANGFUSE_PUBLIC_KEY?.trim();
-  const secretKey = process.env.LANGFUSE_SECRET_KEY?.trim();
-  const promptName = process.env.CREATE_AGENT_JUDGE_PROMPT_NAME?.trim() || DEFAULT_JUDGE_PROMPT_NAME;
-  const label = process.env.CREATE_AGENT_JUDGE_PROMPT_LABEL?.trim() || "production";
-
-  if (!host || !publicKey || !secretKey) {
-    return {
-      version: CREATE_AGENT_LOCAL_JUDGE_VERSION,
-      prompt: buildLocalJudgePrompt(),
-    };
-  }
-
-  const url = new URL(`/api/public/v2/prompts/${encodeURIComponent(promptName)}?label=${encodeURIComponent(label)}`, host).toString();
-  const response = await fetch(url, {
-    headers: {
-      authorization: `Basic ${Buffer.from(`${publicKey}:${secretKey}`).toString("base64")}`,
-    },
-  });
-  if (!response.ok) {
-    return {
-      version: CREATE_AGENT_LOCAL_JUDGE_VERSION,
-      prompt: buildLocalJudgePrompt(),
-    };
-  }
-
-  const body = await response.json() as JsonRecord;
-  const prompt = extractPromptText(body);
-  const version = asString(body.version)
-    ?? asString(body.label)
-    ?? `${promptName}@${label}`;
-  if (!prompt) {
-    return {
-      version: CREATE_AGENT_LOCAL_JUDGE_VERSION,
-      prompt: buildLocalJudgePrompt(),
-    };
-  }
-  return { version, prompt };
-}
-
-function extractPromptText(body: JsonRecord): string | null {
-  const direct = asString(body.prompt);
-  if (direct) return direct;
-  const prompt = body.prompt;
-  if (prompt && typeof prompt === "object" && !Array.isArray(prompt)) {
-    const nested = asString((prompt as JsonRecord).prompt) ?? asString((prompt as JsonRecord).text);
-    if (nested) return nested;
-  }
-  const text = body.text;
-  if (text && typeof text === "object" && !Array.isArray(text)) {
-    const nested = asString((text as JsonRecord).content) ?? asString((text as JsonRecord).text);
-    if (nested) return nested;
-  }
-  return null;
-}
-
 function buildLocalJudgePrompt(): string {
   return [
     "You are evaluating the quality of a create-agent run.",
@@ -457,7 +371,8 @@ async function runCreateAgentJudge(result: StoredCreateAgentBenchmarkResult, mod
     };
   }
 
-  const { prompt, version } = await fetchLangfusePrompt();
+  const prompt = buildLocalJudgePrompt();
+  const version = CREATE_AGENT_LOCAL_JUDGE_VERSION;
   const model = modelOverride?.trim() || process.env.CREATE_AGENT_JUDGE_MODEL?.trim() || DEFAULT_JUDGE_MODEL;
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -551,111 +466,6 @@ function extractOpenAiOutputText(raw: unknown): string | null {
   return null;
 }
 
-function langfuseConfig() {
-  const baseUrl = process.env.LANGFUSE_HOST?.trim() || process.env.LANGFUSE_BASE_URL?.trim() || null;
-  const publicKey = process.env.LANGFUSE_PUBLIC_KEY?.trim() || null;
-  const secretKey = process.env.LANGFUSE_SECRET_KEY?.trim() || null;
-  if (!baseUrl || !publicKey || !secretKey) return null;
-  return { baseUrl, publicKey, secretKey };
-}
-
-async function syncResultToLangfuse(
-  result: StoredCreateAgentBenchmarkResult,
-  opts?: { queueId?: string | null },
-): Promise<{ scoreSync: StoredCreateAgentBenchmarkResult["langfuse"]["scoreSync"]; scoreSyncError: string | null }> {
-  const config = langfuseConfig();
-  if (!config || !result.langfuse.traceId) {
-    return {
-      scoreSync: "skipped",
-      scoreSyncError: config ? "Missing traceId for Langfuse score sync." : "Langfuse credentials are not configured.",
-    };
-  }
-
-  const client = new LangfuseClient({
-    baseUrl: config.baseUrl,
-    publicKey: config.publicKey,
-    secretKey: config.secretKey,
-  });
-
-  try {
-    for (const [name, check] of getCheckEntries(result.evaluation.checks)) {
-      const normalized = normalizeLangfuseScoreValue(createAgentEvalCheckToScoreValue(check));
-      client.score.create({
-        traceId: result.langfuse.traceId,
-        name,
-        value: normalized.value,
-        comment: check.comment,
-        dataType: normalized.dataType,
-        metadata: {
-          ...result.benchmarkMetadata,
-          ...(check.metadata ?? {}),
-        },
-      });
-    }
-
-    if (result.evaluation.judge?.status === "completed") {
-      const judge = result.evaluation.judge;
-      client.score.create({
-        traceId: result.langfuse.traceId,
-        name: "create_agent_config_quality",
-        value: judge.configQuality ?? "skipped",
-        comment: judge.summary ?? undefined,
-        dataType: judge.configQuality == null ? "CATEGORICAL" : "NUMERIC",
-        metadata: { ...result.benchmarkMetadata, judgeVersion: judge.version },
-      });
-      client.score.create({
-        traceId: result.langfuse.traceId,
-        name: "create_agent_reasoning_quality",
-        value: judge.reasoningQuality ?? "skipped",
-        comment: judge.summary ?? undefined,
-        dataType: judge.reasoningQuality == null ? "CATEGORICAL" : "NUMERIC",
-        metadata: { ...result.benchmarkMetadata, judgeVersion: judge.version },
-      });
-      client.score.create({
-        traceId: result.langfuse.traceId,
-        name: "create_agent_governance_judgment_quality",
-        value: judge.governanceJudgmentQuality ?? "skipped",
-        comment: judge.summary ?? undefined,
-        dataType: judge.governanceJudgmentQuality == null ? "CATEGORICAL" : "NUMERIC",
-        metadata: { ...result.benchmarkMetadata, judgeVersion: judge.version },
-      });
-    }
-
-    await client.shutdown();
-
-    if (result.evaluation.shouldQueueForReview && opts?.queueId) {
-      await enqueueTraceForReview(config, opts.queueId, result);
-    }
-
-    return { scoreSync: "synced", scoreSyncError: null };
-  } catch (error) {
-    await client.shutdown().catch(() => undefined);
-    return {
-      scoreSync: "failed",
-      scoreSyncError: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-async function enqueueTraceForReview(
-  config: NonNullable<ReturnType<typeof langfuseConfig>>,
-  queueId: string,
-  result: StoredCreateAgentBenchmarkResult,
-) {
-  if (!result.langfuse.traceId) return;
-  await fetch(new URL(`/api/public/annotation-queues/${queueId}/items`, config.baseUrl), {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Basic ${Buffer.from(`${config.publicKey}:${config.secretKey}`).toString("base64")}`,
-    },
-    body: JSON.stringify({
-      objectId: result.langfuse.traceId,
-      objectType: "TRACE",
-    }),
-  });
-}
-
 async function executeBenchmarkCase(caseId: string, opts: BenchmarkRunOptions): Promise<StoredCreateAgentBenchmarkResult> {
   const ctx = resolveCommandContext(opts, { requireCompany: true });
   const benchmarkAgentId = asString(opts.benchmarkAgentId);
@@ -670,7 +480,7 @@ async function executeBenchmarkCase(caseId: string, opts: BenchmarkRunOptions): 
   const pollIntervalMs = parseNumber(opts.pollIntervalMs, 2000);
   const testCase = await loadCaseById(caseId, casesDir);
   ensureRequiredFixtures(testCase, fixtureRefs);
-  const judgeVersion = opts.judge === false ? null : (process.env.CREATE_AGENT_JUDGE_PROMPT_NAME?.trim() || CREATE_AGENT_LOCAL_JUDGE_VERSION);
+  const judgeVersion = opts.judge === false ? null : CREATE_AGENT_LOCAL_JUDGE_VERSION;
   const benchmarkMetadata = buildCreateAgentBenchmarkMetadata({ testCase, judgeVersion });
 
   const agentsBefore = await listAgents(ctx.api, ctx.orgId!);
@@ -721,13 +531,6 @@ async function executeBenchmarkCase(caseId: string, opts: BenchmarkRunOptions): 
       fixtureRefs,
       judge: null,
     }),
-    langfuse: {
-      traceId: runDetail.langfuse?.traceId ?? null,
-      traceUrl: runDetail.langfuse?.traceUrl ?? null,
-      scoreSync: "pending",
-      scoreSyncError: null,
-      annotationQueueId: asString(opts.queueId),
-    },
   };
 
   if (opts.judge !== false) {
@@ -735,7 +538,7 @@ async function executeBenchmarkCase(caseId: string, opts: BenchmarkRunOptions): 
       testCase,
       benchmarkMetadata: {
         ...benchmarkMetadata,
-        judgeVersion: (await fetchLangfusePrompt()).version,
+        judgeVersion: CREATE_AGENT_LOCAL_JUDGE_VERSION,
       },
       issueId: issue.id,
       runDetail,
@@ -744,15 +547,6 @@ async function executeBenchmarkCase(caseId: string, opts: BenchmarkRunOptions): 
       fixtureRefs,
       judge: await runCreateAgentJudge(provisionalResult, opts.judgeModel),
     });
-  }
-
-  if (opts.syncLangfuse !== false) {
-    const sync = await syncResultToLangfuse(provisionalResult, { queueId: asString(opts.queueId) });
-    provisionalResult.langfuse.scoreSync = sync.scoreSync;
-    provisionalResult.langfuse.scoreSyncError = sync.scoreSyncError;
-  } else {
-    provisionalResult.langfuse.scoreSync = "skipped";
-    provisionalResult.langfuse.scoreSyncError = "Langfuse sync disabled via --no-sync-langfuse.";
   }
 
   const jsonPath = resultJsonPath(artifactsDir, testCase, runDetail.run.id);
@@ -776,11 +570,6 @@ async function rescoreStoredResult(resultPath: string, opts: BenchmarkRescoreOpt
     fixtureRefs: result.fixtureRefs,
     judge,
   });
-  if (opts.syncLangfuse !== false) {
-    const sync = await syncResultToLangfuse(result, { queueId: asString(opts.queueId) });
-    result.langfuse.scoreSync = sync.scoreSync;
-    result.langfuse.scoreSyncError = sync.scoreSyncError;
-  }
   await writeJsonFile(resultPath, result);
   await fs.writeFile(path.join(path.dirname(resultPath), "report.md"), buildMarkdownReport(result), "utf8");
   return result;
@@ -798,10 +587,8 @@ function printBenchmarkSummary(result: StoredCreateAgentBenchmarkResult, json = 
     waitTimedOut: result.runner?.waitTimedOut ?? false,
     classification: result.evaluation.finalClassification,
     reviewerStatus: result.evaluation.reviewerStatus,
-    traceUrl: result.langfuse.traceUrl,
     overall: result.evaluation.checks.create_agent_overall_correctness.value,
     judgeAverage: averageJudgeScore(result.evaluation.judge),
-    scoreSync: result.langfuse.scoreSync,
   });
 }
 
@@ -825,9 +612,7 @@ export function registerCreateAgentBenchmarkCommands(program: Command): void {
       .option("--fixture <key=value>", "Fixture reference used by the case", collectStringOption, [])
       .option("--wait-timeout-sec <seconds>", "Max wait for run completion", "300")
       .option("--poll-interval-ms <ms>", "Polling interval for issue/run status", "2000")
-      .option("--queue-id <id>", "Langfuse annotation queue id for low-quality runs")
       .option("--judge-model <model>", "Override the judge model")
-      .option("--no-sync-langfuse", "Skip Langfuse score sync")
       .option("--no-judge", "Skip optional quality judge")
       .action(async (caseId: string, opts: BenchmarkRunOptions) => {
         try {
@@ -852,9 +637,7 @@ export function registerCreateAgentBenchmarkCommands(program: Command): void {
       .option("--fixture <key=value>", "Fixture reference used by the case", collectStringOption, [])
       .option("--wait-timeout-sec <seconds>", "Max wait for run completion", "300")
       .option("--poll-interval-ms <ms>", "Polling interval for issue/run status", "2000")
-      .option("--queue-id <id>", "Langfuse annotation queue id for low-quality runs")
       .option("--judge-model <model>", "Override the judge model")
-      .option("--no-sync-langfuse", "Skip Langfuse score sync")
       .option("--no-judge", "Skip optional quality judge")
       .option("--continue-on-error", "Continue running the remaining cases after a failure", true)
       .option("--no-continue-on-error", "Stop after the first failed case")
@@ -870,7 +653,6 @@ export function registerCreateAgentBenchmarkCommands(program: Command): void {
                 runId: result.runDetail.run.id,
                 classification: result.evaluation.finalClassification,
                 reviewerStatus: result.evaluation.reviewerStatus,
-                traceUrl: result.langfuse.traceUrl,
               });
             } catch (error) {
               summaries.push({
@@ -892,40 +674,12 @@ export function registerCreateAgentBenchmarkCommands(program: Command): void {
       .command("rescore")
       .description("Re-run deterministic scoring and optional judge for an existing result.json")
       .argument("<resultPath>", "Path to a stored create-agent benchmark result.json")
-      .option("--queue-id <id>", "Langfuse annotation queue id for low-quality runs")
       .option("--judge-model <model>", "Override the judge model")
-      .option("--no-sync-langfuse", "Skip Langfuse score sync")
       .option("--no-judge", "Skip optional quality judge")
       .action(async (resultPath: string, opts: BenchmarkRescoreOptions) => {
         try {
           const result = await rescoreStoredResult(path.resolve(resultPath), opts);
           printBenchmarkSummary(result, Boolean(opts.json));
-        } catch (error) {
-          handleCommandError(error);
-        }
-      }),
-  );
-
-  addCommonClientOptions(
-    createAgent
-      .command("sync-langfuse")
-      .description("Sync one stored create-agent benchmark result to Langfuse")
-      .argument("<resultPath>", "Path to a stored create-agent benchmark result.json")
-      .option("--queue-id <id>", "Langfuse annotation queue id for low-quality runs")
-      .action(async (resultPath: string, opts: BenchmarkSyncOptions) => {
-        try {
-          const result = await readJsonFile<StoredCreateAgentBenchmarkResult>(path.resolve(resultPath));
-          const sync = await syncResultToLangfuse(result, { queueId: asString(opts.queueId) });
-          result.langfuse.scoreSync = sync.scoreSync;
-          result.langfuse.scoreSyncError = sync.scoreSyncError;
-          await writeJsonFile(path.resolve(resultPath), result);
-          printOutput({
-            caseId: result.case.id,
-            runId: result.runDetail.run.id,
-            traceId: result.langfuse.traceId,
-            scoreSync: sync.scoreSync,
-            scoreSyncError: sync.scoreSyncError,
-          }, { json: Boolean(opts.json) });
         } catch (error) {
           handleCommandError(error);
         }

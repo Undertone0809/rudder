@@ -29,14 +29,6 @@ import { parseObject } from "../../agent-runtimes/utils.js";
 import {
   resolveDefaultAgentWorkspaceDir,
 } from "../../home-paths.js";
-import { emitExecutionTranscriptTree } from "../../langfuse-transcript.js";
-import {
-  updateExecutionObservation,
-  updateExecutionTraceIO,
-  updateExecutionTraceName,
-  updateExecutionTraceSession,
-  withExecutionObservation
-} from "../../langfuse.js";
 import { redactCurrentUserText } from "../../log-redaction.js";
 import { logger } from "../../middleware/logger.js";
 import { publishAutomationRunOutputToChat } from "../automation-chat-output.js";
@@ -69,7 +61,7 @@ export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRu
 
 import * as heartbeatCore from "./heartbeat.core.js";
 import * as heartbeatSessions from "./heartbeat.sessions.js";
-const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, resolveHeartbeatObservabilitySurface, buildHeartbeatObservationName, compactTraceText, buildIssueRunTraceName, buildHeartbeatRuntimeTraceMetadata, buildHeartbeatAdapterInvokePayload, sanitizeStartupContextContextForPersistence, sanitizeStartupContextPromptForPersistence, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, readSkillEvidenceFromPayload, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, resolveForbiddenRuntimeSkillMarkers, detectForbiddenRuntimeSkillMarker, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
+const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, buildHeartbeatAdapterInvokePayload, sanitizeStartupContextContextForPersistence, sanitizeStartupContextPromptForPersistence, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, readSkillEvidenceFromPayload, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, resolveForbiddenRuntimeSkillMarkers, detectForbiddenRuntimeSkillMarker, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
 const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
 
 function buildPersistableHeartbeatContext(context: Record<string, unknown>) {
@@ -87,7 +79,7 @@ function resolveRuntimeSceneForRun(run: typeof heartbeatRuns.$inferSelect) {
 }
 
 export function createHeartbeatExecuteHandlers(context: any) {
-  const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, nextRunEventSeq, persistRunProcessMetadata, clearDetachedRunWarning, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = context;
+  const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, nextRunEventSeq, persistRunProcessMetadata, clearDetachedRunWarning, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = context;
 
   async function executeRun(runId: string) {
     let run = await getRun(runId);
@@ -122,29 +114,6 @@ export function createHeartbeatExecuteHandlers(context: any) {
       return;
     }
 
-    const heartbeatObservationContext = buildHeartbeatObservabilityContext(run, {
-      runtime: agent.agentRuntimeType,
-      metadata: {
-        agentName: agent.name,
-        invocationSource: run.invocationSource,
-        triggerDetail: run.triggerDetail,
-      },
-    });
-
-    await withExecutionObservation(
-      heartbeatObservationContext,
-      {
-        name: buildHeartbeatObservationName(run, agent.name),
-        asType: "agent",
-        input: {
-          agentId: agent.id,
-          agentName: agent.name,
-          invocationSource: run.invocationSource,
-          triggerDetail: run.triggerDetail,
-          issueId: readNonEmptyString(parseObject(run.contextSnapshot).issueId),
-        },
-      },
-      async (observation) => {
     const executionTranscript: TranscriptEntry[] = [];
     let stdoutTranscriptBuffer = "";
     let stderrTranscriptBuffer = "";
@@ -159,12 +128,10 @@ export function createHeartbeatExecuteHandlers(context: any) {
       isError?: boolean;
       errors?: string[];
     } | null = null;
-    let modelTurnInput: unknown;
     let latestAdapterMeta: AgentRuntimeInvocationMeta | null = null;
     let adapterForbiddenMarkerObserved = false;
-    let finalObservationOutput: string | null = null;
-    let finalObservationStatus: string | null = run.status;
-    let finalObservationSessionId: string | null = heartbeatObservationContext.sessionKey ?? null;
+    let finalRunOutput: string | null = null;
+    let finalRunStatus: string | null = run.status;
     const runtime = await ensureRuntimeState(agent);
     const context = parseObject(run.contextSnapshot);
     delete context.rudderGitIdentity;
@@ -255,13 +222,6 @@ export function createHeartbeatExecuteHandlers(context: any) {
         agent,
         baseConfig: mergedConfig,
       });
-    heartbeatObservationContext.metadata = {
-      ...(heartbeatObservationContext.metadata ?? {}),
-      ...buildHeartbeatRuntimeTraceMetadata({
-        runtimeConfig,
-        runtimeSkills: runtimeSkillEntries,
-      }),
-    };
     const issueRef = issueContext
       ? {
           id: issueContext.id,
@@ -273,32 +233,6 @@ export function createHeartbeatExecuteHandlers(context: any) {
           executionWorkspacePreference: issueContext.executionWorkspacePreference,
         }
       : null;
-    const rootObservationInput = {
-      agentId: agent.id,
-      agentName: agent.name,
-      invocationSource: run.invocationSource,
-      triggerDetail: run.triggerDetail,
-      issue: issueRef
-        ? {
-          id: issueRef.id,
-          identifier: issueRef.identifier ?? null,
-          title: issueRef.title ?? null,
-        }
-        : null,
-    };
-    updateExecutionObservation(observation, heartbeatObservationContext, {
-      input: rootObservationInput,
-    });
-    updateExecutionTraceIO(observation, { input: rootObservationInput });
-    if (issueRef) {
-      updateExecutionTraceName(
-        observation,
-        buildIssueRunTraceName({
-          issueTitle: issueRef.title,
-          issueId: issueRef.id,
-        }),
-      );
-    }
     const existingExecutionWorkspace =
       issueRef?.executionWorkspaceId ? await executionWorkspacesSvc.getById(issueRef.executionWorkspaceId) : null;
     const workspaceOperationRecorder = workspaceOperationsSvc.createRecorder({
@@ -782,18 +716,6 @@ export function createHeartbeatExecuteHandlers(context: any) {
             if (key in meta.env) meta.env[key] = "***REDACTED***";
           }
         }
-        modelTurnInput = sanitizeStartupContextPromptForPersistence(meta.prompt);
-        heartbeatObservationContext.metadata = {
-          ...(heartbeatObservationContext.metadata ?? {}),
-          ...buildHeartbeatRuntimeTraceMetadata({
-            runtimeConfig,
-            runtimeSkills: runtimeSkillEntries,
-            adapterMeta: meta,
-          }),
-        };
-        updateExecutionObservation(observation, heartbeatObservationContext, {
-          input: rootObservationInput,
-        });
         await appendRunEvent(currentRun, seq++, {
           eventType: "adapter.invoke",
           stream: "system",
@@ -936,9 +858,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
             : outcome === "timed_out"
             ? "timed_out"
               : "failed";
-      heartbeatObservationContext.status = status;
-      finalObservationStatus = status;
-      finalObservationSessionId = nextSessionState.displayId ?? nextSessionState.legacySessionId ?? finalObservationSessionId;
+      finalRunStatus = status;
 
       const adapterResultSummary = summarizeHeartbeatRunResultJson(adapterResult.resultJson);
       transcriptFallbackResult = {
@@ -1081,7 +1001,6 @@ export function createHeartbeatExecuteHandlers(context: any) {
             });
           }
         }
-        await emitHeartbeatLiveEval(finalizedRun.id);
       }
       await finalizeAgentStatus(agent.id, outcome);
     } catch (err) {
@@ -1092,8 +1011,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
         err instanceof Error ? err.message : "Unknown adapter failure",
         await getCurrentUserRedactionOptions(),
       );
-      heartbeatObservationContext.status = "failed";
-      finalObservationStatus = "failed";
+      finalRunStatus = "failed";
       transcriptFallbackResult = {
         ts: new Date().toISOString(),
         output: message,
@@ -1106,8 +1024,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
       const latestRun = await getRun(run.id);
       if (latestRun?.status === "cancelled" || latestRun?.status === "timed_out") {
         const terminalStatus = latestRun.status as "cancelled" | "timed_out";
-        heartbeatObservationContext.status = terminalStatus;
-        finalObservationStatus = terminalStatus;
+        finalRunStatus = terminalStatus;
         transcriptFallbackResult = {
           ts: new Date().toISOString(),
           output: latestRun.error ?? message,
@@ -1115,7 +1032,6 @@ export function createHeartbeatExecuteHandlers(context: any) {
           isError: terminalStatus === "timed_out",
           errors: latestRun.error ? [latestRun.error] : [],
         };
-        await emitHeartbeatLiveEval(latestRun.id);
         await finalizeAgentStatus(agent.id, terminalStatus);
         return;
       }
@@ -1185,7 +1101,6 @@ export function createHeartbeatExecuteHandlers(context: any) {
             });
           }
         }
-        await emitHeartbeatLiveEval(failedRun.id);
       }
 
       await finalizeAgentStatus(agent.id, "failed");
@@ -1205,29 +1120,11 @@ export function createHeartbeatExecuteHandlers(context: any) {
         finalize: true,
         kind: "stderr",
       });
-      try {
-        const transcriptStats = emitExecutionTranscriptTree({
-          context: heartbeatObservationContext,
-          parentObservation: observation,
-          transcript: executionTranscript,
-          initialTurnInput: modelTurnInput,
-          fallbackResult: transcriptFallbackResult,
-        });
-        finalObservationOutput = transcriptStats.finalOutput ?? transcriptFallbackResult?.output ?? null;
-        finalObservationSessionId = transcriptStats.finalSessionId ?? finalObservationSessionId;
-      } catch (error) {
-        logger.warn(
-          {
-            runId: run.id,
-            err: error instanceof Error ? error.message : String(error),
-          },
-          "Failed to export heartbeat transcript tree to Langfuse",
-        );
-      }
+      finalRunOutput = transcriptFallbackResult?.output ?? null;
       await publishAutomationRunOutputToChat(db, {
         issueId,
-        output: finalObservationOutput,
-        status: finalObservationStatus,
+        output: finalRunOutput,
+        status: finalRunStatus,
         transcript: executionTranscript,
       }).catch((error) => {
         logger.warn(
@@ -1239,21 +1136,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
           "Failed to publish automation run output to chat",
         );
       });
-      updateExecutionObservation(observation, heartbeatObservationContext, {
-        input: rootObservationInput,
-        output: finalObservationOutput,
-        level:
-          finalObservationStatus === "failed" || finalObservationStatus === "timed_out" ? "ERROR" : "DEFAULT",
-        statusMessage: finalObservationStatus ?? undefined,
-      });
-      updateExecutionTraceIO(observation, {
-        input: rootObservationInput,
-        output: finalObservationOutput,
-      });
-      updateExecutionTraceSession(observation, finalObservationSessionId);
     }
-      },
-    );
     } catch (outerErr) {
           // Setup code before adapter.execute threw (e.g. ensureRuntimeState, resolveWorkspaceForRun).
           // The inner catch did not fire, so we must record the failure here.
@@ -1278,7 +1161,6 @@ export function createHeartbeatExecuteHandlers(context: any) {
               level: "error",
               message,
             }).catch(() => undefined);
-            await emitHeartbeatLiveEval(failedRun.id).catch(() => undefined);
             await releaseIssueExecutionAndPromote(failedRun).catch(() => undefined);
           }
           // Ensure the agent is not left stuck in "running" if the inner catch handler's

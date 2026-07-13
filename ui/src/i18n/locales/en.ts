@@ -19,7 +19,6 @@ export const en = {
   "common.browser": "Browser",
   "common.systemPermissions": "Permissions",
   "common.notifications": "Notifications",
-  "common.langfuse": "Langfuse",
   "common.about": "About",
   "common.heartbeats": "Heartbeats",
   "common.plugins": "Plugins",
@@ -511,66 +510,6 @@ export const en = {
   "systemPermissions.notifications.chat.description":
     "Notify when assistant chats reply or propose an issue or action.",
   "systemPermissions.notifications.chat.toggle": "Toggle chat notifications",
-  "langfuse.title": "Langfuse",
-  "langfuse.description":
-    "Configure bootstrap-time Langfuse tracing for this local Rudder instance. Changes are saved to the local instance config and apply only after restart.",
-  "langfuse.install.title": "Install Rudder Langfuse integration",
-  "langfuse.install.description":
-    "Langfuse is optional in Rudder. Use it when you want Rudder agent runs, chat turns, and evaluation signals to produce traces in your Langfuse project.",
-  "langfuse.install.scope":
-    "Rudder only installs its own Langfuse integration. Keep managing your Langfuse host, project keys, and local environment outside this installer.",
-  "langfuse.install.action": "Install integration",
-  "langfuse.install.installing": "Installing...",
-  "langfuse.install.progress": "Installing Rudder Langfuse integration",
-  "langfuse.install.failed": "Failed to install Langfuse integration.",
-  "langfuse.install.saved.title": "Langfuse integration installed",
-  "langfuse.install.saved.body": "Langfuse configuration is now available.",
-  "langfuse.loadFailed": "Failed to load Langfuse settings.",
-  "langfuse.updateFailed": "Failed to save Langfuse settings.",
-  "langfuse.section.connection.title": "Connection",
-  "langfuse.section.connection.description":
-    "Use the same Langfuse project credentials Rudder should use for new traces created by this local instance.",
-  "langfuse.enabled.title": "Enable Langfuse tracing",
-  "langfuse.enabled.description":
-    "When enabled, Rudder will initialize Langfuse tracing during the next app or server boot.",
-  "langfuse.baseUrl.label": "Base URL",
-  "langfuse.baseUrl.help":
-    "Point this at your Langfuse host. Keep the full origin, such as the EU cloud, US cloud, or your self-hosted base URL.",
-  "langfuse.publicKey.label": "Public key",
-  "langfuse.publicKey.help":
-    "This is the Langfuse public key for the target project. Leave blank to clear the stored key.",
-  "langfuse.secretKey.label": "Secret key",
-  "langfuse.secretKey.help":
-    "Leave this blank to keep the currently stored secret. Enter a new secret only when rotating or setting credentials for the first time.",
-  "langfuse.secretKey.configured": "A secret key is already stored for this instance.",
-  "langfuse.secretKey.notConfigured": "No secret key is currently stored.",
-  "langfuse.secretKey.clear": "Clear stored secret key",
-  "langfuse.secretKey.clearPending": "The stored secret key will be cleared when you save.",
-  "langfuse.environment.label": "Trace environment",
-  "langfuse.environment.help":
-    "Use a stable stage label such as prod, dev, or e2e. Rudder adds the instance ID separately, so this field should describe stage rather than a specific desktop profile.",
-  "langfuse.environment.placeholder": "prod",
-  "langfuse.environment.unset": "unset",
-  "langfuse.tags.title": "Automatic trace tags",
-  "langfuse.tags.description":
-    "New traces from this instance also include {{instanceTag}} and {{releaseTag}} so different local instances and app versions stay distinguishable.",
-  "langfuse.section.behavior.title": "Behavior",
-  "langfuse.section.behavior.description":
-    "These settings affect the local runtime bootstrap path rather than live UI behavior.",
-  "langfuse.restartRequired.title": "Restart required",
-  "langfuse.restartRequired.description":
-    "After saving, restart the app or local server before expecting new Rudder executions to appear in Langfuse.",
-  "langfuse.envManaged.title": "Managed by environment",
-  "langfuse.envManaged.description":
-    "One or more `LANGFUSE_*` environment variables are set for this runtime. Rudder treats environment values as the source of truth and blocks edits from the settings UI.",
-  "langfuse.envManagedRestartPending.title": "Running server still uses boot-time Langfuse values",
-  "langfuse.envManagedRestartPending.description":
-    "The watched `.env` changed after this dev server booted. Until you restart the app or local server, new traces may still use the old `LANGFUSE_*` values. The running process currently reports trace environment `{{environment}}`.",
-  "langfuse.save": "Save Langfuse settings",
-  "langfuse.saving": "Saving...",
-  "langfuse.saved.title": "Langfuse settings saved",
-  "langfuse.saved.body": "Restart the app or local server before expecting new traces to use this configuration.",
-  "langfuse.saveFailed.title": "Failed to save Langfuse settings",
   "about.title": "About",
   "about.version.title": "Version",
   "about.version.description": "This identifies the Rudder build currently running on this machine.",

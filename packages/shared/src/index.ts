@@ -33,7 +33,6 @@ export {
 } from "./constants.js";
 
 export { resolveAgentRunScene, toAgentRun, toAgentRuns } from "./agent-run.js";
-export { EXECUTION_OBSERVABILITY_SURFACES } from "./types/observability.js";
 export {
   WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS, WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS, WORKSPACE_BACKUP_OFFLINE_INTERVAL_HOURS,
   WORKSPACE_BACKUP_RUNNING_INTERVAL_HOURS
@@ -88,8 +87,7 @@ export type {
   ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTodoItem,
   ChatStreamTranscriptTodoItemStatus, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestTargetType, CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent,
   CostSummary,
-  CostTrendPoint, CostWindowSpendRow, CreateOrganizationResourceRequest, CreateProjectInlineResourceInput, DashboardSummary, DocumentFormat, EnvBinding, ExecutionLangfuseLink, ExecutionObservabilityContext,
-  ExecutionObservabilitySurface, ExecutionWorkspace, ExecutionWorkspaceMode, ExecutionWorkspaceProviderType, ExecutionWorkspaceStatus, ExecutionWorkspaceStrategy, ExecutionWorkspaceStrategyType, FeishuIntegrationSettings, FinanceByBiller,
+  CostTrendPoint, CostWindowSpendRow, CreateOrganizationResourceRequest, CreateProjectInlineResourceInput, DashboardSummary, DocumentFormat, EnvBinding, ExecutionWorkspace, ExecutionWorkspaceMode, ExecutionWorkspaceProviderType, ExecutionWorkspaceStatus, ExecutionWorkspaceStrategy, ExecutionWorkspaceStrategyType, FeishuIntegrationSettings, FinanceByBiller,
   FinanceByKind, FinanceEvent, FinanceSummary, Goal,
   GoalDependencies,
   GoalDependencyPreview, GoogleCalendarConnectResponse, GoogleCalendarOAuthConfig, GoogleCalendarSyncResponse, HeartbeatRecoveryMode,
@@ -97,7 +95,7 @@ export type {
   HeartbeatRun,
   HeartbeatRunContextSnapshot,
   HeartbeatRunEvent,
-  HeartbeatRunRecoveryContext, InstanceBrowserSettings, InstanceGeneralSettings, InstanceLangfuseSettings, InstanceLocale, InstanceNotificationSettings, InstancePathPickerRequest,
+  HeartbeatRunRecoveryContext, InstanceBrowserSettings, InstanceGeneralSettings, InstanceLocale, InstanceNotificationSettings, InstancePathPickerRequest,
   InstancePathPickerResult,
   InstancePathPickerSelectionType, InstanceSchedulerHeartbeatAgent, InstanceSettings, InstanceUserRoleGrant, Invite, Issue,
   IssueAssigneeAgentRuntimeOverrides, IssueAttachment, IssueComment,
@@ -139,14 +137,14 @@ export type {
 } from "./types/index.js";
 
 export {
-  DEFAULT_INSTANCE_BROWSER_SETTINGS, KEYBOARD_SHORTCUT_ACTION_IDS, OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH, instanceBrowserSettingsSchema, instanceGeneralSettingsSchema, instanceLangfuseSettingsSchema, instanceLocaleSchema, instanceNotificationSettingsSchema, instancePathPickerRequestSchema,
+  DEFAULT_INSTANCE_BROWSER_SETTINGS, KEYBOARD_SHORTCUT_ACTION_IDS, OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH, instanceBrowserSettingsSchema, instanceGeneralSettingsSchema, instanceLocaleSchema, instanceNotificationSettingsSchema, instancePathPickerRequestSchema,
   instancePathPickerResultSchema, instancePathPickerSelectionTypeSchema, keyboardShortcutActionIdSchema,
   keyboardShortcutBindingSchema,
   keyboardShortcutPreferenceSchema,
-  keyboardShortcutSettingsSchema, operatorProfileSettingsSchema, patchInstanceBrowserSettingsSchema, patchInstanceGeneralSettingsSchema, patchInstanceLangfuseSettingsSchema, patchInstanceNotificationSettingsSchema, patchKeyboardShortcutSettingsSchema, patchOperatorProfileSettingsSchema, type KeyboardShortcutActionId,
+  keyboardShortcutSettingsSchema, operatorProfileSettingsSchema, patchInstanceBrowserSettingsSchema, patchInstanceGeneralSettingsSchema, patchInstanceNotificationSettingsSchema, patchKeyboardShortcutSettingsSchema, patchOperatorProfileSettingsSchema, type KeyboardShortcutActionId,
   type KeyboardShortcutBinding,
   type KeyboardShortcutPreference,
-  type KeyboardShortcutSettings, type PatchInstanceBrowserSettings, type PatchInstanceGeneralSettings, type PatchInstanceLangfuseSettings, type PatchInstanceNotificationSettings, type PatchKeyboardShortcutSettings, type PatchOperatorProfileSettings
+  type KeyboardShortcutSettings, type PatchInstanceBrowserSettings, type PatchInstanceGeneralSettings, type PatchInstanceNotificationSettings, type PatchKeyboardShortcutSettings, type PatchOperatorProfileSettings
 } from "./validators/index.js";
 
 export {
@@ -256,10 +254,10 @@ export {
 
 export {
   DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES, authConfigSchema, configMetaSchema, databaseBackupConfigSchema,
-  databaseConfigSchema, langfuseConfigSchema, llmConfigSchema, loggingConfigSchema, rudderConfigSchema, secretsConfigSchema, secretsLocalEncryptedConfigSchema, serverConfigSchema, storageConfigSchema,
+  databaseConfigSchema, llmConfigSchema, loggingConfigSchema, rudderConfigSchema, secretsConfigSchema, secretsLocalEncryptedConfigSchema, serverConfigSchema, storageConfigSchema,
   storageLocalDiskConfigSchema,
   storageS3ConfigSchema, type AuthConfig, type ConfigMeta, type DatabaseBackupConfig,
-  type DatabaseConfig, type LangfuseConfig, type LlmConfig, type LoggingConfig, type RudderConfig, type SecretsConfig,
+  type DatabaseConfig, type LlmConfig, type LoggingConfig, type RudderConfig, type SecretsConfig,
   type SecretsLocalEncryptedConfig, type ServerConfig, type StorageConfig,
   type StorageLocalDiskConfig,
   type StorageS3Config

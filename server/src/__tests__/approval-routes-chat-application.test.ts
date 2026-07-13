@@ -4,8 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { approvalRoutes } from "../routes/approvals.js";
 
-const mockWithExecutionObservation = vi.hoisted(() => vi.fn(async (_context, _input, fn) => fn(null)));
-const mockObserveExecutionEvent = vi.hoisted(() => vi.fn().mockResolvedValue(null));
 
 const mockApprovalService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -62,11 +60,6 @@ vi.mock("../services/index.js", () => ({
   organizationIntelligenceRuntimeChainService: () => ({ assertUsable: vi.fn() }),
   logActivity: mockLogActivity,
   secretService: () => mockSecretService,
-}));
-
-vi.mock("../langfuse.js", () => ({
-  withExecutionObservation: mockWithExecutionObservation,
-  observeExecutionEvent: mockObserveExecutionEvent,
 }));
 
 function createApp(db: any = {}) {
@@ -154,28 +147,6 @@ describe("approval routes chat application", () => {
         type: "chat_issue_creation",
       }),
       "user-1",
-    );
-    expect(mockWithExecutionObservation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        surface: "chat_action",
-        rootExecutionId: "approval-1",
-        trigger: "approval_apply",
-        status: "approved",
-      }),
-      expect.objectContaining({
-        name: "chat:approval_apply",
-        asType: "tool",
-      }),
-      expect.any(Function),
-    );
-    expect(mockObserveExecutionEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        surface: "chat_action",
-        rootExecutionId: "approval-1",
-      }),
-      expect.objectContaining({
-        name: "chat.approval.applied",
-      }),
     );
     expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
       "agent-1",

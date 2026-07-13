@@ -436,8 +436,8 @@ was actually used. This is the default evidence semantic for skill optimization;
 it does not count skills that were only loaded into the runtime. Use
 `--loaded-skill <skill>` only when you deliberately need the broader "available
 to the run" evidence set. Both filters match a skill key or display/runtime
-name and include `skillEvidence`, `errorSummary`, Langfuse link metadata,
-issue context, agent, runtime, timestamps, and the raw run fields in JSON.
+name and include `skillEvidence`, `errorSummary`, issue context, agent, runtime,
+timestamps, and the raw run fields in JSON.
 
 `runs by-skill <skill>` is the agent-facing evidence packet for skill
 optimization. It defaults to `--evidence used`, summarizes recent matching runs

@@ -62,7 +62,6 @@ interface RunExportRow {
   orgName: string | null;
   issue: { id: string; identifier: string | null; title: string | null } | null;
   bundle: { agentRuntimeType: string };
-  langfuse?: unknown;
   errorSummary?: string | null;
   skillEvidence?: {
     evidenceType: "used" | "loaded";
@@ -493,7 +492,6 @@ function formatRunListRow(row: RunExportRow) {
     finishedAt: row.run.finishedAt ?? "-",
     evidence: row.skillEvidence?.evidenceType ?? "-",
     skill: row.skillEvidence?.matchedSkillKey ?? "-",
-    langfuse: readLangfuseTraceUrl(row.langfuse) ?? "-",
     error: row.errorSummary ?? "-",
     next: row.run.status === "failed" ? `rudder runs errors ${runId}` : `rudder runs transcript ${runId}`,
   };
@@ -586,7 +584,6 @@ function formatInlineSkillRun(row: RunExportRow) {
   const label = row.skillEvidence?.matchedSkillLabel && row.skillEvidence.matchedSkillLabel !== row.skillEvidence.matchedSkillKey
     ? ` label=${row.skillEvidence.matchedSkillLabel}`
     : "";
-  const langfuse = readLangfuseTraceUrl(row.langfuse);
   return [
     `id=${runId}`,
     `status=${row.run.status}`,
@@ -597,7 +594,6 @@ function formatInlineSkillRun(row: RunExportRow) {
     `finishedAt=${row.run.finishedAt ?? "-"}`,
     `evidence=${row.skillEvidence?.evidenceType ?? "-"}`,
     `skill=${row.skillEvidence?.matchedSkillKey ?? "-"}${label}`,
-    `langfuse=${langfuse ?? "-"}`,
     `error=${row.errorSummary ?? "-"}`,
     `next=${row.run.status === "failed" ? `rudder runs errors ${runId}` : `rudder runs transcript ${runId}`}`,
   ].join(" ");
@@ -606,12 +602,6 @@ function formatInlineSkillRun(row: RunExportRow) {
 function formatIssueRef(issue: RunExportRow["issue"]) {
   if (!issue) return "-";
   return issue.identifier && issue.title ? `${issue.identifier} ${issue.title}` : issue.identifier ?? issue.title ?? issue.id;
-}
-
-function readLangfuseTraceUrl(value: unknown) {
-  if (!value || typeof value !== "object") return null;
-  const traceUrl = (value as { traceUrl?: unknown }).traceUrl;
-  return typeof traceUrl === "string" && traceUrl.length > 0 ? traceUrl : null;
 }
 
 function formatRunEvent(row: HeartbeatRunEvent) {

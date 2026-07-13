@@ -172,7 +172,6 @@ export const queryKeys = {
     shortcutSettings: ["instance", "shortcut-settings"] as const,
     generalSettings: ["instance", "general-settings"] as const,
     notificationSettings: ["instance", "notification-settings"] as const,
-    langfuseSettings: ["instance", "langfuse-settings"] as const,
     schedulerHeartbeats: ["instance", "scheduler-heartbeats"] as const,
   },
   health: ["health"] as const,

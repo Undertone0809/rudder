@@ -60,7 +60,6 @@ function makeRunDetail(status: ObservedRunDetail["run"]["status"] = "succeeded")
       agentConfigFingerprint: null,
       runtimeConfigFingerprint: null,
     },
-    langfuse: null,
     events: [],
     logContent: null,
     logChunks: [],
@@ -172,7 +171,7 @@ describe("create-agent benchmark helpers", () => {
           role: "engineer",
         },
       }),
-      judgeVersion: "langfuse:judge-create-agent@production",
+      judgeVersion: "judge-create-agent@production",
     });
     const description = appendCreateAgentBenchmarkMetadata("Create an engineer", metadata);
     expect(extractCreateAgentBenchmarkMetadata(description)).toEqual(metadata);

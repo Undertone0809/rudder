@@ -34,7 +34,6 @@ Prefer an existing value from this list:
 - `workspace`
 - `chat`
 - `skills`
-- `langfuse`
 - `benchmarks`
 - `agent_runtimes`
 - `developer_workflow`
@@ -66,7 +65,6 @@ Good examples:
 - `agent_workspace`
 - `organization_skills`
 - `messenger_chat`
-- `langfuse_traces`
 - `create_agent_benchmark`
 - `managed_codex_home`
 

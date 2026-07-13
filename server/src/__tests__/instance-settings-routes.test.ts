@@ -21,8 +21,6 @@ const mockBoardAuthService = vi.hoisted(() => ({
   resolveBoardActivityCompanyIds: vi.fn(),
 }));
 const mockLogActivity = vi.hoisted(() => vi.fn());
-const mockLoadConfig = vi.hoisted(() => vi.fn());
-const mockUpdateConfigFile = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/index.js", () => ({
   boardAuthService: () => mockBoardAuthService,
@@ -37,18 +35,6 @@ vi.mock("../services/index.js", () => ({
   logActivity: mockLogActivity,
   operatorProfileService: () => mockOperatorProfileService,
 }));
-
-vi.mock("../config.js", () => ({
-  loadConfig: mockLoadConfig,
-}));
-
-vi.mock("../config-file.js", async () => {
-  const actual = await vi.importActual<typeof import("../config-file.js")>("../config-file.js");
-  return {
-    ...actual,
-    updateConfigFile: mockUpdateConfigFile,
-  };
-});
 
 const mockPathPicker = vi.hoisted(() => ({
   pick: vi.fn(),
@@ -129,39 +115,6 @@ describe("instance settings routes", () => {
     mockOperatorProfileService.updateShortcuts.mockImplementation(async (_userId, patch) => patch);
     mockBoardAuthService.resolveBoardActivityCompanyIds.mockResolvedValue(["organization-1"]);
     mockPathPicker.pick.mockResolvedValue("/Users/test/project");
-    mockLoadConfig.mockReturnValue({
-      langfuse: {
-        installed: false,
-        enabled: false,
-        baseUrl: "http://localhost:3000",
-        publicKey: "pk-lf-current",
-        secretKey: "sk-lf-current",
-        environment: "local",
-      },
-    });
-    mockUpdateConfigFile.mockImplementation((mutator) => mutator({
-      $meta: {
-        version: 1,
-        updatedAt: "2026-04-15T00:00:00.000Z",
-        source: "configure",
-      },
-      database: {},
-      logging: {},
-      server: {},
-      langfuse: {
-        installed: false,
-        enabled: false,
-        baseUrl: "http://localhost:3000",
-        publicKey: "pk-lf-current",
-        secretKey: "sk-lf-current",
-        environment: "local",
-      },
-    }));
-    delete process.env.LANGFUSE_ENABLED;
-    delete process.env.LANGFUSE_BASE_URL;
-    delete process.env.LANGFUSE_PUBLIC_KEY;
-    delete process.env.LANGFUSE_SECRET_KEY;
-    delete process.env.LANGFUSE_ENVIRONMENT;
   });
 
   it("allows local board users to read and update general settings", async () => {
@@ -346,207 +299,6 @@ describe("instance settings routes", () => {
     expect(mockInstanceSettingsService.updateBrowser).not.toHaveBeenCalled();
   });
 
-
-  it("returns sanitized local langfuse settings", async () => {
-    const app = await createApp({
-      type: "board",
-      userId: "local-board",
-      source: "local_implicit",
-      isInstanceAdmin: true,
-    });
-
-    const res = await request(app).get("/api/instance/settings/langfuse");
-
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({
-      installed: false,
-      enabled: false,
-      baseUrl: "http://localhost:3000",
-      publicKey: "pk-lf-current",
-      environment: "prod",
-      secretKeyConfigured: true,
-      managedByEnv: false,
-    });
-  });
-
-  it("preserves the stored secret key when patching langfuse with a blank secret", async () => {
-    const app = await createApp({
-      type: "board",
-      userId: "local-board",
-      source: "local_implicit",
-      isInstanceAdmin: true,
-    });
-
-    mockLoadConfig.mockReturnValueOnce({
-      langfuse: {
-        installed: true,
-        enabled: true,
-        baseUrl: "https://cloud.langfuse.com",
-        publicKey: "pk-lf-next",
-        secretKey: "sk-lf-current",
-        environment: "local",
-      },
-    });
-
-    const res = await request(app)
-      .patch("/api/instance/settings/langfuse")
-      .send({
-        enabled: true,
-        baseUrl: "https://cloud.langfuse.com",
-        publicKey: "pk-lf-next",
-        secretKey: "",
-        environment: "local",
-      });
-
-    expect(res.status).toBe(200);
-    expect(mockUpdateConfigFile).toHaveBeenCalledTimes(1);
-    const updatedConfig = mockUpdateConfigFile.mock.results[0]?.value;
-    expect(updatedConfig.langfuse).toEqual({
-      installed: true,
-      enabled: true,
-      baseUrl: "https://cloud.langfuse.com",
-      publicKey: "pk-lf-next",
-      secretKey: "sk-lf-current",
-      environment: "prod",
-    });
-    expect(res.body).toEqual({
-      installed: true,
-      enabled: true,
-      baseUrl: "https://cloud.langfuse.com",
-      publicKey: "pk-lf-next",
-      environment: "prod",
-      secretKeyConfigured: true,
-      managedByEnv: false,
-    });
-    expect(mockLogActivity).toHaveBeenCalledTimes(2);
-  });
-
-  it("clears the stored secret key only when requested", async () => {
-    const app = await createApp({
-      type: "board",
-      userId: "local-board",
-      source: "local_implicit",
-      isInstanceAdmin: true,
-    });
-
-    mockLoadConfig.mockReturnValueOnce({
-      langfuse: {
-        enabled: false,
-        baseUrl: "http://localhost:3000",
-        publicKey: "pk-lf-current",
-        secretKey: undefined,
-        environment: "",
-      },
-    });
-
-    const res = await request(app)
-      .patch("/api/instance/settings/langfuse")
-      .send({
-        clearSecretKey: true,
-      });
-
-    expect(res.status).toBe(200);
-    const updatedConfig = mockUpdateConfigFile.mock.results[0]?.value;
-    expect(updatedConfig.langfuse).toEqual({
-      installed: true,
-      enabled: false,
-      baseUrl: "http://localhost:3000",
-      publicKey: "pk-lf-current",
-      environment: "prod",
-    });
-    expect(res.body.secretKeyConfigured).toBe(false);
-  });
-
-  it("rejects langfuse settings outside local_trusted mode", async () => {
-    const app = await createApp({
-      type: "board",
-      userId: "admin-1",
-      source: "session",
-      isInstanceAdmin: true,
-    }, "authenticated");
-
-    const res = await request(app).get("/api/instance/settings/langfuse");
-
-    expect(res.status).toBe(422);
-    expect(res.body).toEqual({
-      error: "Langfuse settings are only available in local_trusted mode.",
-    });
-  });
-
-  it("rejects langfuse writes when env vars manage the runtime", async () => {
-    process.env.LANGFUSE_SECRET_KEY = "sk-lf-env";
-    const app = await createApp({
-      type: "board",
-      userId: "local-board",
-      source: "local_implicit",
-      isInstanceAdmin: true,
-    });
-
-    const res = await request(app)
-      .patch("/api/instance/settings/langfuse")
-      .send({ enabled: true });
-
-    expect(res.status).toBe(409);
-    expect(res.body).toEqual({
-      error: "Langfuse settings are managed by environment variables.",
-    });
-    expect(mockUpdateConfigFile).not.toHaveBeenCalled();
-  });
-
-  it("rejects langfuse install when env vars manage the runtime", async () => {
-    process.env.LANGFUSE_SECRET_KEY = "sk-lf-env";
-    const app = await createApp({
-      type: "board",
-      userId: "local-board",
-      source: "local_implicit",
-      isInstanceAdmin: true,
-    });
-
-    const res = await request(app)
-      .post("/api/instance/settings/langfuse/install")
-      .send({});
-
-    expect(res.status).toBe(409);
-    expect(res.body).toEqual({
-      error: "Langfuse settings are managed by environment variables.",
-    });
-    expect(mockUpdateConfigFile).not.toHaveBeenCalled();
-  });
-
-  it("marks the Rudder langfuse integration installed without changing credentials", async () => {
-    const app = await createApp({
-      type: "board",
-      userId: "local-board",
-      source: "local_implicit",
-      isInstanceAdmin: true,
-    });
-
-    const res = await request(app)
-      .post("/api/instance/settings/langfuse/install")
-      .send({});
-
-    expect(res.status).toBe(200);
-    expect(mockUpdateConfigFile).toHaveBeenCalledTimes(1);
-    const updatedConfig = mockUpdateConfigFile.mock.results[0]?.value;
-    expect(updatedConfig.langfuse).toEqual({
-      installed: true,
-      enabled: false,
-      baseUrl: "http://localhost:3000",
-      publicKey: "pk-lf-current",
-      secretKey: "sk-lf-current",
-      environment: "local",
-    });
-    expect(res.body).toEqual({
-      installed: true,
-      enabled: false,
-      baseUrl: "http://localhost:3000",
-      publicKey: "pk-lf-current",
-      environment: "prod",
-      secretKeyConfigured: true,
-      managedByEnv: false,
-    });
-    expect(mockLogActivity).toHaveBeenCalledTimes(2);
-  });
 
   it("allows board users to read and update profile settings without instance admin access", async () => {
     const app = await createApp({

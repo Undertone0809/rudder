@@ -47,7 +47,6 @@ Examples:
 - "Should we keep patching this or write a design or architecture doc first?"
 - "I know the result is too big / too noisy / too complicated, but I need a concrete proposal."
 - "The trace or benchmark says one thing, but the result still feels wrong. Help me make sense of it."
-- "We have Langfuse traces / scores / evals, but I need help deciding what they actually imply."
 
 ## What This Skill Does Not Do
 
@@ -73,7 +72,6 @@ If the correct outcome is to invoke or recommend a more specialized skill, say s
 - `design-review`: use when the main need is visual QA and polish on a live surface
 - `plan-eng-review`: use when architecture and execution planning are the main concern
 - `investigate`: use when the issue is primarily a bug or regression with unclear root cause
-- `langfuse`: use alongside this skill when the critique should be grounded in traces, scores, datasets, experiments, or benchmark evidence instead of intuition alone
 
 Use `build-advisor` when the user is blocked on judgment, articulation, or deciding which layer of the problem to fix first.
 
@@ -229,7 +227,6 @@ If the retrieved plans show repeated redesigns, reversals, or unresolved
 standards debates, call that out explicitly as part of the diagnosis.
 
 When the topic is unstable or practice-driven, also inspect primary external guidance or the named local skills before concluding.
-When the user mentions Langfuse, or when the available evidence lives in Langfuse, invoke `langfuse` and inspect the concrete trace, score, dataset, or experiment context before advising.
 
 Do not guess if you can verify quickly.
 
@@ -557,7 +554,7 @@ After diagnosis, route decisively:
 - If the issue is mostly engineering plan quality, recommend `plan-eng-review`
 - If the issue is mostly workflow confusion in Rudder, recommend `rudder-gstack-guide`
 - If the issue is mostly standards missing from the repo, recommend writing the missing doc first
-- If the issue is mostly trace quality, score design, benchmark interpretation, or agent-eval evidence, combine with `langfuse`
+- If the issue is mostly trace quality, score design, benchmark interpretation, or agent-eval evidence, inspect the available run-intelligence evidence
 - If the issue is mainly a bug or regression, recommend `investigate`
 
 When a direct local answer is enough, provide it.

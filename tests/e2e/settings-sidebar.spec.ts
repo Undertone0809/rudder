@@ -571,194 +571,24 @@ test.describe("Settings sidebar", () => {
     await expect(issueToggle).toHaveAttribute("aria-checked", "false");
   });
 
-  test("saves local Langfuse settings and shows restart-required state", async ({ page }) => {
+  test("shows plugins as the only built-in integration setting", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
-        name: `Langfuse Settings ${Date.now()}`,
+        name: `Integration Settings ${Date.now()}`,
       },
     });
     expect(orgRes.ok()).toBe(true);
     const organization = await orgRes.json() as { issuePrefix: string };
-
-    const langfuseState = {
-      installed: true,
-      enabled: false,
-      baseUrl: "http://localhost:3000",
-      publicKey: "",
-      environment: "",
-      secretKeyConfigured: false,
-      managedByEnv: false,
-    };
-    await page.route("**/api/instance/settings/langfuse**", async (route) => {
-      if (route.request().method() === "GET") {
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify(langfuseState),
-        });
-        return;
-      }
-
-      if (route.request().method() === "PATCH") {
-        const patch = route.request().postDataJSON() as {
-          enabled?: boolean;
-          baseUrl?: string;
-          publicKey?: string;
-          secretKey?: string;
-          environment?: string;
-          clearSecretKey?: boolean;
-        };
-
-        langfuseState.enabled = patch.enabled ?? langfuseState.enabled;
-        langfuseState.baseUrl = patch.baseUrl ?? langfuseState.baseUrl;
-        langfuseState.publicKey = patch.publicKey ?? langfuseState.publicKey;
-        langfuseState.environment = patch.environment ?? langfuseState.environment;
-        if (patch.clearSecretKey === true) {
-          langfuseState.secretKeyConfigured = false;
-        } else if (typeof patch.secretKey === "string" && patch.secretKey.trim().length > 0) {
-          langfuseState.secretKeyConfigured = true;
-        }
-
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify(langfuseState),
-        });
-        return;
-      }
-
-      await route.continue();
-    });
 
     await page.goto(`/${organization.issuePrefix}/dashboard`);
     await page.getByRole("button", { name: "System settings" }).click();
 
     const modal = page.getByTestId("settings-modal-shell");
     const sidebar = modal.getByTestId("workspace-sidebar");
+    const integrationSection = sidebar.getByText("Integrations", { exact: true }).locator("..");
 
-    await sidebar.locator('a[href$="/instance/settings/langfuse"]').click();
-    await expect(page).toHaveURL(/\/instance\/settings\/langfuse$/);
-    await expect(modal.getByRole("heading", { name: "Langfuse", exact: true })).toBeVisible();
-
-    const saveResponse = page.waitForResponse((response) =>
-      response.request().method() === "PATCH"
-      && response.url().includes("/api/instance/settings/langfuse")
-      && response.ok(),
-    );
-
-    await modal.locator("#langfuse-base-url").fill("https://cloud.langfuse.com");
-    await modal.locator("#langfuse-public-key").fill("pk-lf-e2e");
-    await modal.locator("#langfuse-secret-key").fill("sk-lf-e2e");
-    await modal.locator("#langfuse-environment").fill("playwright");
-    await expect(modal.getByText("Automatic trace tags")).toBeVisible();
-    await expect(modal.getByText(/instance:/)).toBeVisible();
-    await expect(modal.getByText(/release:/)).toBeVisible();
-    await modal.getByRole("switch", { name: "Enable Langfuse tracing" }).click();
-    await modal.getByRole("button", { name: "Save Langfuse settings" }).click();
-    await saveResponse;
-
-    await expect(modal.getByRole("heading", { name: "Restart required", exact: true })).toBeVisible();
-
-    await sidebar.locator('a[href$="/instance/settings/general"]').click();
-    await expect(modal.getByRole("heading", { name: "General" })).toBeVisible();
-    await sidebar.locator('a[href$="/instance/settings/langfuse"]').click();
-
-    await expect(modal.locator("#langfuse-base-url")).toHaveValue("https://cloud.langfuse.com");
-    await expect(modal.locator("#langfuse-public-key")).toHaveValue("pk-lf-e2e");
-    await expect(modal.locator("#langfuse-environment")).toHaveValue("playwright");
-    await expect(modal.locator("#langfuse-secret-key")).toHaveValue("");
-    await expect(modal.getByText("A secret key is already stored for this instance.")).toBeVisible();
-  });
-
-  test("gates Langfuse configuration behind Rudder integration install", async ({ page }) => {
-    const orgRes = await page.request.post("/api/orgs", {
-      data: {
-        name: `Langfuse Install Gate ${Date.now()}`,
-      },
-    });
-    expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { issuePrefix: string };
-
-    const initialLangfuse = await page.request.get("/api/instance/settings/langfuse");
-    expect(initialLangfuse.ok()).toBe(true);
-    expect(await initialLangfuse.json()).toEqual(expect.objectContaining({
-      installed: false,
-      managedByEnv: false,
-    }));
-
-    await page.goto(`/${organization.issuePrefix}/dashboard`);
-    await page.getByRole("button", { name: "System settings" }).click();
-
-    const modal = page.getByTestId("settings-modal-shell");
-    const sidebar = modal.getByTestId("workspace-sidebar");
-    await sidebar.locator('a[href$="/instance/settings/langfuse"]').click();
-
-    await expect(modal.getByRole("heading", { name: "Install Rudder Langfuse integration" })).toBeVisible();
-    await expect(modal.getByText(/Langfuse is optional in Rudder/)).toBeVisible();
-    await expect(modal.locator("#langfuse-base-url")).toHaveCount(0);
-
-    const installResponse = page.waitForResponse((response) =>
-      response.request().method() === "POST"
-      && response.url().endsWith("/api/instance/settings/langfuse/install")
-      && response.ok(),
-    );
-    await modal.getByRole("button", { name: "Install integration" }).click();
-    await installResponse;
-
-    await expect(modal.getByRole("heading", { name: "Connection" })).toBeVisible();
-    await expect(modal.locator("#langfuse-base-url")).toHaveValue("http://localhost:3000");
-    await expect(modal.locator("#langfuse-public-key")).toBeVisible();
-    await expect(modal.locator("#langfuse-secret-key")).toBeVisible();
-
-    const installedLangfuse = await page.request.get("/api/instance/settings/langfuse");
-    expect(installedLangfuse.ok()).toBe(true);
-    expect(await installedLangfuse.json()).toEqual(expect.objectContaining({
-      installed: true,
-      managedByEnv: false,
-    }));
-  });
-
-  test("shows Langfuse as env-managed and read-only when runtime env overrides are present", async ({ page }) => {
-    const orgRes = await page.request.post("/api/orgs", {
-      data: {
-        name: `Langfuse Env Managed ${Date.now()}`,
-      },
-    });
-    expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { issuePrefix: string };
-
-    await page.route("**/api/instance/settings/langfuse**", async (route) => {
-      if (route.request().method() !== "GET") {
-        await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "blocked" }) });
-        return;
-      }
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          enabled: true,
-          installed: true,
-          baseUrl: "https://cloud.langfuse.com",
-          publicKey: "pk-lf-env",
-          environment: "env",
-          secretKeyConfigured: true,
-          managedByEnv: true,
-        }),
-      });
-    });
-
-    await page.goto(`/${organization.issuePrefix}/dashboard`);
-    await page.getByRole("button", { name: "System settings" }).click();
-
-    const modal = page.getByTestId("settings-modal-shell");
-    const sidebar = modal.getByTestId("workspace-sidebar");
-    await sidebar.locator('a[href$="/instance/settings/langfuse"]').click();
-
-    await expect(modal.getByText("Managed by environment")).toBeVisible();
-    await expect(modal.locator("#langfuse-base-url")).toBeDisabled();
-    await expect(modal.locator("#langfuse-public-key")).toBeDisabled();
-    await expect(modal.locator("#langfuse-secret-key")).toBeDisabled();
-    await expect(modal.getByRole("button", { name: "Save Langfuse settings" })).toBeDisabled();
+    await expect(integrationSection.getByRole("link", { name: "Plugins", exact: true })).toBeVisible();
+    await expect(integrationSection.getByRole("link")).toHaveCount(1);
   });
 
   test("opens the modal shell immediately and shows a skeleton while profile settings load", async ({ page }) => {

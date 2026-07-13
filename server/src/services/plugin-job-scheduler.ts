@@ -37,7 +37,6 @@
 import type { Db } from "@rudderhq/db";
 import { pluginJobRuns, pluginJobs } from "@rudderhq/db";
 import { and, eq, lte, or } from "drizzle-orm";
-import { observeExecutionEvent, withExecutionObservation } from "../langfuse.js";
 import { logger } from "../middleware/logger.js";
 import { nextCronTick, parseCron, validateCron } from "./cron.js";
 import type { PluginJobStore } from "./plugin-job-store.js";
@@ -365,51 +364,9 @@ export function createPluginJobScheduler(
 
       jobLog.info({ runId: createdRunId }, "dispatching scheduled job");
 
-      await withExecutionObservation(
-        {
-          surface: "plugin_job_run",
-          rootExecutionId: createdRunId,
-          pluginId,
-          trigger: "schedule",
-          status: "running",
-          metadata: {
-            jobId,
-            jobKey,
-            schedule,
-          },
-        },
-        {
-          name: `plugin_job:${jobKey}`,
-          asType: "agent",
-          input: {
-            jobId,
-            jobKey,
-            trigger: "schedule",
-            scheduledAt: (job.nextRunAt ?? new Date()).toISOString(),
-          },
-        },
-        async () => {
-          await observeExecutionEvent(
-            {
-              surface: "plugin_job_run",
-              rootExecutionId: createdRunId,
-              pluginId,
-              trigger: "schedule",
-              status: "dispatching",
-            },
-            {
-              name: "plugin_job.dispatch",
-              asType: "event",
-              metadata: {
-                jobId,
-                jobKey,
-              },
-            },
-          );
+      await jobStore.markRunning(createdRunId);
 
-          await jobStore.markRunning(createdRunId);
-
-          await workerManager.call(
+      await workerManager.call(
             pluginId,
             "runJob",
             {
@@ -423,32 +380,13 @@ export function createPluginJobScheduler(
             jobTimeoutMs,
           );
 
-          const durationMs = Date.now() - startedAt;
-          await jobStore.completeRun(createdRunId, {
-            status: "succeeded",
-            durationMs,
-          });
+      const durationMs = Date.now() - startedAt;
+      await jobStore.completeRun(createdRunId, {
+        status: "succeeded",
+        durationMs,
+      });
 
-          await observeExecutionEvent(
-            {
-              surface: "plugin_job_run",
-              rootExecutionId: createdRunId,
-              pluginId,
-              trigger: "schedule",
-              status: "succeeded",
-            },
-            {
-              name: "plugin_job.completed",
-              asType: "event",
-              output: {
-                durationMs,
-              },
-            },
-          );
-
-          jobLog.info({ runId: createdRunId, durationMs }, "job completed successfully");
-        },
-      );
+      jobLog.info({ runId: createdRunId, durationMs }, "job completed successfully");
     } catch (err) {
       const durationMs = Date.now() - startedAt;
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -466,23 +404,6 @@ export function createPluginJobScheduler(
             error: errorMessage,
             durationMs,
           });
-          await observeExecutionEvent(
-            {
-              surface: "plugin_job_run",
-              rootExecutionId: runId,
-              pluginId,
-              trigger: "schedule",
-              status: "failed",
-            },
-            {
-              name: "plugin_job.failed",
-              asType: "event",
-              output: {
-                durationMs,
-                error: errorMessage,
-              },
-            },
-          );
         } catch (completeErr) {
           jobLog.error(
             {
@@ -587,32 +508,9 @@ export function createPluginJobScheduler(
     const startedAt = Date.now();
 
     try {
-      await withExecutionObservation(
-        {
-          surface: "plugin_job_run",
-          rootExecutionId: runId,
-          pluginId,
-          trigger,
-          status: "running",
-          metadata: {
-            jobId,
-            jobKey,
-          },
-        },
-        {
-          name: `plugin_job:${jobKey}`,
-          asType: "agent",
-          input: {
-            jobId,
-            jobKey,
-            trigger,
-            scheduledAt: new Date().toISOString(),
-          },
-        },
-        async () => {
-          await jobStore.markRunning(runId);
+      await jobStore.markRunning(runId);
 
-          await workerManager.call(
+      await workerManager.call(
             pluginId,
             "runJob",
             {
@@ -626,32 +524,13 @@ export function createPluginJobScheduler(
             jobTimeoutMs,
           );
 
-          const durationMs = Date.now() - startedAt;
-          await jobStore.completeRun(runId, {
-            status: "succeeded",
-            durationMs,
-          });
+      const durationMs = Date.now() - startedAt;
+      await jobStore.completeRun(runId, {
+        status: "succeeded",
+        durationMs,
+      });
 
-          await observeExecutionEvent(
-            {
-              surface: "plugin_job_run",
-              rootExecutionId: runId,
-              pluginId,
-              trigger,
-              status: "succeeded",
-            },
-            {
-              name: "plugin_job.completed",
-              asType: "event",
-              output: {
-                durationMs,
-              },
-            },
-          );
-
-          jobLog.info({ durationMs }, "manual job completed successfully");
-        },
-      );
+      jobLog.info({ durationMs }, "manual job completed successfully");
     } catch (err) {
       const durationMs = Date.now() - startedAt;
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -663,23 +542,6 @@ export function createPluginJobScheduler(
           error: errorMessage,
           durationMs,
         });
-        await observeExecutionEvent(
-          {
-            surface: "plugin_job_run",
-            rootExecutionId: runId,
-            pluginId,
-            trigger,
-            status: "failed",
-          },
-          {
-            name: "plugin_job.failed",
-            asType: "event",
-            output: {
-              durationMs,
-              error: errorMessage,
-            },
-          },
-        );
       } catch (completeErr) {
         jobLog.error(
           {

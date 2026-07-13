@@ -46,7 +46,6 @@ import {
   resolveRudderInstanceId,
   resolveRudderInstanceRoot,
 } from "./home-paths.js";
-import { initializeLangfuse, shutdownLangfuse } from "./langfuse.js";
 import {
   gracefullyStopRuntime,
   probeLocalRuntime,
@@ -377,17 +376,6 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     process.env.RUDDER_RUNTIME_OWNER_KIND = runtimeOwnerKind;
   }
   const config = mergeRuntimeConfig(loadConfig(), options.runtimeOverrides);
-  initializeLangfuse({
-    enabled: config.langfuse.enabled,
-    baseUrl: config.langfuse.baseUrl,
-    publicKey: config.langfuse.publicKey,
-    secretKey: config.langfuse.secretKey,
-    environment: config.langfuse.environment,
-    instanceId,
-    deploymentMode: config.deploymentMode,
-    localEnv,
-    release: serverVersion,
-  });
   if (process.env.RUDDER_SECRETS_PROVIDER === undefined) {
     process.env.RUDDER_SECRETS_PROVIDER = config.secretsProvider;
   }
@@ -1374,11 +1362,6 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
         await appHandle?.close();
       } catch (err) {
         logger.warn({ err }, "App cleanup failed during shutdown");
-      }
-      try {
-        await shutdownLangfuse();
-      } catch (err) {
-        logger.warn({ err }, "Langfuse cleanup failed during shutdown");
       }
       if (embeddedPostgres && embeddedPostgresStartedByThisProcess) {
         try {

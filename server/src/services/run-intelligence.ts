@@ -1,7 +1,6 @@
 import type { Db } from "@rudderhq/db";
 import { agentConfigRevisions, agents, heartbeatRunEvents, heartbeatRuns, issues, organizations } from "@rudderhq/db";
 import {
-  buildLangfuseRunScores,
   diagnoseRun,
   observedRunFromFilesystem,
   type ObservedRunDetail,
@@ -15,7 +14,6 @@ import type { HeartbeatRun, HeartbeatRunEvent } from "@rudderhq/shared";
 import { and, asc, desc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { notFound } from "../errors.js";
-import { getExecutionLangfuseLink } from "../langfuse.js";
 import { resolveHeartbeatRunIdReference } from "./heartbeat-run-reference.js";
 import { getRunLogStore } from "./run-log-store.js";
 
@@ -255,7 +253,6 @@ async function serializeRunRow(
     orgName: row.orgName,
     issue: row.issueId ? issueMap.get(row.issueId) ?? null : null,
     bundle: resolveBundleForRun(row, revisionsByAgentId),
-    langfuse: await getExecutionLangfuseLink(row.id),
     errorSummary,
     skillEvidence: skillEvidenceMap?.get(row.id) ?? null,
   };
@@ -529,14 +526,5 @@ export async function diagnoseObservedRun(
   return {
     detail,
     diagnosis: diagnoseRun(detail, mode),
-  };
-}
-
-export async function buildObservedRunLangfuseScores(db: Db, runId: string) {
-  const { detail, diagnosis } = await diagnoseObservedRun(db, runId);
-  return {
-    detail,
-    diagnosis,
-    scores: buildLangfuseRunScores(detail, diagnosis),
   };
 }

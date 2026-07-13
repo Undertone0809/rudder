@@ -3,7 +3,6 @@ import { activityLog, agents, costEvents, costMonthlySpendRollups, issues, organ
 import { ADDITIONAL_CACHED_INPUT_TOKEN_PROVIDERS } from "@rudderhq/shared";
 import { and, desc, eq, gte, isNotNull, lt, lte, or, sql, type SQLWrapper } from "drizzle-orm";
 import { notFound, unprocessable } from "../errors.js";
-import { observeExecutionEvent } from "../langfuse.js";
 import { budgetService, type BudgetServiceHooks } from "./budgets.js";
 
 export interface CostDateRange {
@@ -304,41 +303,6 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
       });
 
       await budgets.evaluateCostEvent(event);
-
-      if (event.heartbeatRunId) {
-        void observeExecutionEvent(
-          {
-            surface: "cost_event",
-            rootExecutionId: event.heartbeatRunId,
-            orgId,
-            agentId: event.agentId,
-            issueId: event.issueId ?? null,
-            status: event.billingType ?? event.provider,
-            metadata: {
-              costEventId: event.id,
-              provider: event.provider,
-              model: event.model,
-              billingType: event.billingType,
-            },
-          },
-          {
-            name: "cost.ingested",
-            asType: "event",
-            input: {
-              costCents: event.costCents,
-              inputTokens: event.inputTokens,
-              cachedInputTokens: event.cachedInputTokens,
-              outputTokens: event.outputTokens,
-            },
-            metadata: {
-              provider: event.provider,
-              model: event.model,
-              billingType: event.billingType,
-              biller: event.biller,
-            },
-          },
-        ).catch(() => {});
-      }
 
       return event;
     },

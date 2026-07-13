@@ -4,7 +4,6 @@ import type { WorkspaceOperation, WorkspaceOperationPhase, WorkspaceOperationSta
 import { and, asc, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { notFound } from "../errors.js";
-import { withExecutionObservation } from "../langfuse.js";
 import { redactCurrentUserText, redactCurrentUserValue } from "../log-redaction.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { getWorkspaceOperationLogStore } from "./workspace-operation-log-store.js";
@@ -152,34 +151,7 @@ export function workspaceOperationService(db: Db) {
           });
           createdIds.push(id);
 
-          return withExecutionObservation(
-            {
-              surface: "workspace_operation",
-              rootExecutionId: input.heartbeatRunId ?? id,
-              orgId: input.orgId,
-              sessionKey: executionWorkspaceId,
-              status: "running",
-              metadata: {
-                operationId: id,
-                phase: recordInput.phase,
-                command: recordInput.command ?? null,
-                executionWorkspaceId,
-                standalone: input.heartbeatRunId == null,
-              },
-            },
-            {
-              name: input.heartbeatRunId
-                ? `workspace.${recordInput.phase}`
-                : `workspace_operation:${recordInput.phase}:${id}`,
-              asType: "tool",
-              input: {
-                command: recordInput.command ?? null,
-                cwd: recordInput.cwd ?? null,
-              },
-              metadata: recordInput.metadata ?? undefined,
-            },
-            async () => {
-              try {
+          try {
                 const result = await recordInput.run();
                 await append("system", result.system ?? null);
                 await append("stdout", result.stdout ?? null);
@@ -228,9 +200,7 @@ export function workspaceOperationService(db: Db) {
                   })
                   .where(eq(workspaceOperations.id, id));
                 throw error;
-              }
-            },
-          );
+          }
         },
       };
     },

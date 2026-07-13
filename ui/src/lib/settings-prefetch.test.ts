@@ -37,7 +37,6 @@ vi.mock("@/api/instanceSettings", () => ({
   instanceSettingsApi: {
     getGeneral: vi.fn(async () => ({ locale: "en" })),
     getBrowser: vi.fn(async () => ({ enabled: true, openLinksIn: "built_in" })),
-    getLangfuse: vi.fn(async () => ({})),
     getNotifications: vi.fn(async () => ({})),
     getProfile: vi.fn(async () => ({ nickname: "", moreAboutYou: "" })),
     getShortcuts: vi.fn(async () => ({ shortcuts: [] })),
@@ -87,12 +86,6 @@ describe("listSettingsPrefetchQueryKeys", () => {
       ["access", "current-board-access"],
       ["organizations"],
       ["instance", "profile-settings"],
-    ]);
-
-    expect(listSettingsPrefetchQueryKeys("/instance/settings/langfuse", "org_123")).toEqual([
-      ["access", "current-board-access"],
-      ["organizations"],
-      ["instance", "langfuse-settings"],
     ]);
 
     expect(listSettingsPrefetchQueryKeys("/instance/settings/notifications", "org_123")).toEqual([

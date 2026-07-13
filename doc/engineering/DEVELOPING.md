@@ -477,7 +477,6 @@ For isolated untrusted PR review container workflow: `doc/engineering/UNTRUSTED-
 
 Use these focused docs for detailed operations and full command references:
 
-- Langfuse local observability/eval setup and verification: `doc/engineering/LANGFUSE.md`
 - OpenClaw onboarding endpoints and smoke scripts: `doc/engineering/OPENCLAW_ONBOARDING.md`
 - Desktop runtime/packaging behavior: `doc/engineering/DESKTOP.md`
 - CLI command reference: `doc/engineering/CLI.md`

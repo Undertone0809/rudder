@@ -8,7 +8,6 @@ import {
   type AuthBaseUrlMode,
   type DeploymentExposure,
   type DeploymentMode,
-  type LangfuseConfig,
   type SecretProvider,
   type StorageProvider,
 } from "@rudderhq/shared";
@@ -23,7 +22,7 @@ import {
   resolveDefaultStorageDir,
   resolveHomeAwarePath,
 } from "./home-paths.js";
-import { resolveEffectiveLocalEnvName, resolveLangfuseEnvironmentName } from "./local-runtime.js";
+import { resolveEffectiveLocalEnvName } from "./local-runtime.js";
 import { resolveRudderEnvPath } from "./paths.js";
 
 function loadEnvFileWithoutOverride(filePath: string, blockedKeys?: ReadonlySet<string>): void {
@@ -72,10 +71,6 @@ function loadDistinctEnvFileWithoutOverride(
 
   loadEnvFileWithoutOverride(filePath, blockedKeys);
   loadedPaths.add(filePath);
-}
-
-function hasNonEmptyEnv(key: string): boolean {
-  return (process.env[key]?.trim() ?? "").length > 0;
 }
 
 const RUDDER_ENV_FILE_PATH = resolveRudderEnvPath();
@@ -133,14 +128,6 @@ export interface Config {
   heartbeatRunTimeoutMs: number;
   heartbeatRunInactivityTimeoutMs: number;
   companyDeletionEnabled: boolean;
-  langfuse: {
-    installed: boolean;
-    enabled: boolean;
-    baseUrl: string;
-    publicKey: string | undefined;
-    secretKey: string | undefined;
-    environment: string | undefined;
-  };
 }
 
 function parsePositiveInt(rawValue: string | undefined): number | null {
@@ -315,30 +302,6 @@ export function loadConfig(): Config {
   const embeddedPostgresPort = parsePositiveInt(process.env.RUDDER_EMBEDDED_POSTGRES_PORT)
     ?? fileConfig?.database.embeddedPostgresPort
     ?? 54329;
-  const langfuseEnabled = process.env.LANGFUSE_ENABLED === "true";
-  const fileLangfuse = fileConfig?.langfuse as LangfuseConfig | undefined;
-  const langfuseBaseUrl = process.env.LANGFUSE_BASE_URL?.trim() || fileLangfuse?.baseUrl?.trim() || "http://localhost:3000";
-  const langfusePublicKey = process.env.LANGFUSE_PUBLIC_KEY?.trim() || fileLangfuse?.publicKey?.trim() || undefined;
-  const langfuseSecretKey = process.env.LANGFUSE_SECRET_KEY?.trim() || fileLangfuse?.secretKey?.trim() || undefined;
-  const langfuseInstalled =
-    fileLangfuse?.installed
-    ?? Boolean(
-      fileLangfuse?.enabled
-        || fileLangfuse?.publicKey?.trim()
-        || fileLangfuse?.secretKey?.trim()
-        || fileLangfuse?.environment?.trim()
-        || hasNonEmptyEnv("LANGFUSE_ENABLED")
-        || hasNonEmptyEnv("LANGFUSE_BASE_URL")
-        || hasNonEmptyEnv("LANGFUSE_PUBLIC_KEY")
-        || hasNonEmptyEnv("LANGFUSE_SECRET_KEY")
-        || hasNonEmptyEnv("LANGFUSE_ENVIRONMENT"),
-    );
-  const langfuseEnvironment =
-    resolveLangfuseEnvironmentName(
-      process.env.LANGFUSE_ENVIRONMENT?.trim() || fileLangfuse?.environment?.trim(),
-      localEnv,
-    ) ?? undefined;
-
   const heartbeatRunTimeoutMsValue = process.env.HEARTBEAT_RUN_TIMEOUT_MS?.trim();
   const heartbeatRunTimeoutMsRaw = Number(heartbeatRunTimeoutMsValue);
   const heartbeatRunTimeoutMs =
@@ -401,15 +364,5 @@ export function loadConfig(): Config {
     heartbeatRunTimeoutMs,
     heartbeatRunInactivityTimeoutMs,
     companyDeletionEnabled,
-    langfuse: {
-      installed: langfuseInstalled,
-      enabled: hasNonEmptyEnv("LANGFUSE_ENABLED")
-        ? langfuseEnabled
-        : (fileLangfuse?.enabled ?? false),
-      baseUrl: langfuseBaseUrl,
-      publicKey: langfusePublicKey,
-      secretKey: langfuseSecretKey,
-      environment: langfuseEnvironment,
-    },
   };
 }

@@ -1,4 +1,3 @@
-import type { LangfuseObservation } from "@langfuse/tracing";
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
 import {
@@ -14,23 +13,13 @@ import {
   type ChatAttachment,
   type ChatContextLink,
   type ChatConversation,
-  type ChatMessage,
-  type ExecutionObservabilityContext,
-  type ExecutionObservabilitySurface
+  type ChatMessage
 } from "@rudderhq/shared";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
-import type { AgentRuntimeInvocationMeta } from "../agent-runtimes/index.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { conflict, forbidden, HttpError, unauthorized, unprocessable } from "../errors.js";
-import { emitExecutionTranscriptTree } from "../langfuse-transcript.js";
-import {
-  observeExecutionEvent,
-  updateExecutionObservation,
-  updateExecutionTraceIO,
-  withExecutionObservation,
-} from "../langfuse.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import { assertTimeZone } from "../services/automations.scheduler.js";
@@ -69,8 +58,6 @@ import {
   productIntelligenceService,
   projectService,
 } from "../services/index.js";
-import { sanitizeStartupContextPromptForPersistence } from "../services/runtime-kernel/heartbeat.core.js";
-import { summarizeRuntimeSkillsForTrace } from "../services/runtime-trace-metadata.js";
 import {
   runtimeResultText,
   sanitizeGeneratedTitle,
@@ -248,154 +235,6 @@ export function chatRoutes(db: Db, storage: StorageService) {
       throw forbidden("Missing permission: tasks:assign");
     }
     throw unauthorized();
-  }
-
-  function buildChatObservabilityContext(
-    conversation: ChatConversation,
-    input: {
-      surface?: ExecutionObservabilitySurface;
-      rootExecutionId: string;
-      trigger: string;
-      runtime?: string | null;
-      status?: string | null;
-      issueId?: string | null;
-      metadata?: Record<string, unknown> | null;
-    },
-  ): ExecutionObservabilityContext {
-    return {
-      surface: input.surface ?? "chat_action",
-      rootExecutionId: input.rootExecutionId,
-      orgId: conversation.orgId,
-      agentId: conversation.preferredAgentId ?? null,
-      issueId: input.issueId ?? conversation.primaryIssueId ?? null,
-      sessionKey: conversation.id,
-      runtime: input.runtime ?? null,
-      trigger: input.trigger,
-      status: input.status ?? null,
-      metadata: {
-        conversationId: conversation.id,
-        ...(input.metadata ?? {}),
-      },
-    };
-  }
-
-  async function withChatObservation<T>(
-    context: ExecutionObservabilityContext,
-    input: {
-      name: string;
-      asType?: "span" | "agent" | "generation" | "tool" | "chain" | "retriever" | "evaluator" | "guardrail" | "embedding";
-      input?: unknown;
-      metadata?: Record<string, unknown>;
-    },
-    fn: (observation: LangfuseObservation | null) => Promise<T>,
-  ) {
-    let executionError: unknown = null;
-    try {
-      return await withExecutionObservation(context, input, async (observation) => {
-        try {
-          return await fn(observation);
-        } catch (error) {
-          executionError = error;
-          throw error;
-        }
-      });
-    } catch (error) {
-      if (executionError && error === executionError) {
-        throw error;
-      }
-      logger.warn(
-        {
-          rootExecutionId: context.rootExecutionId,
-          trigger: context.trigger,
-          err: error instanceof Error ? error.message : String(error),
-        },
-        "Failed to emit Langfuse chat observation",
-      );
-      return fn(null);
-    }
-  }
-
-  async function emitChatObservationEvent(
-    context: ExecutionObservabilityContext,
-    input: Parameters<typeof observeExecutionEvent>[1],
-  ) {
-    try {
-      await observeExecutionEvent(context, input);
-    } catch (error) {
-      logger.warn(
-        {
-          rootExecutionId: context.rootExecutionId,
-          eventName: input.name,
-          err: error instanceof Error ? error.message : String(error),
-        },
-        "Failed to emit Langfuse chat event",
-      );
-    }
-  }
-
-  function summarizeChatObservationMessages(messages: ChatMessage[]) {
-    const proposalMessage = messages.find(
-      (message) => message.kind === "issue_proposal" || message.kind === "operation_proposal",
-    );
-    const systemEventMessage = messages.find((message) => message.kind === "system_event");
-    const systemPayload =
-      systemEventMessage?.structuredPayload && typeof systemEventMessage.structuredPayload === "object"
-        ? (systemEventMessage.structuredPayload as Record<string, unknown>)
-        : null;
-
-    return {
-      createdMessageIds: messages.map((message) => message.id),
-      assistantKind: proposalMessage?.kind ?? messages.find((message) => message.role === "assistant")?.kind ?? null,
-      approvalId: proposalMessage?.approvalId ?? null,
-      issueId: typeof systemPayload?.issueId === "string" ? systemPayload.issueId : null,
-      issueIdentifier: typeof systemPayload?.issueIdentifier === "string" ? systemPayload.issueIdentifier : null,
-      eventType: typeof systemPayload?.eventType === "string" ? systemPayload.eventType : null,
-    };
-  }
-
-  function modelTurnInputFromInvocationMeta(invocationMeta: AgentRuntimeInvocationMeta) {
-    const prompt = sanitizeStartupContextPromptForPersistence(invocationMeta.prompt);
-    return typeof prompt === "string" && prompt.trim().length > 0
-      ? prompt
-      : undefined;
-  }
-
-  function buildChatTraceInput(
-    input: {
-      conversationId: string;
-      body: string;
-      userMessageId: string;
-    },
-    invocationMeta?: AgentRuntimeInvocationMeta | null,
-  ) {
-    return {
-      conversationId: input.conversationId,
-      body: input.body,
-      userMessageId: input.userMessageId,
-      instruction:
-        typeof invocationMeta?.prompt === "string" && invocationMeta.prompt.trim().length > 0
-          ? sanitizeStartupContextPromptForPersistence(invocationMeta.prompt)
-          : null,
-      promptMetrics: invocationMeta?.promptMetrics ?? null,
-    };
-  }
-
-  function mergeChatInvocationTraceMetadata(
-    context: ExecutionObservabilityContext,
-    invocationMeta: AgentRuntimeInvocationMeta,
-  ) {
-    context.metadata = {
-      ...(context.metadata ?? {}),
-      runtimeAgentType: invocationMeta.agentRuntimeType,
-      runtimeCommand: invocationMeta.command,
-      runtimeCwd: invocationMeta.cwd ?? null,
-      runtimeCommandNotes: invocationMeta.commandNotes ?? [],
-      runtimePromptMetrics: invocationMeta.promptMetrics ?? null,
-      runtimePromptCaptured: typeof invocationMeta.prompt === "string" && invocationMeta.prompt.length > 0,
-      ...(Array.isArray(invocationMeta.loadedSkills)
-        ? summarizeRuntimeSkillsForTrace(invocationMeta.loadedSkills)
-        : {}),
-    };
   }
 
   async function logChatMessagesAdded(
@@ -1681,7 +1520,6 @@ export function chatRoutes(db: Db, storage: StorageService) {
       return;
     }
 
-    let chatObservation: ExecutionObservabilityContext | null = null;
     try {
       const userMessage = await addUserMessage(
         conversation as ChatConversation,
@@ -1693,39 +1531,11 @@ export function chatRoutes(db: Db, storage: StorageService) {
         startChatTitleGeneration(conversation as ChatConversation, userMessage);
       }
       const turnContext = turnContextFromUserMessage(userMessage);
-      chatObservation = buildChatObservabilityContext(conversation as ChatConversation, {
-        surface: "chat_turn",
-        rootExecutionId: turnContext.chatTurnId,
-        trigger: "assistant_reply",
-        runtime: assistantAvailability.agentRuntimeType ?? null,
-        metadata: {
-          stream: false,
-          userMessageId: userMessage.id,
-          editUserMessageId: req.body.editUserMessageId ?? null,
-        },
-      });
-      const traceInputBase = {
-        conversationId: conversation.id,
-        body: req.body.body,
-        userMessageId: userMessage.id,
-      };
-      let currentChatTraceInput = buildChatTraceInput(traceInputBase);
       let activeChatRunId: string | null = null;
-      const persistedAssistantMessages = await withChatObservation(
-        chatObservation,
-        {
-          name: "chat_turn",
-          asType: "agent",
-          input: currentChatTraceInput,
-        },
-        async (observation) => {
+      const persistedAssistantMessages = await (async () => {
           const assistantInput = await loadAssistantInput(conversation as ChatConversation, actor);
           const transcript: TranscriptEntry[] = [];
-          const observedTranscript: TranscriptEntry[] = [];
-          let modelTurnInput: unknown;
           let fallbackOutput: string | null = null;
-          let finalChatOutput: string | null = null;
-          let finalChatStatus: "completed" | "failed" = "completed";
           try {
             const streamed = await assistantSvc.streamChatAssistantReply({
               ...assistantInput,
@@ -1736,25 +1546,12 @@ export function chatRoutes(db: Db, storage: StorageService) {
               onRunCreated: (runId) => {
                 activeChatRunId = runId;
               },
-              onInvocationMeta: async (meta) => {
-                modelTurnInput = modelTurnInputFromInvocationMeta(meta);
-                currentChatTraceInput = buildChatTraceInput(traceInputBase, meta);
-                mergeChatInvocationTraceMetadata(chatObservation!, meta);
-                updateExecutionObservation(observation, chatObservation!, {
-                  input: currentChatTraceInput,
-                });
-                updateExecutionTraceIO(observation, { input: currentChatTraceInput });
-              },
               onTranscriptEntry: async (entry) => {
                 transcript.push(entry);
-              },
-              onObservedTranscriptEntry: async (entry) => {
-                observedTranscript.push(entry);
               },
             });
             fallbackOutput = streamed.partialBody;
             if (streamed.outcome !== "completed") {
-              finalChatStatus = "failed";
               throw new Error("Chat assistant reply was stopped before completion");
             }
             const created = await persistAssistantReply(
@@ -1769,20 +1566,10 @@ export function chatRoutes(db: Db, storage: StorageService) {
               activeChatRunId,
             );
             await linkChatRunMessages(assistantInput.conversation, activeChatRunId, created);
-            finalChatOutput = streamed.reply.body;
             await logChatMessagesAdded(assistantInput.conversation, created, {
               actorType: "system",
               actorId: "chat-assistant",
               agentId: streamed.replyingAgentId,
-            });
-            const summary = summarizeChatObservationMessages(created);
-            await emitChatObservationEvent(chatObservation!, {
-              name: "chat.reply.persisted",
-              metadata: {
-                transcriptEntries: transcript.length,
-                observedTranscriptEntries: observedTranscript.length,
-                ...summary,
-              },
             });
             return created;
           } catch (error) {
@@ -1790,8 +1577,6 @@ export function chatRoutes(db: Db, storage: StorageService) {
               fallbackOutput = userVisiblePartialBodyFromError(error);
               const failurePayload = recoverableFailurePayload(error, activeChatRunId);
               const failureBody = fallbackOutput || recoverableFailureBody(failurePayload) || CHAT_ASSISTANT_USER_ERROR_MESSAGE;
-              const failure = failurePayload?.recoverableFailure as Record<string, unknown> | undefined;
-              const failureCode = typeof failure?.code === "string" ? failure.code : "chat_runtime_exception";
               const failedMessage = await persistPartialAssistantMessage(
                 assistantInput.conversation,
                 failureBody,
@@ -1812,85 +1597,15 @@ export function chatRoutes(db: Db, storage: StorageService) {
                   agentId: chatReplyingAgentId(assistantInput.conversation),
                 });
               }
-              await emitChatObservationEvent(chatObservation!, {
-                name: "chat.reply.failed",
-                level: "ERROR",
-                metadata: {
-                  failedMessageId: failedMessage?.id ?? null,
-                  runId: activeChatRunId,
-                  errorCode: failureCode,
-                  transcriptEntries: transcript.length,
-                  observedTranscriptEntries: observedTranscript.length,
-                  error: error.message,
-                },
-                statusMessage: failureCode,
-              });
               fallbackOutput = failureBody;
-              finalChatStatus = "failed";
               return failedMessages;
             }
-            finalChatStatus = "failed";
             throw error;
-          } finally {
-            try {
-              const observationFallbackOutput = finalChatOutput
-                || fallbackOutput
-                || (finalChatStatus === "failed" ? CHAT_ASSISTANT_USER_ERROR_MESSAGE : null);
-              const transcriptStats = emitExecutionTranscriptTree({
-                context: chatObservation!,
-                parentObservation: observation,
-                transcript: observedTranscript,
-                initialTurnInput: modelTurnInput,
-                fallbackResult: observationFallbackOutput
-                  ? {
-                    output: observationFallbackOutput,
-                    subtype: finalChatStatus,
-                    isError: finalChatStatus === "failed",
-                  }
-                  : null,
-              });
-              finalChatOutput = finalChatOutput
-                || fallbackOutput
-                || (finalChatStatus === "failed" ? observationFallbackOutput : transcriptStats.finalOutput)
-                || null;
-            } catch (error) {
-              logger.warn(
-                {
-                  rootExecutionId: chatObservation!.rootExecutionId,
-                  err: error instanceof Error ? error.message : String(error),
-                },
-                "Failed to export chat transcript tree to Langfuse",
-              );
-            }
-            updateExecutionObservation(observation, {
-              ...chatObservation!,
-              status: finalChatStatus,
-            }, {
-              input: currentChatTraceInput,
-              output: finalChatOutput,
-              level: finalChatStatus === "failed" ? "ERROR" : "DEFAULT",
-              statusMessage: finalChatStatus,
-            });
-            updateExecutionTraceIO(observation, {
-              input: currentChatTraceInput,
-              output: finalChatOutput,
-            });
           }
-        },
-      );
+      })();
       const createdMessages: ChatMessage[] = [userMessage, ...persistedAssistantMessages];
       res.status(201).json({ messages: createdMessages });
     } catch (err) {
-      if (chatObservation) {
-        await emitChatObservationEvent(chatObservation, {
-          name: "chat.reply.failed",
-          level: "ERROR",
-          metadata: {
-            error: err instanceof Error ? err.message : String(err),
-          },
-          statusMessage: err instanceof Error ? err.message : "chat_reply_failed",
-        });
-      }
       logger.warn({ err, conversationId: conversation.id }, "chat assistant reply failed");
       if (err instanceof HttpError) {
         throw err;
@@ -1925,13 +1640,6 @@ export function chatRoutes(db: Db, storage: StorageService) {
     isMultipartRequest,
     uploadedMessageFiles,
     validateUploadedMessageFiles,
-    buildChatObservabilityContext,
-    withChatObservation,
-    emitChatObservationEvent,
-    summarizeChatObservationMessages,
-    modelTurnInputFromInvocationMeta,
-    buildChatTraceInput,
-    mergeChatInvocationTraceMetadata,
     logChatMessagesAdded,
     assertContextLinksBelongToCompany,
     turnContextFromUserMessage,

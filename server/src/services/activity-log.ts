@@ -3,7 +3,6 @@ import { activityLog } from "@rudderhq/db";
 import type { PluginEvent } from "@rudderhq/plugin-sdk";
 import { PLUGIN_EVENT_TYPES, type PluginEventType } from "@rudderhq/shared";
 import { randomUUID } from "node:crypto";
-import { observeExecutionEvent } from "../langfuse.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { logger } from "../middleware/logger.js";
 import { sanitizeRecord } from "../redaction.js";
@@ -13,7 +12,6 @@ import type { PluginEventBus } from "./plugin-event-bus.js";
 import { isPostgresError } from "./postgres-errors.js";
 
 const PLUGIN_EVENT_SET: ReadonlySet<string> = new Set(PLUGIN_EVENT_TYPES);
-const LANGFUSE_ACTIVITY_EXPORT_ALLOWLIST: ReadonlySet<string> = new Set();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ACTIVITY_RUN_ID_FK_CONSTRAINT = "activity_log_run_id_heartbeat_runs_id_fk";
 
@@ -37,16 +35,6 @@ export interface LogActivityInput {
   agentId?: string | null;
   runId?: string | null;
   details?: Record<string, unknown> | null;
-}
-
-function shouldExportActivityToLangfuse(
-  input: LogActivityInput,
-): input is LogActivityInput & { runId: string } {
-  // Keep activity in Rudder's audit log by default. Exporting every mutation to Langfuse
-  // creates low-signal traces that are detached from actual runtime/model execution.
-  return typeof input.runId === "string"
-    && input.runId.trim().length > 0
-    && LANGFUSE_ACTIVITY_EXPORT_ALLOWLIST.has(input.action);
 }
 
 function normalizeHeartbeatRunId(runId: string | null | undefined): string | null {
@@ -110,37 +98,6 @@ export async function logActivity(db: Db, input: LogActivityInput) {
       details: redactedDetails,
     },
   });
-
-  const persistedInput = { ...input, runId: persistedRunId };
-  if (shouldExportActivityToLangfuse(persistedInput)) {
-    void observeExecutionEvent(
-      {
-        surface: "activity_mutation",
-        rootExecutionId: persistedInput.runId,
-        orgId: input.orgId,
-        agentId: input.agentId ?? null,
-        issueId: typeof redactedDetails?.issueId === "string" ? redactedDetails.issueId : null,
-        status: input.action,
-        metadata: {
-          actorType: input.actorType,
-          actorId: input.actorId,
-          entityType: input.entityType,
-          entityId: input.entityId,
-        },
-      },
-      {
-        name: `activity.${input.action}`,
-        asType: "event",
-        input: redactedDetails,
-        metadata: {
-          entityType: input.entityType,
-          entityId: input.entityId,
-        },
-      },
-    ).catch((error) => {
-      logger.warn({ err: error instanceof Error ? error.message : String(error), runId: persistedRunId }, "Failed to emit Langfuse activity event");
-    });
-  }
 
   if (_pluginEventBus && PLUGIN_EVENT_SET.has(input.action)) {
     const event: PluginEvent = {

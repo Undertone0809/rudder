@@ -53,10 +53,6 @@ beforeEach(() => {
       agentConfigFingerprint: null,
       runtimeConfigFingerprint: null,
     },
-    langfuse: {
-      traceId: "trace-1",
-      traceUrl: "http://localhost:3000/project/test/traces/trace-1",
-    },
   });
   mockGetObservedRunDetail.mockResolvedValue({
     run: {
@@ -78,7 +74,6 @@ beforeEach(() => {
       agentConfigFingerprint: null,
       runtimeConfigFingerprint: null,
     },
-    langfuse: null,
     events: [],
     logContent: null,
     logChunks: [],
@@ -92,36 +87,6 @@ beforeEach(() => {
 });
 
 describe("run intelligence routes", () => {
-  it("returns Langfuse deep links on list responses", async () => {
-    mockListObservedRuns.mockResolvedValue([
-      {
-        run: { id: "run-1", orgId: "org-1" },
-        agentName: "Agent",
-        orgName: "Org",
-        issue: null,
-        bundle: {
-          agentRuntimeType: "process",
-          agentConfigRevisionId: null,
-          agentConfigRevisionCreatedAt: null,
-          agentConfigFingerprint: null,
-          runtimeConfigFingerprint: null,
-        },
-        langfuse: {
-          traceId: "trace-1",
-          traceUrl: "http://localhost:3000/project/test/traces/trace-1",
-        },
-      },
-    ]);
-
-    const res = await request(createApp()).get("/api/run-intelligence/orgs/org-1/runs");
-
-    expect(res.status).toBe(200);
-    expect(res.body[0]?.langfuse).toEqual({
-      traceId: "trace-1",
-      traceUrl: "http://localhost:3000/project/test/traces/trace-1",
-    });
-  });
-
   it("passes used skill filters to run list queries", async () => {
     mockListObservedRuns.mockResolvedValue([
       {
@@ -145,7 +110,6 @@ describe("run intelligence routes", () => {
           sourceEventCreatedAt: "2026-06-11T00:00:02.000Z",
         },
         errorSummary: null,
-        langfuse: null,
       },
     ]);
 
@@ -195,7 +159,6 @@ describe("run intelligence routes", () => {
         agentConfigFingerprint: null,
         runtimeConfigFingerprint: null,
       },
-      langfuse: null,
     });
 
     const res = await request(createApp()).get("/api/run-intelligence/runs/run-2");
@@ -308,7 +271,6 @@ describe("run intelligence routes", () => {
         agentConfigFingerprint: null,
         runtimeConfigFingerprint: null,
       },
-      langfuse: null,
       events: [],
       logContent: null,
       logChunks: [],
@@ -353,7 +315,6 @@ describe("run intelligence routes", () => {
         agentConfigFingerprint: null,
         runtimeConfigFingerprint: null,
       },
-      langfuse: null,
       events: [],
       logContent: null,
       logChunks: [],

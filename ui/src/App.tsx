@@ -56,7 +56,6 @@ import { InstanceAboutSettings } from "./pages/InstanceAboutSettings";
 import { InstanceAppearanceSettings } from "./pages/InstanceAppearanceSettings";
 import { InstanceBrowserSettings } from "./pages/InstanceBrowserSettings";
 import { InstanceGeneralSettings } from "./pages/InstanceGeneralSettings";
-import { InstanceLangfuseSettings } from "./pages/InstanceLangfuseSettings";
 import { InstanceNotificationsSettings } from "./pages/InstanceNotificationsSettings";
 import { InstanceProfileSettings } from "./pages/InstanceProfileSettings";
 import { InstanceSettings } from "./pages/InstanceSettings";
@@ -573,7 +572,6 @@ export function App() {
               }
             />
             <Route path="notifications" element={<InstanceNotificationsSettings />} />
-            <Route path="langfuse" element={<InstanceLangfuseSettings />} />
             <Route path="about" element={<InstanceAboutSettings />} />
             <Route path="heartbeats" element={<InstanceSettings />} />
             <Route path="plugins" element={<PluginManager />} />
@@ -644,7 +642,6 @@ export function App() {
                 }
               />
               <Route path="notifications" element={<InstanceNotificationsSettings />} />
-              <Route path="langfuse" element={<InstanceLangfuseSettings />} />
               <Route path="about" element={<InstanceAboutSettings />} />
               <Route path="heartbeats" element={<InstanceSettings />} />
               <Route path="plugins" element={<PluginManager />} />

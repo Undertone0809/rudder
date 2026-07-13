@@ -316,7 +316,6 @@ async function startServer() {
         RUDDER_HOME: HOME_DIR,
         RUDDER_INSTANCE_ID: INSTANCE_ID,
         RUDDER_UI_DEV_MIDDLEWARE: "true",
-        LANGFUSE_ENABLED: "false",
       },
       stdio: "pipe",
     },

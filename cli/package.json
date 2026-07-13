@@ -45,7 +45,6 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@langfuse/client": "^5.1.0",
     "@rudderhq/agent-runtime-claude-local": "workspace:*",
     "@rudderhq/agent-runtime-codex-local": "workspace:*",
     "@rudderhq/agent-runtime-cursor-local": "workspace:*",

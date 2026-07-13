@@ -1,4 +1,3 @@
-import type { LangfuseObservation } from "@langfuse/tracing";
 import { issueLabels, issues, labels, type Db } from "@rudderhq/db";
 import {
   addApprovalCommentSchema,
@@ -6,12 +5,10 @@ import {
   requestApprovalRevisionSchema,
   resolveApprovalSchema,
   resubmitApprovalSchema,
-  type ExecutionObservabilityContext,
 } from "@rudderhq/shared";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { Router, type Request } from "express";
 import { forbidden, unprocessable } from "../errors.js";
-import { observeExecutionEvent, withExecutionObservation } from "../langfuse.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import { redactEventPayload } from "../redaction.js";
@@ -38,44 +35,6 @@ function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(a
   };
 }
 
-function buildChatApprovalObservabilityContext(
-  approval: {
-    id: string;
-    orgId: string;
-    type: string;
-    payload: Record<string, unknown>;
-  },
-  input: {
-    status?: string | null;
-    metadata?: Record<string, unknown> | null;
-  } = {},
-): ExecutionObservabilityContext {
-  const payload = approval.payload ?? {};
-  const conversationId = typeof payload.chatConversationId === "string" ? payload.chatConversationId : null;
-  const issueId =
-    typeof payload.issueId === "string"
-      ? payload.issueId
-      : typeof payload.primaryIssueId === "string"
-        ? payload.primaryIssueId
-        : null;
-
-  return {
-    surface: "chat_action",
-    rootExecutionId: approval.id,
-    orgId: approval.orgId,
-    issueId,
-    sessionKey: conversationId,
-    trigger: "approval_apply",
-    status: input.status ?? null,
-    metadata: {
-      approvalId: approval.id,
-      approvalType: approval.type,
-      conversationId,
-      ...(input.metadata ?? {}),
-    },
-  };
-}
-
 function isChatConvertedIssue(value: unknown): value is ChatConvertedIssue & { identifier?: string | null } {
   return (
     typeof value === "object" &&
@@ -89,60 +48,6 @@ function isChatConvertedIssue(value: unknown): value is ChatConvertedIssue & { i
       typeof (value as { assigneeAgentId?: unknown }).assigneeAgentId === "string"
     )
   );
-}
-
-async function withChatApprovalObservation<T>(
-  context: ExecutionObservabilityContext,
-  input: {
-    name: string;
-    asType?: "span" | "agent" | "generation" | "tool" | "chain" | "retriever" | "evaluator" | "guardrail" | "embedding";
-    input?: unknown;
-    metadata?: Record<string, unknown>;
-  },
-  fn: (observation: LangfuseObservation | null) => Promise<T>,
-) {
-  let executionError: unknown = null;
-  try {
-    return await withExecutionObservation(context, input, async (observation) => {
-      try {
-        return await fn(observation);
-      } catch (error) {
-        executionError = error;
-        throw error;
-      }
-    });
-  } catch (error) {
-    if (executionError && error === executionError) {
-      throw error;
-    }
-    logger.warn(
-      {
-        rootExecutionId: context.rootExecutionId,
-        trigger: context.trigger,
-        err: error instanceof Error ? error.message : String(error),
-      },
-      "Failed to emit Langfuse chat approval observation",
-    );
-    return fn(null);
-  }
-}
-
-async function emitChatApprovalObservationEvent(
-  context: ExecutionObservabilityContext,
-  input: Parameters<typeof observeExecutionEvent>[1],
-) {
-  try {
-    await observeExecutionEvent(context, input);
-  } catch (error) {
-    logger.warn(
-      {
-        rootExecutionId: context.rootExecutionId,
-        eventName: input.name,
-        err: error instanceof Error ? error.message : String(error),
-      },
-      "Failed to emit Langfuse chat approval event",
-    );
-  }
 }
 
 export function approvalRoutes(db: Db) {
@@ -378,36 +283,7 @@ export function approvalRoutes(db: Db) {
 
     if (applied) {
       let chatAppliedIssue: Awaited<ReturnType<typeof chatsSvc.applyApprovedApproval>> = null;
-      if (approval.type === "chat_issue_creation" || approval.type === "chat_operation") {
-        const chatObservation = buildChatApprovalObservabilityContext(approval, {
-          status: approval.status,
-          metadata: {
-            decisionNote: req.body.decisionNote ?? null,
-          },
-        });
-        await withChatApprovalObservation(
-          chatObservation,
-          {
-            name: "chat:approval_apply",
-            asType: "tool",
-            input: {
-              approvalId: approval.id,
-              approvalType: approval.type,
-            },
-          },
-          async () => {
-            chatAppliedIssue = await chatsSvc.applyApprovedApproval(approval, req.actor.userId ?? "board");
-            await emitChatApprovalObservationEvent(chatObservation, {
-              name: "chat.approval.applied",
-              metadata: {
-                approvalType: approval.type,
-              },
-            });
-          },
-        );
-      } else {
-        chatAppliedIssue = await chatsSvc.applyApprovedApproval(approval, req.actor.userId ?? "board");
-      }
+      chatAppliedIssue = await chatsSvc.applyApprovedApproval(approval, req.actor.userId ?? "board");
 
       if (approval.type === "chat_issue_creation" && isChatConvertedIssue(chatAppliedIssue)) {
         await wakeIssueAssigneeAfterChatConversion({

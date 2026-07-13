@@ -237,8 +237,6 @@ async function verifyServerPackage(serverPackageDir) {
     "ajv-formats",
     "hermes-paperclip-adapter",
     "@aws-sdk/client-s3",
-    "@langfuse/client",
-    "@opentelemetry/sdk-trace-node",
   ];
   const present = new Set(packages.map((p) => p.name));
   const missingCritical = critical.filter((name) => !present.has(name));

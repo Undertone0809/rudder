@@ -55,12 +55,6 @@ function normalizeString(value: string | null | undefined): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-function normalizeStageToken(value: string | null | undefined): string | null {
-  const normalized = normalizeString(value);
-  if (!normalized) return null;
-  return normalized.toLowerCase().replace(/[\s-]+/g, "_");
-}
-
 export function parseRuntimeOwnerKind(value: string | null | undefined): LocalRuntimeOwnerKind | null {
   const normalized = normalizeString(value)?.toLowerCase().replace(/-/g, "_");
   return (LOCAL_RUNTIME_OWNER_KINDS as readonly string[]).includes(normalized ?? "")
@@ -85,40 +79,6 @@ export function resolveEffectiveLocalEnvName(
   value: string | null | undefined = process.env.RUDDER_LOCAL_ENV,
 ): string | null {
   return normalizeString(value) ?? inferLocalEnvFromInstanceId(instanceId);
-}
-
-export function normalizeLangfuseEnvironmentName(value: string | null | undefined): string | null {
-  const normalized = normalizeStageToken(value);
-  if (!normalized) return null;
-
-  switch (normalized) {
-    case "default":
-    case "local":
-    case "prod":
-    case "prod_local":
-    case "production":
-      return "prod";
-    case "dev":
-    case "development":
-      return "dev";
-    case "e2e":
-    case "test":
-    case "testing":
-      return "e2e";
-    default:
-      return normalizeString(value);
-  }
-}
-
-export function resolveCanonicalStageName(value: string | null | undefined): string | null {
-  return normalizeLangfuseEnvironmentName(value);
-}
-
-export function resolveLangfuseEnvironmentName(
-  value: string | null | undefined,
-  fallbackLocalEnv: string | null | undefined = null,
-): string | null {
-  return normalizeLangfuseEnvironmentName(value) ?? resolveCanonicalStageName(fallbackLocalEnv);
 }
 
 export function resolveLocalRuntimePaths(instanceId = resolveRudderInstanceId()): LocalRuntimePaths {

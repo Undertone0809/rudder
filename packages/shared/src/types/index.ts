@@ -84,7 +84,7 @@ export type {
   HeartbeatRecoveryTrigger, HeartbeatRun, HeartbeatRunContextSnapshot, HeartbeatRunEvent, HeartbeatRunRecoveryContext, InstanceSchedulerHeartbeatAgent
 } from "./heartbeat.js";
 export type {
-  InstanceBrowserSettings, InstanceGeneralSettings, InstanceLangfuseSettings, InstanceLocale, InstanceNotificationSettings, InstancePathPickerRequest,
+  InstanceBrowserSettings, InstanceGeneralSettings, InstanceLocale, InstanceNotificationSettings, InstancePathPickerRequest,
   InstancePathPickerResult,
   InstancePathPickerSelectionType,
   InstanceSettings, OperatorProfileSettings
@@ -107,10 +107,6 @@ export type {
   MessengerThreadSummary,
   MessengerThreadSummaryPage, MessengerThreadUserState
 } from "./messenger.js";
-export type {
-  ExecutionLangfuseLink, ExecutionObservabilityContext,
-  ExecutionObservabilitySurface
-} from "./observability.js";
 export type {
   OrganizationIntelligenceProfile,
   UpsertOrganizationIntelligenceProfile

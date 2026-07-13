@@ -12,15 +12,7 @@ import {
   issues,
   organizations
 } from "@rudderhq/db";
-import {
-  buildCreateAgentBenchmarkTags,
-  coerceCreateAgentBenchmarkMetadata,
-  extractCreateAgentBenchmarkMetadata,
-} from "@rudderhq/run-intelligence-core";
-import type {
-  AgentSkillAnalytics,
-  ExecutionObservabilityContext
-} from "@rudderhq/shared";
+import type { AgentSkillAnalytics } from "@rudderhq/shared";
 import {
   summarizeTokenUsage
 } from "@rudderhq/shared";
@@ -31,10 +23,6 @@ import type {
 import { runningProcesses } from "../../agent-runtimes/index.js";
 import { parseObject } from "../../agent-runtimes/utils.js";
 import { notFound } from "../../errors.js";
-import {
-  createExecutionScores,
-  observeExecutionEvent
-} from "../../langfuse.js";
 import { redactCurrentUserText, redactCurrentUserValue } from "../../log-redaction.js";
 import { logger } from "../../middleware/logger.js";
 import {
@@ -47,7 +35,6 @@ import { summarizeHeartbeatRunResultJson } from "../heartbeat-run-summary.js";
 import { instanceSettingsService } from "../instance-settings.js";
 import { issueService } from "../issues.js";
 import { publishLiveEvent } from "../live-events.js";
-import { buildObservedRunLangfuseScores } from "../run-intelligence.js";
 import { getRunLogStore } from "../run-log-store.js";
 import { workspaceOperationService } from "../workspace-operations.js";
 
@@ -56,7 +43,7 @@ export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRu
 import type { SessionCompactionDecision, UsageTotals } from "./heartbeat.core.js";
 import * as heartbeatCore from "./heartbeat.core.js";
 import * as heartbeatSessions from "./heartbeat.sessions.js";
-const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, isIssueCommentMentionWake, resolveHeartbeatObservabilitySurface, buildHeartbeatObservationName, compactTraceText, buildIssueRunTraceName, buildHeartbeatRuntimeTraceMetadata, buildHeartbeatAdapterInvokePayload, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, readSkillEvidenceFromPayload, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
+const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, isIssueCommentMentionWake, buildHeartbeatAdapterInvokePayload, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, readSkillEvidenceFromPayload, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
 const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
 
 import { createHeartbeatExecuteHandlers } from "./heartbeat.execute.js";
@@ -483,99 +470,6 @@ export function heartbeatService(db: Db) {
       .then((rows) => rows[0]);
   }
 
-  function buildHeartbeatObservabilityContext(
-    run: typeof heartbeatRuns.$inferSelect,
-    overrides: Partial<ExecutionObservabilityContext> = {},
-  ): ExecutionObservabilityContext {
-    const contextSnapshot = parseObject(run.contextSnapshot);
-    const issueSnapshot = parseObject(contextSnapshot.issue);
-    const benchmarkMetadata =
-      extractCreateAgentBenchmarkMetadata(readNonEmptyString(issueSnapshot.description))
-      ?? coerceCreateAgentBenchmarkMetadata(parseObject(contextSnapshot.benchmark));
-    const baseMetadata = {
-      wakeupRequestId: run.wakeupRequestId,
-      errorCode: run.errorCode,
-      retryOfRunId: run.retryOfRunId,
-      processLossRetryCount: run.processLossRetryCount,
-      externalRunId: run.externalRunId,
-      executionWorkspaceId: readNonEmptyString(contextSnapshot.executionWorkspaceId),
-      ...(benchmarkMetadata ?? {}),
-    };
-    const benchmarkTags = benchmarkMetadata ? buildCreateAgentBenchmarkTags(benchmarkMetadata) : [];
-
-    return {
-      surface: resolveHeartbeatObservabilitySurface(contextSnapshot),
-      rootExecutionId: run.id,
-      orgId: run.orgId,
-      agentId: run.agentId,
-      issueId: readNonEmptyString(contextSnapshot.issueId),
-      sessionKey:
-        run.sessionIdAfter ??
-        run.sessionIdBefore ??
-        readNonEmptyString(contextSnapshot.sessionKey) ??
-        readNonEmptyString(contextSnapshot.taskKey),
-      runtime: readNonEmptyString(contextSnapshot.agentRuntimeType),
-      trigger: run.triggerDetail ?? run.invocationSource,
-      status: run.status,
-      metadata: {
-        ...baseMetadata,
-        ...(overrides.metadata ?? {}),
-      },
-      tags: [...benchmarkTags, ...(overrides.tags ?? [])],
-      ...overrides,
-    };
-  }
-
-  async function emitHeartbeatObservationEvent(
-    run: typeof heartbeatRuns.$inferSelect,
-    input: Parameters<typeof observeExecutionEvent>[1],
-    overrides: Partial<ExecutionObservabilityContext> = {},
-  ) {
-    try {
-      await observeExecutionEvent(buildHeartbeatObservabilityContext(run, overrides), input);
-    } catch (error) {
-      logger.warn(
-        {
-          runId: run.id,
-          eventName: input.name,
-          err: error instanceof Error ? error.message : String(error),
-        },
-        "Failed to emit Langfuse heartbeat event",
-      );
-    }
-  }
-
-  async function emitHeartbeatLiveEval(runId: string) {
-    try {
-      const { detail, scores } = await buildObservedRunLangfuseScores(db, runId);
-      const run = { ...detail.run, chatConversationId: detail.run.chatConversationId ?? null };
-      await createExecutionScores(
-        buildHeartbeatObservabilityContext(run, {
-          runtime: detail.bundle.agentRuntimeType,
-          metadata: {
-            agentName: detail.agentName,
-            orgName: detail.orgName,
-          },
-        }),
-        scores.map((score) => ({
-          rootExecutionId: detail.run.id,
-          name: score.name,
-          value: score.value,
-          comment: score.comment,
-          metadata: score.metadata,
-        })),
-      );
-    } catch (error) {
-      logger.warn(
-        {
-          runId,
-          err: error instanceof Error ? error.message : String(error),
-        },
-        "Failed to emit Langfuse heartbeat scores",
-      );
-    }
-  }
-
   async function setRunStatus(
     runId: string,
     status: string,
@@ -605,23 +499,6 @@ export function heartbeatService(db: Db) {
         },
       });
 
-      await emitHeartbeatObservationEvent(
-        updated,
-        {
-          name: `heartbeat.status.${status}`,
-          asType: "event",
-          output: {
-            status: updated.status,
-            error: updated.error,
-            errorCode: updated.errorCode,
-            startedAt: updated.startedAt ? new Date(updated.startedAt).toISOString() : null,
-            finishedAt: updated.finishedAt ? new Date(updated.finishedAt).toISOString() : null,
-          },
-        },
-        {
-          status: updated.status,
-        },
-      );
     }
 
     return updated;
@@ -712,26 +589,6 @@ export function heartbeatService(db: Db) {
       },
     });
 
-    await emitHeartbeatObservationEvent(
-      run,
-      {
-        name: `heartbeat.event.${event.eventType}`,
-        asType: "event",
-        level: event.level === "error" ? "ERROR" : event.level === "warn" ? "WARNING" : "DEFAULT",
-        output: {
-          seq,
-          eventType: event.eventType,
-          stream: event.stream ?? null,
-          level: event.level ?? null,
-          color: event.color ?? null,
-          message: sanitizedMessage ?? null,
-        },
-        metadata: sanitizedPayload ?? undefined,
-      },
-      {
-        status: run.status,
-      },
-    );
   }
 
   async function nextRunEventSeq(runId: string) {
@@ -757,17 +614,6 @@ export function heartbeatService(db: Db) {
       .where(eq(heartbeatRuns.id, runId))
       .returning()
       .then((rows) => rows[0] ?? null);
-
-    if (updated) {
-      await emitHeartbeatObservationEvent(updated, {
-        name: "heartbeat.process.spawn",
-        asType: "event",
-        output: {
-          pid: meta.pid,
-          startedAt: meta.startedAt,
-        },
-      });
-    }
 
     return updated;
   }
@@ -1159,7 +1005,6 @@ export function heartbeatService(db: Db) {
         },
       });
       await releaseIssueExecutionAndPromote(terminalRun);
-      await emitHeartbeatLiveEval(terminalRun.id);
       await finalizeAgentStatus(run.agentId, "timed_out");
       await startNextQueuedRunForAgent(run.agentId);
       runningProcesses.delete(run.id);
@@ -1243,7 +1088,6 @@ export function heartbeatService(db: Db) {
         },
       });
       await releaseIssueExecutionAndPromote(terminalRun);
-      await emitHeartbeatLiveEval(terminalRun.id);
       await finalizeAgentStatus(run.agentId, "timed_out");
       await startNextQueuedRunForAgent(run.agentId);
       runningProcesses.delete(run.id);
@@ -1386,7 +1230,7 @@ export function heartbeatService(db: Db) {
 
   const baseContext = {
     db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets,
-    getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, nextRunEventSeq, persistRunProcessMetadata, clearDetachedRunWarning, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, reapInactiveRuns, reapTimedOutRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent,
+    getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, nextRunEventSeq, persistRunProcessMetadata, clearDetachedRunWarning, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, reapInactiveRuns, reapTimedOutRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent,
   } as any;
   const recoveryHandlers = createHeartbeatRecoveryHandlers({ ...baseContext, startNextQueuedRunForAgent });
   const wakeupHandlers = createHeartbeatWakeupHandlers({ ...baseContext, ...recoveryHandlers, startNextQueuedRunForAgent });

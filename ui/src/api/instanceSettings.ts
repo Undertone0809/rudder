@@ -1,7 +1,6 @@
 import type {
   InstanceBrowserSettings,
   InstanceGeneralSettings,
-  InstanceLangfuseSettings,
   InstanceNotificationSettings,
   InstancePathPickerRequest,
   InstancePathPickerResult,
@@ -9,7 +8,6 @@ import type {
   OperatorProfileSettings,
   PatchInstanceBrowserSettings,
   PatchInstanceGeneralSettings,
-  PatchInstanceLangfuseSettings,
   PatchInstanceNotificationSettings,
   PatchKeyboardShortcutSettings,
   PatchOperatorProfileSettings,
@@ -37,12 +35,6 @@ export const instanceSettingsApi = {
     api.get<InstanceNotificationSettings>("/instance/settings/notifications"),
   updateNotifications: (patch: PatchInstanceNotificationSettings) =>
     api.patch<InstanceNotificationSettings>("/instance/settings/notifications", patch),
-  getLangfuse: () =>
-    api.get<InstanceLangfuseSettings>("/instance/settings/langfuse"),
-  installLangfuse: () =>
-    api.post<InstanceLangfuseSettings>("/instance/settings/langfuse/install", {}),
-  updateLangfuse: (patch: PatchInstanceLangfuseSettings) =>
-    api.patch<InstanceLangfuseSettings>("/instance/settings/langfuse", patch),
   pickPath: (input: InstancePathPickerRequest) =>
     api.post<InstancePathPickerResult>("/instance/path-picker", input),
 };

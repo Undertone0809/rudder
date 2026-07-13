@@ -17,7 +17,6 @@ import { preserveSettingsOverlayState } from "@/lib/settings-overlay-state";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import {
-  ActivitySquare,
   ArrowLeft,
   BookOpen,
   Check,
@@ -107,7 +106,7 @@ export function SettingsSidebar({
     retry: false,
   });
   const canManageAdminSettings = currentBoardAccess?.isInstanceAdmin === true;
-  const canManageLocalLangfuse = health?.deploymentMode === "local_trusted";
+  const canManageLocalBrowser = health?.deploymentMode === "local_trusted";
   const overlayState = preserveSettingsOverlayState(location.state);
   const modalVariant = variant === "modal";
   const [renderOrganizationList, setRenderOrganizationList] = useState(!modalVariant);
@@ -223,7 +222,7 @@ export function SettingsSidebar({
                 end
                 variant={modalVariant ? "compact" : "default"}
               />
-              {canManageLocalLangfuse ? (
+              {canManageLocalBrowser ? (
                 <SidebarNavItem
                   to="/instance/settings/browser"
                   state={overlayState}
@@ -275,16 +274,6 @@ export function SettingsSidebar({
               )}>
                 {t("common.integrations")}
               </div>
-              {canManageLocalLangfuse ? (
-                <SidebarNavItem
-                  to="/instance/settings/langfuse"
-                  state={overlayState}
-                  label={t("common.langfuse")}
-                  icon={ActivitySquare}
-                  end
-                  variant={modalVariant ? "compact" : "default"}
-                />
-              ) : null}
               <SidebarNavItem
                 to="/instance/settings/plugins"
                 state={overlayState}

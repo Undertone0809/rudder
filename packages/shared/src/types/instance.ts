@@ -18,16 +18,6 @@ export interface InstanceNotificationSettings {
   desktopChatNotifications: boolean;
 }
 
-export interface InstanceLangfuseSettings {
-  installed: boolean;
-  enabled: boolean;
-  baseUrl: string;
-  publicKey: string;
-  environment: string;
-  secretKeyConfigured: boolean;
-  managedByEnv: boolean;
-}
-
 export interface OperatorProfileSettings {
   nickname: string;
   moreAboutYou: string;

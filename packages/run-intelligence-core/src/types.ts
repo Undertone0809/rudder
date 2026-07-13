@@ -1,5 +1,5 @@
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
-import type { ExecutionLangfuseLink, HeartbeatRun, HeartbeatRunEvent } from "@rudderhq/shared";
+import type { HeartbeatRun, HeartbeatRunEvent } from "@rudderhq/shared";
 
 export type RunDiagnosisMode = "auto" | "quick" | "error" | "perf" | "full";
 export type RunFindingSeverity = "info" | "warn" | "error";
@@ -35,7 +35,6 @@ export interface ObservedRun {
   orgName: string | null;
   issue: RunIssueRef | null;
   bundle: EvalBundle;
-  langfuse?: ExecutionLangfuseLink | null;
   errorSummary?: string | null;
   skillEvidence?: RunSkillEvidenceMatch | null;
 }

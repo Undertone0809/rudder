@@ -1,4 +1,3 @@
-import type { LangfuseObservation } from "@langfuse/tracing";
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
 import {
@@ -11,19 +10,12 @@ import {
   updateChatConversationUserStateSchema,
   type ChatAttachment,
   type ChatConversation,
-  type ChatMessage,
-  type ExecutionObservabilityContext
+  type ChatMessage
 } from "@rudderhq/shared";
 import { Router, type Request } from "express";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
-import type { AgentRuntimeInvocationMeta } from "../agent-runtimes/index.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
-import { emitExecutionTranscriptTree } from "../langfuse-transcript.js";
-import {
-  updateExecutionObservation,
-  updateExecutionTraceIO
-} from "../langfuse.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import {
@@ -76,13 +68,6 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     isMultipartRequest,
     uploadedMessageFiles,
     validateUploadedMessageFiles,
-    buildChatObservabilityContext,
-    withChatObservation,
-    emitChatObservationEvent,
-    summarizeChatObservationMessages,
-    modelTurnInputFromInvocationMeta,
-    buildChatTraceInput,
-    mergeChatInvocationTraceMetadata,
     logChatMessagesAdded,
     assertContextLinksBelongToCompany,
     turnContextFromUserMessage,
@@ -215,10 +200,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
 
     let assistantConversationForPartial: ChatConversation | null = null;
     let turnContextForPartial: ReturnType<typeof turnContextFromUserMessage> | null = null;
-    let chatObservation: ExecutionObservabilityContext | null = null;
     const transcript: TranscriptEntry[] = [];
-    const observedTranscript: TranscriptEntry[] = [];
-    let modelTurnInput: unknown;
     let assistantProgressMessage: ChatMessage | null = null;
     let assistantProgressMessageId: string | null = null;
     let activeChatRunId: string | null = null;
@@ -310,41 +292,14 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         attachments: mergedUserAttachments,
       } as ChatMessage;
       turnContextForPartial = turnContextFromUserMessage(userMessage);
-      chatObservation = buildChatObservabilityContext(conversation as ChatConversation, {
-        surface: "chat_turn",
-        rootExecutionId: turnContextForPartial.chatTurnId,
-        trigger: "assistant_reply_stream",
-        runtime: assistantAvailability.agentRuntimeType ?? null,
-        metadata: {
-          stream: true,
-          userMessageId: userMessage.id,
-          editUserMessageId: parsedBody.data.editUserMessageId ?? null,
-          attachmentCount: mergedUserAttachments.length,
-        },
-      });
-      const traceInputBase = {
-        conversationId: conversation.id,
-        body: parsedBody.data.body,
-        userMessageId: userMessage.id,
-      };
-      let currentChatTraceInput = buildChatTraceInput(traceInputBase);
       writeStreamEvent(res, {
         type: "ack",
         userMessage: hydratedUserMessage,
       });
 
-      await withChatObservation(
-        chatObservation,
-        {
-          name: "chat_turn",
-          asType: "agent",
-          input: currentChatTraceInput,
-        },
-        async (observation: LangfuseObservation | null) => {
+      {
           const assistantInput = await loadAssistantInput(conversation as ChatConversation, actor);
           assistantConversationForPartial = assistantInput.conversation;
-          let finalChatOutput: string | null = null;
-          let finalChatStatus: "completed" | "stopped" | "failed" = "completed";
           try {
             const streamed = await assistantSvc.streamChatAssistantReply({
               ...assistantInput,
@@ -356,15 +311,6 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                 activeChatRunId = runId;
               },
               abortSignal: abortController.signal,
-              onInvocationMeta: async (meta: AgentRuntimeInvocationMeta) => {
-                modelTurnInput = modelTurnInputFromInvocationMeta(meta);
-                currentChatTraceInput = buildChatTraceInput(traceInputBase, meta);
-                mergeChatInvocationTraceMetadata(chatObservation!, meta);
-                updateExecutionObservation(observation, chatObservation!, {
-                  input: currentChatTraceInput,
-                });
-                updateExecutionTraceIO(observation, { input: currentChatTraceInput });
-              },
               onAssistantDelta: async (delta: string) => {
                 assistantDraftBody = `${assistantDraftBody}${delta}`;
                 await persistStreamProgress(assistantInput.conversation);
@@ -391,15 +337,10 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                   entry,
                 });
               },
-              onObservedTranscriptEntry: async (entry: TranscriptEntry) => {
-                observedTranscript.push(entry);
-              },
             });
 
             if (streamed.outcome === "stopped") {
-              finalChatStatus = "stopped";
               generationTerminalStatus = "stopped";
-              finalChatOutput = streamed.partialBody;
               const stoppedMessage = await persistPartialAssistantMessage(
                 assistantInput.conversation,
                 streamed.partialBody,
@@ -418,15 +359,6 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                   agentId: streamed.replyingAgentId,
                 });
               }
-              await emitChatObservationEvent(chatObservation!, {
-                name: "chat.reply.stopped",
-                level: "WARNING",
-                metadata: {
-                  stoppedMessageId: stoppedMessage?.id ?? null,
-                  transcriptEntries: transcript.length,
-                  observedTranscriptEntries: observedTranscript.length,
-                },
-              });
               if (!clientClosed) {
                 writeStreamEvent(res, {
                   type: "final",
@@ -449,20 +381,11 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
               activeChatRunId,
             );
             await linkChatRunMessages(assistantInput.conversation, activeChatRunId, createdMessages);
-            finalChatOutput = streamed.reply.body;
             generationTerminalStatus = "completed";
             await logChatMessagesAdded(assistantInput.conversation, createdMessages, {
               actorType: "system",
               actorId: "chat-assistant",
               agentId: streamed.replyingAgentId,
-            });
-            await emitChatObservationEvent(chatObservation!, {
-              name: "chat.reply.persisted",
-              metadata: {
-                transcriptEntries: transcript.length,
-                observedTranscriptEntries: observedTranscript.length,
-                ...summarizeChatObservationMessages(createdMessages),
-              },
             });
             if (!clientClosed) {
               writeStreamEvent(res, {
@@ -472,61 +395,10 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
               res.end();
             }
           } catch (error) {
-            finalChatStatus = "failed";
             generationTerminalStatus = "failed";
-            if (error instanceof ChatAssistantStreamError) {
-              const failurePayload = recoverableFailurePayload(error, activeChatRunId);
-              finalChatOutput =
-                userVisiblePartialBodyFromError(error)
-                || recoverableFailureBody(failurePayload)
-                || CHAT_ASSISTANT_USER_ERROR_MESSAGE;
-            }
             throw error;
-          } finally {
-            try {
-              const observationFallbackOutput = finalChatOutput
-                || (finalChatStatus === "failed" ? CHAT_ASSISTANT_USER_ERROR_MESSAGE : null);
-              const transcriptStats = emitExecutionTranscriptTree({
-                context: chatObservation!,
-                parentObservation: observation,
-                transcript: observedTranscript,
-                initialTurnInput: modelTurnInput,
-                fallbackResult: observationFallbackOutput
-                  ? {
-                    output: observationFallbackOutput,
-                    subtype: finalChatStatus,
-                    isError: finalChatStatus === "failed",
-                  }
-                  : null,
-              });
-              finalChatOutput = finalChatOutput
-                || (finalChatStatus === "failed" ? observationFallbackOutput : transcriptStats.finalOutput)
-                || null;
-            } catch (error) {
-              logger.warn(
-                {
-                  rootExecutionId: chatObservation!.rootExecutionId,
-                  err: error instanceof Error ? error.message : String(error),
-                },
-                "Failed to export chat transcript tree to Langfuse",
-              );
-            }
-            updateExecutionObservation(observation, {
-              ...chatObservation!,
-              status: finalChatStatus,
-            }, {
-              input: currentChatTraceInput,
-              output: finalChatOutput,
-              level: finalChatStatus === "failed" ? "ERROR" : "DEFAULT",
-              statusMessage: finalChatStatus,
-            });
-            updateExecutionTraceIO(observation, {
-              input: currentChatTraceInput,
-              output: finalChatOutput,
-            });
           }
-        },
-      );
+      }
     } catch (err) {
       const failurePayload = recoverableFailurePayload(err, activeChatRunId);
       const partialBody =
@@ -563,24 +435,6 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
           actorId: "chat-assistant",
           agentId: failedReplyingAgentId,
         }).catch(() => {});
-      }
-
-      if (chatObservation) {
-        const failure = failurePayload?.recoverableFailure as Record<string, unknown> | undefined;
-        const failureCode = typeof failure?.code === "string" ? failure.code : "chat_runtime_exception";
-        await emitChatObservationEvent(chatObservation, {
-          name: "chat.reply.failed",
-          level: "ERROR",
-          metadata: {
-            failedMessageId: failedMessage?.id ?? null,
-            runId: activeChatRunId,
-            errorCode: failureCode,
-            transcriptEntries: transcript.length,
-            observedTranscriptEntries: observedTranscript.length,
-            error: err instanceof Error ? err.message : String(err),
-          },
-          statusMessage: err instanceof Error ? err.message : "chat_reply_failed",
-        });
       }
 
       logger.warn({ err, conversationId: conversation.id }, "chat assistant stream failed");
@@ -815,80 +669,49 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       messageId: req.body.messageId ?? null,
       proposal: req.body.proposal ?? null,
     });
-    const chatObservation = buildChatObservabilityContext(conversation as ChatConversation, {
-      rootExecutionId: req.body.messageId ?? `chat-convert:${conversation.id}`,
-      trigger: "convert_to_issue",
-      metadata: {
-        source: "chat_route",
-        messageId: req.body.messageId ?? null,
+    const issue = await svc.convertToIssue(conversation.id, {
+      actorUserId: actor.actorType === "user" ? actor.actorId : null,
+      messageId: req.body.messageId ?? null,
+      proposal: req.body.proposal ?? null,
+    });
+    await wakeIssueAssigneeAfterChatConversion({
+      db,
+      heartbeat,
+      issue,
+      reason: "issue_assigned",
+      mutation: "chat_convert",
+      contextSource: "chat.convert_to_issue",
+      requestedByActorType: actor.actorType,
+      requestedByActorId: actor.actorId,
+    });
+    const systemMessage = await svc.addMessage(conversation.id, {
+      orgId: conversation.orgId,
+      role: "system",
+      kind: "system_event",
+      body: `Created issue ${issue.identifier ?? issue.id} from this chat conversation.`,
+      structuredPayload: {
+        eventType: "issue_created",
+        issueId: issue.id,
+        issueIdentifier: issue.identifier,
       },
     });
-    const result = await withChatObservation(
-      chatObservation,
-      {
-        name: "chat:convert_to_issue",
-        asType: "tool",
-        input: {
-          conversationId: conversation.id,
-          messageId: req.body.messageId ?? null,
-          proposal: req.body.proposal ?? null,
-        },
+    await logActivity(db, {
+      orgId: conversation.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "chat.issue_converted",
+      entityType: "chat",
+      entityId: conversation.id,
+      details: {
+        issueId: issue.id,
+        issueIdentifier: issue.identifier,
+        messageId: req.body.messageId ?? null,
+        systemMessageId: systemMessage.id,
       },
-      async () => {
-        const issue = await svc.convertToIssue(conversation.id, {
-          actorUserId: actor.actorType === "user" ? actor.actorId : null,
-          messageId: req.body.messageId ?? null,
-          proposal: req.body.proposal ?? null,
-        });
-        await wakeIssueAssigneeAfterChatConversion({
-          db,
-          heartbeat,
-          issue,
-          reason: "issue_assigned",
-          mutation: "chat_convert",
-          contextSource: "chat.convert_to_issue",
-          requestedByActorType: actor.actorType,
-          requestedByActorId: actor.actorId,
-        });
-        const systemMessage = await svc.addMessage(conversation.id, {
-          orgId: conversation.orgId,
-          role: "system",
-          kind: "system_event",
-          body: `Created issue ${issue.identifier ?? issue.id} from this chat conversation.`,
-          structuredPayload: {
-            eventType: "issue_created",
-            issueId: issue.id,
-            issueIdentifier: issue.identifier,
-          },
-        });
-        await logActivity(db, {
-          orgId: conversation.orgId,
-          actorType: actor.actorType,
-          actorId: actor.actorId,
-          agentId: actor.agentId,
-          runId: actor.runId,
-          action: "chat.issue_converted",
-          entityType: "chat",
-          entityId: conversation.id,
-          details: {
-            issueId: issue.id,
-            issueIdentifier: issue.identifier,
-            messageId: req.body.messageId ?? null,
-            systemMessageId: systemMessage.id,
-          },
-        });
-        await emitChatObservationEvent(chatObservation, {
-          name: "chat.issue.created",
-          metadata: {
-            issueId: issue.id,
-            issueIdentifier: issue.identifier,
-            systemMessageId: systemMessage.id,
-          },
-        });
-        return { issue, systemMessage };
-      },
-    );
-    res.status(201).json(result);
+    });
+    res.status(201).json({ issue, systemMessage });
   });
 
   router.post(
@@ -904,43 +727,12 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
 
       const actor = getActorInfo(req);
       const messageId = req.params.messageId as string;
-      const chatObservation = buildChatObservabilityContext(conversation as ChatConversation, {
-        rootExecutionId: messageId,
-        trigger: "resolve_operation_proposal",
-        metadata: {
-          action: req.body.action,
-          decisionNote: req.body.decisionNote ?? null,
-        },
+      const resolved = await svc.resolveOperationProposal(conversation.id, messageId, {
+        action: req.body.action,
+        actorUserId: actor.actorType === "user" ? actor.actorId : null,
+        decisionNote: req.body.decisionNote ?? null,
       });
-      const result = await withChatObservation(
-        chatObservation,
-        {
-          name: "chat:resolve_operation_proposal",
-          asType: "tool",
-          input: {
-            conversationId: conversation.id,
-            messageId,
-            action: req.body.action,
-          },
-        },
-        async () => {
-          const resolved = await svc.resolveOperationProposal(conversation.id, messageId, {
-            action: req.body.action,
-            actorUserId: actor.actorType === "user" ? actor.actorId : null,
-            decisionNote: req.body.decisionNote ?? null,
-          });
-          await emitChatObservationEvent(chatObservation, {
-            name: "chat.operation_proposal.resolved",
-            metadata: {
-              action: req.body.action,
-              messageId: resolved.message.id,
-              systemMessageId: resolved.systemMessage.id,
-            },
-          });
-          return resolved;
-        },
-      );
-      res.status(201).json(result);
+      res.status(201).json(resolved);
     },
   );
 

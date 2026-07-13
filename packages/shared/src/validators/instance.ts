@@ -35,25 +35,6 @@ export const instanceNotificationSettingsSchema = z.object({
 
 export const patchInstanceNotificationSettingsSchema = instanceNotificationSettingsSchema.partial();
 
-export const instanceLangfuseSettingsSchema = z.object({
-  installed: z.boolean().default(false),
-  enabled: z.boolean().default(false),
-  baseUrl: z.string().url().default("http://localhost:3000"),
-  publicKey: z.string().default(""),
-  environment: z.string().default(""),
-  secretKeyConfigured: z.boolean().default(false),
-  managedByEnv: z.boolean().default(false),
-}).strict();
-
-export const patchInstanceLangfuseSettingsSchema = z.object({
-  enabled: z.boolean().optional(),
-  baseUrl: z.string().url().optional(),
-  publicKey: z.string().optional(),
-  secretKey: z.string().optional(),
-  environment: z.string().optional(),
-  clearSecretKey: z.boolean().optional(),
-}).strict();
-
 export const OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH = 8000;
 
 export const operatorProfileSettingsSchema = z.object({
@@ -123,8 +104,6 @@ export type InstanceGeneralSettings = z.infer<typeof instanceGeneralSettingsSche
 export type InstanceBrowserSettings = z.infer<typeof instanceBrowserSettingsSchema>;
 export type PatchInstanceBrowserSettings = z.infer<typeof patchInstanceBrowserSettingsSchema>;
 export type PatchInstanceGeneralSettings = z.infer<typeof patchInstanceGeneralSettingsSchema>;
-export type InstanceLangfuseSettings = z.infer<typeof instanceLangfuseSettingsSchema>;
-export type PatchInstanceLangfuseSettings = z.infer<typeof patchInstanceLangfuseSettingsSchema>;
 export type InstanceLocale = z.infer<typeof instanceLocaleSchema>;
 export type OperatorProfileSettings = z.infer<typeof operatorProfileSettingsSchema>;
 export type PatchOperatorProfileSettings = z.infer<typeof patchOperatorProfileSettingsSchema>;
