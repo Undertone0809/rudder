@@ -1,0 +1,7 @@
+interface:
+  display_name: "Build Advisor"
+  short_description: "Turn vague build/UI/workflow feedback into expert diagnosis"
+  default_prompt: "Use $build-advisor to diagnose what is actually wrong with this result, translate my vague discomfort into professional critique, and recommend the right next move."
+
+policy:
+  allow_implicit_invocation: true

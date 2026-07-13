@@ -55,6 +55,14 @@ server/ui-dist/index.html
 !/.agents/skills/self-improvement/
 !/.agents/skills/self-improvement/**
 
+# Local maintainer skill evaluation and benchmark files
+!/agent-skills-bak/maintainer/**/data/
+!/agent-skills-bak/maintainer/**/data/**
+/agent-skills-bak/maintainer/*-workspace/
+/agent-skills-bak/maintainer/**/*eval*
+/agent-skills-bak/maintainer/**/*benchmark*
+/agent-skills-bak/maintainer/**/.DS_Store
+
 # Doc maintenance cursor
 .doc-review-cursor
 
