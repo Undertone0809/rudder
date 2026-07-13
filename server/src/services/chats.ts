@@ -27,6 +27,7 @@ import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 import { organizationService } from "./orgs.js";
+import { isPostgresError } from "./postgres-errors.js";
 
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
@@ -627,12 +628,7 @@ export function chatService(db: Db) {
   }
 
   function isQueuePositionConflict(error: unknown): boolean {
-    return Boolean(
-      error
-      && typeof error === "object"
-      && "code" in error
-      && (error as { code?: unknown }).code === "23505",
-    );
+    return isPostgresError(error, "23505");
   }
 
   function normalizeQueuedPayload(payload: Record<string, unknown>): ChatQueuedMessagePayload {

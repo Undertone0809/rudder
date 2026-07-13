@@ -13,6 +13,7 @@ import { agentRunContextService } from "./agent-run-context.js";
 import { agentService } from "./agents.js";
 import { chatAgentRunService } from "./chat-agent-runs.js";
 import { asString, buildConversationPrompt, buildMissingResultSentinelRepairPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractGeneratedAttachments, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseAssistantTextBlock, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
+import { enrichConversationRuntimeDescriptors } from "./chat-assistant.runtime-batch.js";
 import { preflightManagedAgentWorkspace } from "./managed-workspace-preflight.js";
 import {
   executeAdapterWithModelFallbacks,
@@ -254,7 +255,10 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
   }
 
   async function enrichConversations<T extends ChatConversation>(conversations: T[]): Promise<T[]> {
-    return Promise.all(conversations.map((conversation) => enrichConversation(conversation)));
+    return enrichConversationRuntimeDescriptors(
+      conversations,
+      async (conversation) => (await resolveConversationRuntime(conversation)).descriptor,
+    );
   }
 
   async function streamChatAssistantReply(

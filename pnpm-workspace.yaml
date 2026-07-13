@@ -7,8 +7,27 @@ packages:
   - ui
   - cli
   - desktop
+# pnpm 11 reads security overrides here; package.json mirrors them for the
+# pnpm 9 version pinned by this repository and CI.
+overrides:
+  axios: 1.16.0
+  defu: 6.1.5
+  fast-uri: 3.1.2
+  fast-xml-builder: 1.1.7
+  fast-xml-parser: 5.7.0
+  form-data: 4.0.6
+  js-yaml: 4.2.0
+  lodash-es: 4.18.1
+  path-to-regexp: 8.4.2
+  protobufjs: 7.6.3
+  qs: 6.15.2
+  set-cookie-parser: 3.1.1
+  undici: 7.28.0
+  uuid: 11.1.1
 allowBuilds:
   '@embedded-postgres/darwin-arm64': true
+  # Hydrates the packaged PostgreSQL symlinks required by Linux CI/runtime.
+  '@embedded-postgres/linux-x64': true
   electron: true
   electron-winstaller: true
   es5-ext: true

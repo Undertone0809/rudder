@@ -426,6 +426,92 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(mockAgentService.getInternalById).not.toHaveBeenCalled();
   });
 
+  it("deduplicates list runtime enrichment by organization and preferred agent", async () => {
+    const svc = chatAssistantService({} as any);
+    const conversations = [
+      makeConversation({
+        id: "chat-list-1",
+        chatRuntime: {
+          ...makeConversation().chatRuntime,
+          sourceLabel: "Original descriptor 1",
+        },
+      }),
+      makeConversation({
+        id: "chat-list-2",
+        chatRuntime: {
+          ...makeConversation().chatRuntime,
+          sourceLabel: "Original descriptor 2",
+        },
+      }),
+    ];
+    const inputSnapshots = conversations.map((conversation) => ({ ...conversation }));
+    const inputDescriptors = conversations.map((conversation) => conversation.chatRuntime);
+
+    const enriched = await svc.enrichConversations(conversations);
+    const expectedChatRuntime = {
+      sourceType: "agent",
+      sourceLabel: "Chat Specialist",
+      runtimeAgentId: "agent-1",
+      agentRuntimeType: "codex_local",
+      model: "gpt-5.4",
+      available: true,
+      error: null,
+    };
+
+    expect(mockAgentService.getInternalById).toHaveBeenCalledTimes(1);
+    expect(mockRunContextService.prepareRuntimeConfig).toHaveBeenCalledTimes(1);
+    expect(enriched.map((conversation) => conversation.id)).toEqual(["chat-list-1", "chat-list-2"]);
+    enriched.forEach((conversation, index) => {
+      expect(conversation).not.toBe(conversations[index]);
+      expect(conversation).toEqual({
+        ...conversations[index],
+        chatRuntime: expectedChatRuntime,
+      });
+    });
+    expect(conversations).toEqual(inputSnapshots);
+    conversations.forEach((conversation, index) => {
+      expect(conversation.chatRuntime).toBe(inputDescriptors[index]);
+    });
+
+    mockAgentService.getInternalById.mockReset();
+    mockRunContextService.prepareRuntimeConfig.mockClear();
+    mockAgentService.getInternalById
+      .mockResolvedValueOnce({
+        id: "agent-1",
+        orgId: "organization-1",
+        name: "Chat Specialist",
+        status: "idle",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: { model: "gpt-5.4" },
+        metadata: null,
+      })
+      .mockResolvedValueOnce({
+        id: "agent-1",
+        orgId: "organization-2",
+        name: "Chat Specialist",
+        status: "idle",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: { model: "gpt-5.4" },
+        metadata: null,
+      });
+
+    const crossOrganization = await svc.enrichConversations([
+      makeConversation({ id: "chat-org-1", orgId: "organization-1" }),
+      makeConversation({ id: "chat-org-2", orgId: "organization-2" }),
+    ]);
+
+    expect(mockAgentService.getInternalById).toHaveBeenCalledTimes(2);
+    expect(mockRunContextService.prepareRuntimeConfig).toHaveBeenCalledTimes(2);
+    expect(crossOrganization.map((conversation) => conversation.id)).toEqual([
+      "chat-org-1",
+      "chat-org-2",
+    ]);
+    expect(crossOrganization.map((conversation) => conversation.chatRuntime)).toEqual([
+      expectedChatRuntime,
+      expectedChatRuntime,
+    ]);
+  });
+
   it("points process chat agents to model configuration instead of runtime details", async () => {
     const svc = chatAssistantService({} as any);
     mockAgentService.getInternalById.mockResolvedValueOnce({

@@ -22,6 +22,7 @@ import {
 } from "@rudderhq/shared";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { conflict } from "../errors.js";
+import { isPostgresError } from "./postgres-errors.js";
 
 
 export const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
@@ -29,14 +30,7 @@ export const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
 export const BOARD_ORDER_STEP = 1000;
 
 export function isUniqueConstraintConflict(error: unknown, constraintName: string) {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "23505" &&
-    "constraint" in error &&
-    (error as { constraint?: unknown }).constraint === constraintName
-  );
+  return isPostgresError(error, "23505", constraintName);
 }
 
 export function assertTransition(from: string, to: string) {
