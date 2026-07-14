@@ -68,6 +68,17 @@ export function parseWorkspaceCsvContent(content: string): WorkspaceCsvParseResu
   };
 }
 
+export function normalizeWorkspaceCsvRows(rows: string[][]) {
+  let columnCount = 1;
+  for (const row of rows) {
+    columnCount = Math.max(columnCount, row.length);
+  }
+  return {
+    columnCount,
+    rows: rows.map((row) => Array.from({ length: columnCount }, (_, index) => row[index] ?? "")),
+  };
+}
+
 function serializeWorkspaceCsvField(field: string) {
   if (/[",\r\n]/u.test(field)) {
     return `"${field.replaceAll("\"", "\"\"")}"`;

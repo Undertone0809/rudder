@@ -22,9 +22,12 @@ type WorkspaceCodeEditorProps = {
   ariaLabel?: string;
   filePath: string | null;
   value: string;
-  onChange: (value: string) => void;
+  onChange?: (value: string) => void;
+  readOnly?: boolean;
   scrollRef?: (element: HTMLDivElement | null) => void;
 };
+
+const ignoreWorkspaceCodeChange = () => {};
 
 const WORKSPACE_CODE_LANGUAGE_EXTENSIONS: Record<string, WorkspaceCodeLanguage> = {
   js: "javascript",
@@ -160,7 +163,8 @@ export function WorkspaceCodeEditor({
   ariaLabel = "Code editor",
   filePath,
   value,
-  onChange,
+  onChange = ignoreWorkspaceCodeChange,
+  readOnly = false,
   scrollRef,
 }: WorkspaceCodeEditorProps) {
   const parentRef = useRef<HTMLDivElement | null>(null);
@@ -194,6 +198,8 @@ export function WorkspaceCodeEditor({
       workspaceCodeTheme,
       syntaxHighlighting(workspaceCodeHighlightStyle),
       keymap.of([]),
+      EditorState.readOnly.of(readOnly),
+      EditorView.editable.of(!readOnly),
       EditorView.contentAttributes.of({ "aria-label": ariaLabel }),
       EditorView.updateListener.of((update) => {
         if (!update.docChanged) return;
@@ -224,13 +230,14 @@ export function WorkspaceCodeEditor({
         viewRef.current = null;
       }
     };
-  }, [ariaLabel, languageExtension, scrollRef]);
+  }, [ariaLabel, languageExtension, readOnly, scrollRef]);
 
   return (
     <div
       ref={parentRef}
       data-testid={testId}
       data-workspace-code-language={workspaceCodeLanguageLabel(language)}
+      data-workspace-code-read-only={readOnly ? "true" : "false"}
       className="min-h-[280px] flex-1 overflow-hidden bg-transparent"
     />
   );

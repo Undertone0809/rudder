@@ -99,7 +99,12 @@ import {
   organizationResourceKindLabel,
   organizationResourceSourceTypeLabel,
 } from "../lib/resource-options";
-import { parseWorkspaceCsvContent, serializeWorkspaceCsvRows } from "../lib/workspace-csv";
+import { normalizeWorkspaceCsvRows, parseWorkspaceCsvContent, serializeWorkspaceCsvRows } from "../lib/workspace-csv";
+import {
+  buildWorkspaceHtmlPreviewSrcDoc,
+  isWorkspaceHtmlContentType,
+  isWorkspaceHtmlFilePath,
+} from "../lib/workspace-html-preview";
 
 const WORKSPACE_LAUNCH_TARGET_STORAGE_KEY = "rudder.workspace.launchTargetId";
 const WORKSPACE_OPEN_FILE_TABS_STORAGE_PREFIX = "rudder.workspace.openFileTabs";
@@ -122,10 +127,7 @@ const WORKSPACE_LAUNCH_TARGET_IDS = [
   "finder",
 ] as const satisfies readonly DesktopWorkspaceLaunchTarget["id"][];
 const WORKSPACE_IMAGE_FILE_EXTENSIONS = new Set([".avif", ".bmp", ".gif", ".ico", ".jpeg", ".jpg", ".png", ".svg", ".webp"]);
-const WORKSPACE_HTML_FILE_EXTENSIONS = new Set([".html", ".htm"]);
 const WORKSPACE_CSV_FILE_EXTENSIONS = new Set([".csv"]);
-const WORKSPACE_HTML_PREVIEW_CSP_META =
-  "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'; frame-src 'none'\">";
 const WORKSPACE_TAB_CONTEXT_MENU_WIDTH = 220;
 const WORKSPACE_TAB_CONTEXT_MENU_MAX_HEIGHT = 256;
 const SKILL_INSTALL_CHAT_PREFILL = [
@@ -578,15 +580,6 @@ function isWorkspaceMarkdownFilePath(filePath: string | null) {
   return extension !== null && WORKSPACE_MARKDOWN_FILE_EXTENSIONS.has(extension);
 }
 
-function isWorkspaceHtmlFilePath(filePath: string | null) {
-  const extension = getWorkspaceFileExtension(filePath);
-  return extension !== null && WORKSPACE_HTML_FILE_EXTENSIONS.has(extension);
-}
-
-function isWorkspaceHtmlContentType(contentType: string | null | undefined) {
-  return typeof contentType === "string" && contentType.toLowerCase().split(";")[0]?.trim() === "text/html";
-}
-
 function isWorkspaceCsvFilePath(filePath: string | null) {
   const extension = getWorkspaceFileExtension(filePath);
   return extension !== null && WORKSPACE_CSV_FILE_EXTENSIONS.has(extension);
@@ -594,16 +587,6 @@ function isWorkspaceCsvFilePath(filePath: string | null) {
 
 function isWorkspaceCsvContentType(contentType: string | null | undefined) {
   return typeof contentType === "string" && contentType.toLowerCase().split(";")[0]?.trim() === "text/csv";
-}
-
-function buildWorkspaceHtmlPreviewSrcDoc(content: string) {
-  if (/<head(?:\s[^>]*)?>/iu.test(content)) {
-    return content.replace(/<head(?:\s[^>]*)?>/iu, (match) => `${match}\n${WORKSPACE_HTML_PREVIEW_CSP_META}`);
-  }
-  if (/<html(?:\s[^>]*)?>/iu.test(content)) {
-    return content.replace(/<html(?:\s[^>]*)?>/iu, (match) => `${match}\n<head>${WORKSPACE_HTML_PREVIEW_CSP_META}</head>`);
-  }
-  return `<!doctype html><html><head>${WORKSPACE_HTML_PREVIEW_CSP_META}</head><body>${content}</body></html>`;
 }
 
 function isWorkspaceTextDocumentFilePath(filePath: string | null) {
@@ -2183,14 +2166,6 @@ function LegacyHeartbeatInstructionsDialog({
       </DialogContent>
     </Dialog>
   );
-}
-
-function normalizeWorkspaceCsvRows(rows: string[][]) {
-  const columnCount = Math.max(1, ...rows.map((row) => row.length));
-  return {
-    columnCount,
-    rows: rows.map((row) => Array.from({ length: columnCount }, (_, index) => row[index] ?? "")),
-  };
 }
 
 function CsvWorkspaceEditor({

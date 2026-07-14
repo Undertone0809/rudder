@@ -7,9 +7,14 @@ import { AgentIcon } from "@/components/AgentIconPicker";
 import { CommentThread } from "@/components/CommentThread";
 import { InlineEditor } from "@/components/InlineEditor";
 import { IssueProperties } from "@/components/IssueProperties";
-import { MarkdownBody } from "@/components/MarkdownBody";
 import { PriorityIcon } from "@/components/PriorityIcon";
 import { StatusBadge } from "@/components/StatusBadge";
+import {
+  isWorkspaceCsvPreviewFile,
+  isWorkspaceHtmlPreviewFile,
+  WorkspaceFilePreview,
+  type WorkspaceFilePreviewMode,
+} from "@/components/WorkspaceFilePreview";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -652,19 +657,15 @@ function ChatSidePanelLibraryTreeNode({
   );
 }
 
-function isChatSidePanelWorkspaceMarkdownFile(filePath: string | null | undefined, contentType: string | null | undefined) {
-  const normalized = filePath?.toLowerCase() ?? "";
-  return [".md", ".markdown", ".mdown", ".mdx"].some((extension) => normalized.endsWith(extension))
-    || contentType === "text/markdown";
-}
-
 function ChatSidePanelLibraryFileView({
   libraryFile,
 }: {
   libraryFile: OrganizationWorkspaceFileDetail;
 }) {
   const { pushToast } = useToast();
-  const markdown = isChatSidePanelWorkspaceMarkdownFile(libraryFile.filePath, libraryFile.contentType);
+  const html = isWorkspaceHtmlPreviewFile(libraryFile);
+  const csv = isWorkspaceCsvPreviewFile(libraryFile);
+  const [previewMode, setPreviewMode] = useState<WorkspaceFilePreviewMode>("preview");
   const pathSegments = libraryFile.filePath.split("/").filter(Boolean);
   const visiblePathSegments = pathSegments.length > 3
     ? ["…", ...pathSegments.slice(-2)]
@@ -772,11 +773,39 @@ function ChatSidePanelLibraryFileView({
       </DropdownMenuContent>
     </DropdownMenu>
   ) : null;
+  const fileModeToggle = html || csv ? (
+    <div
+      className="inline-flex shrink-0 overflow-hidden rounded-md border border-border p-0.5"
+      role="group"
+      aria-label={html ? "HTML file mode" : "CSV file mode"}
+    >
+      <Button
+        type="button"
+        variant={previewMode === "preview" ? "secondary" : "ghost"}
+        size="sm"
+        className="h-7 rounded-[4px] px-2 text-xs"
+        aria-pressed={previewMode === "preview"}
+        onClick={() => setPreviewMode("preview")}
+      >
+        {html ? "Preview" : "Table"}
+      </Button>
+      <Button
+        type="button"
+        variant={previewMode === "source" ? "secondary" : "ghost"}
+        size="sm"
+        className="h-7 rounded-[4px] px-2 text-xs"
+        aria-pressed={previewMode === "source"}
+        onClick={() => setPreviewMode("source")}
+      >
+        Source
+      </Button>
+    </div>
+  ) : null;
 
   return (
-    <div className="flex min-h-full flex-col" data-testid="chat-side-panel-library-file-view">
+    <div className="flex h-full min-h-[420px] flex-col" data-testid="chat-side-panel-library-file-view">
       <div
-        className="flex h-11 shrink-0 items-center gap-3 border-b border-[color:var(--border-soft)] px-1"
+        className="flex h-11 shrink-0 items-center gap-3 border-b border-[color:var(--border-soft)] px-4"
         data-testid="chat-side-panel-library-file-toolbar"
       >
         <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -802,30 +831,18 @@ function ChatSidePanelLibraryFileView({
             );
           })}
         </nav>
+        {fileModeToggle}
         {openInMenu ? (
           <div className="shrink-0" data-testid="chat-side-panel-library-open-in">
             {openInMenu}
           </div>
         ) : null}
       </div>
-      {libraryFile.previewKind === "text" && libraryFile.content !== null ? (
-        markdown ? (
-          <article className="min-w-0 flex-1 px-1 py-5" data-testid="chat-side-panel-library-markdown-preview">
-            <MarkdownBody
-              className="rudder-library-document-editor rudder-side-panel-library-document text-[15px] leading-7 text-foreground"
-              enableCodeBlockCopy
-            >
-              {libraryFile.content}
-            </MarkdownBody>
-          </article>
-        ) : (
-          <pre className="mt-4 max-h-[52vh] overflow-auto rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--code-surface)] p-3 text-xs leading-5 text-[color:var(--code-foreground)]"><code>{libraryFile.content}</code></pre>
-        )
-      ) : libraryFile.previewKind === "image" && libraryFile.contentPath ? (
-        <img src={libraryFile.contentPath} alt={libraryFile.filePath} className="mt-4 max-h-[52vh] rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] object-contain" />
-      ) : (
-        <p className="mt-4 text-sm text-muted-foreground">No inline preview is available for this file.</p>
-      )}
+      <WorkspaceFilePreview
+        file={libraryFile}
+        mode={previewMode}
+        testIdPrefix="chat-side-panel-library"
+      />
     </div>
   );
 }
@@ -1282,12 +1299,12 @@ export function ChatSidePanel({
     <aside
       data-testid="chat-side-panel"
       className={cn(
-        "motion-chat-side-panel motion-panel-reveal flex min-h-0 w-full shrink-0 flex-col gap-1.5 bg-transparent",
+        "motion-chat-side-panel motion-panel-reveal flex min-h-0 shrink-0 flex-col gap-1.5 bg-transparent",
         isMobile
-          ? "fixed inset-x-3 bottom-3 top-[4.75rem] z-40"
+          ? "fixed inset-x-3 bottom-3 top-[4.75rem] z-40 w-auto"
           : expanded
-            ? "md:w-full transition-[width,opacity,transform] duration-300 ease-out motion-reduce:transition-none"
-            : "md:w-[min(420px,36vw)] transition-[width,opacity,transform] duration-300 ease-out motion-reduce:transition-none",
+            ? "w-full md:w-full transition-[width,opacity,transform] duration-300 ease-out motion-reduce:transition-none"
+            : "w-full md:w-[min(420px,36vw)] transition-[width,opacity,transform] duration-300 ease-out motion-reduce:transition-none",
         exiting && "translate-x-4 scale-[0.985] opacity-0",
         resizing && "transition-none",
         !sidePanel.open && !exiting && "hidden",
@@ -1422,7 +1439,7 @@ export function ChatSidePanel({
       <div className="workspace-main-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]">
         <div className={cn(
           "scrollbar-auto-hide min-h-0 flex-1",
-          browserTarget || issueTarget || automationTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
+          browserTarget || issueTarget || automationTarget || libraryFilePreviewPath ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
           issueTarget && !browserTarget && "px-4 py-4",
         )} data-testid="chat-side-panel-scroll-body">
           {browserTargets.map((target) => {
@@ -1445,10 +1462,14 @@ export function ChatSidePanel({
           {browserTarget ? null : !activeTarget ? (
             <SidePanelEmptyState browserAvailable={browserAvailable} onOpenTarget={openSidePanelTarget} />
           ) : loading ? (
-            <LoadingPanelBody />
+            <div className={cn(libraryFilePreviewPath && "px-4 py-4")}>
+              <LoadingPanelBody />
+            </div>
           ) : error ? (
-            <div role="alert" className="rounded-[var(--radius-lg)] border border-destructive/30 bg-destructive/10 px-3 py-3 text-sm text-destructive">
-              {error instanceof Error ? error.message : "Could not load this Side Panel target."}
+            <div className={cn(libraryFilePreviewPath && "px-4 py-4")}>
+              <div role="alert" className="rounded-[var(--radius-lg)] border border-destructive/30 bg-destructive/10 px-3 py-3 text-sm text-destructive">
+                {error instanceof Error ? error.message : "Could not load this Side Panel target."}
+              </div>
             </div>
           ) : issueTarget && issue ? (
             expanded ? (
@@ -1502,7 +1523,7 @@ export function ChatSidePanel({
               </div>
             </div>
           ) : libraryFilePreviewPath && libraryFile ? (
-            <ChatSidePanelLibraryFileView libraryFile={libraryFile} />
+            <ChatSidePanelLibraryFileView key={libraryFile.filePath} libraryFile={libraryFile} />
           ) : libraryDirectoryTarget ? (
             <div className="flex min-h-full flex-col" data-testid="chat-side-panel-library-directory-view">
               {libraryDirectory ? (
