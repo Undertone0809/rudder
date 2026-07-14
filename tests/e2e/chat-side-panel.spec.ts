@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { chatMessages, createDb } from "../../packages/db/src/index.ts";
 import { E2E_DATABASE_URL } from "./support/e2e-env";
+import { expectRightAnchoredSidePanelMotion, sampleSidePanelMotion } from "./support/side-panel-motion";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
 
@@ -289,6 +290,7 @@ test.describe("Chat Side Panel", () => {
     expect(titleBox?.y ?? 0).toBeGreaterThanOrEqual(
       (toolbarBox?.y ?? 0) + (toolbarBox?.height ?? 0),
     );
+
     await libraryOpenIn.click();
     await expect(page.getByRole("menuitem", { name: "Open in Library" })).toBeVisible();
     await expect(page.getByTestId("chat-side-panel-library-full-path")).toHaveCount(0);
@@ -1286,14 +1288,20 @@ test.describe("Chat Side Panel", () => {
     await sidePanel.getByLabel("Expand Side Panel").click();
     await expect(sidePanel.getByLabel("Restore Side Panel width")).toBeVisible();
     await expect(page.getByTestId("side-panel-expanded-overlay")).toBeVisible();
-    await expect(page.getByTestId("side-panel-resizer")).toHaveCount(0);
+    await expect(page.getByTestId("side-panel-resizer")).toBeHidden();
 
-    const expandedMainCardBox = await page.getByTestId("workspace-main-card").boundingBox();
-    const expandedSidePanelBox = await sidePanel.boundingBox();
-    expect(expandedMainCardBox).not.toBeNull();
-    expect(expandedSidePanelBox).not.toBeNull();
-    expect(Math.abs(Math.round(expandedSidePanelBox!.x - expandedMainCardBox!.x))).toBeLessThanOrEqual(2);
-    expect(Math.abs(Math.round((expandedMainCardBox!.x + expandedMainCardBox!.width) - (expandedSidePanelBox!.x + expandedSidePanelBox!.width)))).toBeLessThanOrEqual(2);
+    await expect.poll(async () => {
+      const workspaceBox = await page.getByTestId("workspace-main-panel-stack").boundingBox();
+      const expandedSidePanelBox = await sidePanel.boundingBox();
+      if (!workspaceBox || !expandedSidePanelBox) return null;
+      return {
+        left: Math.abs(Math.round(expandedSidePanelBox.x - workspaceBox.x)),
+        right: Math.abs(Math.round(
+          (workspaceBox.x + workspaceBox.width)
+            - (expandedSidePanelBox.x + expandedSidePanelBox.width),
+        )),
+      };
+    }).toEqual({ left: 0, right: 0 });
 
     await sidePanel.getByLabel("Restore Side Panel width").click();
     await expect(sidePanel.getByLabel("Expand Side Panel")).toBeVisible();
@@ -1337,7 +1345,10 @@ test.describe("Chat Side Panel", () => {
 
   test("animates the Side Panel shell and auto-collapses during narrow resize", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Side-Panel-Motion-Resize-${Date.now()}` },
+      data: {
+        name: `Side-Panel-Motion-Resize-${Date.now()}`,
+        issuePrefix: `SPM${randomUUID().replaceAll("-", "").slice(0, 7).toUpperCase()}`,
+      },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
@@ -1350,13 +1361,17 @@ test.describe("Chat Side Panel", () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/${organization.issuePrefix}/dashboard`);
     await page.getByTestId("side-panel-hover-edge").hover();
-    await page.getByTestId("global-side-panel-trigger").click();
+    const openingSamples = await sampleSidePanelMotion(
+      page,
+      () => page.getByTestId("global-side-panel-trigger").click(),
+    );
+    expectRightAnchoredSidePanelMotion(openingSamples, "opening", { endPanelWidth: { min: 390 } });
 
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
-    await expect(sidePanel).toHaveClass(/motion-chat-side-panel/);
-    await expect(sidePanel).toHaveClass(/transition-\[width,opacity,transform\]/);
-    await expect(page.getByTestId("side-panel-resizer")).toHaveClass(/transition-\[width,opacity,transform\]/);
+    await expect(sidePanel.getByLabel("Close Side Panel")).toBeFocused();
+    await expect(page.getByTestId("side-panel-stable-host")).toHaveClass(/motion-resize/);
+    await expect(page.getByTestId("side-panel-resizer")).toHaveClass(/motion-resize/);
 
     const collapseStart = await page.getByTestId("side-panel-resizer").boundingBox();
     expect(collapseStart).not.toBeNull();
@@ -1365,17 +1380,35 @@ test.describe("Chat Side Panel", () => {
     await page.mouse.move(page.viewportSize()!.width - 16, collapseStart!.y + collapseStart!.height / 2, { steps: 8 });
     await expect(sidePanel).toHaveCount(0);
     await page.mouse.up();
+    await expect(page.getByTestId("side-panel-stable-host")).toHaveCSS("width", "0px");
 
     await page.getByTestId("side-panel-hover-edge").hover();
-    await page.getByTestId("global-side-panel-trigger").click();
+    const reopeningSamples = await sampleSidePanelMotion(
+      page,
+      () => page.getByTestId("global-side-panel-trigger").click(),
+    );
+    expectRightAnchoredSidePanelMotion(reopeningSamples, "opening", { endPanelWidth: { min: 390 } });
+    await expect(sidePanel).toBeVisible();
     const reopenedBox = await sidePanel.boundingBox();
     expect(reopenedBox).not.toBeNull();
     expect(reopenedBox!.width).toBeGreaterThanOrEqual(390);
+
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await sidePanel.getByLabel("Close Side Panel").click();
+    const stableHost = page.getByTestId("side-panel-stable-host");
+    await expect(stableHost).toHaveCSS("width", "0px");
+    await expect(page.getByTestId("global-side-panel-trigger")).toBeFocused();
+    await page.getByTestId("global-side-panel-trigger").click();
+    await expect.poll(async () => (await sidePanel.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(390);
+    await page.emulateMedia({ reducedMotion: "no-preference" });
   });
 
-  test("hides the main workspace while the Side Panel is expanded", async ({ page }) => {
+  test("keeps the main workspace mounted but inert while the Side Panel is expanded", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Global-Side-Panel-Expanded-${Date.now()}` },
+      data: {
+        name: `Global-Side-Panel-Expanded-${Date.now()}`,
+        issuePrefix: `SPE${randomUUID().replaceAll("-", "").slice(0, 7).toUpperCase()}`,
+      },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
@@ -1394,13 +1427,19 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Open a panel");
     await expect(page.getByTestId("workspace-main-card")).toBeVisible();
 
-    await sidePanel.getByLabel("Expand Side Panel").click();
+    const expandSamples = await sampleSidePanelMotion(
+      page,
+      () => sidePanel.getByLabel("Expand Side Panel").click(),
+    );
+    expectRightAnchoredSidePanelMotion(expandSamples, "opening", { endPanelWidth: { min: 900 } });
     await expect(page.getByTestId("side-panel-expanded-overlay")).toBeVisible();
     await expect(sidePanel.getByLabel("Restore Side Panel width")).toBeVisible();
-    await expect(page.getByTestId("side-panel-resizer")).toHaveCount(0);
-    await expect(page.getByTestId("workspace-main-card")).not.toBeVisible();
-    await expect(page.getByTestId("workspace-main-card")).toHaveAttribute("aria-hidden", "true");
-    await expect(page.getByTestId("workspace-main-card")).toHaveAttribute("inert", "");
+    await expect(page.getByTestId("side-panel-resizer")).toBeHidden();
+    const mainWorkspace = page.getByTestId("workspace-main-card");
+    await expect(mainWorkspace).toBeAttached();
+    await expect(mainWorkspace).toHaveAttribute("aria-hidden", "true");
+    await expect(mainWorkspace).toHaveAttribute("inert", "");
+    expect((await mainWorkspace.boundingBox())?.width ?? 0).toBeLessThanOrEqual(2);
 
     const workspaceStackBox = await page.getByTestId("workspace-main-panel-stack").boundingBox();
     const expandedSidePanelBox = await sidePanel.boundingBox();
@@ -1409,7 +1448,11 @@ test.describe("Chat Side Panel", () => {
     expect(Math.abs(Math.round(expandedSidePanelBox!.x - workspaceStackBox!.x))).toBeLessThanOrEqual(2);
     expect(Math.abs(Math.round((workspaceStackBox!.x + workspaceStackBox!.width) - (expandedSidePanelBox!.x + expandedSidePanelBox!.width)))).toBeLessThanOrEqual(2);
 
-    await sidePanel.getByLabel("Restore Side Panel width").click();
+    const restoreSamples = await sampleSidePanelMotion(
+      page,
+      () => sidePanel.getByLabel("Restore Side Panel width").click(),
+    );
+    expectRightAnchoredSidePanelMotion(restoreSamples, "closing", { endPanelWidth: { min: 390 } });
     await expect(page.getByTestId("side-panel-expanded-overlay")).toHaveCount(0);
     await expect(page.getByTestId("side-panel-resizer")).toBeVisible();
     await expect(page.getByTestId("workspace-main-card")).toBeVisible();
@@ -1418,7 +1461,22 @@ test.describe("Chat Side Panel", () => {
 
     await sidePanel.getByLabel("Expand Side Panel").click();
     await expect(page.getByTestId("side-panel-expanded-overlay")).toBeVisible();
-    await sidePanel.getByLabel("Close Side Panel").click();
+    await expect.poll(async () => {
+      const [workspaceBox, panelBox] = await Promise.all([
+        page.getByTestId("workspace-main-panel-stack").boundingBox(),
+        sidePanel.boundingBox(),
+      ]);
+      if (!workspaceBox || !panelBox) return Number.POSITIVE_INFINITY;
+      return Math.abs(workspaceBox.width - panelBox.width);
+    }).toBeLessThanOrEqual(2);
+    const closeSamples = await sampleSidePanelMotion(
+      page,
+      () => sidePanel.getByLabel("Close Side Panel").click(),
+    );
+    expectRightAnchoredSidePanelMotion(closeSamples, "closing", {
+      checkClosingContent: true,
+      endPanelWidth: { max: 2 },
+    });
     await expect(sidePanel).toHaveCount(0);
     await expect(page.getByTestId("workspace-main-card")).toBeVisible();
     await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("aria-hidden", "true");
@@ -1458,7 +1516,7 @@ test.describe("Chat Side Panel", () => {
 
     await page.mouse.move(stackBox!.x + stackBox!.width * 0.3, pointerY, { steps: 8 });
     await expect(page.getByTestId("side-panel-expanded-overlay")).toBeVisible();
-    await expect(resizer).toHaveCount(0);
+    await expect(resizer).toBeHidden();
     await page.mouse.up();
   });
 
@@ -1469,7 +1527,10 @@ test.describe("Chat Side Panel", () => {
     });
     expect(browserSettings.ok(), await browserSettings.text()).toBe(true);
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Global-Side-Panel-Browser-${Date.now()}` },
+      data: {
+        name: `Global-Side-Panel-Browser-${Date.now()}`,
+        issuePrefix: `SPB${randomUUID().replaceAll("-", "").slice(0, 7).toUpperCase()}`,
+      },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
@@ -1552,13 +1613,21 @@ test.describe("Chat Side Panel", () => {
     await expect(browserTabs.last()).toHaveAttribute("aria-selected", "true");
     await page.screenshot({ path: "/tmp/rudder-side-panel-tab-reorder.png", fullPage: true });
 
-    await sidePanel.getByLabel("Close Side Panel").click();
+    const closeSamples = await sampleSidePanelMotion(
+      page,
+      () => sidePanel.getByLabel("Close Side Panel").click(),
+    );
+    expectRightAnchoredSidePanelMotion(closeSamples, "closing", {
+      checkClosingContent: true,
+      endPanelWidth: { max: 2 },
+    });
     await expect(page.getByTestId("chat-side-panel")).toBeHidden();
     await expect(stableWebview).toHaveCount(1);
     await expect.poll(() => stableWebview.evaluate((element) => (
       element as HTMLElement & { __rudderKeepaliveMarker?: string }
     ).__rudderKeepaliveMarker)).toBe("browser-guest-1");
     await expect(page.getByTestId("chat-side-panel-trigger")).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByTestId("chat-side-panel-trigger")).toBeFocused();
     await page.getByTestId("chat-side-panel-trigger").click();
     await expect(page.getByTestId("chat-side-panel")).toBeVisible();
     await expect.poll(() => stableWebview.evaluate((element) => (

@@ -74,7 +74,17 @@ import {
   UserRound,
   X
 } from "lucide-react";
-import { createElement, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  createElement,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactElement,
+} from "react";
 import { AutomationDetail } from "./AutomationDetail";
 import { conversationDisplayTitle } from "./Chat.parts";
 import { IssueDetail } from "./IssueDetail";
@@ -1183,32 +1193,30 @@ function ChatSidePanelBrowserView({
 
 export function ChatSidePanel({
   contextReady = true,
-  desktopWidth,
-  equalWidth = false,
   expanded = false,
   exiting = false,
   onClose,
   onToggleExpanded,
-  resizing = false,
   target,
   selectedOrganizationId,
 }: {
   contextReady?: boolean;
-  desktopWidth?: number;
-  equalWidth?: boolean;
   expanded?: boolean;
   exiting?: boolean;
   onClose?: () => void;
   onToggleExpanded?: () => void;
-  resizing?: boolean;
   target?: SidePanelTarget | null;
   selectedOrganizationId: string | null | undefined;
 }) {
   const sidePanel = useSidePanel();
   const [draggedTabKey, setDraggedTabKey] = useState<string | null>(null);
   const [tabDropTarget, setTabDropTarget] = useState<{ key: string; position: "before" | "after" } | null>(null);
+  const [desktopExitComplete, setDesktopExitComplete] = useState(!sidePanel.open);
+  const panelRef = useRef<HTMLElement>(null);
+  const lastOpenDesktopPanelRef = useRef<ReactElement | null>(null);
   const queryClient = useQueryClient();
   const operatorDisplayName = useOperatorDisplayName();
+  const isMobile = typeof window !== "undefined" && window.matchMedia?.("(max-width: 767px)").matches;
   const { openTarget } = sidePanel;
 
   const visibleTabs = sidePanel.tabs;
@@ -1216,6 +1224,30 @@ export function ChatSidePanel({
     () => visibleTabs.filter((candidate): candidate is Extract<SidePanelTarget, { kind: "browser" }> => candidate.kind === "browser"),
     [visibleTabs],
   );
+  useLayoutEffect(() => {
+    if (isMobile) return undefined;
+    if (sidePanel.open) {
+      setDesktopExitComplete(false);
+      return undefined;
+    }
+
+    const host = panelRef.current?.parentElement;
+    if (!host || !lastOpenDesktopPanelRef.current) {
+      setDesktopExitComplete(true);
+      return undefined;
+    }
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches || host.getBoundingClientRect().width <= 0.5) {
+      setDesktopExitComplete(true);
+      return undefined;
+    }
+
+    const handleTransitionEnd = (event: TransitionEvent) => {
+      if (event.target !== host || event.propertyName !== "width") return;
+      setDesktopExitComplete(true);
+    };
+    host.addEventListener("transitionend", handleTransitionEnd);
+    return () => host.removeEventListener("transitionend", handleTransitionEnd);
+  }, [isMobile, sidePanel.open]);
   const desktopBrowserAvailable = Boolean(readDesktopShell()?.getBrowserPartition);
   const browserAvailable = desktopBrowserAvailable;
   useEffect(() => {
@@ -1248,27 +1280,28 @@ export function ChatSidePanel({
   const libraryEntryTarget = activeTarget?.kind === "library_entry" ? activeTarget : null;
   const browserTarget = activeTarget?.kind === "browser" ? activeTarget : null;
   const placeholderTarget = activeTarget?.kind === "placeholder" ? activeTarget : null;
+  const targetQueriesEnabled = sidePanel.open || exiting;
 
   const libraryFilePreviewPath = libraryFileTarget?.filePath ?? libraryEntryTarget?.path ?? null;
   const issueQuery = useQuery({
     queryKey: queryKeys.issues.detail(issueTarget?.issueId ?? "__none__"),
     queryFn: () => issuesApi.get(issueTarget!.issueId),
-    enabled: !!issueTarget,
+    enabled: targetQueriesEnabled && !!issueTarget,
   });
   const issueCommentsQuery = useQuery({
     queryKey: queryKeys.issues.comments(issueTarget?.issueId ?? "__none__"),
     queryFn: () => issuesApi.listComments(issueTarget!.issueId),
-    enabled: !!issueTarget,
+    enabled: targetQueriesEnabled && !!issueTarget,
   });
   const agentsQuery = useQuery({
     queryKey: queryKeys.agents.list(selectedOrganizationId ?? "__none__"),
     queryFn: () => agentsApi.list(selectedOrganizationId!),
-    enabled: !!selectedOrganizationId && !!issueTarget,
+    enabled: targetQueriesEnabled && !!selectedOrganizationId && !!issueTarget,
   });
   const sessionQuery = useQuery({
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
-    enabled: !!issueTarget,
+    enabled: targetQueriesEnabled && !!issueTarget,
   });
   const updateIssueMutation = useMutation({
     mutationFn: ({ issueId, data }: { issueId: string; data: Record<string, unknown> }) =>
@@ -1295,25 +1328,23 @@ export function ChatSidePanel({
   const chatQuery = useQuery({
     queryKey: queryKeys.chats.detail(selectedOrganizationId ?? "__none__", chatTarget?.conversationId ?? "__none__"),
     queryFn: () => chatsApi.get(chatTarget!.conversationId),
-    enabled: !!selectedOrganizationId && !!chatTarget,
+    enabled: targetQueriesEnabled && !!selectedOrganizationId && !!chatTarget,
   });
   const chatMessagesQuery = useQuery({
     queryKey: queryKeys.chats.messages(selectedOrganizationId ?? "__none__", chatTarget?.conversationId ?? "__none__"),
     queryFn: () => chatsApi.listMessages(chatTarget!.conversationId),
-    enabled: !!selectedOrganizationId && !!chatTarget,
+    enabled: targetQueriesEnabled && !!selectedOrganizationId && !!chatTarget,
   });
   const libraryFileQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFile(selectedOrganizationId ?? "__none__", libraryFilePreviewPath ?? ""),
     queryFn: () => organizationsApi.readWorkspaceFile(selectedOrganizationId!, libraryFilePreviewPath!),
-    enabled: !!selectedOrganizationId && !!libraryFilePreviewPath,
+    enabled: targetQueriesEnabled && !!selectedOrganizationId && !!libraryFilePreviewPath,
   });
   const libraryDirectoryQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFiles(selectedOrganizationId ?? "__none__", libraryDirectoryTarget?.directoryPath ?? ""),
     queryFn: () => organizationsApi.listWorkspaceFiles(selectedOrganizationId!, libraryDirectoryTarget!.directoryPath),
-    enabled: !!selectedOrganizationId && !!libraryDirectoryTarget,
+    enabled: targetQueriesEnabled && !!selectedOrganizationId && !!libraryDirectoryTarget,
   });
-
-  if (!sidePanel.open && !exiting && browserTargets.length === 0) return null;
 
   const loading = Boolean(
     (issueTarget && issueQuery.isPending)
@@ -1343,31 +1374,19 @@ export function ChatSidePanel({
   const libraryDirectoryEntries = libraryDirectory?.entries ?? [];
   const libraryDirectoryFileCount = libraryDirectoryEntries.filter((entry) => !entry.isDirectory).length;
   const libraryDirectoryFolderCount = libraryDirectoryEntries.length - libraryDirectoryFileCount;
-  const isMobile = typeof window !== "undefined" && window.matchMedia?.("(max-width: 767px)").matches;
-  const desktopPanelStyle = !isMobile && !expanded
-    ? equalWidth
-      ? { flex: "1 1 0%", width: 0 }
-      : desktopWidth
-        ? { width: desktopWidth }
-        : undefined
-    : undefined;
-
-  return (
+  const panel = (
     <aside
+      ref={panelRef}
       data-testid="chat-side-panel"
       className={cn(
-        "motion-chat-side-panel motion-panel-reveal flex min-h-0 shrink-0 flex-col gap-1.5 bg-transparent",
+        "flex min-h-0 shrink-0 flex-col gap-1.5 bg-transparent",
         isMobile
-          ? "fixed inset-x-3 bottom-3 top-[4.75rem] z-40 w-auto"
-          : expanded
-            ? "w-full md:w-full transition-[width,opacity,transform] duration-300 ease-out motion-reduce:transition-none"
-            : "w-full md:w-[min(420px,36vw)] transition-[width,opacity,transform] duration-300 ease-out motion-reduce:transition-none",
-        exiting && "translate-x-4 scale-[0.985] opacity-0",
-        resizing && "transition-none",
+          ? "motion-chat-side-panel motion-panel-reveal fixed inset-x-3 bottom-3 top-[4.75rem] z-40 w-auto"
+          : "h-full w-full",
+        isMobile && exiting && "translate-x-4 scale-[0.985] opacity-0",
         !contextReady && "hidden",
-        !sidePanel.open && !exiting && "hidden",
+        isMobile && !sidePanel.open && !exiting && "hidden",
       )}
-      style={desktopPanelStyle}
       aria-label="Side Panel"
       aria-hidden={!contextReady || undefined}
     >
@@ -1609,4 +1628,12 @@ export function ChatSidePanel({
       </div>
     </aside>
   );
+
+  if (isMobile) return sidePanel.open || exiting ? panel : null;
+  if (sidePanel.open) {
+    lastOpenDesktopPanelRef.current = panel;
+    return panel;
+  }
+  if (!desktopExitComplete || browserTargets.length > 0) return lastOpenDesktopPanelRef.current;
+  return null;
 }

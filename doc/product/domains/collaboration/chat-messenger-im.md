@@ -992,6 +992,19 @@ Product model:
   choices, width/resizer behavior, and close/focus behavior. It does not become
   the owning domain for issue workflow, automation dispatch, Library path safety,
   Messenger attention, or chat lifecycle.
+- On desktop, the docked and expanded states use one stable, right-anchored
+  panel host. Opening the panel moves its left boundary toward the workspace
+  center while the current work surface narrows; expanding continues that same
+  boundary toward the workspace left edge. Restore and close reverse the same
+  geometry instead of replacing or reparenting the panel content.
+- When Chat gives up space reserved for its Work manifest, that release stays on
+  the same shared duration and easing token as the Side Panel width change,
+  beginning in the same rendered frame. The transcript and composer widths must
+  change monotonically; they must not first become narrower and then expand
+  while the outer Chat surface is shrinking.
+- These right-anchored geometry rules apply to the desktop adjacent-work layout.
+  The compact mobile Side Panel keeps its separate overlay layout and enter/exit
+  treatment.
 - On desktop pointer surfaces, operators can drag a Side Panel tab label before
   or after another tab to reorder the current context's tab strip without
   changing the active target. The close affordance stays visually quiet until
@@ -1042,10 +1055,14 @@ Flow:
 4. The target view loads through the existing organization-scoped API for that
    domain.
 5. The panel renders the object in a compact workbench view at the default
-   docked width and keeps the current board route stable.
+   docked width and keeps the current board route stable. On desktop, its right
+   edge stays attached to the workspace while the divider and panel left edge
+   move left and the current work surface narrows continuously.
 6. If an issue target is expanded to the wide Side Panel state, Rudder swaps the
    compact issue workbench for the embedded Issue Detail body so the operator
    can use the same issue content sections without leaving the current route.
+   The same panel host continues expanding from right to left; it does not jump
+   to the workspace left edge and then grow toward the right.
 7. When the operator clicks the add-tab affordance while a target is already
    open, Rudder keeps existing tabs available but sets the active panel content
    to the empty `Open a panel` picker instead of showing a dropdown menu.
@@ -1141,6 +1158,23 @@ Invariants:
   workspace with only a narrow resize affordance between them. It must not leave
   a broad blank gutter that visually separates the panel from the current work
   surface.
+- Desktop Side Panel geometry must preserve a fixed right edge while opening,
+  expanding, restoring, or closing. Its left edge, the divider, and the current
+  work-surface width must move monotonically in the requested direction. The
+  main work surface must remain visually present until the expanded panel has
+  covered or displaced it; reduced-motion mode may move directly to the same
+  final geometry.
+- While a desktop Side Panel is closing, its mounted content remains clipped by
+  the shrinking host instead of disappearing before the host reaches zero. The
+  host becomes inert as soon as closing begins, and keyboard focus returns to
+  the current surface's Side Panel trigger.
+- Opening a desktop Side Panel transfers keyboard focus from the removed opener
+  into the panel controls. Context or route changes that merely make the panel
+  unavailable must not steal focus from the newly active surface.
+- Side Panel visibility and width changes must preserve the current route, Chat
+  transcript and composer identity, scroll context, tab state, and Browser
+  webview identity. A docked/expanded transition must not reload or recreate an
+  active Browser guest.
 - The panel should not show a generic full-page footer as the primary action for
   every target. Full-page navigation may remain a secondary object toolbar
   action, but the panel's job is adjacent work.
@@ -1164,6 +1198,9 @@ Evidence:
   routes, and Side Panel E2E covers hiding/reopening tabs in one Messenger item,
   switching to an item with no panel history without inheriting tabs, and
   restoring the original item's active tab when returning.
+- Side Panel E2E samples desktop transition frames to verify the fixed right
+  edge, monotonic panel growth and Chat contraction, coordinated Work manifest
+  spacing, and Browser webview identity across expand and restore.
 - Side Panel E2E covers opening issue, automation, Library, and chat references
   without replacing the Chat route; editing an issue title, description,
   status, and assignee inside the panel; browsing a Library directory tree;

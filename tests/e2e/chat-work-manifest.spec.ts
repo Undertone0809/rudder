@@ -10,6 +10,7 @@ import {
 } from "../../packages/db/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_DATABASE_URL } from "./support/e2e-env";
+import { expectRightAnchoredSidePanelMotion, sampleSidePanelMotion } from "./support/side-panel-motion";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
 const screenshotDir = "/tmp/rudder-chat-work-manifest";
@@ -18,7 +19,10 @@ test.describe("Chat Work Manifest", () => {
   test("shows thread work without project work across desktop and compact layouts", async ({ page }) => {
     fs.mkdirSync(screenshotDir, { recursive: true });
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Chat-Work-Manifest-${Date.now()}` },
+      data: {
+        name: `Chat-Work-Manifest-${Date.now()}`,
+        issuePrefix: `CWM${randomUUID().replaceAll("-", "").slice(0, 7).toUpperCase()}`,
+      },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
@@ -186,16 +190,68 @@ test.describe("Chat Work Manifest", () => {
     await expect(widePanel).toHaveAttribute("data-state", "open");
     await expect(shelf).toBeVisible();
     await page.screenshot({ path: `${screenshotDir}/desktop.png`, fullPage: true });
+    await page.evaluate(() => {
+      const state = window as typeof window & {
+        __rudderChatMotionIdentity?: {
+          composer: Element | null;
+          messages: Element | null;
+          scrollRegion: Element | null;
+        };
+      };
+      state.__rudderChatMotionIdentity = {
+        composer: document.querySelector("[data-testid='chat-composer-content']"),
+        messages: document.querySelector("[data-testid='chat-messages-content']"),
+        scrollRegion: document.querySelector("[data-testid='chat-messages-scroll-region']"),
+      };
+    });
 
-    await shelf.getByText("report.md", { exact: true }).click();
+    const openingSamples = await sampleSidePanelMotion(
+      page,
+      () => shelf.getByText("report.md", { exact: true }).click(),
+    );
+    expectRightAnchoredSidePanelMotion(openingSamples, "opening", {
+      checkMessageWidth: true,
+      endPanelWidth: { min: 390 },
+    });
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
     await expect(sidePanel.getByRole("heading", { name: "Manifest report", exact: true })).toBeVisible();
     await expect(page.getByTestId("chat-work-manifest")).toHaveCount(0);
+    expect(await page.evaluate(() => {
+      const state = (window as typeof window & {
+        __rudderChatMotionIdentity?: { composer: Element | null; messages: Element | null; scrollRegion: Element | null };
+      }).__rudderChatMotionIdentity;
+      return Boolean(
+        state
+          && state.composer === document.querySelector("[data-testid='chat-composer-content']")
+          && state.messages === document.querySelector("[data-testid='chat-messages-content']")
+          && state.scrollRegion === document.querySelector("[data-testid='chat-messages-scroll-region']"),
+      );
+    })).toBe(true);
     await page.screenshot({ path: `${screenshotDir}/side-panel.png`, fullPage: true });
 
-    await sidePanel.getByTestId("chat-side-panel-tab-close").click();
+    await sidePanel.getByTestId("chat-side-panel-tab").hover();
+    const closingSamples = await sampleSidePanelMotion(
+      page,
+      () => sidePanel.getByTestId("chat-side-panel-tab-close").click(),
+    );
+    expectRightAnchoredSidePanelMotion(closingSamples, "closing", {
+      checkClosingContent: true,
+      checkMessageWidth: true,
+      endPanelWidth: { max: 2 },
+    });
     await expect(sidePanel).toHaveCount(0);
+    expect(await page.evaluate(() => {
+      const state = (window as typeof window & {
+        __rudderChatMotionIdentity?: { composer: Element | null; messages: Element | null; scrollRegion: Element | null };
+      }).__rudderChatMotionIdentity;
+      return Boolean(
+        state
+          && state.composer === document.querySelector("[data-testid='chat-composer-content']")
+          && state.messages === document.querySelector("[data-testid='chat-messages-content']")
+          && state.scrollRegion === document.querySelector("[data-testid='chat-messages-scroll-region']"),
+      );
+    })).toBe(true);
     await page.setViewportSize({ width: 1024, height: 768 });
     const trigger = page.getByTestId("chat-work-manifest-trigger");
     await expect(trigger).toBeVisible();

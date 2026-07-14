@@ -2344,7 +2344,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
                 <div ref={chatMessagesScrollRef} data-testid="chat-messages-scroll-region" className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto" >
                   <div className={cn(
-                    "min-h-full px-4 pt-4 transition-[padding] duration-200 ease-out motion-reduce:transition-none md:px-5",
+                    "min-h-full px-4 pt-4 transition-[padding] duration-[var(--motion-duration-standard)] ease-[var(--motion-ease-enter)] motion-reduce:transition-none md:px-5",
                     workManifestRailOpen && "xl:pr-[19rem]",
                   )}>
                   <div data-testid="chat-messages-shell" className="relative mx-auto w-full max-w-4xl">
@@ -2485,11 +2485,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                 skillReferences={chatSkillReferences} onMarkdownLinkClick={handleChatMarkdownLinkClick} /> </> ) : null} </>
                       )} </div> </div> </div> </div>
                 {hasActionableApprovals || hasPendingLightweightProposal ? null : (
-                  <div className={cn(
-                    "w-full shrink-0 px-4 pb-4 transition-[padding] duration-200 ease-out motion-reduce:transition-none md:px-5",
+                  <div
+                    data-testid="chat-composer-layout"
+                    className={cn(
+                    "w-full shrink-0 px-4 pb-4 transition-[padding] duration-[var(--motion-duration-standard)] ease-[var(--motion-ease-enter)] motion-reduce:transition-none md:px-5",
                     workManifestRailOpen && "xl:pr-[19rem]",
                   )}>
-                  <div className="mx-auto w-full max-w-4xl space-y-4">
+                  <div data-testid="chat-composer-content" className="mx-auto w-full max-w-4xl space-y-4">
                     {selectedConversationExternalBound ? (
                       renderComposer(false)
                     ) : pendingAskUserMessage && pendingAskUserRequest ? (

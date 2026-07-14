@@ -528,10 +528,8 @@ function DesktopSidePanelSlot({
   const [sidePanelWidth, setSidePanelWidth] = useState(readRememberedSidePanelWidth);
   const sidePanelWidthRatioRef = useRef(widthRatio(sidePanelWidth));
   const [resizingSidePanel, setResizingSidePanel] = useState(false);
-  const [renderSidePanel, setRenderSidePanel] = useState(sidePanel.open);
-  const [sidePanelExiting, setSidePanelExiting] = useState(false);
-  const hasBrowserTabs = sidePanel.tabs.some((target) => target.kind === "browser");
-  const expandedSidePanelWidth = clampSidePanelWidth(SIDE_PANEL_EXPANDED_WIDTH, viewportWidth);
+  const previousSidePanelOpenRef = useRef(sidePanel.open);
+  const sidePanelFocusWithinRef = useRef(false);
 
   useEffect(() => {
     if (typeof window === "undefined" || !widthInitializedRef.current) return;
@@ -559,20 +557,25 @@ function DesktopSidePanelSlot({
     setSidePanelWidth(defaultWidth);
   }, [viewportWidth, workspaceWidth]);
 
-  useEffect(() => {
-    if (sidePanel.open || hasBrowserTabs) {
-      setRenderSidePanel(true);
-      setSidePanelExiting(false);
-      return;
+  useLayoutEffect(() => {
+    const wasOpen = previousSidePanelOpenRef.current;
+    previousSidePanelOpenRef.current = sidePanel.open;
+    if (!wasOpen && sidePanel.open) {
+      const frame = window.requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>("[data-testid='chat-side-panel-collapse']")?.focus();
+      });
+      return () => window.cancelAnimationFrame(frame);
     }
-    if (!renderSidePanel) return;
-    setSidePanelExiting(true);
-    const timer = window.setTimeout(() => {
-      setRenderSidePanel(false);
-      setSidePanelExiting(false);
-    }, 180);
-    return () => window.clearTimeout(timer);
-  }, [hasBrowserTabs, renderSidePanel, sidePanel.open]);
+    if (!wasOpen || sidePanel.open || !sidePanelFocusWithinRef.current) return undefined;
+    sidePanelFocusWithinRef.current = false;
+
+    const frame = window.requestAnimationFrame(() => {
+      const chatTrigger = document.querySelector<HTMLElement>("[data-testid='chat-side-panel-trigger']");
+      const globalTrigger = document.querySelector<HTMLElement>("[data-testid='global-side-panel-trigger']");
+      (chatTrigger ?? globalTrigger)?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [sidePanel.open]);
 
   useEffect(() => {
     if (viewportWidth === null || !Number.isFinite(viewportWidth)) return;
@@ -657,9 +660,17 @@ function DesktopSidePanelSlot({
     window.addEventListener("pointerup", stopResizing, { once: true });
   }, [onExpandedChange, resetSidePanelWidth, setProportionalSidePanelWidth, sidePanel, sidePanelWidth, workspaceWidth]);
 
-  const panelVisible = contextReady && (sidePanel.open || sidePanelExiting);
+  const panelVisible = contextReady && sidePanel.open;
   const expandedVisible = contextReady && sidePanel.open && expanded;
-  const shouldMountSidePanel = sidePanel.open || renderSidePanel || hasBrowserTabs;
+  const dockedPanelWidth = useEqualDefaultWidth && workspaceWidth !== null
+    ? resolveDefaultSidePanelWidth(workspaceWidth, viewportWidth)
+    : sidePanelWidth;
+  const panelTargetWidth = panelVisible
+    ? expandedVisible
+      ? workspaceWidth ?? dockedPanelWidth
+      : dockedPanelWidth
+    : 0;
+  const resizerVisible = panelVisible && !expandedVisible;
 
   return (
     <>
@@ -678,37 +689,48 @@ function DesktopSidePanelSlot({
           <PanelRight className="h-4 w-4" />
         </Button>
       </div> : null}
-      {panelVisible && !expandedVisible ? <div
+      <div
         key="resizer"
         data-testid="side-panel-resizer"
+        aria-hidden={!resizerVisible}
         className={cn(
-          "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center transition-[width,opacity,transform] duration-200 ease-out motion-reduce:transition-none",
-          sidePanelExiting ? "translate-x-2 opacity-0" : "translate-x-0 opacity-100",
+          "motion-resize workspace-column-resizer group flex shrink-0 items-stretch justify-center overflow-hidden",
+          resizerVisible ? "cursor-col-resize opacity-100" : "pointer-events-none opacity-0",
           resizingSidePanel && "is-resizing",
         )}
-        style={{ flexBasis: 4, maxWidth: 4, minWidth: 4, width: 4 }}
+        style={{ width: resizerVisible ? 4 : 0 }}
         onPointerDown={startSidePanelResize}
-        role="separator"
+        role={resizerVisible ? "separator" : undefined}
         aria-orientation="vertical"
-        aria-label="Resize Side Panel"
+        aria-label={resizerVisible ? "Resize Side Panel" : undefined}
       >
         <div className="workspace-column-resizer-line" />
-      </div> : null}
-      {shouldMountSidePanel ? <div
+      </div>
+      <div
         key="panel"
-        className={expandedVisible ? "absolute inset-y-0 left-0 right-0 z-30 flex min-w-0" : "contents"}
+        className={cn(
+          "motion-resize relative flex min-h-0 shrink-0 overflow-hidden",
+          expandedVisible && "z-30",
+          resizingSidePanel && "transition-none",
+        )}
         data-testid={expandedVisible ? "side-panel-expanded-overlay" : "side-panel-stable-host"}
-        style={panelVisible ? undefined : { display: "none" }}
+        data-side-panel-state={expandedVisible ? "expanded" : panelVisible ? "docked" : "closed"}
+        style={{ width: panelTargetWidth }}
         aria-hidden={!panelVisible}
+        inert={!panelVisible ? true : undefined}
+        onFocusCapture={() => {
+          sidePanelFocusWithinRef.current = true;
+        }}
+        onBlurCapture={(event) => {
+          if (sidePanel.open && !event.currentTarget.contains(event.relatedTarget as Node | null)) {
+            sidePanelFocusWithinRef.current = false;
+          }
+        }}
       >
         <ChatSidePanel
           contextReady={contextReady}
           selectedOrganizationId={selectedOrganizationId}
-          desktopWidth={expandedVisible ? undefined : sidePanelWidth}
-          equalWidth={!expandedVisible && useEqualDefaultWidth}
           expanded={expandedVisible}
-          exiting={sidePanelExiting}
-          resizing={resizingSidePanel}
           onClose={() => {
             if (expanded) {
               onExpandedChange(false);
@@ -722,11 +744,10 @@ function DesktopSidePanelSlot({
               resetSidePanelWidth();
             } else {
               onExpandedChange(true);
-              setProportionalSidePanelWidth(expandedSidePanelWidth);
             }
           }}
         />
-      </div> : null}
+      </div>
     </>
   );
 }
@@ -853,7 +874,7 @@ export function Layout() {
   );
   const sidePanelContextReady = sidePanelContextKey === routeSidePanelContextKey;
   const sidePanelOrganizationId = sidePanelContextReady ? matchedOrganization?.id : null;
-  const desktopSidePanelOverlayVisible = sidePanelContextReady
+  const desktopSidePanelContentInactive = sidePanelContextReady
     && sidePanelOpen
     && desktopSidePanelExpanded;
   const hasUnknownOrganizationPrefix =
@@ -1512,13 +1533,13 @@ export function Layout() {
                       <div
                         data-testid="workspace-main-card"
                         data-tour-target="workspace-main"
-                        aria-hidden={desktopSidePanelOverlayVisible || undefined}
-                        inert={desktopSidePanelOverlayVisible ? true : undefined}
+                        aria-hidden={desktopSidePanelContentInactive || undefined}
+                        inert={desktopSidePanelContentInactive ? true : undefined}
                         className={cn(
                           "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
                           "workspace-main-card",
                           useFramelessWorkspaceMain && "workspace-main-card--frameless",
-                          desktopSidePanelOverlayVisible && "pointer-events-none invisible",
+                          desktopSidePanelContentInactive && "pointer-events-none",
                         )}
                       >
                         {!useFramelessWorkspaceMain ? (

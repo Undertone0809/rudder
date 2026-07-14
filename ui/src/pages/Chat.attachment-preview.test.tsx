@@ -980,7 +980,6 @@ function renderChat({ expanded = false }: { expanded?: boolean } = {}) {
           <Chat />
           <ChatSidePanel
             selectedOrganizationId="org-1"
-            desktopWidth={420}
             expanded={expanded}
             onToggleExpanded={toggleSidePanelExpanded}
           />
@@ -2384,8 +2383,9 @@ describe("Chat Side Panel link handling", () => {
     sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     expect(sidePanel?.textContent).toContain("Start browsing");
     expect(sidePanel?.querySelector("[data-testid='chat-side-panel-browser-view']")).not.toBeNull();
-    expect(sidePanel?.className).toContain("motion-chat-side-panel");
-    expect(sidePanel?.className).toContain("transition-[width,opacity,transform]");
+    expect(sidePanel?.className).toContain("h-full");
+    expect(sidePanel?.className).toContain("w-full");
+    expect(sidePanel?.className).not.toContain("motion-chat-side-panel");
     expect(container.querySelector('[data-testid="chat-side-panel-trigger"]')).toBeNull();
     const collapseButton = sidePanel?.querySelector('[data-testid="chat-side-panel-collapse"]');
     expect(collapseButton).not.toBeNull();
