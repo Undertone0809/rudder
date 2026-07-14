@@ -230,23 +230,16 @@ export function SettingsActions({
 }
 
 export function SettingsChoiceGrid({
-  columns = 3,
   children,
   className,
 }: {
-  columns?: 2 | 3 | 4;
   children: ReactNode;
   className?: string;
 }) {
   return (
     <div
       data-slot="settings-choice-grid"
-      className={cn(
-        "grid grid-cols-1 gap-2.5 sm:grid-cols-2",
-        columns === 3 && "lg:grid-cols-3",
-        columns === 4 && "lg:grid-cols-4",
-        className,
-      )}
+      className={cn("flex flex-wrap gap-2.5", className)}
     >
       {children}
     </div>
@@ -281,9 +274,10 @@ export function SettingsChoiceCard({
   return (
     <button
       type="button"
+      data-slot="settings-choice-card"
       aria-pressed={selected}
       className={cn(
-        "group flex min-w-0 flex-col gap-[var(--settings-choice-gap)] rounded-lg border px-[var(--settings-choice-padding-x)] py-[var(--settings-choice-padding-y)] text-left text-[length:var(--settings-choice-label-size)] outline-none transition-[border-color,background-color,box-shadow,transform] hover:bg-[color:var(--surface-elevated)] active:translate-y-px focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/45",
+        "group flex min-w-[var(--settings-choice-min-width)] flex-col gap-[var(--settings-choice-gap)] rounded-lg border px-[var(--settings-choice-padding-x)] py-[var(--settings-choice-padding-y)] text-left text-[length:var(--settings-choice-label-size)] outline-none transition-[border-color,background-color,box-shadow,transform] hover:bg-[color:var(--surface-elevated)] active:translate-y-px focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/45",
         selected
           ? "border-[color:color-mix(in_oklab,var(--accent-base)_74%,var(--border-strong))] bg-[color:var(--surface-elevated)] shadow-[0_0_0_1px_color-mix(in_oklab,var(--accent-base)_28%,transparent)]"
           : "border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-inset)_84%,var(--surface-elevated))]",

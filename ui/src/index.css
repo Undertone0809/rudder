@@ -1436,7 +1436,7 @@
   }
 
   .settings-modal-shell {
-    height: min(820px, calc(100dvh - 1.5rem));
+    height: min(760px, calc(100dvh - 1.5rem));
     border: 1px solid color-mix(in oklab, var(--border-soft) 92%, transparent);
     background: var(--surface-shell);
     box-shadow: var(--shadow-lg);
@@ -1444,7 +1444,7 @@
 
   @media (min-width: 768px) {
     .settings-modal-shell {
-      height: min(820px, calc(100dvh - 3rem));
+      height: min(760px, calc(100dvh - 5rem));
     }
   }
 

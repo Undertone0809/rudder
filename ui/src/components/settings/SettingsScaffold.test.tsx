@@ -63,7 +63,7 @@ function renderScaffold() {
             <button type="button">Save</button>
           </SettingsActions>
         </SettingsGroup>
-        <SettingsChoiceGrid columns={4}>
+        <SettingsChoiceGrid>
           <button type="button">Light</button>
           <button type="button">Dark</button>
         </SettingsChoiceGrid>
@@ -104,6 +104,8 @@ describe("SettingsScaffold", () => {
 
     expect(actions?.querySelectorAll("button")).toHaveLength(2);
     expect(choiceGrid?.querySelectorAll("button")).toHaveLength(2);
-    expect(choiceGrid?.className).toContain("lg:grid-cols-4");
+    expect(choiceGrid?.className).toContain("flex");
+    expect(choiceGrid?.className).toContain("flex-wrap");
+    expect(choiceGrid?.className).not.toContain("grid-cols");
   });
 });

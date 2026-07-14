@@ -165,7 +165,7 @@ export function InstanceGeneralSettings() {
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-3">
             <div className="text-sm font-medium text-foreground">{t("general.language.title")}</div>
-            <SettingsChoiceGrid columns={2}>
+            <SettingsChoiceGrid>
               <SettingsChoiceCard
                 label={t("general.language.option.en.label")}
                 description={t("general.language.option.en.description")}
