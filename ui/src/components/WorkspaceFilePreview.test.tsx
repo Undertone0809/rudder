@@ -30,6 +30,12 @@ vi.mock("./WorkspaceCodeEditor", () => ({
   ),
 }));
 
+vi.mock("./WorkspacePdfPreview", () => ({
+  WorkspacePdfPreview: ({ src, testId, title }: { src: string; testId: string; title: string }) => (
+    <canvas aria-label={title} data-pdf-src={src} data-testid={testId} />
+  ),
+}));
+
 const roots: Root[] = [];
 
 function workspaceFile(
@@ -196,11 +202,10 @@ describe("WorkspaceFilePreview", () => {
       previewKind: "pdf",
       contentPath: "/api/report.pdf",
     }));
-    const pdfPreview = pdfContainer.querySelector<HTMLIFrameElement>("[data-testid='test-file-pdf-preview']");
-    expect(pdfPreview?.tagName).toBe("IFRAME");
-    expect(pdfPreview?.getAttribute("src")).toBe("/api/report.pdf");
+    const pdfPreview = pdfContainer.querySelector<HTMLCanvasElement>("[data-testid='test-file-pdf-preview']");
+    expect(pdfPreview?.tagName).toBe("CANVAS");
     expect(pdfPreview?.getAttribute("data-pdf-src")).toBe("/api/report.pdf");
-    expect(pdfPreview?.getAttribute("referrerpolicy")).toBe("no-referrer");
+    expect(pdfPreview?.getAttribute("aria-label")).toBe("reports/report.pdf");
   });
 
   it("shows an explicit fallback for unsupported binary files", async () => {

@@ -148,9 +148,13 @@ test.describe("Organization workspaces image preview", () => {
     const preview = page.getByTestId("org-workspaces-pdf-preview");
     await expect(preview).toBeVisible();
     await expect(preview).toHaveAttribute(
-      "src",
+      "data-pdf-src",
       new RegExp(`/api/orgs/${organization.id}/workspace/file/content\\?path=reports%2Fbrief\\.pdf`),
     );
+    const previewCanvas = page.getByTestId("org-workspaces-pdf-preview-canvas");
+    await expect(previewCanvas).toHaveAttribute("data-rendered-page", "1", { timeout: 15_000 });
+    await expect(page.getByTestId("org-workspaces-pdf-preview-text-content"))
+      .toContainText("Rendered in Library.");
     const contentResponse = await request.get(`/api/orgs/${organization.id}/workspace/file/content?path=${encodeURIComponent(pdfFilePath)}`);
     expect(contentResponse.ok()).toBe(true);
     expect(contentResponse.headers()["content-type"]).toBe("application/pdf");

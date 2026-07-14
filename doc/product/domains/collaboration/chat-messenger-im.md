@@ -53,6 +53,8 @@ related_code:
   - ui/src/components/Layout.tsx
   - ui/src/components/MilkdownMarkdownEditor.tsx
   - ui/src/components/MessengerContextSidebar.tsx
+  - ui/src/components/WorkspaceFilePreview.tsx
+  - ui/src/components/WorkspacePdfPreview.tsx
   - ui/src/pages/Chat.side-panel.tsx
   - ui/src/pages/Chat.work-manifest.tsx
   - ui/src/pages/Chat.tsx
@@ -84,6 +86,8 @@ related_tests:
   - ui/src/lib/side-panel-targets.test.ts
   - ui/src/context/SidePanelContext.test.tsx
   - ui/src/components/Layout.test.ts
+  - ui/src/components/WorkspaceFilePreview.test.tsx
+  - ui/src/components/WorkspacePdfPreview.test.tsx
   - ui/src/pages/AgentDetail.runs.test.ts
   - ui/src/pages/Chat.test.tsx
   - ui/src/context/ChatGenerationContext.test.tsx
@@ -1022,6 +1026,10 @@ Product model:
   Ordinary external HTTP(S) links use that target by default without replacing
   the current Rudder route. Unsupported shells or unavailable Browser
   capability must not perform an unsafe remote fetch by themselves.
+- Library file targets render supported inline previews inside the Side Panel,
+  including PDFs. Truncated Library breadcrumbs reveal the complete
+  Library-relative path on hover, and the file `Open` menu offers `Open in
+  Library` alongside any Desktop app, IDE, file-browser, or terminal targets.
 
 Flow:
 
@@ -1071,6 +1079,8 @@ Flow:
     when its instance preference is `built_in`, independently of Agent Browser
     access. The `default_browser` preference and explicit `Open externally`
     action use the operating-system browser instead.
+17. From a Library file tab, `Open in Library` navigates to the full Library
+    work surface with the same organization-scoped file selected.
 
 Invariants:
 
@@ -1105,6 +1115,9 @@ Invariants:
   output, run-history, and dispatch semantics from `AUTOMATION.*`.
 - Side Panel Library views must preserve `LIBRARY.FILES.001` path safety,
   protected paths, previews, and stable reference behavior.
+- Side Panel PDF previews must use the organization-scoped inline workspace
+  content endpoint. Full-path hover text and full-Library navigation must use
+  the Library-relative path rather than exposing an absolute filesystem root.
 - Side Panel chat views must preserve chat lifecycle and Messenger attention
   semantics; opening a chat target in the panel is not a read-state or routing
   rewrite unless the owning Messenger/chat code performs that action.
@@ -1144,6 +1157,9 @@ Evidence:
   assignee metadata, issue and automation compact views, Library previews,
   close-tab keyboard shortcuts, final-tab panel closure, and browser placeholder
   behavior.
+- Chat attachment/side-panel tests and Side Panel E2E cover inline PDF rendering,
+  complete Library path hover text, and full-Library navigation from the file
+  `Open` menu.
 - Layout tests cover Side Panel context keys for Messenger chat and issue
   routes, and Side Panel E2E covers hiding/reopening tabs in one Messenger item,
   switching to an item with no panel history without inheriting tabs, and

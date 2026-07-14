@@ -7,6 +7,7 @@ import {
 } from "../lib/workspace-html-preview";
 import { MarkdownBody } from "./MarkdownBody";
 import { WorkspaceCodeEditor } from "./WorkspaceCodeEditor";
+import { WorkspacePdfPreview } from "./WorkspacePdfPreview";
 
 const WORKSPACE_MARKDOWN_FILE_EXTENSIONS = [".md", ".markdown", ".mdown", ".mdx"];
 const WORKSPACE_CSV_FILE_EXTENSIONS = [".csv"];
@@ -195,13 +196,11 @@ export function WorkspaceFilePreview({
   if (file.previewKind === "pdf" && file.contentPath) {
     return (
       <div className="flex min-h-[420px] flex-1" data-testid={`${testIdPrefix}-pdf-preview-frame`}>
-        <iframe
-          data-testid={`${testIdPrefix}-pdf-preview`}
-          data-pdf-src={file.contentPath}
-          title={file.filePath || "Library PDF preview"}
+        <WorkspacePdfPreview
+          className="min-h-[420px]"
           src={file.contentPath}
-          referrerPolicy="no-referrer"
-          className="block min-h-[420px] w-full flex-1 border-0 bg-white"
+          testId={`${testIdPrefix}-pdf-preview`}
+          title={file.filePath || "Library PDF preview"}
         />
       </div>
     );

@@ -285,8 +285,14 @@ vi.mock("react-router-dom", () => ({
 vi.mock("@/context/OrganizationContext", () => ({
   useOrganization: () => ({
     selectedOrganizationId: "org-1",
-    selectedOrganization: { id: "org-1", name: "Rudder", urlKey: "RUD" },
+    selectedOrganization: { id: "org-1", name: "Rudder", issuePrefix: "RUD", urlKey: "rudder" },
   }),
+}));
+
+vi.mock("@/components/WorkspacePdfPreview", () => ({
+  WorkspacePdfPreview: ({ src, testId, title }: { src: string; testId: string; title: string }) => (
+    <canvas aria-label={title} data-pdf-src={src} data-rendered-page="1" data-testid={testId} />
+  ),
 }));
 
 vi.mock("@/context/BreadcrumbContext", () => ({
@@ -2105,11 +2111,56 @@ describe("Chat Side Panel link handling", () => {
     const fileView = sidePanel?.querySelector("[data-testid='chat-side-panel-library-file-view']");
     const fileToolbar = sidePanel?.querySelector("[data-testid='chat-side-panel-library-file-toolbar']");
     expect(sidePanel).not.toBeNull();
-    expect(fileToolbar?.querySelector("nav")?.getAttribute("title")).toBe("reports/activity.md");
+    expect(fileToolbar?.querySelector("nav")?.getAttribute("tabindex")).toBe("0");
+    expect(fileView?.textContent).not.toContain("reports/activity.md");
     expect(fileView?.textContent).not.toContain("text/markdown");
     expect(sidePanel?.textContent).toContain("Activity report");
     expect(sidePanel?.textContent).toContain("Stable Library entry links should render inline.");
     expect(sidePanel?.textContent).not.toContain("Open this target in the full page for details.");
+  });
+
+  it("renders a Library PDF inline in the Side Panel", async () => {
+    mockState.workspaceFiles = {
+      "reports/quarterly/report.pdf": {
+        filePath: "reports/quarterly/report.pdf",
+        content: null,
+        contentType: "application/pdf",
+        previewKind: "pdf",
+        contentPath: "/api/orgs/org-1/workspace/file/content?path=reports%2Fquarterly%2Freport.pdf",
+        truncated: false,
+      },
+    };
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+
+    await act(async () => {
+      root.render(
+        <ThemeProvider>
+          <SidePanelProvider>
+            <ChatSidePanel
+              selectedOrganizationId="org-1"
+              target={{
+                kind: "library_file",
+                filePath: "reports/quarterly/report.pdf",
+                label: "report.pdf",
+              }}
+            />
+          </SidePanelProvider>
+        </ThemeProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    const preview = container.querySelector<HTMLCanvasElement>("[data-testid='chat-side-panel-library-pdf-preview']");
+    expect(preview).not.toBeNull();
+    expect(preview?.getAttribute("data-pdf-src")).toBe(
+      "/api/orgs/org-1/workspace/file/content?path=reports%2Fquarterly%2Freport.pdf",
+    );
+    expect(preview?.getAttribute("aria-label")).toBe("reports/quarterly/report.pdf");
+    expect(container.textContent).not.toContain("No inline preview is available for this file.");
   });
 
   it.each([false, true])("offers Desktop app launch targets for a Library file when expanded is %s", async (expanded) => {
@@ -2160,7 +2211,7 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
 
-    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="Open Library document in another app"]');
+    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="Open file options"]');
     expect(trigger).not.toBeNull();
     expect(trigger?.textContent).toContain("Open");
     const toolbar = container.querySelector<HTMLElement>("[data-testid='chat-side-panel-library-file-toolbar']");
@@ -2173,6 +2224,7 @@ describe("Chat Side Panel link handling", () => {
 
     const menuItems = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'));
     expect(menuItems.map((item) => item.textContent)).toEqual(expect.arrayContaining([
+      expect.stringContaining("Open in Library"),
       expect.stringContaining("Default app"),
       expect.stringContaining("VS Code"),
       expect.stringContaining("Terminal"),
@@ -2191,7 +2243,7 @@ describe("Chat Side Panel link handling", () => {
     );
   }, 15_000);
 
-  it("hides the Library app launcher outside the Desktop shell", async () => {
+  it("keeps Open in Library available outside Desktop while hiding app launch targets", async () => {
     mockState.workspaceFiles = {
       "reports/activity.md": {
         rootPath: "/Users/tester/Documents/Rudder/rudder",
@@ -2222,7 +2274,24 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelector('button[aria-label="Open Library document in another app"]')).toBeNull();
+    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="Open file options"]');
+    expect(trigger).not.toBeNull();
+    await act(async () => {
+      trigger?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+
+    const menuItems = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+    expect(menuItems.map((item) => item.textContent)).toEqual([
+      expect.stringContaining("Open in Library"),
+    ]);
+    expect(menuItems.some((item) => item.textContent?.includes("Default app"))).toBe(false);
+
+    await act(async () => {
+      menuItems[0]?.click();
+      await Promise.resolve();
+    });
+    expect(mockState.navigate).toHaveBeenCalledWith("/rudder/library?path=reports%2Factivity.md");
   });
 
   it("opens the empty Side Panel picker from the add-tab button without a menu", async () => {

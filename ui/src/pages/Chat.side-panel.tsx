@@ -23,6 +23,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useOrganization } from "@/context/OrganizationContext";
 import { MAX_BROWSER_TABS_PER_CONTEXT, useSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
 import { useOperatorDisplayName } from "@/hooks/useOperatorDisplayName";
@@ -33,7 +35,9 @@ import {
   normalizeBrowserSidePanelUrl as normalizeChatSidePanelBrowserUrl,
 } from "@/lib/browser-side-panel";
 import { readDesktopShell, type DesktopFileLaunchTargetId, type DesktopWorkspaceLaunchTarget } from "@/lib/desktop-shell";
+import { applyOrganizationPrefix, extractOrganizationPrefixFromPath, getOrganizationRouteKey } from "@/lib/organization-routes";
 import { queryKeys } from "@/lib/queryKeys";
+import { useLocation, useNavigate } from "@/lib/router";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
 import type { Agent, Issue, IssueComment, OrganizationWorkspaceFileDetail, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
@@ -55,6 +59,7 @@ import {
   FolderOpen,
   Globe2,
   Image as ImageIcon,
+  LibraryBig,
   Loader2,
   Maximize2,
   MessageSquare,
@@ -663,6 +668,9 @@ function ChatSidePanelLibraryFileView({
   libraryFile: OrganizationWorkspaceFileDetail;
 }) {
   const { pushToast } = useToast();
+  const { selectedOrganization } = useOrganization();
+  const location = useLocation();
+  const navigate = useNavigate();
   const html = isWorkspaceHtmlPreviewFile(libraryFile);
   const csv = isWorkspaceCsvPreviewFile(libraryFile);
   const [previewMode, setPreviewMode] = useState<WorkspaceFilePreviewMode>("preview");
@@ -671,7 +679,9 @@ function ChatSidePanelLibraryFileView({
     ? ["…", ...pathSegments.slice(-2)]
     : pathSegments;
   const [launchTargets, setLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
+  const [openMenuOpen, setOpenMenuOpen] = useState(false);
   const [openingTargetId, setOpeningTargetId] = useState<string | null>(null);
+  const [pathTooltipOpen, setPathTooltipOpen] = useState(false);
   const desktopShell = readDesktopShell();
   const canOpenFile = Boolean(libraryFile.rootPath && desktopShell?.openWorkspaceFileInIde);
 
@@ -697,6 +707,12 @@ function ChatSidePanelLibraryFileView({
     (target.kind === "ide" && target.id !== "xcode")
     || ((target.kind === "terminal" || target.kind === "folder") && Boolean(desktopShell?.openWorkspaceFileLocation))
   ));
+  const libraryPath = applyOrganizationPrefix(
+    `/library?path=${encodeURIComponent(libraryFile.filePath)}`,
+    selectedOrganization
+      ? getOrganizationRouteKey(selectedOrganization)
+      : extractOrganizationPrefixFromPath(location.pathname),
+  );
 
   const openTarget = async (target: { id: DesktopFileLaunchTargetId | DesktopWorkspaceLaunchTarget["id"]; label: string; kind: "app" | DesktopWorkspaceLaunchTarget["kind"] }) => {
     if (!libraryFile.rootPath || !desktopShell) return;
@@ -737,29 +753,41 @@ function ChatSidePanelLibraryFileView({
     return <ExternalLink className="h-4 w-4" />;
   };
 
-  const openInMenu = canOpenFile ? (
-    <DropdownMenu>
+  const openInMenu = (
+    <DropdownMenu
+      open={openMenuOpen}
+      onOpenChange={(nextOpen) => {
+        setOpenMenuOpen(nextOpen);
+        if (nextOpen) setPathTooltipOpen(false);
+      }}
+    >
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
           variant="outline"
           size="sm"
           className="h-8 gap-1 px-2"
-          aria-label="Open Library document in another app"
-          title="Open in another app"
+          aria-label="Open file options"
+          title="Open file options"
         >
           <span>Open</span>
           <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuItem
-          disabled={openingTargetId !== null}
-          onSelect={() => void openTarget({ id: "defaultApp", label: "Default app", kind: "app" })}
-        >
-          {targetIcon({ id: "defaultApp", kind: "app" })}
-          <span>Default app</span>
+        <DropdownMenuItem onSelect={() => navigate(libraryPath)}>
+          <LibraryBig className="h-4 w-4" />
+          <span>Open in Library</span>
         </DropdownMenuItem>
+        {canOpenFile ? (
+          <DropdownMenuItem
+            disabled={openingTargetId !== null}
+            onSelect={() => void openTarget({ id: "defaultApp", label: "Default app", kind: "app" })}
+          >
+            {targetIcon({ id: "defaultApp", kind: "app" })}
+            <span>Default app</span>
+          </DropdownMenuItem>
+        ) : null}
         {visibleTargets.map((target) => (
           <DropdownMenuItem
             key={target.id}
@@ -772,7 +800,7 @@ function ChatSidePanelLibraryFileView({
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
-  ) : null;
+  );
   const fileModeToggle = html || csv ? (
     <div
       className="inline-flex shrink-0 overflow-hidden rounded-md border border-border p-0.5"
@@ -809,34 +837,49 @@ function ChatSidePanelLibraryFileView({
         data-testid="chat-side-panel-library-file-toolbar"
       >
         <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <nav
-          aria-label="Library file path"
-          className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden text-sm"
-          title={libraryFile.filePath}
-        >
-          {visiblePathSegments.map((segment, index) => {
-            const isFileName = index === visiblePathSegments.length - 1;
-            return (
-              <span key={`${segment}-${index}`} className="contents">
-                {index > 0 ? <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" aria-hidden="true" /> : null}
-                <span className={cn(
-                  "truncate",
-                  isFileName
-                    ? "max-w-[60%] shrink-0 font-medium text-foreground"
-                    : "min-w-0 text-muted-foreground",
-                )}>
-                  {segment}
-                </span>
-              </span>
-            );
-          })}
-        </nav>
+        <TooltipProvider delayDuration={120}>
+          <Tooltip
+            open={pathTooltipOpen && !openMenuOpen}
+            onOpenChange={setPathTooltipOpen}
+          >
+            <TooltipTrigger asChild>
+              <nav
+                aria-label="Library file path"
+                className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden text-sm"
+                tabIndex={0}
+              >
+                {visiblePathSegments.map((segment, index) => {
+                  const isFileName = index === visiblePathSegments.length - 1;
+                  return (
+                    <span key={`${segment}-${index}`} className="contents">
+                      {index > 0 ? <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" aria-hidden="true" /> : null}
+                      <span className={cn(
+                        "truncate",
+                        isFileName
+                          ? "max-w-[60%] shrink-0 font-medium text-foreground"
+                          : "min-w-0 text-muted-foreground",
+                      )}>
+                        {segment}
+                      </span>
+                    </span>
+                  );
+                })}
+              </nav>
+            </TooltipTrigger>
+            <TooltipContent
+              side="bottom"
+              sideOffset={8}
+              className="max-w-[min(36rem,calc(100vw-2rem))] break-all text-left leading-5"
+              data-testid="chat-side-panel-library-full-path"
+            >
+              {libraryFile.filePath}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
         {fileModeToggle}
-        {openInMenu ? (
-          <div className="shrink-0" data-testid="chat-side-panel-library-open-in">
-            {openInMenu}
-          </div>
-        ) : null}
+        <div className="shrink-0" data-testid="chat-side-panel-library-open-in">
+          {openInMenu}
+        </div>
       </div>
       <WorkspaceFilePreview
         file={libraryFile}

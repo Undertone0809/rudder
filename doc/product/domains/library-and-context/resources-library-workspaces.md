@@ -25,6 +25,8 @@ related_code:
   - server/src/routes/orgs.ts
   - server/src/services/agent-run-context.ts
   - ui/src/pages/OrganizationResources.tsx
+  - ui/src/components/WorkspaceFilePreview.tsx
+  - ui/src/components/WorkspacePdfPreview.tsx
   - ui/src/pages/OrganizationWorkspaces.tsx
   - ui/src/pages/Chat.side-panel.tsx
   - desktop/src/ide-opener.ts
@@ -40,6 +42,10 @@ related_tests:
   - server/src/__tests__/workspace-backups.test.ts
   - server/src/__tests__/workspace-backups-routes.test.ts
   - ui/src/pages/OrganizationWorkspaceFilesSidebar.test.tsx
+  - ui/src/components/WorkspaceFilePreview.test.tsx
+  - ui/src/components/WorkspacePdfPreview.test.tsx
+  - ui/src/pages/Chat.attachment-preview.test.tsx
+  - tests/e2e/organization-workspaces-image-preview.spec.ts
   - tests/e2e/organization-workspaces-launcher.spec.ts
   - tests/e2e/workspace-shell.spec.ts
   - tests/e2e/chat-side-panel.spec.ts
@@ -118,13 +124,18 @@ Product model:
   the file in the system default app or a detected IDE. Messenger document
   previews additionally let operators reveal the current file in the platform
   file browser or open its containing directory in a detected terminal.
-- Individual file rows and Messenger document previews expose file targets
-  through an `Open In` action. `Default app`
-  is a file-safe target that delegates to the operating system's configured
-  default app for that file type; detected IDEs such as Cursor or VS Code remain
-  explicit file targets. In Messenger document previews, folder and terminal
-  entries are containing-directory targets: folder targets reveal the file,
-  while terminal targets use the file's parent directory as cwd.
+- Individual Library file rows expose file targets through an `Open In` action;
+  Messenger document previews expose the same targets through an `Open` menu.
+  `Default app` is a file-safe target that delegates to the operating system's
+  configured default app for that file type; detected IDEs such as Cursor or VS
+  Code remain explicit file targets. In Messenger document previews, folder and
+  terminal entries are containing-directory targets: folder targets reveal the
+  file, while terminal targets use the file's parent directory as cwd.
+- Messenger Library file previews render supported documents inline, including
+  PDF files through the validated workspace content endpoint. Their compact path
+  breadcrumb exposes the complete Library-relative path on hover, and the
+  `Open` menu includes `Open in Library` so the operator can move from adjacent
+  inspection to the same file in the full Library work surface.
 - Protected roots such as agent instruction, skills, and managed directories
   are excluded from normal mentionable Library surfaces unless an explicit
   management flow owns them.
@@ -144,6 +155,8 @@ Flow:
 7. In Desktop shells, Rudder asks the Desktop bridge for available launcher
    targets and sends workspace/file open requests through that bridge rather
    than through the server file API.
+8. From a Messenger Library preview, the operator can open the same validated
+   file path in the full Library route without changing its organization scope.
 
 Invariants:
 
@@ -162,6 +175,9 @@ Invariants:
   containing-directory targets. Default apps and IDEs receive the validated file
   path; folder targets reveal that file and terminal targets receive its parent
   directory as cwd.
+- `Open in Library` resolves only the current organization-scoped
+  Library-relative file path; it must not expose or navigate to an absolute
+  filesystem root.
 - Desktop bridge handlers must require the renderer-provided root to resolve
   inside the configured organization workspace home, then resolve both the root
   and file through filesystem real paths before opening either the file or its
@@ -186,6 +202,9 @@ Evidence:
 - Messenger Side Panel component and E2E coverage prove a Library document can
   use the same Desktop launcher menu and route terminal/folder actions through
   the validated containing-directory bridge.
+- Messenger Side Panel component and E2E coverage prove PDF files render inline,
+  long breadcrumbs reveal the complete Library path on hover, and `Open in
+  Library` opens the selected file in the full Library work surface.
 
 ## WORKSPACE.PROJECT.001
 

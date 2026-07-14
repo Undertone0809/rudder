@@ -5,6 +5,32 @@ import { E2E_DATABASE_URL } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
 
+function createSimplePdf() {
+  const stream = "BT /F1 18 Tf 36 96 Td (Rudder PDF preview) Tj /F1 10 Tf 0 -24 Td (Rendered in Messenger.) Tj ET";
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 144] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  let body = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(body, "utf8"));
+    body += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xrefOffset = Buffer.byteLength(body, "utf8");
+  body += `xref\n0 ${objects.length + 1}\n`;
+  body += "0000000000 65535 f \n";
+  for (const offset of offsets.slice(1)) {
+    body += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  }
+  body += `trailer << /Root 1 0 R /Size ${objects.length + 1} >>\n`;
+  body += `startxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(body, "utf8");
+}
+
 function buildIssueMentionHref(issueId: string, ref?: string | null, commentId?: string | null) {
   const params = new URLSearchParams();
   if (ref) params.set("r", ref);
@@ -168,10 +194,13 @@ test.describe("Chat Side Panel", () => {
 
   test("opens a Library document with Desktop app, Finder, and Terminal targets", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Chat-Side-Panel-File-Launcher-${Date.now()}` },
+      data: {
+        name: `Chat-Side-Panel-File-Launcher-${Date.now()}`,
+        issuePrefix: `CSL${randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase()}`,
+      },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
-    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey?: string | null };
     const libraryFilePath = `projects/competitor-research/exports/2026/07/file-launcher-${Date.now()}.md`;
     const libraryFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
       data: {
@@ -230,7 +259,10 @@ test.describe("Chat Side Panel", () => {
     await expect(fileNameBreadcrumb).toBeVisible();
     await expect(fileToolbar).not.toContainText("text/markdown");
 
-    const libraryOpenIn = sidePanel.getByRole("button", { name: "Open Library document in another app" });
+    await filePath.hover();
+    await expect(page.getByTestId("chat-side-panel-library-full-path")).toContainText(libraryFilePath);
+
+    const libraryOpenIn = sidePanel.getByRole("button", { name: "Open file options" });
     await expect(libraryOpenIn).toBeVisible();
     await expect(libraryOpenIn).toHaveText("Open");
     const [toolbarBox, pathBox, fileNameBox, openInBox, titleBox] = await Promise.all([
@@ -258,6 +290,8 @@ test.describe("Chat Side Panel", () => {
       (toolbarBox?.y ?? 0) + (toolbarBox?.height ?? 0),
     );
     await libraryOpenIn.click();
+    await expect(page.getByRole("menuitem", { name: "Open in Library" })).toBeVisible();
+    await expect(page.getByTestId("chat-side-panel-library-full-path")).toHaveCount(0);
     await expect(page.getByRole("menuitem", { name: "Default app" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "VS Code" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Finder" })).toBeVisible();
@@ -278,10 +312,107 @@ test.describe("Chat Side Panel", () => {
     await sidePanel.getByLabel("Expand Side Panel").click();
     await expect(sidePanel.getByTestId("chat-side-panel-library-file-toolbar")).toBeVisible();
     await expect(sidePanel.getByRole("navigation", { name: "Library file path" })).toContainText(libraryFileName);
-    await expect(sidePanel.getByRole("button", { name: "Open Library document in another app" })).toHaveText("Open");
+    await expect(sidePanel.getByRole("button", { name: "Open file options" })).toHaveText("Open");
 
     await page.screenshot({
       path: testInfo.outputPath("chat-side-panel-library-open-in.png"),
+      fullPage: true,
+    });
+
+    await sidePanel.getByRole("button", { name: "Open file options" }).click();
+    await page.getByRole("menuitem", { name: "Open in Library" }).click();
+    const organizationRouteKey = organization.urlKey || organization.issuePrefix;
+    await expect(page).toHaveURL(new RegExp(`/${organizationRouteKey}/library\\?path=${encodeURIComponent(libraryFilePath)}$`));
+    await expect(page.getByTestId("org-workspaces-editor-tabs")).toContainText(libraryFileName, { timeout: 15_000 });
+  });
+
+  test("previews a Library PDF inline in the Side Panel", async ({ page, request }, testInfo) => {
+    const orgRes = await request.post("/api/orgs", {
+      data: {
+        name: `Chat-Side-Panel-PDF-${Date.now()}`,
+        issuePrefix: `CSP${randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase()}`,
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const pdfFilePath = `projects/reports/2026/quarterly-${Date.now()}.pdf`;
+    const fileRes = await request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: {
+        filePath: pdfFilePath,
+        content: createSimplePdf().toString("utf8"),
+      },
+    });
+    expect(fileRes.ok(), await fileRes.text()).toBe(true);
+    const libraryFile = await fileRes.json() as { markdownLink: string };
+    const pdfFileName = pdfFilePath.split("/").at(-1) ?? pdfFilePath;
+
+    const chatRes = await request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "PDF Side Panel preview host chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: `Preview ${libraryFile.markdownLink} beside this chat.`,
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(assistantMessage).toContainText(pdfFileName, { timeout: 15_000 });
+    await assistantMessage.getByRole("link", { name: pdfFileName }).click();
+
+    const sidePanel = page.getByTestId("chat-side-panel");
+    const preview = sidePanel.getByTestId("chat-side-panel-library-pdf-preview");
+    await expect(preview).toBeVisible({ timeout: 15_000 });
+    await expect(preview).toHaveAttribute(
+      "data-pdf-src",
+      new RegExp(`/api/orgs/${organization.id}/workspace/file/content\\?path=${encodeURIComponent(pdfFilePath)}`),
+    );
+    const previewCanvas = sidePanel.getByTestId("chat-side-panel-library-pdf-preview-canvas");
+    await expect(previewCanvas).toHaveAttribute("data-rendered-page", "1", { timeout: 15_000 });
+    await expect(sidePanel.getByTestId("chat-side-panel-library-pdf-preview-text-content"))
+      .toContainText("Rudder PDF preview");
+    await expect.poll(() => previewCanvas.evaluate((canvasElement) => {
+      const canvas = canvasElement as HTMLCanvasElement;
+      const context = canvas.getContext("2d");
+      if (!context || canvas.width === 0 || canvas.height === 0) return 0;
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      let inkPixels = 0;
+      for (let index = 0; index < pixels.length; index += 4) {
+        if (pixels[index]! < 230 || pixels[index + 1]! < 230 || pixels[index + 2]! < 230) inkPixels += 1;
+      }
+      return inkPixels;
+    })).toBeGreaterThan(20);
+    await expect(sidePanel.getByText("No inline preview is available for this file.")).toHaveCount(0);
+
+    const contentResponse = await request.get(
+      `/api/orgs/${organization.id}/workspace/file/content?path=${encodeURIComponent(pdfFilePath)}`,
+    );
+    expect(contentResponse.ok(), await contentResponse.text()).toBe(true);
+    expect(contentResponse.headers()["content-type"]).toBe("application/pdf");
+    expect(contentResponse.headers()["content-disposition"]).toContain("inline;");
+
+    await page.screenshot({
+      path: testInfo.outputPath("chat-side-panel-library-pdf-preview.png"),
       fullPage: true,
     });
   });
