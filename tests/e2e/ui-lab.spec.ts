@@ -154,6 +154,7 @@ test.describe("UI Lab", () => {
 
   test("renders Markdown website links as inline icon-leading text", async ({ page }) => {
     const organization = await createUiLabOrganization(page);
+    await page.addInitScript(() => window.localStorage.setItem("rudder.theme", "dark"));
     await page.route("**/api/website-metadata?**", async (route) => {
       const requestUrl = new URL(route.request().url());
       const targetUrl = requestUrl.searchParams.get("url");
@@ -172,13 +173,19 @@ test.describe("UI Lab", () => {
     await page.getByRole("button", { name: /Common Components/ }).click();
 
     const websiteLink = page.locator("a.rudder-website-link").filter({ hasText: "Rudder docs" });
+    const openAiLink = page.locator("a.rudder-website-link").filter({ hasText: "OpenAI docs" });
     const fallbackLink = page.locator("a.rudder-website-link").filter({ hasText: "reference guide" });
     await expect(websiteLink).toBeVisible();
+    await expect(openAiLink).toBeVisible();
     await expect(fallbackLink).toBeVisible();
+    await expect(page.locator("html")).toHaveClass(/dark/);
     await expect(websiteLink).toHaveAttribute("href", "https://docs.rudderhq.dev");
     await expect(websiteLink).toHaveAttribute("target", "_blank");
-    await expect(websiteLink.locator("img.rudder-website-link-logo")).toHaveAttribute("src", "/rudder-logo.png");
+    await expect(websiteLink.locator("img.rudder-website-link-logo")).toHaveAttribute("src", /^data:image\/x-icon;base64,/u);
     await expect(websiteLink.locator(".rudder-website-link-label")).toHaveText("Rudder docs");
+    await expect(openAiLink.locator("img.rudder-website-link-logo")).toHaveAttribute("data-dark-mode", "invert");
+    await expect(openAiLink.locator("img.rudder-website-link-logo")).toHaveCSS("filter", "invert(1)");
+    await expect(websiteLink.locator("img.rudder-website-link-logo")).toHaveCSS("filter", "none");
     await expect(fallbackLink.locator('[data-website-icon="generic"]')).toBeVisible();
     await expect(fallbackLink.locator(".rudder-website-link-label")).toHaveText("reference guide");
     await expect(page.locator("a.rudder-link-chip--website")).toHaveCount(0);

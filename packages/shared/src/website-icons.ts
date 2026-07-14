@@ -3,6 +3,7 @@ export interface KnownWebsiteIcon {
   includeSubdomains?: boolean;
   siteName: string;
   iconDataUrl: string;
+  darkMode?: "invert";
 }
 
 function imageDataUrl(mimeType: string, base64: string) {
@@ -44,7 +45,7 @@ export const KNOWN_WEBSITE_ICONS: readonly KnownWebsiteIcon[] = [
   { hostnames: ["docs.google.com"], siteName: "Google Docs", iconDataUrl: googleDocsIcon },
   { hostnames: ["notion.so","www.notion.so"], siteName: "Notion", iconDataUrl: notionIcon },
   { hostnames: ["linear.app","linear.com"], siteName: "Linear", iconDataUrl: linearIcon },
-  { hostnames: ["openai.com"], includeSubdomains: true, siteName: "OpenAI", iconDataUrl: openaiIcon },
+  { hostnames: ["openai.com"], includeSubdomains: true, siteName: "OpenAI", iconDataUrl: openaiIcon, darkMode: "invert" },
   { hostnames: ["chatgpt.com","chat.openai.com"], includeSubdomains: true, siteName: "ChatGPT", iconDataUrl: chatgptIcon },
   { hostnames: ["anthropic.com"], includeSubdomains: true, siteName: "Anthropic", iconDataUrl: anthropicIcon },
   { hostnames: ["claude.ai"], siteName: "Claude", iconDataUrl: claudeIcon },

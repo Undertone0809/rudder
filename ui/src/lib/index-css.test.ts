@@ -520,6 +520,7 @@ describe("index.css motion rules", () => {
     const websiteLink = cssBlock("a.rudder-website-link");
     const websiteIcon = cssBlock(".rudder-website-link-icon");
     const websiteLogo = cssBlock(".rudder-website-link-logo");
+    const darkWebsiteLogo = cssBlock('.dark .rudder-website-link-logo[data-dark-mode="invert"]');
     const websiteGeneric = cssBlock(".rudder-website-link-generic");
     const websiteLinkHover = cssBlock("a.rudder-website-link:hover");
 
@@ -535,6 +536,7 @@ describe("index.css motion rules", () => {
     expect(websiteLogo).toContain("display: block");
     expect(websiteLogo).toContain("width: 100%");
     expect(websiteLogo).toContain("height: 100%");
+    expect(darkWebsiteLogo).toContain("filter: invert(1)");
     expect(websiteGeneric).toContain("width: 100%");
     expect(websiteGeneric).toContain("height: 100%");
     expect(websiteLinkHover).toContain("color: var(--rudder-doc-link-hover)");

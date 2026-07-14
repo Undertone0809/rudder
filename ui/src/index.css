@@ -4367,6 +4367,10 @@ a.rudder-website-link:hover {
   background: transparent;
 }
 
+.dark .rudder-website-link-logo[data-dark-mode="invert"] {
+  filter: invert(1);
+}
+
 .rudder-website-link-generic {
   width: 100%;
   height: 100%;

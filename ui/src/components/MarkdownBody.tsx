@@ -442,6 +442,7 @@ function useWebsiteMetadataIcon(url: URL) {
 
 export function WebsiteLinkIcon({ url }: { url: URL }) {
   const metadataIcon = useWebsiteMetadataIcon(url);
+  const knownIcon = resolveKnownWebsiteIcon(url);
   const [failedIconUrls, setFailedIconUrls] = useState<Set<string>>(() => new Set());
   const iconUrl = metadataIcon.status === "ready" && !failedIconUrls.has(metadataIcon.iconUrl)
     ? metadataIcon.iconUrl
@@ -460,6 +461,7 @@ export function WebsiteLinkIcon({ url }: { url: URL }) {
           className="rudder-website-link-logo"
           aria-hidden="true"
           data-website-icon="metadata"
+          data-dark-mode={knownIcon?.darkMode}
           referrerPolicy="no-referrer"
           onError={() => setFailedIconUrls((current) => new Set(current).add(iconUrl))}
         />

@@ -1861,7 +1861,7 @@ function CommonComponentsSection() {
                 "",
                 "@Holden should render as an agent mention chip when a comment calls for agent attention.",
                 "",
-                `Website references such as [Rudder docs](${RUDDER_DOCS_URL}) and [reference guide](https://gingiris.github.io/growth-tools/blog/2026/04/02/github-readme-template-guide/) should render as compact link chips.`,
+                `Website references such as [Rudder docs](${RUDDER_DOCS_URL}), [OpenAI docs](https://platform.openai.com/docs), and [reference guide](https://gingiris.github.io/growth-tools/blog/2026/04/02/github-readme-template-guide/) should render as compact link chips.`,
                 "",
                 "- Keep examples deterministic.",
                 "- Use workflow E2E for behavior-heavy surfaces.",

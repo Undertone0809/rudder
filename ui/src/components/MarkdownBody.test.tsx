@@ -1805,6 +1805,8 @@ describe("MarkdownBody", () => {
       expect(link.querySelector("img.rudder-website-link-logo")?.getAttribute("data-website-icon")).toBe("metadata");
       expect(link.querySelector("[data-website-icon='generic']")).toBeNull();
     }
+    expect(links[4]?.querySelector("img.rudder-website-link-logo")?.getAttribute("data-dark-mode")).toBe("invert");
+    expect(links[3]?.querySelector("img.rudder-website-link-logo")?.hasAttribute("data-dark-mode")).toBe(false);
     expect(links.map((link) => link.textContent)).toEqual([
       "tweet", "Feishu", "Rudder", "ChatGPT", "OpenAI", "Reddit", "Medium", "Hacker News", "Linux.do",
     ]);
