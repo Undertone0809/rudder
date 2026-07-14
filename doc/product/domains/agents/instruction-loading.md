@@ -298,9 +298,6 @@ The contract is evidenced by:
   skills, requested/used skills, command notes, prompt metrics, command, cwd,
   and runtime type; this is metadata/readback evidence even when not all fields
   are directly rendered in the UI
-- run intelligence metadata from `buildHeartbeatRuntimeTraceMetadata`,
-  including `instructionsConfigured`, `instructionsFilePath`,
-  `runtimeCommandNotes`, and `runtimePromptMetrics`
 - runtime logs for instruction load, warning, legacy heartbeat ignore, and
   workspace fallback events
 - package tests and adapter tests that assert ordering, heartbeat inclusion,
