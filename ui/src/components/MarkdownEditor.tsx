@@ -184,6 +184,10 @@ export interface MarkdownEditorProps {
 export interface MarkdownEditorRef {
   focus: () => void;
   getMarkdown?: () => string;
+  undo?: () => boolean;
+  redo?: () => boolean;
+  canUndo?: () => boolean;
+  canRedo?: () => boolean;
 }
 
 type CaretTarget =
