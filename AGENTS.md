@@ -264,6 +264,12 @@ When adding endpoints:
 - For visible UI changes, verify the rendered result before hand-off using a browser, screenshot, or equivalent visual inspection. Do not rely on code review, typecheck, or tests alone for layout-sensitive changes.
 - If a change affects user-visible functionality, include the relevant final screenshots in the hand-off response so the reviewer can see the shipped result, not just read about it.
 
+## 9. Review and verify
+
+For the most things, you should spawn an agent as the reviewer and conduct verification; carry out exploratory and adversarial reviews. The verifier needs to perform Black box testing and run the changes in a real local environment to confirm the effect before the acceptance can be deemed passed, especially for UI-related modifications.
+
+For simple small tasks, you don't need to spawn an agent, like tweaking some text in the README.
+
 ## 10. Definition of Done
 
 A change is done when all are true:
