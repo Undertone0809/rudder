@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
+import { Settings } from "lucide-react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { Settings } from "lucide-react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   SettingsActions,
