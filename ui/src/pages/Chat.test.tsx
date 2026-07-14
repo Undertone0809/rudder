@@ -1436,6 +1436,49 @@ describe("ask_user chat messages", () => {
     expect(findLatestUnansweredAskUserMessage(messages)).toBe(secondAsk);
   });
 
+  it("treats a visible superseded branch answer as answered", () => {
+    const ask = message({
+      id: "ask-branch",
+      role: "assistant",
+      kind: "ask_user",
+      body: "Need scope.",
+      structuredPayload: askUserPayload,
+      createdAt: new Date("2026-05-07T00:00:01.000Z"),
+    });
+    const answer = message({
+      id: "answer-branch",
+      role: "user",
+      kind: "message",
+      body: formatAskUserAnswerMessage(askUserPayload.requestUserInput, {
+        scope: { kind: "option", label: "Narrow path" },
+      }),
+      chatTurnId: "answer-turn",
+      turnVariant: 0,
+      supersededAt: new Date("2026-05-07T00:00:04.000Z"),
+      createdAt: new Date("2026-05-07T00:00:02.000Z"),
+    });
+    const failedReply = message({
+      id: "failed-branch",
+      role: "assistant",
+      kind: "message",
+      status: "failed",
+      chatTurnId: "answer-turn",
+      turnVariant: 0,
+      supersededAt: new Date("2026-05-07T00:00:04.000Z"),
+      createdAt: new Date("2026-05-07T00:00:03.000Z"),
+    });
+    const visibleBranch = computeDisplayedChatMessages(
+      [ask, answer, failedReply],
+      { chatTurnId: "answer-turn", turnVariant: 0 },
+    );
+
+    expect(isAskUserMessageAnswered(ask, visibleBranch)).toBe(true);
+    expect(findLatestUnansweredAskUserMessage(visibleBranch)).toBeNull();
+    expect(askUserAnswerFromMessage(answer, visibleBranch)).toEqual([
+      { questionId: "scope", title: "Scope", answer: "Narrow path" },
+    ]);
+  });
+
   it("formats selected and freeform answers as a normal user message", () => {
     const request = askUserPayload.requestUserInput;
     const body = formatAskUserAnswerMessage(request, {

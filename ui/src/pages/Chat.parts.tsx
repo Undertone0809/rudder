@@ -1104,7 +1104,7 @@ export function isAskUserMessageAnswered(
   const targetIndex = messages.findIndex((message) => message.id === target.id);
   if (targetIndex < 0) return false;
   return messages.slice(targetIndex + 1).some((message) =>
-    message.role === "user" && !message.supersededAt
+    message.role === "user"
   );
 }
 
@@ -1116,7 +1116,6 @@ export function findLatestUnansweredAskUserMessage(messages: ChatMessage[]) {
     if (!askUserRequestFromMessage(message)) continue;
     if (!messages.slice(index + 1).some((candidate) =>
       candidate.role === "user"
-      && !candidate.supersededAt
     )) return message;
   }
   return null;
@@ -1239,13 +1238,13 @@ export function parseAskUserAnswerMessage(
 }
 
 export function askUserAnswerFromMessage(message: ChatMessage, messages: ChatMessage[]) {
-  if (message.role !== "user" || message.kind !== "message" || message.supersededAt) return null;
+  if (message.role !== "user" || message.kind !== "message") return null;
   const targetIndex = messages.findIndex((candidate) => candidate.id === message.id);
   if (targetIndex < 0) return null;
 
   for (let index = targetIndex - 1; index >= 0; index -= 1) {
     const candidate = messages[index];
-    if (!candidate || candidate.supersededAt) continue;
+    if (!candidate) continue;
     if (candidate.role === "user") return null;
     const request = askUserRequestFromMessage(candidate);
     if (request) return parseAskUserAnswerMessage(request, message.body);

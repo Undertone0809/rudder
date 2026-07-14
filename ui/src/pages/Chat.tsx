@@ -1279,8 +1279,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     if (!href) return;
     const opened = window.open(href, "_blank", "noopener,noreferrer");
     if (opened) opened.opener = null;
-  }, [openSidePanelTargetForContext, resolveCurrentSidePanelChatContextKey]); const pendingAskUserMessage = useMemo(
-    () => findLatestUnansweredAskUserMessage(visibleMessages), [visibleMessages], ); const pendingAskUserRequest = pendingAskUserMessage ? askUserRequestFromMessage(pendingAskUserMessage) : null; const lastMarkedReadKeyRef = useRef<string | null>(null); const optimisticReadBadgeMarkerRef = useRef<string | null>(null);
+  }, [openSidePanelTargetForContext, resolveCurrentSidePanelChatContextKey]); const latestUnansweredAskUserMessage = useMemo(
+    () => findLatestUnansweredAskUserMessage(visibleMessages), [visibleMessages], ); const activeStreamUserTurnVisible = Boolean(activeStream && !activeStreamPreviewHidden); const activeStreamAskUserRequest = activeStreamUserTurnVisible && latestUnansweredAskUserMessage ? askUserRequestFromMessage(latestUnansweredAskUserMessage) : null; const pendingAskUserMessage = activeStreamUserTurnVisible ? null : latestUnansweredAskUserMessage; const pendingAskUserRequest = pendingAskUserMessage ? askUserRequestFromMessage(pendingAskUserMessage) : null; const lastMarkedReadKeyRef = useRef<string | null>(null); const optimisticReadBadgeMarkerRef = useRef<string | null>(null);
   useEffect(() => { if (!pendingAskUserRequest) return; closeComposerContextMenus(); }, [closeComposerContextMenus, pendingAskUserRequest]);
   useEffect(() => { const chatId = selectedConversation?.id ?? null; if (!chatId || showMessagesLoading) return; if (initialScrolledConversationRef.current === chatId) return; initialScrolledConversationRef.current = chatId; const frame = requestAnimationFrame(() => { const scrollElement = chatMessagesScrollElementRef.current; if (!scrollElement) return; scrollChatMessagesToBottom(scrollElement); }); return () => cancelAnimationFrame(frame); }, [selectedConversation?.id, showMessagesLoading, visibleMessages.length]);
   useEffect(() => { if (!conversationId || !pendingTargetMessageId || showMessagesLoading) return; const frame = requestAnimationFrame(() => { const scrollElement = chatMessagesScrollElementRef.current; if (!scrollElement) return; const target = findChatMessageElement(scrollElement, pendingTargetMessageId); if (!target) return; revealChatMessageElement(target); const nextSearch = new URLSearchParams(searchParams); nextSearch.delete("messageId"); nextSearch.delete("targetMessageId"); navigate({
@@ -2399,7 +2399,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     onMentionQueryChange: setLibraryFileMentionQuery,
                                     onInlineTokenClick: handleComposerInlineTokenClick,
                                   } : null}
-                                  answered={isAskUserMessageAnswered(message, visibleMessages)}
+                                  answered={activeStreamUserTurnVisible || isAskUserMessageAnswered(message, visibleMessages)}
                                   askUserAnswer={askUserAnswerFromMessage(message, visibleMessages)}
                                   animateAskUserAnswer={message.id === recentAskUserAnswerMessageId} /> </Fragment> ); })}
                           {showActiveStreamDraft && activeStream ? ( <>
@@ -2409,7 +2409,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                   createdAt={activeStream.userCreatedAt} onCopyMessageText={copyChatMessageText} onEditDraftOnly={editDraftOnly}
                                   skillReferences={chatSkillReferences} onMarkdownLinkClick={handleChatMarkdownLinkClick}
                                   askUserAnswer={
-                                    pendingAskUserRequest ? parseAskUserAnswerMessage(pendingAskUserRequest, activeStream.userBody) : null
+                                    activeStreamAskUserRequest ? parseAskUserAnswerMessage(activeStreamAskUserRequest, activeStream.userBody) : null
                                   }
                                   animateAskUserAnswer={activeStream.userBody.startsWith(ASK_USER_ANSWER_PREFIX)}
                                   turnBranchControls={turnBranchControlsForTurn(activeStream.chatTurnId, activeStream.turnVariant)} /> ) : null}
