@@ -4,7 +4,9 @@ import type { ChatWorkManifestItem, ChatWorkManifestResponse } from "@rudderhq/s
 import {
   BriefcaseBusiness,
   ChevronDown,
+  CircleAlert,
   FileOutput,
+  FileText,
   Link2,
   ListFilter,
   MessageSquare,
@@ -88,31 +90,35 @@ function ManifestRow({
 }) {
   const externalUrl = websiteUrl(item);
   return (
-    <div className="group flex min-h-11 items-center gap-2 border-t border-border/55 px-3 first:border-t-0">
+    <div className="group flex min-h-10 items-center gap-1">
       <button
         type="button"
-        className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left"
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-[var(--radius-sm)] px-1.5 py-1.5 text-left transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
         onClick={onOpen}
         title={item.title}
       >
-        {externalUrl ? (
-          <span className="shrink-0 text-sm text-muted-foreground">
-            <WebsiteLinkIcon url={externalUrl} />
-          </span>
-        ) : (
-          <Paperclip className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-        )}
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-xs font-medium text-foreground">{item.title}</span>
+        <span className="grid size-6 shrink-0 place-items-center rounded-[calc(var(--radius-sm)-1px)] bg-muted/65 text-muted-foreground transition-colors group-hover:bg-background/65 group-hover:text-foreground">
           {externalUrl ? (
-            <span className="block truncate text-[11px] text-muted-foreground">{externalUrl.href}</span>
+            <span className="text-sm">
+              <WebsiteLinkIcon url={externalUrl} />
+            </span>
+          ) : item.category === "output" ? (
+            <FileText className="size-3.5" aria-hidden="true" />
+          ) : (
+            <Paperclip className="size-3.5" aria-hidden="true" />
+          )}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-xs font-medium leading-5 text-foreground">{item.title}</span>
+          {externalUrl ? (
+            <span className="block truncate text-[11px] leading-4 text-muted-foreground">{externalUrl.href}</span>
           ) : null}
         </span>
       </button>
       {item.messageId ? (
         <button
           type="button"
-          className="grid size-7 shrink-0 place-items-center rounded-sm text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus:opacity-100 group-hover:opacity-100"
+          className="grid size-7 shrink-0 place-items-center rounded-[var(--radius-sm)] text-muted-foreground opacity-0 transition-[background-color,color,opacity] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 group-hover:opacity-100"
           onClick={onJump}
           aria-label={`Jump to source message for ${item.title}`}
           title="Jump to source message"
@@ -125,12 +131,14 @@ function ManifestRow({
 }
 
 function ManifestSection({
+  idPrefix,
   label,
   icon,
   items,
   onOpenItem,
   onJumpToMessage,
 }: {
+  idPrefix: string;
   label: string;
   icon: ReactNode;
   items: ChatWorkManifestItem[];
@@ -140,28 +148,32 @@ function ManifestSection({
   const [expanded, setExpanded] = useState(false);
   if (items.length === 0) return null;
   const visibleItems = expanded ? items : items.slice(0, COLLAPSED_ROWS);
+  const sectionId = `${idPrefix}-${label.toLowerCase()}`;
   return (
-    <section aria-label={label}>
-      <div className="flex h-9 items-center gap-2 border-t border-border/70 bg-muted/25 px-3 text-[11px] font-semibold text-muted-foreground first:border-t-0">
-        {icon}
-        <span>{label}</span>
-        <span className="ml-auto tabular-nums">{items.length}</span>
+    <section className="border-t border-border/50 px-2.5 py-2 first:border-t-0" aria-label={label}>
+      <div className="flex h-7 items-center gap-2 px-1.5 text-[11px] font-medium text-muted-foreground">
+        <span className="grid size-5 place-items-center" aria-hidden="true">{icon}</span>
+        <span className="text-foreground/80">{label}</span>
+        <span className="ml-auto tabular-nums text-muted-foreground/80">{items.length}</span>
       </div>
-      <div>
+      <div id={sectionId} className="mt-0.5 space-y-0.5" role="list">
         {visibleItems.map((item) => (
-          <ManifestRow
-            key={item.id}
-            item={item}
-            onOpen={() => onOpenItem(item)}
-            onJump={() => item.messageId && onJumpToMessage(item.messageId)}
-          />
+          <div key={item.id} role="listitem">
+            <ManifestRow
+              item={item}
+              onOpen={() => onOpenItem(item)}
+              onJump={() => item.messageId && onJumpToMessage(item.messageId)}
+            />
+          </div>
         ))}
       </div>
       {items.length > COLLAPSED_ROWS ? (
         <button
           type="button"
-          className="flex h-8 w-full items-center justify-center gap-1 border-t border-border/55 text-[11px] text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+          className="mt-1 flex h-7 w-full items-center justify-center gap-1 rounded-[var(--radius-sm)] text-[11px] text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
           onClick={() => setExpanded((value) => !value)}
+          aria-expanded={expanded}
+          aria-controls={sectionId}
         >
           {expanded ? "Show less" : `View all ${items.length}`}
           <ChevronDown className={cn("size-3 transition-transform", expanded && "rotate-180")} aria-hidden="true" />
@@ -172,6 +184,7 @@ function ManifestSection({
 }
 
 function ManifestContent({
+  idPrefix,
   manifest,
   loading,
   error,
@@ -179,9 +192,16 @@ function ManifestContent({
   onJumpToMessage,
   onAddSource,
   onOpenProject,
-}: Omit<ChatWorkManifestProps, "sidePanelOpen">) {
+}: Omit<ChatWorkManifestProps, "sidePanelOpen"> & { idPrefix: string }) {
   if (loading) return null;
-  if (error) return <div className="px-3 py-6 text-center text-xs text-destructive">{error}</div>;
+  if (error) {
+    return (
+      <div className="flex items-start gap-2.5 border-t border-border/50 px-3.5 py-4 text-xs text-destructive">
+        <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+        <span className="leading-5">{error}</span>
+      </div>
+    );
+  }
   const outputs = Array.isArray(manifest?.outputs) ? manifest.outputs : [];
   const sources = Array.isArray(manifest?.sources) ? manifest.sources : [];
   const references = Array.isArray(manifest?.references) ? manifest.references : [];
@@ -189,6 +209,7 @@ function ManifestContent({
   return (
     <>
       <ManifestSection
+        idPrefix={idPrefix}
         label="Outputs"
         icon={<FileOutput className="size-3.5" aria-hidden="true" />}
         items={outputs}
@@ -196,6 +217,7 @@ function ManifestContent({
         onJumpToMessage={onJumpToMessage}
       />
       <ManifestSection
+        idPrefix={idPrefix}
         label="Sources"
         icon={<Paperclip className="size-3.5" aria-hidden="true" />}
         items={sources}
@@ -203,6 +225,7 @@ function ManifestContent({
         onJumpToMessage={onJumpToMessage}
       />
       <ManifestSection
+        idPrefix={idPrefix}
         label="References"
         icon={<Link2 className="size-3.5" aria-hidden="true" />}
         items={references}
@@ -212,12 +235,14 @@ function ManifestContent({
       {manifest.project ? (
         <button
           type="button"
-          className="flex h-11 w-full items-center gap-2 border-t border-border/70 bg-muted/20 px-3 text-left hover:bg-muted/45"
+          className="flex min-h-10 w-full items-center gap-2 border-t border-border/50 px-4 py-2.5 text-left transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/30"
           onClick={() => onOpenProject(manifest.project!.id)}
         >
-          <BriefcaseBusiness className="size-3.5 text-muted-foreground" aria-hidden="true" />
+          <span className="grid size-6 shrink-0 place-items-center rounded-[calc(var(--radius-sm)-1px)] bg-muted/65 text-muted-foreground">
+            <BriefcaseBusiness className="size-3.5" aria-hidden="true" />
+          </span>
           <span className="text-xs font-medium text-foreground">Project work</span>
-          <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{manifest.project.totalCount} items</span>
+          <span className="ml-auto pr-1 text-[11px] tabular-nums text-muted-foreground">{manifest.project.totalCount} items</span>
         </button>
       ) : null}
     </>
@@ -232,7 +257,7 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
     <div className="pointer-events-none relative z-20 shrink-0" data-testid="chat-work-manifest">
       <aside
         className={cn(
-          "hidden w-72 origin-top-right overflow-hidden rounded-md border border-border/75 bg-background/96 shadow-sm transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none xl:block",
+          "hidden w-72 origin-top-right overflow-hidden rounded-[var(--radius-md)] border border-border/65 bg-[color:var(--surface-overlay)] shadow-md transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none xl:block",
           props.wideOpen
             ? "pointer-events-auto translate-y-0 scale-100 opacity-100"
             : "pointer-events-none -translate-y-1 scale-[0.98] opacity-0",
@@ -244,38 +269,41 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
         data-testid="chat-work-manifest-wide-panel"
         data-state={props.wideOpen ? "open" : "closed"}
       >
-        <div className="flex h-10 items-center border-b border-border/70 px-3">
+        <div className="flex h-11 items-center border-b border-border/55 px-3.5">
           <span className="text-xs font-semibold text-foreground">Work</span>
           <span className="ml-1.5 text-[11px] tabular-nums text-muted-foreground">{count}</span>
-          <button type="button" className="ml-auto grid size-7 place-items-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground" onClick={props.onAddSource} aria-label="Add source" title="Add source">
-            <Plus className="size-3.5" aria-hidden="true" />
+          <button type="button" className="ml-auto grid size-7 place-items-center rounded-[var(--radius-sm)] text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30" onClick={props.onAddSource} aria-label="Add source" title="Add source">
+            <Plus className="size-4" aria-hidden="true" />
           </button>
         </div>
-        <ManifestContent {...props} />
+        <ManifestContent {...props} idPrefix="chat-work-manifest-wide" />
       </aside>
 
       <button
         type="button"
-        className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-foreground shadow-sm xl:hidden"
+        className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border/70 bg-[color:var(--surface-overlay)] px-2.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 xl:hidden"
         onClick={() => setCompactOpen((value) => !value)}
         data-testid="chat-work-manifest-trigger"
         aria-expanded={compactOpen}
+        aria-controls="chat-work-manifest-compact-panel"
       >
         <BriefcaseBusiness className="size-3.5" aria-hidden="true" />
         Work {count}
       </button>
       {compactOpen ? (
         <div
-          className="pointer-events-auto absolute right-0 top-10 w-[min(20rem,calc(100vw-2rem))] overflow-hidden rounded-md border border-border bg-background shadow-lg xl:hidden"
+          id="chat-work-manifest-compact-panel"
+          className="pointer-events-auto absolute right-0 top-10 w-[min(20rem,calc(100vw-2rem))] overflow-hidden rounded-[var(--radius-md)] border border-border/65 bg-[color:var(--surface-overlay)] shadow-md xl:hidden"
           data-testid="chat-work-manifest-compact-panel"
         >
-          <div className="flex h-10 items-center border-b border-border/70 px-3">
+          <div className="flex h-11 items-center border-b border-border/55 px-3.5">
             <span className="text-xs font-semibold">Work</span>
-            <button type="button" className="ml-auto grid size-7 place-items-center rounded-sm text-muted-foreground hover:bg-muted" onClick={() => setCompactOpen(false)} aria-label="Close work manifest">
+            <span className="ml-1.5 text-[11px] tabular-nums text-muted-foreground">{count}</span>
+            <button type="button" className="ml-auto grid size-7 place-items-center rounded-[var(--radius-sm)] text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30" onClick={() => setCompactOpen(false)} aria-label="Close work manifest">
               <X className="size-3.5" aria-hidden="true" />
             </button>
           </div>
-          <ManifestContent {...props} />
+          <ManifestContent {...props} idPrefix="chat-work-manifest-compact" />
         </div>
       ) : null}
     </div>

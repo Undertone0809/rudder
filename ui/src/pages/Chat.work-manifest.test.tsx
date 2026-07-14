@@ -95,6 +95,10 @@ describe("ChatWorkManifest", () => {
     expect(text).not.toContain("From Agent");
     expect(text).toContain("https://ref-1.example/");
     expect(container.querySelector("[data-website-icon]")).not.toBeNull();
+    const projectButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((candidate) => candidate.textContent?.includes("Project work"));
+    act(() => projectButton?.click());
+    expect(handlers.onOpenProject).toHaveBeenCalledWith("project-1");
   });
 
   it("does not render while loading or when thread and project work are empty", () => {
@@ -165,7 +169,37 @@ describe("ChatWorkManifest", () => {
     );
     const trigger = container.querySelector<HTMLButtonElement>("[data-testid='chat-work-manifest-trigger']");
     expect(trigger?.textContent).toContain("Work 6");
+    expect(trigger?.getAttribute("aria-controls")).toBe("chat-work-manifest-compact-panel");
     act(() => trigger?.click());
-    expect(container.querySelector("[data-testid='chat-work-manifest-compact-panel']")?.textContent).toContain("Report.md");
+    const compactPanel = container.querySelector("[data-testid='chat-work-manifest-compact-panel']");
+    expect(compactPanel?.id).toBe("chat-work-manifest-compact-panel");
+    expect(compactPanel?.textContent).toContain("Report.md");
+  });
+
+  it("expands a bounded section with an accessible control", () => {
+    const container = render(
+      <ChatWorkManifest manifest={manifest} loading={false} error={null} sidePanelOpen={false} {...wideProps} {...handlers} />,
+    );
+    const button = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((candidate) => candidate.textContent?.includes("View all 3"));
+    expect(button?.getAttribute("aria-expanded")).toBe("false");
+    expect(button?.getAttribute("aria-controls")).toBe("chat-work-manifest-wide-sources");
+    act(() => button?.click());
+    expect(button?.getAttribute("aria-expanded")).toBe("true");
+    expect(container.textContent).toContain("Notes.txt");
+    expect(button?.textContent).toContain("Show less");
+  });
+
+  it("keeps wide and compact section ids unique", () => {
+    const container = render(
+      <ChatWorkManifest manifest={manifest} loading={false} error={null} sidePanelOpen={false} {...wideProps} {...handlers} />,
+    );
+    const trigger = container.querySelector<HTMLButtonElement>("[data-testid='chat-work-manifest-trigger']");
+    act(() => trigger?.click());
+    const ids = Array.from(container.querySelectorAll<HTMLElement>("[id^='chat-work-manifest-']"))
+      .map((element) => element.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toContain("chat-work-manifest-wide-sources");
+    expect(ids).toContain("chat-work-manifest-compact-sources");
   });
 });

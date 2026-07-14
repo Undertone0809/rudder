@@ -107,7 +107,7 @@ test.describe("Chat Work Manifest", () => {
         orgId: organization.id,
         conversationId: chat.id,
         role: "user",
-        body: `Use https://source.example/research and ${sourceFile.markdownLink}.`,
+        body: `Use https://source.example/research, https://source-two.example/data, and ${sourceFile.markdownLink}.`,
         status: "completed",
       },
       {
@@ -161,6 +161,16 @@ test.describe("Chat Work Manifest", () => {
     await expect(shelf.getByRole("button", { name: /source\.example https:\/\/source\.example\/research/ }))
       .toHaveCount(1);
 
+    const sourcesSection = shelf.getByRole("region", { name: "Sources" });
+    const expandSources = sourcesSection.getByRole("button", { name: /View all/ });
+    await expect(expandSources).toHaveAttribute("aria-expanded", "false");
+    await expandSources.click();
+    const collapseSources = sourcesSection.getByRole("button", { name: "Show less" });
+    await expect(collapseSources).toHaveAttribute("aria-expanded", "true");
+    await expect(shelf).toContainText("source-two.example");
+    await collapseSources.click();
+    await expect(sourcesSection.getByRole("button", { name: /View all/ })).toHaveAttribute("aria-expanded", "false");
+
     const [scrollBox, workspaceBox] = await Promise.all([
       page.getByTestId("chat-messages-scroll-region").boundingBox(),
       page.getByTestId("workspace-main-card").boundingBox(),
@@ -193,7 +203,10 @@ test.describe("Chat Work Manifest", () => {
     await expect(page.getByTestId("chat-work-manifest")).toHaveCount(0);
     await page.screenshot({ path: `${screenshotDir}/side-panel.png`, fullPage: true });
 
-    await sidePanel.getByTestId("chat-side-panel-tab-close").click();
+    const closeSidePanelTab = sidePanel.getByTestId("chat-side-panel-tab-close");
+    await closeSidePanelTab.focus();
+    await expect(closeSidePanelTab).toBeFocused();
+    await closeSidePanelTab.press("Enter");
     await expect(sidePanel).toHaveCount(0);
     await page.setViewportSize({ width: 1024, height: 768 });
     const trigger = page.getByTestId("chat-work-manifest-trigger");
