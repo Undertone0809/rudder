@@ -51,6 +51,8 @@ server/ui-dist/index.html
 !/.agents/skills/maintainer/
 !/.agents/skills/maintainer/**
 /.agents/skills/maintainer/*-workspace/
+/.agents/skills/maintainer/**/*eval*
+/.agents/skills/maintainer/**/*benchmark*
 /.agents/skills/maintainer/**/.DS_Store
 !/.agents/skills/self-improvement/
 !/.agents/skills/self-improvement/**
