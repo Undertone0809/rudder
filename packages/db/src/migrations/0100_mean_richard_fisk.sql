@@ -1,12 +1,27 @@
-CREATE TABLE "organization_issue_prefix_aliases" (
+CREATE TABLE IF NOT EXISTS "organization_issue_prefix_aliases" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"org_id" uuid NOT NULL,
 	"prefix" text NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-ALTER TABLE "organization_issue_prefix_aliases" ADD CONSTRAINT "organization_issue_prefix_aliases_org_id_organizations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-CREATE UNIQUE INDEX "organization_issue_prefix_aliases_prefix_idx" ON "organization_issue_prefix_aliases" USING btree ("prefix");
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1
+		FROM pg_constraint
+		WHERE conname = 'organization_issue_prefix_aliases_org_id_organizations_id_fk'
+			AND conrelid = 'organization_issue_prefix_aliases'::regclass
+	) THEN
+		ALTER TABLE "organization_issue_prefix_aliases"
+			ADD CONSTRAINT "organization_issue_prefix_aliases_org_id_organizations_id_fk"
+			FOREIGN KEY ("org_id") REFERENCES "public"."organizations"("id")
+			ON DELETE cascade ON UPDATE no action;
+	END IF;
+END
+$$;
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "organization_issue_prefix_aliases_prefix_idx" ON "organization_issue_prefix_aliases" USING btree ("prefix");
 --> statement-breakpoint
 SELECT pg_advisory_xact_lock(hashtext('rudder:organization-issue-prefix'));
 --> statement-breakpoint
@@ -20,16 +35,18 @@ BEGIN
 			SELECT "id" AS org_id, "url_key" AS route_key FROM "organizations"
 			UNION ALL
 			SELECT "id" AS org_id, "issue_prefix" AS route_key FROM "organizations"
+			UNION ALL
+			SELECT "org_id", "prefix" AS route_key FROM "organization_issue_prefix_aliases"
 		) existing_route_keys
 		GROUP BY lower(route_key)
 		HAVING count(DISTINCT org_id) > 1
 	) THEN
-		RAISE EXCEPTION 'Existing organization route identities conflict case-insensitively. Resolve the conflicting URL and Issue Keys before applying migration 0100.';
+		RAISE EXCEPTION 'Existing organization route identities and historical Issue Keys conflict case-insensitively. Resolve the conflicting keys before applying migration 0100.';
 	END IF;
 END
 $$;
 --> statement-breakpoint
-CREATE FUNCTION "enforce_organization_route_key_namespace"() RETURNS trigger
+CREATE OR REPLACE FUNCTION "enforce_organization_route_key_namespace"() RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
@@ -54,7 +71,7 @@ BEGIN
 END
 $$;
 --> statement-breakpoint
-CREATE FUNCTION "enforce_organization_alias_route_key_namespace"() RETURNS trigger
+CREATE OR REPLACE FUNCTION "enforce_organization_alias_route_key_namespace"() RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
@@ -80,9 +97,13 @@ BEGIN
 END
 $$;
 --> statement-breakpoint
+DROP TRIGGER IF EXISTS "organizations_route_key_namespace_trigger" ON "organizations";
+--> statement-breakpoint
 CREATE TRIGGER "organizations_route_key_namespace_trigger"
 BEFORE INSERT OR UPDATE OF "url_key", "issue_prefix" ON "organizations"
 FOR EACH ROW EXECUTE FUNCTION "enforce_organization_route_key_namespace"();
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS "organization_alias_route_key_namespace_trigger" ON "organization_issue_prefix_aliases";
 --> statement-breakpoint
 CREATE TRIGGER "organization_alias_route_key_namespace_trigger"
 BEFORE INSERT OR UPDATE OF "org_id", "prefix" ON "organization_issue_prefix_aliases"

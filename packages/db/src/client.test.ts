@@ -217,6 +217,209 @@ describe("applyPendingMigrations", () => {
   );
 
   it(
+    "completes migration 0100 when an older version already created the alias table",
+    async () => {
+      const connectionString = await createTempDatabase();
+
+      await applyPendingMigrations(connectionString);
+
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        const migration0100Hash = await migrationHash("0100_mean_richard_fisk.sql");
+        await sql.unsafe(`
+          INSERT INTO "organizations" ("id", "url_key", "name", "issue_prefix")
+          VALUES ('00000000-0000-0000-0000-000000000100', 'migration-recovery', 'Migration Recovery', 'MRC')
+        `);
+        await sql.unsafe(`
+          INSERT INTO "organization_issue_prefix_aliases" ("org_id", "prefix")
+          VALUES ('00000000-0000-0000-0000-000000000100', 'OLDMRC')
+        `);
+
+        await sql.unsafe(`DROP TRIGGER "organizations_route_key_namespace_trigger" ON "organizations"`);
+        await sql.unsafe(
+          `DROP TRIGGER "organization_alias_route_key_namespace_trigger" ON "organization_issue_prefix_aliases"`,
+        );
+        await sql.unsafe(`DROP FUNCTION "enforce_organization_route_key_namespace"()`);
+        await sql.unsafe(`DROP FUNCTION "enforce_organization_alias_route_key_namespace"()`);
+        await sql.unsafe(
+          `ALTER TABLE "organization_issue_prefix_aliases" DROP CONSTRAINT "organization_issue_prefix_aliases_org_id_organizations_id_fk"`,
+        );
+        await sql.unsafe(`DROP INDEX "organization_issue_prefix_aliases_prefix_idx"`);
+        await sql.unsafe(
+          `DELETE FROM "drizzle"."__drizzle_migrations" WHERE hash = '${migration0100Hash}'`,
+        );
+        await sql.unsafe(`
+          INSERT INTO "drizzle"."__drizzle_migrations" ("hash", "created_at")
+          VALUES ('legacy-0100-hash', 1783928221647)
+        `);
+      } finally {
+        await sql.end();
+      }
+
+      const pendingState = await inspectMigrations(connectionString);
+      expect(pendingState).toMatchObject({
+        status: "needsMigrations",
+        pendingMigrations: ["0100_mean_richard_fisk.sql"],
+        reason: "pending-migrations",
+      });
+
+      await applyPendingMigrations(connectionString);
+
+      const finalState = await inspectMigrations(connectionString);
+      expect(finalState.status).toBe("upToDate");
+
+      const verifySql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        const aliases = await verifySql.unsafe<{ prefix: string }[]>(
+          `SELECT prefix FROM "organization_issue_prefix_aliases" ORDER BY prefix`,
+        );
+        expect(aliases.map((row) => row.prefix)).toEqual(["OLDMRC"]);
+
+        const constraints = await verifySql.unsafe<{ conname: string }[]>(`
+          SELECT conname
+          FROM pg_constraint
+          WHERE conname = 'organization_issue_prefix_aliases_org_id_organizations_id_fk'
+        `);
+        expect(constraints).toHaveLength(1);
+
+        const indexes = await verifySql.unsafe<{ indexname: string }[]>(`
+          SELECT indexname
+          FROM pg_indexes
+          WHERE schemaname = 'public'
+            AND indexname = 'organization_issue_prefix_aliases_prefix_idx'
+        `);
+        expect(indexes).toHaveLength(1);
+
+        const functions = await verifySql.unsafe<{ proname: string }[]>(`
+          SELECT proname
+          FROM pg_proc
+          WHERE proname IN (
+            'enforce_organization_route_key_namespace',
+            'enforce_organization_alias_route_key_namespace'
+          )
+          ORDER BY proname
+        `);
+        expect(functions.map((row) => row.proname)).toEqual([
+          "enforce_organization_alias_route_key_namespace",
+          "enforce_organization_route_key_namespace",
+        ]);
+
+        const triggers = await verifySql.unsafe<{ tgname: string }[]>(`
+          SELECT tgname
+          FROM pg_trigger
+          WHERE NOT tgisinternal
+            AND tgname IN (
+              'organizations_route_key_namespace_trigger',
+              'organization_alias_route_key_namespace_trigger'
+            )
+          ORDER BY tgname
+        `);
+        expect(triggers.map((row) => row.tgname)).toEqual([
+          "organization_alias_route_key_namespace_trigger",
+          "organizations_route_key_namespace_trigger",
+        ]);
+      } finally {
+        await verifySql.end();
+      }
+    },
+    20_000,
+  );
+
+  it(
+    "rolls back migration 0100 when a legacy alias conflicts with another organization route",
+    async () => {
+      const connectionString = await createTempDatabase();
+
+      await applyPendingMigrations(connectionString);
+
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      const migration0100Hash = await migrationHash("0100_mean_richard_fisk.sql");
+      try {
+        await sql.unsafe(`DROP TRIGGER "organizations_route_key_namespace_trigger" ON "organizations"`);
+        await sql.unsafe(
+          `DROP TRIGGER "organization_alias_route_key_namespace_trigger" ON "organization_issue_prefix_aliases"`,
+        );
+        await sql.unsafe(`DROP FUNCTION "enforce_organization_route_key_namespace"()`);
+        await sql.unsafe(`DROP FUNCTION "enforce_organization_alias_route_key_namespace"()`);
+        await sql.unsafe(
+          `ALTER TABLE "organization_issue_prefix_aliases" DROP CONSTRAINT "organization_issue_prefix_aliases_org_id_organizations_id_fk"`,
+        );
+        await sql.unsafe(`DROP INDEX "organization_issue_prefix_aliases_prefix_idx"`);
+        await sql.unsafe(
+          `DELETE FROM "drizzle"."__drizzle_migrations" WHERE hash = '${migration0100Hash}'`,
+        );
+        await sql.unsafe(`
+          INSERT INTO "drizzle"."__drizzle_migrations" ("hash", "created_at")
+          VALUES ('legacy-conflicting-0100-hash', 1783928221647)
+        `);
+        await sql.unsafe(`
+          INSERT INTO "organizations" ("id", "url_key", "name", "issue_prefix")
+          VALUES
+            ('00000000-0000-0000-0000-000000000101', 'legacy-owner', 'Legacy Owner', 'LOWN'),
+            ('00000000-0000-0000-0000-000000000102', 'claimed-route', 'Claimed Route', 'CRTE')
+        `);
+        await sql.unsafe(`
+          INSERT INTO "organization_issue_prefix_aliases" ("org_id", "prefix")
+          VALUES ('00000000-0000-0000-0000-000000000101', 'CLAIMED-ROUTE')
+        `);
+      } finally {
+        await sql.end();
+      }
+
+      await expect(applyPendingMigrations(connectionString)).rejects.toThrow(
+        "Existing organization route identities and historical Issue Keys conflict case-insensitively",
+      );
+
+      const pendingState = await inspectMigrations(connectionString);
+      expect(pendingState).toMatchObject({
+        status: "needsMigrations",
+        pendingMigrations: ["0100_mean_richard_fisk.sql"],
+        reason: "pending-migrations",
+      });
+
+      const verifySql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        const migrationEntries = await verifySql.unsafe<{ count: number }[]>(`
+          SELECT count(*)::int AS count
+          FROM "drizzle"."__drizzle_migrations"
+          WHERE hash = '${migration0100Hash}'
+        `);
+        expect(migrationEntries[0]?.count).toBe(0);
+
+        const aliases = await verifySql.unsafe<{ prefix: string }[]>(
+          `SELECT prefix FROM "organization_issue_prefix_aliases" ORDER BY prefix`,
+        );
+        expect(aliases.map((row) => row.prefix)).toEqual(["CLAIMED-ROUTE"]);
+
+        const restoredObjects = await verifySql.unsafe<{ count: number }[]>(`
+          SELECT (
+            (SELECT count(*) FROM pg_constraint
+              WHERE conname = 'organization_issue_prefix_aliases_org_id_organizations_id_fk')
+            + (SELECT count(*) FROM pg_indexes
+              WHERE schemaname = 'public'
+                AND indexname = 'organization_issue_prefix_aliases_prefix_idx')
+            + (SELECT count(*) FROM pg_proc
+              WHERE proname IN (
+                'enforce_organization_route_key_namespace',
+                'enforce_organization_alias_route_key_namespace'
+              ))
+            + (SELECT count(*) FROM pg_trigger
+              WHERE NOT tgisinternal
+                AND tgname IN (
+                  'organizations_route_key_namespace_trigger',
+                  'organization_alias_route_key_namespace_trigger'
+                ))
+          )::int AS count
+        `);
+        expect(restoredObjects[0]?.count).toBe(0);
+      } finally {
+        await verifySql.end();
+      }
+    },
+    20_000,
+  );
+
+  it(
     "replays migration 0044 safely when its schema changes already exist",
     async () => {
       const connectionString = await createTempDatabase();
