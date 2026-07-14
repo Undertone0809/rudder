@@ -39,7 +39,7 @@ const mockState = vi.hoisted(() => ({
   projects: [] as Project[],
   routeBase: "/messenger/chat",
   workspaceDirectories: {} as Record<string, { directoryPath: string; entries: OrganizationWorkspaceFileEntry[] }>,
-  workspaceFiles: {} as Record<string, { rootPath?: string | null; filePath: string; content: string | null; contentType: string | null; previewKind: "text" | "image" | "pdf" | "binary"; contentPath: string | null; truncated: boolean }>,
+  workspaceFiles: {} as Record<string, { rootPath?: string | null; filePath: string; content: string | null; contentType: string | null; previewKind: "text" | "image" | "pdf" | "binary"; contentPath: string | null; message?: string | null; truncated: boolean }>,
   queueSnapshot: { activeGenerationId: null, items: [] } as ChatQueueSnapshot,
   cancelQueuedMessage: vi.fn(),
   createQueuedMessage: vi.fn(),
@@ -52,6 +52,7 @@ const mockState = vi.hoisted(() => ({
   pushToast: vi.fn(),
   queryKeys: [] as unknown[][],
   getQueryData: vi.fn(),
+  updateWorkspaceFile: vi.fn(),
   sendInFlightByChatId: {} as Record<string, true>,
   sendMessageStream: vi.fn(),
   setSidebarOpen: vi.fn(),
@@ -391,6 +392,14 @@ vi.mock("@/api/issues", () => ({
   },
 }));
 
+vi.mock("@/api/orgs", () => ({
+  organizationsApi: {
+    readWorkspaceFile: vi.fn(),
+    listWorkspaceFiles: vi.fn(),
+    updateWorkspaceFile: (...args: unknown[]) => mockState.updateWorkspaceFile(...args),
+  },
+}));
+
 vi.mock("@/api/automations", () => ({
   automationsApi: {
     get: vi.fn(),
@@ -410,9 +419,27 @@ vi.mock("@/components/MarkdownEditor", async () => {
   const React = await import("react");
   return {
     MarkdownEditor: React.forwardRef((props: { value: string; onChange: (value: string) => void; onSubmit?: () => void; placeholder?: string }, ref) => {
+      const undoStackRef = React.useRef<string[]>([]);
+      const redoStackRef = React.useRef<string[]>([]);
       React.useImperativeHandle(ref, () => ({
         focus: vi.fn(),
         getMarkdown: () => props.value,
+        undo: () => {
+          const previous = undoStackRef.current.pop();
+          if (previous === undefined) return false;
+          redoStackRef.current.push(props.value);
+          props.onChange(previous);
+          return true;
+        },
+        redo: () => {
+          const next = redoStackRef.current.pop();
+          if (next === undefined) return false;
+          undoStackRef.current.push(props.value);
+          props.onChange(next);
+          return true;
+        },
+        canUndo: () => undoStackRef.current.length > 0,
+        canRedo: () => redoStackRef.current.length > 0,
       }));
       return (
         <textarea
@@ -420,7 +447,11 @@ vi.mock("@/components/MarkdownEditor", async () => {
           data-testid="mock-markdown-editor"
           placeholder={props.placeholder}
           value={props.value}
-          onChange={(event) => props.onChange(event.currentTarget.value)}
+          onChange={(event) => {
+            undoStackRef.current.push(props.value);
+            redoStackRef.current = [];
+            props.onChange(event.currentTarget.value);
+          }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
@@ -436,6 +467,7 @@ vi.mock("@/components/MarkdownEditor", async () => {
 let cleanupFn: (() => void) | null = null;
 let scrollIntoViewMock: ReturnType<typeof vi.fn>;
 let storageState: Record<string, string> = {};
+let sessionStorageState: Record<string, string> = {};
 
 function chat(overrides: Partial<ChatConversation> = {}): ChatConversation {
   return {
@@ -946,6 +978,7 @@ function imageMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
 
 function installLocalStorageMock() {
   storageState = {};
+  sessionStorageState = {};
   vi.stubGlobal("localStorage", {
     getItem: vi.fn((key: string) => storageState[key] ?? null),
     setItem: vi.fn((key: string, value: string) => {
@@ -956,6 +989,18 @@ function installLocalStorageMock() {
     }),
     clear: vi.fn(() => {
       storageState = {};
+    }),
+  });
+  vi.stubGlobal("sessionStorage", {
+    getItem: vi.fn((key: string) => sessionStorageState[key] ?? null),
+    setItem: vi.fn((key: string, value: string) => {
+      sessionStorageState[key] = String(value);
+    }),
+    removeItem: vi.fn((key: string) => {
+      delete sessionStorageState[key];
+    }),
+    clear: vi.fn(() => {
+      sessionStorageState = {};
     }),
   });
 }
@@ -1081,6 +1126,18 @@ beforeEach(() => {
   mockState.routeBase = "/messenger/chat";
   mockState.workspaceDirectories = {};
   mockState.workspaceFiles = {};
+  mockState.updateWorkspaceFile.mockReset();
+  mockState.updateWorkspaceFile.mockImplementation(async (
+    _organizationId: string,
+    filePath: string,
+    data: { content: string },
+  ) => {
+    const current = mockState.workspaceFiles[filePath];
+    if (!current) throw new Error("Workspace file not found");
+    const updated = { ...current, content: data.content };
+    mockState.workspaceFiles[filePath] = updated;
+    return updated;
+  });
   mockState.issues = {};
   mockState.issueComments = {};
   mockState.agents = [agent()];
@@ -1998,10 +2055,12 @@ describe("Chat Side Panel link handling", () => {
     sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     const fileView = sidePanel?.querySelector("[data-testid='chat-side-panel-library-file-view']");
     const fileToolbar = sidePanel?.querySelector("[data-testid='chat-side-panel-library-file-toolbar']");
-    const markdownPreview = sidePanel?.querySelector("[data-testid='chat-side-panel-library-markdown-preview']");
-    expect(markdownPreview?.querySelector("h1")?.textContent).toBe("Side Panel notes");
-    expect(markdownPreview?.querySelector("li")?.textContent).toBe("Keep markdown rendered");
-    expect(markdownPreview?.textContent).not.toContain("# Side Panel notes");
+    const markdownEditor = sidePanel?.querySelector("[data-testid='chat-side-panel-library-markdown-editor']");
+    const markdownInput = markdownEditor?.querySelector<HTMLTextAreaElement>("[data-testid='mock-markdown-editor']");
+    expect(markdownInput?.value).toBe("# Side Panel notes\n\n- Keep markdown rendered");
+    expect(markdownEditor?.querySelector("[data-testid='chat-side-panel-library-history-controls']")).not.toBeNull();
+    expect(Array.from(fileView?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Preview");
+    expect(Array.from(fileView?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Edit");
     expect(fileToolbar?.textContent).toContain("notes.md");
     expect(fileView?.textContent).not.toContain("text/markdown");
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(2);
@@ -2059,7 +2118,7 @@ describe("Chat Side Panel link handling", () => {
     });
 
     sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
-    expect(sidePanel?.querySelector("[data-testid='chat-side-panel-library-markdown-preview']")).not.toBeNull();
+    expect(sidePanel?.querySelector("[data-testid='chat-side-panel-library-markdown-editor']")).not.toBeNull();
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(2);
 
     const shortcut = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "w", metaKey: true });
@@ -2073,10 +2132,10 @@ describe("Chat Side Panel link handling", () => {
     expect(tabs).toHaveLength(1);
     expect(tabs[0]?.textContent).toContain("Library");
     expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Library root");
-    expect(container.querySelector("[data-testid='chat-side-panel-library-markdown-preview']")).toBeNull();
+    expect(container.querySelector("[data-testid='chat-side-panel-library-markdown-editor']")).toBeNull();
   });
 
-  it("renders a stable Library entry target as an inline file preview", async () => {
+  it("renders a stable Library entry target as an inline Markdown editor", async () => {
     mockState.workspaceFiles = {
       "reports/activity.md": {
         filePath: "reports/activity.md",
@@ -2091,6 +2150,7 @@ describe("Chat Side Panel link handling", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
 
     await act(async () => {
       root.render(
@@ -2118,9 +2178,376 @@ describe("Chat Side Panel link handling", () => {
     expect(fileToolbar?.querySelector("nav")?.getAttribute("tabindex")).toBe("0");
     expect(fileView?.textContent).not.toContain("reports/activity.md");
     expect(fileView?.textContent).not.toContain("text/markdown");
-    expect(sidePanel?.textContent).toContain("Activity report");
-    expect(sidePanel?.textContent).toContain("Stable Library entry links should render inline.");
+    expect(sidePanel?.querySelector<HTMLTextAreaElement>("[data-testid='mock-markdown-editor']")?.value).toBe(
+      "# Activity report\n\nStable Library entry links should render inline.",
+    );
     expect(sidePanel?.textContent).not.toContain("Open this target in the full page for details.");
+  });
+
+  it("edits Markdown directly with undo, redo, autosave retry, and preserved frontmatter", async () => {
+    vi.useFakeTimers();
+    mockState.workspaceFiles = {
+      "reports/editable.md": {
+        filePath: "reports/editable.md",
+        content: "---\ntitle: Editable report\n---\n# Original heading\n\nOriginal body.",
+        contentType: "text/markdown",
+        previewKind: "text",
+        contentPath: null,
+        truncated: false,
+      },
+    };
+    mockState.updateWorkspaceFile.mockRejectedValueOnce(new Error("Temporary save failure"));
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+
+    try {
+      await act(async () => {
+        root.render(
+          <ThemeProvider>
+            <SidePanelProvider>
+              <ChatSidePanel
+                selectedOrganizationId="org-1"
+                target={{ kind: "library_file", filePath: "reports/editable.md", label: "editable.md" }}
+              />
+            </SidePanelProvider>
+          </ThemeProvider>,
+        );
+        await Promise.resolve();
+      });
+
+      const editor = container.querySelector<HTMLTextAreaElement>("[data-testid='mock-markdown-editor']");
+      const undoButton = container.querySelector<HTMLButtonElement>('button[aria-label="Undo Markdown edit"]');
+      const redoButton = container.querySelector<HTMLButtonElement>('button[aria-label="Redo Markdown edit"]');
+      expect(editor?.value).toBe("# Original heading\n\nOriginal body.");
+      expect(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Frontmatter"]')?.value).toBe(
+        "---\ntitle: Editable report\n---",
+      );
+      expect(undoButton?.disabled).toBe(true);
+
+      await act(async () => {
+        if (editor) {
+          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(
+            editor,
+            "# Revised heading\n\nRevised body.",
+          );
+          editor.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        await Promise.resolve();
+      });
+      expect(undoButton?.disabled).toBe(false);
+
+      await act(async () => {
+        undoButton?.click();
+        await Promise.resolve();
+      });
+      expect(editor?.value).toBe("# Original heading\n\nOriginal body.");
+      expect(redoButton?.disabled).toBe(false);
+
+      await act(async () => {
+        redoButton?.click();
+        await Promise.resolve();
+      });
+      expect(editor?.value).toBe("# Revised heading\n\nRevised body.");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(700);
+      });
+      expect(container.textContent).toContain("Save failed");
+      expect(mockState.updateWorkspaceFile).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+          .find((button) => button.textContent === "Retry")
+          ?.click();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(mockState.updateWorkspaceFile).toHaveBeenCalledTimes(2);
+      expect(mockState.updateWorkspaceFile).toHaveBeenLastCalledWith(
+        "org-1",
+        "reports/editable.md",
+        { content: "---\ntitle: Editable report\n---\n# Revised heading\n\nRevised body." },
+      );
+      expect(container.textContent).toContain("Saved");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a truncated Side Panel Markdown file read-only", async () => {
+    mockState.workspaceFiles = {
+      "reports/truncated.md": {
+        filePath: "reports/truncated.md",
+        content: "# Partial preview\n",
+        contentType: "text/markdown",
+        previewKind: "text",
+        contentPath: null,
+        message: "Preview truncated to the first 200 KB.",
+        truncated: true,
+      },
+    };
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+
+    await act(async () => {
+      root.render(
+        <ThemeProvider>
+          <SidePanelProvider>
+            <ChatSidePanel
+              selectedOrganizationId="org-1"
+              target={{ kind: "library_file", filePath: "reports/truncated.md", label: "truncated.md" }}
+            />
+          </SidePanelProvider>
+        </ThemeProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("[data-testid='chat-side-panel-library-markdown-editor']")).toBeNull();
+    expect(container.querySelector("[data-testid='chat-side-panel-library-markdown-preview']")).not.toBeNull();
+    expect(container.querySelector("[data-testid='chat-side-panel-library-readonly-notice']")?.textContent).toBe(
+      "Preview truncated to the first 200 KB.",
+    );
+    expect(mockState.updateWorkspaceFile).not.toHaveBeenCalled();
+  });
+
+  it("saves the latest Markdown state after reverting while an older save is in flight", async () => {
+    vi.useFakeTimers();
+    mockState.workspaceFiles = {
+      "notes/in-flight.md": {
+        filePath: "notes/in-flight.md",
+        content: "# Server copy\n",
+        contentType: "text/markdown",
+        previewKind: "text",
+        contentPath: null,
+        truncated: false,
+      },
+    };
+    let resolveFirstSave: (() => void) | null = null;
+    mockState.updateWorkspaceFile.mockImplementationOnce((
+      _organizationId: string,
+      filePath: string,
+      data: { content: string },
+    ) => new Promise((resolve) => {
+      resolveFirstSave = () => {
+        const updated = { ...mockState.workspaceFiles[filePath], content: data.content };
+        mockState.workspaceFiles[filePath] = updated;
+        resolve(updated);
+      };
+    }));
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+
+    try {
+      await act(async () => {
+        root.render(
+          <ThemeProvider>
+            <SidePanelProvider>
+              <ChatSidePanel
+                selectedOrganizationId="org-1"
+                target={{ kind: "library_file", filePath: "notes/in-flight.md", label: "in-flight.md" }}
+              />
+            </SidePanelProvider>
+          </ThemeProvider>,
+        );
+        await Promise.resolve();
+      });
+
+      const editor = container.querySelector<HTMLTextAreaElement>("[data-testid='mock-markdown-editor']");
+      const changeEditor = (value: string) => {
+        if (!editor) return;
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(editor, value);
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+      };
+
+      await act(async () => {
+        changeEditor("# In-flight revision\n");
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(700);
+      });
+      expect(mockState.updateWorkspaceFile).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        changeEditor("# Server copy\n");
+        await Promise.resolve();
+      });
+      expect(container.textContent).toContain("Saving");
+
+      await act(async () => {
+        resolveFirstSave?.();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(mockState.updateWorkspaceFile).toHaveBeenCalledTimes(2);
+      expect(mockState.updateWorkspaceFile).toHaveBeenLastCalledWith(
+        "org-1",
+        "notes/in-flight.md",
+        { content: "# Server copy\n" },
+      );
+      expect(mockState.workspaceFiles["notes/in-flight.md"]?.content).toBe("# Server copy\n");
+      expect(container.textContent).toContain("Saved");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("restores an unsaved Side Panel Markdown draft after the editor remounts", async () => {
+    vi.useFakeTimers();
+    mockState.workspaceFiles = {
+      "notes/recovery.md": {
+        filePath: "notes/recovery.md",
+        content: "# Server copy\n",
+        contentType: "text/markdown",
+        previewKind: "text",
+        contentPath: null,
+        truncated: false,
+      },
+    };
+
+    const firstContainer = document.createElement("div");
+    document.body.appendChild(firstContainer);
+    const firstRoot = createRoot(firstContainer);
+
+    try {
+      await act(async () => {
+        firstRoot.render(
+          <ThemeProvider>
+            <SidePanelProvider>
+              <ChatSidePanel
+                selectedOrganizationId="org-1"
+                target={{ kind: "library_file", filePath: "notes/recovery.md", label: "recovery.md" }}
+              />
+            </SidePanelProvider>
+          </ThemeProvider>,
+        );
+        await Promise.resolve();
+      });
+      const firstEditor = firstContainer.querySelector<HTMLTextAreaElement>("[data-testid='mock-markdown-editor']");
+      await act(async () => {
+        if (firstEditor) {
+          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(
+            firstEditor,
+            "# Recovered draft\n\nNot saved yet.",
+          );
+          firstEditor.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        await Promise.resolve();
+      });
+      await act(async () => firstRoot.unmount());
+      expect(mockState.updateWorkspaceFile).not.toHaveBeenCalled();
+
+      const secondContainer = document.createElement("div");
+      document.body.appendChild(secondContainer);
+      const secondRoot = createRoot(secondContainer);
+      cleanupFn = () => act(() => secondRoot.unmount());
+      await act(async () => {
+        secondRoot.render(
+          <ThemeProvider>
+            <SidePanelProvider>
+              <ChatSidePanel
+                selectedOrganizationId="org-1"
+                target={{ kind: "library_file", filePath: "notes/recovery.md", label: "recovery.md" }}
+              />
+            </SidePanelProvider>
+          </ThemeProvider>,
+        );
+        await Promise.resolve();
+      });
+      expect(secondContainer.querySelector<HTMLTextAreaElement>("[data-testid='mock-markdown-editor']")?.value).toBe(
+        "# Recovered draft\n\nNot saved yet.",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects an unsaved Side Panel Markdown draft when the server base changed", async () => {
+    vi.useFakeTimers();
+    mockState.workspaceFiles = {
+      "notes/stale-recovery.md": {
+        filePath: "notes/stale-recovery.md",
+        content: "# Original server copy\n",
+        contentType: "text/markdown",
+        previewKind: "text",
+        contentPath: null,
+        truncated: false,
+      },
+    };
+
+    const firstContainer = document.createElement("div");
+    document.body.appendChild(firstContainer);
+    const firstRoot = createRoot(firstContainer);
+
+    try {
+      await act(async () => {
+        firstRoot.render(
+          <ThemeProvider>
+            <SidePanelProvider>
+              <ChatSidePanel
+                selectedOrganizationId="org-1"
+                target={{ kind: "library_file", filePath: "notes/stale-recovery.md", label: "stale-recovery.md" }}
+              />
+            </SidePanelProvider>
+          </ThemeProvider>,
+        );
+        await Promise.resolve();
+      });
+      const firstEditor = firstContainer.querySelector<HTMLTextAreaElement>("[data-testid='mock-markdown-editor']");
+      await act(async () => {
+        if (firstEditor) {
+          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(
+            firstEditor,
+            "# Unsaved stale draft\n",
+          );
+          firstEditor.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        await Promise.resolve();
+      });
+      await act(async () => firstRoot.unmount());
+
+      mockState.workspaceFiles["notes/stale-recovery.md"] = {
+        ...mockState.workspaceFiles["notes/stale-recovery.md"],
+        content: "# New server copy\n",
+      };
+
+      const secondContainer = document.createElement("div");
+      document.body.appendChild(secondContainer);
+      const secondRoot = createRoot(secondContainer);
+      cleanupFn = () => act(() => secondRoot.unmount());
+      await act(async () => {
+        secondRoot.render(
+          <ThemeProvider>
+            <SidePanelProvider>
+              <ChatSidePanel
+                selectedOrganizationId="org-1"
+                target={{ kind: "library_file", filePath: "notes/stale-recovery.md", label: "stale-recovery.md" }}
+              />
+            </SidePanelProvider>
+          </ThemeProvider>,
+        );
+        await Promise.resolve();
+      });
+
+      expect(secondContainer.querySelector<HTMLTextAreaElement>("[data-testid='mock-markdown-editor']")?.value).toBe(
+        "# New server copy\n",
+      );
+      expect(sessionStorageState).toEqual({});
+      expect(mockState.updateWorkspaceFile).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("renders a Library PDF inline in the Side Panel", async () => {
@@ -2634,7 +3061,7 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
 
-    const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    const sidePanel = document.body.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     expect(sidePanel).not.toBeNull();
     expect(sidePanel?.className).toContain("fixed");
     expect(sidePanel?.className).toContain("inset-x-3");
@@ -2650,7 +3077,7 @@ describe("Chat Side Panel link handling", () => {
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 220));
     });
-    expect(container.querySelector("[data-testid='chat-side-panel']")).toBeNull();
+    expect(document.body.querySelector("[data-testid='chat-side-panel']")).toBeNull();
     expect(sidePanelTrigger?.getAttribute("aria-pressed")).toBe("false");
     expect(container.querySelector("textarea[aria-label='Composer draft']")).not.toBeNull();
   });
@@ -2696,7 +3123,7 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
 
-    const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    const sidePanel = document.body.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     const issueView = sidePanel?.querySelector<HTMLElement>("[data-testid='chat-side-panel-issue-view']");
     const issueScroller = sidePanel?.querySelector<HTMLElement>("[data-testid='chat-side-panel-issue-scroll']");
     const timelineFlow = sidePanel?.querySelector<HTMLElement>("[data-testid='comment-thread-timeline-flow']");

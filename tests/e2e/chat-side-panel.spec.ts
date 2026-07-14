@@ -289,6 +289,111 @@ test.describe("Chat Side Panel", () => {
     expect(titleBox?.y ?? 0).toBeGreaterThanOrEqual(
       (toolbarBox?.y ?? 0) + (toolbarBox?.height ?? 0),
     );
+
+    const markdownEditor = sidePanel.getByTestId("chat-side-panel-library-markdown-editor");
+    const editable = markdownEditor.locator(".rudder-milkdown-content [contenteditable='true']").first();
+    const historyControls = markdownEditor.getByTestId("chat-side-panel-library-history-controls");
+    const undoButton = markdownEditor.getByRole("button", { name: "Undo Markdown edit" });
+    const redoButton = markdownEditor.getByRole("button", { name: "Redo Markdown edit" });
+    await expect(editable).toBeVisible();
+    await expect(historyControls).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-library-file-mode-toggle")).toHaveCount(0);
+    await expect(undoButton).toBeDisabled();
+
+    let patchAttempts = 0;
+    let allowPatch = false;
+    await page.route("**/api/orgs/**/workspace/file**", async (route) => {
+      if (route.request().method() !== "PATCH") {
+        await route.continue();
+        return;
+      }
+      patchAttempts += 1;
+      if (!allowPatch) {
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Temporary Side Panel save failure" }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+
+    await documentTitle.evaluate((heading) => {
+      const editableRoot = heading.closest<HTMLElement>("[contenteditable='true']");
+      editableRoot?.focus();
+      const range = document.createRange();
+      range.selectNodeContents(heading);
+      range.collapse(false);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    });
+    await page.keyboard.type(" revised");
+    await expect(markdownEditor.getByRole("heading", {
+      name: "OpenClaw and Hermes Agent SEO competitor research revised",
+      exact: true,
+    })).toBeVisible();
+    await expect(undoButton).toBeEnabled();
+
+    await undoButton.click();
+    await expect(markdownEditor.getByRole("heading", {
+      name: "OpenClaw and Hermes Agent SEO competitor research",
+      exact: true,
+    })).toBeVisible();
+    await expect(redoButton).toBeEnabled();
+
+    await redoButton.click();
+    await expect(markdownEditor.getByRole("heading", {
+      name: "OpenClaw and Hermes Agent SEO competitor research revised",
+      exact: true,
+    })).toBeVisible();
+    await expect(markdownEditor).toContainText("Save failed", { timeout: 10_000 });
+    allowPatch = true;
+    await markdownEditor.getByRole("button", { name: "Retry" }).click();
+    await expect(markdownEditor).toContainText("Saved", { timeout: 10_000 });
+    expect(patchAttempts).toBeGreaterThanOrEqual(2);
+
+    const savedFileRes = await page.request.get(
+      `/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(libraryFilePath)}`,
+    );
+    expect(savedFileRes.ok(), await savedFileRes.text()).toBe(true);
+    const savedFile = await savedFileRes.json() as { content: string | null };
+    expect(savedFile.content).toContain("# OpenClaw and Hermes Agent SEO competitor research revised");
+
+    const [editorBox, historyBox] = await Promise.all([
+      markdownEditor.boundingBox(),
+      historyControls.boundingBox(),
+    ]);
+    expect(editorBox).not.toBeNull();
+    expect(historyBox).not.toBeNull();
+    expect(historyBox?.x ?? 0).toBeGreaterThanOrEqual(editorBox?.x ?? 0);
+    expect((historyBox?.x ?? 0) + (historyBox?.width ?? 0)).toBeLessThanOrEqual(
+      (editorBox?.x ?? 0) + (editorBox?.width ?? 0) + 1,
+    );
+    expect((historyBox?.y ?? 0) + (historyBox?.height ?? 0)).toBeLessThanOrEqual(
+      (editorBox?.y ?? 0) + (editorBox?.height ?? 0) + 1,
+    );
+
+    await page.screenshot({
+      path: testInfo.outputPath("chat-side-panel-library-markdown-editor.png"),
+      fullPage: true,
+    });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(sidePanel).toHaveClass(/fixed/);
+    await expect(historyControls).toBeVisible();
+    const mobileHistoryBox = await historyControls.boundingBox();
+    expect(mobileHistoryBox).not.toBeNull();
+    expect(mobileHistoryBox?.x ?? 0).toBeGreaterThanOrEqual(0);
+    expect((mobileHistoryBox?.x ?? 0) + (mobileHistoryBox?.width ?? 0)).toBeLessThanOrEqual(390);
+    expect((mobileHistoryBox?.y ?? 0) + (mobileHistoryBox?.height ?? 0)).toBeLessThanOrEqual(844);
+    await page.screenshot({
+      path: testInfo.outputPath("chat-side-panel-library-markdown-editor-mobile.png"),
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 1440, height: 900 });
+
     await libraryOpenIn.click();
     await expect(page.getByRole("menuitem", { name: "Open in Library" })).toBeVisible();
     await expect(page.getByTestId("chat-side-panel-library-full-path")).toHaveCount(0);

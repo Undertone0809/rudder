@@ -7,11 +7,13 @@ import { AgentIcon } from "@/components/AgentIconPicker";
 import { CommentThread } from "@/components/CommentThread";
 import { InlineEditor } from "@/components/InlineEditor";
 import { IssueProperties } from "@/components/IssueProperties";
+import { MarkdownEditor, type MarkdownEditorRef } from "@/components/MarkdownEditor";
 import { PriorityIcon } from "@/components/PriorityIcon";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
   isWorkspaceCsvPreviewFile,
   isWorkspaceHtmlPreviewFile,
+  isWorkspaceMarkdownPreviewFile,
   WorkspaceFilePreview,
   type WorkspaceFilePreviewMode,
 } from "@/components/WorkspaceFilePreview";
@@ -68,13 +70,16 @@ import {
   PackageOpen,
   PanelRight,
   Plus,
+  Redo2,
   RotateCw,
   Table2,
   Terminal,
+  Undo2,
   UserRound,
   X
 } from "lucide-react";
 import { createElement, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import { AutomationDetail } from "./AutomationDetail";
 import { conversationDisplayTitle } from "./Chat.parts";
 import { IssueDetail } from "./IssueDetail";
@@ -99,6 +104,117 @@ const CHAT_SIDE_PANEL_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([
   ".text",
 ]);
 const CHAT_SIDE_PANEL_TAB_DND_MIME = "application/x-rudder-side-panel-tab";
+const CHAT_SIDE_PANEL_MARKDOWN_DRAFT_STORAGE_PREFIX = "rudder.chat-side-panel.markdown-draft.v1";
+
+type ChatSidePanelMarkdownDraft = {
+  baseContent: string;
+  content: string;
+  filePath: string;
+  organizationId: string;
+  updatedAt: string;
+};
+
+function chatSidePanelMarkdownDraftStorageKey(organizationId: string, filePath: string) {
+  return `${CHAT_SIDE_PANEL_MARKDOWN_DRAFT_STORAGE_PREFIX}:${encodeURIComponent(organizationId)}:${encodeURIComponent(filePath)}`;
+}
+
+function clearChatSidePanelMarkdownDraft(organizationId: string, filePath: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(chatSidePanelMarkdownDraftStorageKey(organizationId, filePath));
+  } catch {
+    // Storage can be unavailable in hardened browser contexts.
+  }
+}
+
+function storeChatSidePanelMarkdownDraft(
+  organizationId: string,
+  filePath: string,
+  baseContent: string,
+  content: string,
+) {
+  if (typeof window === "undefined") return;
+  if (content === baseContent) {
+    clearChatSidePanelMarkdownDraft(organizationId, filePath);
+    return;
+  }
+  try {
+    const draft: ChatSidePanelMarkdownDraft = {
+      organizationId,
+      filePath,
+      baseContent,
+      content,
+      updatedAt: new Date().toISOString(),
+    };
+    window.sessionStorage.setItem(
+      chatSidePanelMarkdownDraftStorageKey(organizationId, filePath),
+      JSON.stringify(draft),
+    );
+  } catch {
+    // The editor remains usable when session storage is unavailable.
+  }
+}
+
+function restoreChatSidePanelMarkdownDraft(
+  organizationId: string,
+  filePath: string,
+  serverContent: string,
+) {
+  if (typeof window === "undefined") return serverContent;
+  try {
+    const stored = window.sessionStorage.getItem(chatSidePanelMarkdownDraftStorageKey(organizationId, filePath));
+    if (!stored) return serverContent;
+    const draft = JSON.parse(stored) as Partial<ChatSidePanelMarkdownDraft>;
+    const valid = draft.organizationId === organizationId
+      && draft.filePath === filePath
+      && typeof draft.baseContent === "string"
+      && typeof draft.content === "string";
+    if (!valid || draft.baseContent !== serverContent || draft.content === serverContent) {
+      clearChatSidePanelMarkdownDraft(organizationId, filePath);
+      return serverContent;
+    }
+    return draft.content as string;
+  } catch {
+    clearChatSidePanelMarkdownDraft(organizationId, filePath);
+    return serverContent;
+  }
+}
+
+function splitChatSidePanelYamlFrontmatter(content: string) {
+  const match = content.match(/^(---\r?\n[\s\S]*?\r?\n---)(\r?\n|$)/);
+  if (!match) return { frontmatter: null, separator: "", body: content };
+  return {
+    frontmatter: match[1] ?? "",
+    separator: match[2] ?? "\n",
+    body: content.slice(match[0].length),
+  };
+}
+
+function joinChatSidePanelYamlFrontmatter(frontmatter: string | null, separator: string, body: string) {
+  return frontmatter === null ? body : `${frontmatter}${separator || "\n"}${body}`;
+}
+
+function countChatSidePanelMarkdownWords(content: string) {
+  return content.match(/[\p{L}\p{N}]+(?:[-'][\p{L}\p{N}]+)*/gu)?.length ?? 0;
+}
+
+function useChatSidePanelMobileLayout() {
+  const [isMobile, setIsMobile] = useState(() => (
+    typeof window !== "undefined" && Boolean(window.matchMedia?.("(max-width: 767px)").matches)
+  ));
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return undefined;
+    const mediaQuery = window.matchMedia("(max-width: 767px)");
+    const update = () => setIsMobile(mediaQuery.matches);
+    update();
+    mediaQuery.addEventListener?.("change", update);
+    return () => mediaQuery.removeEventListener?.("change", update);
+  }, []);
+
+  return isMobile;
+}
+
 type BrowserWebviewElement = HTMLElement & {
   canGoBack?: () => boolean;
   canGoForward?: () => boolean;
@@ -666,10 +782,267 @@ function ChatSidePanelLibraryTreeNode({
   );
 }
 
-function ChatSidePanelLibraryFileView({
+function ChatSidePanelMarkdownFileEditor({
   libraryFile,
+  organizationId,
 }: {
   libraryFile: OrganizationWorkspaceFileDetail;
+  organizationId: string;
+}) {
+  const queryClient = useQueryClient();
+  const filePath = libraryFile.filePath;
+  const serverContent = libraryFile.content ?? "";
+  const editorRef = useRef<MarkdownEditorRef>(null);
+  const syncedContentRef = useRef(serverContent);
+  const draftContentRef = useRef(serverContent);
+  const queuedSaveRef = useRef<string | null>(null);
+  const saveInFlightRef = useRef(false);
+  const mountedRef = useRef(true);
+  const [draftContent, setDraftContent] = useState(() => (
+    restoreChatSidePanelMarkdownDraft(organizationId, filePath, serverContent)
+  ));
+  const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "error">(
+    draftContent === serverContent ? "saved" : "saving",
+  );
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [, setHistoryVersion] = useState(0);
+
+  draftContentRef.current = draftContent;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      storeChatSidePanelMarkdownDraft(
+        organizationId,
+        filePath,
+        syncedContentRef.current,
+        draftContentRef.current,
+      );
+    };
+  }, [filePath, organizationId]);
+
+  useEffect(() => {
+    if (serverContent === syncedContentRef.current) return;
+    const wasClean = draftContentRef.current === syncedContentRef.current;
+    syncedContentRef.current = serverContent;
+    if (wasClean) {
+      draftContentRef.current = serverContent;
+      setDraftContent(serverContent);
+      setSaveStatus("saved");
+      clearChatSidePanelMarkdownDraft(organizationId, filePath);
+      return;
+    }
+    storeChatSidePanelMarkdownDraft(organizationId, filePath, serverContent, draftContentRef.current);
+  }, [filePath, organizationId, serverContent]);
+
+  const drainSaveQueue = useCallback(async () => {
+    if (saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
+    try {
+      while (queuedSaveRef.current !== null) {
+        const content = queuedSaveRef.current;
+        queuedSaveRef.current = null;
+        if (content === syncedContentRef.current) continue;
+        if (mountedRef.current) {
+          setSaveStatus("saving");
+          setSaveError(null);
+        }
+        try {
+          const detail = await organizationsApi.updateWorkspaceFile(organizationId, filePath, { content });
+          const savedContent = detail.content ?? content;
+          syncedContentRef.current = savedContent;
+          queryClient.setQueryData(
+            queryKeys.organizations.workspaceFile(organizationId, filePath),
+            detail,
+          );
+          storeChatSidePanelMarkdownDraft(
+            organizationId,
+            filePath,
+            savedContent,
+            draftContentRef.current,
+          );
+          if (draftContentRef.current !== savedContent) {
+            queuedSaveRef.current = draftContentRef.current;
+          }
+        } catch (error) {
+          if (mountedRef.current) {
+            setSaveStatus("error");
+            setSaveError(error instanceof Error ? error.message : "Could not save this file.");
+          }
+          return;
+        }
+      }
+      if (mountedRef.current) {
+        setSaveStatus(
+          queuedSaveRef.current === null && draftContentRef.current === syncedContentRef.current
+            ? "saved"
+            : "saving",
+        );
+      }
+    } finally {
+      saveInFlightRef.current = false;
+    }
+  }, [filePath, organizationId, queryClient]);
+
+  const enqueueSave = useCallback((content: string) => {
+    queuedSaveRef.current = content;
+    void drainSaveQueue();
+  }, [drainSaveQueue]);
+
+  useEffect(() => {
+    storeChatSidePanelMarkdownDraft(
+      organizationId,
+      filePath,
+      syncedContentRef.current,
+      draftContent,
+    );
+    if (draftContent === syncedContentRef.current) {
+      setSaveStatus(saveInFlightRef.current || queuedSaveRef.current !== null ? "saving" : "saved");
+      setSaveError(null);
+      return undefined;
+    }
+    const timeout = window.setTimeout(() => enqueueSave(draftContent), 700);
+    return () => window.clearTimeout(timeout);
+  }, [draftContent, enqueueSave, filePath, organizationId]);
+
+  const handleDraftChange = (content: string) => {
+    draftContentRef.current = content;
+    setDraftContent(content);
+    setSaveStatus("saving");
+    setSaveError(null);
+    setHistoryVersion((current) => current + 1);
+  };
+
+  const markdownParts = splitChatSidePanelYamlFrontmatter(draftContent);
+  const wordCount = countChatSidePanelMarkdownWords(markdownParts.body);
+  const canUndo = editorRef.current?.canUndo?.() ?? false;
+  const canRedo = editorRef.current?.canRedo?.() ?? false;
+
+  return (
+    <div
+      className="relative flex min-h-0 flex-1 flex-col"
+      data-testid="chat-side-panel-library-markdown-editor"
+    >
+      <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-5 pb-20 pt-5">
+        {markdownParts.frontmatter !== null ? (
+          <details
+            className="group mb-6 rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-page)]"
+            data-testid="chat-side-panel-library-frontmatter-editor"
+          >
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+              <span>Frontmatter</span>
+              <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+            </summary>
+            <textarea
+              value={markdownParts.frontmatter}
+              onChange={(event) => handleDraftChange(joinChatSidePanelYamlFrontmatter(
+                event.currentTarget.value,
+                markdownParts.separator,
+                markdownParts.body,
+              ))}
+              spellCheck={false}
+              className="block min-h-28 w-full resize-y border-t border-[color:var(--border-soft)] bg-transparent px-3 py-2 font-mono text-xs leading-5 text-foreground outline-none"
+              aria-label="Frontmatter"
+            />
+          </details>
+        ) : null}
+        <MarkdownEditor
+          ref={editorRef}
+          key={filePath}
+          engine="milkdown"
+          value={markdownParts.body}
+          onChange={(body) => handleDraftChange(joinChatSidePanelYamlFrontmatter(
+            markdownParts.frontmatter,
+            markdownParts.separator,
+            body,
+          ))}
+          bordered={false}
+          placeholder="Write in Markdown..."
+          contentClassName="rudder-library-document-editor rudder-side-panel-library-document min-h-[420px] text-[15px] leading-7 text-foreground"
+        />
+      </div>
+
+      <div className="pointer-events-none absolute inset-x-3 bottom-3 flex min-w-0 items-end justify-between gap-3">
+        <div
+          className={cn(
+            "pointer-events-auto flex min-h-8 min-w-0 items-center gap-2 rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-2.5 text-xs shadow-sm",
+            saveStatus === "error" ? "text-destructive" : "text-muted-foreground",
+          )}
+          role={saveStatus === "error" ? "alert" : "status"}
+          title={saveError ?? undefined}
+        >
+          <span className={cn(
+            "h-1.5 w-1.5 shrink-0 rounded-full",
+            saveStatus === "error" ? "bg-destructive" : saveStatus === "saving" ? "bg-[color:var(--accent-strong)]" : "bg-emerald-500",
+          )} />
+          <span className="truncate">
+            {saveStatus === "error" ? "Save failed" : saveStatus === "saving" ? "Saving" : "Saved"}
+            {` · ${wordCount.toLocaleString()} ${wordCount === 1 ? "word" : "words"}`}
+          </span>
+          {saveStatus === "error" ? (
+            <button
+              type="button"
+              className="shrink-0 font-medium text-foreground underline underline-offset-2"
+              onClick={() => enqueueSave(draftContentRef.current)}
+            >
+              Retry
+            </button>
+          ) : null}
+        </div>
+
+        <TooltipProvider delayDuration={120}>
+          <div
+            className="pointer-events-auto flex shrink-0 items-center rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] p-0.5 shadow-sm"
+            data-testid="chat-side-panel-library-history-controls"
+          >
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
+                  aria-label="Undo Markdown edit"
+                  disabled={!canUndo}
+                  onClick={() => {
+                    editorRef.current?.undo?.();
+                    setHistoryVersion((current) => current + 1);
+                  }}
+                >
+                  <Undo2 className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">Undo</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
+                  aria-label="Redo Markdown edit"
+                  disabled={!canRedo}
+                  onClick={() => {
+                    editorRef.current?.redo?.();
+                    setHistoryVersion((current) => current + 1);
+                  }}
+                >
+                  <Redo2 className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">Redo</TooltipContent>
+            </Tooltip>
+          </div>
+        </TooltipProvider>
+      </div>
+    </div>
+  );
+}
+
+function ChatSidePanelLibraryFileView({
+  libraryFile,
+  organizationId,
+}: {
+  libraryFile: OrganizationWorkspaceFileDetail;
+  organizationId: string;
 }) {
   const { pushToast } = useToast();
   const { selectedOrganization } = useOrganization();
@@ -677,6 +1050,7 @@ function ChatSidePanelLibraryFileView({
   const navigate = useNavigate();
   const html = isWorkspaceHtmlPreviewFile(libraryFile);
   const csv = isWorkspaceCsvPreviewFile(libraryFile);
+  const markdown = isWorkspaceMarkdownPreviewFile(libraryFile);
   const [previewMode, setPreviewMode] = useState<WorkspaceFilePreviewMode>("preview");
   const pathSegments = libraryFile.filePath.split("/").filter(Boolean);
   const visiblePathSegments = pathSegments.length > 3
@@ -892,11 +1266,30 @@ function ChatSidePanelLibraryFileView({
           {openInMenu}
         </div>
       </div>
-      <WorkspaceFilePreview
-        file={libraryFile}
-        mode={previewMode}
-        testIdPrefix="chat-side-panel-library"
-      />
+      {markdown && !libraryFile.truncated ? (
+        <ChatSidePanelMarkdownFileEditor
+          key={`${organizationId}:${libraryFile.filePath}`}
+          libraryFile={libraryFile}
+          organizationId={organizationId}
+        />
+      ) : (
+        <>
+          {markdown && libraryFile.truncated ? (
+            <div
+              className="shrink-0 border-b border-[color:var(--border-soft)] px-4 py-2 text-xs text-muted-foreground"
+              data-testid="chat-side-panel-library-readonly-notice"
+              role="status"
+            >
+              {libraryFile.message ?? "This file is too large to edit in the Side Panel."}
+            </div>
+          ) : null}
+          <WorkspaceFilePreview
+            file={libraryFile}
+            mode={previewMode}
+            testIdPrefix="chat-side-panel-library"
+          />
+        </>
+      )}
     </div>
   );
 }
@@ -1209,6 +1602,7 @@ export function ChatSidePanel({
   const [tabDropTarget, setTabDropTarget] = useState<{ key: string; position: "before" | "after" } | null>(null);
   const queryClient = useQueryClient();
   const operatorDisplayName = useOperatorDisplayName();
+  const isMobile = useChatSidePanelMobileLayout();
   const { openTarget } = sidePanel;
 
   const visibleTabs = sidePanel.tabs;
@@ -1343,7 +1737,6 @@ export function ChatSidePanel({
   const libraryDirectoryEntries = libraryDirectory?.entries ?? [];
   const libraryDirectoryFileCount = libraryDirectoryEntries.filter((entry) => !entry.isDirectory).length;
   const libraryDirectoryFolderCount = libraryDirectoryEntries.length - libraryDirectoryFileCount;
-  const isMobile = typeof window !== "undefined" && window.matchMedia?.("(max-width: 767px)").matches;
   const desktopPanelStyle = !isMobile && !expanded
     ? equalWidth
       ? { flex: "1 1 0%", width: 0 }
@@ -1352,13 +1745,13 @@ export function ChatSidePanel({
         : undefined
     : undefined;
 
-  return (
+  const panel = (
     <aside
       data-testid="chat-side-panel"
       className={cn(
         "motion-chat-side-panel motion-panel-reveal flex min-h-0 shrink-0 flex-col gap-1.5 bg-transparent",
         isMobile
-          ? "fixed inset-x-3 bottom-3 top-[4.75rem] z-40 w-auto"
+          ? "fixed inset-x-3 bottom-3 top-[4.75rem] z-[60] w-auto"
           : expanded
             ? "w-full md:w-full transition-[width,opacity,transform] duration-300 ease-out motion-reduce:transition-none"
             : "w-full md:w-[min(420px,36vw)] transition-[width,opacity,transform] duration-300 ease-out motion-reduce:transition-none",
@@ -1373,7 +1766,7 @@ export function ChatSidePanel({
     >
       <div className={cn(
         "workspace-main-card relative z-10 flex shrink-0 flex-col overflow-visible rounded-[var(--desktop-workspace-radius)]",
-        isMobile && "shadow-[0_24px_90px_-36px_rgb(0_0_0/0.75)]",
+        isMobile && "!bg-[color:var(--surface-page)] shadow-[0_24px_90px_-36px_rgb(0_0_0/0.75)]",
       )}>
         <div
           role="tablist"
@@ -1495,7 +1888,10 @@ export function ChatSidePanel({
           </div>
         </div>
       </div>
-      <div className="workspace-main-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]">
+      <div className={cn(
+        "workspace-main-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]",
+        isMobile && "!bg-[color:var(--surface-page)]",
+      )}>
         <div className={cn(
           "scrollbar-auto-hide min-h-0 flex-1",
           browserTarget || issueTarget || automationTarget || libraryFilePreviewPath ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
@@ -1581,8 +1977,12 @@ export function ChatSidePanel({
                 ))}
               </div>
             </div>
-          ) : libraryFilePreviewPath && libraryFile ? (
-            <ChatSidePanelLibraryFileView key={libraryFile.filePath} libraryFile={libraryFile} />
+          ) : libraryFilePreviewPath && libraryFile && selectedOrganizationId ? (
+            <ChatSidePanelLibraryFileView
+              key={libraryFile.filePath}
+              libraryFile={libraryFile}
+              organizationId={selectedOrganizationId}
+            />
           ) : libraryDirectoryTarget ? (
             <div className="flex min-h-full flex-col" data-testid="chat-side-panel-library-directory-view">
               {libraryDirectory ? (
@@ -1609,4 +2009,8 @@ export function ChatSidePanel({
       </div>
     </aside>
   );
+
+  return isMobile && typeof document !== "undefined"
+    ? createPortal(panel, document.body)
+    : panel;
 }
