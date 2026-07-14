@@ -15,7 +15,7 @@ const e2eDb = createDb(E2E_DATABASE_URL);
 const screenshotDir = "/tmp/rudder-chat-work-manifest";
 
 test.describe("Chat Work Manifest", () => {
-  test("separates thread work from project work across desktop and compact layouts", async ({ page }) => {
+  test("shows thread work without project work across desktop and compact layouts", async ({ page }) => {
     fs.mkdirSync(screenshotDir, { recursive: true });
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Chat-Work-Manifest-${Date.now()}` },
@@ -65,6 +65,7 @@ test.describe("Chat Work Manifest", () => {
       data: {
         title: "Empty manifest chat",
         preferredAgentId: agent.id,
+        contextLinks: [{ entityType: "project", entityId: project.id }],
       },
     });
     expect(emptyChatRes.ok(), await emptyChatRes.text()).toBe(true);
@@ -154,7 +155,7 @@ test.describe("Chat Work Manifest", () => {
     await expect(shelf).toContainText("https://reference.example/docs");
     await expect(shelf.getByRole("button", { name: /reference\.example/ }).locator("[data-website-icon]"))
       .toBeVisible();
-    await expect(shelf).toContainText("Project work");
+    await expect(shelf).not.toContainText("Project work");
     await expect(shelf).not.toContainText("Project research source");
     await expect(shelf).not.toContainText("stale.example");
     await expect(shelf).not.toContainText("Browser");
@@ -214,8 +215,11 @@ test.describe("Chat Work Manifest", () => {
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${emptyChat.id}`);
     await expect(page.getByTestId("chat-work-manifest")).toHaveCount(0);
     await expect(page.getByTestId("chat-work-manifest-wide-toggle")).toHaveCount(0);
+    await expect(page.getByTestId("chat-work-manifest-trigger")).toHaveCount(0);
 
     await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(page.getByTestId("chat-work-manifest")).toHaveCount(0);
+    await expect(page.getByTestId("chat-work-manifest-wide-toggle")).toHaveCount(0);
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
     await expect(wideToggle).toBeVisible();
     await wideToggle.click();

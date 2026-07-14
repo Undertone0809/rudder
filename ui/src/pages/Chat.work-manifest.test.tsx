@@ -62,7 +62,6 @@ const handlers = {
   onOpenItem: vi.fn(),
   onJumpToMessage: vi.fn(),
   onAddSource: vi.fn(),
-  onOpenProject: vi.fn(),
 };
 
 const wideProps = {
@@ -70,7 +69,7 @@ const wideProps = {
 };
 
 describe("ChatWorkManifest", () => {
-  it("renders ordered sections, bounded rows, website details, and a separate project roll-up", () => {
+  it("renders ordered sections, bounded rows, and website details without project work", () => {
     const container = render(
       <ChatWorkManifest
         manifest={manifest}
@@ -89,15 +88,15 @@ describe("ChatWorkManifest", () => {
     expect(text).toContain("Brief.md");
     expect(text).not.toContain("Notes.txt");
     expect(text).toContain("View all 3");
-    expect(text).toContain("Project work");
-    expect(text).toContain("9 items");
+    expect(text).not.toContain("Project work");
+    expect(text).not.toContain("9 items");
     expect(text).not.toContain("Browser");
     expect(text).not.toContain("From Agent");
     expect(text).toContain("https://ref-1.example/");
     expect(container.querySelector("[data-website-icon]")).not.toBeNull();
   });
 
-  it("does not render while loading or when thread and project work are empty", () => {
+  it("does not render while loading or when thread work is empty", () => {
     const loading = render(
       <ChatWorkManifest manifest={null} loading error={null} sidePanelOpen={false} {...wideProps} {...handlers} />,
     );
@@ -114,6 +113,18 @@ describe("ChatWorkManifest", () => {
       />,
     );
     expect(empty.querySelector("[data-testid='chat-work-manifest']")).toBeNull();
+    cleanup?.();
+    const projectOnly = render(
+      <ChatWorkManifest
+        manifest={{ ...manifest, totalCount: 0, outputs: [], sources: [], references: [] }}
+        loading={false}
+        error={null}
+        sidePanelOpen={false}
+        {...wideProps}
+        {...handlers}
+      />,
+    );
+    expect(projectOnly.querySelector("[data-testid='chat-work-manifest']")).toBeNull();
   });
 
   it("surfaces manifest request errors instead of treating them as empty", () => {
