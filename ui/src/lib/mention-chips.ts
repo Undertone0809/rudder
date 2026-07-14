@@ -1,9 +1,10 @@
 import { parseAgentMentionHref, parseAutomationMentionHref, parseChatMentionHref, parseIssueMentionHref, parseLibraryDirectoryMentionHref, parseLibraryDocMentionHref, parseLibraryEntryMentionHref, parseLibraryFileMentionHref, parseProjectMentionHref } from "@rudderhq/shared";
-import { FileText, Folder } from "lucide-react";
+import { FileText, Folder, Globe2 } from "lucide-react";
 import type { CSSProperties } from "react";
 import { getAgentAvatarBackgroundStyle, getAgentAvatarImageSrc } from "./agent-avatar";
 import { getAgentIcon } from "./agent-icons";
 import { getProjectIconComponent, normalizeProjectIconName } from "./project-icons";
+import { isWorkspaceHtmlFilePath } from "./workspace-html-preview";
 
 export type ParsedMentionChip =
   | {
@@ -258,9 +259,16 @@ export function mentionChipInlineStyle(mention: ParsedMentionChip): CSSPropertie
   }
 
   if (mention.kind === "library_doc" || mention.kind === "library_entry" || mention.kind === "library_file" || mention.kind === "library_directory") {
+    const filePath = mention.kind === "library_entry"
+      ? mention.path
+      : mention.kind === "library_file"
+        ? mention.filePath
+        : null;
     const iconMask = mention.kind === "library_directory"
       ? buildLucideIconMask(Folder, "lucide:folder")
-      : buildLucideIconMask(FileText, "lucide:file-text");
+      : isWorkspaceHtmlFilePath(filePath)
+        ? buildLucideIconMask(Globe2, "lucide:globe-2")
+        : buildLucideIconMask(FileText, "lucide:file-text");
     if (iconMask) {
       style["--rudder-mention-icon-mask"] = iconMask;
     }

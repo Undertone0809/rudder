@@ -40,6 +40,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { useLocation, useNavigate } from "@/lib/router";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
+import { isWorkspaceHtmlFilePath } from "@/lib/workspace-html-preview";
 import type { Agent, Issue, IssueComment, OrganizationWorkspaceFileDetail, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -68,6 +69,7 @@ import {
   PanelRight,
   Plus,
   RotateCw,
+  Table2,
   Terminal,
   UserRound,
   X
@@ -628,9 +630,11 @@ function ChatSidePanelLibraryTreeNode({
 
   const FileIcon = isChatSidePanelWorkspaceImageFile(entry.path)
     ? ImageIcon
-    : isChatSidePanelWorkspaceTextDocumentFile(entry.path)
-      ? FileText
-      : FileCode2;
+    : isWorkspaceHtmlFilePath(entry.path)
+      ? Globe2
+      : isChatSidePanelWorkspaceTextDocumentFile(entry.path)
+        ? FileText
+        : FileCode2;
 
   return (
     <li>
@@ -801,33 +805,36 @@ function ChatSidePanelLibraryFileView({
       </DropdownMenuContent>
     </DropdownMenu>
   );
+  const showSourceAction = previewMode === "preview";
+  const fileModeToggleLabel = showSourceAction
+    ? "Show source"
+    : html
+      ? "Show webpage"
+      : "Show table";
+  const FileModeToggleIcon = showSourceAction
+    ? FileCode2
+    : html
+      ? Globe2
+      : Table2;
   const fileModeToggle = html || csv ? (
-    <div
-      className="inline-flex shrink-0 overflow-hidden rounded-md border border-border p-0.5"
-      role="group"
-      aria-label={html ? "HTML file mode" : "CSV file mode"}
-    >
-      <Button
-        type="button"
-        variant={previewMode === "preview" ? "secondary" : "ghost"}
-        size="sm"
-        className="h-7 rounded-[4px] px-2 text-xs"
-        aria-pressed={previewMode === "preview"}
-        onClick={() => setPreviewMode("preview")}
-      >
-        {html ? "Preview" : "Table"}
-      </Button>
-      <Button
-        type="button"
-        variant={previewMode === "source" ? "secondary" : "ghost"}
-        size="sm"
-        className="h-7 rounded-[4px] px-2 text-xs"
-        aria-pressed={previewMode === "source"}
-        onClick={() => setPreviewMode("source")}
-      >
-        Source
-      </Button>
-    </div>
+    <TooltipProvider delayDuration={120}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            aria-label={fileModeToggleLabel}
+            data-testid="chat-side-panel-library-file-mode-toggle"
+            onClick={() => setPreviewMode(showSourceAction ? "source" : "preview")}
+          >
+            <FileModeToggleIcon className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" sideOffset={8}>{fileModeToggleLabel}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   ) : null;
 
   return (
@@ -836,7 +843,11 @@ function ChatSidePanelLibraryFileView({
         className="flex h-11 shrink-0 items-center gap-3 border-b border-[color:var(--border-soft)] px-4"
         data-testid="chat-side-panel-library-file-toolbar"
       >
-        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        {html ? (
+          <Globe2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        ) : (
+          <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        )}
         <TooltipProvider delayDuration={120}>
           <Tooltip
             open={pathTooltipOpen && !openMenuOpen}

@@ -131,13 +131,17 @@ test("renders a Library HTML report in the Messenger Side Panel by default", asy
   expect(externalAssetRequested).toBe(false);
   await page.screenshot({ path: "/tmp/rudder-messenger-html-preview.png", fullPage: false });
 
-  await sidePanel.getByRole("button", { name: "Source" }).click();
+  const modeToggle = sidePanel.getByTestId("chat-side-panel-library-file-mode-toggle");
+  await expect(modeToggle).toHaveCount(1);
+  await expect(modeToggle).toHaveAccessibleName("Show source");
+  await modeToggle.click();
   await expect(preview).toHaveCount(0);
   const source = sidePanel.getByTestId("chat-side-panel-library-code-preview");
   await expect(source).toHaveAttribute("data-workspace-code-read-only", "true");
   await expect(source).toContainText("Rendered Messenger report");
 
-  await sidePanel.getByRole("button", { name: "Preview" }).click();
+  await expect(modeToggle).toHaveAccessibleName("Show webpage");
+  await modeToggle.click();
   await expect(sidePanel.getByTestId("chat-side-panel-library-html-preview").contentFrame()
     .getByRole("heading", { name: "Rendered Messenger report" })).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
@@ -242,10 +246,13 @@ test("uses full preview surfaces for JSON, CSV, and PDF Library files", async ({
   await expect(csvPreview).toBeVisible();
   await expect(csvPreview.getByRole("columnheader", { name: "keyword" })).toBeVisible();
   await expect(csvPreview.getByRole("cell", { name: "agent management" })).toBeVisible();
-  await expect(sidePanel.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
+  const csvModeToggle = sidePanel.getByTestId("chat-side-panel-library-file-mode-toggle");
+  await expect(csvModeToggle).toHaveCount(1);
+  await expect(csvModeToggle).toHaveAccessibleName("Show source");
   await expectPreviewFillsFileView(sidePanel, csvPreview);
   await page.screenshot({ path: "/tmp/rudder-messenger-csv-preview.png", fullPage: false });
-  await sidePanel.getByRole("button", { name: "Source" }).click();
+  await csvModeToggle.click();
+  await expect(csvModeToggle).toHaveAccessibleName("Show table");
   await expect(sidePanel.getByTestId("chat-side-panel-library-code-preview")).toContainText("category,keyword,score");
 
   const pdfName = libraryFiles[2]!.filePath.split("/").at(-1)!;

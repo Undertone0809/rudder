@@ -258,6 +258,29 @@ describe("mention chips", () => {
     expect(element.classList.contains("rudder-mention-chip--library_file")).toBe(true);
   });
 
+  it("uses a webpage icon for HTML Library file and entry mentions", () => {
+    const htmlFileStyle = mentionChipInlineStyle({
+      kind: "library_file",
+      filePath: "reports/summary.HTML",
+      title: "summary.HTML",
+    }) as Record<string, string>;
+    const htmlEntryStyle = mentionChipInlineStyle({
+      kind: "library_entry",
+      entryId: "entry-html",
+      title: "report.htm",
+      path: "reports/report.htm",
+    }) as Record<string, string>;
+    const markdownStyle = mentionChipInlineStyle({
+      kind: "library_file",
+      filePath: "reports/summary.md",
+      title: "summary.md",
+    }) as Record<string, string>;
+
+    expect(decodeURIComponent(htmlFileStyle["--rudder-mention-icon-mask"] ?? "")).toContain("<circle");
+    expect(htmlEntryStyle["--rudder-mention-icon-mask"]).toBe(htmlFileStyle["--rudder-mention-icon-mask"]);
+    expect(markdownStyle["--rudder-mention-icon-mask"]).not.toBe(htmlFileStyle["--rudder-mention-icon-mask"]);
+  });
+
   it("parses and decorates library directory mention links", () => {
     expect(parseMentionChipHref("library-directory://directory?p=projects%2Frudder-mkt&t=Rudder%20marketing")).toEqual({
       kind: "library_directory",
