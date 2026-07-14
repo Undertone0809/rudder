@@ -66,7 +66,11 @@ function createLocalFileRunLogStore(basePath: string): RunLogStore {
     if (stat.size === 0 || start >= stat.size) {
       return { content: "", endOffset: start, eof: true };
     }
-    const end = Math.max(start, Math.min(start + limitBytes - 1, stat.size - 1));
+    // A text page must contain enough bytes to make progress across a complete
+    // UTF-8 code point. Server-generated next offsets therefore never split a
+    // character, even when the requested byte limit lands inside one.
+    const effectiveLimitBytes = Math.max(4, limitBytes);
+    const end = Math.max(start, Math.min(start + effectiveLimitBytes - 1, stat.size - 1));
 
     if (start > end) {
       return { content: "", endOffset: start, eof: true };
@@ -82,8 +86,27 @@ function createLocalFileRunLogStore(basePath: string): RunLogStore {
       stream.on("end", () => resolve());
     });
 
-    const content = Buffer.concat(chunks).toString("utf8");
-    const endOffset = end + 1;
+    const bytes = Buffer.concat(chunks);
+    let leadingContinuationBytes = 0;
+    while (
+      leadingContinuationBytes < bytes.length
+      && (bytes[leadingContinuationBytes]! & 0xc0) === 0x80
+    ) {
+      leadingContinuationBytes += 1;
+    }
+    const decodable = bytes.subarray(leadingContinuationBytes);
+    let decodedBytes = decodable.length;
+    let content = "";
+    for (let trim = 0; trim <= Math.min(3, decodable.length); trim += 1) {
+      try {
+        decodedBytes = decodable.length - trim;
+        content = new TextDecoder("utf-8", { fatal: true }).decode(decodable.subarray(0, decodedBytes));
+        break;
+      } catch {
+        if (trim === Math.min(3, decodable.length)) throw new Error("Run log contains invalid UTF-8");
+      }
+    }
+    const endOffset = start + leadingContinuationBytes + decodedBytes;
     const eof = endOffset >= stat.size;
     const nextOffset = eof ? undefined : endOffset;
     return { content, endOffset, eof, nextOffset };

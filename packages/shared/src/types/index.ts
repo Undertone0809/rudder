@@ -151,6 +151,14 @@ export type {
   ProjectResourceAttachmentInput, UpdateOrganizationResourceRequest, UpdateProjectResourceAttachmentRequest
 } from "./resource.js";
 export type {
+  RunSummary,
+  RunSummaryIssue,
+  RunSummaryPage,
+  RunSummarySkillEvidence,
+  RunSummaryTarget,
+  RunSummaryUsage
+} from "./run-intelligence.js";
+export type {
   AgentEnvConfig, EnvBinding, EnvPlainBinding,
   EnvSecretRefBinding, OrganizationSecret, SecretProvider, SecretProviderDescriptor, SecretVersionSelector
 } from "./secrets.js";

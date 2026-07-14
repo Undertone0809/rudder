@@ -84,7 +84,7 @@ export const heartbeatRunListColumns = {
   exitCode: heartbeatRuns.exitCode,
   signal: heartbeatRuns.signal,
   usageJson: heartbeatRuns.usageJson,
-  resultJson: heartbeatRuns.resultJson,
+  resultJson: heartbeatRuns.resultSummaryJson,
   sessionIdBefore: heartbeatRuns.sessionIdBefore,
   sessionIdAfter: heartbeatRuns.sessionIdAfter,
   logStore: heartbeatRuns.logStore,

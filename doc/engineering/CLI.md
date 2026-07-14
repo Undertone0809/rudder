@@ -420,11 +420,11 @@ Bad cases to avoid:
 ## Run Debugging Commands
 
 ```sh
-pnpm rudder runs list --org-id <org-id> [--status failed] [--agent-id <id>] [--issue-id <id>] [--runtime codex_local] [--used-skill <skill-key>] [--loaded-skill <skill-key>] [--limit 200]
-pnpm rudder runs by-skill <skill-key-or-name> --org-id <org-id> [--evidence used|loaded] [--limit 50]
+pnpm rudder runs list --org-id <org-id> [--status failed] [--agent-id <id>] [--issue-id <id>] [--runtime codex_local] [--used-skill <skill-key>] [--loaded-skill <skill-key>] [--limit 50] [--cursor <cursor>] [--full]
+pnpm rudder runs by-skill <skill-key-or-name> --org-id <org-id> [--evidence used|loaded] [--limit 50] [--cursor <cursor>] [--full]
 pnpm rudder runs get <run-id>
-pnpm rudder runs events <run-id>
-pnpm rudder runs log <run-id> [--max-chars 12000]
+pnpm rudder runs events <run-id> [--after-seq 0] [--limit 200]
+pnpm rudder runs log <run-id> [--offset 0] [--limit-bytes 256000] [--max-chars 12000]
 pnpm rudder runs transcript <run-id> [--turn-limit 20] [--cursor <cursor>] [--include-output] [--max-output-chars 1200] [--errors-only] [--around-error step-12] [--context-turns 1] [--chronological] [--narrative]
 pnpm rudder runs errors <run-id> [--max-chars 1200]
 pnpm rudder runs cancel <run-id>
@@ -436,14 +436,22 @@ was actually used. This is the default evidence semantic for skill optimization;
 it does not count skills that were only loaded into the runtime. Use
 `--loaded-skill <skill>` only when you deliberately need the broader "available
 to the run" evidence set. Both filters match a skill key or display/runtime
-name and include `skillEvidence`, `errorSummary`, issue context, agent, runtime,
-timestamps, and the raw run fields in JSON.
+name and include skill evidence, bounded outcome/error context, issue context,
+agent, runtime, timestamps, usage, and log availability. The default `--json`
+output is a stable `{ items, page }` summary envelope and excludes heavyweight
+result, context, excerpt, session, process, and configuration fields. Continue
+with `--cursor <page.nextCursor>` when `page.hasMore` is true. Use `--full` only
+for compatibility with scripts that still require the legacy raw run-row array;
+the legacy list keeps its 200-row default while summary reads default to 50.
 
 `runs by-skill <skill>` is the agent-facing evidence packet for skill
 optimization. It defaults to `--evidence used`, summarizes recent matching runs
 by status, agent, issue, and common errors, then prints follow-up commands such
 as `rudder runs transcript <run-id>` or `rudder runs errors <run-id>`. Pass
-`--json` for a stable object with `{ skill, summary, rows, nextCommands }`.
+`--json` for a stable object with `{ skill, summary, rows, page, nextCommands }`.
+Its rows are lightweight summaries and `page.nextCursor` continues the evidence
+set. `--full` preserves the legacy report shape and raw run rows; it does not add
+summary page metadata.
 Run IDs rendered by the CLI are short IDs by default, and every `runs <run-id>`
 follow-up command accepts those short IDs directly.
 
@@ -486,7 +494,7 @@ Recommended cases:
 
 Bad cases to avoid:
 
-- Starting a run audit with a broad unfiltered `runs list --json`; filter by organization, agent, issue, status, skill, or time first.
+- Starting a run audit with `runs list --full --json`; prefer the bounded summary projection, then open one run's evidence.
 - Expecting `runs list` to act as a projection/summary transcript endpoint. Use `runs errors` or `runs transcript` for details.
 - Using `--json` transcript output when a compact human view is enough; full payloads can include large raw entries.
 - Cancelling or retrying a run without checking whether it belongs to another active issue owner.

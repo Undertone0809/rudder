@@ -64,6 +64,7 @@ describe("client command help examples and cautions", () => {
       "Find recent failures for one agent before opening transcripts",
       "--agent-id",
       "--status failed",
+      "--full",
       "Filter first",
       "Use runs errors or runs transcript",
     ]);

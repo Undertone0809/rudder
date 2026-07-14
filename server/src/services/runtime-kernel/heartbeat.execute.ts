@@ -861,6 +861,10 @@ export function createHeartbeatExecuteHandlers(context: any) {
       finalRunStatus = status;
 
       const adapterResultSummary = summarizeHeartbeatRunResultJson(adapterResult.resultJson);
+      const persistedResultSummary = summarizeHeartbeatRunResultJson({
+        ...(adapterResult.resultJson ?? {}),
+        ...(readNonEmptyString(adapterResult.summary) ? { summary: adapterResult.summary } : {}),
+      });
       transcriptFallbackResult = {
         ts: new Date().toISOString(),
         model: readNonEmptyString(adapterResult.model),
@@ -928,6 +932,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
         signal: adapterResult.signal,
         usageJson,
         resultJson: adapterResult.resultJson ?? null,
+        resultSummaryJson: persistedResultSummary,
         sessionIdAfter: nextSessionState.displayId ?? nextSessionState.legacySessionId,
         stdoutExcerpt,
         stderrExcerpt,

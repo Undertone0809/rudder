@@ -41,6 +41,21 @@ describe("summarizeHeartbeatRunResultJson", () => {
     });
   });
 
+  it("uses bounded chat bodies and rejects malformed cost payloads", () => {
+    const summary = summarizeHeartbeatRunResultJson({
+      body: "chat outcome ".repeat(100),
+      costUsd: { raw: "x".repeat(100_000) },
+      cost_usd: "1.25",
+      total_cost_usd: "not-a-number",
+    });
+
+    expect(summary).toEqual({
+      result: "chat outcome ".repeat(100).slice(0, 500),
+      cost_usd: 1.25,
+    });
+    expect(JSON.stringify(summary).length).toBeLessThan(600);
+  });
+
   it("returns null for non-object and irrelevant payloads", () => {
     expect(summarizeHeartbeatRunResultJson(null)).toBeNull();
     expect(summarizeHeartbeatRunResultJson(["nope"] as unknown as Record<string, unknown>)).toBeNull();

@@ -232,6 +232,22 @@ describe("chatAgentRunService", () => {
 
     const events = await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, secondRun.id));
     expect(events.some((event) => event.eventType === "chat.message_linked")).toBe(true);
+
+    const largeRawResult = "x".repeat(200_000);
+    await svc.finalizeRun(secondRun.id, {
+      status: "succeeded",
+      resultJson: {
+        summary: "s".repeat(800),
+        costUsd: 0.42,
+        raw: largeRawResult,
+      },
+    });
+    const [finalizedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, secondRun.id));
+    expect(finalizedRun?.resultJson).toMatchObject({ raw: largeRawResult });
+    expect(finalizedRun?.resultSummaryJson).toEqual({
+      summary: "s".repeat(500),
+      costUsd: 0.42,
+    });
   });
 
   it("stores automation run target metadata on chat-backed agent runs", async () => {

@@ -71,10 +71,11 @@ const SAMPLE_INPUT_BY_TOOL: Record<string, Record<string, unknown>> = {
   rudder_chat_create: { title: "MCP chat" },
   rudder_chat_send: { chat: "chat_123", body: "Hello" },
   rudder_chat_archive: { chat: "chat_123" },
-  rudder_runs_by_skill: { skill: "rudder" },
+  rudder_runs_list: { cursor: "next-run-page", full: true },
+  rudder_runs_by_skill: { skill: "rudder", cursor: "next-skill-page", full: true },
   rudder_runs_get: { run: "run_123" },
-  rudder_runs_events: { run: "run_123" },
-  rudder_runs_log: { run: "run_123", maxChars: 2000 },
+  rudder_runs_events: { run: "run_123", afterSeq: 40, limit: 20 },
+  rudder_runs_log: { run: "run_123", maxChars: 2000, offset: 256000, limitBytes: 256000 },
   rudder_runs_transcript: { run: "run_123", turnLimit: 5 },
   rudder_runs_errors: { run: "run_123" },
   rudder_runs_cancel: { run: "run_123" },
@@ -321,6 +322,36 @@ describe("agent-v1 MCP server", () => {
       const input = SAMPLE_INPUT_BY_TOOL[tool.name] ?? {};
       expect(() => buildAgentV1ToolCallPlan(tool.name, input, env), tool.name).not.toThrow();
     }
+  });
+
+  it("passes run summary pagination and explicit full compatibility options", () => {
+    const env = {
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+    };
+
+    expect(buildAgentV1ToolCallPlan("rudder_runs_list", { cursor: "next-page", full: true }, env).args).toEqual([
+      "runs",
+      "list",
+      "--cursor",
+      "next-page",
+      "--full",
+      "--json",
+    ]);
+    expect(buildAgentV1ToolCallPlan("rudder_runs_by_skill", {
+      skill: "rudder",
+      cursor: "next-skill-page",
+      full: true,
+    }, env).args).toEqual([
+      "runs",
+      "by-skill",
+      "rudder",
+      "--cursor",
+      "next-skill-page",
+      "--full",
+      "--json",
+    ]);
   });
 
   it("advertises every sampled MCP tool input argument in strict schemas", () => {

@@ -1,4 +1,4 @@
-import type { HeartbeatRun, HeartbeatRunEvent } from "@rudderhq/shared";
+import type { HeartbeatRun, HeartbeatRunEvent, RunSummary, RunSummaryPage } from "@rudderhq/shared";
 import { Command } from "commander";
 import { getAgentCliCapabilityById } from "../../agent-v1-registry.js";
 import {
@@ -21,7 +21,9 @@ interface RunsListOptions extends BaseClientOptions {
   usedSkill?: string;
   loadedSkill?: string;
   createdBefore?: string;
+  cursor?: string;
   limit?: string;
+  full?: boolean;
 }
 
 interface RunsBySkillOptions extends BaseClientOptions {
@@ -31,11 +33,20 @@ interface RunsBySkillOptions extends BaseClientOptions {
   runtime?: string;
   issueId?: string;
   createdBefore?: string;
+  cursor?: string;
   limit?: string;
+  full?: boolean;
 }
 
 interface RunLogOptions extends BaseClientOptions {
   maxChars?: string;
+  offset?: string;
+  limitBytes?: string;
+}
+
+interface RunEventsOptions extends BaseClientOptions {
+  afterSeq?: string;
+  limit?: string;
 }
 
 interface RunTranscriptOptions extends BaseClientOptions {
@@ -73,7 +84,7 @@ interface RunExportRow {
   } | null;
 }
 
-interface SkillRunReport {
+interface SkillRunReport<Row extends RunListRow = RunListRow> {
   skill: {
     query: string;
     evidenceType: "used" | "loaded";
@@ -91,9 +102,12 @@ interface SkillRunReport {
     issues: Array<{ id: string; identifier: string | null; title: string | null; count: number }>;
     commonErrors: Array<{ summary: string; count: number }>;
   };
-  rows: RunExportRow[];
+  rows: Row[];
+  page?: RunSummaryPage["page"];
   nextCommands: string[];
 }
+
+type RunListRow = RunExportRow | RunSummary;
 
 interface RunTranscriptRow {
   id: string;
@@ -194,7 +208,9 @@ export function registerRunsCommands(program: Command): void {
       .option("--used-skill <key-or-name>", "Filter by skill actually used during the run")
       .option("--loaded-skill <key-or-name>", "Filter by skill loaded for the run")
       .option("--created-before <iso>", "Only runs created before this timestamp")
-      .option("--limit <n>", "Maximum rows", "200")
+      .option("--cursor <cursor>", "Stable summary cursor returned in page.nextCursor")
+      .option("--limit <n>", "Maximum rows; defaults to 50 summaries or 200 full rows")
+      .option("--full", "Use the legacy full-row list response for compatibility")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
           {
@@ -215,8 +231,13 @@ export function registerRunsCommands(program: Command): void {
         try {
           assertSingleSkillFilter(opts);
           const ctx = resolveCommandContext(opts, { requireCompany: true });
-          const rows = (await ctx.api.get<RunExportRow[]>(`/api/run-intelligence/orgs/${ctx.orgId}/runs?${buildRunsListQuery(opts)}`)) ?? [];
-          printOutput(ctx.json ? rows : rows.map(formatRunListRow), { json: ctx.json });
+          if (opts.full) {
+            const rows = (await ctx.api.get<RunExportRow[]>(`/api/run-intelligence/orgs/${ctx.orgId}/runs?${buildRunsListQuery(opts)}`)) ?? [];
+            printOutput(ctx.json ? rows : rows.map(formatRunListRow), { json: ctx.json });
+            return;
+          }
+          const page = await ctx.api.get<RunSummaryPage>(`/api/run-intelligence/orgs/${ctx.orgId}/runs?${buildRunsListQuery(opts)}`);
+          printOutput(ctx.json ? page : (page?.items ?? []).map(formatRunListRow), { json: ctx.json });
         } catch (err) {
           handleCommandError(err);
         }
@@ -236,14 +257,22 @@ export function registerRunsCommands(program: Command): void {
       .option("--runtime <type>", "Filter by runtime type")
       .option("--issue-id <id>", "Filter by linked issue ID")
       .option("--created-before <iso>", "Only runs created before this timestamp")
+      .option("--cursor <cursor>", "Stable summary cursor returned in page.nextCursor")
       .option("--limit <n>", "Maximum rows", "50")
+      .option("--full", "Use the legacy full-row list response for compatibility")
       .action(async (skill: string, opts: RunsBySkillOptions) => {
         try {
           const evidenceType = parseSkillEvidenceType(opts.evidence);
           const ctx = resolveCommandContext(opts, { requireCompany: true });
           const params = buildRunsBySkillQuery(skill, opts, evidenceType);
-          const rows = (await ctx.api.get<RunExportRow[]>(`/api/run-intelligence/orgs/${ctx.orgId}/runs?${params}`)) ?? [];
-          const report = buildSkillRunReport(skill, evidenceType, rows);
+          if (opts.full) {
+            const rows = (await ctx.api.get<RunExportRow[]>(`/api/run-intelligence/orgs/${ctx.orgId}/runs?${params}`)) ?? [];
+            const report = buildSkillRunReport(skill, evidenceType, rows);
+            printOutput(ctx.json ? report : formatSkillRunReport(report), { json: ctx.json });
+            return;
+          }
+          const page = await ctx.api.get<RunSummaryPage>(`/api/run-intelligence/orgs/${ctx.orgId}/runs?${params}`);
+          const report = buildSkillRunReport(skill, evidenceType, page?.items ?? [], page?.page);
           printOutput(ctx.json ? report : formatSkillRunReport(report), { json: ctx.json });
         } catch (err) {
           handleCommandError(err);
@@ -273,11 +302,19 @@ export function registerRunsCommands(program: Command): void {
       .command("events")
       .description(getAgentCliCapabilityById("runs.events").description)
       .argument("<runId>", "Run ID or short run ID")
-      .action(async (runId: string, opts: BaseClientOptions) => {
+      .option("--after-seq <n>", "Return events after this sequence number", "0")
+      .option("--limit <n>", "Maximum events to return", "200")
+      .action(async (runId: string, opts: RunEventsOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
-          const rows = (await ctx.api.get<HeartbeatRunEvent[]>(`/api/run-intelligence/runs/${encodeURIComponent(runId)}/events`)) ?? [];
-          printOutput(ctx.json ? rows : rows.map(formatRunEvent), { json: ctx.json });
+          const params = new URLSearchParams({
+            afterSeq: String(parseNonNegativeInteger(opts.afterSeq, 0)),
+            limit: String(parseLimit(opts.limit, 200)),
+          });
+          const page = await ctx.api.get<{ items: HeartbeatRunEvent[]; page: Record<string, unknown> }>(
+            `/api/run-intelligence/runs/${encodeURIComponent(runId)}/events?${params}`,
+          );
+          printOutput(ctx.json ? page : (page?.items ?? []).map(formatRunEvent), { json: ctx.json });
         } catch (err) {
           handleCommandError(err);
         }
@@ -290,10 +327,18 @@ export function registerRunsCommands(program: Command): void {
       .description(getAgentCliCapabilityById("runs.log").description)
       .argument("<runId>", "Run ID or short run ID")
       .option("--max-chars <n>", "Maximum log characters for human output", "12000")
+      .option("--offset <n>", "Start reading at this byte offset", "0")
+      .option("--limit-bytes <n>", "Maximum log bytes to return", "256000")
       .action(async (runId: string, opts: RunLogOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
-          const row = await ctx.api.get<{ content: string }>(`/api/run-intelligence/runs/${encodeURIComponent(runId)}/log`);
+          const params = new URLSearchParams({
+            offset: String(parseNonNegativeInteger(opts.offset, 0)),
+            limitBytes: String(parseLimit(opts.limitBytes, 256000)),
+          });
+          const row = await ctx.api.get<{ content: string }>(
+            `/api/run-intelligence/runs/${encodeURIComponent(runId)}/log?${params}`,
+          );
           if (ctx.json) {
             printOutput(row, { json: true });
           } else {
@@ -428,6 +473,7 @@ export function registerRunsCommands(program: Command): void {
 
 function buildRunsListQuery(opts: RunsListOptions) {
   const params = new URLSearchParams();
+  params.set("projection", opts.full ? "full" : "summary");
   if (opts.updatedAfter) params.set("updatedAfter", opts.updatedAfter);
   if (opts.runIdPrefix) params.set("runIdPrefix", opts.runIdPrefix);
   if (opts.agentId) params.set("agentId", opts.agentId);
@@ -437,19 +483,22 @@ function buildRunsListQuery(opts: RunsListOptions) {
   if (opts.usedSkill) params.set("usedSkill", opts.usedSkill);
   if (opts.loadedSkill) params.set("loadedSkill", opts.loadedSkill);
   if (opts.createdBefore) params.set("createdBefore", opts.createdBefore);
-  if (opts.limit) params.set("limit", opts.limit);
+  if (!opts.full && opts.cursor) params.set("cursor", opts.cursor);
+  params.set("limit", opts.limit ?? (opts.full ? "200" : "50"));
   return params.toString();
 }
 
 function buildRunsBySkillQuery(skill: string, opts: RunsBySkillOptions, evidenceType: "used" | "loaded") {
   const params = new URLSearchParams();
+  params.set("projection", opts.full ? "full" : "summary");
   params.set(evidenceType === "used" ? "usedSkill" : "loadedSkill", skill);
   if (opts.agentId) params.set("agentId", opts.agentId);
   if (opts.status) params.set("status", opts.status);
   if (opts.runtime) params.set("runtime", opts.runtime);
   if (opts.issueId) params.set("issueId", opts.issueId);
   if (opts.createdBefore) params.set("createdBefore", opts.createdBefore);
-  if (opts.limit) params.set("limit", opts.limit);
+  if (!opts.full && opts.cursor) params.set("cursor", opts.cursor);
+  params.set("limit", opts.limit ?? "50");
   return params.toString();
 }
 
@@ -480,24 +529,29 @@ function buildTranscriptQuery(opts: RunTranscriptOptions, output: { json: boolea
   return params.toString();
 }
 
-function formatRunListRow(row: RunExportRow) {
-  const runId = formatCliRunId(row.run.id);
+function formatRunListRow(row: RunListRow) {
+  const runId = formatCliRunId(runIdOf(row));
   return {
     id: runId,
-    status: row.run.status,
-    agent: row.agentName ?? row.run.agentId,
-    runtime: row.bundle.agentRuntimeType,
+    status: runStatusOf(row),
+    agent: row.agentName ?? runAgentIdOf(row),
+    runtime: runRuntimeOf(row),
     issue: formatIssueRef(row.issue),
-    createdAt: row.run.createdAt,
-    finishedAt: row.run.finishedAt ?? "-",
+    createdAt: runCreatedAtOf(row),
+    finishedAt: runFinishedAtOf(row) ?? "-",
     evidence: row.skillEvidence?.evidenceType ?? "-",
     skill: row.skillEvidence?.matchedSkillKey ?? "-",
-    error: row.errorSummary ?? "-",
-    next: row.run.status === "failed" ? `rudder runs errors ${runId}` : `rudder runs transcript ${runId}`,
+    error: runErrorOf(row) ?? "-",
+    next: runStatusOf(row) === "failed" ? `rudder runs errors ${runId}` : `rudder runs transcript ${runId}`,
   };
 }
 
-function buildSkillRunReport(skill: string, evidenceType: "used" | "loaded", rows: RunExportRow[]): SkillRunReport {
+function buildSkillRunReport<Row extends RunListRow>(
+  skill: string,
+  evidenceType: "used" | "loaded",
+  rows: Row[],
+  page?: RunSummaryPage["page"],
+): SkillRunReport<Row> {
   const statusCounts = {
     succeeded: 0,
     failed: 0,
@@ -512,7 +566,7 @@ function buildSkillRunReport(skill: string, evidenceType: "used" | "loaded", row
   const errors = new Map<string, number>();
 
   for (const row of rows) {
-    const status = row.run.status;
+    const status = runStatusOf(row);
     if (status === "succeeded") statusCounts.succeeded += 1;
     else if (status === "failed") statusCounts.failed += 1;
     else if (status === "cancelled") statusCounts.cancelled += 1;
@@ -521,7 +575,8 @@ function buildSkillRunReport(skill: string, evidenceType: "used" | "loaded", row
     else if (status === "queued") statusCounts.queued += 1;
     else statusCounts.other += 1;
 
-    const agent = agents.get(row.run.agentId) ?? { id: row.run.agentId, name: row.agentName, count: 0 };
+    const agentId = runAgentIdOf(row);
+    const agent = agents.get(agentId) ?? { id: agentId, name: row.agentName, count: 0 };
     agent.count += 1;
     agents.set(agent.id, agent);
 
@@ -531,7 +586,7 @@ function buildSkillRunReport(skill: string, evidenceType: "used" | "loaded", row
       issues.set(issue.id, issue);
     }
 
-    const error = row.errorSummary?.trim();
+    const error = runErrorOf(row)?.trim();
     if (error) errors.set(error, (errors.get(error) ?? 0) + 1);
   }
 
@@ -548,9 +603,10 @@ function buildSkillRunReport(skill: string, evidenceType: "used" | "loaded", row
         .slice(0, 5),
     },
     rows,
+    ...(page ? { page } : {}),
     nextCommands: rows.slice(0, 5).map((row) => {
-      const runId = formatCliRunId(row.run.id);
-      return row.run.status === "failed"
+      const runId = formatCliRunId(runIdOf(row));
+      return runStatusOf(row) === "failed"
         ? `rudder runs errors ${runId}`
         : `rudder runs transcript ${runId}`;
     }),
@@ -578,30 +634,62 @@ function formatSkillRunReport(report: SkillRunReport) {
   return lines;
 }
 
-function formatInlineSkillRun(row: RunExportRow) {
-  const runId = formatCliRunId(row.run.id);
+function formatInlineSkillRun(row: RunListRow) {
+  const runId = formatCliRunId(runIdOf(row));
   const issue = formatIssueRef(row.issue);
   const label = row.skillEvidence?.matchedSkillLabel && row.skillEvidence.matchedSkillLabel !== row.skillEvidence.matchedSkillKey
     ? ` label=${row.skillEvidence.matchedSkillLabel}`
     : "";
   return [
     `id=${runId}`,
-    `status=${row.run.status}`,
-    `agent=${row.agentName ?? row.run.agentId}`,
+    `status=${runStatusOf(row)}`,
+    `agent=${row.agentName ?? runAgentIdOf(row)}`,
     `issue=${issue}`,
-    `runtime=${row.bundle.agentRuntimeType}`,
-    `createdAt=${row.run.createdAt}`,
-    `finishedAt=${row.run.finishedAt ?? "-"}`,
+    `runtime=${runRuntimeOf(row)}`,
+    `createdAt=${runCreatedAtOf(row)}`,
+    `finishedAt=${runFinishedAtOf(row) ?? "-"}`,
     `evidence=${row.skillEvidence?.evidenceType ?? "-"}`,
     `skill=${row.skillEvidence?.matchedSkillKey ?? "-"}${label}`,
-    `error=${row.errorSummary ?? "-"}`,
-    `next=${row.run.status === "failed" ? `rudder runs errors ${runId}` : `rudder runs transcript ${runId}`}`,
+    `error=${runErrorOf(row) ?? "-"}`,
+    `next=${runStatusOf(row) === "failed" ? `rudder runs errors ${runId}` : `rudder runs transcript ${runId}`}`,
   ].join(" ");
 }
 
-function formatIssueRef(issue: RunExportRow["issue"]) {
+function formatIssueRef(issue: RunExportRow["issue"] | RunSummary["issue"]) {
   if (!issue) return "-";
   return issue.identifier && issue.title ? `${issue.identifier} ${issue.title}` : issue.identifier ?? issue.title ?? issue.id;
+}
+
+function isRunSummary(row: RunListRow): row is RunSummary {
+  return "id" in row;
+}
+
+function runIdOf(row: RunListRow) {
+  return isRunSummary(row) ? row.id : row.run.id;
+}
+
+function runAgentIdOf(row: RunListRow) {
+  return isRunSummary(row) ? row.agentId : row.run.agentId;
+}
+
+function runStatusOf(row: RunListRow) {
+  return isRunSummary(row) ? row.status : row.run.status;
+}
+
+function runRuntimeOf(row: RunListRow) {
+  return isRunSummary(row) ? row.runtime : row.bundle.agentRuntimeType;
+}
+
+function runCreatedAtOf(row: RunListRow) {
+  return isRunSummary(row) ? row.createdAt : row.run.createdAt;
+}
+
+function runFinishedAtOf(row: RunListRow) {
+  return isRunSummary(row) ? row.finishedAt : row.run.finishedAt;
+}
+
+function runErrorOf(row: RunListRow) {
+  return isRunSummary(row) ? row.error : row.errorSummary;
 }
 
 function formatRunEvent(row: HeartbeatRunEvent) {
@@ -645,6 +733,12 @@ function formatRunError(row: RunErrorRow) {
 function parseLimit(value: string | undefined, fallback: number) {
   const parsed = Number(value ?? fallback);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+}
+
+function parseNonNegativeInteger(value: string | undefined, fallback: number) {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
   return Math.floor(parsed);
 }
 

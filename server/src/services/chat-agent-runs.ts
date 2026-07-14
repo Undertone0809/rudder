@@ -4,6 +4,7 @@ import { chatMessages, heartbeatRunEvents, heartbeatRuns } from "@rudderhq/db";
 import type { ChatConversation, HeartbeatRun } from "@rudderhq/shared";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { AgentRuntimeInvocationMeta } from "../agent-runtimes/index.js";
+import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import { publishLiveEvent } from "./live-events.js";
 import { isPostgresError } from "./postgres-errors.js";
 import { buildHeartbeatAdapterInvokePayload } from "./runtime-kernel/heartbeat.core.js";
@@ -264,6 +265,7 @@ export function chatAgentRunService(db: Db) {
         error: input.error ?? null,
         errorCode: input.errorCode ?? null,
         resultJson: input.resultJson ?? null,
+        resultSummaryJson: summarizeHeartbeatRunResultJson(input.resultJson),
         usageJson: input.usageJson ?? null,
         updatedAt: new Date(),
       })

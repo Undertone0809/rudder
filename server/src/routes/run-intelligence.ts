@@ -13,6 +13,7 @@ import {
   getObservedRunEvents,
   getObservedRunLog,
   listObservedRuns,
+  listRunSummaries,
 } from "../services/run-intelligence.js";
 import { assertCompanyAccess, getAuthorizedOrgScope } from "./authz.js";
 
@@ -41,6 +42,12 @@ function asOptionalPositiveInteger(value: unknown, max: number) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
   return Math.min(max, Math.floor(parsed));
+}
+
+function asNonNegativeInteger(value: unknown, fallback: number) {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.floor(parsed));
 }
 
 function clipText(value: string, maxChars: number) {
@@ -206,7 +213,12 @@ export function runIntelligenceRoutes(db: Db) {
       throw badRequest("Use either usedSkill or loadedSkill, not both.");
     }
 
-    const rows = await listObservedRuns(db, {
+    const projection = asString(req.query.projection);
+    if (projection && projection !== "summary" && projection !== "full") {
+      throw badRequest("projection must be either summary or full.");
+    }
+
+    const commonInput = {
       orgId,
       updatedAfter: asDateOrNull(req.query.updatedAfter),
       runIdPrefix: asString(req.query.runIdPrefix),
@@ -217,6 +229,20 @@ export function runIntelligenceRoutes(db: Db) {
       usedSkill,
       loadedSkill,
       createdBefore: asDateOrNull(req.query.createdBefore),
+    };
+
+    if (projection === "summary") {
+      const page = await listRunSummaries(db, {
+        ...commonInput,
+        cursor: asString(req.query.cursor),
+        limit: asPositiveInteger(req.query.limit, 50, 100),
+      });
+      res.json(page);
+      return;
+    }
+
+    const rows = await listObservedRuns(db, {
+      ...commonInput,
       limit: Math.max(1, Math.min(1000, Number(req.query.limit ?? 200) || 200)),
     });
 
@@ -235,19 +261,24 @@ export function runIntelligenceRoutes(db: Db) {
   router.get("/run-intelligence/runs/:runId/events", async (req, res) => {
     const runId = req.params.runId as string;
     const scope = { orgIds: getAuthorizedOrgScope(req) };
-    const run = await getObservedRun(db, runId, scope);
-    if (!run) throw notFound("Agent run not found");
-    assertCompanyAccess(req, run.run.orgId);
-    res.json(await getObservedRunEvents(db, runId, scope));
+    const result = await getObservedRunEvents(db, runId, scope, {
+      afterSeq: asNonNegativeInteger(req.query.afterSeq, 0),
+      limit: asPositiveInteger(req.query.limit, 200, 999),
+    });
+    assertCompanyAccess(req, result.orgId);
+    res.json(result.response);
   });
 
   router.get("/run-intelligence/runs/:runId/log", async (req, res) => {
     const runId = req.params.runId as string;
     const scope = { orgIds: getAuthorizedOrgScope(req) };
-    const run = await getObservedRun(db, runId, scope);
-    if (!run) throw notFound("Agent run not found");
-    assertCompanyAccess(req, run.run.orgId);
-    res.json(await getObservedRunLog(db, runId, scope));
+    const result = await getObservedRunLog(db, runId, scope, {
+      offset: asNonNegativeInteger(req.query.offset, 0),
+      limitBytes: Math.max(4, asPositiveInteger(req.query.limitBytes, 256_000, 1_000_000)),
+    });
+    assertCompanyAccess(req, result.orgId);
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.json(result.response);
   });
 
   router.get("/run-intelligence/runs/:runId/transcript", async (req, res) => {
@@ -300,7 +331,6 @@ export function runIntelligenceRoutes(db: Db) {
             entry: detail.transcript[step.index - 1] ?? null,
             output: fullText(step.detailText),
           })),
-          transcript: detail.transcript,
         }
         : {}),
       trace: {

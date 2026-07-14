@@ -126,7 +126,7 @@ export type {
   ProjectCodebaseScope, ProjectExecutionWorkspaceDefaultMode, ProjectExecutionWorkspacePolicy, ProjectGoalRef, ProjectResourceAttachment,
   ProjectResourceAttachmentInput, ProjectRunWorkspaceDefaultMode, ProjectRunWorkspacePolicy, ProjectWorkspace,
   ProjectWorkspaceSourceType,
-  ProjectWorkspaceVisibility, ProviderQuotaResult, QuotaWindow, RunWorkspace, RunWorkspaceMode, RunWorkspaceProviderType, RunWorkspaceStatus, RunWorkspaceStrategy, RunWorkspaceStrategyType, SecretProviderDescriptor, SidebarBadges, UpdateOrganizationResourceRequest, UpdateProjectResourceAttachmentRequest, UpsertOrganizationIntelligenceProfile, UserActivityLedgerInclude,
+  ProjectWorkspaceVisibility, ProviderQuotaResult, QuotaWindow, RunSummary, RunSummaryIssue, RunSummaryPage, RunSummarySkillEvidence, RunSummaryTarget, RunSummaryUsage, RunWorkspace, RunWorkspaceMode, RunWorkspaceProviderType, RunWorkspaceStatus, RunWorkspaceStrategy, RunWorkspaceStrategyType, SecretProviderDescriptor, SidebarBadges, UpdateOrganizationResourceRequest, UpdateProjectResourceAttachmentRequest, UpsertOrganizationIntelligenceProfile, UserActivityLedgerInclude,
   UserActivityLedgerItem,
   UserActivityLedgerKind,
   UserActivityLedgerRelatedEntity,

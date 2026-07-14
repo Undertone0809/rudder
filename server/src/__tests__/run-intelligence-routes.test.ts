@@ -5,6 +5,7 @@ import { errorHandler } from "../middleware/index.js";
 import { runIntelligenceRoutes } from "../routes/run-intelligence.js";
 
 const mockListObservedRuns = vi.hoisted(() => vi.fn());
+const mockListRunSummaries = vi.hoisted(() => vi.fn());
 const mockGetObservedRun = vi.hoisted(() => vi.fn());
 const mockGetObservedRunEvents = vi.hoisted(() => vi.fn());
 const mockGetObservedRunLog = vi.hoisted(() => vi.fn());
@@ -12,6 +13,7 @@ const mockGetObservedRunDetail = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/run-intelligence.js", () => ({
   listObservedRuns: mockListObservedRuns,
+  listRunSummaries: mockListRunSummaries,
   getObservedRun: mockGetObservedRun,
   getObservedRunEvents: mockGetObservedRunEvents,
   getObservedRunLog: mockGetObservedRunLog,
@@ -39,8 +41,23 @@ function createApp() {
 beforeEach(() => {
   vi.clearAllMocks();
   mockListObservedRuns.mockResolvedValue([]);
-  mockGetObservedRunEvents.mockResolvedValue([]);
-  mockGetObservedRunLog.mockResolvedValue({ content: "" });
+  mockListRunSummaries.mockResolvedValue({
+    items: [],
+    page: { limit: 50, hasMore: false, nextCursor: null },
+  });
+  mockGetObservedRunEvents.mockResolvedValue({
+    orgId: "org-1",
+    response: { items: [], page: { afterSeq: 0, limit: 200, hasMore: false, nextAfterSeq: null } },
+  });
+  mockGetObservedRunLog.mockResolvedValue({
+    orgId: "org-1",
+    response: {
+      content: "",
+      endOffset: 0,
+      eof: true,
+      page: { offset: 0, limitBytes: 256_000, endOffset: 0, eof: true, nextOffset: null },
+    },
+  });
   mockGetObservedRun.mockResolvedValue({
     run: { id: "run-1", orgId: "org-1" },
     agentName: "Agent",
@@ -87,6 +104,141 @@ beforeEach(() => {
 });
 
 describe("run intelligence routes", () => {
+  it("keeps the legacy full list response and defaults unchanged", async () => {
+    mockListObservedRuns.mockResolvedValue([{ run: { id: "run-1", orgId: "org-1" } }]);
+
+    const res = await request(createApp()).get("/api/run-intelligence/orgs/org-1/runs");
+
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(mockListObservedRuns).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      orgId: "org-1",
+      limit: 200,
+      createdBefore: null,
+    }));
+    expect(mockListRunSummaries).not.toHaveBeenCalled();
+  });
+
+  it("returns summary pages with bounded defaults and forwards filters and cursor", async () => {
+    mockListRunSummaries.mockResolvedValue({
+      items: [{ id: "run-1", orgId: "org-1", outcome: "done" }],
+      page: { limit: 100, hasMore: true, nextCursor: "next-page" },
+    });
+
+    const res = await request(createApp())
+      .get("/api/run-intelligence/orgs/org-1/runs")
+      .query({
+        projection: "summary",
+        cursor: "current-page",
+        status: "failed",
+        agentId: "agent-1",
+        runtime: "codex_local",
+        issueId: "issue-1",
+        usedSkill: "skill-optimizer",
+        createdBefore: "2026-07-14T00:30:00.000Z",
+        limit: "500",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      items: [{ id: "run-1", orgId: "org-1", outcome: "done" }],
+      page: { limit: 100, hasMore: true, nextCursor: "next-page" },
+    });
+    expect(mockListRunSummaries).toHaveBeenCalledWith(expect.anything(), {
+      orgId: "org-1",
+      updatedAfter: null,
+      runIdPrefix: null,
+      agentId: "agent-1",
+      status: "failed",
+      runtime: "codex_local",
+      issueId: "issue-1",
+      usedSkill: "skill-optimizer",
+      loadedSkill: null,
+      createdBefore: new Date("2026-07-14T00:30:00.000Z"),
+      cursor: "current-page",
+      limit: 100,
+    });
+    expect(mockListObservedRuns).not.toHaveBeenCalled();
+  });
+
+  it("uses a 50 item default for summary projection", async () => {
+    const res = await request(createApp())
+      .get("/api/run-intelligence/orgs/org-1/runs")
+      .query({ projection: "summary" });
+
+    expect(res.status).toBe(200);
+    expect(mockListRunSummaries).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      orgId: "org-1",
+      cursor: null,
+      limit: 50,
+    }));
+  });
+
+  it("rejects unknown run list projections", async () => {
+    const res = await request(createApp())
+      .get("/api/run-intelligence/orgs/org-1/runs")
+      .query({ projection: "compact" });
+
+    expect(res.status).toBe(400);
+    expect(mockListObservedRuns).not.toHaveBeenCalled();
+    expect(mockListRunSummaries).not.toHaveBeenCalled();
+  });
+
+  it("returns bounded event pages and forwards pagination inputs", async () => {
+    mockGetObservedRunEvents.mockResolvedValue({
+      orgId: "org-1",
+      response: {
+        items: [{ id: 12, seq: 12, eventType: "adapter.invoke" }],
+        page: { afterSeq: 10, limit: 25, hasMore: true, nextAfterSeq: 12 },
+      },
+    });
+
+    const res = await request(createApp())
+      .get("/api/run-intelligence/runs/run-1/events")
+      .query({ afterSeq: "10", limit: "25" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.page).toEqual({ afterSeq: 10, limit: 25, hasMore: true, nextAfterSeq: 12 });
+    expect(mockGetObservedRunEvents).toHaveBeenCalledWith(expect.anything(), "run-1", {
+      orgIds: ["org-1"],
+    }, { afterSeq: 10, limit: 25 });
+  });
+
+  it("returns bounded log ranges with no-store caching", async () => {
+    mockGetObservedRunLog.mockResolvedValue({
+      orgId: "org-1",
+      response: {
+        content: "next bytes",
+        endOffset: 112,
+        eof: false,
+        nextOffset: 112,
+        page: { offset: 100, limitBytes: 12, endOffset: 112, eof: false, nextOffset: 112 },
+      },
+    });
+
+    const res = await request(createApp())
+      .get("/api/run-intelligence/runs/run-1/log")
+      .query({ offset: "100", limitBytes: "12" });
+
+    expect(res.status).toBe(200);
+    expect(res.headers["cache-control"]).toBe("no-cache, no-store, must-revalidate");
+    expect(res.body.page).toEqual({ offset: 100, limitBytes: 12, endOffset: 112, eof: false, nextOffset: 112 });
+    expect(mockGetObservedRunLog).toHaveBeenCalledWith(expect.anything(), "run-1", {
+      orgIds: ["org-1"],
+    }, { offset: 100, limitBytes: 12 });
+  });
+
+  it("enforces org access on bounded evidence", async () => {
+    mockGetObservedRunEvents.mockResolvedValueOnce({
+      orgId: "org-2",
+      response: { items: [], page: { afterSeq: 0, limit: 200, hasMore: false, nextAfterSeq: null } },
+    });
+
+    const res = await request(createApp()).get("/api/run-intelligence/runs/run-2/events");
+
+    expect(res.status).toBe(403);
+  });
+
   it("passes used skill filters to run list queries", async () => {
     mockListObservedRuns.mockResolvedValue([
       {
@@ -222,9 +374,21 @@ describe("run intelligence routes", () => {
         originalLength: 3000,
       },
     });
-    expect(res.body.transcript[2]).toMatchObject({
-      kind: "tool_result",
-      content: "ERR".repeat(1000),
+    expect(res.body.transcript).toBeUndefined();
+  });
+
+  it("does not duplicate the full transcript for unpaged full output", async () => {
+    const res = await request(createApp())
+      .get("/api/run-intelligence/runs/run-1/transcript")
+      .query({ output: "full", order: "oldest" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.transcript).toBeUndefined();
+    expect(res.body.entries[2]).toMatchObject({
+      entry: {
+        kind: "tool_result",
+        content: "ERR".repeat(1000),
+      },
     });
   });
 

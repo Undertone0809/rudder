@@ -1,10 +1,36 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   formatShortRunId,
   isShortRunIdReference,
   resolveHeartbeatRunIdReference,
 } from "../services/heartbeat-run-reference.ts";
-import { extractSkillEvidenceMatch } from "../services/run-intelligence.ts";
+import {
+  extractSkillEvidenceMatch,
+  getObservedRunEvents,
+  getObservedRunLog,
+} from "../services/run-intelligence.ts";
+
+const mockHeartbeatListEvents = vi.hoisted(() => vi.fn());
+const mockHeartbeatReadLog = vi.hoisted(() => vi.fn());
+const mockGetGeneralSettings = vi.hoisted(() => vi.fn());
+
+vi.mock("../services/heartbeat.js", () => ({
+  heartbeatService: () => ({
+    listEvents: mockHeartbeatListEvents,
+    readLog: mockHeartbeatReadLog,
+  }),
+}));
+
+vi.mock("../services/instance-settings.js", () => ({
+  instanceSettingsService: () => ({
+    getGeneral: mockGetGeneralSettings,
+  }),
+}));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockGetGeneralSettings.mockResolvedValue({ censorUsernameInLogs: false });
+});
 
 function mockRunIdLookup(rows: Array<{ id: string }>) {
   const limit = vi.fn().mockResolvedValue(rows);
@@ -13,6 +39,14 @@ function mockRunIdLookup(rows: Array<{ id: string }>) {
   const from = vi.fn(() => ({ where }));
   const select = vi.fn(() => ({ from }));
   return { db: { select }, select, from, where, orderBy, limit };
+}
+
+function mockRunOrgLookup(orgId: string) {
+  const limit = vi.fn().mockResolvedValue([{ orgId }]);
+  const where = vi.fn(() => ({ limit }));
+  const from = vi.fn(() => ({ where }));
+  const select = vi.fn(() => ({ from }));
+  return { select };
 }
 
 describe("agent run references", () => {
@@ -160,6 +194,92 @@ describe("run intelligence skill evidence", () => {
       matchedSkillKey: "skill-optimizer",
       matchedSkillLabel: "Skill Optimizer",
       sourceEventCreatedAt: null,
+    });
+  });
+});
+
+describe("run intelligence bounded evidence", () => {
+  it("returns an event page after the requested sequence", async () => {
+    mockHeartbeatListEvents.mockResolvedValue([
+      { id: 11, seq: 11, stream: "system", level: "info" },
+      { id: 12, seq: 12, stream: "stdout", level: "info" },
+      { id: 13, seq: 13, stream: "stderr", level: "error" },
+    ]);
+
+    const result = await getObservedRunEvents(
+      mockRunOrgLookup("org-1") as never,
+      "609695f1-f90a-4b17-be61-4f0c6fe37c42",
+      { orgIds: ["org-1"] },
+      { afterSeq: 10, limit: 2 },
+    );
+
+    expect(mockHeartbeatListEvents).toHaveBeenCalledWith(
+      "609695f1-f90a-4b17-be61-4f0c6fe37c42",
+      10,
+      3,
+    );
+    expect(result).toMatchObject({
+      orgId: "org-1",
+      response: {
+        items: [{ seq: 11 }, { seq: 12 }],
+        page: { afterSeq: 10, limit: 2, hasMore: true, nextAfterSeq: 12 },
+      },
+    });
+  });
+
+  it("redacts event secrets and current-user paths before returning evidence", async () => {
+    mockGetGeneralSettings.mockResolvedValue({ censorUsernameInLogs: true });
+    const homePath = `${process.env.HOME ?? "/Users/test-user"}/private-project`;
+    mockHeartbeatListEvents.mockResolvedValue([{
+      id: 11,
+      seq: 11,
+      stream: "system",
+      level: "info",
+      message: `read ${homePath}`,
+      payload: { apiKey: "secret-token", path: homePath },
+    }]);
+
+    const result = await getObservedRunEvents(
+      mockRunOrgLookup("org-1") as never,
+      "609695f1-f90a-4b17-be61-4f0c6fe37c42",
+      { orgIds: ["org-1"] },
+      { limit: 10 },
+    );
+    const serialized = JSON.stringify(result.response.items[0]);
+
+    expect(serialized).not.toContain("secret-token");
+    expect(serialized).not.toContain(homePath);
+    expect(result.response.items[0]?.payload).toMatchObject({ apiKey: "***REDACTED***" });
+  });
+
+  it("returns a bounded log range and pagination metadata", async () => {
+    mockHeartbeatReadLog.mockResolvedValue({
+      runId: "609695f1-f90a-4b17-be61-4f0c6fe37c42",
+      store: "local_file",
+      logRef: "run.ndjson",
+      content: "bytes",
+      endOffset: 105,
+      eof: false,
+      nextOffset: 105,
+    });
+
+    const result = await getObservedRunLog(
+      mockRunOrgLookup("org-1") as never,
+      "609695f1-f90a-4b17-be61-4f0c6fe37c42",
+      { orgIds: ["org-1"] },
+      { offset: 100, limitBytes: 5 },
+    );
+
+    expect(mockHeartbeatReadLog).toHaveBeenCalledWith(
+      "609695f1-f90a-4b17-be61-4f0c6fe37c42",
+      { offset: 100, limitBytes: 5 },
+    );
+    expect(result.response.page).toEqual({
+      offset: 100,
+      limitBytes: 5,
+      endOffset: 105,
+      eof: false,
+      nextOffset: 105,
     });
   });
 });

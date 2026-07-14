@@ -30,6 +30,7 @@ export const heartbeatRuns = pgTable(
     signal: text("signal"),
     usageJson: jsonb("usage_json").$type<Record<string, unknown>>(),
     resultJson: jsonb("result_json").$type<Record<string, unknown>>(),
+    resultSummaryJson: jsonb("result_summary_json").$type<Record<string, unknown>>(),
     sessionIdBefore: text("session_id_before"),
     sessionIdAfter: text("session_id_after"),
     logStore: text("log_store"),
@@ -55,6 +56,11 @@ export const heartbeatRuns = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
+    orgCreatedIdIdx: index("heartbeat_runs_org_created_id_idx").on(
+      table.orgId,
+      table.createdAt,
+      table.id,
+    ),
     companyAgentStartedIdx: index("heartbeat_runs_company_agent_started_idx").on(
       table.orgId,
       table.agentId,

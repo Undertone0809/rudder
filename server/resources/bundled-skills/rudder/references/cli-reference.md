@@ -98,11 +98,11 @@ Direct API fallback is allowed for heartbeat close-out only when a required CLI 
 | `rudder_chat_create` | `rudder chat create --org-id <id>` | Create a chat conversation. | yes | required | no | attached when available |
 | `rudder_chat_send` | `rudder chat send <chat-id> --body <text>` | Send an agent-authored message directly to the operator in a chat. | yes | no | required | attached when available |
 | `rudder_chat_archive` | `rudder chat archive <chat-id>` | Archive a chat conversation without deleting it. | yes | no | no | attached when available |
-| `rudder_runs_list` | `rudder runs list --org-id <id> [--used-skill <skill>] [--loaded-skill <skill>]` | List observed agent runs with filters for status, agent, issue, runtime, time, and skill evidence; used-skill means actual usage and loaded-skill is opt-in. | no | required | no | no |
-| `rudder_runs_by_skill` | `rudder runs by-skill <skill> --org-id <id> [--evidence <used-or-loaded>]` | Build a skill evidence packet from recent runs; defaults to actual usage and returns status counts, agents, issues, common errors, rows, and transcript/errors follow-up commands. | no | required | no | no |
+| `rudder_runs_list` | `rudder runs list --org-id <id> [--used-skill <skill>] [--loaded-skill <skill>] [--cursor <cursor>] [--full]` | List lightweight run summaries with stable pagination and filters; use --full only for legacy full-row compatibility. | no | required | no | no |
+| `rudder_runs_by_skill` | `rudder runs by-skill <skill> --org-id <id> [--evidence <used-or-loaded>] [--cursor <cursor>] [--full]` | Build a paginated skill evidence packet from lightweight run summaries; use --full only for legacy full-row compatibility. | no | required | no | no |
 | `rudder_runs_get` | `rudder runs get <run-id>` | Read one observed run detail. | no | no | no | no |
-| `rudder_runs_events` | `rudder runs events <run-id>` | List persisted run events. | no | no | no | no |
-| `rudder_runs_log` | `rudder runs log <run-id>` | Read stored run log content with clipped human output. | no | no | no | no |
+| `rudder_runs_events` | `rudder runs events <run-id> [--after-seq <n>] [--limit <n>]` | List a bounded page of persisted run events with a sequence cursor. | no | no | no | no |
+| `rudder_runs_log` | `rudder runs log <run-id> [--offset <bytes>] [--limit-bytes <n>]` | Read a bounded byte range of stored run log content. | no | no | no | no |
 | `rudder_runs_transcript` | `rudder runs transcript <run-id> [--turn-limit <n>] [--cursor <cursor>] [--include-output]` | Read the server-normalized run transcript; human output is compact and JSON includes full entries. | no | no | no | no |
 | `rudder_runs_errors` | `rudder runs errors <run-id>` | List failed tool calls, stderr, runtime failures, and jump-to-context commands. | no | no | no | no |
 | `rudder_runs_cancel` | `rudder runs cancel <run-id>` | Cancel a heartbeat run through the governed server route. | yes | no | no | attached when available |

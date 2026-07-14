@@ -1421,7 +1421,15 @@ export function heartbeatService(db: Db) {
         .limit(Math.max(1, Math.min(limit, 1000))),
 
     readLog: async (runId: string, opts?: { offset?: number; limitBytes?: number }) => {
-      const run = await getRun(runId);
+      const run = await db
+        .select({
+          id: heartbeatRuns.id,
+          logStore: heartbeatRuns.logStore,
+          logRef: heartbeatRuns.logRef,
+        })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, runId))
+        .then((rows) => rows[0] ?? null);
       if (!run) throw notFound("Heartbeat run not found");
       if (!run.logStore || !run.logRef) throw notFound("Run log not found");
 

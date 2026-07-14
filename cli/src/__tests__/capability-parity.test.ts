@@ -705,26 +705,25 @@ describe("CLI automation/chat/runs parity", () => {
   });
 
   it("requests run list filters with used skill evidence by default", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify([
-      {
-        run: {
-          id: "run-1",
-          agentId: "agent-1",
-          status: "failed",
-          createdAt: "2026-06-11T00:00:00.000Z",
-          finishedAt: "2026-06-11T00:01:00.000Z",
-        },
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      items: [{
+        id: "run-1",
+        agentId: "agent-1",
+        status: "failed",
+        runtime: "codex_local",
+        createdAt: "2026-06-11T00:00:00.000Z",
+        finishedAt: "2026-06-11T00:01:00.000Z",
         agentName: "Wesley",
         issue: { id: "issue-1", identifier: "ZST-1", title: "Optimize skill" },
-        bundle: { agentRuntimeType: "codex_local" },
-        errorSummary: "adapter_error",
+        error: "adapter_error",
         skillEvidence: {
           evidenceType: "used",
           matchedSkillKey: "skill-optimizer",
           matchedSkillLabel: "Skill Optimizer",
         },
-      },
-    ]), { status: 200 }));
+      }],
+      page: { limit: 50, hasMore: false, nextCursor: null },
+    }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const output = captureOutput();
 
@@ -746,6 +745,7 @@ describe("CLI automation/chat/runs parity", () => {
     const [url] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     const requestedUrl = new URL(url);
     expect(requestedUrl.pathname).toBe("/api/run-intelligence/orgs/org-1/runs");
+    expect(requestedUrl.searchParams.get("projection")).toBe("summary");
     expect(requestedUrl.searchParams.get("usedSkill")).toBe("skill-optimizer");
     expect(requestedUrl.searchParams.get("loadedSkill")).toBeNull();
     expect(output.stdoutText()).toContain("evidence=used");
@@ -753,27 +753,79 @@ describe("CLI automation/chat/runs parity", () => {
     expect(output.stdoutText()).toContain("rudder runs errors run-1");
   });
 
+  it("requests bounded run event and log pages", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      const pathname = new URL(url).pathname;
+      return new Response(JSON.stringify(pathname.endsWith("/events")
+        ? { items: [], page: { hasMore: true, nextAfterSeq: 60 } }
+        : { content: "log page", page: { eof: false, nextOffset: 512000 } }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const output = captureOutput();
+
+    await expect(runCli([
+      process.execPath,
+      "rudder",
+      "runs",
+      "events",
+      "run-1",
+      "--after-seq",
+      "40",
+      "--limit",
+      "20",
+      "--api-base",
+      "http://localhost:3100",
+      "--api-key",
+      "token-1",
+      "--json",
+    ])).resolves.toBe(0);
+    await expect(runCli([
+      process.execPath,
+      "rudder",
+      "runs",
+      "log",
+      "run-1",
+      "--offset",
+      "256000",
+      "--limit-bytes",
+      "256000",
+      "--api-base",
+      "http://localhost:3100",
+      "--api-key",
+      "token-1",
+      "--json",
+    ])).resolves.toBe(0);
+
+    const eventUrl = new URL(fetchMock.mock.calls[0]![0] as string);
+    expect(eventUrl.searchParams.get("afterSeq")).toBe("40");
+    expect(eventUrl.searchParams.get("limit")).toBe("20");
+    const logUrl = new URL(fetchMock.mock.calls[1]![0] as string);
+    expect(logUrl.searchParams.get("offset")).toBe("256000");
+    expect(logUrl.searchParams.get("limitBytes")).toBe("256000");
+    expect(output.stdoutText()).toContain("nextAfterSeq");
+    expect(output.stdoutText()).toContain("nextOffset");
+  });
+
   it("builds a by-skill report and opts into loaded evidence explicitly", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify([
-      {
-        run: {
-          id: "run-2",
-          agentId: "agent-1",
-          status: "succeeded",
-          createdAt: "2026-06-11T00:00:00.000Z",
-          finishedAt: "2026-06-11T00:02:00.000Z",
-        },
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      items: [{
+        id: "run-2",
+        agentId: "agent-1",
+        status: "succeeded",
+        runtime: "codex_local",
+        createdAt: "2026-06-11T00:00:00.000Z",
+        finishedAt: "2026-06-11T00:02:00.000Z",
         agentName: "Wesley",
         issue: { id: "issue-1", identifier: "ZST-1", title: "Optimize skill" },
-        bundle: { agentRuntimeType: "codex_local" },
-        errorSummary: null,
+        error: null,
         skillEvidence: {
           evidenceType: "loaded",
           matchedSkillKey: "skill-optimizer",
           matchedSkillLabel: "Skill Optimizer",
         },
-      },
-    ]), { status: 200 }));
+      }],
+      page: { limit: 50, hasMore: true, nextCursor: "next-summary-page" },
+    }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const output = captureOutput();
 
@@ -797,6 +849,7 @@ describe("CLI automation/chat/runs parity", () => {
     const [url] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     const requestedUrl = new URL(url);
     expect(requestedUrl.pathname).toBe("/api/run-intelligence/orgs/org-1/runs");
+    expect(requestedUrl.searchParams.get("projection")).toBe("summary");
     expect(requestedUrl.searchParams.get("loadedSkill")).toBe("skill-optimizer");
     expect(requestedUrl.searchParams.get("usedSkill")).toBeNull();
     expect(JSON.parse(output.stdoutText())).toMatchObject({
@@ -806,8 +859,115 @@ describe("CLI automation/chat/runs parity", () => {
         succeeded: 1,
         failed: 0,
       },
+      page: { limit: 50, hasMore: true, nextCursor: "next-summary-page" },
       nextCommands: ["rudder runs transcript run-2"],
     });
+  });
+
+  it("preserves the legacy by-skill report when full rows are requested", async () => {
+    const rows = [{
+      run: {
+        id: "run-full-1",
+        agentId: "agent-1",
+        status: "failed",
+        createdAt: "2026-06-11T00:00:00.000Z",
+        finishedAt: null,
+        resultJson: { raw: true },
+      },
+      agentName: "Wesley",
+      issue: null,
+      bundle: { agentRuntimeType: "codex_local" },
+      errorSummary: "adapter_error",
+      skillEvidence: {
+        evidenceType: "used",
+        matchedSkillKey: "rudder",
+        matchedSkillLabel: "Rudder",
+      },
+    }];
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(rows), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const output = captureOutput();
+
+    await expect(runCli([
+      process.execPath,
+      "rudder",
+      "runs",
+      "by-skill",
+      "rudder",
+      "--org-id",
+      "org-1",
+      "--full",
+      "--api-base",
+      "http://localhost:3100",
+      "--api-key",
+      "token-1",
+      "--json",
+    ])).resolves.toBe(0);
+
+    const payload = JSON.parse(output.stdoutText());
+    expect(payload.rows).toEqual(rows);
+    expect(payload).not.toHaveProperty("page");
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    expect(new URL(url).searchParams.get("projection")).toBe("full");
+    expect(new URL(url).searchParams.get("limit")).toBe("50");
+  });
+
+  it("returns a stable summary page for list JSON and preserves legacy full JSON", async () => {
+    const summaryPage = {
+      items: [{ id: "run-1", agentId: "agent-1", status: "failed", runtime: "codex_local" }],
+      page: { limit: 1, hasMore: true, nextCursor: "next-page" },
+    };
+    const legacyRows = [{ run: { id: "run-1", resultJson: { large: true } } }];
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const requestedUrl = new URL(String(input));
+      return new Response(JSON.stringify(requestedUrl.searchParams.get("projection") === "summary" ? summaryPage : legacyRows), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const summaryOutput = captureOutput();
+    await expect(runCli([
+      process.execPath,
+      "rudder",
+      "runs",
+      "list",
+      "--org-id",
+      "org-1",
+      "--cursor",
+      "current-page",
+      "--limit",
+      "1",
+      "--api-base",
+      "http://localhost:3100",
+      "--api-key",
+      "token-1",
+      "--json",
+    ])).resolves.toBe(0);
+    expect(JSON.parse(summaryOutput.stdoutText())).toEqual(summaryPage);
+
+    summaryOutput.stdout.mockClear();
+    summaryOutput.log.mockClear();
+    await expect(runCli([
+      process.execPath,
+      "rudder",
+      "runs",
+      "list",
+      "--org-id",
+      "org-1",
+      "--full",
+      "--api-base",
+      "http://localhost:3100",
+      "--api-key",
+      "token-1",
+      "--json",
+    ])).resolves.toBe(0);
+    expect(JSON.parse(summaryOutput.stdoutText())).toEqual(legacyRows);
+
+    const summaryUrl = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    const fullUrl = new URL(String(fetchMock.mock.calls[1]?.[0]));
+    expect(summaryUrl.searchParams.get("projection")).toBe("summary");
+    expect(summaryUrl.searchParams.get("cursor")).toBe("current-page");
+    expect(fullUrl.searchParams.get("projection")).toBe("full");
+    expect(fullUrl.searchParams.get("limit")).toBe("200");
   });
 
   it("requests full run transcript JSON with cursor and output controls", async () => {

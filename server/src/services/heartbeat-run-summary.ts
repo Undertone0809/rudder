@@ -106,7 +106,14 @@ function extractFinalResponseFromStdout(stdout: unknown): string | null {
 }
 
 function readNumericField(record: Record<string, unknown>, key: string) {
-  return key in record ? record[key] ?? null : undefined;
+  if (!(key in record)) return undefined;
+  const value = record[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.length <= 64) {
+    const parsed = Number(value);
+    if (value.trim() && Number.isFinite(parsed)) return parsed;
+  }
+  return null;
 }
 
 export function summarizeHeartbeatRunResultJson(
@@ -123,6 +130,11 @@ export function summarizeHeartbeatRunResultJson(
     if (value !== null) {
       summary[key] = value;
     }
+  }
+
+  if (!summary.summary && !summary.result && !summary.message) {
+    const body = truncateSummaryText(resultJson.body);
+    if (body) summary.result = body;
   }
 
   const numericFieldAliases = ["total_cost_usd", "cost_usd", "costUsd"] as const;

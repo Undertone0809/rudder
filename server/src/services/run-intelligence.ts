@@ -10,11 +10,22 @@ import {
   type RunSkillEvidenceMatch,
   type RunSkillEvidenceType,
 } from "@rudderhq/run-intelligence-core";
-import type { HeartbeatRun, HeartbeatRunEvent } from "@rudderhq/shared";
-import { and, asc, desc, eq, gt, inArray, lt, sql } from "drizzle-orm";
+import {
+  isUuidLike,
+  summarizeTokenUsage,
+  type HeartbeatRun,
+  type HeartbeatRunEvent,
+  type RunSummary,
+  type RunSummaryPage,
+} from "@rudderhq/shared";
+import { and, asc, desc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
-import { notFound } from "../errors.js";
+import { badRequest, forbidden, notFound } from "../errors.js";
+import { redactCurrentUserValue } from "../log-redaction.js";
+import { redactEventPayload } from "../redaction.js";
 import { resolveHeartbeatRunIdReference } from "./heartbeat-run-reference.js";
+import { heartbeatService } from "./heartbeat.js";
+import { instanceSettingsService } from "./instance-settings.js";
 import { getRunLogStore } from "./run-log-store.js";
 
 function hashValue(value: unknown) {
@@ -89,6 +100,37 @@ export function extractSkillEvidenceMatch(input: {
   };
 }
 
+function extractFirstSkillEvidenceMatch(input: {
+  payload: unknown;
+  eventType: string | null;
+  eventId: number | null;
+  eventCreatedAt: Date | string | null;
+}): RunSkillEvidenceMatch | null {
+  const payload = asRecord(input.payload);
+  for (const evidenceType of ["used", "loaded"] as const) {
+    const keysField = evidenceType === "used" ? "usedSkillKeys" : "loadedSkillKeys";
+    const skillsField = evidenceType === "used" ? "usedSkills" : "loadedSkills";
+    const candidate = [
+      ...(Array.isArray(payload[skillsField]) ? payload[skillsField] : []),
+      ...(Array.isArray(payload[keysField]) ? payload[keysField] : []),
+    ]
+      .map((entry) => normalizeSkillEvidenceEntry(entry))
+      .find((entry): entry is { key: string; label: string | null } => Boolean(entry));
+    if (!candidate) continue;
+    return {
+      evidenceType,
+      matchedSkillKey: candidate.key,
+      matchedSkillLabel: candidate.label,
+      sourceEventType: input.eventType,
+      sourceEventId: input.eventId,
+      sourceEventCreatedAt: input.eventCreatedAt instanceof Date
+        ? input.eventCreatedAt.toISOString()
+        : input.eventCreatedAt ?? null,
+    };
+  }
+  return null;
+}
+
 function buildSkillExistsCondition(evidenceType: RunSkillEvidenceType, skillQuery: string) {
   const keysField = evidenceType === "used" ? "usedSkillKeys" : "loadedSkillKeys";
   const skillsField = evidenceType === "used" ? "usedSkills" : "loadedSkills";
@@ -150,6 +192,85 @@ export interface ListObservedRunsInput {
   limit: number;
 }
 
+export interface ListRunSummariesInput extends ListObservedRunsInput {
+  cursor?: string | null;
+}
+
+interface RunSummaryCursor {
+  createdAt: string;
+  id: string;
+}
+
+type SummaryRunRow = {
+  id: string;
+  orgId: string;
+  agentId: string;
+  invocationSource: string;
+  triggerDetail: string | null;
+  status: string;
+  startedAt: Date | null;
+  finishedAt: Date | null;
+  errorText: string | null;
+  logBytes: number | null;
+  logStore: string | null;
+  logRef: string | null;
+  chatConversationId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  agentName: string | null;
+  agentRuntimeType: string;
+  orgName: string | null;
+  issueId: string | null;
+  targetType: string | null;
+  targetId: string | null;
+  outcomeText: string | null;
+  usageInputTokens: string | null;
+  usageCachedInputTokens: string | null;
+  usageOutputTokens: string | null;
+  usageCostUsd: string | null;
+  resultCostUsd: string | null;
+  usageProvider: string | null;
+  usageModel: string | null;
+};
+
+function encodeRunSummaryCursor(row: Pick<SummaryRunRow, "createdAt" | "id">) {
+  return Buffer.from(JSON.stringify({
+    createdAt: row.createdAt.toISOString(),
+    id: row.id,
+  } satisfies RunSummaryCursor), "utf8").toString("base64url");
+}
+
+function decodeRunSummaryCursor(value: string): { createdAt: Date; id: string } {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<RunSummaryCursor>;
+    const createdAt = typeof parsed.createdAt === "string" ? new Date(parsed.createdAt) : null;
+    if (
+      !createdAt
+      || Number.isNaN(createdAt.getTime())
+      || typeof parsed.id !== "string"
+      || !isUuidLike(parsed.id)
+    ) {
+      throw new Error("invalid cursor payload");
+    }
+    return { createdAt, id: parsed.id };
+  } catch {
+    throw badRequest("Invalid run summary cursor.");
+  }
+}
+
+function clipSummaryText(value: string | null, maxLength = 500) {
+  if (!value) return null;
+  const normalized = value.trim();
+  if (!normalized) return null;
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}…` : normalized;
+}
+
+function finiteNonNegativeNumber(value: string | null) {
+  if (value === null || value.trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
 function resolveBundleForRun(
   run: RunRow,
   revisionsByAgentId: Map<string, Array<typeof agentConfigRevisions.$inferSelect>>,
@@ -172,7 +293,7 @@ function resolveBundleForRun(
   };
 }
 
-async function loadIssuesForRuns(db: Db, runRows: RunRow[]) {
+async function loadIssuesForRuns(db: Db, runRows: Array<Pick<RunRow, "issueId">>) {
   const issueIds = [...new Set(runRows.map((row) => row.issueId).filter((value): value is string => Boolean(value)))];
   if (issueIds.length === 0) return new Map<string, { id: string; identifier: string | null; title: string | null }>();
 
@@ -323,14 +444,95 @@ async function loadRunRows(db: Db, input: ListObservedRunsInput): Promise<RunRow
     .limit(input.limit) as RunRow[];
 }
 
+async function loadSummaryRunRows(db: Db, input: ListRunSummariesInput): Promise<SummaryRunRow[]> {
+  const conditions = [eq(heartbeatRuns.orgId, input.orgId)];
+  if (input.updatedAfter) conditions.push(gt(heartbeatRuns.updatedAt, input.updatedAfter));
+  if (input.createdBefore) conditions.push(lt(heartbeatRuns.createdAt, input.createdBefore));
+  if (input.agentId) conditions.push(eq(heartbeatRuns.agentId, input.agentId));
+  if (input.status) conditions.push(eq(heartbeatRuns.status, input.status));
+  if (input.runtime) conditions.push(eq(agents.agentRuntimeType, input.runtime));
+  if (input.runIdPrefix) {
+    const runIdPrefix = input.runIdPrefix.replace(/-/g, "").toLowerCase();
+    conditions.push(sql`replace(${heartbeatRuns.id}::text, '-', '') like ${`${runIdPrefix}%`}`);
+  }
+  if (input.issueId) conditions.push(sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${input.issueId}`);
+  if (input.usedSkill) conditions.push(buildSkillExistsCondition("used", input.usedSkill));
+  if (input.loadedSkill) conditions.push(buildSkillExistsCondition("loaded", input.loadedSkill));
+  if (input.cursor) {
+    const cursor = decodeRunSummaryCursor(input.cursor);
+    conditions.push(or(
+      lt(heartbeatRuns.createdAt, cursor.createdAt),
+      and(eq(heartbeatRuns.createdAt, cursor.createdAt), lt(heartbeatRuns.id, cursor.id)),
+    )!);
+  }
+
+  return await db
+    .select({
+      id: heartbeatRuns.id,
+      orgId: heartbeatRuns.orgId,
+      agentId: heartbeatRuns.agentId,
+      invocationSource: heartbeatRuns.invocationSource,
+      triggerDetail: heartbeatRuns.triggerDetail,
+      status: heartbeatRuns.status,
+      startedAt: heartbeatRuns.startedAt,
+      finishedAt: heartbeatRuns.finishedAt,
+      errorText: sql<string | null>`left(coalesce(
+        ${heartbeatRuns.errorCode},
+        ${heartbeatRuns.error}
+      ), 501)`.as("errorText"),
+      logBytes: heartbeatRuns.logBytes,
+      logStore: heartbeatRuns.logStore,
+      logRef: heartbeatRuns.logRef,
+      chatConversationId: heartbeatRuns.chatConversationId,
+      createdAt: heartbeatRuns.createdAt,
+      updatedAt: heartbeatRuns.updatedAt,
+      agentName: agents.name,
+      agentRuntimeType: agents.agentRuntimeType,
+      orgName: organizations.name,
+      issueId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`.as("issueId"),
+      targetType: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'targetType'`.as("targetType"),
+      targetId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'targetId'`.as("targetId"),
+      outcomeText: sql<string | null>`left(coalesce(
+        ${heartbeatRuns.resultSummaryJson} ->> 'summary',
+        ${heartbeatRuns.resultSummaryJson} ->> 'result',
+        ${heartbeatRuns.resultSummaryJson} ->> 'message',
+        ${heartbeatRuns.resultSummaryJson} ->> 'userMessage'
+      ), 501)`.as("outcomeText"),
+      usageInputTokens: sql<string | null>`${heartbeatRuns.usageJson} ->> 'inputTokens'`.as("usageInputTokens"),
+      usageCachedInputTokens: sql<string | null>`coalesce(
+        ${heartbeatRuns.usageJson} ->> 'cachedInputTokens',
+        ${heartbeatRuns.usageJson} ->> 'cacheReadTokens'
+      )`.as("usageCachedInputTokens"),
+      usageOutputTokens: sql<string | null>`${heartbeatRuns.usageJson} ->> 'outputTokens'`.as("usageOutputTokens"),
+      usageCostUsd: sql<string | null>`coalesce(
+        ${heartbeatRuns.usageJson} ->> 'costUsd',
+        ${heartbeatRuns.usageJson} ->> 'totalCostUsd'
+      )`.as("usageCostUsd"),
+      resultCostUsd: sql<string | null>`coalesce(
+        ${heartbeatRuns.resultSummaryJson} ->> 'total_cost_usd',
+        ${heartbeatRuns.resultSummaryJson} ->> 'cost_usd',
+        ${heartbeatRuns.resultSummaryJson} ->> 'costUsd'
+      )`.as("resultCostUsd"),
+      usageProvider: sql<string | null>`${heartbeatRuns.usageJson} ->> 'provider'`.as("usageProvider"),
+      usageModel: sql<string | null>`${heartbeatRuns.usageJson} ->> 'model'`.as("usageModel"),
+    })
+    .from(heartbeatRuns)
+    .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
+    .innerJoin(organizations, eq(heartbeatRuns.orgId, organizations.id))
+    .where(and(...conditions))
+    .orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id))
+    .limit(input.limit + 1) as SummaryRunRow[];
+}
+
 async function loadSkillEvidenceForRuns(
   db: Db,
-  runRows: RunRow[],
+  runRows: Array<Pick<RunRow, "id" | "orgId">>,
   input: Pick<ListObservedRunsInput, "usedSkill" | "loadedSkill">,
+  includeFirstEvidence = false,
 ) {
   const skillQuery = input.usedSkill ?? input.loadedSkill ?? null;
   const evidenceType: RunSkillEvidenceType = input.usedSkill ? "used" : "loaded";
-  if (!skillQuery || runRows.length === 0) return new Map<string, RunSkillEvidenceMatch>();
+  if ((!skillQuery && !includeFirstEvidence) || runRows.length === 0) return new Map<string, RunSkillEvidenceMatch>();
 
   const runIds = runRows.map((row) => row.id);
   const rows = await db
@@ -353,16 +555,26 @@ async function loadSkillEvidenceForRuns(
 
   const evidenceByRunId = new Map<string, RunSkillEvidenceMatch>();
   for (const row of rows) {
-    if (evidenceByRunId.has(row.runId)) continue;
-    const match = extractSkillEvidenceMatch({
-      payload: row.payload,
-      evidenceType,
-      skillQuery,
-      eventType: row.eventType,
-      eventId: row.id,
-      eventCreatedAt: row.createdAt,
-    });
-    if (match) evidenceByRunId.set(row.runId, match);
+    const match = skillQuery
+      ? extractSkillEvidenceMatch({
+        payload: row.payload,
+        evidenceType,
+        skillQuery,
+        eventType: row.eventType,
+        eventId: row.id,
+        eventCreatedAt: row.createdAt,
+      })
+      : extractFirstSkillEvidenceMatch({
+        payload: row.payload,
+        eventType: row.eventType,
+        eventId: row.id,
+        eventCreatedAt: row.createdAt,
+      });
+    if (!match) continue;
+    const current = evidenceByRunId.get(row.runId);
+    if (!current || (current.evidenceType === "loaded" && match.evidenceType === "used")) {
+      evidenceByRunId.set(row.runId, match);
+    }
   }
   return evidenceByRunId;
 }
@@ -432,7 +644,9 @@ async function loadRunEvents(db: Db, runId: string): Promise<HeartbeatRunEvent[]
   }));
 }
 
-async function loadRunLogContent(run: typeof heartbeatRuns.$inferSelect) {
+async function loadRunLogContent(
+  run: Pick<typeof heartbeatRuns.$inferSelect, "logStore" | "logRef" | "logBytes">,
+) {
   if (!run.logStore || !run.logRef) return "";
   const logStore = getRunLogStore();
   const result = await logStore.read(
@@ -458,10 +672,99 @@ export async function listObservedRuns(db: Db, input: ListObservedRunsInput): Pr
   return Promise.all(rows.map((row) => serializeRunRow(row, issueMap, revisionsByAgentId, skillEvidenceMap)));
 }
 
+export async function listRunSummaries(db: Db, input: ListRunSummariesInput): Promise<RunSummaryPage> {
+  const fetchedRows = await loadSummaryRunRows(db, input);
+  const hasMore = fetchedRows.length > input.limit;
+  const rows = hasMore ? fetchedRows.slice(0, input.limit) : fetchedRows;
+  const [issueMap, skillEvidenceMap] = await Promise.all([
+    loadIssuesForRuns(db, rows),
+    loadSkillEvidenceForRuns(db, rows, input, true),
+  ]);
+
+  const items: RunSummary[] = rows.map((row) => {
+    const inputTokens = finiteNonNegativeNumber(row.usageInputTokens);
+    const cachedInputTokens = finiteNonNegativeNumber(row.usageCachedInputTokens);
+    const outputTokens = finiteNonNegativeNumber(row.usageOutputTokens);
+    const costUsd = finiteNonNegativeNumber(row.usageCostUsd) ?? finiteNonNegativeNumber(row.resultCostUsd);
+    const hasUsage = inputTokens !== null || cachedInputTokens !== null || outputTokens !== null
+      || costUsd !== null || Boolean(row.usageProvider) || Boolean(row.usageModel);
+    const tokenSummary = summarizeTokenUsage({
+      inputTokens,
+      cachedInputTokens,
+      outputTokens,
+      provider: row.usageProvider,
+    });
+    const durationMs = row.startedAt && row.finishedAt
+      ? Math.max(0, row.finishedAt.getTime() - row.startedAt.getTime())
+      : null;
+
+    return {
+      id: row.id,
+      orgId: row.orgId,
+      orgName: row.orgName,
+      agentId: row.agentId,
+      agentName: row.agentName,
+      runtime: row.agentRuntimeType,
+      invocationSource: row.invocationSource as RunSummary["invocationSource"],
+      triggerDetail: row.triggerDetail as RunSummary["triggerDetail"],
+      status: row.status as RunSummary["status"],
+      issue: row.issueId ? issueMap.get(row.issueId) ?? null : null,
+      target: row.targetType && row.targetId ? { type: row.targetType, id: row.targetId } : null,
+      chatConversationId: row.chatConversationId,
+      startedAt: row.startedAt,
+      finishedAt: row.finishedAt,
+      durationMs,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      outcome: clipSummaryText(row.outcomeText),
+      error: clipSummaryText(row.errorText),
+      usage: hasUsage ? {
+        inputTokens: tokenSummary.inputTokens,
+        cachedInputTokens: tokenSummary.cachedInputTokens,
+        outputTokens: tokenSummary.outputTokens,
+        totalTokens: tokenSummary.totalTokens,
+        costUsd,
+        provider: row.usageProvider,
+        model: row.usageModel,
+      } : null,
+      skillEvidence: skillEvidenceMap.get(row.id) ?? null,
+      hasLog: Boolean(row.logStore && row.logRef),
+      logBytes: Math.max(0, Number(row.logBytes ?? 0) || 0),
+    };
+  });
+
+  return {
+    items,
+    page: {
+      limit: input.limit,
+      hasMore,
+      nextCursor: hasMore && rows.length > 0 ? encodeRunSummaryCursor(rows[rows.length - 1]!) : null,
+    },
+  };
+}
+
 type RunIdResolutionScope = { orgIds?: string[] };
+
+function assertRunOrgScope(orgId: string, scope: RunIdResolutionScope) {
+  if (scope.orgIds && !scope.orgIds.includes(orgId)) {
+    throw forbidden("User does not have access to this organization");
+  }
+}
+
+async function loadRunOrgId(db: Db, runId: string) {
+  return db
+    .select({ orgId: heartbeatRuns.orgId })
+    .from(heartbeatRuns)
+    .where(eq(heartbeatRuns.id, runId))
+    .limit(1)
+    .then((rows) => rows[0]?.orgId ?? null);
+}
 
 export async function getObservedRun(db: Db, runId: string, scope: RunIdResolutionScope = {}): Promise<RunExportRow | null> {
   const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
+  const orgId = await loadRunOrgId(db, resolvedRunId);
+  if (!orgId) return null;
+  assertRunOrgScope(orgId, scope);
   const row = await loadRunRowById(db, resolvedRunId);
   if (!row) return null;
   const [issueMap, revisionsByAgentId] = await Promise.all([
@@ -471,37 +774,80 @@ export async function getObservedRun(db: Db, runId: string, scope: RunIdResoluti
   return serializeRunRow(row, issueMap, revisionsByAgentId);
 }
 
-export async function getObservedRunEvents(db: Db, runId: string, scope: RunIdResolutionScope = {}) {
+export async function getObservedRunEvents(
+  db: Db,
+  runId: string,
+  scope: RunIdResolutionScope = {},
+  input: { afterSeq?: number; limit?: number } = {},
+) {
   const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
-  const run = await db
-    .select({ id: heartbeatRuns.id })
-    .from(heartbeatRuns)
-    .where(eq(heartbeatRuns.id, resolvedRunId))
-    .limit(1)
-    .then((rows) => rows[0] ?? null);
-  if (!run) throw notFound("Agent run not found");
-  return loadRunEvents(db, resolvedRunId);
+  const orgId = await loadRunOrgId(db, resolvedRunId);
+  if (!orgId) throw notFound("Agent run not found");
+  assertRunOrgScope(orgId, scope);
+  const heartbeat = heartbeatService(db);
+  const afterSeq = Math.max(0, Math.floor(input.afterSeq ?? 0));
+  const limit = Math.max(1, Math.min(999, Math.floor(input.limit ?? 200)));
+  const fetched = await heartbeat.listEvents(resolvedRunId, afterSeq, limit + 1);
+  const hasMore = fetched.length > limit;
+  const currentUserRedactionOptions = {
+    enabled: (await instanceSettingsService(db).getGeneral()).censorUsernameInLogs,
+  };
+  const items = (hasMore ? fetched.slice(0, limit) : fetched).map((event) =>
+    redactCurrentUserValue({
+      ...event,
+      stream: event.stream as HeartbeatRunEvent["stream"],
+      level: event.level as HeartbeatRunEvent["level"],
+      payload: redactEventPayload(event.payload),
+    }, currentUserRedactionOptions),
+  );
+  return {
+    orgId,
+    response: {
+      items,
+      page: {
+        afterSeq,
+        limit,
+        hasMore,
+        nextAfterSeq: hasMore && items.length > 0 ? items[items.length - 1]!.seq : null,
+      },
+    },
+  };
 }
 
-export async function getObservedRunLog(db: Db, runId: string, scope: RunIdResolutionScope = {}) {
+export async function getObservedRunLog(
+  db: Db,
+  runId: string,
+  scope: RunIdResolutionScope = {},
+  input: { offset?: number; limitBytes?: number } = {},
+) {
   const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
-  const run = await db
-    .select()
-    .from(heartbeatRuns)
-    .where(eq(heartbeatRuns.id, resolvedRunId))
-    .limit(1)
-    .then((rows) => rows[0] ?? null);
-  if (!run) throw notFound("Agent run not found");
-  return { content: await loadRunLogContent(run) };
+  const orgId = await loadRunOrgId(db, resolvedRunId);
+  if (!orgId) throw notFound("Agent run not found");
+  assertRunOrgScope(orgId, scope);
+  const heartbeat = heartbeatService(db);
+  const offset = Math.max(0, Math.floor(input.offset ?? 0));
+  const limitBytes = Math.max(4, Math.min(1_000_000, Math.floor(input.limitBytes ?? 256_000)));
+  const result = await heartbeat.readLog(resolvedRunId, { offset, limitBytes });
+  return {
+    orgId,
+    response: {
+      ...result,
+      page: {
+        offset,
+        limitBytes,
+        endOffset: result.endOffset,
+        eof: result.eof,
+        nextOffset: result.nextOffset ?? null,
+      },
+    },
+  };
 }
 
 export async function getObservedRunDetail(db: Db, runId: string, scope: RunIdResolutionScope = {}): Promise<ObservedRunDetail | null> {
   const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
-  const [observedRun, events] = await Promise.all([
-    getObservedRun(db, resolvedRunId, scope),
-    loadRunEvents(db, resolvedRunId),
-  ]);
+  const observedRun = await getObservedRun(db, resolvedRunId, scope);
   if (!observedRun) return null;
+  const events = await loadRunEvents(db, resolvedRunId);
 
   const run = { ...observedRun.run, chatConversationId: observedRun.run.chatConversationId ?? null };
   const logContent = await loadRunLogContent(run).catch(() => "");

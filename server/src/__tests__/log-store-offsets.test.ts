@@ -43,6 +43,35 @@ describe("log store offsets", () => {
     expect(result.nextOffset).toBeUndefined();
   });
 
+  it("keeps UTF-8 code points intact across small run log pages", async () => {
+    const root = await makeTempRoot("rudder-run-log-utf8-pages-");
+    process.env.RUN_LOG_BASE_PATH = path.join(root, "run-logs");
+    vi.resetModules();
+    const { getRunLogStore } = await import("../services/run-log-store.js");
+    const store = getRunLogStore();
+    const handle = await store.begin({ orgId: "org-1", agentId: "agent-1", runId: "run-utf8" });
+    await store.append(handle, {
+      ts: "2026-04-24T00:00:00.000Z",
+      stream: "stdout",
+      chunk: "中文日志分页完整",
+    });
+    const summary = await store.finalize(handle);
+    const full = await store.read(handle, { offset: 0, limitBytes: summary.bytes });
+
+    const pages: string[] = [];
+    let offset = 0;
+    for (let index = 0; index < summary.bytes; index += 1) {
+      const page = await store.read(handle, { offset, limitBytes: 4 });
+      pages.push(page.content);
+      expect(page.content).not.toContain("\uFFFD");
+      if (page.eof) break;
+      expect(page.nextOffset).toBeGreaterThan(offset);
+      offset = page.nextOffset!;
+    }
+
+    expect(pages.join("")).toBe(full.content);
+  });
+
   it("reports workspace operation log offsets as bytes for UTF-8 content", async () => {
     const root = await makeTempRoot("rudder-workspace-operation-log-offsets-");
     process.env.WORKSPACE_OPERATION_LOG_BASE_PATH = path.join(root, "workspace-operation-logs");

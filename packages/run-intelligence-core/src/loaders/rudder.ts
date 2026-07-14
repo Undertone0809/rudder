@@ -1,5 +1,5 @@
 import type { TranscriptEntry, TranscriptTodoItemStatus } from "@rudderhq/agent-runtime-utils";
-import type { HeartbeatRun, HeartbeatRunEvent } from "@rudderhq/shared";
+import type { HeartbeatRun, HeartbeatRunEvent, RunSummary, RunSummaryPage } from "@rudderhq/shared";
 import { diagnoseRun } from "../diagnosis.js";
 import { getTranscriptParser } from "../parsers.js";
 import { buildTranscript, parseNdjsonLog } from "../transcript.js";
@@ -26,24 +26,75 @@ export async function listObservedRuns(
   return fetchJson<RunExportRow[]>(`${apiBaseUrl}/run-intelligence/orgs/${encodeURIComponent(orgId)}/runs${qs}`);
 }
 
+export async function listObservedRunSummaries(
+  apiBaseUrl: string,
+  orgId: string,
+  params?: URLSearchParams,
+): Promise<RunSummaryPage> {
+  const query = new URLSearchParams(params);
+  query.set("projection", "summary");
+  return fetchJson<RunSummaryPage>(
+    `${apiBaseUrl}/run-intelligence/orgs/${encodeURIComponent(orgId)}/runs?${query.toString()}`,
+  );
+}
+
 export async function getObservedRun(apiBaseUrl: string, runId: string): Promise<RunExportRow> {
   return fetchJson<RunExportRow>(`${apiBaseUrl}/run-intelligence/runs/${encodeURIComponent(runId)}`);
 }
 
+interface RunEventsPage {
+  items: HeartbeatRunEvent[];
+  page: {
+    hasMore: boolean;
+    nextAfterSeq: number | null;
+  };
+}
+
+interface RunLogPage {
+  content: string;
+  page: {
+    eof: boolean;
+    nextOffset: number | null;
+  };
+}
+
 export async function getRunEvents(apiBaseUrl: string, runId: string): Promise<HeartbeatRunEvent[]> {
-  return fetchJson<HeartbeatRunEvent[]>(`${apiBaseUrl}/run-intelligence/runs/${encodeURIComponent(runId)}/events`);
+  const events: HeartbeatRunEvent[] = [];
+  let afterSeq = 0;
+  do {
+    const page = await fetchJson<RunEventsPage>(
+      `${apiBaseUrl}/run-intelligence/runs/${encodeURIComponent(runId)}/events?afterSeq=${afterSeq}&limit=999`,
+    );
+    events.push(...page.items);
+    if (!page.page.hasMore || page.page.nextAfterSeq === null) return events;
+    afterSeq = page.page.nextAfterSeq;
+  } while (true);
 }
 
 export async function getRunLog(apiBaseUrl: string, runId: string): Promise<{ content: string }> {
-  return fetchJson<{ content: string }>(`${apiBaseUrl}/run-intelligence/runs/${encodeURIComponent(runId)}/log`);
+  const chunks: string[] = [];
+  let offset = 0;
+  do {
+    const page = await fetchJson<RunLogPage>(
+      `${apiBaseUrl}/run-intelligence/runs/${encodeURIComponent(runId)}/log?offset=${offset}&limitBytes=1000000`,
+    );
+    chunks.push(page.content);
+    if (page.page.eof || page.page.nextOffset === null) return { content: chunks.join("") };
+    offset = page.page.nextOffset;
+  } while (true);
 }
 
 export async function findObservedRunByPrefix(apiBaseUrl: string, runIdPrefix: string): Promise<RunExportRow | null> {
+  const match = await findObservedRunSummaryByPrefix(apiBaseUrl, runIdPrefix);
+  return match ? getObservedRun(apiBaseUrl, match.id) : null;
+}
+
+export async function findObservedRunSummaryByPrefix(apiBaseUrl: string, runIdPrefix: string): Promise<RunSummary | null> {
   const organizations = await listOrganizations(apiBaseUrl);
   for (const organization of organizations) {
-    const params = new URLSearchParams({ limit: "200", runIdPrefix });
-    const rows = await listObservedRuns(apiBaseUrl, organization.id, params);
-    const match = rows.find((row) => row.run.id.toLowerCase().startsWith(runIdPrefix.toLowerCase()));
+    const params = new URLSearchParams({ limit: "100", runIdPrefix });
+    const page = await listObservedRunSummaries(apiBaseUrl, organization.id, params);
+    const match = page.items.find((row) => row.id.toLowerCase().startsWith(runIdPrefix.toLowerCase()));
     if (match) return match;
   }
   return null;

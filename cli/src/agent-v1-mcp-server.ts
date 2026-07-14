@@ -817,7 +817,9 @@ function cliArgsForCapability(
       pushOptional(args, "--used-skill", input.usedSkill);
       pushOptional(args, "--loaded-skill", input.loadedSkill);
       pushOptional(args, "--created-before", input.createdBefore);
+      pushOptional(args, "--cursor", input.cursor);
       pushOptional(args, "--limit", input.limit);
+      pushBoolean(args, "--full", input.full);
       return args;
     }
     case "runs.by-skill": {
@@ -828,16 +830,24 @@ function cliArgsForCapability(
       pushOptional(args, "--runtime", input.runtime);
       pushOptional(args, "--issue-id", input.issueId);
       pushOptional(args, "--created-before", input.createdBefore);
+      pushOptional(args, "--cursor", input.cursor);
       pushOptional(args, "--limit", input.limit);
+      pushBoolean(args, "--full", input.full);
       return args;
     }
     case "runs.get":
       return ["runs", "get", requiredString(input, "run")];
-    case "runs.events":
-      return ["runs", "events", requiredString(input, "run")];
+    case "runs.events": {
+      const args = ["runs", "events", requiredString(input, "run")];
+      pushOptional(args, "--after-seq", input.afterSeq);
+      pushOptional(args, "--limit", input.limit);
+      return args;
+    }
     case "runs.log": {
       const args = ["runs", "log", requiredString(input, "run")];
       pushOptional(args, "--max-chars", input.maxChars);
+      pushOptional(args, "--offset", input.offset);
+      pushOptional(args, "--limit-bytes", input.limitBytes);
       return args;
     }
     case "runs.transcript": {

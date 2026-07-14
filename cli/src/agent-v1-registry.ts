@@ -1024,9 +1024,9 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   },
   {
     id: "runs.list",
-    command: "rudder runs list --org-id <id> [--used-skill <skill>] [--loaded-skill <skill>]",
+    command: "rudder runs list --org-id <id> [--used-skill <skill>] [--loaded-skill <skill>] [--cursor <cursor>] [--full]",
     category: "runs",
-    description: "List observed agent runs with filters for status, agent, issue, runtime, time, and skill evidence; used-skill means actual usage and loaded-skill is opt-in.",
+    description: "List lightweight run summaries with stable pagination and filters; use --full only for legacy full-row compatibility.",
     mutating: false,
     contract: "agent-v1",
     requiresOrgId: true,
@@ -1036,9 +1036,9 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   },
   {
     id: "runs.by-skill",
-    command: "rudder runs by-skill <skill> --org-id <id> [--evidence <used-or-loaded>]",
+    command: "rudder runs by-skill <skill> --org-id <id> [--evidence <used-or-loaded>] [--cursor <cursor>] [--full]",
     category: "runs",
-    description: "Build a skill evidence packet from recent runs; defaults to actual usage and returns status counts, agents, issues, common errors, rows, and transcript/errors follow-up commands.",
+    description: "Build a paginated skill evidence packet from lightweight run summaries; use --full only for legacy full-row compatibility.",
     mutating: false,
     contract: "agent-v1",
     requiresOrgId: true,
@@ -1060,9 +1060,9 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   },
   {
     id: "runs.events",
-    command: "rudder runs events <run-id>",
+    command: "rudder runs events <run-id> [--after-seq <n>] [--limit <n>]",
     category: "runs",
-    description: "List persisted run events.",
+    description: "List a bounded page of persisted run events with a sequence cursor.",
     mutating: false,
     contract: "agent-v1",
     requiresOrgId: false,
@@ -1072,9 +1072,9 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   },
   {
     id: "runs.log",
-    command: "rudder runs log <run-id>",
+    command: "rudder runs log <run-id> [--offset <bytes>] [--limit-bytes <n>]",
     category: "runs",
-    description: "Read stored run log content with clipped human output.",
+    description: "Read a bounded byte range of stored run log content.",
     mutating: false,
     contract: "agent-v1",
     requiresOrgId: false,
@@ -1339,6 +1339,9 @@ function mcpInputSchemaForCapability(id: string): AgentV1McpToolManifestEntry["i
     contextTurns: "Number of context turns.",
     maxChars: "Maximum characters.",
     snippetChars: "Maximum snippet characters.",
+    afterSeq: "Return events after this sequence number.",
+    offset: "Byte offset for ranged reads.",
+    limitBytes: "Maximum bytes for ranged reads.",
   })) {
     add(key, mcpNumber(description));
   }
@@ -1351,7 +1354,7 @@ function mcpInputSchemaForCapability(id: string): AgentV1McpToolManifestEntry["i
   })) {
     add(key, mcpStringArray(description));
   }
-  for (const key of ["clearTitle", "clearCapabilities", "clearDescription", "clearReportsTo", "enable", "enabled", "disabled", "reopen", "planMode", "includeTranscript", "includeOutput", "includeOutputs", "notifyOnIssueCreated", "errorsOnly", "chronological", "narrative", "submit"]) {
+  for (const key of ["clearTitle", "clearCapabilities", "clearDescription", "clearReportsTo", "enable", "enabled", "disabled", "reopen", "planMode", "includeTranscript", "includeOutput", "includeOutputs", "notifyOnIssueCreated", "errorsOnly", "chronological", "narrative", "submit", "full"]) {
     add(key, mcpBoolean(`Boolean option ${key}.`));
   }
 
