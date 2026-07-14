@@ -81,7 +81,7 @@ history or line-by-line code copies.
 - `domains/collaboration/`: Chat, Messenger, issue threads, readable
   references, unread state, and IM/agent-integration bridges.
 - `domains/control-plane/`: approvals, budgets, costs, activity, dashboard
-  rollups, and operator-observability signals.
+  rollups, operator-observability signals, and server process lifecycle.
 - `domains/review-feedback-learning/`: review decisions, feedback capture,
   issue/review follow-up, and learning-promotion paths.
 - `domains/plugins/`: installed plugin lifecycle, worker boundaries,

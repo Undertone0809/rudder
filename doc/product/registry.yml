@@ -1199,6 +1199,23 @@ contracts:
       - tests/e2e/run-transcript-detail.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+  CONTROL.SERVER.LIFECYCLE.001:
+    owner: product
+    domain: control-plane
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/control-plane/server-runtime-lifecycle.md
+    related_code:
+      - server/src/index.ts
+      - server/src/runtime/runtime-supervisor.ts
+      - server/src/realtime/live-events-ws.ts
+    related_tests:
+      - server/src/__tests__/runtime-supervisor.test.ts
+      - server/src/__tests__/live-events-ws.test.ts
+      - scripts/smoke/server-runtime-lifecycle.mjs
+      - scripts/smoke/server-runtime-lifecycle-child.ts
+    related_plans:
+      - doc/plans/2026-07-13-runtime-supervisor-resource-lifecycle.md
   REVIEW.DECISION.001:
     owner: product
     domain: review-feedback-learning

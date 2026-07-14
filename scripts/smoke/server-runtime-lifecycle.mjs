@@ -1,10 +1,10 @@
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
 
 const SUCCESS_MARKER = "SERVER_RUNTIME_LIFECYCLE_OK";
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));

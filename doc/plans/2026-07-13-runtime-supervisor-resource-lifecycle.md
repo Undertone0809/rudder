@@ -68,7 +68,8 @@ those semantics while making ownership explicit.
 
 ## Non-Negotiable Compatibility Guarantees
 
-- No `doc/product/**` edits.
+- No `doc/product/**` edits in the implementation commit; any later registry
+  sync must remain documentation-only and separately authorized.
 - No HTTP route, query, status, response, or authentication changes.
 - No WebSocket path, authentication, payload, event ordering, or reconnect
   changes while the server is running.
@@ -82,8 +83,17 @@ those semantics while making ownership explicit.
 - Preserve best-effort shutdown: one disposer failure is logged and does not
   skip remaining resource cleanup.
 
-The Product Logic Registry remains read-only. This is an internal lifecycle
-refactor, so no product contract delta is authorized or required.
+The Product Logic Registry remained read-only during implementation. This is an
+internal lifecycle refactor, so no product contract delta was authorized or
+required for the implementation commit.
+
+Post-implementation contract sync (2026-07-14): the user later explicitly
+authorized updating `doc/product/**`. The delivered observable lifecycle
+guarantees are now recorded as `CONTROL.SERVER.LIFECYCLE.001` without changing
+runtime or business behavior. The contract deliberately scopes ownership to
+resources registered with the server lifecycle owner and records unbounded HTTP
+drain, shared-PostgreSQL black-box coverage, and deferred teardown work as known
+gaps.
 
 ## Target Boundary
 
