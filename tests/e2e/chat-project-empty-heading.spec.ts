@@ -63,6 +63,8 @@ test.describe("Chat project empty heading", () => {
     await expect(heading).toHaveText(`What should we build in ${alpha.name}?`, { timeout: 15_000 });
     await expect(heading).toHaveClass(/motion-chat-empty-heading/);
     await expect(page.getByTestId("chat-project-selector")).toContainText(alpha.name);
+    await expect(page.getByRole("button", { name: "Create a file or build a site" })).toBeVisible();
+    await page.getByTestId("chat-empty-state-tab-recent").click();
     await expect(recentConversations).toContainText("Alpha kickoff thread", { timeout: 15_000 });
     await expect(recentConversations).toHaveCSS("animation-name", "rudder-chat-empty-recent-project-enter");
 
@@ -206,8 +208,10 @@ test.describe("Chat project empty heading", () => {
     await page.goto(`/${organization.issuePrefix}/messenger/chat?projectId=${project.id}&agentId=${agent.id}`);
 
     const recentConversations = page.getByTestId("chat-empty-state-recent-project-conversations");
+    await expect(page.getByTestId("chat-empty-state-tab-use-cases")).toHaveAttribute("aria-selected", "true", { timeout: 15_000 });
+    await expect(page.getByRole("button", { name: /Create a file or build a site/ })).toBeVisible();
+    await page.getByTestId("chat-empty-state-tab-recent").click();
     await expect(recentConversations).toHaveAttribute("data-state", "open", { timeout: 15_000 });
-    await expect(recentConversations).toContainText("Recent conversations");
     await expect(recentConversations).toContainText("Users need edit/delete comment support");
     await expect(recentConversations).toContainText(secondUserQuestion);
     await expect(recentConversations).not.toContainText(assistantReply);
@@ -219,10 +223,10 @@ test.describe("Chat project empty heading", () => {
 
     await page.getByTestId("chat-empty-state-tab-use-cases").click();
     await expect(page.getByTestId("chat-empty-state-tab-use-cases")).toHaveAttribute("aria-selected", "true");
-    await expect(page.getByRole("button", { name: /Scope a new feature/ })).toBeVisible();
-    await expect(page.getByRole("button", { name: /Clarify a vague request/ })).toBeVisible();
-    await expect(page.getByRole("button", { name: /Turn a chat into an issue/ })).toBeVisible();
-    await expect(page.getByRole("button", { name: /Review a blocker/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Create a file or build a site/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Research and plan next steps/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Get a briefing on recent work/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Automate routine and recurring work/ })).toBeVisible();
 
     await page.getByTestId("chat-empty-state-tab-recent").click();
     await expect(page.getByTestId("chat-empty-state-tab-recent")).toHaveAttribute("aria-selected", "true");
@@ -231,14 +235,11 @@ test.describe("Chat project empty heading", () => {
     await expect(composer).toBeVisible({ timeout: 15_000 });
     await composer.fill("Draft a new implementation plan");
 
-    await expect(recentConversations).toHaveAttribute("data-state", "closed");
-    await expect(recentConversations).toHaveAttribute("aria-hidden", "true");
-    await expect(recentConversations).toHaveCSS("pointer-events", "none");
-    await expect(recentConversations).toHaveCSS("opacity", "0");
-    await expect(recentConversations).toHaveCSS("max-height", "0px");
+    await expect(recentConversations).toHaveCount(0);
 
     await composer.fill("");
 
+    await expect(recentConversations).toBeVisible();
     await expect(recentConversations).toHaveAttribute("data-state", "open");
     await expect(recentConversations).toHaveAttribute("aria-hidden", "false");
     await expect(recentConversations).toHaveCSS("opacity", "1");
@@ -284,6 +285,8 @@ test.describe("Chat project empty heading", () => {
     await page.goto(`/${organization.issuePrefix}/messenger/chat?projectId=${project.id}&agentId=${agent.id}`);
 
     const recentConversations = page.getByTestId("chat-empty-state-recent-project-conversations");
+    await expect(page.getByTestId("chat-empty-state-tab-use-cases")).toHaveAttribute("aria-selected", "true", { timeout: 15_000 });
+    await page.getByTestId("chat-empty-state-tab-recent").click();
     await expect(recentConversations).toHaveAttribute("data-state", "open", { timeout: 15_000 });
     await expect(recentConversations).toContainText("Recent overflow thread 12");
     await expect(recentConversations).not.toContainText("Recent overflow thread 7");
@@ -324,7 +327,7 @@ test.describe("Chat project empty heading", () => {
     const heading = page.locator("h1.motion-chat-empty-heading");
     await expect(heading).toHaveText(`What should we build in ${longProjectName}?`, { timeout: 15_000 });
     await expect(page.getByTestId("chat-empty-state-tabs")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /Scope a new feature/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Create a file or build a site/ })).toBeVisible();
 
     const headingMetrics = await heading.evaluate((element) => ({
       clientWidth: element.clientWidth,

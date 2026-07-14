@@ -7,11 +7,13 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  applyChatPromptToDraft,
   ChatEmptyStatePromptOptions,
   ChatEmptyStateRecentConversations,
   ChatLongMessageBody,
+  chatPromptQueryFromDraft,
+  chatPromptSuggestionsForDraft,
   EMPTY_STATE_PROMPT_GROUPS,
-  OPEN_TASK_PRIORITY_PROMPT,
 } from "./Chat";
 
 vi.mock("@/lib/router", () => ({
@@ -74,9 +76,9 @@ function render(element: ReactNode) {
   return container;
 }
 
-function turnChatIntoIssueGroup() {
-  const group = EMPTY_STATE_PROMPT_GROUPS.find((candidate) => candidate.label === "Turn a chat into an issue");
-  if (!group) throw new Error("Missing Turn a chat into an issue prompt group");
+function automateGroup() {
+  const group = EMPTY_STATE_PROMPT_GROUPS.find((candidate) => candidate.id === "automate");
+  if (!group) throw new Error("Missing automate prompt group");
   return group;
 }
 
@@ -108,34 +110,95 @@ function chatConversation(overrides: Partial<ChatConversation> = {}): ChatConver
   } as ChatConversation;
 }
 
-describe("Chat empty-state prompt examples", () => {
-  it("includes the open-task priority prompt under issue examples", () => {
-    expect(turnChatIntoIssueGroup().examples).toContain(OPEN_TASK_PRIORITY_PROMPT);
+describe("Chat empty-state prompt starters", () => {
+  it("uses the four Codex task categories with complete editable prompts", () => {
+    expect(EMPTY_STATE_PROMPT_GROUPS.map((group) => group.label)).toEqual([
+      "Create a file or build a site",
+      "Research and plan next steps",
+      "Get a briefing on recent work",
+      "Automate routine and recurring work",
+    ]);
+    expect(EMPTY_STATE_PROMPT_GROUPS.every((group) => group.prompt.includes("Start by asking me"))).toBe(true);
+    expect(EMPTY_STATE_PROMPT_GROUPS.every((group) => group.suggestions.length === 4)).toBe(true);
   });
 
-  it("selects the priority prompt without using a submit button", () => {
-    const onExampleSelect = vi.fn();
+  it("matches typed task intent and narrows the suggestion list", () => {
+    expect(chatPromptSuggestionsForDraft("Automate").map((suggestion) => suggestion.label)).toEqual([
+      "Automate a recurring report",
+      "Automate my morning prep",
+      "Automate triage",
+      "Automate monitoring important changes",
+    ]);
+    expect(chatPromptSuggestionsForDraft("Automate my").map((suggestion) => suggestion.label)).toEqual([
+      "Automate my morning prep",
+    ]);
+    expect(chatPromptSuggestionsForDraft("monitoring changes").map((suggestion) => suggestion.label)).toEqual([
+      "Automate monitoring important changes",
+    ]);
+  });
+
+  it.each([
+    ["file", "create"],
+    ["plan", "research"],
+    ["briefing", "briefing"],
+    ["routine", "automate"],
+  ] as const)("matches the %s task keyword against group label tokens", (query, groupId) => {
+    expect(chatPromptSuggestionsForDraft(query).map((suggestion) => suggestion.groupId)).toEqual([
+      groupId,
+      groupId,
+      groupId,
+      groupId,
+    ]);
+  });
+
+  it("hides suggestions after a complete prompt has been selected", () => {
+    const selectedPrompt = automateGroup().suggestions[1].prompt;
+    expect(chatPromptSuggestionsForDraft(selectedPrompt)).toEqual([]);
+    expect(chatPromptSuggestionsForDraft(`${selectedPrompt} Include weather.`)).toEqual([]);
+  });
+
+  it("preserves selected Skill references while replacing the typed starter", () => {
+    const skillReference = "[daily-brief](skill://org/skill-1?ref=daily-brief)";
+    const draft = `Automate ${skillReference}\u00a0`;
+    const prompt = automateGroup().suggestions[0].prompt;
+
+    expect(chatPromptQueryFromDraft(draft)).toBe("Automate");
+    expect(applyChatPromptToDraft(draft, prompt)).toBe(`${prompt} ${skillReference}\u00a0`);
+  });
+
+  it("renders keyboard-selectable options and fills without submitting", () => {
+    const onSuggestionSelect = vi.fn();
+    const suggestions = automateGroup().suggestions.map((suggestion) => ({
+      ...suggestion,
+      groupId: automateGroup().id,
+    }));
     const container = render(
       <ChatEmptyStatePromptOptions
-        group={turnChatIntoIssueGroup()}
+        suggestions={suggestions}
         optionsId="chat-empty-state-prompt-options"
-        entered
-        originX="50%"
-        onExampleSelect={onExampleSelect}
+        activeIndex={1}
+        onActiveIndexChange={vi.fn()}
+        onSuggestionSelect={onSuggestionSelect}
       />,
     );
 
-    const priorityPromptButton = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent === OPEN_TASK_PRIORITY_PROMPT);
+    const listbox = container.querySelector("[role='listbox']");
+    const morningPrepButton = Array.from(container.querySelectorAll<HTMLButtonElement>("[role='option']"))
+      .find((button) => button.textContent?.includes("Automate my morning prep"));
 
-    expect(priorityPromptButton).toBeTruthy();
-    expect(priorityPromptButton?.getAttribute("type")).toBe("button");
+    expect(listbox?.getAttribute("aria-label")).toBe("Suggested prompts");
+    expect(morningPrepButton?.getAttribute("type")).toBe("button");
+    expect(morningPrepButton?.getAttribute("tabindex")).toBe("-1");
+    expect(morningPrepButton?.getAttribute("aria-selected")).toBe("true");
 
     act(() => {
-      priorityPromptButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      morningPrepButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(onExampleSelect).toHaveBeenCalledWith(OPEN_TASK_PRIORITY_PROMPT);
+    expect(onSuggestionSelect).toHaveBeenCalledWith(expect.objectContaining({
+      id: "automate-morning-prep",
+      prompt: automateGroup().suggestions[1].prompt,
+    }));
   });
 });
 

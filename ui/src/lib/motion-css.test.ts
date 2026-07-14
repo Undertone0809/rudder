@@ -28,7 +28,6 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain(".motion-live-surface::before");
     expect(motionCss).toContain('.motion-kanban-card[data-live="true"]');
     expect(motionCss).toContain('.motion-org-edge[data-active="true"]');
-    expect(motionCss).toContain(".motion-chat-options-pop");
     expect(motionCss).toContain(".motion-chat-composer-menu-pop");
     expect(motionCss).toContain(".motion-chat-empty-heading");
     expect(motionCss).toContain(".motion-chat-empty-recent-conversations");
@@ -59,15 +58,6 @@ describe("Motion V1 CSS", () => {
     const liveSurfaceKeyframes = motionCss.match(/@keyframes rudder-live-surface \{[\s\S]*?\n\}/)?.[0] ?? "";
     expect(liveSurfaceKeyframes).toContain("--motion-live-surface-angle: 360deg");
     expect(liveSurfaceKeyframes).not.toContain("transform:");
-  });
-
-  it("defines a visible pop animation for chat option disclosure", () => {
-    expect(motionCss).toContain("@keyframes rudder-chat-options-pop");
-    expect(motionCss).toContain("var(--chat-options-origin-x");
-    expect(motionCss).toContain("scale(0.82)");
-    expect(motionCss).toContain("scale(1.035)");
-    expect(motionCss).toContain("@keyframes rudder-chat-option-enter");
-    expect(motionCss).toContain("[data-chat-option]:nth-child(2)");
   });
 
   it("defines a focused pop animation for chat composer menus", () => {

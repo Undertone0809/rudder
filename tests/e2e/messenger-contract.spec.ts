@@ -2966,7 +2966,7 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.locator(".rudder-mdxeditor-content").first()).toBeVisible();
     await expect(page.getByRole("heading", { name: "What can I help with, Wanhu?" })).toBeVisible();
     await expect(page.locator('.rudder-mdxeditor [class*="_placeholder_"]')).toHaveText("Ask anything");
-    await expect(page.getByRole("button", { name: "Clarify a vague request" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Research and plan next steps" })).toBeVisible();
     await expect(page.getByRole("link", { name: "New chat" })).toBeVisible();
     await expect(page.locator('[data-testid="workspace-sidebar"] [data-testid^="messenger-thread-"]')).toHaveCount(0);
     await expect(page.getByTestId(threadTestId("approvals"))).toHaveCount(0);
@@ -2996,63 +2996,6 @@ test.describe("Messenger unified threads contract", () => {
     const chatRow = page.getByTestId(threadTestId(`chat:${chatId}`));
     await expect(chatRow).toBeVisible({ timeout: 15_000 });
     await expect(chatRow).toContainText(message);
-  });
-
-  test("expands empty-state prompts into concrete use cases before filling the composer", async ({ page }) => {
-    const organization = await createOrganization(page, `Messenger-UseCases-${Date.now()}`);
-
-    await page.route("**/api/instance/settings/profile", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          nickname: "Wanhu",
-          moreAboutYou: "",
-        }),
-      });
-    });
-
-    await page.goto("/");
-    await page.evaluate((orgId) => {
-      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
-    }, organization.id);
-
-    await page.goto("/messenger");
-
-    const composer = page.locator(".rudder-mdxeditor-content").first();
-    await expect(composer).toBeVisible({ timeout: 15_000 });
-
-    await page.getByRole("button", { name: "Scope a new feature" }).click();
-    const promptOptions = page.getByTestId("chat-empty-state-prompt-options");
-    await expect(promptOptions).toBeVisible();
-    await expect(promptOptions).toHaveAttribute("data-entered", "true");
-    await expect(promptOptions).toHaveClass(/motion-chat-options-pop/);
-    await expect(promptOptions).toHaveAttribute("style", /--chat-options-origin-x:\s*22%/);
-    await expect(promptOptions).toContainText("Example use cases");
-    await expect(promptOptions).toHaveCSS("opacity", "1");
-    await expect(page.getByRole("button", { name: "Plan an approval queue for budget overrides" })).toBeVisible();
-
-    await promptOptions.evaluate((element) => {
-      element.setAttribute("data-test-remount-marker", "scope");
-    });
-    await page.getByRole("button", { name: "Turn a chat into an issue" }).click();
-    await expect(promptOptions).toHaveAttribute("style", /--chat-options-origin-x:\s*78%/);
-    await expect(promptOptions).not.toHaveAttribute("data-test-remount-marker", "scope");
-    await expect(page.getByRole("button", { name: "Extract the next shippable task from this discussion" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Plan an approval queue for budget overrides" })).toHaveCount(0);
-
-    await page.getByRole("button", { name: "Scope a new feature" }).click();
-    await expect(promptOptions).toHaveAttribute("style", /--chat-options-origin-x:\s*22%/);
-    await expect(page.getByRole("button", { name: "Plan an approval queue for budget overrides" })).toBeVisible();
-
-    await page.getByRole("button", { name: "Plan an approval queue for budget overrides" }).click();
-    await expect(composer).toContainText("Plan an approval queue for budget overrides");
-    await expect(promptOptions).toHaveCount(0);
-
-    await page.getByRole("button", { name: "Clarify a vague request" }).click();
-    await expect(promptOptions).toHaveAttribute("data-entered", "true");
-    await expect(page.getByRole("button", { name: "Turn rough notes into an implementation plan" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Plan an approval queue for budget overrides" })).toHaveCount(0);
   });
 
   test("re-enters Messenger at the last opened thread for the same organization", async ({ page }) => {

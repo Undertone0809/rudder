@@ -1453,11 +1453,14 @@ function CommonComponentsSection() {
         <LabExample title="Chat prompts, messages, and process states">
           <div className="space-y-5">
             <ChatEmptyStatePromptOptions
-              group={EMPTY_STATE_PROMPT_GROUPS[0]!}
+              suggestions={EMPTY_STATE_PROMPT_GROUPS[0]!.suggestions.map((suggestion) => ({
+                ...suggestion,
+                groupId: EMPTY_STATE_PROMPT_GROUPS[0]!.id,
+              }))}
               optionsId="ui-lab-chat-prompt-options"
-              entered
-              originX="36%"
-              onExampleSelect={() => {}}
+              activeIndex={0}
+              onActiveIndexChange={() => {}}
+              onSuggestionSelect={() => {}}
             />
 
             <div className="rounded-md border border-border bg-card/60 p-3">

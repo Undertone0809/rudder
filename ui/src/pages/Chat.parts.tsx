@@ -3,6 +3,7 @@ import { type ChatStreamDraftState } from "@/context/ChatGenerationContext";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { formatAssigneeUserLabel } from "@/lib/assignees";
 import { displayChatTitle, isDefaultChatTitle, promoteDefaultChatTitle } from "@/lib/chat-title";
+import { appendSkillReferencesToDraft } from "@/lib/organization-skill-picker";
 import { projectColorCssVars } from "@/lib/project-colors";
 import { Link } from "@/lib/router";
 import { sidePanelTargetFromHref, type SidePanelTarget } from "@/lib/side-panel-targets";
@@ -23,6 +24,10 @@ import {
   type Project
 } from "@rudderhq/shared";
 import {
+  BookOpen,
+  Clock3,
+  FilePlus2,
+  ListFilter,
   Loader2
 } from "lucide-react";
 import { useCallback, useEffect, useRef, type CSSProperties } from "react";
@@ -40,40 +45,117 @@ export type ChatImageContextMenuPosition = {
   top: number;
 };
 
-export const OPEN_TASK_PRIORITY_PROMPT = "List my open tasks by priority";
-
 export const EMPTY_STATE_PROMPT_GROUPS = [
   {
-    label: "Scope a new feature",
-    examples: [
-      "Plan an approval queue for budget overrides",
-      "Scope a weekly CEO status digest",
-      "Design an organization plugin install flow",
+    id: "create",
+    label: "Create a file or build a site",
+    trigger: "Create a",
+    prompt: "Create a new website for a business. Start by asking me about the business, its customers, and what the website should help them do.",
+    suggestions: [
+      {
+        id: "create-document",
+        label: "Create a new document",
+        prompt: "Create a new document. Start by asking me what it should be about.",
+      },
+      {
+        id: "create-spreadsheet",
+        label: "Create a new spreadsheet",
+        prompt: "Create a new spreadsheet. Start by asking me what it should track and who will use it.",
+      },
+      {
+        id: "create-presentation",
+        label: "Create a new presentation",
+        prompt: "Create a new presentation. Start by asking me what it should be about and who it is for.",
+      },
+      {
+        id: "create-website",
+        label: "Create a new website",
+        prompt: "Create a new website for a business. Start by asking me about the business, its customers, and what the website should help them do.",
+      },
     ],
   },
   {
-    label: "Clarify a vague request",
-    examples: [
-      "Turn rough notes into an implementation plan",
-      "Figure out what 'make Messenger less noisy' should mean",
-      "Translate a founder ask into acceptance criteria",
+    id: "research",
+    label: "Research and plan next steps",
+    trigger: "Figure out next steps",
+    prompt: "Figure out next steps for a strategy or project. Start by asking me what goal or initiative I'm planning around.",
+    suggestions: [
+      {
+        id: "research-topic",
+        label: "Figure out next steps for a topic I'm exploring",
+        prompt: "Figure out next steps for a topic I'm exploring. Start by asking me what I'm trying to move forward.",
+      },
+      {
+        id: "research-options",
+        label: "Figure out next steps after comparing options",
+        prompt: "Figure out next steps after comparing options. Start by asking me what options I'm considering.",
+      },
+      {
+        id: "research-meeting",
+        label: "Figure out next steps for an upcoming meeting",
+        prompt: "Figure out next steps for an upcoming meeting. Start by asking me which meeting to prepare for.",
+      },
+      {
+        id: "research-strategy",
+        label: "Figure out next steps for a strategy or project",
+        prompt: "Figure out next steps for a strategy or project. Start by asking me what goal or initiative I'm planning around.",
+      },
     ],
   },
   {
-    label: "Turn a chat into an issue",
-    examples: [
-      OPEN_TASK_PRIORITY_PROMPT,
-      "Extract the next shippable task from this discussion",
-      "Split this conversation into scope, owner, and done criteria",
-      "Draft an issue from a decision we already made",
+    id: "briefing",
+    label: "Get a briefing on recent work",
+    trigger: "Brief me on",
+    prompt: "Brief me on a project. Start by asking me which project to cover.",
+    suggestions: [
+      {
+        id: "briefing-project",
+        label: "Brief me on a project",
+        prompt: "Brief me on a project. Start by asking me which project to cover.",
+      },
+      {
+        id: "briefing-decisions",
+        label: "Brief me on recent decisions",
+        prompt: "Brief me on recent decisions. Start by asking me which topic to explore.",
+      },
+      {
+        id: "briefing-stakeholders",
+        label: "Brief me on key updates for stakeholders",
+        prompt: "Brief me on key updates for stakeholders. Start by asking me who the briefing is for and what it should cover.",
+      },
+      {
+        id: "briefing-feedback",
+        label: "Brief me on customer feedback",
+        prompt: "Brief me on customer feedback. Start by asking me which product or topic to focus on.",
+      },
     ],
   },
   {
-    label: "Review a blocker",
-    examples: [
-      "Diagnose why a packaged desktop build is failing",
-      "Review a confusing approval flow before more coding",
-      "Decide whether to patch the design or write a standard first",
+    id: "automate",
+    label: "Automate routine and recurring work",
+    trigger: "Automate",
+    prompt: "Automate my morning prep. Start by asking me what I want included each morning.",
+    suggestions: [
+      {
+        id: "automate-report",
+        label: "Automate a recurring report",
+        prompt: "Automate a recurring report. Start by asking me what the report should cover and how often to send it.",
+      },
+      {
+        id: "automate-morning-prep",
+        label: "Automate my morning prep",
+        prompt: "Automate my morning prep. Start by asking me what I want included each morning.",
+      },
+      {
+        id: "automate-triage",
+        label: "Automate triage",
+        prompt: "Automate triage. Start by asking me how I want items prioritized and handled.",
+      },
+      {
+        id: "automate-monitoring",
+        label: "Automate monitoring important changes",
+        prompt: "Automate monitoring important changes. Start by asking me what changes to watch for.",
+      },
     ],
   },
 ] as const;
@@ -82,52 +164,153 @@ export const NO_PROJECT_ID = "__none__";
 export const CHAT_LAST_PROJECT_STORAGE_KEY = "rudder.chatLastProjectByOrg";
 export const CHAT_PROJECT_BY_AGENT_STORAGE_KEY = "rudder.chatProjectByAgentByOrg";
 
-export type EmptyStatePromptLabel = (typeof EMPTY_STATE_PROMPT_GROUPS)[number]["label"];
 export type EmptyStatePromptGroup = (typeof EMPTY_STATE_PROMPT_GROUPS)[number];
+export type EmptyStatePromptGroupId = EmptyStatePromptGroup["id"];
+export type EmptyStatePromptSuggestion = EmptyStatePromptGroup["suggestions"][number] & {
+  groupId: EmptyStatePromptGroupId;
+};
+
+const CHAT_SKILL_REFERENCE_PATTERN = /\[[^\]\n]+\]\(skill:\/\/[^)\n]+\)/gu;
+
+function normalizedPromptQuery(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function promptTextMatchesTokenPrefixes(value: string, query: string) {
+  const valueTokens = value.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const queryTokens = query.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  return queryTokens.length > 0 && queryTokens.every((queryToken) => (
+    valueTokens.some((valueToken) => valueToken.startsWith(queryToken))
+  ));
+}
+
+export function chatPromptQueryFromDraft(draft: string) {
+  return draft
+    .replace(CHAT_SKILL_REFERENCE_PATTERN, " ")
+    .replace(/\u00a0/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+export function chatPromptQueryKey(draft: string) {
+  return normalizedPromptQuery(chatPromptQueryFromDraft(draft));
+}
+
+export function chatSkillReferencesFromDraft(draft: string) {
+  return Array.from(new Set(draft.match(CHAT_SKILL_REFERENCE_PATTERN) ?? []));
+}
+
+export function applyChatPromptToDraft(draft: string, prompt: string) {
+  return appendSkillReferencesToDraft(prompt, chatSkillReferencesFromDraft(draft));
+}
+
+export function chatPromptSuggestionsForDraft(draft: string, limit = 4): EmptyStatePromptSuggestion[] {
+  const query = chatPromptQueryKey(draft);
+  if (query.length < 2 || limit <= 0) return [];
+
+  const allSuggestions = EMPTY_STATE_PROMPT_GROUPS.flatMap((group) => (
+    group.suggestions.map((suggestion) => ({ ...suggestion, groupId: group.id }))
+  ));
+  if (allSuggestions.some((suggestion) => {
+    const prompt = normalizedPromptQuery(suggestion.prompt);
+    return query === prompt || query.startsWith(`${prompt} `);
+  })) return [];
+
+  const queryTokens = query.split(/\s+/u).filter((token) => token.length >= 3);
+  const ranked = EMPTY_STATE_PROMPT_GROUPS.flatMap((group, groupIndex) => {
+    const groupLabel = normalizedPromptQuery(group.label);
+    const groupTrigger = normalizedPromptQuery(group.trigger);
+    const broadGroupMatch = groupLabel.startsWith(query)
+      || groupTrigger.startsWith(query)
+      || promptTextMatchesTokenPrefixes(`${groupLabel} ${groupTrigger}`, query);
+
+    return group.suggestions.flatMap((suggestion, suggestionIndex) => {
+      const label = normalizedPromptQuery(suggestion.label);
+      const prompt = normalizedPromptQuery(suggestion.prompt);
+      const searchable = `${label} ${prompt}`;
+      let score = -1;
+      if (broadGroupMatch) score = 100;
+      else if (label.startsWith(query)) score = 92;
+      else if (label.includes(query)) score = 82;
+      else if (prompt.includes(query)) score = 72;
+      else if (queryTokens.length > 1 && queryTokens.every((token) => searchable.includes(token))) score = 62;
+      if (score < 0) return [];
+      return [{
+        ...suggestion,
+        groupId: group.id,
+        score,
+        order: groupIndex * 10 + suggestionIndex,
+      }];
+    });
+  });
+
+  return ranked
+    .sort((left, right) => right.score - left.score || left.order - right.order)
+    .slice(0, limit)
+    .map(({ score: _score, order: _order, ...suggestion }) => suggestion);
+}
+
+export function ChatEmptyStatePromptIcon({
+  groupId,
+  className,
+}: {
+  groupId: EmptyStatePromptGroupId;
+  className?: string;
+}) {
+  if (groupId === "create") return <FilePlus2 className={className} aria-hidden />;
+  if (groupId === "research") return <BookOpen className={className} aria-hidden />;
+  if (groupId === "briefing") return <ListFilter className={className} aria-hidden />;
+  return <Clock3 className={className} aria-hidden />;
+}
 
 export function ChatEmptyStatePromptOptions({
-  group,
+  suggestions,
   optionsId,
-  entered,
-  originX,
-  onExampleSelect,
+  activeIndex,
+  onActiveIndexChange,
+  onSuggestionSelect,
 }: {
-  group: EmptyStatePromptGroup;
+  suggestions: readonly EmptyStatePromptSuggestion[];
   optionsId: string;
-  entered: boolean;
-  originX: string;
-  onExampleSelect: (example: string) => void;
+  activeIndex: number;
+  onActiveIndexChange: (index: number) => void;
+  onSuggestionSelect: (suggestion: EmptyStatePromptSuggestion) => void;
 }) {
   return (
     <div
-      key={group.label}
       id={optionsId}
       data-testid="chat-empty-state-prompt-options"
-      data-entered={entered ? "true" : "false"}
-      role="region"
-      aria-label={`${group.label} examples`}
-      style={{ "--chat-options-origin-x": originX } as CSSProperties}
-      className="motion-chat-options-pop mt-3 w-full max-w-3xl rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-panel)_86%,transparent)] px-3 py-3 shadow-[var(--shadow-sm)]"
+      role="listbox"
+      aria-label="Suggested prompts"
+      className="motion-content-reveal w-full max-w-3xl space-y-1 px-1 py-1"
     >
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <p className="text-xs font-medium text-muted-foreground">
-          Example use cases
-        </p>
-        <p className="text-sm text-foreground">{group.label}</p>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {group.examples.map((example) => (
+      {suggestions.map((suggestion, index) => {
+        const active = index === activeIndex;
+        return (
           <button
-            key={example}
+            key={suggestion.id}
+            id={`${optionsId}-${suggestion.id}`}
             type="button"
+            role="option"
+            tabIndex={-1}
+            aria-selected={active}
             data-chat-option
-            onClick={() => onExampleSelect(example)}
-            className="rounded-[calc(var(--radius-sm)+2px)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_72%,transparent)] px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:border-[color:var(--border-strong)] hover:bg-[color:var(--surface-active)] hover:text-foreground"
+            data-active={active ? "true" : "false"}
+            onMouseMove={() => onActiveIndexChange(index)}
+            onMouseDown={(event) => event.preventDefault()}
+            onFocus={() => onActiveIndexChange(index)}
+            onClick={() => onSuggestionSelect(suggestion)}
+            className={cn(
+              "group flex min-h-10 w-full items-center gap-3 rounded-[var(--radius-md)] px-3 py-2 text-left text-sm text-muted-foreground outline-none transition-colors",
+              "hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/35",
+              active && "bg-[color:var(--surface-active)] text-foreground",
+            )}
           >
-            {example}
+            <ChatEmptyStatePromptIcon groupId={suggestion.groupId} className="h-4 w-4 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{suggestion.label}</span>
           </button>
-        ))}
-      </div>
+        );
+      })}
     </div>
   );
 }

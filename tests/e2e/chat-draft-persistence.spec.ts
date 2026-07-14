@@ -18,7 +18,7 @@ test("keeps an unsent messenger composer draft and attachments when switching pr
 
   const composer = page.locator(".rudder-mdxeditor-content").first();
   await expect(composer).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByRole("button", { name: /Scope a new feature/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Create a file or build a site/ })).toBeVisible();
   await page.locator('input[type="file"]').first().setInputFiles([
     {
       name: "draft-note.txt",
@@ -34,9 +34,9 @@ test("keeps an unsent messenger composer draft and attachments when switching pr
   await expect(page.getByTestId("chat-pending-attachment")).toHaveCount(2);
   await expect(page.getByTestId("chat-pending-attachments")).toContainText("draft-note.txt");
   await expect(page.getByTestId("chat-pending-attachments")).toContainText("draft-context.md");
-  await expect(page.getByRole("button", { name: /Scope a new feature/ })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /Clarify a vague request/ })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /Turn a chat into an issue/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Create a file or build a site/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Research and plan next steps/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Get a briefing on recent work/ })).toHaveCount(0);
 
   await composer.fill("Keep this unsent draft");
 
