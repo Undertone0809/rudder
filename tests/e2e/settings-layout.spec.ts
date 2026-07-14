@@ -78,6 +78,30 @@ async function visitSettingsPage({
   await expectStableSettingsLayout(modal, reference);
 }
 
+async function expectCompactChoiceCards(modal: Locator, expectedCount: number) {
+  const choiceGroup = modal.locator('[data-slot="settings-choice-grid"]').first();
+  await expect(choiceGroup).toBeVisible();
+  await expect(choiceGroup.locator('[data-slot="settings-choice-card"]')).toHaveCount(expectedCount);
+
+  const geometry = await choiceGroup.evaluate((element) => {
+    const containerBox = element.getBoundingClientRect();
+    const cardBoxes = Array.from(
+      element.querySelectorAll<HTMLElement>('[data-slot="settings-choice-card"]'),
+      (card) => card.getBoundingClientRect(),
+    );
+    return {
+      containerRight: containerBox.right,
+      cardWidths: cardBoxes.map((box) => box.width),
+      cardTops: cardBoxes.map((box) => box.top),
+      lastCardRight: cardBoxes.at(-1)?.right ?? containerBox.right,
+    };
+  });
+
+  expect(Math.max(...geometry.cardWidths)).toBeLessThan(260);
+  expect(Math.max(...geometry.cardTops) - Math.min(...geometry.cardTops)).toBeLessThanOrEqual(3);
+  expect(geometry.containerRight - geometry.lastCardRight).toBeGreaterThan(80);
+}
+
 test.describe("Settings layout", () => {
   test("keeps the desktop settings shell and page grammar stable across representative pages", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -86,6 +110,14 @@ test.describe("Settings layout", () => {
     const modal = await openSettings(page, organization);
     const reference = await getShellSize(modal);
     const backgroundWorkspace = page.getByTestId("workspace-shell");
+
+    expect(reference.width).toBeGreaterThanOrEqual(1098);
+    expect(reference.width).toBeLessThanOrEqual(1102);
+    expect(reference.height).toBeGreaterThanOrEqual(758);
+    expect(reference.height).toBeLessThanOrEqual(762);
+    const sidebarWidth = await modal.getByTestId("workspace-sidebar").evaluate((element) => element.getBoundingClientRect().width);
+    expect(sidebarWidth).toBeGreaterThanOrEqual(182);
+    expect(sidebarWidth).toBeLessThanOrEqual(186);
 
     await expect.poll(() => page.evaluate(() => Boolean(document.activeElement?.closest('[data-testid="settings-modal-shell"]')))).toBe(true);
     await expect(modal.getByRole("button", { name: "Close settings" })).toBeVisible();
@@ -110,9 +142,24 @@ test.describe("Settings layout", () => {
     await expect(modal).toBeVisible();
     await expect.poll(() => page.evaluate(() => Boolean(document.activeElement?.closest('[data-testid="settings-modal-shell"]')))).toBe(true);
 
+    await visitSettingsPage({
+      modal,
+      href: "/instance/settings/general",
+      heading: "General",
+      reference,
+    });
+    await expectCompactChoiceCards(modal, 2);
+
+    await visitSettingsPage({
+      modal,
+      href: "/instance/settings/appearance",
+      heading: "Appearance",
+      reference,
+    });
+    await expectCompactChoiceCards(modal, 3);
+
     const destinations = [
       { href: "/instance/settings/profile", heading: "Profile" },
-      { href: "/instance/settings/appearance", heading: "Appearance" },
       { href: "/instance/settings/notifications", heading: "System permissions" },
       { href: "/instance/settings/heartbeats", heading: "Heartbeats" },
       { href: "/instance/settings/plugins", heading: "Plugin Manager" },

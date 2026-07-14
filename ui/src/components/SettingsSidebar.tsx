@@ -139,7 +139,7 @@ export function SettingsSidebar({
       className={cn(
         "flex min-h-0 shrink-0 flex-col",
         modalVariant
-          ? "settings-modal-sidebar w-[min(84vw,240px)] md:w-[220px]"
+          ? "settings-modal-sidebar w-[min(84vw,240px)] md:w-[184px]"
           : "workspace-context-sidebar w-[248px]",
       )}
     >
