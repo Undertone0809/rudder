@@ -1436,26 +1436,21 @@
   }
 
   .settings-modal-shell {
-    height: min(760px, calc(100vh - 2rem));
+    height: min(820px, calc(100dvh - 1.5rem));
     border: 1px solid color-mix(in oklab, var(--border-soft) 92%, transparent);
-    background: color-mix(in oklab, var(--surface-elevated) 99.25%, transparent);
+    background: var(--surface-shell);
     box-shadow: var(--shadow-lg);
   }
 
   @media (min-width: 768px) {
     .settings-modal-shell {
-      height: min(760px, calc(100vh - 5rem));
+      height: min(820px, calc(100dvh - 3rem));
     }
   }
 
   html.desktop-shell-macos .settings-modal-shell {
     border-color: rgb(218 212 205 / 0.9);
-    background:
-      linear-gradient(
-        180deg,
-        rgb(245 244 242 / 0.996) 0%,
-        rgb(240 238 235 / 0.992) 100%
-      );
+    background: rgb(242 240 237 / 0.996);
     box-shadow:
       0 40px 110px -56px rgb(61 49 36 / 0.38),
       0 20px 40px -26px rgb(61 49 36 / 0.18),
@@ -1464,12 +1459,7 @@
 
   html.dark.desktop-shell-macos .settings-modal-shell {
     border-color: rgb(76 75 70 / 0.88);
-    background:
-      linear-gradient(
-        180deg,
-        rgb(31 31 29 / 0.996) 0%,
-        rgb(24 24 23 / 0.992) 100%
-      );
+    background: rgb(27 27 26 / 0.996);
     box-shadow:
       0 48px 120px -60px rgb(0 0 0 / 0.68),
       0 22px 42px -28px rgb(0 0 0 / 0.4),
@@ -1477,32 +1467,17 @@
   }
 
   .settings-modal-sidebar {
-    background:
-      linear-gradient(
-        180deg,
-        color-mix(in oklab, var(--surface-shell) 92%, transparent),
-        color-mix(in oklab, var(--surface-inset) 82%, transparent)
-      );
+    background: color-mix(in oklab, var(--surface-inset) 82%, var(--surface-shell));
     border-right: 1px solid color-mix(in oklab, var(--border-soft) 92%, transparent);
   }
 
   html.desktop-shell-macos .settings-modal-sidebar {
-    background:
-      linear-gradient(
-        180deg,
-        rgb(247 246 243 / 0.96) 0%,
-        rgb(241 239 236 / 0.94) 100%
-      );
+    background: rgb(239 237 233 / 0.98);
     border-right-color: rgb(216 211 204 / 0.9);
   }
 
   html.dark.desktop-shell-macos .settings-modal-sidebar {
-    background:
-      linear-gradient(
-        180deg,
-        rgb(37 37 35 / 0.96) 0%,
-        rgb(31 31 29 / 0.94) 100%
-      );
+    background: rgb(34 34 32 / 0.98);
     border-right-color: rgb(75 74 70 / 0.88);
   }
 

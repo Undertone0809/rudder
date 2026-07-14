@@ -29,8 +29,8 @@ describe("sidebarItemVariants", () => {
 
     expect(classes).toContain("rounded-[calc(var(--radius-sm)-1px)]");
     expect(classes).toContain("border-transparent");
-    expect(classes).toContain("px-3");
-    expect(classes).toContain("py-1.5");
+    expect(classes).toContain("px-2.5");
+    expect(classes).toContain("py-2");
     expect(classes).toContain("hover:bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)]");
     expect(classes).toContain("hover:border-[color:var(--border-soft)]");
     expect(classes).not.toContain("shadow-[var(--shadow-sm)]");
@@ -41,7 +41,8 @@ describe("sidebarItemVariants", () => {
 
     expect(classes).toContain("rounded-[calc(var(--radius-sm)-1px)]");
     expect(classes).toContain("surface-active");
-    expect(classes).toContain("border-[color:var(--border-strong)]");
+    expect(classes).toContain("border-transparent");
+    expect(classes).toContain("bg-[color:var(--surface-active)]");
     expect(classes).toContain("text-foreground");
     expect(classes).not.toContain("shadow-[var(--shadow-sm)]");
   });

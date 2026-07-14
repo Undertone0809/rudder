@@ -1,21 +1,32 @@
 import { expect, test } from "@playwright/test";
 
+let issuePrefixSequence = 0;
+
+function uniqueIssuePrefix() {
+  issuePrefixSequence += 1;
+  return `S${Date.now().toString(36).slice(-7)}${issuePrefixSequence.toString(36)}`
+    .toUpperCase()
+    .slice(0, 12);
+}
+
 test.describe("Settings sidebar", () => {
   test("keeps fixed light mode even when the system prefers dark", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Fixed Light Theme ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { issuePrefix: string };
+    const organization = await orgRes.json() as { issuePrefix: string; urlKey: string };
 
     await page.emulateMedia({ colorScheme: "dark" });
     await page.goto(`/${organization.issuePrefix}/dashboard`);
     await page.getByRole("button", { name: "System settings" }).click();
 
     const modal = page.getByTestId("settings-modal-shell");
-    await modal.getByRole("button", { name: "Light" }).click();
+    await modal.locator('a[href$="/instance/settings/appearance"]').click();
+    await modal.getByRole("button", { name: /^Light Warm paper surfaces$/ }).click();
 
     await expect.poll(async () =>
       page.evaluate(() => ({
@@ -34,15 +45,16 @@ test.describe("Settings sidebar", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Settings Shortcut ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { issuePrefix: string };
+    const organization = await orgRes.json() as { issuePrefix: string; urlKey: string };
 
     await page.goto(`/${organization.issuePrefix}/dashboard`);
     await page.keyboard.press("ControlOrMeta+,");
 
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/organization/settings$`));
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/organization/settings$`));
     await expect(page.getByTestId("settings-modal-shell")).toBeVisible();
   });
 
@@ -52,18 +64,20 @@ test.describe("Settings sidebar", () => {
     const createRes = await page.request.post("/api/orgs", {
       data: {
         name: firstOrganizationName,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
 
     expect(createRes.ok()).toBe(true);
-    const organization = await createRes.json() as { id: string; issuePrefix: string };
+    const organization = await createRes.json() as { id: string; issuePrefix: string; urlKey: string };
     const secondOrgRes = await page.request.post("/api/orgs", {
       data: {
         name: secondOrganizationName,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(secondOrgRes.ok()).toBe(true);
-    const secondOrganization = await secondOrgRes.json() as { id: string; issuePrefix: string };
+    const secondOrganization = await secondOrgRes.json() as { id: string; issuePrefix: string; urlKey: string };
 
     await page.goto(`/${organization.issuePrefix}/dashboard`);
 
@@ -71,7 +85,7 @@ test.describe("Settings sidebar", () => {
     const modal = page.getByTestId("settings-modal-shell");
     const modalSidebar = modal.getByTestId("workspace-sidebar");
 
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/organization/settings$`));
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/organization/settings$`));
     await expect(modalSidebar.locator('a[href$="/organization/settings"]')).toHaveCount(0);
     await expect(modalSidebar.locator('a[href$="/org"]')).toHaveCount(0);
     await expect(modalSidebar.locator('a[href$="/skills"]')).toHaveCount(0);
@@ -93,9 +107,10 @@ test.describe("Settings sidebar", () => {
     await expect(modal.getByRole("button", { name: firstOrganizationName })).toBeVisible();
     await expect(modal.getByRole("button", { name: secondOrganizationName })).toBeVisible();
     await modal.getByRole("button", { name: secondOrganizationName }).click();
-    await expect(page).toHaveURL(new RegExp(`/${secondOrganization.issuePrefix}/organization/settings$`));
+    await expect(page).toHaveURL(new RegExp(`/${secondOrganization.urlKey}/organization/settings$`));
     await expect(modal).toBeVisible();
-    const organizationNameInput = modal.locator('input[type="text"]').first();
+    await modal.getByRole("tab", { name: "General", exact: true }).click();
+    const organizationNameInput = modal.getByRole("textbox", { name: "Organization name", exact: true });
     await expect(organizationNameInput).toHaveValue(secondOrganizationName);
     await expect.poll(async () =>
       page.evaluate(() => window.localStorage.getItem("rudder.selectedOrganizationId")),
@@ -120,10 +135,11 @@ test.describe("Settings sidebar", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Modal Settings ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { issuePrefix: string };
+    const organization = await orgRes.json() as { issuePrefix: string; urlKey: string };
 
     await page.goto(`/${organization.issuePrefix}/dashboard`);
     await page.getByRole("button", { name: "System settings" }).click();
@@ -138,14 +154,14 @@ test.describe("Settings sidebar", () => {
     await expect(backdrop).toBeVisible();
     await expect(workspaceShell).toBeVisible();
     await expect(personalLabel).toBeVisible();
-    await expect(modal.getByText("System settings")).toHaveCount(0);
+    await expect(modal.getByRole("heading", { name: "System settings", exact: true })).toHaveClass(/sr-only/);
 
     const modalBox = await modal.boundingBox();
     const viewport = page.viewportSize();
     expect(modalBox).not.toBeNull();
     expect(viewport).not.toBeNull();
     expect(modalBox!.width).toBeGreaterThan(940);
-    expect(modalBox!.width).toBeLessThan(viewport!.width - 120);
+    expect(modalBox!.width).toBeLessThanOrEqual(Math.min(1180, viewport!.width - 32));
     expect(modalBox!.y).toBeLessThan(viewport!.height * 0.4);
 
     const textTransform = await personalLabel.evaluate((element) => getComputedStyle(element).textTransform);
@@ -157,7 +173,7 @@ test.describe("Settings sidebar", () => {
     const clickY = modalBox!.y + 24;
     await page.mouse.click(clickX, clickY);
 
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/dashboard$`));
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/dashboard$`));
     await expect(modal).toHaveCount(0);
   });
 
@@ -168,10 +184,11 @@ test.describe("Settings sidebar", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Developer Diagnostics ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { issuePrefix: string };
+    const organization = await orgRes.json() as { issuePrefix: string; urlKey: string };
 
     await page.goto(`/${organization.issuePrefix}/dashboard`);
     await page.getByRole("button", { name: "System settings" }).click();
@@ -202,21 +219,22 @@ test.describe("Settings sidebar", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Escape Settings ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { issuePrefix: string };
+    const organization = await orgRes.json() as { issuePrefix: string; urlKey: string };
 
     await page.goto(`/${organization.issuePrefix}/dashboard`);
     await page.getByRole("button", { name: "System settings" }).click();
 
     const modal = page.getByTestId("settings-modal-shell");
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/organization/settings$`));
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/organization/settings$`));
     await expect(modal).toBeVisible();
 
     await page.keyboard.press("Escape");
 
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/dashboard$`));
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/dashboard$`));
     await expect(modal).toHaveCount(0);
   });
 
@@ -224,10 +242,11 @@ test.describe("Settings sidebar", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Settings Organizations ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { issuePrefix: string };
+    const organization = await orgRes.json() as { issuePrefix: string; urlKey: string };
 
     await page.goto(`/${organization.issuePrefix}/dashboard`);
     await page.getByRole("button", { name: "System settings" }).click();
@@ -238,7 +257,7 @@ test.describe("Settings sidebar", () => {
     await expect(modalSidebar.locator('a[href$="/instance/settings/organizations"]')).toHaveCount(0);
 
     await page.goto(`/${organization.issuePrefix}/organizations`);
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/organization/settings$`));
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/organization/settings$`));
     await expect(page.getByRole("heading", { name: "Organization Settings", exact: true })).toBeVisible();
   });
 
@@ -246,6 +265,7 @@ test.describe("Settings sidebar", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Plugin Manager Examples ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -274,6 +294,7 @@ test.describe("Settings sidebar", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Stable Settings Height ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -313,41 +334,43 @@ test.describe("Settings sidebar", () => {
     expect(Math.round(generalBox!.height)).toBe(referenceHeight);
   });
 
-  test("shows the shared organization workspace as a fixed org path in organization settings", async ({ page }, testInfo) => {
+  test("shows the shared organization Library as a fixed org path in organization settings", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Workspace Settings ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
 
     await page.goto(`/${organization.issuePrefix}/dashboard`);
     await page.getByRole("button", { name: "System settings" }).click();
 
     const modal = page.getByTestId("settings-modal-shell");
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/organization/settings$`));
-    await expect(modal.getByText("Shared organization workspace")).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/organization/settings$`));
+    await modal.getByRole("tab", { name: "Workspace", exact: true }).click();
+    await expect(modal.getByRole("heading", { name: "Shared organization Library", exact: true })).toBeVisible();
     await expect(modal.getByText(/system-managed per organization/i)).toBeVisible();
-    await expect(modal.getByText(/use workspaces to browse shared files, plans, and skill packages/i)).toBeVisible();
-    await expect(modal.getByText(/use resources for canonical repos, docs, urls, and connectors/i)).toBeVisible();
+    await expect(modal.getByText(/use Library to browse shared files, plans, and skill packages/i)).toBeVisible();
     await expect(modal.getByPlaceholder("https://github.com/org/repo")).toHaveCount(0);
     await expect(modal.getByPlaceholder("/absolute/path/to/workspace")).toHaveCount(0);
-    await expect(modal.getByRole("link", { name: "Open workspaces" })).toBeVisible();
+    await expect(modal.getByRole("link", { name: "Open Library" })).toBeVisible();
 
     await page.screenshot({
       path: testInfo.outputPath("settings-org-workspace.png"),
       fullPage: true,
     });
 
-    await modal.getByRole("link", { name: "Open workspaces" }).click();
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/workspaces$`));
+    await modal.getByRole("link", { name: "Open Library" }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/library$`));
   });
 
   test("shows the about page with version and lifecycle actions", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `About Settings ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -401,6 +424,7 @@ test.describe("Settings sidebar", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Desktop Update Toast ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -458,6 +482,7 @@ test.describe("Settings sidebar", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Desktop Deferred Update ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -482,6 +507,7 @@ test.describe("Settings sidebar", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `System Permissions Settings ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -541,13 +567,13 @@ test.describe("Settings sidebar", () => {
     await sidebar.locator('a[href$="/instance/settings/notifications"]').click();
     await expect(page).toHaveURL(/\/instance\/settings\/notifications$/);
     await expect(modal.getByRole("heading", { name: "System permissions", exact: true })).toBeVisible();
-    await expect(modal.getByText("Full Disk Access")).toBeVisible();
-    await expect(modal.getByText("Accessibility")).toBeVisible();
-    await expect(modal.getByText("Automation")).toBeVisible();
-    await expect(modal.getByText("Notifications")).toBeVisible();
+    await expect(modal.getByRole("heading", { name: "Full Disk Access", exact: true })).toBeVisible();
+    await expect(modal.getByRole("heading", { name: "Accessibility", exact: true })).toBeVisible();
+    await expect(modal.getByRole("heading", { name: "Automation", exact: true })).toBeVisible();
+    await expect(modal.getByRole("heading", { name: "Notifications", exact: true })).toBeVisible();
     await expect(modal.getByText("System notification access")).toBeVisible();
-    await expect(modal.getByText("Issue notifications")).toBeVisible();
-    await expect(modal.getByText("Chat notifications")).toBeVisible();
+    await expect(modal.getByRole("heading", { name: "Issue notifications", exact: true })).toBeVisible();
+    await expect(modal.getByRole("heading", { name: "Chat notifications", exact: true })).toBeVisible();
     await expect(modal.getByText("Checking")).toHaveCount(0);
     await expect(modal.getByText("Per app")).toHaveCount(0);
     await expect(modal.getByText("Unknown")).toHaveCount(0);
@@ -575,6 +601,7 @@ test.describe("Settings sidebar", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Integration Settings ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -595,6 +622,7 @@ test.describe("Settings sidebar", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Profile Settings Skeleton ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -631,25 +659,27 @@ test.describe("Settings sidebar", () => {
     const firstOrgRes = await page.request.post("/api/orgs", {
       data: {
         name: firstOrganizationName,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(firstOrgRes.ok()).toBe(true);
-    const firstOrganization = await firstOrgRes.json() as { id: string; issuePrefix: string };
+    const firstOrganization = await firstOrgRes.json() as { id: string; issuePrefix: string; urlKey: string };
 
     const secondOrgRes = await page.request.post("/api/orgs", {
       data: {
         name: secondOrganizationName,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(secondOrgRes.ok()).toBe(true);
-    const secondOrganization = await secondOrgRes.json() as { issuePrefix: string };
+    const secondOrganization = await secondOrgRes.json() as { issuePrefix: string; urlKey: string };
 
     await page.goto(`/${firstOrganization.issuePrefix}/dashboard`);
     await page.getByRole("button", { name: "System settings" }).click();
 
     const modal = page.getByTestId("settings-modal-shell");
     await modal.getByRole("button", { name: secondOrganizationName }).click();
-    await expect(page).toHaveURL(new RegExp(`/${secondOrganization.issuePrefix}/organization/settings$`));
+    await expect(page).toHaveURL(new RegExp(`/${secondOrganization.urlKey}/organization/settings$`));
     await expect.poll(async () =>
       page.evaluate(() => window.localStorage.getItem("rudder.selectedOrganizationId")),
     ).toBe(firstOrganization.id);
@@ -660,7 +690,7 @@ test.describe("Settings sidebar", () => {
     const clickY = modalBox!.y + 24;
     await page.mouse.click(clickX, clickY);
 
-    await expect(page).toHaveURL(new RegExp(`/${firstOrganization.issuePrefix}/dashboard$`));
+    await expect(page).toHaveURL(new RegExp(`/${firstOrganization.urlKey}/dashboard$`));
     await expect(modal).toHaveCount(0);
     await expect.poll(async () =>
       page.evaluate(() => window.localStorage.getItem("rudder.selectedOrganizationId")),
@@ -671,10 +701,11 @@ test.describe("Settings sidebar", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Heartbeat Settings ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
 
     const agentName = `Heartbeat Toggle Agent ${Date.now()}`;
     const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
@@ -726,18 +757,20 @@ test.describe("Settings sidebar", () => {
     const firstOrgRes = await page.request.post("/api/orgs", {
       data: {
         name: firstOrganizationName,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(firstOrgRes.ok()).toBe(true);
-    const firstOrganization = await firstOrgRes.json() as { id: string; issuePrefix: string };
+    const firstOrganization = await firstOrgRes.json() as { id: string; issuePrefix: string; urlKey: string };
 
     const secondOrgRes = await page.request.post("/api/orgs", {
       data: {
         name: secondOrganizationName,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(secondOrgRes.ok()).toBe(true);
-    const secondOrganization = await secondOrgRes.json() as { id: string; issuePrefix: string };
+    const secondOrganization = await secondOrgRes.json() as { id: string; issuePrefix: string; urlKey: string };
 
     const firstAgentRes = await page.request.post(`/api/orgs/${firstOrganization.id}/agents`, {
       data: {
@@ -785,7 +818,7 @@ test.describe("Settings sidebar", () => {
 
     await targetHeaderLink.click();
 
-    await expect(page).toHaveURL(new RegExp(`/${secondOrganization.issuePrefix}/heartbeats$`));
+    await expect(page).toHaveURL(new RegExp(`/${secondOrganization.urlKey}/heartbeats$`));
     await expect(page.getByRole("link", { name: secondAgentName })).toBeVisible();
     await expect(page.getByTestId("settings-modal-shell")).toHaveCount(0);
   });
@@ -794,10 +827,11 @@ test.describe("Settings sidebar", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Heartbeat Hidden Chat Agent ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
 
     const agentName = `Visible Heartbeat Agent ${Date.now()}`;
     const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
@@ -855,16 +889,18 @@ test.describe("Settings sidebar", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Label Settings ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
 
     await page.goto(`/${organization.issuePrefix}/dashboard`);
     await page.getByRole("button", { name: "System settings" }).click();
 
     const modal = page.getByTestId("settings-modal-shell");
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/organization/settings$`));
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/organization/settings$`));
+    await modal.getByRole("tab", { name: "Workspace", exact: true }).click();
     await expect(modal.getByText("Issue label management")).toBeVisible();
 
     const createResponse = page.waitForResponse((response) =>

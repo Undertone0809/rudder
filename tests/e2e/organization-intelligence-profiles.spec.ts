@@ -1,10 +1,15 @@
 import { expect, test } from "@playwright/test";
 
+function uniqueIssuePrefix() {
+  return `I${Date.now().toString(36).slice(-8)}`.toUpperCase().slice(0, 12);
+}
+
 test.describe("Organization intelligence profiles", () => {
   test("creates a Fast profile from settings with a fallback chain", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Intelligence Profiles ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -81,6 +86,7 @@ test.describe("Organization intelligence profiles", () => {
     });
 
     await page.goto(`/${organization.issuePrefix}/organization/settings`);
+    await page.getByRole("tab", { name: "Intelligence", exact: true }).click();
 
     const panel = page.getByTestId("organization-intelligence-profiles");
     await expect(panel).toBeVisible();
@@ -88,7 +94,7 @@ test.describe("Organization intelligence profiles", () => {
     const fast = page.getByTestId("intelligence-profile-lightweight");
     await expect(fast.getByText("Fast", { exact: true })).toBeVisible();
     await expect(fast.getByText("Not configured", { exact: true })).toBeVisible();
-    await expect(fast.getByRole("button", { name: "GPT-5.4-Mini", exact: true })).toBeVisible();
+    await expect(fast.getByRole("button", { name: /gpt-5\.4[ -]mini/i })).toBeVisible();
 
     await fast.getByRole("button", { name: "Add fallback model" }).click();
     await expect(fast.getByText("Fallback 1", { exact: true })).toBeVisible();

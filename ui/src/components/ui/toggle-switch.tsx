@@ -58,7 +58,7 @@ export function ToggleSwitch({
       data-state={checked ? "checked" : "unchecked"}
       aria-checked={checked}
       className={cn(
-        "relative inline-flex shrink-0 items-center rounded-full border transition-[background-color,border-color,box-shadow,opacity] disabled:cursor-not-allowed disabled:opacity-60",
+        "relative inline-flex shrink-0 items-center rounded-full border outline-none transition-[background-color,border-color,box-shadow,opacity] focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60",
         sizeStyles.track,
         checked
           ? TONE_STYLES[tone]

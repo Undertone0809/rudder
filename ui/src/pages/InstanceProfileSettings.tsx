@@ -1,7 +1,10 @@
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import {
-  SettingsDivider,
+  SettingsActions,
+  SettingsField,
+  SettingsGroup,
+  SettingsPage,
   SettingsPageHeader,
   SettingsSection,
 } from "@/components/settings/SettingsScaffold";
@@ -135,7 +138,7 @@ export function InstanceProfileSettings() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 px-1 pb-6">
+    <SettingsPage>
       <SettingsPageHeader
         icon={UserRound}
         title={t("profile.title")}
@@ -148,18 +151,17 @@ export function InstanceProfileSettings() {
         </div>
       ) : null}
 
-      <SettingsDivider />
-
       <SettingsSection
         title={t("profile.about.title")}
         description={t("profile.about.description")}
       >
-        <div className="space-y-5">
-          <div className="space-y-2">
-            <label htmlFor="profile-nickname" className="flex items-center gap-2 text-sm font-medium text-foreground">
-              <IdCard className="h-4 w-4 text-muted-foreground" />
-              {t("profile.nickname.label")}
-            </label>
+        <SettingsGroup>
+          <SettingsField
+            htmlFor="profile-nickname"
+            icon={IdCard}
+            label={t("profile.nickname.label")}
+            description={t("profile.nickname.help")}
+          >
             <Input
               id="profile-nickname"
               value={nickname}
@@ -167,26 +169,24 @@ export function InstanceProfileSettings() {
               placeholder={t("profile.nickname.placeholder")}
               maxLength={80}
             />
-            <p className="text-xs leading-5 text-muted-foreground">
-              {t("profile.nickname.help")}
-            </p>
-          </div>
+          </SettingsField>
 
-          <div className="space-y-2">
-            <label htmlFor="profile-more-about-you" className="flex items-center gap-2 text-sm font-medium text-foreground">
-              <MessageSquareText className="h-4 w-4 text-muted-foreground" />
-              {t("profile.moreAboutYou.label")}
-            </label>
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[calc(var(--radius-md)-1px)] border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-inset)_76%,transparent)] px-3 py-2.5">
-              <div className="min-w-0 space-y-0.5">
+          <SettingsField
+            htmlFor="profile-more-about-you"
+            icon={MessageSquareText}
+            label={t("profile.moreAboutYou.label")}
+            description={t("profile.moreAboutYou.help")}
+          >
+            <div className="flex flex-col gap-3 border-y border-[color:var(--border-soft)] py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 flex-col gap-0.5">
                 <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                  <Brain className="h-4 w-4 text-muted-foreground" />
+                  <Brain className="size-4 text-muted-foreground" />
                   {t("profile.import.helper.title")}
                 </div>
                 <p className="text-xs leading-5 text-muted-foreground">{t("profile.import.helper.description")}</p>
               </div>
               <Button type="button" variant="outline" size="sm" onClick={handleCopyPrompt} className="shrink-0">
-                {promptCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                {promptCopied ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
                 {promptCopied ? t("profile.import.copiedButton") : t("profile.import.copyPrompt")}
               </Button>
             </div>
@@ -198,19 +198,18 @@ export function InstanceProfileSettings() {
               maxLength={OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH}
               className="min-h-36"
             />
-            <div className="flex items-center justify-between gap-3 text-xs leading-5 text-muted-foreground">
-              <p>{t("profile.moreAboutYou.help")}</p>
+            <div className="flex items-center justify-end text-xs leading-5 text-muted-foreground">
               <span className="shrink-0 tabular-nums">{moreAboutYou.length}/{OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH}</span>
             </div>
-          </div>
-        </div>
+          </SettingsField>
 
-        <div className="flex items-center justify-end pt-2">
-          <Button onClick={() => saveMutation.mutate()} disabled={!hasChanges || saveMutation.isPending}>
-            {saveMutation.isPending ? t("profile.saving") : t("profile.save")}
-          </Button>
-        </div>
+          <SettingsActions>
+            <Button onClick={() => saveMutation.mutate()} disabled={!hasChanges || saveMutation.isPending}>
+              {saveMutation.isPending ? t("profile.saving") : t("profile.save")}
+            </Button>
+          </SettingsActions>
+        </SettingsGroup>
       </SettingsSection>
-    </div>
+    </SettingsPage>
   );
 }

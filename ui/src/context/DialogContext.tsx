@@ -118,6 +118,8 @@ export function DialogProvider({ children }: { children: ReactNode }) {
   const [promptTextValue, setPromptTextValue] = useState("");
   const confirmRequestRef = useRef<ConfirmDialogRequest | null>(null);
   const promptTextRequestRef = useRef<PromptTextDialogRequest | null>(null);
+  const confirmReturnFocusRef = useRef<HTMLElement | null>(null);
+  const promptTextReturnFocusRef = useRef<HTMLElement | null>(null);
   const dialogRequestIdRef = useRef(0);
 
   const openNewIssue = useCallback((defaults: NewIssueDefaults = {}) => {
@@ -178,6 +180,9 @@ export function DialogProvider({ children }: { children: ReactNode }) {
 
   const confirm = useCallback((options: ConfirmDialogOptions) => (
     new Promise<boolean>((resolve) => {
+      confirmReturnFocusRef.current = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
       dialogRequestIdRef.current += 1;
       setConfirmRequest({
         id: dialogRequestIdRef.current,
@@ -189,6 +194,9 @@ export function DialogProvider({ children }: { children: ReactNode }) {
 
   const promptText = useCallback((options: PromptTextDialogOptions) => (
     new Promise<string | null>((resolve) => {
+      promptTextReturnFocusRef.current = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
       dialogRequestIdRef.current += 1;
       setPromptTextRequest({
         id: dialogRequestIdRef.current,
@@ -262,7 +270,16 @@ export function DialogProvider({ children }: { children: ReactNode }) {
           if (!open) settleConfirm(false);
         }}
       >
-        <DialogContent className="sm:max-w-md" showCloseButton={false}>
+        <DialogContent
+          className="sm:max-w-md"
+          showCloseButton={false}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            const returnTarget = confirmReturnFocusRef.current;
+            confirmReturnFocusRef.current = null;
+            if (returnTarget?.isConnected) returnTarget.focus({ preventScroll: true });
+          }}
+        >
           <DialogHeader>
             <DialogTitle className="text-base leading-6">
               {confirmRequest?.title}
@@ -293,7 +310,16 @@ export function DialogProvider({ children }: { children: ReactNode }) {
           if (!open) settlePromptText(null);
         }}
       >
-        <DialogContent className="sm:max-w-md" showCloseButton={false}>
+        <DialogContent
+          className="sm:max-w-md"
+          showCloseButton={false}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            const returnTarget = promptTextReturnFocusRef.current;
+            promptTextReturnFocusRef.current = null;
+            if (returnTarget?.isConnected) returnTarget.focus({ preventScroll: true });
+          }}
+        >
           <form
             className="space-y-4"
             onSubmit={(event) => {

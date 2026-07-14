@@ -2,7 +2,10 @@ import { expect, test, type Page } from "@playwright/test";
 
 async function createOrganization(page: Page, name: string) {
   const orgRes = await page.request.post("/api/orgs", {
-    data: { name },
+    data: {
+      name,
+      issuePrefix: `C${Date.now().toString(36).slice(-8)}`.toUpperCase().slice(0, 12),
+    },
   });
   expect(orgRes.ok()).toBe(true);
   return orgRes.json();
@@ -40,6 +43,7 @@ test.describe("Organization settings archived chats", () => {
     }, organization.id);
 
     await page.goto(`/${organization.issuePrefix}/organization/settings`, { waitUntil: "commit" });
+    await page.getByRole("tab", { name: "Chat", exact: true }).click();
     await expect(page.getByText("Archived conversations", { exact: true })).toBeVisible({ timeout: 15_000 });
 
     const scrollRegion = page.getByTestId("archived-chats-scroll-region");
@@ -53,7 +57,14 @@ test.describe("Organization settings archived chats", () => {
     const targetRow = page.getByTestId(`archived-chat-row-${targetChat.id}`);
     await expect(targetRow).toContainText("Target archived cleanup");
 
-    await targetRow.getByRole("button", { name: "Delete Target archived cleanup" }).click();
+    const deleteTrigger = targetRow.getByRole("button", { name: "Delete Target archived cleanup" });
+    await deleteTrigger.click();
+    await expect(page.getByRole("heading", { name: "Delete archived chat?" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("heading", { name: "Delete archived chat?" })).toHaveCount(0);
+    await expect(deleteTrigger).toBeFocused();
+
+    await deleteTrigger.click();
     await expect(page.getByRole("heading", { name: "Delete archived chat?" })).toBeVisible();
     await page.getByRole("button", { name: "Delete" }).click();
 

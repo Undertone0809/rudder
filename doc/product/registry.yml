@@ -1326,11 +1326,24 @@ contracts:
       - server/src/services/operator-profile.ts
       - server/src/services/organization-intelligence-profiles.ts
       - ui/index.html
+      - ui/src/App.tsx
+      - ui/src/components/Layout.tsx
+      - ui/src/components/PageTabBar.tsx
+      - ui/src/components/SettingsSidebar.tsx
+      - ui/src/components/settings/SettingsPageSkeleton.tsx
+      - ui/src/components/settings/SettingsScaffold.tsx
       - ui/src/context/ThemeContext.tsx
+      - ui/src/pages/InstanceAboutSettings.tsx
       - ui/src/pages/InstanceAppearanceSettings.tsx
       - ui/src/pages/InstanceBrowserSettings.tsx
+      - ui/src/pages/InstanceGeneralSettings.tsx
+      - ui/src/pages/InstanceNotificationsSettings.tsx
+      - ui/src/pages/InstanceProfileSettings.tsx
       - ui/src/pages/InstanceSettings.tsx
+      - ui/src/pages/InstanceShortcutsSettings.tsx
       - ui/src/pages/OrganizationSettings.tsx
+      - ui/src/pages/PluginManager.tsx
+      - ui/src/pages/PluginSettings.tsx
     related_tests:
       - desktop/src/browser-ipc.test.ts
       - desktop/src/browser-profile.test.ts
@@ -1338,11 +1351,22 @@ contracts:
       - server/src/__tests__/instance-settings-routes.test.ts
       - server/src/__tests__/operator-profile-service.test.ts
       - server/src/__tests__/organization-intelligence-profiles.test.ts
+      - ui/src/components/SettingsSidebar.browser.test.tsx
+      - ui/src/components/PageTabBar.test.tsx
+      - ui/src/components/JsonSchemaForm.test.tsx
+      - ui/src/components/settings/SettingsScaffold.test.tsx
       - ui/src/context/ThemeContext.test.tsx
+      - ui/src/pages/InstanceAboutSettings.test.tsx
       - ui/src/pages/InstanceAppearanceSettings.test.tsx
       - ui/src/pages/InstanceBrowserSettings.test.tsx
+      - ui/src/pages/InstanceGeneralSettings.test.tsx
+      - ui/src/pages/InstanceNotificationsSettings.test.tsx
+      - ui/src/pages/InstanceProfileSettings.test.tsx
+      - ui/src/pages/InstanceSettings.test.tsx
+      - ui/src/pages/InstanceShortcutsSettings.test.tsx
       - tests/e2e/built-in-browser.spec.ts
       - tests/e2e/settings-appearance.spec.ts
+      - tests/e2e/settings-layout.spec.ts
       - tests/e2e/settings-sidebar.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md

@@ -225,12 +225,20 @@ test.describe("Built-in Browser", () => {
       openLinksIn: "default_browser",
     });
 
-    await modal.getByRole("button", { name: "Import..." }).click();
+    const importTrigger = modal.getByRole("button", { name: "Import..." });
+    await importTrigger.click();
     const importDialog = page.getByRole("dialog", { name: "Import browser data" });
     await expect(importDialog).toBeVisible();
     await expect(importDialog.getByLabel("Browser profile")).toHaveValue("opaque-chrome-default");
     await expect(importDialog.getByText("Passwords", { exact: true })).toBeVisible();
     await expect(importDialog.getByText("Not available in this version", { exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(importDialog).toHaveCount(0);
+    await expect(importTrigger).toBeFocused();
+    await expect(modal).toBeVisible();
+    await expect.poll(() => page.evaluate(() => Boolean(document.activeElement?.closest('[data-testid="settings-modal-shell"]')))).toBe(true);
+    await importTrigger.click();
+    await expect(importDialog).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("built-in-browser-import-dialog.png"), fullPage: true });
     await importDialog.getByRole("button", { name: "Import", exact: true }).click();
     await expect(importDialog.getByRole("status")).toContainText("Import complete");
@@ -279,6 +287,8 @@ test.describe("Built-in Browser", () => {
     await importDialog.getByTestId("browser-import-result-panel").scrollIntoViewIfNeeded();
     await page.screenshot({ path: testInfo.outputPath("built-in-browser-import-result.png"), fullPage: true });
     await cancelButton.click();
+    await expect(importDialog).toHaveCount(0);
+    await expect(importTrigger).toBeFocused();
 
     await modal.getByRole("button", { name: "Clear all browsing data" }).click();
     const confirmDialog = page.getByRole("dialog", { name: "Clear all browsing data?" });

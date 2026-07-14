@@ -7,11 +7,16 @@ import { SettingsSidebar } from "./SettingsSidebar";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const queryState = vi.hoisted(() => ({
+  isInstanceAdmin: true,
+  deploymentMode: "local_trusted" as "local_trusted" | "authenticated",
+}));
+
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey }: { queryKey: readonly string[] }) => {
     const key = queryKey.join(":");
-    if (key === "access:current-board-access") return { data: { isInstanceAdmin: true } };
-    if (key === "health") return { data: { deploymentMode: "local_trusted" } };
+    if (key === "access:current-board-access") return { data: { isInstanceAdmin: queryState.isInstanceAdmin } };
+    if (key === "health") return { data: { deploymentMode: queryState.deploymentMode } };
     return { data: [] };
   },
 }));
@@ -61,23 +66,51 @@ let cleanup: (() => void) | null = null;
 afterEach(() => {
   cleanup?.();
   cleanup = null;
+  queryState.isInstanceAdmin = true;
+  queryState.deploymentMode = "local_trusted";
 });
+
+function renderSidebar() {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  cleanup = () => {
+    act(() => root.unmount());
+    container.remove();
+  };
+
+  act(() => {
+    root.render(<SettingsSidebar showOrganizationSwitcher={false} showBackButton={false} />);
+  });
+
+  return container;
+}
 
 describe("SettingsSidebar Browser entry", () => {
   it("shows Browser under Desktop app for instance admins", () => {
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-    cleanup = () => {
-      act(() => root.unmount());
-      container.remove();
-    };
-
-    act(() => {
-      root.render(<SettingsSidebar showOrganizationSwitcher={false} showBackButton={false} />);
-    });
+    const container = renderSidebar();
 
     const browserLink = container.querySelector('a[href="/instance/settings/browser"]');
     expect(browserLink?.textContent).toBe("Browser");
+  });
+
+  it("hides Browser outside local trusted deployments", () => {
+    queryState.deploymentMode = "authenticated";
+    const container = renderSidebar();
+
+    expect(container.querySelector('a[href="/instance/settings/browser"]')).toBeNull();
+    expect(container.querySelector('a[href="/instance/settings/general"]')).not.toBeNull();
+  });
+
+  it("hides instance administration destinations from non-admin operators", () => {
+    queryState.isInstanceAdmin = false;
+    const container = renderSidebar();
+
+    expect(container.querySelector('a[href="/instance/settings/profile"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/instance/settings/shortcuts"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/instance/settings/general"]')).toBeNull();
+    expect(container.querySelector('a[href="/instance/settings/browser"]')).toBeNull();
+    expect(container.querySelector('a[href="/instance/settings/heartbeats"]')).toBeNull();
+    expect(container.querySelector('a[href="/instance/settings/plugins"]')).toBeNull();
   });
 });

@@ -1,6 +1,7 @@
 import {
   SettingsChoiceCard,
-  SettingsDivider,
+  SettingsChoiceGrid,
+  SettingsPage,
   SettingsPageHeader,
   SettingsSection,
 } from "@/components/settings/SettingsScaffold";
@@ -394,17 +395,15 @@ export function InstanceAppearanceSettings() {
   }, [setBreadcrumbs, t]);
 
   return (
-    <div className="mx-auto max-w-4xl space-y-7 px-1 pb-6">
+    <SettingsPage>
       <SettingsPageHeader
         icon={Palette}
         title={t("general.appearance.title")}
         description={t("general.appearance.description")}
       />
 
-      <SettingsDivider />
-
       <SettingsSection title={t("general.appearance.colorMode")}>
-        <div className="flex flex-wrap gap-2.5">
+        <SettingsChoiceGrid>
           <SettingsChoiceCard
             label={t("general.appearance.light.label")}
             description={t("general.appearance.light.description")}
@@ -426,11 +425,11 @@ export function InstanceAppearanceSettings() {
             onClick={() => setTheme("dark")}
             preview={<ThemePreview mode="dark" />}
           />
-        </div>
+        </SettingsChoiceGrid>
       </SettingsSection>
 
       <SettingsSection title={t("general.appearance.designStyle")}>
-        <div className="flex flex-wrap gap-2.5">
+        <SettingsChoiceGrid>
           <SettingsChoiceCard
             label={t("general.appearance.defaultStyle.label")}
             description={t("general.appearance.defaultStyle.description")}
@@ -452,11 +451,11 @@ export function InstanceAppearanceSettings() {
             onClick={() => setDesignStyle("luma")}
             preview={<DesignStylePreview style="luma" />}
           />
-        </div>
+        </SettingsChoiceGrid>
       </SettingsSection>
 
       <SettingsSection title={t("general.appearance.baseColor")}>
-        <div className="flex flex-wrap gap-2.5">
+        <SettingsChoiceGrid>
           {BASE_COLOR_OPTIONS.map((option) => (
             <SettingsChoiceCard
               key={option}
@@ -467,11 +466,11 @@ export function InstanceAppearanceSettings() {
               preview={<BaseColorPreview baseColor={option} />}
             />
           ))}
-        </div>
+        </SettingsChoiceGrid>
       </SettingsSection>
 
       <SettingsSection title={t("general.appearance.themeColor")}>
-        <div className="flex flex-wrap gap-2.5">
+        <SettingsChoiceGrid>
           {ACCENT_THEME_OPTIONS.map((option) => (
             <SettingsChoiceCard
               key={option}
@@ -482,8 +481,8 @@ export function InstanceAppearanceSettings() {
               preview={<AccentThemePreview accentTheme={option} />}
             />
           ))}
-        </div>
+        </SettingsChoiceGrid>
       </SettingsSection>
-    </div>
+    </SettingsPage>
   );
 }

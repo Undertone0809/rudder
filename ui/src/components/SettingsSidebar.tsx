@@ -139,7 +139,7 @@ export function SettingsSidebar({
       className={cn(
         "flex min-h-0 shrink-0 flex-col",
         modalVariant
-          ? "settings-modal-sidebar w-[184px]"
+          ? "settings-modal-sidebar w-[min(84vw,240px)] md:w-[220px]"
           : "workspace-context-sidebar w-[248px]",
       )}
     >
@@ -169,10 +169,10 @@ export function SettingsSidebar({
         ref={sidebarNavScrollRef}
         className={cn(
           "scrollbar-auto-hide flex min-h-0 flex-1 flex-col overflow-y-auto",
-          modalVariant ? "gap-3 px-2 py-4" : "gap-5 px-3 py-3",
+          modalVariant ? "gap-4 px-3 py-5" : "gap-5 px-3 py-3",
         )}
       >
-        <div className="space-y-1">
+        <div className="flex flex-col gap-1">
           <div className={cn(
             "px-3 font-medium text-muted-foreground/78",
             modalVariant ? "text-[11px]" : "text-[12px]",
@@ -199,7 +199,7 @@ export function SettingsSidebar({
 
         {canManageAdminSettings ? (
           <>
-            <div className="space-y-1">
+            <div className="flex flex-col gap-1">
               <div className={cn(
                 "px-3 font-medium text-muted-foreground/78",
                 modalVariant ? "text-[11px]" : "text-[12px]",
@@ -250,7 +250,7 @@ export function SettingsSidebar({
               />
             </div>
 
-            <div className="space-y-1">
+            <div className="flex flex-col gap-1">
               <div className={cn(
                 "px-3 font-medium text-muted-foreground/78",
                 modalVariant ? "text-[11px]" : "text-[12px]",
@@ -267,7 +267,7 @@ export function SettingsSidebar({
               />
             </div>
 
-            <div className="space-y-1">
+            <div className="flex flex-col gap-1">
               <div className={cn(
                 "px-3 font-medium text-muted-foreground/78",
                 modalVariant ? "text-[11px]" : "text-[12px]",
@@ -307,7 +307,7 @@ export function SettingsSidebar({
         ) : null}
 
         <div className={cn(
-          "space-y-1 border-t border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] pt-3",
+          "flex flex-col gap-1 border-t border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] pt-3",
           !modalVariant && !renderOrganizationList && "mt-auto",
         )}>
           <SettingsExternalLink
@@ -318,14 +318,14 @@ export function SettingsSidebar({
         </div>
 
         {renderOrganizationList && sidebarOrganizations.length > 0 ? (
-          <div className={cn("space-y-1 pt-2", !modalVariant && "mt-auto")}>
+          <div className={cn("flex flex-col gap-1 pt-2", !modalVariant && "mt-auto")}>
             <div className={cn(
               "px-3 font-medium text-muted-foreground/78",
               modalVariant ? "text-[11px]" : "text-[12px]",
             )}>
               {t("common.yourOrganizations")}
             </div>
-            <div className="space-y-1">
+            <div className="flex flex-col gap-1">
               {sidebarOrganizations.map((organization) => {
                 const selected = organization.id === viewedOrganizationId;
                 return (

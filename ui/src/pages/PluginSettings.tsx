@@ -6,6 +6,11 @@ import {
   type JsonSchemaNode,
 } from "@/components/JsonSchemaForm";
 import { PageTabBar } from "@/components/PageTabBar";
+import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
+import {
+  SettingsPage,
+  SettingsPageHeader,
+} from "@/components/settings/SettingsScaffold";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -130,7 +135,7 @@ export function PluginSettings() {
   }, [pluginId]);
 
   if (pluginLoading) {
-    return <div className="p-4 text-sm text-muted-foreground">Loading plugin details...</div>;
+    return <SettingsPageSkeleton dense />;
   }
 
   if (!plugin) {
@@ -148,28 +153,32 @@ export function PluginSettings() {
   const pluginCapabilities = plugin.manifestJson.capabilities ?? [];
 
   return (
-    <div className="space-y-6 max-w-5xl">
-      <div className="flex items-center gap-4">
-        <Link to="/instance/settings/plugins" state={overlayState}>
-          <Button variant="outline" size="icon" className="h-8 w-8">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-        </Link>
-        <div className="flex items-center gap-2">
-          <Puzzle className="h-6 w-6 text-muted-foreground" />
-          <h1 className="text-xl font-semibold">{plugin.manifestJson.displayName ?? plugin.packageName}</h1>
-          <Badge variant={statusVariant} className="ml-2">
-            {displayStatus}
-          </Badge>
-          <Badge variant="outline" className="ml-1">
-            v{plugin.manifestJson.version ?? plugin.version}
-          </Badge>
+    <SettingsPage width="wide" className="min-w-0">
+      <div className="flex min-w-0 items-start gap-3">
+        <Button variant="ghost" size="icon-sm" className="shrink-0" aria-label="Back to plugins" title="Back to plugins" asChild>
+          <Link to="/instance/settings/plugins" state={overlayState}>
+            <ArrowLeft />
+          </Link>
+        </Button>
+        <div className="min-w-0 flex-1">
+          <SettingsPageHeader
+            icon={Puzzle}
+            title={plugin.manifestJson.displayName ?? plugin.packageName}
+            description={(
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant={statusVariant}>{displayStatus}</Badge>
+                <Badge variant="outline">v{plugin.manifestJson.version ?? plugin.version}</Badge>
+              </div>
+            )}
+          />
         </div>
       </div>
 
-      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "configuration" | "status")} className="space-y-6">
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "configuration" | "status")} className="flex min-w-0 flex-col gap-6">
         <PageTabBar
+          ariaLabel="Plugin settings sections"
           align="start"
+          mobileMode="scrollable-tabs"
           items={[
             { value: "configuration", label: "Configuration" },
             { value: "status", label: "Status" },
@@ -178,8 +187,8 @@ export function PluginSettings() {
           onValueChange={(value) => setActiveTab(value as "configuration" | "status")}
         />
 
-        <TabsContent value="configuration" className="space-y-6">
-          <div className="space-y-8">
+        <TabsContent value="configuration" className="min-w-0 space-y-6">
+          <div className="min-w-0 space-y-8">
             <section className="space-y-5">
               <h2 className="text-base font-semibold">About</h2>
               <div className="grid gap-8 lg:grid-cols-[minmax(0,1.4fr)_minmax(220px,0.8fr)]">
@@ -248,7 +257,7 @@ export function PluginSettings() {
           </div>
         </TabsContent>
 
-        <TabsContent value="status" className="space-y-6">
+        <TabsContent value="status" className="min-w-0 space-y-6">
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_320px]">
             <div className="space-y-6">
               <Card>
@@ -540,7 +549,7 @@ export function PluginSettings() {
           </div>
         </TabsContent>
       </Tabs>
-    </div>
+    </SettingsPage>
   );
 }
 

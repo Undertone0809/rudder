@@ -5,6 +5,12 @@
  * @see doc/engineering/PLUGIN_RUNTIME_CONTRACT.md — Plugin Marketplace / Manager
  */
 import { pluginsApi } from "@/api/plugins";
+import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
+import {
+  SettingsPage,
+  SettingsPageHeader,
+  SettingsSection,
+} from "@/components/settings/SettingsScaffold";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -164,21 +170,19 @@ export function PluginManager() {
     [installedPlugins]
   );
 
-  if (isLoading) return <div className="p-4 text-sm text-muted-foreground">Loading plugins...</div>;
+  if (isLoading) return <SettingsPageSkeleton dense />;
   if (error) return <div className="p-4 text-sm text-destructive">Failed to load plugins.</div>;
 
   return (
-    <div className="space-y-6 max-w-5xl">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Puzzle className="h-6 w-6 text-muted-foreground" />
-          <h1 className="text-xl font-semibold">Plugin Manager</h1>
-        </div>
-        
+    <SettingsPage width="wide">
+      <SettingsPageHeader
+        icon={Puzzle}
+        title="Plugin Manager"
+        action={(
         <Dialog open={installDialogOpen} onOpenChange={setInstallDialogOpen}>
           <DialogTrigger asChild>
             <Button size="sm" className="gap-2">
-              <Plus className="h-4 w-4" />
+              <Plus data-icon="inline-start" />
               Install Plugin
             </Button>
           </DialogTrigger>
@@ -211,12 +215,10 @@ export function PluginManager() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      </div>
+        )}
+      />
 
-      <section className="space-y-3">
-        <div className="flex items-center gap-2">
-          <h2 className="text-base font-semibold">Available Plugins</h2>
-        </div>
+      <SettingsSection title="Available Plugins">
 
         {availableQuery.isLoading ? (
           <div className="text-sm text-muted-foreground">Loading available plugins...</div>
@@ -240,7 +242,7 @@ export function PluginManager() {
 
               return (
                 <li key={availablePlugin.packageName}>
-                  <div className="flex items-center gap-4 px-4 py-3">
+                  <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium">{availablePlugin.displayName}</span>
@@ -259,7 +261,7 @@ export function PluginManager() {
                       <p className="mt-1 text-sm text-muted-foreground">{availablePlugin.description}</p>
                       <p className="mt-1 text-xs text-muted-foreground">{availablePlugin.packageName}</p>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
                       {installedPlugin ? (
                         <>
                           {installedPlugin.status !== "ready" && (
@@ -299,12 +301,9 @@ export function PluginManager() {
             })}
           </ul>
         )}
-      </section>
+      </SettingsSection>
 
-      <section className="space-y-3">
-        <div className="flex items-center gap-2">
-          <h2 className="text-base font-semibold">Installed Plugins</h2>
-        </div>
+      <SettingsSection title="Installed Plugins">
 
         {!installedPlugins.length ? (
           <Card className="bg-muted/30">
@@ -320,7 +319,7 @@ export function PluginManager() {
           <ul className="divide-y rounded-md border bg-card">
             {installedPlugins.map((plugin) => (
               <li key={plugin.id}>
-                <div className="flex items-start gap-4 px-4 py-3">
+                <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-start sm:gap-4">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <Link
@@ -370,8 +369,8 @@ export function PluginManager() {
                       </div>
                     )}
                   </div>
-                  <div className="flex shrink-0 self-center">
-                    <div className="flex flex-col items-end gap-2">
+                  <div className="flex w-full shrink-0 sm:w-auto sm:self-center">
+                    <div className="flex w-full flex-col items-start gap-2 sm:w-auto sm:items-end">
                       <div className="flex items-center gap-2">
                         <Badge
                           variant={
@@ -431,7 +430,7 @@ export function PluginManager() {
             ))}
           </ul>
         )}
-      </section>
+      </SettingsSection>
 
       <Dialog
         open={uninstallPluginId !== null}
@@ -502,6 +501,6 @@ export function PluginManager() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </SettingsPage>
   );
 }

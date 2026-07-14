@@ -1,6 +1,8 @@
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import {
+  SettingsGroup,
+  SettingsPage,
   SettingsPageHeader,
   SettingsSection,
   SettingsToggle,
@@ -403,9 +405,8 @@ export function InstanceNotificationsSettings() {
   );
 
   return (
-    <div className="mx-auto max-w-4xl space-y-7 px-1 pb-6">
+    <SettingsPage>
       <SettingsPageHeader
-        eyebrow={t("settings.eyebrow.system")}
         icon={ShieldCheck}
         title={t("systemPermissions.title")}
         description={t("systemPermissions.description")}
@@ -421,7 +422,7 @@ export function InstanceNotificationsSettings() {
         title={t("systemPermissions.section.title")}
         description={t("systemPermissions.section.description")}
       >
-        <div className="overflow-hidden rounded-[var(--radius-md)] border border-border/70 bg-card/45">
+        <SettingsGroup>
           {SYSTEM_PERMISSIONS.map((permission) => {
             const status = getSystemPermissionStatus(permission, isDesktopShell, resolvedSystemPermissionStatuses);
             const showSystemSettingsAction = isDesktopShell && Boolean(permission.macSettingsUrl);
@@ -429,7 +430,8 @@ export function InstanceNotificationsSettings() {
             return (
               <div
                 key={permission.id}
-                className="grid gap-3 border-t border-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)] px-4 py-3.5 first:border-t-0 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+                data-slot="settings-item"
+                className="grid gap-3 px-4 py-3.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
               >
                 <div className="flex min-w-0 items-start gap-3">
                   <PermissionIcon icon={permission.icon} />
@@ -461,7 +463,7 @@ export function InstanceNotificationsSettings() {
             );
           })}
 
-          <div className="border-t border-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)] px-4 py-3.5">
+          <div data-slot="settings-item" className="px-4 py-3.5">
             <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
               <div className="flex min-w-0 items-start gap-3">
                 <PermissionIcon icon={Bell} />
@@ -551,8 +553,8 @@ export function InstanceNotificationsSettings() {
               </div>
             </div>
           </div>
-        </div>
+        </SettingsGroup>
       </SettingsSection>
-    </div>
+    </SettingsPage>
   );
 }

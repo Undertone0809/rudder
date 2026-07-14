@@ -1,7 +1,8 @@
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import {
-  SettingsDivider,
+  SettingsActions,
+  SettingsPage,
   SettingsPageHeader,
   SettingsSection,
 } from "@/components/settings/SettingsScaffold";
@@ -211,7 +212,7 @@ export function InstanceShortcutsSettings() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 px-1 pb-6">
+    <SettingsPage width="wide">
       <SettingsPageHeader
         icon={Keyboard}
         title={t("common.shortcuts")}
@@ -223,8 +224,6 @@ export function InstanceShortcutsSettings() {
           {actionError}
         </div>
       ) : null}
-
-      <SettingsDivider />
 
       <SettingsSection
         title="Global"
@@ -369,7 +368,7 @@ export function InstanceShortcutsSettings() {
         </div>
       </SettingsSection>
 
-      <div className="flex justify-end gap-2 border-t border-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)] pt-4">
+      <SettingsActions className="border-t border-[color:var(--border-soft)] px-0">
         <Button
           type="button"
           variant="outline"
@@ -381,7 +380,7 @@ export function InstanceShortcutsSettings() {
             setActionError(null);
           }}
         >
-          <RotateCcw className="h-4 w-4" />
+          <RotateCcw data-icon="inline-start" />
           Revert
         </Button>
         <Button
@@ -389,10 +388,10 @@ export function InstanceShortcutsSettings() {
           disabled={!hasChanges || saveMutation.isPending}
           onClick={() => saveMutation.mutate()}
         >
-          <Save className="h-4 w-4" />
+          <Save data-icon="inline-start" />
           {saveMutation.isPending ? "Saving..." : "Save shortcuts"}
         </Button>
-      </div>
-    </div>
+      </SettingsActions>
+    </SettingsPage>
   );
 }

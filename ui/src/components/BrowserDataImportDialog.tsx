@@ -25,14 +25,16 @@ import {
   TriangleAlert,
   XCircle,
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 
 export function BrowserDataImportDialog({
   open,
   onOpenChange,
+  returnFocusRef,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  returnFocusRef?: RefObject<HTMLElement | null>;
 }) {
   const { t } = useI18n();
   const [sources, setSources] = useState<DesktopBrowserImportSource[]>([]);
@@ -135,6 +137,10 @@ export function BrowserDataImportDialog({
       <DialogContent
         className="flex max-h-[calc(100vh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-[34rem]"
         showCloseButton={false}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          returnFocusRef?.current?.focus({ preventScroll: true });
+        }}
         onEscapeKeyDown={(event) => {
           if (importing) event.preventDefault();
         }}

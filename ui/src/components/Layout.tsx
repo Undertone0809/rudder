@@ -8,6 +8,7 @@ import { useSidePanel } from "@/context/SidePanelContext";
 import { Link, Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BookOpen, PanelLeft, PanelRight, Settings, X } from "lucide-react";
+import { Dialog as DialogPrimitive } from "radix-ui";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import { accessApi } from "../api/access";
 import { chatsApi } from "../api/chats";
@@ -152,10 +153,68 @@ export function DesktopSettingsModalFrame({
   const mainScrollRef = useScrollbarActivityRef("workspace-main:settings-modal");
   const settingsNavigationCloseRef = useRef<HTMLButtonElement | null>(null);
   const settingsNavigationTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const backdropRef = useRef<HTMLDivElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(
+    typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
+  const restoreSettingsFocus = useCallback(() => {
+    const fallbackTrigger = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-settings-trigger="true"]'),
+    ).find((element) => element.getClientRects().length > 0 && !element.closest("[inert]"));
+    const previouslyFocused = previouslyFocusedRef.current;
+    const restoreTarget = previouslyFocused
+      && previouslyFocused !== document.body
+      && previouslyFocused !== document.documentElement
+      && previouslyFocused.isConnected
+      && !previouslyFocused.closest("[inert]")
+      ? previouslyFocused
+      : fallbackTrigger;
+    restoreTarget?.focus({ preventScroll: true });
+  }, []);
 
   useEffect(() => {
-    shellRef.current?.focus();
+    const outsideElements = new Map<HTMLElement, { inert: boolean; ariaHidden: string | null }>();
+    const animationFrame = window.requestAnimationFrame(() => {
+      const backdrop = backdropRef.current;
+      const shell = shellRef.current;
+      if (!backdrop || !shell) return;
+
+      let current: HTMLElement | null = shell;
+      while (current.parentElement) {
+        for (const sibling of Array.from(current.parentElement.children)) {
+          if (!(sibling instanceof HTMLElement) || outsideElements.has(sibling)) continue;
+          if (
+            sibling === current
+            || sibling === backdrop
+            || sibling.contains(shell)
+            || sibling.contains(backdrop)
+          ) continue;
+          outsideElements.set(sibling, {
+            inert: sibling.inert,
+            ariaHidden: sibling.getAttribute("aria-hidden"),
+          });
+          sibling.inert = true;
+          sibling.setAttribute("aria-hidden", "true");
+        }
+        current = current.parentElement;
+        if (current === document.body) break;
+      }
+    });
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      for (const [element, previous] of outsideElements) {
+        element.inert = previous.inert;
+        if (previous.ariaHidden === null) {
+          element.removeAttribute("aria-hidden");
+        } else {
+          element.setAttribute("aria-hidden", previous.ariaHidden);
+        }
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -172,31 +231,42 @@ export function DesktopSettingsModalFrame({
   }, [isMobile, settingsNavigationOpen]);
 
   return (
-    <div
-      data-testid="settings-modal-backdrop"
-      className="settings-modal-backdrop fixed inset-0 z-50 flex items-center justify-center px-3 py-4 md:px-4 md:py-6"
-      onClick={onClose}
-      onKeyDown={(event) => {
-        if (event.key !== "Escape") return;
-        event.preventDefault();
-        if (isMobile && settingsNavigationOpen) {
-          event.stopPropagation();
-          setSettingsNavigationOpen(false);
-          return;
-        }
-        onClose();
+    <DialogPrimitive.Root
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
       }}
     >
-      <div
-        data-testid="settings-modal-shell"
-        ref={shellRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label={t("common.systemSettings")}
-        tabIndex={-1}
-        className="settings-modal-shell relative flex min-h-0 w-full max-w-[1100px] overflow-hidden rounded-[12px]"
-        onClick={(event) => event.stopPropagation()}
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay
+          ref={backdropRef}
+          data-testid="settings-modal-backdrop"
+          className="settings-modal-backdrop fixed inset-0 z-50"
+        />
+        <DialogPrimitive.Content
+          data-testid="settings-modal-shell"
+          ref={shellRef}
+          aria-describedby={undefined}
+          tabIndex={-1}
+          className="settings-modal-shell fixed left-1/2 top-1/2 z-50 flex min-h-0 w-[calc(100%-1rem)] max-w-[1180px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-[10px] sm:w-[calc(100%-2rem)]"
+          onOpenAutoFocus={(event) => {
+            if (!isMobile) return;
+            event.preventDefault();
+            settingsNavigationTriggerRef.current?.focus({ preventScroll: true });
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            restoreSettingsFocus();
+          }}
+          onEscapeKeyDown={(event) => {
+            if (!isMobile || !settingsNavigationOpen) return;
+            event.preventDefault();
+            setSettingsNavigationOpen(false);
+          }}
       >
+        <DialogPrimitive.Title className="sr-only">
+          {t("common.systemSettings")}
+        </DialogPrimitive.Title>
         {isMobile && settingsNavigationOpen ? (
           <div
             aria-hidden="true"
@@ -241,7 +311,7 @@ export function DesktopSettingsModalFrame({
           className="settings-modal-main flex min-h-0 min-w-0 flex-1 flex-col"
           inert={isMobile && settingsNavigationOpen ? true : undefined}
         >
-          <div className="flex h-12 shrink-0 items-center justify-between px-4">
+          <div className="flex h-14 shrink-0 items-center justify-between px-3 sm:px-5">
             {isMobile ? (
               <Button
                 ref={settingsNavigationTriggerRef}
@@ -262,8 +332,8 @@ export function DesktopSettingsModalFrame({
               size="icon-sm"
               className="size-8 rounded-full text-muted-foreground"
               onClick={onClose}
-              aria-label={t("common.closeSidebar")}
-              title={t("common.closeSidebar")}
+              aria-label={t("common.closeSettings")}
+              title={t("common.closeSettings")}
             >
               <X className="h-4 w-4" />
             </Button>
@@ -272,13 +342,14 @@ export function DesktopSettingsModalFrame({
             id="main-content"
             tabIndex={-1}
             ref={mainScrollRef}
-            className="scrollbar-auto-hide min-w-0 flex-1 overflow-auto px-2.5 pb-2.5 md:px-3 md:pb-3"
+            className="scrollbar-auto-hide min-w-0 flex-1 overflow-auto"
           >
             {children}
           </main>
         </section>
-      </div>
-    </div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }
 

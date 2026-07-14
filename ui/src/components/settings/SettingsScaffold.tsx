@@ -1,45 +1,72 @@
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { cn } from "@/lib/utils";
 import type { LucideIcon } from "lucide-react";
-import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes, HTMLAttributes, LabelHTMLAttributes, ReactNode } from "react";
+
+export function SettingsPage({
+  width = "default",
+  className,
+  children,
+  ...props
+}: HTMLAttributes<HTMLDivElement> & {
+  width?: "default" | "wide" | "full";
+}) {
+  return (
+    <div
+      {...props}
+      data-slot="settings-page"
+      data-width={width}
+      className={cn(
+        "mx-auto flex w-full flex-col gap-7 px-4 pb-10 sm:px-7",
+        width === "default" && "max-w-[52rem]",
+        width === "wide" && "max-w-[64rem]",
+        width === "full" && "max-w-none",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
+}
 
 export function SettingsPageHeader({
   eyebrow,
   icon: Icon,
   title,
   description,
+  action,
 }: {
   eyebrow?: string;
   icon?: LucideIcon;
   title: string;
   description?: ReactNode;
+  action?: ReactNode;
 }) {
   return (
-    <header className="space-y-2.5">
+    <header data-slot="settings-page-header" className="flex flex-col gap-2">
       {eyebrow ? (
-        <div className="text-[10px] font-medium text-muted-foreground/72">
+        <div className="text-[11px] font-medium text-muted-foreground/72">
           {eyebrow}
         </div>
       ) : null}
-      <div className="flex items-start gap-2">
-        {Icon ? <Icon className="mt-0.5 h-[18px] w-[18px] shrink-0 text-muted-foreground" /> : null}
-        <div className="space-y-1.5">
-          <h1 className="font-display text-[1.4rem] leading-none text-foreground sm:text-[1.55rem]">
-            {title}
-          </h1>
-          {description ? (
-            <p className="max-w-3xl text-[13px] leading-5 text-muted-foreground">
-              {description}
-            </p>
-          ) : null}
+      <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-5">
+        <div className="flex min-w-0 items-start gap-2.5">
+          {Icon ? <Icon className="mt-0.5 size-5 shrink-0 text-muted-foreground" /> : null}
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <h1 className="font-display text-[1.4rem] font-semibold leading-tight text-foreground sm:text-[1.55rem]">
+              {title}
+            </h1>
+            {description ? (
+              <div className="max-w-3xl text-[13px] leading-5 text-muted-foreground">
+                {description}
+              </div>
+            ) : null}
+          </div>
         </div>
+        {action ? <div className="flex shrink-0 items-center sm:justify-end">{action}</div> : null}
       </div>
     </header>
   );
-}
-
-export function SettingsDivider() {
-  return <div className="border-t border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)]" />;
 }
 
 export function SettingsGroup({
@@ -56,10 +83,10 @@ export function SettingsGroup({
       data-slot="settings-group"
       data-variant={variant}
       className={cn(
-        "overflow-hidden rounded-[var(--radius-md)] border border-[color:color-mix(in_oklab,var(--border-soft)_92%,transparent)] [&>[data-slot=settings-item]+[data-slot=settings-item]]:border-t [&>[data-slot=settings-item]+[data-slot=settings-item]]:border-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)]",
+        "overflow-hidden rounded-lg border border-[color:var(--border-soft)] [&>[data-slot=settings-actions]]:border-t [&>[data-slot=settings-actions]]:border-[color:var(--border-soft)] [&>[data-slot=settings-item]+[data-slot=settings-item]]:border-t [&>[data-slot=settings-item]+[data-slot=settings-item]]:border-[color:var(--border-soft)]",
         variant === "feature"
-          ? "bg-[color:color-mix(in_oklab,var(--surface-elevated)_98%,transparent)]"
-          : "bg-[color:color-mix(in_oklab,var(--surface-inset)_72%,transparent)]",
+          ? "bg-[color:var(--surface-elevated)]"
+          : "bg-[color:color-mix(in_oklab,var(--surface-inset)_84%,var(--surface-elevated))]",
         className,
       )}
     >
@@ -89,18 +116,18 @@ export function SettingsItem({
     <div
       data-slot="settings-item"
       className={cn(
-        "grid min-h-[4.5rem] grid-cols-1 items-center gap-3 px-4 py-3.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-5",
+        "grid min-h-[4.25rem] grid-cols-1 items-center gap-3 px-4 py-3.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-5",
         className,
       )}
     >
       <div className="flex min-w-0 items-start gap-3">
         {Icon ? (
-          <span className="flex size-10 shrink-0 items-center justify-center text-muted-foreground">
-            <Icon className="size-6" />
+          <span className="flex size-9 shrink-0 items-center justify-center text-muted-foreground">
+            <Icon className="size-5" />
           </span>
         ) : null}
         <div className="flex min-w-0 flex-col gap-0.5">
-          <Heading className="text-[14px] font-medium text-foreground">{title}</Heading>
+          <Heading className="text-[14px] font-medium leading-5 text-foreground">{title}</Heading>
           {description ? (
             <div className="max-w-[38rem] text-[13px] leading-5 text-muted-foreground">
               {description}
@@ -128,9 +155,9 @@ export function SettingsSection({
   children: ReactNode;
 }) {
   return (
-    <section className={cn("space-y-3.5", className)}>
-      <div className="space-y-1">
-        <h2 className="text-[1rem] font-semibold tracking-[-0.02em] text-foreground">{title}</h2>
+    <section data-slot="settings-section" className={cn("flex flex-col gap-3", className)}>
+      <div className="flex flex-col gap-1">
+        <h2 className="text-[15px] font-semibold text-foreground">{title}</h2>
         {description ? (
           <p className="max-w-3xl text-[13px] leading-5 text-muted-foreground">{description}</p>
         ) : null}
@@ -140,29 +167,88 @@ export function SettingsSection({
   );
 }
 
-export function SettingsRow({
-  title,
+export function SettingsField({
+  label,
   description,
-  action,
+  htmlFor,
+  icon: Icon,
+  children,
   className,
 }: {
-  title: string;
-  description: ReactNode;
-  action?: ReactNode;
+  label: ReactNode;
+  description?: ReactNode;
+  htmlFor?: LabelHTMLAttributes<HTMLLabelElement>["htmlFor"];
+  icon?: LucideIcon;
+  children: ReactNode;
+  className?: string;
+}) {
+  const fieldHeading = (
+    <>
+      {Icon ? <Icon className="size-4 shrink-0 text-muted-foreground" /> : null}
+      {label}
+    </>
+  );
+
+  return (
+    <div data-slot="settings-item" className={cn("flex flex-col gap-3 px-4 py-4", className)}>
+      <div className="flex min-w-0 flex-col gap-0.5">
+        {htmlFor ? (
+          <label htmlFor={htmlFor} className="flex items-center gap-2 text-[14px] font-medium leading-5 text-foreground">
+            {fieldHeading}
+          </label>
+        ) : (
+          <div className="flex items-center gap-2 text-[14px] font-medium leading-5 text-foreground">
+            {fieldHeading}
+          </div>
+        )}
+        {description ? (
+          <div className="max-w-[42rem] text-[13px] leading-5 text-muted-foreground">
+            {description}
+          </div>
+        ) : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+export function SettingsActions({
+  children,
+  className,
+}: {
+  children: ReactNode;
   className?: string;
 }) {
   return (
     <div
+      data-slot="settings-actions"
+      className={cn("flex flex-wrap items-center justify-end gap-2 px-4 py-3", className)}
+    >
+      {children}
+    </div>
+  );
+}
+
+export function SettingsChoiceGrid({
+  columns = 3,
+  children,
+  className,
+}: {
+  columns?: 2 | 3 | 4;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      data-slot="settings-choice-grid"
       className={cn(
-        "flex items-start justify-between gap-3 border-t border-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)] py-3.5 first:border-t-0 first:pt-0 last:pb-0",
+        "grid grid-cols-1 gap-2.5 sm:grid-cols-2",
+        columns === 3 && "lg:grid-cols-3",
+        columns === 4 && "lg:grid-cols-4",
         className,
       )}
     >
-      <div className="min-w-0 space-y-1">
-        <h3 className="text-[14px] font-medium text-foreground">{title}</h3>
-        <div className="max-w-3xl text-[13px] leading-5 text-muted-foreground">{description}</div>
-      </div>
-      {action ? <div className="shrink-0">{action}</div> : null}
+      {children}
     </div>
   );
 }
@@ -175,7 +261,7 @@ export function SettingsToggle({
   checked: boolean;
 }) {
   return (
-    <ToggleSwitch checked={checked} size="lg" tone="accent" className={cn(className)} {...props} />
+    <ToggleSwitch checked={checked} size="md" tone="accent" className={cn(className)} {...props} />
   );
 }
 
@@ -197,10 +283,10 @@ export function SettingsChoiceCard({
       type="button"
       aria-pressed={selected}
       className={cn(
-        "group flex min-w-[var(--settings-choice-min-width)] flex-col gap-[var(--settings-choice-gap)] rounded-[var(--settings-choice-radius)] border px-[var(--settings-choice-padding-x)] py-[var(--settings-choice-padding-y)] text-left text-[length:var(--settings-choice-label-size)] transition-[border-color,background-color,box-shadow,transform] hover:-translate-y-0.5 hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_98%,transparent)]",
+        "group flex min-w-0 flex-col gap-[var(--settings-choice-gap)] rounded-lg border px-[var(--settings-choice-padding-x)] py-[var(--settings-choice-padding-y)] text-left text-[length:var(--settings-choice-label-size)] outline-none transition-[border-color,background-color,box-shadow,transform] hover:bg-[color:var(--surface-elevated)] active:translate-y-px focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/45",
         selected
-          ? "border-[color:color-mix(in_oklab,var(--accent-base)_82%,white)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_98%,transparent)] shadow-[0_0_0_1px_color-mix(in_oklab,var(--accent-base)_42%,transparent)]"
-          : "border-[color:color-mix(in_oklab,var(--border-soft)_92%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-inset)_92%,transparent)]",
+          ? "border-[color:color-mix(in_oklab,var(--accent-base)_74%,var(--border-strong))] bg-[color:var(--surface-elevated)] shadow-[0_0_0_1px_color-mix(in_oklab,var(--accent-base)_28%,transparent)]"
+          : "border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-inset)_84%,var(--surface-elevated))]",
         className,
       )}
       {...props}
@@ -208,7 +294,7 @@ export function SettingsChoiceCard({
       <div className="overflow-hidden rounded-[var(--settings-choice-preview-radius)]">
         {preview}
       </div>
-      <div className="space-y-0.5">
+      <div className="flex flex-col gap-0.5">
         <div className="font-medium text-foreground">{label}</div>
         {description ? (
           <div className="text-[length:var(--settings-choice-description-size)] leading-4 text-muted-foreground">

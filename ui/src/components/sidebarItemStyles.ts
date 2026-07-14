@@ -6,7 +6,7 @@ export const sidebarItemVariants = cva(
     variants: {
       variant: {
         default: "px-3 py-2.5",
-        compact: "px-3 py-1.5",
+        compact: "px-2.5 py-2",
       },
       active: {
         true: "surface-active border-[color:var(--border-strong)] text-foreground",
@@ -19,6 +19,11 @@ export const sidebarItemVariants = cva(
         variant: "default",
         active: true,
         className: "shadow-[var(--shadow-sm)]",
+      },
+      {
+        variant: "compact",
+        active: true,
+        className: "border-transparent bg-[color:var(--surface-active)] shadow-none",
       },
     ],
     defaultVariants: {

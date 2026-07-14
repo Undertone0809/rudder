@@ -1,8 +1,9 @@
 import { healthApi } from "@/api/health";
 import {
-  SettingsDivider,
+  SettingsGroup,
+  SettingsItem,
+  SettingsPage,
   SettingsPageHeader,
-  SettingsRow,
   SettingsSection,
 } from "@/components/settings/SettingsScaffold";
 import { Button } from "@/components/ui/button";
@@ -91,6 +92,28 @@ function formatEnvironmentValue(value: string | null | undefined, unknownLabel: 
     default:
       return formatDesktopValue(value, unknownLabel);
   }
+}
+
+function AboutValueRow({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div
+      data-slot="settings-item"
+      className="grid min-h-14 grid-cols-1 items-center gap-1 px-4 py-3 sm:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)] sm:gap-5"
+    >
+      <div className="text-[13px] font-medium text-muted-foreground">{label}</div>
+      <div className={mono ? "break-all font-mono text-[13px] text-foreground sm:text-right" : "text-[14px] font-medium text-foreground sm:text-right"}>
+        {value}
+      </div>
+    </div>
+  );
 }
 
 function formatUpdateChannel(
@@ -402,7 +425,7 @@ export function InstanceAboutSettings() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-7 px-1 pb-6">
+    <SettingsPage>
       <SettingsPageHeader
         icon={Info}
         title={t("about.title")}
@@ -414,140 +437,129 @@ export function InstanceAboutSettings() {
         </div>
       ) : null}
 
-      <SettingsDivider />
-
       <SettingsSection
         title={t("about.version.title")}
         description={t("about.version.description")}
       >
-        <div className="grid gap-2.5">
-          <div className="rounded-[calc(var(--radius-md)-1px)] border border-border/70 bg-card/60 px-3.5 py-3">
-            <div className="text-[11px] font-medium text-muted-foreground">{t("about.version.current")}</div>
-            <div className="mt-2 text-sm font-medium text-foreground">
-              {formatVersion(currentVersion, t("common.unknown"))}
-            </div>
-          </div>
-        </div>
+        <SettingsGroup>
+          <AboutValueRow
+            label={t("about.version.current")}
+            value={formatVersion(currentVersion, t("common.unknown"))}
+          />
+        </SettingsGroup>
       </SettingsSection>
-
-      <SettingsDivider />
 
       <SettingsSection
         title={t("about.desktop.title")}
         description={t("about.desktop.description")}
       >
-        <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-3">
-          <div className="rounded-[calc(var(--radius-md)-1px)] border border-border/70 bg-card/60 px-3.5 py-3">
-            <div className="text-[11px] font-medium text-muted-foreground">{t("about.desktop.profile")}</div>
-            <div className="mt-2 text-sm font-medium text-foreground">
-              {formatEnvironmentValue(environment, t("common.unknown"))}
-            </div>
-          </div>
-          <div className="rounded-[calc(var(--radius-md)-1px)] border border-border/70 bg-card/60 px-3.5 py-3">
-            <div className="text-[11px] font-medium text-muted-foreground">{t("about.desktop.instance")}</div>
-            <div className="mt-2 text-sm font-medium text-foreground">{instance ?? t("common.unknown")}</div>
-          </div>
+        <SettingsGroup>
+          <AboutValueRow
+            label={t("about.desktop.profile")}
+            value={formatEnvironmentValue(environment, t("common.unknown"))}
+          />
+          <AboutValueRow
+            label={t("about.desktop.instance")}
+            value={instance ?? t("common.unknown")}
+          />
           {runtimeMode ? (
-            <div className="rounded-[calc(var(--radius-md)-1px)] border border-border/70 bg-card/60 px-3.5 py-3">
-              <div className="text-[11px] font-medium text-muted-foreground">{t("about.desktop.runtime")}</div>
-              <div className="mt-2 text-sm font-medium text-foreground">
-                {formatDesktopValue(runtimeMode, t("common.unknown"))}
-              </div>
-            </div>
+            <AboutValueRow
+              label={t("about.desktop.runtime")}
+              value={formatDesktopValue(runtimeMode, t("common.unknown"))}
+            />
           ) : null}
           {ownerKind ? (
-            <div className="rounded-[calc(var(--radius-md)-1px)] border border-border/70 bg-card/60 px-3.5 py-3">
-              <div className="text-[11px] font-medium text-muted-foreground">{t("about.desktop.owner")}</div>
-              <div className="mt-2 text-sm font-medium text-foreground">
-                {formatDesktopValue(ownerKind, t("common.unknown"))}
-              </div>
-            </div>
+            <AboutValueRow
+              label={t("about.desktop.owner")}
+              value={formatDesktopValue(ownerKind, t("common.unknown"))}
+            />
           ) : null}
           {instanceRoot ? (
-            <div className="rounded-[calc(var(--radius-md)-1px)] border border-border/70 bg-card/60 px-3.5 py-3 md:col-span-2 xl:col-span-3">
-              <div className="text-[11px] font-medium text-muted-foreground">{t("about.desktop.instanceDataPath")}</div>
-              <div className="mt-2 break-all font-mono text-sm text-foreground">
-                {instanceRoot}
-              </div>
-            </div>
+            <AboutValueRow
+              label={t("about.desktop.instanceDataPath")}
+              value={instanceRoot}
+              mono
+            />
           ) : null}
-        </div>
+        </SettingsGroup>
       </SettingsSection>
-
-      <SettingsDivider />
 
       <SettingsSection
         title={t("about.actions.title")}
         description={t("about.actions.description")}
       >
-        <SettingsRow
-          title={t("about.updates.title")}
-          description={(
-            <div className="space-y-1">
-              <div>{t("about.updates.description")}</div>
-              {updateResult ? (
-                <div className="text-[12px]">
-                  {updateResult.status === "update-available"
-                    ? t("about.updates.available.inline", {
-                      latestVersion: formatVersion(updateResult.latestVersion, t("common.unknown")),
-                      channel: formatUpdateChannel(t, updateResult.channel),
-                    })
-                    : updateResult.status === "up-to-date"
-                      ? t("about.updates.current.inline", {
-                        currentVersion: formatVersion(updateResult.currentVersion, t("common.unknown")),
+        <SettingsGroup>
+          <SettingsItem
+            title={t("about.updates.title")}
+            description={(
+              <div className="flex flex-col gap-1">
+                <div>{t("about.updates.description")}</div>
+                {updateResult ? (
+                  <div className="text-[12px]">
+                    {updateResult.status === "update-available"
+                      ? t("about.updates.available.inline", {
+                        latestVersion: formatVersion(updateResult.latestVersion, t("common.unknown")),
                         channel: formatUpdateChannel(t, updateResult.channel),
                       })
-                      : t("about.updates.unavailable.inline", {
-                        channel: formatUpdateChannel(t, updateResult.channel),
-                      })}
-                </div>
-              ) : null}
-            </div>
-          )}
-          action={(
-            <div className="flex items-center gap-2">
-              {updateResult?.status === "update-available" && updateResult.latestVersion ? (
+                      : updateResult.status === "up-to-date"
+                        ? t("about.updates.current.inline", {
+                          currentVersion: formatVersion(updateResult.currentVersion, t("common.unknown")),
+                          channel: formatUpdateChannel(t, updateResult.channel),
+                        })
+                        : t("about.updates.unavailable.inline", {
+                          channel: formatUpdateChannel(t, updateResult.channel),
+                        })}
+                  </div>
+                ) : null}
+              </div>
+            )}
+            action={(
+              <div className="flex flex-wrap items-center gap-2">
+                {updateResult?.status === "update-available" && updateResult.latestVersion ? (
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => void handleInstallUpdate()}
+                    disabled={installUpdatePending || updateActionInProgress}
+                  >
+                    {installUpdatePending ? t("about.updates.installing") : t("about.updates.install")}
+                  </Button>
+                ) : null}
                 <Button
-                  variant="default"
+                  variant="outline"
                   size="sm"
-                  onClick={() => void handleInstallUpdate()}
-                  disabled={installUpdatePending || updateActionInProgress}
+                  onClick={() => void handleCheckForUpdates()}
+                  disabled={checkUpdatesPending || installUpdatePending || updateActionInProgress}
                 >
-                  {installUpdatePending ? t("about.updates.installing") : t("about.updates.install")}
+                  <RefreshCw data-icon="inline-start" className={checkUpdatesPending ? "animate-spin" : undefined} />
+                  {t("about.updates.check")}
                 </Button>
-              ) : null}
+              </div>
+            )}
+          />
+
+          {updateProgress ? (
+            <div data-slot="settings-item" className="px-4 py-3.5">
+              <UpdateProgressDetails progress={updateProgress} t={t} />
+            </div>
+          ) : null}
+
+          <SettingsItem
+            title={t("about.feedback.title")}
+            description={t("about.feedback.description")}
+            action={(
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => void handleCheckForUpdates()}
-                disabled={checkUpdatesPending || installUpdatePending || updateActionInProgress}
+                onClick={() => void handleSendFeedback()}
               >
-                <RefreshCw className={`mr-2 h-4 w-4 ${checkUpdatesPending ? "animate-spin" : ""}`} />
-                {t("about.updates.check")}
+                <Mail data-icon="inline-start" />
+                {t("about.feedback.send")}
               </Button>
-            </div>
-          )}
-        />
-
-        {updateProgress ? (
-          <UpdateProgressDetails progress={updateProgress} t={t} />
-        ) : null}
-
-        <SettingsRow
-          title={t("about.feedback.title")}
-          description={t("about.feedback.description")}
-          action={(
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void handleSendFeedback()}
-            >
-              <Mail className="mr-2 h-4 w-4" />
-              {t("about.feedback.send")}
-            </Button>
-          )}
-        />
+            )}
+          />
+        </SettingsGroup>
       </SettingsSection>
-    </div>
+    </SettingsPage>
   );
 }

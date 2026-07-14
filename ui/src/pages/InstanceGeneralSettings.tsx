@@ -2,9 +2,11 @@ import { instanceSettingsApi } from "@/api/instanceSettings";
 import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import {
   SettingsChoiceCard,
-  SettingsDivider,
+  SettingsChoiceGrid,
+  SettingsGroup,
+  SettingsItem,
+  SettingsPage,
   SettingsPageHeader,
-  SettingsRow,
   SettingsSection,
   SettingsToggle,
 } from "@/components/settings/SettingsScaffold";
@@ -146,7 +148,7 @@ export function InstanceGeneralSettings() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-7 px-1 pb-6">
+    <SettingsPage>
       <SettingsPageHeader
         icon={SlidersHorizontal}
         title={t("general.title")}
@@ -159,13 +161,11 @@ export function InstanceGeneralSettings() {
         </div>
       ) : null}
 
-      <SettingsDivider />
-
       <SettingsSection title={t("general.basics.title")}>
-        <div>
-          <div className="space-y-3.5 pb-4">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3">
             <div className="text-sm font-medium text-foreground">{t("general.language.title")}</div>
-            <div className="flex flex-wrap gap-2.5">
+            <SettingsChoiceGrid columns={2}>
               <SettingsChoiceCard
                 label={t("general.language.option.en.label")}
                 description={t("general.language.option.en.description")}
@@ -190,43 +190,40 @@ export function InstanceGeneralSettings() {
                   />
                 }
               />
-            </div>
+            </SettingsChoiceGrid>
           </div>
 
-          <SettingsRow
-            title={t("general.productTour.title")}
-            description={t("general.productTour.description")}
-            className="pt-4"
-            action={
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="shrink-0"
-                onClick={() => {
-                  navigate(DEFAULT_ORGANIZATION_HOME_PATH);
-                  window.setTimeout(() => openProductTour({ source: "settings" }), 0);
-                }}
-              >
-                <Map className="h-4 w-4" />
-                {t("general.productTour.start")}
-              </Button>
-            }
-          />
+          <SettingsGroup>
+            <SettingsItem
+              title={t("general.productTour.title")}
+              description={t("general.productTour.description")}
+              action={
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    navigate(DEFAULT_ORGANIZATION_HOME_PATH);
+                    window.setTimeout(() => openProductTour({ source: "settings" }), 0);
+                  }}
+                >
+                  <Map data-icon="inline-start" />
+                  {t("general.productTour.start")}
+                </Button>
+              }
+            />
+          </SettingsGroup>
         </div>
       </SettingsSection>
 
       {desktopUpdatesSupported ? (
-        <>
-          <SettingsDivider />
-
-          <SettingsSection title={t("general.updates.title")}>
-            <SettingsRow
+        <SettingsSection title={t("general.updates.title")}>
+          <SettingsGroup>
+            <SettingsItem
               title={t("general.updates.canary.title")}
               description={updateChannel === "canary"
                 ? t("general.updates.canary.enabledDescription")
                 : t("general.updates.canary.disabledDescription")}
-              className="border-t-0 pt-0"
               action={
                 <SettingsToggle
                   checked={updateChannel === "canary"}
@@ -236,40 +233,39 @@ export function InstanceGeneralSettings() {
                 />
               }
             />
-          </SettingsSection>
-        </>
+          </SettingsGroup>
+        </SettingsSection>
       ) : null}
 
-      <SettingsDivider />
-
       <SettingsSection title={t("general.developer.title")}>
-        <SettingsRow
-          title={t("general.logs.censor.title")}
-          description={t("general.logs.censor.description")}
-          className="border-t-0 pt-0"
-          action={
-            <SettingsToggle
-              checked={censorUsernameInLogs}
-              aria-label="Toggle username log censoring"
-              disabled={toggleMutation.isPending}
-              onClick={() => toggleMutation.mutate({ censorUsernameInLogs: !censorUsernameInLogs })}
-            />
-          }
-        />
+        <SettingsGroup>
+          <SettingsItem
+            title={t("general.logs.censor.title")}
+            description={t("general.logs.censor.description")}
+            action={
+              <SettingsToggle
+                checked={censorUsernameInLogs}
+                aria-label="Toggle username log censoring"
+                disabled={toggleMutation.isPending}
+                onClick={() => toggleMutation.mutate({ censorUsernameInLogs: !censorUsernameInLogs })}
+              />
+            }
+          />
 
-        <SettingsRow
-          title={t("general.diagnostics.developer.title")}
-          description={t("general.diagnostics.developer.description")}
-          action={
-            <SettingsToggle
-              checked={showDeveloperDiagnostics}
-              aria-label="Toggle developer diagnostics"
-              disabled={toggleMutation.isPending}
-              onClick={() => toggleMutation.mutate({ showDeveloperDiagnostics: !showDeveloperDiagnostics })}
-            />
-          }
-        />
+          <SettingsItem
+            title={t("general.diagnostics.developer.title")}
+            description={t("general.diagnostics.developer.description")}
+            action={
+              <SettingsToggle
+                checked={showDeveloperDiagnostics}
+                aria-label="Toggle developer diagnostics"
+                disabled={toggleMutation.isPending}
+                onClick={() => toggleMutation.mutate({ showDeveloperDiagnostics: !showDeveloperDiagnostics })}
+              />
+            }
+          />
+        </SettingsGroup>
       </SettingsSection>
-    </div>
+    </SettingsPage>
   );
 }

@@ -329,8 +329,8 @@ const FieldWrapper = React.memo(({
   children,
 }: FieldWrapperProps) => {
   return (
-    <div className={cn("space-y-2", disabled && "opacity-60")}>
-      <div className="flex items-center justify-between">
+    <div className={cn("min-w-0 space-y-2", disabled && "opacity-60")}>
+      <div className="flex min-w-0 items-center justify-between">
         {label && (
           <Label className="text-sm font-medium">
             {label}
@@ -387,14 +387,14 @@ const BooleanField = React.memo(({
   description?: string;
   error?: string;
 }) => (
-  <div className="flex items-start space-x-3 space-y-0">
+  <div className="flex min-w-0 items-start space-x-3 space-y-0">
     <Checkbox
       id={id}
       checked={!!value}
       onCheckedChange={onChange}
       disabled={disabled}
     />
-    <div className="grid gap-1.5 leading-none">
+    <div className="grid min-w-0 gap-1.5 leading-none">
       {label && (
         <Label
           htmlFor={id}
@@ -450,7 +450,7 @@ const EnumField = React.memo(({
       onValueChange={onChange}
       disabled={disabled}
     >
-      <SelectTrigger className="w-full">
+      <SelectTrigger className="w-full min-w-0">
         <SelectValue placeholder="Select an option" />
       </SelectTrigger>
       <SelectContent>
@@ -500,7 +500,7 @@ const SecretField = React.memo(({
       error={error}
       disabled={disabled}
     >
-      <div className="relative">
+      <div className="relative min-w-0">
         <Input
           type={isVisible ? "text" : "password"}
           value={String(value ?? "")}
@@ -623,7 +623,7 @@ const StringField = React.memo(({
           onChange={(e) => onChange(e.target.value)}
           placeholder={String(defaultValue ?? "")}
           disabled={disabled}
-          className="min-h-[100px]"
+          className="min-h-[100px] min-w-0"
           aria-invalid={!!error}
         />
       ) : (
@@ -669,9 +669,9 @@ const ArrayField = React.memo(({
   const isComplex = resolveType(itemSchema) === "object";
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
+    <div className="min-w-0 space-y-4">
+      <div className="flex min-w-0 items-center justify-between gap-3">
+        <div className="min-w-0">
           <Label className="text-sm font-medium">{label}</Label>
           {propSchema.description && (
             <p className="text-xs text-muted-foreground">
@@ -683,6 +683,7 @@ const ArrayField = React.memo(({
           type="button"
           variant="outline"
           size="sm"
+          className="shrink-0"
           disabled={
             disabled ||
             (propSchema.maxItems !== undefined &&
@@ -698,13 +699,13 @@ const ArrayField = React.memo(({
         </Button>
       </div>
 
-      <div className="space-y-3">
+      <div className="min-w-0 space-y-3">
         {items.map((item, index) => (
           <div
             key={index}
-            className="group relative flex items-start space-x-2 rounded-lg border p-3"
+            className="group relative flex w-full min-w-0 max-w-full items-start gap-2 rounded-lg border p-3"
           >
-            <div className="flex-1">
+            <div className="min-w-0 flex-1">
               <div className="mb-2 text-xs font-medium text-muted-foreground">
                 Item {index + 1}
               </div>
@@ -726,7 +727,7 @@ const ArrayField = React.memo(({
               type="button"
               variant="ghost"
               size="icon"
-              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+              className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
               disabled={
                 disabled ||
                 (propSchema.minItems !== undefined &&
@@ -784,13 +785,13 @@ const ObjectField = React.memo(({
   };
 
   return (
-    <div className="space-y-3 rounded-lg border p-4">
+    <div className="min-w-0 space-y-3 rounded-lg border p-4">
       <button
         type="button"
-        className="flex w-full items-center justify-between"
+        className="flex w-full min-w-0 items-center justify-between gap-3"
         onClick={() => setIsCollapsed(!isCollapsed)}
       >
-        <div className="text-left">
+        <div className="min-w-0 text-left">
           <Label className="cursor-pointer text-sm font-semibold">
             {label}
           </Label>
@@ -801,14 +802,14 @@ const ObjectField = React.memo(({
           )}
         </div>
         {isCollapsed ? (
-          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
         ) : (
-          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
         )}
       </button>
 
       {!isCollapsed && (
-        <div className="pt-2">
+        <div className="min-w-0 pt-2">
           <JsonSchemaForm
             schema={propSchema}
             values={(value as Record<string, unknown>) ?? {}}
@@ -978,7 +979,7 @@ export function JsonSchemaForm({
   // If it's a scalar at root, render a single FormField
   if (type !== "object") {
     return (
-      <div className={className}>
+      <div className={cn("min-w-0", className)}>
         <FormField
           propSchema={schema}
           value={values}
@@ -1010,7 +1011,7 @@ export function JsonSchemaForm({
     return (
       <div
         className={cn(
-          "py-4 text-center text-sm text-muted-foreground",
+          "min-w-0 py-4 text-center text-sm text-muted-foreground",
           className,
         )}
       >
@@ -1020,7 +1021,7 @@ export function JsonSchemaForm({
   }
 
   return (
-    <div className={cn("space-y-6", className)}>
+    <div className={cn("min-w-0 space-y-6", className)}>
       {Object.entries(properties).map(([key, propSchema]) => {
         const value = values[key];
         const isRequired = requiredFields.has(key);

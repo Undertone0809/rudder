@@ -4,6 +4,7 @@ import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton
 import {
   SettingsGroup,
   SettingsItem,
+  SettingsPage,
   SettingsPageHeader,
   SettingsSection,
   SettingsToggle,
@@ -25,8 +26,8 @@ import { queryKeys } from "@/lib/queryKeys";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import type { PatchInstanceBrowserSettings } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AppWindow, Database, Import, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { AppWindow, Database, Globe2, Import, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 export function InstanceBrowserSettings() {
   const { t } = useI18n();
@@ -37,6 +38,7 @@ export function InstanceBrowserSettings() {
   const [clearSucceeded, setClearSucceeded] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const importTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     setBreadcrumbs([
@@ -126,11 +128,11 @@ export function InstanceBrowserSettings() {
   }
 
   return (
-    <div
+    <SettingsPage
       data-testid="browser-settings-page"
-      className="mx-auto flex max-w-[47.5rem] flex-col gap-6 px-1 pb-6"
     >
       <SettingsPageHeader
+        icon={Globe2}
         title={t("browser.title")}
         description={t("browser.description")}
       />
@@ -209,6 +211,7 @@ export function InstanceBrowserSettings() {
               : t("browser.import.disabledDescription")}
             action={
               <Button
+                ref={importTriggerRef}
                 type="button"
                 variant="outline"
                 size="sm"
@@ -246,7 +249,11 @@ export function InstanceBrowserSettings() {
         ) : null}
       </SettingsSection>
 
-      <BrowserDataImportDialog open={importOpen} onOpenChange={setImportOpen} />
-    </div>
+      <BrowserDataImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        returnFocusRef={importTriggerRef}
+      />
+    </SettingsPage>
   );
 }

@@ -1,10 +1,20 @@
 import { expect, test } from "@playwright/test";
 
+let issuePrefixSequence = 0;
+
+function uniqueIssuePrefix() {
+  issuePrefixSequence += 1;
+  return `A${Date.now().toString(36).slice(-7)}${issuePrefixSequence.toString(36)}`
+    .toUpperCase()
+    .slice(0, 12);
+}
+
 test.describe("Settings appearance", () => {
   test("moves color mode from General into Appearance", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Appearance Settings ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -27,7 +37,7 @@ test.describe("Settings appearance", () => {
     await expect(page).toHaveURL(/\/instance\/settings\/appearance$/);
     await expect(modal.getByRole("heading", { name: "Appearance" })).toBeVisible();
     await expect(modal.getByText("Color mode")).toBeVisible();
-    await expect(modal.getByRole("button", { name: "Light" })).toBeVisible();
+    await expect(modal.getByRole("button", { name: /^Light Warm paper surfaces$/ })).toBeVisible();
     await expect(modal.getByRole("button", { name: "Auto" })).toBeVisible();
     await expect(modal.getByRole("button", { name: /^Dark Low-glare workspace$/ })).toBeVisible();
   });
@@ -36,6 +46,7 @@ test.describe("Settings appearance", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Appearance Style ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -74,6 +85,7 @@ test.describe("Settings appearance", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Appearance Preset ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -157,6 +169,7 @@ test.describe("Settings appearance", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Appearance Controls ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
       },
     });
     expect(orgRes.ok()).toBe(true);

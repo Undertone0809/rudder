@@ -1,7 +1,7 @@
 import { HeartbeatEnabledButtons } from "@/components/HeartbeatEnabledButtons";
 import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import {
-  SettingsDivider,
+  SettingsPage,
   SettingsPageHeader,
   SettingsSection,
 } from "@/components/settings/SettingsScaffold";
@@ -205,7 +205,7 @@ export function InstanceSettings() {
   }
 
   return (
-    <div className="mx-auto max-w-none space-y-5 px-0.5 pb-4">
+    <SettingsPage width="wide">
       <SettingsPageHeader
         icon={Clock3}
         title={t("heartbeats.title")}
@@ -244,8 +244,6 @@ export function InstanceSettings() {
           </Button>
         )}
       </div>
-
-      <SettingsDivider />
 
       {actionError && (
         <div className="rounded-[var(--radius-md)] border border-destructive/30 bg-destructive/8 px-4 py-3 text-sm text-destructive">
@@ -355,6 +353,6 @@ export function InstanceSettings() {
         </div>
         </SettingsSection>
       )}
-    </div>
+    </SettingsPage>
   );
 }

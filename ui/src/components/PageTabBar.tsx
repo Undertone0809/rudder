@@ -17,6 +17,8 @@ interface PageTabBarProps {
   onValueChange?: (value: string) => void;
   align?: "center" | "start";
   triggerClassName?: string;
+  ariaLabel?: string;
+  mobileMode?: "select" | "scrollable-tabs";
 }
 
 export function PageTabBar({
@@ -25,6 +27,8 @@ export function PageTabBar({
   onValueChange,
   align = "center",
   triggerClassName,
+  ariaLabel,
+  mobileMode = "select",
 }: PageTabBarProps) {
   const { isMobile } = useSidebar();
   const itemValues = items.map((item) => item.value);
@@ -35,9 +39,10 @@ export function PageTabBar({
     setItemRef,
   } = useSlidingIndicator<HTMLButtonElement>(value, itemValues);
 
-  if (isMobile && value !== undefined && onValueChange) {
+  if (isMobile && mobileMode === "select" && value !== undefined && onValueChange) {
     return (
       <select
+        aria-label={ariaLabel}
         value={value}
         onChange={(e) => onValueChange(e.target.value)}
         className="h-9 rounded-md border border-border bg-background px-2 py-1 text-base focus:outline-none focus:ring-1 focus:ring-ring"
@@ -51,9 +56,13 @@ export function PageTabBar({
     );
   }
 
-  return (
+  const tabBar = (
     <div ref={containerRef} className="relative w-fit">
-      <TabsList variant="line" className={cn("relative z-10", align === "start" ? "justify-start" : undefined)}>
+      <TabsList
+        aria-label={ariaLabel}
+        variant="line"
+        className={cn("relative z-10", align === "start" ? "justify-start" : undefined)}
+      >
         {items.map((item) => (
           <TabsTrigger
             key={item.value}
@@ -91,4 +100,10 @@ export function PageTabBar({
       />
     </div>
   );
+
+  if (isMobile && mobileMode === "scrollable-tabs") {
+    return <div className="scrollbar-auto-hide max-w-full overflow-x-auto pb-1">{tabBar}</div>;
+  }
+
+  return tabBar;
 }
