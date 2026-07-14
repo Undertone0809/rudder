@@ -17,6 +17,7 @@ import {
   organizations,
   reconcilePendingMigrationHistory,
   RUDDER_PRODUCTION_POSTGRES_VERSION,
+  type Db,
   type LocalPostgresInstance,
 } from "@rudderhq/db";
 import {
@@ -60,6 +61,7 @@ import {
 import { logger } from "./middleware/logger.js";
 import { resolveRudderConfigPath, resolveRudderEnvPath } from "./paths.js";
 import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
+import { RuntimeSupervisor, supervisedStart } from "./runtime/runtime-supervisor.js";
 import { chatAgentRunService } from "./services/chat-agent-runs.js";
 import {
   automationService,
@@ -368,10 +370,27 @@ export async function startManagedLocalServer(
 }
 
 export async function startServer(options: StartServerOptions = {}): Promise<StartedServer> {
+  const supervisor = new RuntimeSupervisor({
+    onDisposeError: ({ name, error }) => {
+      logger.warn({ err: error, resource: name }, "Runtime resource cleanup failed");
+    },
+  });
+  return supervisedStart(supervisor, () => startServerRuntime(options, supervisor));
+}
+
+async function startServerRuntime(
+  options: StartServerOptions,
+  supervisor: RuntimeSupervisor,
+): Promise<StartedServer> {
   options.onEvent?.({ stage: "config", message: "Loading Rudder configuration" });
   const instanceId = resolveRudderInstanceId();
   const localEnv = resolveEffectiveLocalEnvName(instanceId);
   const runtimeOwnerKind = options.runtimeOwnerKind ?? resolveRuntimeOwnerKind();
+  let ownedRuntimeDescriptor: { instanceId: string; pid: number; apiUrl: string } | null = null;
+  supervisor.own("runtime-descriptor", async () => {
+    if (!ownedRuntimeDescriptor) return;
+    await removeLocalRuntimeDescriptorIfOwned(ownedRuntimeDescriptor);
+  });
   if (runtimeOwnerKind) {
     process.env.RUDDER_RUNTIME_OWNER_KIND = runtimeOwnerKind;
   }
@@ -542,10 +561,13 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     }
   }
   
-  let db;
+  let db: Db;
   let embeddedPostgres: LocalPostgresInstance | null = null;
   let embeddedPostgresStartedByThisProcess = false;
-  let appHandle: Awaited<ReturnType<typeof createRudderApp>> | null = null;
+  supervisor.own("embedded-postgres", async () => {
+    if (!embeddedPostgres || !embeddedPostgresStartedByThisProcess) return;
+    await embeddedPostgres.stop();
+  });
   let migrationSummary: MigrationSummary = "skipped";
   let activeDatabaseConnectionString: string;
   let startupDbInfo:
@@ -753,6 +775,10 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     activeDatabaseConnectionString = embeddedConnectionString;
     startupDbInfo = { mode: "embedded-postgres", provider: localPostgresProvider, dataDir, port, ...(localPostgresBinDir ? { postgresBinDir: localPostgresBinDir } : {}) };
   }
+
+  supervisor.own("database-pool", async () => {
+    await db.$client.end({ timeout: 5 });
+  });
   
   const liveOrganizationRows = await db
     .select({ id: organizations.id, name: organizations.name, urlKey: organizations.urlKey })
@@ -957,7 +983,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   const uiMode = config.uiDevMiddleware ? "vite-dev" : config.serveUi ? "static" : "none";
   const storageService = createStorageServiceFromConfig(config);
   options.onEvent?.({ stage: "app", message: "Creating Rudder app" });
-  appHandle = await createRudderApp(db as any, {
+  const appHandle = await createRudderApp(db as any, {
     uiMode,
     serverPort: listenPort,
     storageService,
@@ -973,7 +999,26 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     betterAuthHandler,
     resolveSession,
   });
+  supervisor.own("app", () => appHandle.close());
   const server = createServer(appHandle.app as unknown as Parameters<typeof createServer>[0]);
+  let httpCloseInFlight: Promise<void> | null = null;
+  const beginHttpClose = () => {
+    if (httpCloseInFlight) return httpCloseInFlight;
+    httpCloseInFlight = new Promise<void>((resolveClose) => {
+      if (!server.listening) {
+        resolveClose();
+        return;
+      }
+      server.close((err) => {
+        if (err) {
+          logger.warn({ err }, "HTTP server close reported an error during shutdown");
+        }
+        resolveClose();
+      });
+    });
+    return httpCloseInFlight;
+  };
+  supervisor.own("http-server-drain", beginHttpClose);
   
   if (listenPort !== config.port) {
     logger.warn(`Requested port is busy; using next free port (requestedPort=${config.port}, selectedPort=${listenPort})`);
@@ -988,10 +1033,11 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   process.env.RUDDER_LISTEN_PORT = String(listenPort);
   process.env.RUDDER_API_URL = `http://${runtimeApiHost}:${listenPort}`;
   
-  setupLiveEventsWebSocketServer(server, db as any, {
+  const liveEventsRuntime = setupLiveEventsWebSocketServer(server, db as any, {
     deploymentMode: config.deploymentMode,
     resolveSessionFromHeaders,
   });
+  supervisor.own("live-events-websocket", () => liveEventsRuntime.close());
 
   void reconcilePersistedRuntimeServicesOnStartup(db as any)
     .then((result) => {
@@ -1006,12 +1052,18 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       logger.error({ err }, "startup reconciliation of persisted runtime services failed");
     });
   
-  const intervalHandles: Array<ReturnType<typeof setInterval>> = [];
+  const ownInterval = (name: string, handle: ReturnType<typeof setInterval>) => {
+    supervisor.own(name, () => clearInterval(handle));
+  };
   const feishuRuntime = feishuIntegrationRuntimeService(db as any, { storage: storageService });
+  supervisor.own("feishu-runtime", () => feishuRuntime.stop());
   const feishuLongConnectionEnabled = isFeishuLongConnectionEnabled();
   configureFeishuIntegrationRuntime({
     runtime: feishuRuntime,
     enabled: feishuLongConnectionEnabled,
+  });
+  supervisor.own("feishu-runtime-registry", () => {
+    configureFeishuIntegrationRuntime({ runtime: null, enabled: false });
   });
 
   if (config.heartbeatSchedulerEnabled) {
@@ -1043,7 +1095,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       .catch((err) => {
         logger.error({ err }, "startup chat run recovery failed");
       });
-    intervalHandles.push(setInterval(() => {
+    ownInterval("heartbeat-scheduler-interval", setInterval(() => {
       void heartbeat
         .tickTimers(new Date())
         .then((result) => {
@@ -1136,7 +1188,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       },
       "Automatic database backups enabled",
     );
-    intervalHandles.push(setInterval(() => {
+    ownInterval("database-backup-interval", setInterval(() => {
       void runScheduledBackup();
     }, backupIntervalMs));
   }
@@ -1250,7 +1302,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       "Automatic workspace backups enabled",
     );
     void runScheduledWorkspaceBackups("startup");
-    intervalHandles.push(setInterval(() => {
+    ownInterval("workspace-backup-interval", setInterval(() => {
       void runScheduledWorkspaceBackups("running");
     }, WORKSPACE_BACKUP_SCHEDULER_TICK_MS));
   }
@@ -1318,9 +1370,12 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       resolveListen();
     });
   });
+  supervisor.own("http-ingress", () => {
+    void beginHttpClose();
+  });
 
   if (runtimeOwnerKind) {
-    await writeLocalRuntimeDescriptor({
+    const runtimeDescriptor = {
       instanceId,
       localEnv,
       pid: process.pid,
@@ -1329,56 +1384,22 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       version: serverVersion,
       ownerKind: runtimeOwnerKind,
       startedAt: new Date().toISOString(),
-    });
+    };
+    ownedRuntimeDescriptor = {
+      instanceId: runtimeDescriptor.instanceId,
+      pid: runtimeDescriptor.pid,
+      apiUrl: runtimeDescriptor.apiUrl,
+    };
+    await writeLocalRuntimeDescriptor(runtimeDescriptor);
   }
 
-  let stopInFlight: Promise<void> | null = null;
-  const stop = async () => {
-    if (stopInFlight) return stopInFlight;
-    options.onEvent?.({ stage: "shutdown", message: "Stopping Rudder server" });
-    stopInFlight = (async () => {
-      for (const handle of intervalHandles) {
-        clearInterval(handle);
-      }
-      configureFeishuIntegrationRuntime({ runtime: null, enabled: false });
-      await new Promise<void>((resolveClose) => {
-        if (!server.listening) {
-          resolveClose();
-          return;
-        }
-        server.close((err) => {
-          if (err) {
-            logger.warn({ err }, "HTTP server close reported an error during shutdown");
-          }
-          resolveClose();
-        });
-      });
-      try {
-        await feishuRuntime.stop();
-      } catch (err) {
-        logger.warn({ err }, "Feishu long-connection runtime cleanup failed");
-      }
-      try {
-        await appHandle?.close();
-      } catch (err) {
-        logger.warn({ err }, "App cleanup failed during shutdown");
-      }
-      if (embeddedPostgres && embeddedPostgresStartedByThisProcess) {
-        try {
-          await embeddedPostgres.stop();
-        } catch (err) {
-          logger.error({ err }, "Failed to stop embedded PostgreSQL cleanly");
-        }
-      }
-      if (runtimeOwnerKind) {
-        await removeLocalRuntimeDescriptorIfOwned({
-          instanceId,
-          pid: process.pid,
-          apiUrl: process.env.RUDDER_API_URL ?? `http://${runtimeApiHost}:${listenPort}`,
-        });
-      }
-    })();
-    return stopInFlight;
+  let shutdownEventSent = false;
+  const stop = () => {
+    if (!shutdownEventSent) {
+      shutdownEventSent = true;
+      options.onEvent?.({ stage: "shutdown", message: "Stopping Rudder server" });
+    }
+    return supervisor.dispose();
   };
 
   const handleSignal = (signal: "SIGINT" | "SIGTERM") => {
@@ -1391,11 +1412,13 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       });
   };
 
-  process.once("SIGINT", () => {
-    handleSignal("SIGINT");
-  });
-  process.once("SIGTERM", () => {
-    handleSignal("SIGTERM");
+  const handleSigint = () => handleSignal("SIGINT");
+  const handleSigterm = () => handleSignal("SIGTERM");
+  process.once("SIGINT", handleSigint);
+  process.once("SIGTERM", handleSigterm);
+  supervisor.own("process-signal-listeners", () => {
+    process.off("SIGINT", handleSigint);
+    process.off("SIGTERM", handleSigterm);
   });
 
   options.onEvent?.({ stage: "ready", message: "Rudder server is ready" });
