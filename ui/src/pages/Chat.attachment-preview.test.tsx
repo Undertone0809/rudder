@@ -295,6 +295,10 @@ vi.mock("@/components/WorkspacePdfPreview", () => ({
   ),
 }));
 
+vi.mock("@/hooks/useViewedOrganization", () => ({
+  useViewedOrganization: () => ({ viewedOrganizationId: "org-1" }),
+}));
+
 vi.mock("@/context/BreadcrumbContext", () => ({
   useBreadcrumbs: () => ({ setBreadcrumbs: mockState.setBreadcrumbs }),
 }));

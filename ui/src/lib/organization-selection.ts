@@ -7,7 +7,9 @@ export function shouldSyncOrganizationSelectionFromRoute(params: {
 }): boolean {
   const { selectionSource, selectedOrganizationId, routeOrganizationId } = params;
 
-  if (selectedOrganizationId === routeOrganizationId) return false;
+  if (selectedOrganizationId === routeOrganizationId) {
+    return selectionSource !== "route_sync";
+  }
 
   // Let manual organization switches finish their remembered-path navigation first.
   if (selectionSource === "manual" && selectedOrganizationId) {

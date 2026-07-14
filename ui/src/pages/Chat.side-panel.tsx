@@ -1171,6 +1171,7 @@ function ChatSidePanelBrowserView({
 }
 
 export function ChatSidePanel({
+  contextReady = true,
   desktopWidth,
   equalWidth = false,
   expanded = false,
@@ -1181,6 +1182,7 @@ export function ChatSidePanel({
   target,
   selectedOrganizationId,
 }: {
+  contextReady?: boolean;
   desktopWidth?: number;
   equalWidth?: boolean;
   expanded?: boolean;
@@ -1206,9 +1208,9 @@ export function ChatSidePanel({
   const desktopBrowserAvailable = Boolean(readDesktopShell()?.getBrowserPartition);
   const browserAvailable = desktopBrowserAvailable;
   useEffect(() => {
-    if (!target || (target.kind === "browser" && !browserAvailable)) return;
+    if (!contextReady || !target || (target.kind === "browser" && !browserAvailable)) return;
     openTarget(target);
-  }, [browserAvailable, openTarget, target]);
+  }, [browserAvailable, contextReady, openTarget, target]);
 
   useEffect(() => {
     if (desktopBrowserAvailable) return;
@@ -1217,6 +1219,7 @@ export function ChatSidePanel({
     }
   }, [browserTargets, desktopBrowserAvailable, sidePanel]);
   const activeTarget = useMemo(() => {
+    if (!contextReady) return null;
     if (visibleTabs.length === 0) return null;
     if (sidePanel.activeKey === null) return null;
     if (sidePanel.activeKey) {
@@ -1224,7 +1227,7 @@ export function ChatSidePanel({
       if (matchingTab) return matchingTab;
     }
     return visibleTabs.at(-1) ?? null;
-  }, [sidePanel.activeKey, visibleTabs]);
+  }, [contextReady, sidePanel.activeKey, visibleTabs]);
 
   const issueTarget = activeTarget?.kind === "issue" ? activeTarget : null;
   const chatTarget = activeTarget?.kind === "chat" ? activeTarget : null;
@@ -1350,10 +1353,12 @@ export function ChatSidePanel({
             : "w-full md:w-[min(420px,36vw)] transition-[width,opacity,transform] duration-300 ease-out motion-reduce:transition-none",
         exiting && "translate-x-4 scale-[0.985] opacity-0",
         resizing && "transition-none",
+        !contextReady && "hidden",
         !sidePanel.open && !exiting && "hidden",
       )}
       style={desktopPanelStyle}
       aria-label="Side Panel"
+      aria-hidden={!contextReady || undefined}
     >
       <div className={cn(
         "workspace-main-card relative z-10 flex shrink-0 flex-col overflow-visible rounded-[var(--desktop-workspace-radius)]",

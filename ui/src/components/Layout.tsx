@@ -401,6 +401,14 @@ export function resolveSidePanelContextKey(relativePath: string): string | null 
   return null;
 }
 
+export function resolveSidePanelRouteContextKey(
+  relativePath: string,
+  organizationId: string | null | undefined,
+): string {
+  return resolveSidePanelContextKey(relativePath)
+    ?? (organizationId ? `organization:${organizationId}:global` : "global");
+}
+
 function getCurrentViewportWidth(): number | null {
   if (typeof window === "undefined") return null;
   return window.innerWidth;
@@ -498,10 +506,14 @@ function readRememberedSidePanelWidth(): number {
 }
 
 function DesktopSidePanelSlot({
+  contextReady,
+  expanded,
   onExpandedChange,
   selectedOrganizationId,
 }: {
-  onExpandedChange?: (expanded: boolean) => void;
+  contextReady: boolean;
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
   selectedOrganizationId: string | null | undefined;
 }) {
   const sidePanel = useSidePanel();
@@ -518,14 +530,8 @@ function DesktopSidePanelSlot({
   const [resizingSidePanel, setResizingSidePanel] = useState(false);
   const [renderSidePanel, setRenderSidePanel] = useState(sidePanel.open);
   const [sidePanelExiting, setSidePanelExiting] = useState(false);
-  const [sidePanelExpanded, setSidePanelExpanded] = useState(false);
   const hasBrowserTabs = sidePanel.tabs.some((target) => target.kind === "browser");
   const expandedSidePanelWidth = clampSidePanelWidth(SIDE_PANEL_EXPANDED_WIDTH, viewportWidth);
-
-  useLayoutEffect(() => {
-    onExpandedChange?.(sidePanel.open && sidePanelExpanded);
-    return () => onExpandedChange?.(false);
-  }, [onExpandedChange, sidePanel.open, sidePanelExpanded]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !widthInitializedRef.current) return;
@@ -622,7 +628,7 @@ function DesktopSidePanelSlot({
       latestWidth = startWidth - deltaX;
       if (workspaceWidth !== null && shouldAutoExpandSidePanel(latestWidth, workspaceWidth)) {
         stopResizing();
-        setSidePanelExpanded(true);
+        onExpandedChange(true);
         return;
       }
       if (latestWidth <= SIDE_PANEL_COLLAPSE_WIDTH) {
@@ -649,10 +655,10 @@ function DesktopSidePanelSlot({
 
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", stopResizing, { once: true });
-  }, [resetSidePanelWidth, setProportionalSidePanelWidth, sidePanel, sidePanelWidth, workspaceWidth]);
+  }, [onExpandedChange, resetSidePanelWidth, setProportionalSidePanelWidth, sidePanel, sidePanelWidth, workspaceWidth]);
 
-  const panelVisible = sidePanel.open || sidePanelExiting;
-  const expandedVisible = panelVisible && sidePanelExpanded;
+  const panelVisible = contextReady && (sidePanel.open || sidePanelExiting);
+  const expandedVisible = contextReady && sidePanel.open && expanded;
   const shouldMountSidePanel = sidePanel.open || renderSidePanel || hasBrowserTabs;
 
   return (
@@ -696,6 +702,7 @@ function DesktopSidePanelSlot({
         aria-hidden={!panelVisible}
       >
         <ChatSidePanel
+          contextReady={contextReady}
           selectedOrganizationId={selectedOrganizationId}
           desktopWidth={expandedVisible ? undefined : sidePanelWidth}
           equalWidth={!expandedVisible && useEqualDefaultWidth}
@@ -703,18 +710,18 @@ function DesktopSidePanelSlot({
           exiting={sidePanelExiting}
           resizing={resizingSidePanel}
           onClose={() => {
-            if (sidePanelExpanded) {
-              setSidePanelExpanded(false);
+            if (expanded) {
+              onExpandedChange(false);
               resetSidePanelWidth();
             }
             sidePanel.hidePanel();
           }}
           onToggleExpanded={() => {
-            if (sidePanelExpanded) {
-              setSidePanelExpanded(false);
+            if (expanded) {
+              onExpandedChange(false);
               resetSidePanelWidth();
             } else {
-              setSidePanelExpanded(true);
+              onExpandedChange(true);
               setProportionalSidePanelWidth(expandedSidePanelWidth);
             }
           }}
@@ -724,13 +731,12 @@ function DesktopSidePanelSlot({
   );
 }
 
-function SidePanelRouteContextBinder({ relativePath }: { relativePath: string }) {
+function SidePanelRouteContextBinder({ contextKey }: { contextKey: string }) {
   const { setContextKey } = useSidePanel();
-  const sidePanelContextKey = useMemo(() => resolveSidePanelContextKey(relativePath), [relativePath]);
 
   useLayoutEffect(() => {
-    setContextKey(sidePanelContextKey);
-  }, [setContextKey, sidePanelContextKey]);
+    setContextKey(contextKey);
+  }, [contextKey, setContextKey]);
 
   return null;
 }
@@ -747,6 +753,7 @@ export function Layout() {
     openProductTour,
   } = useDialog();
   const { togglePanelVisible } = usePanel();
+  const { contextKey: sidePanelContextKey, open: sidePanelOpen } = useSidePanel();
   const {
     organizations,
     loading: organizationsLoading,
@@ -840,6 +847,15 @@ export function Layout() {
       organizationPrefix: orgPrefix,
     });
   }, [organizations, orgPrefix]);
+  const routeSidePanelContextKey = resolveSidePanelRouteContextKey(
+    relativeBoardPath,
+    matchedOrganization?.id,
+  );
+  const sidePanelContextReady = sidePanelContextKey === routeSidePanelContextKey;
+  const sidePanelOrganizationId = sidePanelContextReady ? matchedOrganization?.id : null;
+  const desktopSidePanelOverlayVisible = sidePanelContextReady
+    && sidePanelOpen
+    && desktopSidePanelExpanded;
   const hasUnknownOrganizationPrefix =
     Boolean(orgPrefix) && !organizationsLoading && organizations.length > 0 && !matchedOrganization;
   const { data: health } = useQuery({
@@ -951,9 +967,21 @@ export function Layout() {
 
   useOrganizationPageMemory();
 
+  useLayoutEffect(() => {
+    setDesktopSidePanelExpanded(false);
+  }, [matchedOrganization?.id]);
+
+  useLayoutEffect(() => {
+    if (!sidePanelContextReady) setDesktopSidePanelExpanded(false);
+  }, [sidePanelContextReady]);
+
+  useLayoutEffect(() => {
+    if (!sidePanelOpen) setDesktopSidePanelExpanded(false);
+  }, [sidePanelOpen]);
+
   useEffect(() => {
-    rememberPrimaryRailPath(selectedOrganizationId, relativeBoardUrl);
-  }, [relativeBoardUrl, selectedOrganizationId]);
+    rememberPrimaryRailPath(matchedOrganization?.id, relativeBoardUrl);
+  }, [matchedOrganization?.id, relativeBoardUrl]);
 
   useEffect(() => {
     if (!isMobile) {
@@ -1294,7 +1322,7 @@ export function Layout() {
       <WorktreeBanner />
       <DevRestartBanner devServer={health?.devServer} />
       <MarkdownMentionsProvider>
-      <SidePanelRouteContextBinder relativePath={relativeBoardPath} />
+      <SidePanelRouteContextBinder contextKey={routeSidePanelContextKey} />
       <CalendarWorkspaceProvider>
       <div className={cn("min-h-0 flex-1", isMobile ? "w-full" : "flex overflow-hidden")}>
         {isMobile && sidebarOpen && (
@@ -1484,13 +1512,13 @@ export function Layout() {
                       <div
                         data-testid="workspace-main-card"
                         data-tour-target="workspace-main"
-                        aria-hidden={desktopSidePanelExpanded || undefined}
-                        inert={desktopSidePanelExpanded ? true : undefined}
+                        aria-hidden={desktopSidePanelOverlayVisible || undefined}
+                        inert={desktopSidePanelOverlayVisible ? true : undefined}
                         className={cn(
                           "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
                           "workspace-main-card",
                           useFramelessWorkspaceMain && "workspace-main-card--frameless",
-                          desktopSidePanelExpanded && "pointer-events-none invisible",
+                          desktopSidePanelOverlayVisible && "pointer-events-none invisible",
                         )}
                       >
                         {!useFramelessWorkspaceMain ? (
@@ -1523,7 +1551,9 @@ export function Layout() {
                         </main>
                       </div>
                       <DesktopSidePanelSlot
-                        selectedOrganizationId={selectedOrganizationId}
+                        contextReady={sidePanelContextReady}
+                        expanded={desktopSidePanelExpanded}
+                        selectedOrganizationId={sidePanelOrganizationId}
                         onExpandedChange={setDesktopSidePanelExpanded}
                       />
                     </div>
@@ -1561,7 +1591,12 @@ export function Layout() {
       <NewProjectDialog />
       <NewGoalDialog />
       <NewAgentDialog />
-      {isMobile ? <ChatSidePanel selectedOrganizationId={selectedOrganizationId} /> : null}
+      {isMobile ? (
+        <ChatSidePanel
+          contextReady={sidePanelContextReady}
+          selectedOrganizationId={sidePanelOrganizationId}
+        />
+      ) : null}
       </CalendarWorkspaceProvider>
       </MarkdownMentionsProvider>
     </div>

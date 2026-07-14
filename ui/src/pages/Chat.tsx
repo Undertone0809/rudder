@@ -38,6 +38,7 @@ import { useSidebar } from "@/context/SidebarContext";
 import { useSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
+import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import {
   NO_CHAT_AGENT_ID,
@@ -467,7 +468,7 @@ function ChatScrollMap({
     </>
   );
 }
-function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm } = useDialog();
+function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm } = useDialog();
   const {
     abortChatStream,
     sendInFlightByChatId,
@@ -489,6 +490,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       pushToast({
         title: "Failed to open file",
         body: error instanceof Error ? error.message : `Could not open ${targetPath}.`, tone: "error", }); }); }, [pushToast]);
+  const organizationRouteMatchesSelection = Boolean(
+    viewedOrganizationId && viewedOrganizationId === selectedOrganizationId,
+  );
   const handleChatMarkdownLinkClick = useCallback<MarkdownLinkClickHandler>(({ event, href, label }) => { if (!shouldHandlePlainChatLinkClick(event)) return; const sidePanelTarget = chatSidePanelTargetFromHref(href, label); if (sidePanelTarget) { event.preventDefault(); event.stopPropagation(); openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), sidePanelTarget); return true; } const chatMessageTarget = chatMessageJumpTargetFromHref(href); if (chatMessageTarget) { event.preventDefault(); event.stopPropagation(); navigate({
         pathname: chatConversationPath(chatMessageTarget.conversationId),
         search: `?messageId=${encodeURIComponent(chatMessageTarget.messageId)}`,
@@ -521,10 +525,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     queryKey: queryKeys.chats.listPreview(selectedOrganizationId ?? "__none__", "active", CHAT_LIST_PREVIEW_LIMIT),
     queryFn: () => chatsApi.list(selectedOrganizationId!, "active", { limit: CHAT_LIST_PREVIEW_LIMIT }), enabled: !!selectedOrganizationId, }); const conversationQuery = useQuery({
     queryKey: queryKeys.chats.detail(selectedOrganizationId ?? "__none__", conversationId ?? "__none__"),
-    queryFn: () => chatsApi.get(conversationId!), enabled: !!selectedOrganizationId && !!conversationId, }); const activeConversationFromList = conversationsQuery.data?.find((conversation) => conversation.id === conversationId) ?? null; const activeConversationBelongsToSelectedOrganization =
+    queryFn: () => chatsApi.get(conversationId!), enabled: !!selectedOrganizationId && !!conversationId && organizationRouteMatchesSelection, }); const activeConversationFromList = conversationsQuery.data?.find((conversation) => conversation.id === conversationId) ?? null; const activeConversationBelongsToSelectedOrganization = organizationRouteMatchesSelection && (
     conversationQuery.data
       ? conversationQuery.data.orgId === selectedOrganizationId
-      : activeConversationFromList?.orgId === selectedOrganizationId; const messagesQuery = useQuery({
+      : activeConversationFromList?.orgId === selectedOrganizationId); const messagesQuery = useQuery({
     queryKey: queryKeys.chats.messages(selectedOrganizationId ?? "__none__", conversationId ?? "__none__"),
     queryFn: () => chatsApi.listMessages(conversationId!, { includeTranscript: false }), enabled: !!conversationId && activeConversationBelongsToSelectedOrganization, });
   const workManifestQuery = useQuery({
@@ -690,13 +694,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       agentId: activeSkillAgentId,
     })); }, [activeSkillAgentId, draftIssueContext, draftProjectDefaultKey, issues, pendingIssueId, pendingProjectPrefill, projects, selectedConversation, selectedOrganizationId, visibleProjects]);
   useEffect(() => {
-    if (!conversationId || !conversationQuery.data || activeConversationBelongsToSelectedOrganization) return;
+    if (!organizationRouteMatchesSelection || !conversationId || !conversationQuery.data || activeConversationBelongsToSelectedOrganization) return;
     navigate(chatRootPath, { replace: true });
-  }, [activeConversationBelongsToSelectedOrganization, chatRootPath, conversationId, conversationQuery.data, navigate]);
+  }, [activeConversationBelongsToSelectedOrganization, chatRootPath, conversationId, conversationQuery.data, navigate, organizationRouteMatchesSelection]);
   const showConversationLoading = Boolean(
-    conversationId && !selectedConversation && conversationQuery.isPending && conversationQuery.data === undefined,
+    conversationId && (!organizationRouteMatchesSelection || (!selectedConversation && conversationQuery.isPending && conversationQuery.data === undefined)),
   );
-  useEffect(() => { if (!selectedOrganizationId) return; if (!relativePath.startsWith("/messenger/chat")) return; rememberMessengerPath(selectedOrganizationId, relativePath); }, [relativePath, selectedOrganizationId]); const refreshChat = async (chatId?: string | null) => { if (!selectedOrganizationId) return;
+  useEffect(() => { if (!selectedOrganizationId || !organizationRouteMatchesSelection) return; if (!relativePath.startsWith("/messenger/chat")) return; rememberMessengerPath(selectedOrganizationId, relativePath); }, [organizationRouteMatchesSelection, relativePath, selectedOrganizationId]); const refreshChat = async (chatId?: string | null) => { if (!selectedOrganizationId) return;
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(selectedOrganizationId, "active") }),
       queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(selectedOrganizationId, "all") }), invalidateMessengerThreadSummaryQueries(queryClient, selectedOrganizationId), ]);

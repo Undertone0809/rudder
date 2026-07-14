@@ -26,6 +26,7 @@ import {
   resolveMessengerRoute,
   useMessengerModel,
 } from "@/hooks/useMessenger";
+import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { createIssueDetailLocationState } from "@/lib/issueDetailBreadcrumb";
 import { getRememberedMessengerPath, rememberMessengerPath, resolveRememberedMessengerEntry } from "@/lib/messenger-memory";
 import { invalidateMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache";
@@ -1052,6 +1053,7 @@ export function Messenger() {
   const relativePath = toOrganizationRelativePath(location.pathname);
   const route = resolveMessengerRoute(relativePath);
   const { setBreadcrumbs } = useBreadcrumbs();
+  const { viewedOrganizationId } = useViewedOrganization();
   const {
     isLoading,
     error,
@@ -1061,6 +1063,9 @@ export function Messenger() {
     approvalThreadDetail,
     systemThreadDetail,
   } = useMessengerModel();
+  const organizationRouteMatchesSelection = Boolean(
+    viewedOrganizationId && viewedOrganizationId === selectedOrganizationId,
+  );
   const pendingAutoScrollThreadRef = useRef<string | null>(null);
   const completedAutoScrollThreadRef = useRef<string | null>(null);
   const activeThreadKey =
@@ -1081,17 +1086,17 @@ export function Messenger() {
           : false;
 
   useEffect(() => {
-    if (!selectedOrganizationId) return;
+    if (!selectedOrganizationId || !organizationRouteMatchesSelection) return;
     if (route.kind === "root") return;
     rememberMessengerPath(
       selectedOrganizationId,
       route.kind === "approvals" ? "/messenger/approvals" : relativePath,
     );
-  }, [relativePath, route.kind, selectedOrganizationId]);
+  }, [organizationRouteMatchesSelection, relativePath, route.kind, selectedOrganizationId]);
 
   useEffect(() => {
     if (route.kind !== "root") return;
-    if (!selectedOrganizationId || isLoading || error) return;
+    if (!selectedOrganizationId || !organizationRouteMatchesSelection || isLoading || error) return;
 
     const requestedPrefill = searchParams.get("prefill")?.trim();
     const nextPath = requestedPrefill
@@ -1111,7 +1116,7 @@ export function Messenger() {
       },
       { replace: true },
     );
-  }, [error, isLoading, location.hash, location.search, navigate, route.kind, searchParams, selectedOrganizationId, threadSummaries]);
+  }, [error, isLoading, location.hash, location.search, navigate, organizationRouteMatchesSelection, route.kind, searchParams, selectedOrganizationId, threadSummaries]);
 
   useEffect(() => {
     pendingAutoScrollThreadRef.current = activeThreadKey;

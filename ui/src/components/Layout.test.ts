@@ -6,6 +6,7 @@ import {
   resolveProportionalSidePanelWidth,
   resolveProportionalWorkspaceColumnWidth,
   resolveSidePanelContextKey,
+  resolveSidePanelRouteContextKey,
   shouldAutoExpandSidePanel,
   shouldUseFramelessWorkspaceMain,
 } from "./Layout";
@@ -75,6 +76,24 @@ describe("side panel route context", () => {
     expect(resolveSidePanelContextKey("/messenger/chat")).toBeNull();
     expect(resolveSidePanelContextKey("/messenger/issues")).toBeNull();
     expect(resolveSidePanelContextKey("/messenger/approvals")).toBeNull();
+  });
+
+  it("scopes aggregate route context to the viewed organization", () => {
+    expect(resolveSidePanelRouteContextKey("/messenger", "org-a")).toBe(
+      "organization:org-a:global",
+    );
+    expect(resolveSidePanelRouteContextKey("/messenger", "org-b")).toBe(
+      "organization:org-b:global",
+    );
+  });
+
+  it("keeps globally unique detail context keys stable across organization route sync", () => {
+    expect(resolveSidePanelRouteContextKey("/messenger/chat/chat-1", "org-a")).toBe(
+      "chat:chat-1",
+    );
+    expect(resolveSidePanelRouteContextKey("/messenger/issues/RUD-42", "org-a")).toBe(
+      "issue:RUD-42",
+    );
   });
 
   it("keeps malformed route segments from crashing layout context resolution", () => {

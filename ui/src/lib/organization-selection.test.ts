@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { shouldSyncOrganizationSelectionFromRoute } from "./organization-selection";
 
 describe("shouldSyncOrganizationSelectionFromRoute", () => {
-  it("does not resync when selection already matches the route", () => {
+  it("does not resync when a route-sourced selection already matches the route", () => {
     expect(
       shouldSyncOrganizationSelectionFromRoute({
         selectionSource: "route_sync",
@@ -10,6 +10,16 @@ describe("shouldSyncOrganizationSelectionFromRoute", () => {
         routeOrganizationId: "pap",
       }),
     ).toBe(false);
+  });
+
+  it("marks a completed manual switch as route-synchronized", () => {
+    expect(
+      shouldSyncOrganizationSelectionFromRoute({
+        selectionSource: "manual",
+        selectedOrganizationId: "pap",
+        routeOrganizationId: "pap",
+      }),
+    ).toBe(true);
   });
 
   it("defers route sync while a manual organization switch is in flight", () => {

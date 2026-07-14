@@ -27,6 +27,10 @@ vi.mock("@/hooks/useMessenger", () => ({
   resolveMessengerRoute: () => messengerRoute,
 }));
 
+vi.mock("@/hooks/useViewedOrganization", () => ({
+  useViewedOrganization: () => ({ viewedOrganizationId: "org-1" }),
+}));
+
 vi.mock("@/context/BreadcrumbContext", () => ({
   useBreadcrumbs: () => ({ setBreadcrumbs }),
 }));
