@@ -28,7 +28,10 @@ describe("resolveKnownWebsiteIcon", () => {
   it("resolves known public sites used in rendered link icons", () => {
     expect(resolveKnownWebsiteIcon("https://x.com/user/status/1")?.siteName).toBe("X");
     expect(resolveKnownWebsiteIcon("https://www.linkedin.com/pulse/post")?.siteName).toBe("LinkedIn");
-    expect(resolveKnownWebsiteIcon("https://platform.openai.com/docs")?.siteName).toBe("OpenAI");
+    expect(resolveKnownWebsiteIcon("https://platform.openai.com/docs")).toMatchObject({
+      siteName: "OpenAI",
+      darkMode: "invert",
+    });
     expect(resolveKnownWebsiteIcon("https://chatgpt.com/c/example")?.siteName).toBe("ChatGPT");
     expect(resolveKnownWebsiteIcon("https://learn.chatgpt.com/docs/sandboxing/auto-review")?.siteName).toBe("ChatGPT");
     expect(resolveKnownWebsiteIcon("https://docs.anthropic.com/en/docs/overview")?.siteName).toBe("Anthropic");
