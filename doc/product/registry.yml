@@ -895,6 +895,7 @@ contracts:
     related_code:
       - packages/db/src/schema/chat_conversations.ts
       - server/src/routes/chats.ts
+      - server/src/services/chat-title-generation.ts
       - server/src/services/chats.ts
       - server/src/services/product-intelligence.ts
       - server/src/services/organization-intelligence-profiles.ts
@@ -902,10 +903,12 @@ contracts:
       - ui/src/components/MessengerContextSidebar.tsx
     related_tests:
       - server/src/__tests__/chat-routes.test.ts
+      - server/src/__tests__/chat-title-generation.test.ts
       - server/src/__tests__/messenger-service.test.ts
       - server/src/__tests__/product-intelligence.test.ts
       - server/src/__tests__/organization-intelligence-profiles.test.ts
       - ui/src/components/MessengerContextSidebar.actions.test.tsx
+      - tests/e2e/chat-fork.spec.ts
       - tests/e2e/messenger-chat-title-regenerate.spec.ts
     related_plans:
       - doc/plans/2026-06-18-chat-title-defaults.md
@@ -923,6 +926,7 @@ contracts:
       - packages/shared/src/validators/chat.ts
       - server/src/routes/chats.stream-routes.ts
       - server/src/routes/chats.ts
+      - server/src/services/chat-title-generation.ts
       - server/src/services/chats.ts
       - ui/src/api/chats.ts
       - ui/src/pages/Chat.tsx
@@ -930,6 +934,7 @@ contracts:
       - ui/src/components/MessengerContextSidebar.tsx
     related_tests:
       - server/src/__tests__/chat-routes.test.ts
+      - server/src/__tests__/chat-title-generation.test.ts
       - server/src/__tests__/messenger-service.test.ts
       - ui/src/pages/Chat.messages.test.tsx
       - ui/src/pages/Chat.attachment-preview.test.tsx

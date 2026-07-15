@@ -269,10 +269,12 @@ Evidence:
 
 ## Contract Summary
 
-Rudder chat titles use a deterministic first-user-message fallback plus the
-organization's `lightweight` Product Intelligence profile, surfaced as Fast
-Intelligence, for automatic generation and manual regeneration. The title
-pipeline must keep Messenger scannable without blocking chat replies or
+Rudder non-fork chat titles use a deterministic first-user-message fallback
+plus the organization's `lightweight` Product Intelligence profile, surfaced
+as Fast Intelligence, for automatic generation and manual regeneration. Forked
+chats keep the source-family numbering defined by `CHAT.FORK.001` and do not
+enter automatic first-message title generation. The title pipeline must keep
+Messenger scannable without blocking chat replies, obscuring fork lineage, or
 overwriting explicit operator naming.
 
 ## Intent / User Job
@@ -296,12 +298,21 @@ that title when available. This keeps the first chat path fast and resilient
 while preserving the organization's configured model preference for small
 product intelligence tasks.
 
+Fork numbering is already a meaningful title chosen by the fork workflow. It
+must remain stable when the child receives its first new message; otherwise a
+late fallback or Fast Intelligence result would erase the visible relationship
+between branches. Operators may still explicitly rename or manually regenerate
+a fork title when they want to replace that relationship-oriented default.
+
 ## Actors / Objects / State
 
 - Board operator: the user who sends chat messages, renames chats, or chooses
   `Regenerate title`.
 - Chat conversation: `chat_conversations.id`, `orgId`, `title`, and updated
   timestamp.
+- Fork lineage: `forkedFromConversationId` and `forkRootConversationId`
+  distinguish numbered fork titles from default-titled chats eligible for
+  automatic generation.
 - Chat messages: persisted user and assistant messages used as generation
   source text.
 - Organization intelligence profile: the organization-scoped `lightweight`
@@ -317,6 +328,8 @@ product intelligence tasks.
 
 - `POST /api/chats/:id/messages` for non-streaming user messages.
 - `POST /api/chats/:id/messages/stream` for streaming user messages.
+- `POST /api/chats/:id/fork`, which creates the stable family-numbered title
+  governed by `CHAT.FORK.001`.
 - `POST /api/chats/:id/title/regenerate` for manual title regeneration.
 - Messenger chat actions menu, which exposes `Regenerate title` only when the
   selected organization has a configured `lightweight` intelligence profile.
@@ -338,7 +351,10 @@ product intelligence tasks.
 6. If Fast Intelligence is missing, disabled, invalid, unavailable, fails, or
    returns unusable output, Rudder keeps the fallback title and logs the
    failure without failing the chat send.
-7. When the operator chooses `Regenerate title` from Messenger chat actions,
+7. When a conversation is created by the fork workflow, Rudder keeps its
+   family-numbered title when new user messages arrive and does not invoke
+   automatic fallback or Fast Intelligence title generation for that child.
+8. When the operator chooses `Regenerate title` from Messenger chat actions,
    Rudder builds a bounded excerpt from the latest user/assistant messages,
    calls Fast Intelligence, persists the returned title, refreshes chat and
    Messenger rows, and records `chat.title_regenerated` activity.
@@ -349,6 +365,7 @@ product intelligence tasks.
 | --- | --- | --- | --- | --- |
 | First message, Fast Intelligence configured | Chat title is `New chat`; first user message is non-empty; `lightweight` profile is configured and returns usable output | User message persists, assistant flow continues, fallback title is stored, then usable Fast title replaces fallback | Chat send or assistant reply must not wait on title generation | `server/src/__tests__/chat-routes.test.ts` automatic title cases |
 | First message, Fast Intelligence unavailable | Chat title is `New chat`; first user message is non-empty; profile missing/disabled/failing/unusable | Fallback from first user message remains visible; send succeeds; warning may be logged | Chat title must not remain `New chat` when a fallback can be derived | Chat route fallback tests |
+| First new message in a fork | Conversation has `forkedFromConversationId`; title is the family-numbered fork title; Fast Intelligence may be configured or unavailable | Message and assistant flow continue while the numbered title remains unchanged; no automatic title runtime is invoked | First-message fallback or Fast Intelligence must not replace the fork title | Chat title service/route tests and chat fork E2E |
 | Manual rename races async generation | Operator changes title after fallback but before async generation finishes | Late generated title is ignored unless current title is still fallback or `New chat` | Explicit operator title must not be overwritten | `server/src/__tests__/messenger-service.test.ts` manual rename guard |
 | Manual regeneration succeeds | Board operator triggers regenerate; chat has eligible source messages; Fast Intelligence returns usable title | Existing title is replaced, Messenger/chat caches refresh, activity records previous and new title | Regeneration must not create a new conversation or message | Chat route regeneration tests and E2E |
 | Manual regeneration lacks source | Chat has no eligible user/assistant messages | Request returns 422 and title is unchanged | Runtime must not be called with an empty prompt | Chat route missing-source test |
@@ -361,6 +378,8 @@ product intelligence tasks.
 For automatic generation, the operator-visible input is the first non-empty
 message they send in a default-titled chat. Rudder does not ask the operator for
 extra title input and does not block the chat composer while generation runs.
+Sending a new message in a fork is not automatic title input; the child already
+has a stable title from the fork workflow.
 
 For manual regeneration, the operator sees a `Regenerate title` menu item in
 the Messenger chat actions menu only when Fast Intelligence is configured for
@@ -382,6 +401,8 @@ The operator sees the chat title update in the chat surface and Messenger row:
   replaced by the generated title.
 - If Fast Intelligence fails, the fallback stays visible and the chat send path
   still succeeds.
+- A fork keeps its family-numbered title after the first new user message,
+  regardless of Fast Intelligence availability.
 - On manual regeneration success, the existing title changes to the generated
   title.
 - While manual regeneration is in flight, Messenger shows a title-generation
@@ -394,6 +415,9 @@ The operator sees the chat title update in the chat surface and Messenger row:
 
 - `chat_conversations.title` stores the fallback, generated title, manual
   rename, or regenerated title.
+- `chat_conversations.forkedFromConversationId` and
+  `forkRootConversationId` persist why a numbered fork title is excluded from
+  automatic generation.
 - `chat_messages` stores the user/assistant messages that form the title source
   material.
 - Successful manual regeneration writes `chat.title_regenerated` activity with
@@ -436,13 +460,22 @@ The operator sees the chat title update in the chat surface and Messenger row:
    - Visible output: no regenerate menu item.
    - Evidence: Messenger sidebar unit and E2E tests.
 
+5. Fork title survives its first new message:
+   - Trigger: operator sends a new message in `Release Checklist (2)`.
+   - Expected state/action: Rudder persists the message and starts the assistant
+     path without invoking automatic title generation.
+   - Visible output: the chat and Messenger row remain
+     `Release Checklist (2)`.
+   - Evidence: chat title service/route tests and chat fork E2E with configured
+     and unavailable Fast Intelligence.
+
 ## Invariants / Non-Goals
 
 - Automatic title generation must not block message persistence or assistant
   reply streaming/non-streaming.
-- Automatic generation only applies to default-titled chats. Explicitly titled
-  chats and manually renamed chats must not be overwritten by late asynchronous
-  generation.
+- Automatic generation only applies to default-titled, non-fork chats.
+  Explicitly titled chats, forked chats, and manually renamed chats must not be
+  overwritten by late asynchronous generation.
 - The deterministic fallback must remain available when Fast Intelligence is
   not configured or fails.
 - Manual regeneration is board-only, organization-scoped, and must reject chats
@@ -468,6 +501,8 @@ Update this contract when changing:
 
 - when automatic title generation starts or whether it blocks chat sends
 - fallback title semantics or title overwrite guards
+- fork eligibility for automatic title generation or the title handoff from
+  `CHAT.FORK.001`
 - Fast Intelligence purpose/feature routing for chat titles
 - board/API permissions for regeneration
 - Messenger visibility rules for the regenerate action
@@ -489,6 +524,7 @@ Related code:
 
 - `packages/db/src/schema/chat_conversations.ts`
 - `server/src/routes/chats.ts`
+- `server/src/services/chat-title-generation.ts`
 - `server/src/services/chats.ts`
 - `server/src/services/product-intelligence.ts`
 - `server/src/services/organization-intelligence-profiles.ts`
@@ -500,7 +536,9 @@ Related tests:
 - Chat route tests cover non-blocking automatic title generation, deterministic
   fallback when Fast Intelligence is unavailable, unusable generated output,
   bounded prompts, streaming sends, board-only regeneration, missing-source
-  rejection, and `chat.title_regenerated` activity.
+  rejection, `chat.title_regenerated` activity, and numbered forks that skip
+  automatic generation.
+- Chat title generation service tests cover the fork exclusion directly.
 - Messenger service tests cover the manual-rename guard that prevents late
   asynchronous generated titles from replacing an explicit operator title.
 - Messenger sidebar tests and E2E cover hiding/showing `Regenerate title` based
@@ -509,6 +547,8 @@ Related tests:
 - Product Intelligence tests cover resolving organization-scoped lightweight
   profiles, purpose metadata, and configured/disabled/missing provider failure
   cases.
+- Chat fork E2E covers stable numbered titles with Fast Intelligence configured
+  and unavailable.
 
 Known gaps:
 
@@ -533,6 +573,20 @@ Product model:
   `forkedFromMessageId`.
 - The fork records family lineage with `forkRootConversationId`; nested forks
   reuse the original root conversation.
+- Without an explicit title input, the first fork receives the source-family
+  base title with suffix `(2)`. Later direct or nested forks receive the next
+  available family suffix `(3)`, `(4)`, and so on; numbering is allocated
+  uniquely even when fork requests arrive concurrently.
+- A nested fork recognizes an existing family suffix only when the surrounding
+  family sequence proves it was allocated by Rudder. An isolated manually
+  renamed title such as `Plan (2026)`, with no preceding `Plan (2025)` in the
+  family sequence, remains literal and forks as `Plan (2026) (2)` instead of
+  being collapsed into the `Plan` sequence.
+- Numbered titles stay within the chat title length limit. Truncation preserves
+  a stable family sequence across suffix-width changes such as `(9)` to `(10)`.
+- An explicit fork title remains unchanged. Operators may rename or manually
+  regenerate a numbered fork later, but automatic first-message title
+  generation must not replace the fork workflow's title.
 - Forking automatically ensures one Messenger custom group for the fork family.
   New fork-family groups use the default 🌿 icon. The group contains the
   root/source family and its forks. Nested forks reuse the same group instead of
@@ -552,7 +606,10 @@ Flow:
 
 1. The operator chooses `Fork` from a chat or `Fork from here` on a persisted
    assistant response.
-2. Rudder creates a new active conversation in the same organization.
+2. Rudder serializes title allocation for the source family and creates a new
+   active conversation in the same organization. Without an explicit title,
+   the child receives the next available family-numbered title beginning at
+   `(2)`.
 3. Rudder copies context links and messages up to the requested fork point. If
    no source message is supplied, it copies through the latest eligible message.
 4. Rudder writes a system message in the child conversation naming the fork
@@ -586,15 +643,28 @@ Invariants:
 - Nested forks must not produce duplicate fork-family custom groups.
 - Forking must not attempt to put the root conversation in multiple custom
   groups; preexisting root group membership is the fork-family grouping anchor.
+- Concurrent direct or nested forks in one family must not receive duplicate
+  numbered titles.
+- Nested numbering must continue the root family sequence rather than append a
+  new `(2)` to a Rudder-generated suffix.
+- A numeric-looking suffix that is not supported by the surrounding allocated
+  sequence is part of the operator's literal title.
+- Numbered fork titles must stay within the normal chat title length limit and
+  remain sequential when the base is truncated.
+- Automatic first-message title generation must not replace a fork's numbered
+  title. Explicit rename and manual regeneration remain allowed.
 
 Evidence:
 
 - Chat route tests cover authorization, active-generation rejection, and
   activity logging.
 - Messenger service tests cover message-level copy bounds and nested fork group
-  reuse.
+  reuse, concurrent and nested title allocation, manual numeric suffixes, and
+  the title-length boundary.
 - Chat message/UI tests cover the message-level fork action.
-- Chat fork E2E covers the visible fork workflow and copied-message boundary.
+- Chat fork E2E covers the visible fork workflow, copied-message boundary,
+  `(2)` naming, and numbered-title stability with Fast Intelligence configured
+  and unavailable.
 - Feishu source badge E2E covers that a fork from a Feishu-bound conversation
   returns a normal Rudder chat with no Feishu outbound rows.
 - Chat refresh E2E covers that a refreshed assistant answer appears as a chat
