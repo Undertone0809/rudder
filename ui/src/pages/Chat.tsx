@@ -2313,7 +2313,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                   onOpenItem={openWorkManifestItem}
                   onJumpToMessage={jumpToChatMessage}
                   onAddSource={() => fileInputRef.current?.click()}
-                  onOpenProject={(projectId) => navigate(`/projects/${projectId}`)}
                 />
               </div>
               {isMobile && conversations.length > 0 ? (

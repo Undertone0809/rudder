@@ -23,7 +23,6 @@ export interface ChatWorkManifestProps {
   onOpenItem(item: ChatWorkManifestItem): void;
   onJumpToMessage(messageId: string): void;
   onAddSource(): void;
-  onOpenProject(projectId: string): void;
 }
 
 const COLLAPSED_ROWS = 2;
@@ -33,8 +32,7 @@ export function hasChatWorkManifestContent(manifest: ChatWorkManifestResponse | 
   const outputCount = Array.isArray(manifest.outputs) ? manifest.outputs.length : 0;
   const sourceCount = Array.isArray(manifest.sources) ? manifest.sources.length : 0;
   const referenceCount = Array.isArray(manifest.references) ? manifest.references.length : 0;
-  return outputCount + sourceCount + referenceCount > 0
-    || Boolean(manifest.project && manifest.project.totalCount > 0);
+  return outputCount + sourceCount + referenceCount > 0;
 }
 
 function websiteUrl(item: ChatWorkManifestItem) {
@@ -178,7 +176,6 @@ function ManifestContent({
   onOpenItem,
   onJumpToMessage,
   onAddSource,
-  onOpenProject,
 }: Omit<ChatWorkManifestProps, "sidePanelOpen">) {
   if (loading) return null;
   if (error) return <div className="px-3 py-6 text-center text-xs text-destructive">{error}</div>;
@@ -209,17 +206,6 @@ function ManifestContent({
         onOpenItem={onOpenItem}
         onJumpToMessage={onJumpToMessage}
       />
-      {manifest.project ? (
-        <button
-          type="button"
-          className="flex h-11 w-full items-center gap-2 border-t border-border/70 bg-muted/20 px-3 text-left hover:bg-muted/45"
-          onClick={() => onOpenProject(manifest.project!.id)}
-        >
-          <BriefcaseBusiness className="size-3.5 text-muted-foreground" aria-hidden="true" />
-          <span className="text-xs font-medium text-foreground">Project work</span>
-          <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{manifest.project.totalCount} items</span>
-        </button>
-      ) : null}
     </>
   );
 }

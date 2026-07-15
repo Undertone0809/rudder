@@ -722,7 +722,7 @@ describe("CLI automation/chat/runs parity", () => {
           matchedSkillLabel: "Skill Optimizer",
         },
       }],
-      page: { limit: 50, hasMore: false, nextCursor: null },
+      page: { limit: 50, hasMore: true, nextCursor: "next-summary-page" },
     }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const output = captureOutput();
@@ -751,6 +751,7 @@ describe("CLI automation/chat/runs parity", () => {
     expect(output.stdoutText()).toContain("evidence=used");
     expect(output.stdoutText()).toContain("skill=skill-optimizer");
     expect(output.stdoutText()).toContain("rudder runs errors run-1");
+    expect(output.stdoutText()).toContain("hasMore=true nextCursor=next-summary-page");
   });
 
   it("requests bounded run event and log pages", async () => {
@@ -862,6 +863,31 @@ describe("CLI automation/chat/runs parity", () => {
       page: { limit: 50, hasMore: true, nextCursor: "next-summary-page" },
       nextCommands: ["rudder runs transcript run-2"],
     });
+  });
+
+  it("prints the next summary cursor for a paginated by-skill report", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      items: [],
+      page: { limit: 50, hasMore: true, nextCursor: "next-skill-page" },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const output = captureOutput();
+
+    await expect(runCli([
+      process.execPath,
+      "rudder",
+      "runs",
+      "by-skill",
+      "skill-optimizer",
+      "--org-id",
+      "org-1",
+      "--api-base",
+      "http://localhost:3100",
+      "--api-key",
+      "token-1",
+    ])).resolves.toBe(0);
+
+    expect(output.stdoutText()).toContain("hasMore=true nextCursor=next-skill-page");
   });
 
   it("preserves the legacy by-skill report when full rows are requested", async () => {

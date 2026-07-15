@@ -394,7 +394,7 @@ vi.mock("@/api/issues", () => ({
 
 vi.mock("@/api/orgs", () => ({
   organizationsApi: {
-    readWorkspaceFile: vi.fn(),
+    readWorkspaceFile: vi.fn(async (_organizationId: string, filePath: string) => mockState.workspaceFiles[filePath]),
     listWorkspaceFiles: vi.fn(),
     updateWorkspaceFile: (...args: unknown[]) => mockState.updateWorkspaceFile(...args),
   },
@@ -2269,7 +2269,10 @@ describe("Chat Side Panel link handling", () => {
       expect(mockState.updateWorkspaceFile).toHaveBeenLastCalledWith(
         "org-1",
         "reports/editable.md",
-        { content: "---\ntitle: Editable report\n---\n# Revised heading\n\nRevised body." },
+        {
+          content: "---\ntitle: Editable report\n---\n# Revised heading\n\nRevised body.",
+          expectedContent: "---\ntitle: Editable report\n---\n# Original heading\n\nOriginal body.",
+        },
       );
       expect(container.textContent).toContain("Saved");
     } finally {
@@ -2393,7 +2396,7 @@ describe("Chat Side Panel link handling", () => {
       expect(mockState.updateWorkspaceFile).toHaveBeenLastCalledWith(
         "org-1",
         "notes/in-flight.md",
-        { content: "# Server copy\n" },
+        { content: "# Server copy\n", expectedContent: "# In-flight revision\n" },
       );
       expect(mockState.workspaceFiles["notes/in-flight.md"]?.content).toBe("# Server copy\n");
       expect(container.textContent).toContain("Saved");
@@ -2472,7 +2475,7 @@ describe("Chat Side Panel link handling", () => {
     }
   });
 
-  it("rejects an unsaved Side Panel Markdown draft when the server base changed", async () => {
+  it("preserves an unsaved Side Panel Markdown draft when the server base changed", async () => {
     vi.useFakeTimers();
     mockState.workspaceFiles = {
       "notes/stale-recovery.md": {
@@ -2540,10 +2543,235 @@ describe("Chat Side Panel link handling", () => {
       });
 
       expect(secondContainer.querySelector<HTMLTextAreaElement>("[data-testid='mock-markdown-editor']")?.value).toBe(
+        "# Unsaved stale draft\n",
+      );
+      expect(secondContainer.textContent).toContain("Conflict");
+      expect(sessionStorageState).not.toEqual({});
+      expect(mockState.updateWorkspaceFile).not.toHaveBeenCalled();
+
+      await act(async () => {
+        Array.from(secondContainer.querySelectorAll("button"))
+          .find((button) => button.textContent === "Use latest")
+          ?.click();
+        await Promise.resolve();
+      });
+      expect(secondContainer.querySelector<HTMLTextAreaElement>("[data-testid='mock-markdown-editor']")?.value).toBe(
         "# New server copy\n",
       );
       expect(sessionStorageState).toEqual({});
-      expect(mockState.updateWorkspaceFile).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("treats a failed save response as saved when verification finds the draft on disk", async () => {
+    vi.useFakeTimers();
+    mockState.workspaceFiles = {
+      "notes/ambiguous-save.md": {
+        filePath: "notes/ambiguous-save.md",
+        content: "# Original copy\n",
+        contentType: "text/markdown",
+        previewKind: "text",
+        contentPath: null,
+        truncated: false,
+      },
+    };
+    mockState.updateWorkspaceFile.mockImplementationOnce(async (
+      _organizationId: string,
+      filePath: string,
+      data: { content: string },
+    ) => {
+      mockState.workspaceFiles[filePath] = {
+        ...mockState.workspaceFiles[filePath]!,
+        content: data.content,
+      };
+      throw new Error("Activity log unavailable after write");
+    });
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+
+    try {
+      await act(async () => {
+        root.render(
+          <ThemeProvider>
+            <SidePanelProvider>
+              <ChatSidePanel
+                selectedOrganizationId="org-1"
+                target={{ kind: "library_file", filePath: "notes/ambiguous-save.md", label: "ambiguous-save.md" }}
+              />
+            </SidePanelProvider>
+          </ThemeProvider>,
+        );
+        await Promise.resolve();
+      });
+      const editor = container.querySelector<HTMLTextAreaElement>("[data-testid='mock-markdown-editor']");
+      await act(async () => {
+        if (editor) {
+          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(
+            editor,
+            "# Persisted despite response failure\n",
+          );
+          editor.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        await vi.advanceTimersByTimeAsync(700);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(container.textContent).toContain("Saved");
+      expect(container.textContent).not.toContain("Conflict");
+      expect(mockState.updateWorkspaceFile).toHaveBeenCalledTimes(1);
+      expect(sessionStorageState).toEqual({});
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("finishes Keep mine after an older save request rejects", async () => {
+    vi.useFakeTimers();
+    const filePath = "notes/keep-mine-race.md";
+    mockState.workspaceFiles = {
+      [filePath]: {
+        filePath,
+        content: "# Original copy\n",
+        contentType: "text/markdown",
+        previewKind: "text",
+        contentPath: null,
+        truncated: false,
+      },
+    };
+    let rejectFirstSave: ((reason?: unknown) => void) | null = null;
+    mockState.updateWorkspaceFile.mockImplementationOnce(() => new Promise((_, reject) => {
+      rejectFirstSave = reject;
+    }));
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+    const renderPanel = () => (
+      <ThemeProvider>
+        <SidePanelProvider>
+          <ChatSidePanel
+            selectedOrganizationId="org-1"
+            target={{ kind: "library_file", filePath, label: "keep-mine-race.md" }}
+          />
+        </SidePanelProvider>
+      </ThemeProvider>
+    );
+
+    try {
+      await act(async () => {
+        root.render(renderPanel());
+        await Promise.resolve();
+      });
+      const editor = container.querySelector<HTMLTextAreaElement>("[data-testid='mock-markdown-editor']");
+      await act(async () => {
+        if (editor) {
+          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(editor, "# My draft\n");
+          editor.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        await vi.advanceTimersByTimeAsync(700);
+      });
+      expect(mockState.updateWorkspaceFile).toHaveBeenCalledTimes(1);
+
+      mockState.workspaceFiles[filePath] = { ...mockState.workspaceFiles[filePath]!, content: "# Agent copy\n" };
+      await act(async () => {
+        root.render(renderPanel());
+        await Promise.resolve();
+      });
+      expect(container.textContent).toContain("Conflict");
+
+      await act(async () => {
+        Array.from(container.querySelectorAll("button"))
+          .find((button) => button.textContent === "Keep mine")
+          ?.click();
+        rejectFirstSave?.(new Error("Stale save rejected"));
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(mockState.updateWorkspaceFile).toHaveBeenCalledTimes(2);
+      expect(mockState.workspaceFiles[filePath]?.content).toBe("# My draft\n");
+      expect(container.textContent).toContain("Saved");
+      expect(container.textContent).not.toContain("Save failed");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps Use latest resolved after an older save request rejects", async () => {
+    vi.useFakeTimers();
+    const filePath = "notes/use-latest-race.md";
+    mockState.workspaceFiles = {
+      [filePath]: {
+        filePath,
+        content: "# Original copy\n",
+        contentType: "text/markdown",
+        previewKind: "text",
+        contentPath: null,
+        truncated: false,
+      },
+    };
+    let rejectFirstSave: ((reason?: unknown) => void) | null = null;
+    mockState.updateWorkspaceFile.mockImplementationOnce(() => new Promise((_, reject) => {
+      rejectFirstSave = reject;
+    }));
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+    const renderPanel = () => (
+      <ThemeProvider>
+        <SidePanelProvider>
+          <ChatSidePanel
+            selectedOrganizationId="org-1"
+            target={{ kind: "library_file", filePath, label: "use-latest-race.md" }}
+          />
+        </SidePanelProvider>
+      </ThemeProvider>
+    );
+
+    try {
+      await act(async () => {
+        root.render(renderPanel());
+        await Promise.resolve();
+      });
+      const editor = container.querySelector<HTMLTextAreaElement>("[data-testid='mock-markdown-editor']");
+      await act(async () => {
+        if (editor) {
+          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(editor, "# My draft\n");
+          editor.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        await vi.advanceTimersByTimeAsync(700);
+      });
+      expect(mockState.updateWorkspaceFile).toHaveBeenCalledTimes(1);
+
+      mockState.workspaceFiles[filePath] = { ...mockState.workspaceFiles[filePath]!, content: "# Agent copy\n" };
+      await act(async () => {
+        root.render(renderPanel());
+        await Promise.resolve();
+      });
+      expect(container.textContent).toContain("Conflict");
+
+      await act(async () => {
+        Array.from(container.querySelectorAll("button"))
+          .find((button) => button.textContent === "Use latest")
+          ?.click();
+        rejectFirstSave?.(new Error("Stale save rejected"));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(mockState.updateWorkspaceFile).toHaveBeenCalledTimes(1);
+      expect(editor?.value).toBe("# Agent copy\n");
+      expect(container.textContent).toContain("Saved");
+      expect(container.textContent).not.toContain("Save failed");
     } finally {
       vi.useRealTimers();
     }

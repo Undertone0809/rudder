@@ -339,6 +339,76 @@ describe("organization workspace browser", () => {
     }));
   });
 
+  it("rejects a workspace file write when the expected content is stale", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Workspace Browser Concurrent Write Org",
+      urlKey: deriveOrganizationUrlKey("Workspace Browser Concurrent Write Org"),
+      issuePrefix: "WBC",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const filePath = path.join(resolveOrganizationWorkspaceRoot(orgId), "reports", "shared.md");
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, "# New agent copy\n", "utf8");
+
+    await expect(workspaceBrowser.writeFile(
+      orgId,
+      "reports/shared.md",
+      "# Stale Side Panel draft\n",
+      "# Original copy\n",
+    )).rejects.toMatchObject({
+      status: 409,
+      message: "This file changed since it was opened. Reload it before saving again.",
+    });
+    await expect(fs.readFile(filePath, "utf8")).resolves.toBe("# New agent copy\n");
+  });
+
+  it("allows only one concurrent workspace file write from the same expected content", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Workspace Browser Atomic Write Org",
+      urlKey: deriveOrganizationUrlKey("Workspace Browser Atomic Write Org"),
+      issuePrefix: "WBA",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const filePath = path.join(resolveOrganizationWorkspaceRoot(orgId), "reports", "atomic.md");
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, "# Original copy\n", "utf8");
+
+    const results = await Promise.allSettled([
+      workspaceBrowser.writeFile(orgId, "reports/atomic.md", "# First copy\n", "# Original copy\n"),
+      workspaceBrowser.writeFile(orgId, "reports/atomic.md", "# Second copy\n", "# Original copy\n"),
+    ]);
+    const fulfilled = results.filter((result) => result.status === "fulfilled");
+    const rejected = results.filter((result) => result.status === "rejected");
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).toMatchObject({
+      reason: {
+        status: 409,
+        message: "This file changed since it was opened. Reload it before saving again.",
+      },
+    });
+    await expect(fs.readFile(filePath, "utf8")).resolves.toBe(
+      fulfilled[0]?.status === "fulfilled" ? fulfilled[0].value.content : "",
+    );
+  });
+
   it("searches mentionable Library files beyond the default result window while excluding protected roots", async () => {
     const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
     cleanupDirs.add(rudderHome);

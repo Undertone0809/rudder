@@ -745,25 +745,26 @@ Evidence:
 
 Messenger Chat exposes a compact, conversation-scoped Work manifest that keeps
 the current thread's inspectable Outputs, Sources, and References visible
-without requiring the operator to search the transcript. Project assets remain
-a separate roll-up and never silently mix into the current Chat sections.
+without requiring the operator to search the transcript. Work from other
+conversations linked to the same Project is intentionally omitted from this
+surface and remains available from Project-level surfaces.
 
 ## Intent / User Job
 
-An operator returning to a long or active Chat needs to answer four questions
+An operator returning to a long or active Chat needs to answer three questions
 quickly: what this thread produced, what input it used, which external sites the
-visible conversation cited, and whether the linked Project has additional work
-assets. The manifest is an index into durable work and provenance, not a second
-chat transcript or a generic bookmark manager.
+visible conversation cited. The manifest is an index into durable work and
+provenance, not a second chat transcript or a generic bookmark manager.
 
 ## Why / Design Reasoning
 
 The manifest is a typed, durable projection rather than a client-only Markdown
 scan. A client-only list cannot reliably distinguish an Agent-created artifact
 from a recommended website, becomes inconsistent after edits and refreshed
-answers, and cannot enforce organization or Project boundaries. The alternative
-of placing every Project item directly in Chat creates noise and obscures which
-thread actually produced or used an object.
+answers, and cannot enforce organization or Project boundaries. Project
+membership must not pull work from other conversations into the current Chat
+because that creates noise and obscures which thread actually produced or used
+an object.
 
 Output classification is intentionally strict. An arbitrary assistant URL is a
 Reference, not an Output. An Output requires structured production evidence so
@@ -774,7 +775,7 @@ them through `CONTEXT.RESOURCES.001`.
 ## Actors / Objects / State
 
 - Board operator: reads the manifest, adds a Source, opens an item, jumps to its
-  source message, or follows the Project roll-up.
+  source message, or opens Project-level surfaces for broader Project work.
 - Chat conversation: organization-scoped thread and optional Project context.
 - Chat message: active, non-superseded user or assistant visible body, optional
   Run id, replying Agent id, and attachments.
@@ -787,8 +788,6 @@ them through `CONTEXT.RESOURCES.001`.
   Context Resource eligible for a project-scoped Chat Run.
 - Reference: deduplicated external HTTP(S) website in a visible user or assistant
   message that is not promoted by the category precedence rules.
-- Project roll-up: count and navigation for manifest items belonging to other
-  conversations linked to the same Project.
 
 ## Entry Points / Inputs
 
@@ -822,12 +821,14 @@ them through `CONTEXT.RESOURCES.001`.
 8. Reconciliation removes stale derived Sources/References from superseded or
    edited visible messages, but it does not silently delete a durable Output
    merely because the message that announced it was refreshed.
-9. The API returns the current Chat sections plus a separate Project id/count.
-10. When at least one current-thread item or non-empty Project roll-up exists,
-    wide Chat renders the compact shelf and a header icon that animates the shelf
-    between open and collapsed states; narrow Chat exposes the same data from a
-    compact Work trigger. An empty manifest renders no Work control or shelf.
-    Opening an internal target reuses Side Panel behavior from
+9. The API returns the current Chat sections. It may continue returning a
+   Project id/count as compatibility metadata, but Chat does not render it or
+   include it in the Work count.
+10. When at least one current-thread item exists, wide Chat renders the compact
+    shelf and a header icon that animates the shelf between open and collapsed
+    states; narrow Chat exposes the same data from a compact Work trigger. A
+    project-only or otherwise empty current-thread manifest renders no Work
+    control or shelf. Opening an internal target reuses Side Panel behavior from
     `CHAT.SIDE.PANEL.001`.
 
 ## Decision Table
@@ -841,17 +842,17 @@ them through `CONTEXT.RESOURCES.001`.
 | Link appears in tool history only | URL exists only in transcript, reasoning, stdout, or stderr | No manifest item | Tool exploration must not pollute the visible manifest | Service tests |
 | Answer is refreshed or edited | Prior message becomes superseded | Stale derived References disappear; durable Outputs remain inspectable | Refresh must not erase a real artifact | Service tests |
 | Chat is forked | Copied historical assistant rows have no producing Run id | Sources can be re-derived; copied rows do not gain Output ownership | Fork must not claim the source thread's Outputs as newly produced | Fork/service tests |
-| Chat has a linked Project | Other Project conversations contain manifest rows | Current rows stay unchanged; separate Project count is shown | Project rows must not mix into current Chat sections | API and E2E |
-| No items exist | Reconciliation returns no candidates and the Project roll-up is empty | No Work control or empty shelf is rendered | UI must not reserve space or invent Create Site/Browser capability | Component/E2E tests |
+| Chat has a linked Project | Other Project conversations contain manifest rows | Current rows stay unchanged; other-conversation rows are omitted from Chat | Project membership must not import other conversations into the current Chat manifest | API and E2E |
+| No current-thread items exist | Reconciliation returns no current-thread candidates, even if compatibility metadata reports Project items | No Work control or empty shelf is rendered | UI must not reserve space or invent Create Site/Browser capability | Component/E2E tests |
 | Manifest request fails | Current manifest state cannot be confirmed | Show the compact Work error state instead of treating the result as empty | Operators must be able to distinguish retrieval failure from confirmed absence | Component/E2E tests |
 
 ## Actor-Visible Input
 
 The operator sees the selected Chat, its normal transcript/composer, and a Work
-surface containing only Outputs, Sources, References, and a separate Project
-assets row when Project context exists. Each row exposes a readable title and
-type icon. Website rows expose the normalized URL and website icon instead of a
-generic link icon or redundant `From Agent` origin label.
+surface containing only the current thread's Outputs, Sources, and References.
+Each row exposes a readable title and type icon. Website rows expose the
+normalized URL and website icon instead of a generic link icon or redundant
+`From Agent` origin label.
 
 ## Operator-Visible Output
 
@@ -892,8 +893,9 @@ to reconcile the projection.
 2. Project-scoped Chat:
    - Trigger: Chat selects a Project whose resources are injected into a Run.
    - Expected state/action: eligible Project resources appear as Sources; other
-     Project thread items remain behind the Project roll-up.
-   - Visible output: current Chat sections plus `Project assets <count>`.
+     Project thread items do not appear in the current Chat manifest.
+   - Visible output: current Chat sections only. Broader Project work remains
+     available from Project-level surfaces.
    - Evidence: context link, project resource attachments, manifest rows.
 3. Recommendation without production:
    - Trigger: assistant final answer links an external product website.
@@ -910,7 +912,8 @@ to reconcile the projection.
 ## Invariants / Non-Goals
 
 - Organization access is enforced before reconciliation or listing.
-- Current Chat items and Project roll-up items remain visibly separate.
+- Project membership does not import work from other conversations into the
+  current Chat manifest.
 - One target appears once per conversation under its strongest supported
   category.
 - Outputs require structured production evidence and persist across answer
@@ -922,10 +925,10 @@ to reconcile the projection.
 ## Drift Boundaries
 
 Update this contract when categories, production evidence, reconciliation,
-Project roll-up scope, provenance, responsive visibility, or item-open behavior
-changes. Parser implementation, row-limit constants, icon choices, and query
-batching may change without a contract edit when the visible semantics and
-invariants remain intact.
+Project membership isolation, provenance, responsive visibility, or item-open
+behavior changes. Parser implementation, row-limit constants, icon choices,
+compatibility metadata, and query batching may change without a contract edit
+when the visible semantics and invariants remain intact.
 
 ## Traceability
 

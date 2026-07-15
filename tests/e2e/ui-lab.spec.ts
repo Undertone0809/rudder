@@ -1,9 +1,11 @@
 import { expect, test } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 
 async function createUiLabOrganization(page: import("@playwright/test").Page) {
   const orgRes = await page.request.post("/api/orgs", {
     data: {
       name: `UI Lab ${Date.now()}`,
+      issuePrefix: `UIL${randomUUID().replaceAll("-", "").slice(0, 7).toUpperCase()}`,
     },
   });
   expect(orgRes.ok()).toBe(true);
@@ -143,7 +145,7 @@ test.describe("UI Lab", () => {
     expect(metrics.iconLabelCenterDelta).toBeLessThanOrEqual(1);
     expect(metrics.rowToNextGap).toBeLessThanOrEqual(6);
 
-    await page.locator("button").filter({ hasText: "Chat Transcript" }).click();
+    await page.locator("button").filter({ hasText: "Run Detail" }).click();
     await expect(page.locator('[data-transcript-file-change="true"]').first()).toBeVisible();
     await expect(page.getByText("File Change", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("Updated rudder/proposals/2026-06-10-rudder-cli-capability-parity.md", { exact: false })).toBeVisible();

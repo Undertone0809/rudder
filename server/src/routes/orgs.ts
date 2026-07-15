@@ -609,7 +609,12 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     const filePath = typeof req.query.path === "string" ? req.query.path : "";
     assertAgentLibraryProjectPath(req, filePath, "file");
     assertNoEmbeddedImageDataUrls(req.body.content);
-    const result = await workspaceBrowser.writeFile(orgId, filePath, req.body.content);
+    const result = await workspaceBrowser.writeFile(
+      orgId,
+      filePath,
+      req.body.content,
+      req.body.expectedContent,
+    );
     await organizationSkills.syncWorkspaceFileChange(orgId, result.filePath, req.body.content);
     const actor = getActorInfo(req);
     await logActivity(db, {

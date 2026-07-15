@@ -55,6 +55,7 @@ export interface OrganizationWorkspaceFileDetail {
 
 export interface OrganizationWorkspaceFileUpdateRequest {
   content: string;
+  expectedContent?: string;
 }
 
 export interface OrganizationWorkspaceFileCreateRequest {

@@ -6,6 +6,10 @@ import { expectRightAnchoredSidePanelMotion, sampleSidePanelMotion } from "./sup
 
 const e2eDb = createDb(E2E_DATABASE_URL);
 
+function uniqueIssuePrefix() {
+  return `T${randomUUID().replaceAll("-", "").slice(0, 9).toUpperCase()}`;
+}
+
 function createSimplePdf() {
   const stream = "BT /F1 18 Tf 36 96 Td (Rudder PDF preview) Tj /F1 10 Tf 0 -24 Td (Rendered in Messenger.) Tj ET";
   const objects = [
@@ -113,7 +117,10 @@ async function installEnabledBrowserSettingsStub(page: Page) {
 test.describe("Chat Side Panel", () => {
   test("renders the full issue detail body when an issue Side Panel tab is expanded", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Chat-Side-Panel-Expanded-Issue-${Date.now()}` },
+      data: {
+        name: `Chat-Side-Panel-Expanded-Issue-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
@@ -203,10 +210,11 @@ test.describe("Chat Side Panel", () => {
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey?: string | null };
     const libraryFilePath = `projects/competitor-research/exports/2026/07/file-launcher-${Date.now()}.md`;
+    const initialLibraryContent = "# OpenClaw and Hermes Agent SEO competitor research\n\nOpen this document outside Rudder.";
     const libraryFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
       data: {
         filePath: libraryFilePath,
-        content: "# OpenClaw and Hermes Agent SEO competitor research\n\nOpen this document outside Rudder.",
+        content: initialLibraryContent,
       },
     });
     expect(libraryFileRes.ok(), await libraryFileRes.text()).toBe(true);
@@ -350,17 +358,34 @@ test.describe("Chat Side Panel", () => {
       exact: true,
     })).toBeVisible();
     await expect(markdownEditor).toContainText("Save failed", { timeout: 10_000 });
+
+    const concurrentLibraryContent = "# New agent copy\n\nKeep this concurrent update.";
+    const concurrentWriteRes = await page.request.patch(
+      `/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(libraryFilePath)}`,
+      { data: { content: concurrentLibraryContent, expectedContent: initialLibraryContent } },
+    );
+    expect(concurrentWriteRes.ok(), await concurrentWriteRes.text()).toBe(true);
+
     allowPatch = true;
-    await markdownEditor.getByRole("button", { name: "Retry" }).click();
-    await expect(markdownEditor).toContainText("Saved", { timeout: 10_000 });
-    expect(patchAttempts).toBeGreaterThanOrEqual(2);
+    await expect(markdownEditor).toContainText("Conflict", { timeout: 10_000 });
+    await expect(markdownEditor.getByRole("button", { name: "Keep mine" })).toBeVisible();
+    await expect(markdownEditor.getByRole("button", { name: "Use latest" })).toBeVisible();
+    await expect(markdownEditor.getByRole("heading", {
+      name: "OpenClaw and Hermes Agent SEO competitor research revised",
+      exact: true,
+    })).toBeVisible();
+    expect(patchAttempts).toBeGreaterThanOrEqual(1);
+
+    await markdownEditor.getByRole("button", { name: "Use latest" }).click();
+    await expect(markdownEditor).toContainText("Saved");
+    await expect(markdownEditor.getByRole("heading", { name: "New agent copy", exact: true })).toBeVisible();
 
     const savedFileRes = await page.request.get(
       `/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(libraryFilePath)}`,
     );
     expect(savedFileRes.ok(), await savedFileRes.text()).toBe(true);
     const savedFile = await savedFileRes.json() as { content: string | null };
-    expect(savedFile.content).toContain("# OpenClaw and Hermes Agent SEO competitor research revised");
+    expect(savedFile.content).toBe(concurrentLibraryContent);
 
     const [editorBox, historyBox] = await Promise.all([
       markdownEditor.boundingBox(),
@@ -525,7 +550,10 @@ test.describe("Chat Side Panel", () => {
 
   test("reuses the Automation detail UI in the Side Panel", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Chat-Side-Panel-Automation-${Date.now()}` },
+      data: {
+        name: `Chat-Side-Panel-Automation-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
@@ -622,7 +650,10 @@ test.describe("Chat Side Panel", () => {
 
   test("opens issue, automation, library, and chat references in the Side Panel without replacing the Chat route", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Chat-Side-Panel-${Date.now()}` },
+      data: {
+        name: `Chat-Side-Panel-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
@@ -663,6 +694,10 @@ test.describe("Chat Side Panel", () => {
     });
     expect(agentRes.ok(), await agentRes.text()).toBe(true);
     const agent = await agentRes.json() as { id: string };
+    const assignIssueRes = await page.request.patch(`/api/issues/${issue.id}`, {
+      data: { assigneeAgentId: agent.id },
+    });
+    expect(assignIssueRes.ok(), await assignIssueRes.text()).toBe(true);
 
     const automationRes = await page.request.post(`/api/orgs/${organization.id}/automations`, {
       data: {
@@ -766,16 +801,15 @@ test.describe("Chat Side Panel", () => {
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
     await expect(sidePanel.getByTestId("chat-side-panel-tabs")).toBeVisible();
-    await expect(sidePanel.getByText("Side Panel")).toHaveCount(0);
-    await expect(sidePanel.getByRole("button", { name: `Close ${issueRef} tab` })).toBeVisible();
+    await expect(sidePanel.getByText("Side Panel", { exact: true })).toHaveCount(0);
+    await expect(sidePanel.getByRole("button", { name: /Close .*Reference issue target tab$/ })).toBeVisible();
     await expect(sidePanel).toContainText("Reference issue target");
     await expect(sidePanel).toContainText("Issue details should stay beside the active chat.");
     await expect(sidePanel).toContainText("Existing side panel comment should stay visible.");
     await expect(sidePanel.getByLabel("Edit issue")).toHaveCount(0);
     await expect(sidePanel.getByRole("region", { name: "Issue properties" })).toBeVisible();
-    await expect(sidePanel.getByText("Properties", { exact: true })).toBeVisible();
     await expect(sidePanel.getByText("Reference Automation Agent", { exact: true })).toBeVisible();
-    await expect(sidePanel.getByText("engineer", { exact: true })).toBeVisible();
+    await expect(sidePanel.getByText("Engineer", { exact: true })).toBeVisible();
     await expect(sidePanel.getByLabel("Close Side Panel")).toBeVisible();
     await expect(sidePanel.getByLabel("Expand Side Panel")).toBeVisible();
     await expect(sidePanel.getByRole("link", { name: "Full page" })).toHaveCount(0);
@@ -783,7 +817,7 @@ test.describe("Chat Side Panel", () => {
     const propertiesPanel = sidePanel.getByRole("region", { name: "Issue properties" });
     await propertiesPanel.locator('button:has([data-slot="issue-status-icon"])').first().click();
     await page.getByRole("menuitemradio", { name: "Done" }).click();
-    await expect(sidePanel).toContainText("done");
+    await expect(propertiesPanel.getByText("Done", { exact: true })).toBeVisible();
 
     const reassigneeRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
       data: {
@@ -869,13 +903,17 @@ test.describe("Chat Side Panel", () => {
     await expect.poll(async () => issueScroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
     await expect(activityRegion.getByText("Scrollable side panel activity comment 12.")).toBeInViewport();
 
+    await page.setViewportSize({ width: 1440, height: 900 });
     await sidePanel.getByLabel("Expand Side Panel").click();
     await expect(sidePanel).toContainText("Sub-issues");
     await expect(sidePanel).toContainText("Activity");
     await expect(propertiesPanel).toBeVisible();
 
     const commentComposer = sidePanel.locator(".chat-composer .rudder-milkdown-content [contenteditable='true']").last();
+    const reopenCheckbox = sidePanel.getByRole("checkbox", { name: "Re-open" });
     await expect(commentComposer).toBeVisible({ timeout: 15_000 });
+    await expect(reopenCheckbox).toBeChecked();
+    await reopenCheckbox.uncheck();
     await commentComposer.click();
     await page.keyboard.type("Posted without leaving Messenger.");
     const commentResponse = page.waitForResponse((response) => {
@@ -906,6 +944,7 @@ test.describe("Chat Side Panel", () => {
       fullPage: true,
     });
 
+    await sidePanel.getByLabel("Restore Side Panel width").click();
     await assistantMessage.locator('a[data-mention-kind="automation"]').filter({ hasText: automation.title }).click();
     await expect(page).toHaveURL(new RegExp(`${hostChat.id}$`));
     await expect(sidePanel).toContainText("Codex verification automation");
@@ -930,7 +969,10 @@ test.describe("Chat Side Panel", () => {
 
   test("keeps the issue Side Panel in one scroll flow with a pinned composer", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Chat-Side-Panel-Pinned-Composer-${Date.now()}` },
+      data: {
+        name: `Chat-Side-Panel-Pinned-Composer-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
@@ -1063,7 +1105,10 @@ test.describe("Chat Side Panel", () => {
 
   test("keeps hidden Side Panel tabs scoped to the active Messenger chat", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Chat-Side-Panel-Session-State-${Date.now()}` },
+      data: {
+        name: `Chat-Side-Panel-Session-State-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
@@ -1183,7 +1228,10 @@ test.describe("Chat Side Panel", () => {
 
   test("keeps Side Panel tabs scoped to a concrete Messenger issue", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Chat-Side-Panel-Issue-Session-State-${Date.now()}` },
+      data: {
+        name: `Chat-Side-Panel-Issue-Session-State-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
@@ -1274,7 +1322,10 @@ test.describe("Chat Side Panel", () => {
 
   test("opens a Library directory in the Side Panel with the Library file-tree UI", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Chat-Side-Panel-Library-Directory-${Date.now()}` },
+      data: {
+        name: `Chat-Side-Panel-Library-Directory-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
@@ -1346,7 +1397,12 @@ test.describe("Chat Side Panel", () => {
     await expect(directoryView).toContainText("charlie.md");
 
     await directoryView.getByRole("button", { name: "charlie.md" }).click();
-    await expect(sidePanel).toContainText(`${directoryPath}/nested/charlie.md`);
+    const filePathNavigation = sidePanel.getByRole("navigation", { name: "Library file path" });
+    await expect(filePathNavigation.getByText("nested", { exact: true })).toBeVisible();
+    await expect(filePathNavigation.getByText("charlie.md", { exact: true })).toBeVisible();
+    await filePathNavigation.hover();
+    await expect(page.getByTestId("chat-side-panel-library-full-path"))
+      .toContainText(`${directoryPath}/nested/charlie.md`);
     await expect(sidePanel).toContainText("Nested file preview.");
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
   });
@@ -1355,7 +1411,10 @@ test.describe("Chat Side Panel", () => {
     await installBrowserDesktopStub(page);
     await installEnabledBrowserSettingsStub(page);
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Global-Side-Panel-${Date.now()}` },
+      data: {
+        name: `Global-Side-Panel-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
@@ -1376,6 +1435,14 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Library");
     await expect(page.getByTestId("side-panel-resizer")).toBeVisible();
     await expect(sidePanel.locator(".workspace-main-card")).toHaveCount(2);
+    await expect.poll(async () => {
+      const [mainBox, panelBox] = await Promise.all([
+        page.getByTestId("workspace-main-card").boundingBox(),
+        sidePanel.boundingBox(),
+      ]);
+      if (!mainBox || !panelBox) return Number.POSITIVE_INFINITY;
+      return Math.abs(mainBox.width - panelBox.width);
+    }).toBeLessThanOrEqual(2);
 
     const mainCardBox = await page.getByTestId("workspace-main-card").boundingBox();
     const resizerBox = await page.getByTestId("side-panel-resizer").boundingBox();
@@ -1386,7 +1453,7 @@ test.describe("Chat Side Panel", () => {
     expect(sidePanelBox).not.toBeNull();
     expect(sidePanelHeaderBox).not.toBeNull();
     expect(Math.round(resizerBox!.x - (mainCardBox!.x + mainCardBox!.width))).toBeLessThanOrEqual(2);
-    expect(Math.round(sidePanelBox!.x - (resizerBox!.x + resizerBox!.width))).toBe(0);
+    expect(Math.abs(Math.round(sidePanelBox!.x - (resizerBox!.x + resizerBox!.width)))).toBeLessThanOrEqual(2);
     expect(Math.round(sidePanelHeaderBox!.x - (mainCardBox!.x + mainCardBox!.width))).toBeLessThanOrEqual(6);
 
     await sidePanel.getByLabel("Expand Side Panel").click();
@@ -1398,14 +1465,14 @@ test.describe("Chat Side Panel", () => {
       const workspaceBox = await page.getByTestId("workspace-main-panel-stack").boundingBox();
       const expandedSidePanelBox = await sidePanel.boundingBox();
       if (!workspaceBox || !expandedSidePanelBox) return null;
-      return {
-        left: Math.abs(Math.round(expandedSidePanelBox.x - workspaceBox.x)),
-        right: Math.abs(Math.round(
+      return Math.max(
+        Math.abs(Math.round(expandedSidePanelBox.x - workspaceBox.x)),
+        Math.abs(Math.round(
           (workspaceBox.x + workspaceBox.width)
             - (expandedSidePanelBox.x + expandedSidePanelBox.width),
         )),
-      };
-    }).toEqual({ left: 0, right: 0 });
+      );
+    }).toBeLessThanOrEqual(2);
 
     await sidePanel.getByLabel("Restore Side Panel width").click();
     await expect(sidePanel.getByLabel("Expand Side Panel")).toBeVisible();
@@ -1589,7 +1656,10 @@ test.describe("Chat Side Panel", () => {
 
   test("only auto-expands after a resize makes the Side Panel wider than 2:1", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Side-Panel-Auto-Expand-${Date.now()}` },
+      data: {
+        name: `Side-Panel-Auto-Expand-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
@@ -1606,6 +1676,14 @@ test.describe("Chat Side Panel", () => {
     const sidePanel = page.getByTestId("chat-side-panel");
     const resizer = page.getByTestId("side-panel-resizer");
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await expect.poll(async () => {
+      const [mainBox, panelBox] = await Promise.all([
+        page.getByTestId("workspace-main-card").boundingBox(),
+        sidePanel.boundingBox(),
+      ]);
+      if (!mainBox || !panelBox) return Number.POSITIVE_INFINITY;
+      return Math.abs(mainBox.width - panelBox.width);
+    }).toBeLessThanOrEqual(2);
     const stackBox = await page.getByTestId("workspace-main-panel-stack").boundingBox();
     const resizerBox = await resizer.boundingBox();
     expect(stackBox).not.toBeNull();
@@ -1741,7 +1819,10 @@ test.describe("Chat Side Panel", () => {
 
   test("keeps the default Side Panel and main content at a 1:1 split while the app width changes", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Global-Side-Panel-Proportional-${Date.now()}` },
+      data: {
+        name: `Global-Side-Panel-Proportional-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };

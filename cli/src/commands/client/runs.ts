@@ -237,7 +237,7 @@ export function registerRunsCommands(program: Command): void {
             return;
           }
           const page = await ctx.api.get<RunSummaryPage>(`/api/run-intelligence/orgs/${ctx.orgId}/runs?${buildRunsListQuery(opts)}`);
-          printOutput(ctx.json ? page : (page?.items ?? []).map(formatRunListRow), { json: ctx.json });
+          printOutput(ctx.json ? page : formatRunSummaryPage(page), { json: ctx.json });
         } catch (err) {
           handleCommandError(err);
         }
@@ -627,9 +627,20 @@ function formatSkillRunReport(report: SkillRunReport) {
     lines.push(`commonErrors=${report.summary.commonErrors.map((error) => `${clip(error.summary, 80)}:${error.count}`).join(" | ")}`);
   }
   lines.push(...report.rows.map((row) => formatInlineSkillRun(row)));
+  if (report.page?.hasMore && report.page.nextCursor) {
+    lines.push(`more: hasMore=true nextCursor=${report.page.nextCursor}`);
+  }
   if (report.nextCommands.length > 0) {
     lines.push("next:");
     lines.push(...report.nextCommands.map((command) => `  ${command}`));
+  }
+  return lines;
+}
+
+function formatRunSummaryPage(page: RunSummaryPage | null | undefined) {
+  const lines: unknown[] = (page?.items ?? []).map(formatRunListRow);
+  if (page?.page.hasMore && page.page.nextCursor) {
+    lines.push(`more: hasMore=true nextCursor=${page.page.nextCursor}`);
   }
   return lines;
 }

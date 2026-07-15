@@ -62,6 +62,7 @@ export type UpdateOrganizationBranding = z.infer<typeof updateOrganizationBrandi
 
 export const updateOrganizationWorkspaceFileSchema = z.object({
   content: z.string(),
+  expectedContent: z.string().optional(),
 });
 
 export type UpdateOrganizationWorkspaceFile = z.infer<typeof updateOrganizationWorkspaceFileSchema>;

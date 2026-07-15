@@ -115,6 +115,7 @@ const CHAT_SIDE_PANEL_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([
 ]);
 const CHAT_SIDE_PANEL_TAB_DND_MIME = "application/x-rudder-side-panel-tab";
 const CHAT_SIDE_PANEL_MARKDOWN_DRAFT_STORAGE_PREFIX = "rudder.chat-side-panel.markdown-draft.v1";
+const CHAT_SIDE_PANEL_MARKDOWN_CONFLICT_MESSAGE = "This file changed while you were editing it.";
 
 type ChatSidePanelMarkdownDraft = {
   baseContent: string;
@@ -122,6 +123,12 @@ type ChatSidePanelMarkdownDraft = {
   filePath: string;
   organizationId: string;
   updatedAt: string;
+};
+
+type RestoredChatSidePanelMarkdownDraft = {
+  baseContent: string;
+  conflicted: boolean;
+  content: string;
 };
 
 function chatSidePanelMarkdownDraftStorageKey(organizationId: string, filePath: string) {
@@ -169,24 +176,29 @@ function restoreChatSidePanelMarkdownDraft(
   organizationId: string,
   filePath: string,
   serverContent: string,
-) {
-  if (typeof window === "undefined") return serverContent;
+): RestoredChatSidePanelMarkdownDraft {
+  const serverDraft = { baseContent: serverContent, conflicted: false, content: serverContent };
+  if (typeof window === "undefined") return serverDraft;
   try {
     const stored = window.sessionStorage.getItem(chatSidePanelMarkdownDraftStorageKey(organizationId, filePath));
-    if (!stored) return serverContent;
+    if (!stored) return serverDraft;
     const draft = JSON.parse(stored) as Partial<ChatSidePanelMarkdownDraft>;
     const valid = draft.organizationId === organizationId
       && draft.filePath === filePath
       && typeof draft.baseContent === "string"
       && typeof draft.content === "string";
-    if (!valid || draft.baseContent !== serverContent || draft.content === serverContent) {
+    if (!valid || draft.content === serverContent) {
       clearChatSidePanelMarkdownDraft(organizationId, filePath);
-      return serverContent;
+      return serverDraft;
     }
-    return draft.content as string;
+    return {
+      baseContent: draft.baseContent as string,
+      conflicted: draft.baseContent !== serverContent,
+      content: draft.content as string,
+    };
   } catch {
     clearChatSidePanelMarkdownDraft(organizationId, filePath);
-    return serverContent;
+    return serverDraft;
   }
 }
 
@@ -802,22 +814,32 @@ function ChatSidePanelMarkdownFileEditor({
   const queryClient = useQueryClient();
   const filePath = libraryFile.filePath;
   const serverContent = libraryFile.content ?? "";
+  const restoredDraftRef = useRef<RestoredChatSidePanelMarkdownDraft | null>(null);
+  if (restoredDraftRef.current === null) {
+    restoredDraftRef.current = restoreChatSidePanelMarkdownDraft(organizationId, filePath, serverContent);
+  }
+  const restoredDraft = restoredDraftRef.current;
   const editorRef = useRef<MarkdownEditorRef>(null);
-  const syncedContentRef = useRef(serverContent);
-  const draftContentRef = useRef(serverContent);
+  const syncedContentRef = useRef(restoredDraft.baseContent);
+  const latestServerContentRef = useRef(serverContent);
+  const draftContentRef = useRef(restoredDraft.content);
   const queuedSaveRef = useRef<string | null>(null);
   const saveInFlightRef = useRef(false);
+  const saveConflictRef = useRef(restoredDraft.conflicted);
+  const saveResolutionVersionRef = useRef(0);
   const mountedRef = useRef(true);
-  const [draftContent, setDraftContent] = useState(() => (
-    restoreChatSidePanelMarkdownDraft(organizationId, filePath, serverContent)
-  ));
+  const [draftContent, setDraftContent] = useState(restoredDraft.content);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "error">(
-    draftContent === serverContent ? "saved" : "saving",
+    restoredDraft.conflicted ? "error" : draftContent === serverContent ? "saved" : "saving",
   );
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(
+    restoredDraft.conflicted ? CHAT_SIDE_PANEL_MARKDOWN_CONFLICT_MESSAGE : null,
+  );
+  const [saveConflict, setSaveConflict] = useState(restoredDraft.conflicted);
   const [, setHistoryVersion] = useState(0);
 
   draftContentRef.current = draftContent;
+  latestServerContentRef.current = serverContent;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -834,17 +856,67 @@ function ChatSidePanelMarkdownFileEditor({
 
   useEffect(() => {
     if (serverContent === syncedContentRef.current) return;
-    const wasClean = draftContentRef.current === syncedContentRef.current;
-    syncedContentRef.current = serverContent;
-    if (wasClean) {
-      draftContentRef.current = serverContent;
-      setDraftContent(serverContent);
+    if (serverContent === draftContentRef.current) {
+      syncedContentRef.current = serverContent;
+      saveConflictRef.current = false;
+      setSaveConflict(false);
       setSaveStatus("saved");
+      setSaveError(null);
       clearChatSidePanelMarkdownDraft(organizationId, filePath);
       return;
     }
-    storeChatSidePanelMarkdownDraft(organizationId, filePath, serverContent, draftContentRef.current);
+    const wasClean = draftContentRef.current === syncedContentRef.current;
+    if (wasClean) {
+      syncedContentRef.current = serverContent;
+      draftContentRef.current = serverContent;
+      setDraftContent(serverContent);
+      saveConflictRef.current = false;
+      setSaveConflict(false);
+      setSaveStatus("saved");
+      setSaveError(null);
+      clearChatSidePanelMarkdownDraft(organizationId, filePath);
+      return;
+    }
+    queuedSaveRef.current = null;
+    saveConflictRef.current = true;
+    saveResolutionVersionRef.current += 1;
+    setSaveConflict(true);
+    setSaveStatus("error");
+    setSaveError(CHAT_SIDE_PANEL_MARKDOWN_CONFLICT_MESSAGE);
+    storeChatSidePanelMarkdownDraft(
+      organizationId,
+      filePath,
+      syncedContentRef.current,
+      draftContentRef.current,
+    );
   }, [filePath, organizationId, serverContent]);
+
+  const acceptSavedDetail = useCallback((
+    detail: OrganizationWorkspaceFileDetail,
+    attemptedContent: string,
+  ) => {
+    const savedContent = detail.content ?? attemptedContent;
+    syncedContentRef.current = savedContent;
+    latestServerContentRef.current = savedContent;
+    saveConflictRef.current = false;
+    if (mountedRef.current) {
+      setSaveConflict(false);
+      setSaveError(null);
+    }
+    queryClient.setQueryData(
+      queryKeys.organizations.workspaceFile(organizationId, filePath),
+      detail,
+    );
+    storeChatSidePanelMarkdownDraft(
+      organizationId,
+      filePath,
+      savedContent,
+      draftContentRef.current,
+    );
+    if (draftContentRef.current !== savedContent) {
+      queuedSaveRef.current = draftContentRef.current;
+    }
+  }, [filePath, organizationId, queryClient]);
 
   const drainSaveQueue = useCallback(async () => {
     if (saveInFlightRef.current) return;
@@ -852,33 +924,60 @@ function ChatSidePanelMarkdownFileEditor({
     try {
       while (queuedSaveRef.current !== null) {
         const content = queuedSaveRef.current;
+        const resolutionVersion = saveResolutionVersionRef.current;
         queuedSaveRef.current = null;
+        if (saveConflictRef.current) return;
         if (content === syncedContentRef.current) continue;
         if (mountedRef.current) {
           setSaveStatus("saving");
           setSaveError(null);
         }
         try {
-          const detail = await organizationsApi.updateWorkspaceFile(organizationId, filePath, { content });
-          const savedContent = detail.content ?? content;
-          syncedContentRef.current = savedContent;
-          queryClient.setQueryData(
-            queryKeys.organizations.workspaceFile(organizationId, filePath),
-            detail,
-          );
-          storeChatSidePanelMarkdownDraft(
-            organizationId,
-            filePath,
-            savedContent,
-            draftContentRef.current,
-          );
-          if (draftContentRef.current !== savedContent) {
-            queuedSaveRef.current = draftContentRef.current;
-          }
+          const detail = await organizationsApi.updateWorkspaceFile(organizationId, filePath, {
+            content,
+            expectedContent: syncedContentRef.current,
+          });
+          if (resolutionVersion !== saveResolutionVersionRef.current) continue;
+          acceptSavedDetail(detail, content);
         } catch (error) {
+          if (resolutionVersion !== saveResolutionVersionRef.current) continue;
+          let latestDetail: OrganizationWorkspaceFileDetail | null = null;
+          try {
+            latestDetail = await organizationsApi.readWorkspaceFile(organizationId, filePath);
+          } catch {
+            // Preserve the original save error when the verification read also fails.
+          }
+          if (resolutionVersion !== saveResolutionVersionRef.current) continue;
+          if (latestDetail) {
+            latestServerContentRef.current = latestDetail.content ?? "";
+            queryClient.setQueryData(
+              queryKeys.organizations.workspaceFile(organizationId, filePath),
+              latestDetail,
+            );
+          }
+          if (latestDetail?.content === content) {
+            acceptSavedDetail(latestDetail, content);
+            continue;
+          }
+          if (latestDetail && latestDetail.content !== syncedContentRef.current) {
+            queuedSaveRef.current = null;
+            saveConflictRef.current = true;
+            storeChatSidePanelMarkdownDraft(
+              organizationId,
+              filePath,
+              syncedContentRef.current,
+              draftContentRef.current,
+            );
+          }
           if (mountedRef.current) {
             setSaveStatus("error");
-            setSaveError(error instanceof Error ? error.message : "Could not save this file.");
+            const conflicted = saveConflictRef.current;
+            setSaveConflict(conflicted);
+            setSaveError(
+              conflicted
+                ? CHAT_SIDE_PANEL_MARKDOWN_CONFLICT_MESSAGE
+                : error instanceof Error ? error.message : "Could not save this file.",
+            );
           }
           return;
         }
@@ -892,8 +991,11 @@ function ChatSidePanelMarkdownFileEditor({
       }
     } finally {
       saveInFlightRef.current = false;
+      if (queuedSaveRef.current !== null && !saveConflictRef.current) {
+        void drainSaveQueue();
+      }
     }
-  }, [filePath, organizationId, queryClient]);
+  }, [acceptSavedDetail, filePath, organizationId, queryClient]);
 
   const enqueueSave = useCallback((content: string) => {
     queuedSaveRef.current = content;
@@ -907,6 +1009,7 @@ function ChatSidePanelMarkdownFileEditor({
       syncedContentRef.current,
       draftContent,
     );
+    if (saveConflictRef.current) return undefined;
     if (draftContent === syncedContentRef.current) {
       setSaveStatus(saveInFlightRef.current || queuedSaveRef.current !== null ? "saving" : "saved");
       setSaveError(null);
@@ -919,9 +1022,33 @@ function ChatSidePanelMarkdownFileEditor({
   const handleDraftChange = (content: string) => {
     draftContentRef.current = content;
     setDraftContent(content);
+    setSaveStatus(saveConflictRef.current ? "error" : "saving");
+    if (!saveConflictRef.current) setSaveError(null);
+    setHistoryVersion((current) => current + 1);
+  };
+
+  const useLatestServerContent = () => {
+    const content = latestServerContentRef.current;
+    saveResolutionVersionRef.current += 1;
+    syncedContentRef.current = content;
+    draftContentRef.current = content;
+    queuedSaveRef.current = null;
+    saveConflictRef.current = false;
+    setDraftContent(content);
+    setSaveConflict(false);
+    setSaveStatus("saved");
+    setSaveError(null);
+    clearChatSidePanelMarkdownDraft(organizationId, filePath);
+  };
+
+  const keepLocalDraft = () => {
+    saveResolutionVersionRef.current += 1;
+    syncedContentRef.current = latestServerContentRef.current;
+    saveConflictRef.current = false;
+    setSaveConflict(false);
     setSaveStatus("saving");
     setSaveError(null);
-    setHistoryVersion((current) => current + 1);
+    enqueueSave(draftContentRef.current);
   };
 
   const markdownParts = splitChatSidePanelYamlFrontmatter(draftContent);
@@ -987,10 +1114,27 @@ function ChatSidePanelMarkdownFileEditor({
             saveStatus === "error" ? "bg-destructive" : saveStatus === "saving" ? "bg-[color:var(--accent-strong)]" : "bg-emerald-500",
           )} />
           <span className="truncate">
-            {saveStatus === "error" ? "Save failed" : saveStatus === "saving" ? "Saving" : "Saved"}
+            {saveConflict ? "Conflict" : saveStatus === "error" ? "Save failed" : saveStatus === "saving" ? "Saving" : "Saved"}
             {` · ${wordCount.toLocaleString()} ${wordCount === 1 ? "word" : "words"}`}
           </span>
-          {saveStatus === "error" ? (
+          {saveConflict ? (
+            <>
+              <button
+                type="button"
+                className="shrink-0 font-medium text-foreground underline underline-offset-2"
+                onClick={keepLocalDraft}
+              >
+                Keep mine
+              </button>
+              <button
+                type="button"
+                className="shrink-0 font-medium text-foreground underline underline-offset-2"
+                onClick={useLatestServerContent}
+              >
+                Use latest
+              </button>
+            </>
+          ) : saveStatus === "error" ? (
             <button
               type="button"
               className="shrink-0 font-medium text-foreground underline underline-offset-2"

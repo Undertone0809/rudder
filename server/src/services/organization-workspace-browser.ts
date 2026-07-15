@@ -276,6 +276,26 @@ function getWorkspaceFilePreviewKind(contentType: string, buffer: Buffer): Organ
 export function organizationWorkspaceBrowserService(db: Db) {
   const orgs = organizationService(db);
   const libraryEntries = libraryEntryService(db);
+  const workspaceFileWriteTails = new Map<string, Promise<void>>();
+
+  async function serializeWorkspaceFileWrite<T>(filePath: string, operation: () => Promise<T>): Promise<T> {
+    const previous = workspaceFileWriteTails.get(filePath) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => current);
+    workspaceFileWriteTails.set(filePath, tail);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (workspaceFileWriteTails.get(filePath) === tail) {
+        workspaceFileWriteTails.delete(filePath);
+      }
+    }
+  }
 
   async function listAgentWorkspaceDirectoryMap(orgId: string) {
     const rows = await db
@@ -589,6 +609,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
       orgId: string,
       filePath: string,
       content: string,
+      expectedContent?: string,
     ): Promise<OrganizationWorkspaceFileDetail> {
       const root = await resolveWorkspaceRoot(orgId);
       const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, filePath);
@@ -600,7 +621,16 @@ export function organizationWorkspaceBrowserService(db: Db) {
         throw notFound("File not found inside the organization Library");
       }
 
-      await fs.writeFile(resolvedTarget, content, "utf8");
+      await serializeWorkspaceFileWrite(resolvedTarget, async () => {
+        if (expectedContent !== undefined) {
+          const currentContent = await fs.readFile(resolvedTarget, "utf8");
+          if (currentContent !== expectedContent) {
+            throw conflict("This file changed since it was opened. Reload it before saving again.");
+          }
+        }
+
+        await fs.writeFile(resolvedTarget, content, "utf8");
+      });
       const libraryEntry = await libraryEntries.getOrCreateWorkspaceFileEntry(orgId, normalizedPath);
 
       return {
