@@ -407,7 +407,7 @@ export function NewProjectDialog() {
       <DialogContent
         showCloseButton={false}
         className={cn(
-          "flex max-h-[min(860px,calc(100vh-2rem))] flex-col gap-0 overflow-hidden p-0",
+          "flex max-h-[min(860px,calc(100vh-2rem))] flex-col gap-0 overflow-visible p-0",
           expanded ? "sm:max-w-3xl" : "sm:max-w-xl",
         )}
         onKeyDown={handleKeyDown}
@@ -542,8 +542,21 @@ export function NewProjectDialog() {
                     className="z-[60] flex max-h-[min(420px,calc(100dvh-2rem),var(--radix-popover-content-available-height))] w-[min(20rem,calc(100vw-2rem))] flex-col overflow-hidden p-1"
                     align="end"
                     collisionPadding={16}
+                    disablePortal
                     sideOffset={8}
                   >
+                  <button
+                    type="button"
+                    className="flex w-full shrink-0 items-start gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
+                    onClick={addExternalResourceDraft}
+                  >
+                    <Link2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span>
+                      <span className="block text-xs font-medium">Create external resource</span>
+                      <span className="block text-[11px] text-muted-foreground">Add a URL, local path, repo path, or connector reference.</span>
+                    </span>
+                  </button>
+                  <div className="mx-2 my-1 h-px shrink-0 bg-border" />
                   <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                     {libraryCopy("addFromLibrary", locale)}
                   </div>
@@ -564,7 +577,7 @@ export function NewProjectDialog() {
                   <div
                     ref={addResourcesScrollRef}
                     data-testid="new-project-add-resources-popover-scroll"
-                    className="scrollbar-auto-hide min-h-0 overflow-y-auto overscroll-contain pr-1"
+                    className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1"
                   >
                     {availableLibraryFiles.length === 0 ? (
                       <div className="px-2 py-2 text-xs text-muted-foreground">
@@ -636,18 +649,6 @@ export function NewProjectDialog() {
                       </button>
                     ))}
 
-                    <div className="my-1 h-px bg-border" />
-                    <button
-                      type="button"
-                      className="flex w-full items-start gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
-                      onClick={addExternalResourceDraft}
-                    >
-                      <Link2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span>
-                        <span className="block text-xs font-medium">Create external resource</span>
-                        <span className="block text-[11px] text-muted-foreground">Add a URL, local path, repo path, or connector reference.</span>
-                      </span>
-                    </button>
                   </div>
                   </PopoverContent>
                 </Popover>
