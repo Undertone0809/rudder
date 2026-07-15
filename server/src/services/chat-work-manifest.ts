@@ -122,13 +122,17 @@ export function chatWorkManifestService(db: Db) {
         const output = role === "assistant" && Boolean(message.runId) &&
           (target.targetType === "library_entry" || target.targetType === "library_file") &&
           artifactPath(target.metadata);
+        const rudderReference = target.targetType === "issue" ||
+          target.targetType === "issue_comment" ||
+          target.targetType === "automation" ||
+          target.targetType === "chat_conversation";
         mergeCandidate(candidates, {
           orgId: conversation.orgId,
           conversationId,
           projectId,
           messageId: message.id,
           runId: message.runId,
-          category: output ? "output" : role === "user" ? "source" : "reference",
+          category: output ? "output" : rudderReference ? "reference" : role === "user" ? "source" : "reference",
           targetType: target.targetType,
           targetKey: target.targetKey,
           title: target.title,
