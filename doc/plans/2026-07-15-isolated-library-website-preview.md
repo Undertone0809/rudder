@@ -25,7 +25,8 @@ related_code:
   - server/src/__tests__/workspace-web-preview.test.ts
   - tests/e2e/organization-workspaces-image-preview.spec.ts
   - tests/e2e/chat-side-panel-html-preview.spec.ts
-commit_refs: []
+commit_refs:
+  - 0cf027c4c
 updated_at: 2026-07-15
 ---
 
