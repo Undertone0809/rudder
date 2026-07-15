@@ -60,9 +60,9 @@ Low-frequency escape hatches:
 
 Smoke scenarios:
 
-- `pnpm --filter @rudderhq/desktop smoke` runs the clean-instance desktop smoke path.
-- `node desktop/scripts/smoke.mjs --mode=packaged` now runs both a clean packaged smoke path and an upgrade smoke path that downgrades the temp `prod_local` schema before relaunching.
-- Pass `--scenario=clean`, `--scenario=upgrade`, or `--scenario=all` to target a specific smoke path manually.
+- `pnpm --filter @rudderhq/desktop smoke` runs startup-recovery, renderer-recovery, and clean-instance Desktop smoke paths.
+- `node desktop/scripts/smoke.mjs --mode=packaged` runs startup-recovery, renderer-recovery, clean packaged, and upgrade smoke paths. The upgrade path downgrades the temporary `prod_local` schema before relaunching.
+- Pass `--scenario=startup-recovery`, `--scenario=renderer-recovery`, `--scenario=clean`, `--scenario=upgrade`, or `--scenario=all` to target a specific smoke path manually.
 
 ## Local profiles
 
@@ -265,13 +265,26 @@ Instead it:
 3. attaches when the runtime is healthy and compatible
 4. starts a new runtime only when needed
 
-The boot screen and Desktop settings page show the active profile, instance, runtime mode (`attached` or `owned`), server version, and the shared instance data path.
+Healthy startup intentionally shows only the Rudder mark and non-progress motion.
+It does not expose profile, instance, runtime stage, version, paths, or actions.
+The Desktop settings page remains the normal place to inspect the active profile,
+instance, runtime mode (`attached` or `owned`), server version, and shared
+instance data path.
 
 In packaged mode, resident-shell actions can restart the local runtime without changing the shared instance path.
 
 ## Failure recovery
 
-Desktop has two operator-facing recovery layers after the local runtime starts:
+Desktop has three operator-facing recovery layers across startup and UI runtime:
+
+- If managed local startup rejects after the boot window exists, the quiet boot
+  surface expands in place. The operator can retry, open an editable support
+  draft addressed to `zeeland4work@gmail.com`, or disclose technical details.
+  The support draft includes a bounded, main-process-owned diagnostic summary;
+  it does not attach files or send mail automatically. The UI asks the operator
+  to add what they were doing and what changed, and warns against attaching
+  `.env`, `config.json`, databases, credentials, API keys, or private workspace
+  files. Raw details and the instance path stay collapsed until requested.
 
 - If the React UI throws during render, the board shows a recovery surface instead
   of unmounting to a blank window. The operator can reload the UI, copy a
@@ -321,7 +334,8 @@ rm -rf ~/.rudder/instances/dev
 rm -rf ~/.rudder/instances/default
 ```
 
-The startup failure screen exposes the active instance path for the current run.
+The startup failure screen exposes the active instance path for the current run
+inside its collapsed technical details.
 
 ## Packaging
 

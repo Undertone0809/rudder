@@ -3,6 +3,7 @@ import { app, BrowserWindow, dialog, shell } from "electron";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { DESKTOP_CLI_FLAG } from "./cli-link.js";
+import { createDesktopSupportMailtoUrl, DESKTOP_FEEDBACK_EMAIL } from "./desktop-support-mail.js";
 import {
   appendBoundedDesktopUpdateOutput,
   summarizeDesktopUpdateChildOutput,
@@ -24,7 +25,7 @@ import {
 
 export const DESKTOP_GITHUB_REPO = "Undertone0809/rudder";
 const DESKTOP_RELEASES_URL = `https://github.com/${DESKTOP_GITHUB_REPO}/releases`;
-export const DESKTOP_FEEDBACK_EMAIL = "zeeland4work@gmail.com";
+export { DESKTOP_FEEDBACK_EMAIL };
 export const DESKTOP_UPDATE_QUIT_ARG = "--rudder-update-quit";
 export const DESKTOP_UPDATE_FORCE_ARG = "--rudder-update-force";
 export const INSTANCE_SETTINGS_GENERAL_PATH = "/instance/settings/general";
@@ -101,10 +102,15 @@ export function createDesktopUpdateFlow(context: {
     | { status: "failed"; message: string };
 
   function createFeedbackMailtoUrl(): string {
-    const params = new URLSearchParams({
-      subject: `Rudder feedback (${app.getVersion()})`,
+    const bootState = context.getBootState();
+    return createDesktopSupportMailtoUrl({
+      version: resolveRudderAppVersion(),
+      platform: process.platform,
+      arch: process.arch,
+      failure: bootState.stage === "error" ? bootState.failure : null,
+      profile: bootState.runtime?.localEnv,
+      instance: bootState.runtime?.instanceId,
     });
-    return `mailto:${DESKTOP_FEEDBACK_EMAIL}?${params.toString()}`;
   }
 
   async function checkForUpdates(): Promise<DesktopUpdateCheckResult> {

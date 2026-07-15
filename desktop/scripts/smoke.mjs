@@ -613,7 +613,7 @@ async function verifyPackagedDesktopCli(baseUrl, ceo, issue) {
   );
 }
 
-async function launchDesktop(userDataDir, mode, ports) {
+async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}) {
   console.log(`[desktop-smoke] launching ${mode} desktop app`);
   const paths = resolveInstancePaths(userDataDir);
   const executablePath = mode === "packaged" ? await resolvePackagedExecutablePath() : electronBinary;
@@ -638,10 +638,16 @@ async function launchDesktop(userDataDir, mode, ports) {
       RUDDER_AGENT_JWT_SECRET: smokeAgentJwtSecret,
       PORT: String(ports.appPort),
       RUDDER_EMBEDDED_POSTGRES_PORT: String(ports.dbPort),
+      ...extraEnv,
     },
   });
-  let page = await electronApp.firstWindow();
-  page = await waitForBoardWindow(electronApp, page);
+  const page = await electronApp.firstWindow();
+  return { electronApp, page };
+}
+
+async function launchDesktop(userDataDir, mode, ports) {
+  const { electronApp, page: firstPage } = await launchDesktopWindow(userDataDir, mode, ports);
+  const page = await waitForBoardWindow(electronApp, firstPage);
   const baseUrl = new URL(page.url()).origin;
   console.log(`[desktop-smoke] board loaded at ${baseUrl}`);
   return { electronApp, page, baseUrl };
@@ -1479,6 +1485,113 @@ async function assertUpgradeRepairLogged(logsDir) {
   );
 }
 
+async function readSupportHandoffs(recordPath) {
+  const content = await readFile(recordPath, "utf8").catch(() => "");
+  return content
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
+async function runStartupRecoveryScenario(mode) {
+  const scenarioRoot = path.join(tmpRoot, "startup-recovery");
+  const ports = await allocateSmokePorts();
+  const invalidPostgresBinDir = path.join(scenarioRoot, "missing-postgres-bin");
+  const supportHandoffPath = path.join(scenarioRoot, "support-handoffs.jsonl");
+  const { electronApp, page } = await launchDesktopWindow(scenarioRoot, mode, ports, {
+    RUDDER_POSTGRES_BIN_DIR: invalidPostgresBinDir,
+    RUDDER_DESKTOP_SMOKE_SUPPORT_HANDOFF_PATH: supportHandoffPath,
+    RUDDER_DESKTOP_SMOKE_SUPPORT_HANDOFF_SEQUENCE: "resolve,resolve,reject",
+  });
+
+  try {
+    await page.waitForFunction(
+      () => document.body.dataset.bootView === "failed",
+      null,
+      { timeout: 60_000 },
+    );
+    const initialState = await page.evaluate(() => window.rudderBoot.getState());
+    assert.equal(initialState.view, "failed", "startup recovery should expose a failed safe view model");
+    assert.equal(initialState.failure?.attempt, 1, "the first startup failure should be attempt one");
+    await page.waitForFunction(() => document.activeElement?.id === "failure-title");
+    assert.equal(
+      await page.getByRole("button", { name: "Try again" }).isEnabled(),
+      true,
+      "startup retry should be available after failure",
+    );
+    assert.equal(
+      await page.getByRole("button", { name: "Email support" }).isEnabled(),
+      true,
+      "support email should be available after failure",
+    );
+    assert.equal(
+      await page.locator("#technical-details").evaluate((details) => details.open),
+      false,
+      "technical details should stay collapsed until the operator asks for them",
+    );
+    const visibleText = await page.locator("body").innerText();
+    assert.doesNotMatch(visibleText, /Starting Rudder|Preparing database|Profile\s+prod_local/u);
+    const bridgeShape = await page.evaluate(() => ({
+      hasBootBridge: typeof window.rudderBoot === "object",
+      hasFullDesktopShell: typeof window.desktopShell !== "undefined",
+    }));
+    assert.deepEqual(bridgeShape, { hasBootBridge: true, hasFullDesktopShell: false });
+
+    const emailButton = page.getByRole("button", { name: "Email support" });
+    await emailButton.click();
+    await page.locator("#inline-status").filter({ hasText: "The draft was handed to your mail app" }).waitFor();
+    assert.equal(await emailButton.isEnabled(), true, "email support should be reusable after handoff completes");
+    let handoffs = await readSupportHandoffs(supportHandoffPath);
+    assert.equal(handoffs.length, 1, "the first email action should perform one OS handoff");
+    const mailto = new URL(handoffs[0].url);
+    assert.equal(mailto.protocol, "mailto:");
+    assert.equal(mailto.pathname, "zeeland4work@gmail.com");
+    assert.equal(mailto.searchParams.has("attach"), false);
+    assert.equal(mailto.searchParams.has("cc"), false);
+    assert.equal(mailto.searchParams.has("bcc"), false);
+    assert.match(mailto.searchParams.get("body") ?? "", /Failure ID:/u);
+
+    await page.evaluate(() => Promise.all([
+      window.rudderBoot.openSupportDraft(),
+      window.rudderBoot.openSupportDraft(),
+    ]));
+    handoffs = await readSupportHandoffs(supportHandoffPath);
+    assert.equal(handoffs.length, 2, "concurrent support intents should coalesce into one additional handoff");
+
+    await emailButton.click();
+    await page.locator("#inline-status").filter({ hasText: "Rudder could not hand off the draft" }).waitFor();
+    assert.equal(await emailButton.isEnabled(), true, "email support should remain reusable after handoff rejection");
+    assert.equal(await page.getByRole("button", { name: "Copy support email" }).isVisible(), true);
+    handoffs = await readSupportHandoffs(supportHandoffPath);
+    assert.equal(handoffs.length, 3, "the rejected handoff should be recorded as one distinct attempt");
+
+    await page.locator("#technical-details summary").click();
+    assert.match(await page.locator("#diagnostic-grid").innerText(), /Failure ID/u);
+    assert.match(await page.locator("#diagnostic-grid").innerText(), /Instance folder/u);
+
+    await page.getByRole("button", { name: "Try again" }).dblclick();
+    await page.waitForFunction(
+      (attempt) => {
+        if (document.body.dataset.bootView !== "failed") return false;
+        const rows = Array.from(document.querySelectorAll("#diagnostic-grid dd"));
+        return rows.some((row) => row.textContent === String(attempt + 1));
+      },
+      initialState.failure.attempt,
+      { timeout: 60_000 },
+    );
+    const retryState = await page.evaluate(() => window.rudderBoot.getState());
+    assert.equal(retryState.failure?.attempt, 2, "double-click retry should produce one new startup attempt");
+    assert.equal(
+      electronApp.windows().filter((candidate) => !candidate.isClosed()).length,
+      1,
+      "startup retry should remain in one Desktop window",
+    );
+    console.log("[desktop-smoke] startup recovery kept diagnostics hidden, used a narrow bridge, and coalesced retry");
+  } finally {
+    await closeDesktop(electronApp).catch(() => {});
+  }
+}
+
 async function runCleanScenario(mode) {
   const scenarioRoot = path.join(tmpRoot, "clean");
   const ports = await allocateSmokePorts();
@@ -1710,10 +1823,14 @@ async function runUpgradeScenario(mode) {
 
 function resolveScenarioList(mode, scenario) {
   if (!scenario || scenario === "default") {
-    return mode === "packaged" ? ["clean", "upgrade"] : ["clean"];
+    return mode === "packaged"
+      ? ["startup-recovery", "clean", "upgrade"]
+      : ["startup-recovery", "clean"];
   }
-  if (scenario === "all") return ["clean", "upgrade"];
-  if (scenario === "clean" || scenario === "upgrade" || scenario === "browser") return [scenario];
+  if (scenario === "all") return ["startup-recovery", "clean", "upgrade"];
+  if (scenario === "startup-recovery" || scenario === "clean" || scenario === "upgrade" || scenario === "browser") {
+    return [scenario];
+  }
   throw new Error(`Unknown smoke scenario: ${scenario}`);
 }
 
@@ -1721,7 +1838,9 @@ try {
   const scenarios = resolveScenarioList(smokeMode, smokeScenario);
   for (const scenario of scenarios) {
     console.log(`[desktop-smoke] running ${scenario} scenario`);
-    if (scenario === "clean") {
+    if (scenario === "startup-recovery") {
+      await runStartupRecoveryScenario(smokeMode);
+    } else if (scenario === "clean") {
       await runCleanScenario(smokeMode);
     } else if (scenario === "browser") {
       await runBrowserScenario(smokeMode);

@@ -1,11 +1,11 @@
-import type { BrowserWindowConstructorOptions, OpenDialogOptions, WebContents } from "electron";
+import type { BrowserWindowConstructorOptions, IpcMainInvokeEvent, OpenDialogOptions, WebContents } from "electron";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, session, shell, systemPreferences, Tray } from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveDesktopAppName } from "./app-identity.js";
-import { createBootScreenHtml, createRendererRecoveryScreenHtml } from "./boot-screen.js";
+import { createBootScreenHtml, createRendererRecoveryScreenHtml, type BootScreenState } from "./boot-screen.js";
 import { createElectronBrowserAgentTabFactory } from "./browser-agent-electron.js";
 import { BrowserAgentError, createBrowserAgentTabController } from "./browser-agent-tabs.js";
 import {
@@ -96,6 +96,12 @@ import { imageBufferFromPayload, parseDesktopImageDataPayload, sanitizeDesktopIm
 import { resolveDesktopLocalEnvProfile, type LocalEnvProfile } from "./desktop-local-env.js";
 import { resolveDesktopCapabilities } from "./desktop-main-capabilities.js";
 import { createDesktopQuitFlow } from "./desktop-quit-flow.js";
+import {
+  createDesktopRecoveryDiagnostic,
+  createDesktopStartupFailureView,
+  type DesktopStartupFailureView,
+} from "./desktop-startup-failure.js";
+import { DESKTOP_FEEDBACK_EMAIL } from "./desktop-support-mail.js";
 import { createDesktopUpdateFlow, INSTANCE_SETTINGS_GENERAL_PATH } from "./desktop-update-flow.js";
 import {
   toWorkspaceLaunchTargetPayload,
@@ -108,6 +114,7 @@ type BootState = {
   message: string;
   detail?: string;
   error?: string;
+  failure?: DesktopStartupFailureView;
   capabilities?: DesktopCapabilities;
   permissions?: DesktopSystemPermissions;
   diagnostics?: {
@@ -399,6 +406,7 @@ const initialPaths = resolveSharedInstancePaths(initialProfile.instanceId);
 
 let mainWindow: BrowserWindow | null = null;
 let currentMainRenderer: WebContents | null = null;
+let currentMainWindowKind: "app" | "boot" = "boot";
 let residentTray: Tray | null = null;
 let sidePanelCloseShortcutActive = false;
 let residentControlsAvailable = false;
@@ -433,6 +441,10 @@ let currentBootState: BootState = {
 };
 let serverHandle: StartedServer | null = null;
 let startInFlight: Promise<void> | null = null;
+let restartInFlight: Promise<void> | null = null;
+let supportDraftInFlight: Promise<void> | null = null;
+let supportDraftHandoffAttemptCount = 0;
+let startupAttemptCount = 0;
 let pendingDesktopNavigationPath: string | null = null;
 let lastKnownAppUrl: string | null = null;
 let rendererRecoveryInFlight = false;
@@ -553,6 +565,16 @@ function createDesktopWebPreferences(preloadPath: string): Electron.WebPreferenc
   };
 }
 
+function createBootWebPreferences(preloadPath: string): Electron.WebPreferences {
+  return {
+    preload: preloadPath,
+    contextIsolation: true,
+    nodeIntegration: false,
+    sandbox: false,
+    webviewTag: false,
+  };
+}
+
 function applyDesktopAppearance(appearance: DesktopAppearance): void {
   currentAppearance = appearance;
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -661,6 +683,20 @@ function requireBrowserRuntimeLifecycle() {
 function getCurrentMainRenderer(): WebContents | null {
   if (!currentMainRenderer || currentMainRenderer.isDestroyed()) return null;
   return currentMainRenderer;
+}
+
+function assertCurrentMainFrame(event: IpcMainInvokeEvent, action: string): void {
+  const renderer = getCurrentMainRenderer();
+  if (!renderer || event.sender !== renderer || event.senderFrame !== renderer.mainFrame) {
+    throw new Error(`${action} is available only to the current Rudder main frame.`);
+  }
+}
+
+function assertStartupRecoveryFrame(event: IpcMainInvokeEvent, action: string): void {
+  assertCurrentMainFrame(event, action);
+  if (currentMainWindowKind !== "boot") {
+    throw new Error(`${action} is available only from the Desktop startup window.`);
+  }
 }
 
 function collectBrowserControlPlaneOrigins(...additionalOrigins: Array<string | null | undefined>): string[] {
@@ -786,7 +822,11 @@ function updateBootState(nextState: Partial<BootState> & Pick<BootState, "stage"
     },
   };
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("desktop:boot-state", currentBootState);
+    if (currentMainWindowKind === "boot") {
+      mainWindow.webContents.send("desktop:recovery-state", createBootScreenState());
+    } else {
+      mainWindow.webContents.send("desktop:boot-state", currentBootState);
+    }
   }
   updateResidentShellMenu();
 }
@@ -798,19 +838,51 @@ function refreshDesktopSystemPermissions(): DesktopSystemPermissions {
     permissions,
   };
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("desktop:boot-state", currentBootState);
+    if (currentMainWindowKind === "boot") {
+      mainWindow.webContents.send("desktop:recovery-state", createBootScreenState());
+    } else {
+      mainWindow.webContents.send("desktop:boot-state", currentBootState);
+    }
   }
   return permissions;
 }
 
-async function loadBootScreen(): Promise<void> {
-  if (!mainWindow) return;
-  const html = createBootScreenHtml(APP_NAME);
-  await mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+function createBootScreenState(): BootScreenState {
+  return {
+    view: currentBootState.stage === "error" ? "failed" : "loading",
+    stage: currentBootState.stage,
+    ...(currentBootState.failure ? { failure: currentBootState.failure } : {}),
+    runtime: {
+      profile: currentBootState.runtime?.localEnv,
+      instance: currentBootState.runtime?.instanceId,
+      version: currentBootState.runtime?.version,
+    },
+    instanceRoot: currentBootState.paths?.instanceRoot,
+  };
+}
+
+function resolveDesktopBrandIconDataUrl(): string | null {
+  if (!desktopWindowIcon || desktopWindowIcon.isEmpty()) return null;
+  return desktopWindowIcon.resize({ width: 128, height: 128 }).toDataURL();
+}
+
+function createCurrentRecoveryDiagnostic(): string {
+  if (!currentBootState.failure) {
+    throw new Error("No startup diagnostic is available.");
+  }
+  return createDesktopRecoveryDiagnostic({
+    failure: currentBootState.failure,
+    version: resolveRudderAppVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    profile: currentBootState.runtime?.localEnv,
+    instance: currentBootState.runtime?.instanceId,
+    instanceRoot: currentBootState.paths?.instanceRoot,
+  });
 }
 
 function resolveBootScreenUrl(): string {
-  const html = createBootScreenHtml(APP_NAME);
+  const html = createBootScreenHtml(APP_NAME, resolveDesktopBrandIconDataUrl(), createBootScreenState());
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
@@ -858,13 +930,20 @@ async function showRendererRecovery(reason: {
   if (isQuitting() || rendererRecoveryInFlight || !mainWindow || mainWindow.isDestroyed()) return;
   rendererRecoveryInFlight = true;
   console.error("[rudder-desktop] renderer recovery screen shown", reason);
+  recordRendererRecoveryState(reason);
+  await mainWindow.loadURL(resolveRendererRecoveryScreenUrl(reason));
+  showMainWindow();
+}
+
+function recordRendererRecoveryState(reason: {
+  message?: string;
+  detail?: string;
+}): void {
   updateBootState({
     stage: "renderer_error",
     message: reason.message ?? "Rudder hit a UI failure.",
     detail: reason.detail ?? "The desktop renderer stopped responding.",
   });
-  await mainWindow.loadURL(resolveRendererRecoveryScreenUrl(reason));
-  showMainWindow();
 }
 
 async function promptForUnresponsiveRenderer(): Promise<void> {
@@ -990,9 +1069,8 @@ function installMainWindowSidePanelCloseShortcutHandler(window: BrowserWindow): 
   });
 }
 
-async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
-  const browserProfile = requireBrowserProfileController();
-  const preloadPath = path.resolve(MODULE_DIR, "preload.js");
+async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Promise<BrowserWindow> {
+  const preloadPath = path.resolve(MODULE_DIR, kind === "boot" ? "boot-preload.js" : "preload.js");
   const macWindowEffects = process.platform === "darwin"
     ? resolveMacWindowEffects()
     : {
@@ -1008,27 +1086,25 @@ async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
     autoHideMenuBar: process.platform !== "darwin",
     ...macWindowEffects,
     ...(desktopWindowIcon ? { icon: desktopWindowIcon } : {}),
-    webPreferences: createDesktopWebPreferences(preloadPath),
+    webPreferences: kind === "boot"
+      ? createBootWebPreferences(preloadPath)
+      : createDesktopWebPreferences(preloadPath),
   });
 
   if (process.platform !== "darwin") {
     window.setMenuBarVisibility(false);
   }
 
-  installBrowserWebviewPolicy(window.webContents, {
-    partition: browserProfile.getPartition(),
-    getControlPlaneOrigins: () => collectBrowserControlPlaneOrigins(initialUrl),
-    isBrowserAvailable: () => browserProfile.isOperatorAvailable(),
-    registerGuest: browserGuestRegistry.register,
-    openBrowserPopup: (url) => routeDesktopWebLink(url, "browser_popup"),
-  });
-
-  window.once("ready-to-show", () => {
-    window.show();
-  });
-
-  installRendererRecoveryHandlers(window, initialUrl);
-  installMainWindowSidePanelCloseShortcutHandler(window);
+  if (kind === "app") {
+    const browserProfile = requireBrowserProfileController();
+    installBrowserWebviewPolicy(window.webContents, {
+      partition: browserProfile.getPartition(),
+      getControlPlaneOrigins: () => collectBrowserControlPlaneOrigins(initialUrl),
+      isBrowserAvailable: () => browserProfile.isOperatorAvailable(),
+      registerGuest: browserGuestRegistry.register,
+      openBrowserPopup: (url) => routeDesktopWebLink(url, "browser_popup"),
+    });
+  }
 
   window.on("close", (event) => {
     if (!shouldHideToResidentShell() || isQuitRequested() || isQuitting()) return;
@@ -1048,12 +1124,29 @@ async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
     updateResidentShellMenu();
   });
 
-  currentMainRenderer = window.webContents;
-  await window.loadURL(initialUrl);
+  try {
+    await window.loadURL(initialUrl);
+  } catch (error) {
+    if (kind === "boot") {
+      if (!window.isDestroyed()) window.destroy();
+      throw error;
+    }
+    const reason = {
+      title: "Load failed",
+      message: "Rudder could not load the UI.",
+      detail: "The initial Rudder page could not be loaded. Reload the UI or restart Rudder.",
+    };
+    console.error("[rudder-desktop] initial renderer load failed; showing recovery", error);
+    recordRendererRecoveryState(reason);
+    await window.loadURL(resolveRendererRecoveryScreenUrl(reason));
+  }
+
+  installRendererRecoveryHandlers(window, initialUrl);
+  if (kind === "app") installMainWindowSidePanelCloseShortcutHandler(window);
   return window;
 }
 
-async function replaceMainWindow(nextWindow: BrowserWindow): Promise<void> {
+async function replaceMainWindow(nextWindow: BrowserWindow, kind: "app" | "boot"): Promise<void> {
   const previousWindow = mainWindow;
   if (previousWindow && !previousWindow.isDestroyed()) {
     previousWindow.hide();
@@ -1061,7 +1154,9 @@ async function replaceMainWindow(nextWindow: BrowserWindow): Promise<void> {
 
   mainWindow = nextWindow;
   currentMainRenderer = nextWindow.webContents;
+  currentMainWindowKind = kind;
   mainWindow.setTitle(APP_NAME);
+  mainWindow.show();
 
   if (previousWindow && previousWindow !== nextWindow && !previousWindow.isDestroyed()) {
     previousWindow.destroy();
@@ -1069,12 +1164,12 @@ async function replaceMainWindow(nextWindow: BrowserWindow): Promise<void> {
 }
 
 async function openBootWindow(): Promise<void> {
-  await replaceMainWindow(await createDesktopWindow(resolveBootScreenUrl()));
+  await replaceMainWindow(await createDesktopWindow(resolveBootScreenUrl(), "boot"), "boot");
 }
 
 async function openAppWindow(loadUrl: string): Promise<void> {
   rememberAppUrl(loadUrl);
-  await replaceMainWindow(await createDesktopWindow(loadUrl));
+  await replaceMainWindow(await createDesktopWindow(loadUrl, "app"), "app");
 }
 
 function schedulePostUpdateRendererReloadIfNeeded(): void {
@@ -1328,9 +1423,33 @@ function hideMainWindowToResident(): void {
 }
 
 async function restartFromResidentControls(): Promise<void> {
-  showMainWindow();
-  await openBootWindow();
-  await startLocalRudder();
+  if (restartInFlight) return restartInFlight;
+  restartInFlight = (async () => {
+    showMainWindow();
+    await openBootWindow();
+    await startLocalRudder();
+  })().finally(() => {
+    restartInFlight = null;
+  });
+  return restartInFlight;
+}
+
+async function retryStartupFromBootScreen(): Promise<void> {
+  if (restartInFlight) return restartInFlight;
+  restartInFlight = (async () => {
+    if (startInFlight) await startInFlight;
+    updateBootState({
+      stage: "starting",
+      message: "Resolving shared local Rudder instance…",
+      detail: "Preparing the embedded database and board UI.",
+      error: undefined,
+      failure: undefined,
+    });
+    await startLocalRudder();
+  })().finally(() => {
+    restartInFlight = null;
+  });
+  return restartInFlight;
 }
 
 function requestQuit(): void {
@@ -1369,6 +1488,8 @@ function serverRuntimeOptions(): StartServerOptions {
 async function startLocalRudder(): Promise<void> {
   if (startInFlight) return startInFlight;
   startInFlight = (async () => {
+    startupAttemptCount += 1;
+    const attempt = startupAttemptCount;
     const profile = resolveDesktopLocalEnvProfile();
     const sharedPaths = resolveSharedInstancePaths(profile.instanceId);
 
@@ -1377,6 +1498,7 @@ async function startLocalRudder(): Promise<void> {
       message: "Resolving shared local Rudder instance…",
       detail: `Target profile: ${profile.name}`,
       error: undefined,
+      failure: undefined,
       paths: sharedPaths,
       runtime: {
         localEnv: profile.name,
@@ -1388,9 +1510,8 @@ async function startLocalRudder(): Promise<void> {
       },
     });
 
-    await stopLocalRudder();
-
     try {
+      await stopLocalRudder();
       const serverModule = await importServerModule();
       updateBootState({
         stage: "config",
@@ -1445,14 +1566,20 @@ async function startLocalRudder(): Promise<void> {
       schedulePostUpdateRendererReloadIfNeeded();
       await captureDesktopWindowIfRequested();
     } catch (error) {
+      console.error("[rudder-desktop] managed local server startup failed", error);
+      const failure = createDesktopStartupFailureView({
+        error,
+        stage: currentBootState.stage,
+        attempt,
+      });
       updateBootState({
         stage: "error",
         message: "Rudder failed to start.",
         detail: "The shared local instance did not come up cleanly.",
-        error: error instanceof Error ? error.stack ?? error.message : String(error),
+        error: failure.summary,
+        failure,
         paths: serverHandle?.instancePaths ?? currentBootState.paths,
       });
-      await loadBootScreen();
     } finally {
       startInFlight = null;
     }
@@ -1532,15 +1659,70 @@ function desktopWorkspaceFileAllowedRoots() {
   return resolveDesktopOrganizationWorkspaceAllowedRoots(process.env, instanceId);
 }
 
+async function openDesktopSupportDraft(): Promise<void> {
+  const url = createFeedbackMailtoUrl();
+  const smokeRecordPath = process.env.RUDDER_DESKTOP_SMOKE_SUPPORT_HANDOFF_PATH?.trim();
+  if (!smokeRecordPath) {
+    await shell.openExternal(url);
+    return;
+  }
+
+  supportDraftHandoffAttemptCount += 1;
+  const attempt = supportDraftHandoffAttemptCount;
+  fs.appendFileSync(
+    path.resolve(smokeRecordPath),
+    `${JSON.stringify({ attempt, url })}\n`,
+    "utf8",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  const outcomes = (process.env.RUDDER_DESKTOP_SMOKE_SUPPORT_HANDOFF_SEQUENCE ?? "resolve")
+    .split(",")
+    .map((value) => value.trim().toLowerCase());
+  if (outcomes[attempt - 1] === "reject") {
+    throw new Error("Simulated support draft handoff rejection.");
+  }
+}
+
 function registerIpc(): void {
   registerBrowserIpcHandlers(ipcMain, {
     getMainRenderer: getCurrentMainRenderer,
     controller: requireBrowserProfileController(),
     importer: requireBrowserCookieImporter(),
   });
-  ipcMain.handle("desktop:get-boot-state", async () => {
+  ipcMain.handle("desktop:get-boot-state", async (event) => {
+    assertCurrentMainFrame(event, "Desktop boot state");
     refreshDesktopSystemPermissions();
     return currentBootState;
+  });
+  ipcMain.handle("desktop:get-recovery-state", async (event) => {
+    assertStartupRecoveryFrame(event, "Desktop recovery state");
+    return createBootScreenState();
+  });
+  ipcMain.handle("desktop:retry-startup", async (event) => {
+    assertStartupRecoveryFrame(event, "Desktop startup retry");
+    if (currentBootState.stage !== "error") {
+      throw new Error("Desktop startup retry is available only after startup fails.");
+    }
+    await retryStartupFromBootScreen();
+  });
+  ipcMain.handle("desktop:copy-support-email", async (event) => {
+    assertStartupRecoveryFrame(event, "Support email copy");
+    clipboard.writeText(DESKTOP_FEEDBACK_EMAIL);
+  });
+  ipcMain.handle("desktop:copy-recovery-diagnostic", async (event) => {
+    assertStartupRecoveryFrame(event, "Recovery diagnostic copy");
+    if (currentBootState.stage !== "error") {
+      throw new Error("No failed startup diagnostic is available.");
+    }
+    clipboard.writeText(createCurrentRecoveryDiagnostic());
+  });
+  ipcMain.handle("desktop:open-recovery-instance-folder", async (event) => {
+    assertStartupRecoveryFrame(event, "Recovery instance folder");
+    if (currentBootState.stage !== "error" || !currentBootState.paths?.instanceRoot) {
+      throw new Error("No failed startup instance folder is available.");
+    }
+    const openError = await shell.openPath(currentBootState.paths.instanceRoot);
+    if (openError) throw new Error(openError);
   });
   ipcMain.handle("desktop:get-system-permissions", async () => refreshDesktopSystemPermissions());
   ipcMain.handle("desktop:get-app-version", async () => resolveRudderAppVersion());
@@ -1637,7 +1819,8 @@ function registerIpc(): void {
   ipcMain.handle("desktop:reload-app", async () => {
     await reloadAppWindow();
   });
-  ipcMain.handle("desktop:restart", async () => {
+  ipcMain.handle("desktop:restart", async (event) => {
+    assertCurrentMainFrame(event, "Desktop restart");
     await restartFromResidentControls();
   });
   ipcMain.handle("desktop:check-for-updates", async () => checkForUpdates());
@@ -1666,8 +1849,16 @@ function registerIpc(): void {
     clearTimeout(pending.timeout);
     pending.resolve(payload.decision === "wait" || payload.decision === "force" ? payload.decision : "cancel");
   });
-  ipcMain.handle("desktop:send-feedback", async () => {
-    await shell.openExternal(createFeedbackMailtoUrl());
+  ipcMain.handle("desktop:send-feedback", async (event) => {
+    assertCurrentMainFrame(event, "Feedback draft");
+    if (currentMainWindowKind === "boot" && currentBootState.stage !== "error") {
+      throw new Error("Startup support is available only after startup fails.");
+    }
+    if (supportDraftInFlight) return supportDraftInFlight;
+    supportDraftInFlight = openDesktopSupportDraft().finally(() => {
+      supportDraftInFlight = null;
+    });
+    return supportDraftInFlight;
   });
   ipcMain.handle("desktop:open-external", async (event, target: string) => {
     if (event.sender !== getCurrentMainRenderer()) {
