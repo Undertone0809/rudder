@@ -3526,9 +3526,20 @@ describe("chat routes", () => {
   it("aborts the active stream only through the explicit stop endpoint", async () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Need help");
-    const stoppedMessage = {
-      ...createMessage("message-stopped", "assistant", "message", "Partial reply"),
-      status: "stopped",
+    const progressMessage = {
+      ...createMessage("message-progress", "assistant", "message", ""),
+      status: "streaming",
+    };
+    const beforeStopTranscript = {
+      kind: "assistant" as const,
+      ts: "2026-03-26T08:01:01.000Z",
+      text: "Before stop",
+      delta: true,
+    };
+    const lateTranscript = {
+      kind: "thinking" as const,
+      ts: "2026-03-26T08:01:02.000Z",
+      text: "Late reasoning must be fenced",
     };
     let capturedSignal: AbortSignal | null = null;
     let releaseAssistant!: () => void;
@@ -3536,13 +3547,18 @@ describe("chat routes", () => {
       mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
         capturedSignal = input.abortSignal ?? null;
         await input.onAssistantState?.("streaming");
+        await input.onAssistantDelta?.("Before stop");
+        await input.onTranscriptEntry?.(beforeStopTranscript);
         resolve();
         await new Promise<void>((release) => {
           releaseAssistant = release;
         });
+        await input.onAssistantDelta?.(" Late assistant output");
+        await input.onAssistantState?.("finalizing");
+        await input.onTranscriptEntry?.(lateTranscript);
         return {
           outcome: "stopped",
-          partialBody: "Partial reply",
+          partialBody: "Before stop Late assistant output",
           replyingAgentId: "agent-1",
         };
       });
@@ -3551,7 +3567,7 @@ describe("chat routes", () => {
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.listMessages.mockResolvedValue([userMessage]);
     mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
-    mockChatService.addMessage.mockResolvedValueOnce(stoppedMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(progressMessage);
 
     const streamRequest = request(createApp())
       .post("/api/chats/chat-1/messages/stream")
@@ -3577,7 +3593,18 @@ describe("chat routes", () => {
     expect(stopRes.status).toBe(200);
     expect(stopRes.body).toEqual({ stopped: true });
     expect(capturedSignal?.aborted).toBe(true);
+    expect(capturedSignal?.reason).toEqual({
+      kind: "operator_interrupt",
+      hardDeadlineMs: 2_000,
+    });
     expect(mockChatService.markGenerationTerminal).toHaveBeenCalledWith("generation-1", "stopped");
+
+    const repeatedStopRes = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream/stop")
+      .send({});
+
+    expect(repeatedStopRes.status).toBe(200);
+    expect(repeatedStopRes.body).toEqual({ stopped: true });
 
     releaseAssistant();
     const streamRes = await streamPromise;
@@ -3588,8 +3615,186 @@ describe("chat routes", () => {
       .map((line) => JSON.parse(line));
     expect(events.at(-1)).toEqual({
       type: "final",
-      messages: [expect.objectContaining({ id: "message-stopped", status: "stopped" })],
+      messages: [expect.objectContaining({ id: "message-progress", status: "stopped" })],
     });
+    expect(events).toContainEqual({ type: "assistant_delta", delta: "Before stop" });
+    expect(JSON.stringify(events)).not.toContain("Late assistant output");
+    expect(JSON.stringify(events)).not.toContain("Late reasoning");
+    expect(mockChatService.updateMessage).toHaveBeenLastCalledWith(
+      "chat-1",
+      "message-progress",
+      expect.objectContaining({
+        status: "stopped",
+        body: "Before stop",
+        transcript: [beforeStopTranscript],
+      }),
+    );
+  });
+
+  it("freezes a stopped reply at the last delta admitted to the stream", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need help");
+    const progressMessage = {
+      ...createMessage("message-progress", "assistant", "message", ""),
+      status: "streaming",
+    };
+    const visibleTranscript = {
+      kind: "thinking" as const,
+      ts: "2026-03-26T08:01:01.000Z",
+      text: "Visible transcript",
+    };
+    const unadmittedTranscript = {
+      kind: "thinking" as const,
+      ts: "2026-03-26T08:01:02.000Z",
+      text: "Unadmitted transcript",
+    };
+    let releaseBlockedPersist!: () => void;
+    const blockedPersistRelease = new Promise<void>((resolve) => {
+      releaseBlockedPersist = resolve;
+    });
+    let signalBlockedPersistStarted!: () => void;
+    const blockedPersistStarted = new Promise<void>((resolve) => {
+      signalBlockedPersistStarted = resolve;
+    });
+    let blockedPersistCount = 0;
+
+    mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+      await input.onAssistantState?.("streaming");
+      await input.onAssistantDelta?.("Visible prefix");
+      await input.onTranscriptEntry?.(visibleTranscript);
+      await Promise.all([
+        input.onAssistantDelta?.(" unadmitted tail"),
+        input.onTranscriptEntry?.(unadmittedTranscript),
+      ]);
+      return {
+        outcome: "stopped",
+        partialBody: "Visible prefix unadmitted tail",
+        replyingAgentId: "agent-1",
+      };
+    });
+    mockChatService.updateMessage.mockImplementation(async (_conversationId: string, messageId: string, input: Record<string, unknown>) => {
+      if (input.status === "streaming" && input.body === "Visible prefix unadmitted tail") {
+        blockedPersistCount += 1;
+        if (blockedPersistCount === 2) signalBlockedPersistStarted();
+        await blockedPersistRelease;
+      }
+      return {
+        ...createMessage(
+          messageId,
+          "assistant",
+          typeof input.kind === "string" ? input.kind : "message",
+          typeof input.body === "string" ? input.body : "",
+        ),
+        status: typeof input.status === "string" ? input.status : "completed",
+        transcript: Array.isArray(input.transcript) ? input.transcript : [],
+        replyingAgentId: typeof input.replyingAgentId === "string" ? input.replyingAgentId : null,
+      };
+    });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(progressMessage);
+
+    const streamPromise = request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Need help" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          text += chunk;
+        });
+        response.on("end", () => callback(null, text));
+      })
+      .then((response) => response);
+
+    await blockedPersistStarted;
+    const stopRes = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream/stop")
+      .send({});
+    expect(stopRes.body).toEqual({ stopped: true });
+
+    releaseBlockedPersist();
+    const streamRes = await streamPromise;
+    const events = String(streamRes.body)
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(events).toContainEqual({ type: "assistant_delta", delta: "Visible prefix" });
+    expect(events).toContainEqual({ type: "transcript_entry", entry: visibleTranscript });
+    expect(JSON.stringify(events)).not.toContain("unadmitted tail");
+    expect(JSON.stringify(events)).not.toContain("Unadmitted transcript");
+    expect(events.at(-1)).toEqual({
+      type: "final",
+      messages: [expect.objectContaining({ body: "Visible prefix", status: "stopped" })],
+    });
+    expect(mockChatService.updateMessage).toHaveBeenLastCalledWith(
+      "chat-1",
+      "message-progress",
+      expect.objectContaining({
+        body: "Visible prefix",
+        status: "stopped",
+        transcript: [visibleTranscript],
+      }),
+    );
+  });
+
+  it("does not re-enter stopped persistence after its first attempt fails", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need help");
+    const progressMessage = {
+      ...createMessage("message-progress", "assistant", "message", ""),
+      status: "streaming",
+    };
+    let releaseAssistant!: () => void;
+    const assistantStarted = new Promise<void>((resolve) => {
+      mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+        await input.onAssistantState?.("streaming");
+        resolve();
+        await new Promise<void>((release) => {
+          releaseAssistant = release;
+        });
+        return {
+          outcome: "stopped",
+          partialBody: "",
+          replyingAgentId: "agent-1",
+        };
+      });
+    });
+    let stoppedPersistenceAttempts = 0;
+    mockChatService.updateMessage.mockImplementation(async () => {
+      stoppedPersistenceAttempts += 1;
+      throw new Error("stopped persistence unavailable");
+    });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(progressMessage);
+
+    const streamPromise = request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Need help" })
+      .buffer(true)
+      .parse((response, callback) => {
+        response.setEncoding("utf8");
+        response.on("data", () => undefined);
+        response.on("end", () => callback(null, ""));
+      })
+      .then((response) => response);
+
+    await assistantStarted;
+    const stopRes = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream/stop")
+      .send({});
+    expect(stopRes.body).toEqual({ stopped: true });
+
+    releaseAssistant();
+    await streamPromise;
+    expect(stoppedPersistenceAttempts).toBe(1);
+    expect(mockChatAgentRuns.linkAssistantMessage).not.toHaveBeenCalled();
+    expect(mockChatService.markGenerationTerminal).toHaveBeenLastCalledWith("generation-1", "stopped");
   });
 
   it("stops a persisted active generation when no local stream owner remains", async () => {

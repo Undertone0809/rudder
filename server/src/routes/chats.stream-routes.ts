@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
+import { createAssistantTextAccumulator } from "../services/chat-assistant.helpers.js";
 import {
   CHAT_ASSISTANT_USER_ERROR_MESSAGE,
   ChatAssistantStreamError,
@@ -46,6 +47,8 @@ type ChatStreamRouteContext = {
 export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
   const CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE =
     "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.";
+  const CHAT_ASSISTANT_STOPPED_FALLBACK_MESSAGE =
+    "Chat run stopped before a final reply. Continue the conversation to resume from the preserved context.";
   const {
     router,
     db,
@@ -206,16 +209,28 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     let activeChatRunId: string | null = null;
     let generationTerminalStatus: "completed" | "failed" | "stopped" | "aborted" = "failed";
     let assistantDraftBody = "";
+    let admittedAssistantBody = "";
+    const admittedTranscript: TranscriptEntry[] = [];
+    let stopCutoff: { body: string; transcript: TranscriptEntry[] } | null = null;
+    const freezeStopCutoff = () => {
+      if (stopCutoff) return;
+      stopCutoff = {
+        body: admittedAssistantBody,
+        transcript: [...admittedTranscript],
+      };
+    };
+    abortController.signal.addEventListener("abort", freezeStopCutoff, { once: true });
     const persistStreamProgress = async (
       progressConversation: ChatConversation,
       replyingAgentId = chatReplyingAgentId(progressConversation),
+      snapshot = { body: assistantDraftBody, transcript: [...transcript] },
     ) => {
       if (!turnContextForPartial) return null;
       const input = {
         kind: "message" as const,
         status: "streaming" as const,
-        body: assistantDraftBody,
-        transcript,
+        body: snapshot.body,
+        transcript: snapshot.transcript,
         runId: activeChatRunId ?? undefined,
         replyingAgentId,
       };
@@ -232,8 +247,8 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         role: "assistant",
         kind: "message",
         status: "streaming",
-        body: assistantDraftBody,
-        transcript,
+        body: snapshot.body,
+        transcript: snapshot.transcript,
         runId: activeChatRunId ?? null,
         replyingAgentId,
         chatTurnId: turnContextForPartial.chatTurnId,
@@ -241,6 +256,63 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       }) as ChatMessage;
       assistantProgressMessageId = assistantProgressMessage.id;
       return assistantProgressMessage;
+    };
+    const stoppedState = (fallbackBody: string) => {
+      if (!stopCutoff) {
+        return { body: fallbackBody, transcript: [...transcript] };
+      }
+      const accumulator = createAssistantTextAccumulator();
+      for (const entry of stopCutoff.transcript) {
+        if (entry.kind === "assistant") {
+          accumulator.push(entry.text, entry.delta === true);
+        }
+      }
+      return {
+        body: stopCutoff.body.trim() ? stopCutoff.body : accumulator.fullText,
+        transcript: stopCutoff.transcript,
+      };
+    };
+    let stoppedPersistencePromise: Promise<ChatMessage | null> | null = null;
+    const persistStoppedAssistant = (
+      stoppedConversation: ChatConversation,
+      replyingAgentId: string | null,
+      fallbackBody: string,
+    ): Promise<ChatMessage | null> => {
+      if (stoppedPersistencePromise) return stoppedPersistencePromise;
+      generationTerminalStatus = "stopped";
+      stoppedPersistencePromise = (async () => {
+        const frozen = stoppedState(fallbackBody);
+        const stoppedBody = frozen.body.trim()
+          ? frozen.body
+          : (assistantProgressMessageId ? CHAT_ASSISTANT_STOPPED_FALLBACK_MESSAGE : "");
+        const stoppedMessage = await persistPartialAssistantMessage(
+          stoppedConversation,
+          stoppedBody,
+          "stopped",
+          turnContextForPartial,
+          frozen.transcript,
+          replyingAgentId,
+          assistantProgressMessageId,
+          activeChatRunId,
+        );
+        await linkChatRunMessages(stoppedConversation, activeChatRunId, stoppedMessage ? [stoppedMessage] : []);
+        if (stoppedMessage) {
+          await logChatMessagesAdded(stoppedConversation, [stoppedMessage], {
+            actorType: "system",
+            actorId: "chat-assistant",
+            agentId: replyingAgentId,
+          });
+        }
+        if (!clientClosed) {
+          writeStreamEvent(res, {
+            type: "final",
+            messages: stoppedMessage ? [stoppedMessage] : [],
+          });
+          res.end();
+        }
+        return stoppedMessage;
+      })();
+      return stoppedPersistencePromise;
     };
     let clientClosed = false;
     const handleClosed = () => {
@@ -312,60 +384,55 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
               },
               abortSignal: abortController.signal,
               onAssistantDelta: async (delta: string) => {
+                if (abortController.signal.aborted) return;
                 assistantDraftBody = `${assistantDraftBody}${delta}`;
-                await persistStreamProgress(assistantInput.conversation);
-                if (clientClosed) return;
-                writeStreamEvent(res, {
+                await persistStreamProgress(assistantInput.conversation, undefined, {
+                  body: assistantDraftBody,
+                  transcript: [...transcript],
+                });
+                if (abortController.signal.aborted || clientClosed) return;
+                if (writeStreamEvent(res, {
                   type: "assistant_delta",
                   delta,
-                });
+                })) {
+                  admittedAssistantBody = `${admittedAssistantBody}${delta}`;
+                }
               },
               onAssistantState: async (state: unknown) => {
-                await persistStreamProgress(assistantInput.conversation);
-                if (clientClosed) return;
+                if (abortController.signal.aborted) return;
+                await persistStreamProgress(assistantInput.conversation, undefined, {
+                  body: assistantDraftBody,
+                  transcript: [...transcript],
+                });
+                if (abortController.signal.aborted || clientClosed) return;
                 writeStreamEvent(res, {
                   type: "assistant_state",
                   state,
                 });
               },
               onTranscriptEntry: async (entry: TranscriptEntry) => {
+                if (abortController.signal.aborted) return;
                 transcript.push(entry);
-                await persistStreamProgress(assistantInput.conversation);
-                if (clientClosed) return;
-                writeStreamEvent(res, {
+                await persistStreamProgress(assistantInput.conversation, undefined, {
+                  body: assistantDraftBody,
+                  transcript: [...transcript],
+                });
+                if (abortController.signal.aborted || clientClosed) return;
+                if (writeStreamEvent(res, {
                   type: "transcript_entry",
                   entry,
-                });
+                })) {
+                  admittedTranscript.push(entry);
+                }
               },
             });
 
-            if (streamed.outcome === "stopped") {
-              generationTerminalStatus = "stopped";
-              const stoppedMessage = await persistPartialAssistantMessage(
+            if (abortController.signal.aborted || streamed.outcome === "stopped") {
+              await persistStoppedAssistant(
                 assistantInput.conversation,
-                streamed.partialBody,
-                "stopped",
-                turnContextForPartial!,
-                transcript,
                 streamed.replyingAgentId,
-                assistantProgressMessageId,
-                activeChatRunId,
+                streamed.partialBody,
               );
-              await linkChatRunMessages(assistantInput.conversation, activeChatRunId, stoppedMessage ? [stoppedMessage] : []);
-              if (stoppedMessage) {
-                await logChatMessagesAdded(assistantInput.conversation, [stoppedMessage], {
-                  actorType: "system",
-                  actorId: "chat-assistant",
-                  agentId: streamed.replyingAgentId,
-                });
-              }
-              if (!clientClosed) {
-                writeStreamEvent(res, {
-                  type: "final",
-                  messages: stoppedMessage ? [stoppedMessage] : [],
-                });
-                res.end();
-              }
               return;
             }
 
@@ -395,11 +462,33 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
               res.end();
             }
           } catch (error) {
-            generationTerminalStatus = "failed";
+            if (!abortController.signal.aborted) {
+              generationTerminalStatus = "failed";
+            }
             throw error;
           }
       }
     } catch (err) {
+      if (abortController.signal.aborted) {
+        try {
+          if (stoppedPersistencePromise) {
+            await stoppedPersistencePromise;
+          } else {
+            await persistStoppedAssistant(
+              assistantConversationForPartial ?? (conversation as ChatConversation),
+              chatReplyingAgentId(assistantConversationForPartial ?? (conversation as ChatConversation)),
+              "",
+            );
+          }
+        } catch (stopPersistenceError) {
+          logger.warn(
+            { err: stopPersistenceError, conversationId: conversation.id },
+            "failed to persist stopped chat assistant message",
+          );
+          if (!clientClosed && !res.writableEnded) res.end();
+        }
+        return;
+      }
       const failurePayload = recoverableFailurePayload(err, activeChatRunId);
       const partialBody =
         userVisiblePartialBodyFromError(err)
@@ -452,6 +541,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         res.end();
       }
     } finally {
+      abortController.signal.removeEventListener("abort", freezeStopCutoff);
       req.off("aborted", handleClosed);
       res.off("close", handleClosed);
       if (generation) {

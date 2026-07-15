@@ -1,3 +1,7 @@
+import { createOperatorInterruptAbortReason } from "@rudderhq/agent-runtime-utils/server-utils";
+
+const CHAT_OPERATOR_INTERRUPT_HARD_DEADLINE_MS = 2_000;
+
 type ActiveChatGeneration = {
   generationId: string | null;
   token: symbol;
@@ -44,7 +48,9 @@ export function cancelActiveChatGeneration(conversationId: string): boolean {
   const active = activeChatGenerations.get(conversationId);
   if (!active?.abortController) return false;
   if (!active.abortController.signal.aborted) {
-    active.abortController.abort();
+    active.abortController.abort(
+      createOperatorInterruptAbortReason(CHAT_OPERATOR_INTERRUPT_HARD_DEADLINE_MS),
+    );
   }
   return true;
 }
@@ -53,7 +59,9 @@ export function cancelAndReleaseActiveChatGeneration(conversationId: string): bo
   const active = activeChatGenerations.get(conversationId);
   if (!active) return false;
   if (active.abortController && !active.abortController.signal.aborted) {
-    active.abortController.abort();
+    active.abortController.abort(
+      createOperatorInterruptAbortReason(CHAT_OPERATOR_INTERRUPT_HARD_DEADLINE_MS),
+    );
   }
   activeChatGenerations.delete(conversationId);
   return true;

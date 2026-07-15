@@ -12,6 +12,32 @@ import type {
 
 const LOCAL_CLI_CREDENTIAL_AUTH_CHECK_TIMEOUT_MS = 3000;
 const RUDDER_DESKTOP_CLI_ENTRY_ENV = "RUDDER_DESKTOP_CLI_ENTRY";
+export const OPERATOR_INTERRUPT_ABORT_REASON_KIND = "operator_interrupt" as const;
+
+export interface OperatorInterruptAbortReason {
+  kind: typeof OPERATOR_INTERRUPT_ABORT_REASON_KIND;
+  /** Maximum milliseconds from abort until the process group receives SIGKILL. */
+  hardDeadlineMs: number;
+}
+
+export function createOperatorInterruptAbortReason(hardDeadlineMs: number): OperatorInterruptAbortReason {
+  if (!Number.isFinite(hardDeadlineMs) || hardDeadlineMs <= 0) {
+    throw new RangeError("operator interrupt hardDeadlineMs must be a positive finite number");
+  }
+  return {
+    kind: OPERATOR_INTERRUPT_ABORT_REASON_KIND,
+    hardDeadlineMs: Math.max(1, Math.floor(hardDeadlineMs)),
+  };
+}
+
+function operatorInterruptHardDeadlineMs(reason: unknown): number | null {
+  if (!reason || typeof reason !== "object" || Array.isArray(reason)) return null;
+  const candidate = reason as Partial<OperatorInterruptAbortReason>;
+  if (candidate.kind !== OPERATOR_INTERRUPT_ABORT_REASON_KIND) return null;
+  if (typeof candidate.hardDeadlineMs !== "number" || !Number.isFinite(candidate.hardDeadlineMs)) return null;
+  if (candidate.hardDeadlineMs <= 0) return null;
+  return Math.max(1, Math.floor(candidate.hardDeadlineMs));
+}
 
 export function ensurePathInEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   if (typeof env.PATH === "string" && env.PATH.length > 0) return env;
@@ -44,7 +70,35 @@ function killChildProcessTree(child: ChildProcessWithEvents, force: boolean): vo
     return;
   }
 
-  child.kill(force ? "SIGKILL" : "SIGTERM");
+  const signal = force ? "SIGKILL" : "SIGTERM";
+  if (typeof child.pid === "number" && child.pid > 0) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // Fall back to the direct child if its process group is already gone.
+    }
+  }
+
+  try {
+    child.kill(signal);
+  } catch {
+    // The process may have exited between the liveness check and signal.
+  }
+}
+
+function isChildProcessTreeAlive(child: ChildProcessWithEvents): boolean {
+  if (process.platform === "win32") return isChildProcessAlive(child);
+  const pid = child.pid;
+  if (typeof pid !== "number" || pid <= 0) return false;
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : null;
+    if (code === "EPERM") return true;
+    return isChildProcessAlive(child);
+  }
 }
 
 export async function findAncestorWithFile(
@@ -995,6 +1049,7 @@ export async function runChildProcess(
 
         const child = spawn(target.command, target.args, {
           cwd: opts.cwd,
+          detached: process.platform !== "win32",
           env: mergedEnv,
           shell: false,
           stdio: [opts.stdin != null ? "pipe" : "ignore", "pipe", "pipe"],
@@ -1019,17 +1074,36 @@ export async function runChildProcess(
         let stdout = "";
         let stderr = "";
         let logChain: Promise<void> = Promise.resolve();
+        let operatorInterrupted = false;
+        let forceKillTimer: NodeJS.Timeout | null = null;
+        let forceKillAt = Number.POSITIVE_INFINITY;
+
+        const clearForceKillTimer = () => {
+          if (forceKillTimer) clearTimeout(forceKillTimer);
+          forceKillTimer = null;
+          forceKillAt = Number.POSITIVE_INFINITY;
+        };
+        const scheduleForceKill = (delayMs: number) => {
+          const boundedDelayMs = Math.max(1, delayMs);
+          const killAt = Date.now() + boundedDelayMs;
+          if (forceKillTimer && forceKillAt <= killAt) return;
+          clearForceKillTimer();
+          forceKillAt = killAt;
+          forceKillTimer = setTimeout(() => {
+            forceKillTimer = null;
+            forceKillAt = Number.POSITIVE_INFINITY;
+            if (isChildProcessTreeAlive(child)) {
+              killChildProcessTree(child, true);
+            }
+          }, boundedDelayMs);
+        };
 
         const timeout =
           opts.timeoutSec > 0
             ? setTimeout(() => {
                 timedOut = true;
                 killChildProcessTree(child, false);
-                setTimeout(() => {
-                  if (isChildProcessAlive(child)) {
-                    killChildProcessTree(child, true);
-                  }
-                }, Math.max(1, opts.graceSec) * 1000);
+                scheduleForceKill(Math.max(1, opts.graceSec) * 1000);
               }, opts.timeoutSec * 1000)
             : null;
 
@@ -1037,37 +1111,42 @@ export async function runChildProcess(
         if (opts.abortSignal) {
           const onAbort = () => {
             aborted = true;
+            const operatorHardDeadlineMs = operatorInterruptHardDeadlineMs(opts.abortSignal?.reason);
+            operatorInterrupted = operatorHardDeadlineMs !== null;
             killChildProcessTree(child, false);
-            setTimeout(() => {
-              if (isChildProcessAlive(child)) {
-                killChildProcessTree(child, true);
-              }
-            }, Math.max(1, opts.graceSec) * 1000);
+            scheduleForceKill(operatorHardDeadlineMs ?? Math.max(1, opts.graceSec) * 1000);
           };
 
-          opts.abortSignal.addEventListener("abort", onAbort, { once: true });
-          abortCleanup = () => opts.abortSignal?.removeEventListener("abort", onAbort);
+          if (opts.abortSignal.aborted) {
+            onAbort();
+          } else {
+            opts.abortSignal.addEventListener("abort", onAbort, { once: true });
+            abortCleanup = () => opts.abortSignal?.removeEventListener("abort", onAbort);
+          }
         }
 
         child.stdout?.on("data", (chunk: unknown) => {
           const text = String(chunk);
           stdout = appendWithCap(stdout, text);
+          if (operatorInterrupted) return;
           logChain = logChain
-            .then(() => opts.onLog("stdout", text))
+            .then(() => operatorInterrupted ? undefined : opts.onLog("stdout", text))
             .catch((err) => onLogError(err, runId, "failed to append stdout log chunk"));
         });
 
         child.stderr?.on("data", (chunk: unknown) => {
           const text = String(chunk);
           stderr = appendWithCap(stderr, text);
+          if (operatorInterrupted) return;
           logChain = logChain
-            .then(() => opts.onLog("stderr", text))
+            .then(() => operatorInterrupted ? undefined : opts.onLog("stderr", text))
             .catch((err) => onLogError(err, runId, "failed to append stderr log chunk"));
         });
 
         child.on("error", (err: Error) => {
           if (timeout) clearTimeout(timeout);
           if (abortCleanup) abortCleanup();
+          clearForceKillTimer();
           runningProcesses.delete(runId);
           const errno = (err as NodeJS.ErrnoException).code;
           const pathValue = mergedEnv.PATH ?? mergedEnv.Path ?? "";
@@ -1081,8 +1160,10 @@ export async function runChildProcess(
         child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
           if (timeout) clearTimeout(timeout);
           if (abortCleanup) abortCleanup();
+          if (!isChildProcessTreeAlive(child)) clearForceKillTimer();
           runningProcesses.delete(runId);
-          void logChain.finally(() => {
+          const completionBarrier = operatorInterrupted ? Promise.resolve() : logChain;
+          void completionBarrier.finally(() => {
             resolve({
               exitCode: code,
               signal: aborted ? "SIGTERM" : signal,
