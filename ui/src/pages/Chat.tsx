@@ -2071,6 +2071,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           {loadErrorMessage} </div> ) : null}
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row md:gap-1.5">
         <main className="workspace-main-card relative flex min-h-0 flex-1 flex-col overflow-hidden md:rounded-[var(--desktop-workspace-radius)]">
+          {conversationId ? (
+            <div
+              aria-hidden="true"
+              data-testid="chat-desktop-toolbar-clearance"
+              className="workspace-main-header hidden h-11 shrink-0 md:block"
+            />
+          ) : null}
           {!selectedOrganizationId ? (
             <div className="flex flex-1 items-center justify-center px-6 py-12 text-sm text-muted-foreground">
               Select a organization first. </div> ) : showConversationLoading ? (

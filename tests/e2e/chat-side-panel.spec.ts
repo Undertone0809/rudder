@@ -1462,6 +1462,94 @@ test.describe("Chat Side Panel", () => {
     await page.mouse.up();
   });
 
+  test("keeps desktop chat controls clear of interrupted messages beside the Side Panel", async ({ page }) => {
+    await installBrowserDesktopStub(page);
+    const browserSettings = await page.request.patch("/api/instance/settings/browser", {
+      data: { enabled: true, openLinksIn: "built_in" },
+    });
+    expect(browserSettings.ok(), await browserSettings.text()).toBe(true);
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Toolbar-Clearance-${Date.now()}`,
+        issuePrefix: `CTC${randomUUID().replaceAll("-", "").slice(0, 7).toUpperCase()}`,
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Interrupted chat beside Browser",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "interrupted",
+      body: "Chat run interrupted before a final reply. Continue the conversation to resume from the preserved context.",
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.setViewportSize({ width: 1200, height: 820 });
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    await page.getByRole("button", { name: "Collapse workspace sidebar" }).click();
+    await expect(page.getByRole("button", { name: "Open Messenger sidebar" })).toBeVisible();
+    await page.getByTestId("chat-side-panel-trigger").click();
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await sidePanel.getByRole("button", { name: /Browser/ }).click();
+    await expect(sidePanel.getByTestId("chat-side-panel-browser-view")).toBeVisible();
+
+    const toolbarClearance = page.getByTestId("chat-desktop-toolbar-clearance");
+    const openSidebarButton = page.getByRole("button", { name: "Open Messenger sidebar" });
+    const chatActionsButton = page.getByTestId("chat-actions-trigger");
+    const assistantMessage = page.getByTestId("chat-assistant-message");
+    await expect(toolbarClearance).toBeVisible();
+    await expect(chatActionsButton).toBeVisible();
+    await expect(assistantMessage).toContainText("Chat run interrupted before a final reply.");
+
+    const [toolbarBox, openSidebarBox, chatActionsBox, messageBox, scrollRegionBox] = await Promise.all([
+      toolbarClearance.boundingBox(),
+      openSidebarButton.boundingBox(),
+      chatActionsButton.boundingBox(),
+      assistantMessage.boundingBox(),
+      page.getByTestId("chat-messages-scroll-region").boundingBox(),
+    ]);
+    expect(toolbarBox).not.toBeNull();
+    expect(openSidebarBox).not.toBeNull();
+    expect(chatActionsBox).not.toBeNull();
+    expect(messageBox).not.toBeNull();
+    expect(scrollRegionBox).not.toBeNull();
+
+    const toolbarBottom = toolbarBox!.y + toolbarBox!.height;
+    expect(openSidebarBox!.y + openSidebarBox!.height).toBeLessThanOrEqual(toolbarBottom + 1);
+    expect(chatActionsBox!.y + chatActionsBox!.height).toBeLessThanOrEqual(toolbarBottom + 1);
+    expect(scrollRegionBox!.y).toBeGreaterThanOrEqual(toolbarBottom - 1);
+    expect(messageBox!.y).toBeGreaterThanOrEqual(toolbarBottom - 1);
+
+    await page.screenshot({
+      path: "/tmp/rudder-chat-toolbar-clearance-with-side-panel.png",
+      fullPage: true,
+    });
+  });
+
   test("opens a Browser side panel tab with URL navigation controls", async ({ page }) => {
     await installBrowserDesktopStub(page);
     const browserSettings = await page.request.patch("/api/instance/settings/browser", {
