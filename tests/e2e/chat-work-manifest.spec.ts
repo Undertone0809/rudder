@@ -36,6 +36,12 @@ test.describe("Chat Work Manifest", () => {
     });
     expect(outputFileRes.ok(), await outputFileRes.text()).toBe(true);
     const outputFile = await outputFileRes.json() as { markdownLink: string };
+    const websiteOutputPath = `artifacts/chat-manifest-${Date.now()}/index.html`;
+    const websiteOutputFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: { filePath: websiteOutputPath, content: "<!doctype html><title>Manifest site</title>" },
+    });
+    expect(websiteOutputFileRes.ok(), await websiteOutputFileRes.text()).toBe(true);
+    const websiteOutputFile = await websiteOutputFileRes.json() as { markdownLink: string };
     const sourcePath = `docs/chat-manifest-${Date.now()}-brief.md`;
     const sourceFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
       data: { filePath: sourcePath, content: "# Source brief" },
@@ -115,7 +121,7 @@ test.describe("Chat Work Manifest", () => {
         orgId: organization.id,
         conversationId: chat.id,
         role: "assistant",
-        body: `Produced ${outputFile.markdownLink}. Source duplicate: https://source.example/research#section. Reference: https://reference.example/docs.`,
+        body: `Produced ${outputFile.markdownLink} and ${websiteOutputFile.markdownLink}. Source duplicate: https://source.example/research#section. Reference: https://reference.example/docs.`,
         status: "completed",
         runId,
         replyingAgentId: agent.id,
@@ -151,6 +157,9 @@ test.describe("Chat Work Manifest", () => {
     await expect(shelf).toContainText("Sources");
     await expect(shelf).toContainText("References");
     await expect(shelf).toContainText("report.md");
+    await expect(shelf).toContainText("index.html");
+    await expect(shelf.getByRole("button", { name: /index\.html/ }).locator("[data-file-icon='website']"))
+      .toBeVisible();
     await expect(shelf).not.toContainText("From Agent");
     await expect(shelf).toContainText("https://reference.example/docs");
     await expect(shelf.getByRole("button", { name: /reference\.example/ }).locator("[data-website-icon]"))

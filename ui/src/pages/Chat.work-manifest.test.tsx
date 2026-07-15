@@ -49,6 +49,14 @@ function item(id: string, category: "output" | "source" | "reference", title: st
   };
 }
 
+function attachmentItem(id: string, title: string, contentType: string | null = null): ChatWorkManifestItem {
+  return {
+    ...item(id, "output", title),
+    targetType: "attachment",
+    metadata: { contentType },
+  };
+}
+
 const manifest: ChatWorkManifestResponse = {
   conversationId: "chat-1",
   totalCount: 6,
@@ -94,6 +102,49 @@ describe("ChatWorkManifest", () => {
     expect(text).not.toContain("From Agent");
     expect(text).toContain("https://ref-1.example/");
     expect(container.querySelector("[data-website-icon]")).not.toBeNull();
+  });
+
+  it("matches inline file links by using a website icon for HTML and a document icon for other files", () => {
+    const fileManifest: ChatWorkManifestResponse = {
+      ...manifest,
+      totalCount: 7,
+      outputs: [
+        attachmentItem("html", "index.html", "text/html"),
+        attachmentItem("image", "hero.png", "image/png"),
+        attachmentItem("table", "results.csv", "text/csv"),
+        attachmentItem("code", "styles.css", "text/css"),
+        attachmentItem("document", "README.md", "text/markdown"),
+        attachmentItem("unknown", "Artifact"),
+      ],
+      sources: [],
+      references: [item("website", "reference", "docs.example")],
+    };
+    const container = render(
+      <ChatWorkManifest
+        manifest={fileManifest}
+        loading={false}
+        error={null}
+        sidePanelOpen={false}
+        wideOpen
+        {...handlers}
+      />,
+    );
+
+    const panel = container.querySelector("[data-testid='chat-work-manifest-wide-panel']");
+    const expandButton = Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+      .find((button) => button.textContent?.includes("View all 6"));
+    act(() => expandButton?.click());
+    const iconFor = (title: string) => Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+      .find((button) => button.title === title)
+      ?.querySelector("[data-file-icon]")
+      ?.getAttribute("data-file-icon");
+    expect(iconFor("index.html")).toBe("website");
+    expect(iconFor("hero.png")).toBe("document");
+    expect(iconFor("results.csv")).toBe("document");
+    expect(iconFor("styles.css")).toBe("document");
+    expect(iconFor("README.md")).toBe("document");
+    expect(iconFor("Artifact")).toBe("attachment");
+    expect(panel?.querySelector("[data-website-icon]")).not.toBeNull();
   });
 
   it("does not render while loading or when thread work is empty", () => {
