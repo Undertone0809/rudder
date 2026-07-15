@@ -21,11 +21,17 @@ function browserLinkDedupeKey(url: string): string {
   }
 }
 
+function fileUrlLabel(url: URL): string {
+  const pathname = decodeURIComponent(url.pathname).replace(/\/+$/g, "");
+  return pathname.split("/").filter(Boolean).at(-1) || "File";
+}
+
 export function browserSidePanelLabel(url: string): string {
   const trimmed = url.trim();
   if (!trimmed || trimmed === BROWSER_SIDE_PANEL_BLANK_URL) return "New tab";
   try {
     const parsed = new URL(trimmed);
+    if (parsed.protocol === "file:") return fileUrlLabel(parsed);
     return parsed.hostname || parsed.protocol.replace(":", "") || "Browser";
   } catch {
     return trimmed;
@@ -36,10 +42,12 @@ export function normalizeBrowserSidePanelUrl(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return BROWSER_SIDE_PANEL_BLANK_URL;
   if (/^about:blank$/i.test(trimmed)) return BROWSER_SIDE_PANEL_BLANK_URL;
-  if (/^https?:/i.test(trimmed)) {
+  if (/^(https?|file):/i.test(trimmed)) {
     try {
       const url = new URL(trimmed);
-      return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : searchUrl(trimmed);
+      return url.protocol === "http:" || url.protocol === "https:" || url.protocol === "file:"
+        ? url.toString()
+        : searchUrl(trimmed);
     } catch {
       return searchUrl(trimmed);
     }

@@ -7,13 +7,11 @@ import {
 } from "./browser-side-panel";
 
 describe("Browser Side Panel targets", () => {
-  it("normalizes URLs and search input without allowing privileged protocols", () => {
+  it("normalizes URLs, local file URLs, and search input without allowing privileged protocols", () => {
     expect(normalizeBrowserSidePanelUrl("example.com/docs")).toBe("https://example.com/docs");
     expect(normalizeBrowserSidePanelUrl("localhost:4173/app")).toBe("http://localhost:4173/app");
     expect(normalizeBrowserSidePanelUrl("browser automation")).toBe("https://www.google.com/search?q=browser%20automation");
-    expect(normalizeBrowserSidePanelUrl("file:///tmp/private.txt")).toBe(
-      "https://www.google.com/search?q=file%3A%2F%2F%2Ftmp%2Fprivate.txt",
-    );
+    expect(normalizeBrowserSidePanelUrl("file:///tmp/private.txt")).toBe("file:///tmp/private.txt");
     expect(normalizeBrowserSidePanelUrl("javascript:alert(1)")).toBe(
       "https://www.google.com/search?q=javascript%3Aalert(1)",
     );
@@ -32,6 +30,7 @@ describe("Browser Side Panel targets", () => {
     expect(firstPopup.tabId).toBeTruthy();
     expect(secondPopup.tabId).not.toBe(firstPopup.tabId);
     expect(linked.label).toBe("example.com");
+    expect(createBrowserSidePanelTarget("file:///tmp/private.txt").label).toBe("private.txt");
     expect(browserSidePanelLabel(BROWSER_SIDE_PANEL_BLANK_URL)).toBe("New tab");
   });
 });

@@ -112,9 +112,20 @@ export function isAllowedBrowserNavigationUrl(target: string, controlPlaneOrigin
   }
 }
 
+export function isAllowedOperatorBrowserNavigationUrl(target: string, controlPlaneOrigins: string[]): boolean {
+  try {
+    const parsed = new URL(target);
+    if (parsed.protocol === "file:") return true;
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    return !isBlockedBrowserControlPlaneUrl(target, controlPlaneOrigins);
+  } catch {
+    return false;
+  }
+}
+
 export function isAllowedBrowserBootstrapUrl(target: string, controlPlaneOrigins: string[]): boolean {
   if (target === "about:blank") return true;
-  return isAllowedBrowserNavigationUrl(target, controlPlaneOrigins);
+  return isAllowedOperatorBrowserNavigationUrl(target, controlPlaneOrigins);
 }
 
 export function createBrowserProfileController(options: {

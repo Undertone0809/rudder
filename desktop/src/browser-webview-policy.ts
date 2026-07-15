@@ -1,6 +1,6 @@
 import {
   isAllowedBrowserBootstrapUrl,
-  isAllowedBrowserNavigationUrl,
+  isAllowedOperatorBrowserNavigationUrl,
   isBlockedBrowserControlPlaneUrl,
 } from "./browser-profile.js";
 
@@ -95,6 +95,15 @@ function isWebProtocolUrl(target: string): boolean {
   }
 }
 
+function isAllowedMainFrameRequestUrl(target: string): boolean {
+  try {
+    const protocol = new URL(target).protocol;
+    return protocol === "http:" || protocol === "https:" || protocol === "file:";
+  } catch {
+    return false;
+  }
+}
+
 export function installBrowserSessionPolicy(browserSession: BrowserSessionPolicyTarget, options: {
   getControlPlaneOrigins(): string[];
 }): void {
@@ -104,8 +113,11 @@ export function installBrowserSessionPolicy(browserSession: BrowserSessionPolicy
   });
   browserSession.on("will-download", denyBrowserDownload);
   browserSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
-    const isFrameNavigation = details.resourceType === "mainFrame" || details.resourceType === "subFrame";
-    if (isFrameNavigation && !isWebProtocolUrl(details.url)) {
+    if (details.resourceType === "mainFrame" && !isAllowedMainFrameRequestUrl(details.url)) {
+      callback({ cancel: true });
+      return;
+    }
+    if (details.resourceType === "subFrame" && !isWebProtocolUrl(details.url)) {
       callback({ cancel: true });
       return;
     }
@@ -170,13 +182,13 @@ export function installBrowserWebviewPolicy(hostContents: BrowserWebviewHost, op
     options.registerGuest(guest);
     guest.setWindowOpenHandler(({ url }) => {
       if (options.isBrowserAvailable()
-        && isAllowedBrowserNavigationUrl(url, options.getControlPlaneOrigins())) {
+        && isAllowedOperatorBrowserNavigationUrl(url, options.getControlPlaneOrigins())) {
         setImmediate(() => options.openBrowserPopup?.(url));
       }
       return { action: "deny" };
     });
     const preventUnsafeNavigation = (event: PreventableEvent, targetUrl: string) => {
-      if (!isAllowedBrowserNavigationUrl(targetUrl, options.getControlPlaneOrigins())) {
+      if (!isAllowedOperatorBrowserNavigationUrl(targetUrl, options.getControlPlaneOrigins())) {
         event.preventDefault();
       }
     };
