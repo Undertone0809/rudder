@@ -130,7 +130,8 @@ Product model:
   previews additionally let operators reveal the current file in the platform
   file browser or open its containing directory in a detected terminal.
 - Individual Library file rows expose file targets through an `Open In` action;
-  Messenger document previews expose the same targets through an `Open` menu.
+  full Library HTML previews and Messenger document previews expose file targets
+  through an `Open` menu.
   `Default app` is a file-safe target that delegates to the operating system's
   configured default app for that file type; detected IDEs such as Cursor or VS
   Code remain explicit file targets. In Messenger document previews, folder and
@@ -141,6 +142,10 @@ Product model:
   breadcrumb exposes the complete Library-relative path on hover, and the
   `Open` menu includes `Open in Library` so the operator can move from adjacent
   inspection to the same file in the full Library work surface.
+- HTML files in the full Library work surface and Messenger Side Panel follow
+  `LIBRARY.WEB.PREVIEW.001` for multi-file rendering, the Connected default,
+  the unified preview toolbar, isolated runtime boundaries, and static Offline
+  fallback behavior.
 - Image files shown in either the full Library work surface or a Messenger
   Library preview open through the shared application image overlay. The
   overlay provides explicit close, copy, and download actions, keeps the
@@ -169,6 +174,9 @@ Flow:
    file path in the full Library route without changing its organization scope.
 9. From either Library surface, selecting an image opens the shared image
    overlay without replacing the current Library route or Side Panel target.
+10. Opening a supported HTML file delegates website rendering and inspection
+    controls to `LIBRARY.WEB.PREVIEW.001` while Open continues to target the
+    original validated Library file.
 
 Invariants:
 
@@ -190,6 +198,9 @@ Invariants:
 - `Open in Library` resolves only the current organization-scoped
   Library-relative file path; it must not expose or navigate to an absolute
   filesystem root.
+- HTML preview Open actions must use the original validated Library path and
+  must never pass a short-lived preview capability URL to Desktop or Library
+  navigation targets.
 - Inspectable Library images must not be routed into a Browser target or a new
   window. Loading, broken, and very small images must retain a non-overlapping
   close control alongside every available image action.
@@ -223,6 +234,9 @@ Evidence:
 - Shared image preview component tests cover Web and Desktop control-safe
   sizing, and Organization Workspaces E2E proves Library image inspection opens
   and exits through the application overlay.
+- Website preview unit, server, and E2E coverage is owned by
+  `LIBRARY.WEB.PREVIEW.001` and proves the shared toolbar and Open action in both
+  the full Library work surface and Messenger Side Panel.
 
 ## WORKSPACE.PROJECT.001
 

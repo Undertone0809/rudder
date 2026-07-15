@@ -19,6 +19,26 @@ async function expectPreviewFillsFileView(sidePanel: Locator, preview: Locator) 
   expect(Math.abs((previewBox!.y + previewBox!.height) - (fileViewBox!.y + fileViewBox!.height))).toBeLessThanOrEqual(2);
 }
 
+async function expectHtmlToolbarFits(toolbar: Locator) {
+  await expect.poll(async () => toolbar.evaluate((element) => {
+    const toolbarRect = element.getBoundingClientRect();
+    const controls = [
+      element.querySelector('[role="group"][aria-label="HTML file mode"]'),
+      element.querySelector('[data-testid$="-html-preview-network-menu"]'),
+      element.querySelector('button[aria-label="Open file options"]'),
+      element.querySelector('button[aria-label="Reload website preview"]'),
+    ].filter((control): control is Element => control instanceof Element);
+    const outOfBounds = controls.filter((control) => {
+      const rect = control.getBoundingClientRect();
+      return rect.left < toolbarRect.left - 1 || rect.right > toolbarRect.right + 1;
+    }).length;
+    return {
+      horizontalOverflow: Math.max(0, element.scrollWidth - element.clientWidth),
+      outOfBounds,
+    };
+  })).toEqual({ horizontalOverflow: 0, outOfBounds: 0 });
+}
+
 function createSimplePdf() {
   const stream = "BT /F1 18 Tf 36 96 Td (Rendered Messenger PDF) Tj ET";
   const objects = [
@@ -106,6 +126,7 @@ test("renders a Library HTML report in the Messenger Side Panel by default", asy
   await page.goto("/");
   await page.evaluate((orgId) => {
     window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    window.localStorage.setItem("rudder.workspace.sidePanelWidth.v2", "340");
   }, organization.id);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
@@ -123,25 +144,16 @@ test("renders a Library HTML report in the Messenger Side Panel by default", asy
   await expect(preview).toHaveAttribute("referrerpolicy", "no-referrer");
   await expect(preview).toHaveAttribute("src", /http:\/\/preview\.localhost:\d+\/workspace-preview\//);
   await expect(preview).not.toHaveAttribute("srcdoc", /.+/);
-  const networkMode = sidePanel.getByRole("group", { name: "Website preview network mode" });
-  const connectedButton = networkMode.getByRole("radio", { name: /^Connected/ });
-  const offlineButton = networkMode.getByRole("radio", { name: "Offline" });
-  await expect(connectedButton).toHaveAttribute("aria-checked", "true");
-  await expect(offlineButton).toHaveAttribute("aria-checked", "false");
-  const [offlineRadii, connectedRadii] = await Promise.all([
-    offlineButton.evaluate((element) => {
-      const style = getComputedStyle(element);
-      return { left: style.borderTopLeftRadius, right: style.borderTopRightRadius };
-    }),
-    connectedButton.evaluate((element) => {
-      const style = getComputedStyle(element);
-      return { left: style.borderTopLeftRadius, right: style.borderTopRightRadius };
-    }),
-  ]);
-  expect(offlineRadii.left).not.toBe("0px");
-  expect(offlineRadii.right).toBe("0px");
-  expect(connectedRadii.left).toBe("0px");
-  expect(connectedRadii.right).not.toBe("0px");
+  const toolbar = sidePanel.getByTestId("chat-side-panel-library-html-preview-toolbar");
+  await expect(toolbar).toHaveCount(1);
+  await expect(toolbar.getByRole("group", { name: "HTML file mode" })).toBeVisible();
+  const networkMenu = toolbar.getByRole("button", { name: /^Network mode: Connected/ });
+  await expect(networkMenu).toContainText("Connected");
+  await expect(toolbar.getByRole("button", { name: "Open file options" })).toBeVisible();
+  await expectHtmlToolbarFits(toolbar);
+  await expect.poll(async () => (await sidePanel.boundingBox())?.width ?? 0).toBeLessThanOrEqual(341);
+  await expect(sidePanel.getByTestId("chat-side-panel-library-file-toolbar")
+    .getByRole("button", { name: "Open file options" })).toHaveCount(0);
   await expect(preview.contentFrame().getByRole("heading", { name: "Rendered Messenger report" })).toBeVisible();
   await expect(preview.contentFrame().getByRole("heading", { name: "Rendered Messenger report" })).toHaveCSS("color", "rgb(24, 96, 78)");
   await expect(preview.contentFrame().getByText("The report should open as a webpage instead of source code.")).toBeVisible();
@@ -152,28 +164,29 @@ test("renders a Library HTML report in the Messenger Side Panel by default", asy
   await page.screenshot({ path: "/tmp/rudder-messenger-html-preview.png", fullPage: false });
 
   externalAssetRequested = false;
-  await offlineButton.click();
+  await networkMenu.click();
+  await page.getByRole("menuitemradio", { name: /Offline/ }).click();
   await expect(preview).toHaveAttribute("sandbox", "");
-  await expect(connectedButton).toHaveAttribute("aria-checked", "false");
-  await expect(offlineButton).toHaveAttribute("aria-checked", "true");
+  await expect(toolbar.getByRole("button", { name: /^Network mode: Offline/ })).toContainText("Offline");
   await expect(preview.contentFrame().locator("body")).not.toHaveAttribute("data-script-ran", "yes");
   await page.waitForTimeout(500);
   expect(externalAssetRequested).toBe(false);
 
-  const modeToggle = sidePanel.getByTestId("chat-side-panel-library-file-mode-toggle");
-  await expect(modeToggle).toHaveCount(1);
-  await expect(modeToggle).toHaveAccessibleName("Show source");
-  await modeToggle.click();
+  const modeToggle = toolbar.getByRole("group", { name: "HTML file mode" });
+  await modeToggle.getByRole("radio", { name: "Source" }).click();
   await expect(preview).toHaveCount(0);
   const source = sidePanel.getByTestId("chat-side-panel-library-code-preview");
   await expect(source).toHaveAttribute("data-workspace-code-read-only", "true");
   await expect(source).toContainText("Rendered Messenger report");
+  await expect(sidePanel.getByTestId("chat-side-panel-library-html-preview-network-menu")).toHaveCount(0);
+  await expect(sidePanel.getByTestId("chat-side-panel-library-html-preview-toolbar")
+    .getByRole("button", { name: "Open file options" })).toBeVisible();
 
-  await expect(modeToggle).toHaveAccessibleName("Show webpage");
-  await modeToggle.click();
+  await sidePanel.getByRole("group", { name: "HTML file mode" }).getByRole("radio", { name: "Preview" }).click();
   await expect(sidePanel.getByTestId("chat-side-panel-library-html-preview").contentFrame()
     .getByRole("heading", { name: "Rendered Messenger report" })).toBeVisible();
-  await expect(sidePanel.getByTestId("chat-side-panel-library-html-preview")).toHaveAttribute("sandbox", "allow-scripts");
+  await expect(sidePanel.getByTestId("chat-side-panel-library-html-preview")).toHaveAttribute("sandbox", "");
+  await expect(sidePanel.getByRole("button", { name: /^Network mode: Offline/ })).toContainText("Offline");
   await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -183,6 +196,7 @@ test("renders a Library HTML report in the Messenger Side Panel by default", asy
   const mobilePreview = sidePanel.getByTestId("chat-side-panel-library-html-preview");
   await expect(mobilePreview.contentFrame().getByRole("heading", { name: "Rendered Messenger report" })).toBeVisible();
   await expect(mobilePreview).toHaveAttribute("sandbox", "allow-scripts");
+  await expectHtmlToolbarFits(sidePanel.getByTestId("chat-side-panel-library-html-preview-toolbar"));
   await expectPreviewFillsFileView(sidePanel, sidePanel.getByTestId("chat-side-panel-library-html-preview-frame"));
   await expect.poll(async () => {
     const box = await sidePanel.boundingBox();

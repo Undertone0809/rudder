@@ -2,19 +2,47 @@ import type {
   OrganizationWorkspaceWebPreviewSession,
   WorkspaceWebPreviewNetworkMode,
 } from "@rudderhq/shared";
-import { Loader2, RefreshCw, Wifi, WifiOff } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ChevronDown, Code2, Globe2, Loader2, RefreshCw, Wifi, WifiOff } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
 import { organizationsApi } from "../api/orgs";
 import { cn } from "../lib/utils";
 import { buildWorkspaceHtmlStaticFallbackSrcDoc } from "../lib/workspace-html-preview";
 import { Button } from "./ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+
+export type WorkspaceHtmlViewMode = "preview" | "source";
 
 interface WorkspaceHtmlPreviewProps {
   organizationId: string;
   filePath: string;
   htmlContent?: string;
+  testIdPrefix?: string;
+  className?: string;
+  viewMode?: WorkspaceHtmlViewMode;
+  onViewModeChange?: (mode: WorkspaceHtmlViewMode) => void;
+  networkMode?: WorkspaceWebPreviewNetworkMode;
+  onNetworkModeChange?: (mode: WorkspaceWebPreviewNetworkMode) => void;
+  openAction?: ReactNode;
+}
+
+interface WorkspaceHtmlPreviewToolbarProps {
+  viewMode: WorkspaceHtmlViewMode;
+  onViewModeChange: (mode: WorkspaceHtmlViewMode) => void;
+  networkMode?: WorkspaceWebPreviewNetworkMode;
+  onNetworkModeChange?: (mode: WorkspaceWebPreviewNetworkMode) => void;
+  networkUnavailable?: boolean;
+  onReload?: () => void;
+  openAction?: ReactNode;
   testIdPrefix?: string;
   className?: string;
 }
@@ -26,6 +54,126 @@ type PreviewState =
 
 const inFlightPreviewSessions = new Map<string, Promise<OrganizationWorkspaceWebPreviewSession>>();
 const DEFAULT_NETWORK_MODE: WorkspaceWebPreviewNetworkMode = "connected";
+
+export function WorkspaceHtmlPreviewToolbar({
+  viewMode,
+  onViewModeChange,
+  networkMode,
+  onNetworkModeChange,
+  networkUnavailable = false,
+  onReload,
+  openAction,
+  testIdPrefix = "workspace-file",
+  className,
+}: WorkspaceHtmlPreviewToolbarProps) {
+  const displayedNetworkMode = networkUnavailable ? "offline" : networkMode;
+  const networkLabel = displayedNetworkMode === "connected" ? "Connected" : "Offline";
+  const NetworkIcon = displayedNetworkMode === "connected" ? Wifi : WifiOff;
+  const networkAriaLabel = networkUnavailable
+    ? "Network mode: Offline. Connected preview is unavailable while using the static Offline fallback."
+    : displayedNetworkMode === "connected"
+      ? "Network mode: Connected. Runs artifact scripts and may send preview content to external HTTPS sites."
+      : "Network mode: Offline. Local assets only; scripts and external requests are blocked.";
+
+  return (
+    <div
+      className={cn(
+        "workspace-html-preview-toolbar scrollbar-auto-hide flex min-h-10 shrink-0 items-center overflow-x-auto border-b border-border bg-[color:var(--surface-elevated)] px-1",
+        className,
+      )}
+      data-testid={`${testIdPrefix}-html-preview-toolbar`}
+    >
+      <div className="workspace-html-preview-toolbar-controls ml-auto flex min-w-max items-center gap-1">
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          size="sm"
+          spacing={0}
+          value={viewMode}
+          onValueChange={(value) => {
+            if (value === "preview" || value === "source") onViewModeChange(value);
+          }}
+          aria-label="HTML file mode"
+        >
+          <ToggleGroupItem value="preview" className="px-2" aria-label="Preview" title="Preview">
+            <Globe2 data-icon="inline-start" />
+            <span className="workspace-html-preview-mode-label">Preview</span>
+          </ToggleGroupItem>
+          <ToggleGroupItem value="source" className="px-2" aria-label="Source" title="Source">
+            <Code2 data-icon="inline-start" />
+            <span className="workspace-html-preview-mode-label">Source</span>
+          </ToggleGroupItem>
+        </ToggleGroup>
+
+        {viewMode === "preview" && displayedNetworkMode && onNetworkModeChange ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild disabled={networkUnavailable}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="min-w-[6.5rem] justify-between"
+                aria-label={networkAriaLabel}
+                data-testid={`${testIdPrefix}-html-preview-network-menu`}
+              >
+                <NetworkIcon data-icon="inline-start" />
+                <span>{networkLabel}</span>
+                <ChevronDown className="workspace-html-preview-network-chevron" data-icon="inline-end" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-72">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Network access</DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  value={displayedNetworkMode}
+                  onValueChange={(value) => {
+                    if (value === "connected" || value === "offline") onNetworkModeChange(value);
+                  }}
+                >
+                  <DropdownMenuRadioItem value="connected">
+                    <Wifi />
+                    <span className="flex min-w-0 flex-col">
+                      <span>Connected</span>
+                      <span className="text-xs font-normal text-muted-foreground">Run scripts and allow HTTPS resources</span>
+                    </span>
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="offline">
+                    <WifiOff />
+                    <span className="flex min-w-0 flex-col">
+                      <span>Offline</span>
+                      <span className="text-xs font-normal text-muted-foreground">Local assets only; block scripts</span>
+                    </span>
+                  </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
+
+        {openAction ? <div className="workspace-html-preview-open-action shrink-0">{openAction}</div> : null}
+
+        {viewMode === "preview" && onReload ? (
+          <TooltipProvider delayDuration={120}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Reload website preview"
+                  onClick={onReload}
+                >
+                  <RefreshCw />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Reload preview</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 function createPreviewSession(
   organizationId: string,
@@ -59,6 +207,11 @@ export function WorkspaceHtmlPreview({
   htmlContent,
   testIdPrefix = "workspace-file",
   className,
+  viewMode = "preview",
+  onViewModeChange = () => {},
+  networkMode: controlledNetworkMode,
+  onNetworkModeChange,
+  openAction,
 }: WorkspaceHtmlPreviewProps) {
   const identity = `${organizationId}:${filePath}`;
   const [modeSelection, setModeSelection] = useState<{
@@ -71,7 +224,10 @@ export function WorkspaceHtmlPreview({
     session: null,
     error: null,
   });
-  const networkMode = modeSelection.identity === identity ? modeSelection.mode : DEFAULT_NETWORK_MODE;
+  const uncontrolledNetworkMode = modeSelection.identity === identity
+    ? modeSelection.mode
+    : DEFAULT_NETWORK_MODE;
+  const networkMode = controlledNetworkMode ?? uncontrolledNetworkMode;
 
   useEffect(() => {
     if (modeSelection.identity !== identity) {
@@ -106,11 +262,15 @@ export function WorkspaceHtmlPreview({
 
   const selectMode = (mode: WorkspaceWebPreviewNetworkMode) => {
     if (previewState.status === "error" || mode === networkMode) return;
-    setModeSelection({ identity, mode });
+    if (controlledNetworkMode === undefined) setModeSelection({ identity, mode });
+    onNetworkModeChange?.(mode);
   };
 
   const retryPreview = () => {
-    setModeSelection({ identity, mode: DEFAULT_NETWORK_MODE });
+    if (controlledNetworkMode === undefined) {
+      setModeSelection({ identity, mode: DEFAULT_NETWORK_MODE });
+    }
+    onNetworkModeChange?.(DEFAULT_NETWORK_MODE);
     setReloadVersion((current) => current + 1);
   };
 
@@ -119,66 +279,16 @@ export function WorkspaceHtmlPreview({
       className={cn("flex min-h-[420px] flex-1 flex-col bg-white", className)}
       data-testid={`${testIdPrefix}-html-preview-frame`}
     >
-      <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border bg-[color:var(--surface-elevated)] px-2">
-        <TooltipProvider delayDuration={120}>
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            size="sm"
-            spacing={0}
-            value={previewState.status === "error" ? "offline" : networkMode}
-            onValueChange={(value) => {
-              if (value === "offline" || value === "connected") selectMode(value);
-            }}
-            aria-label="Website preview network mode"
-            aria-disabled={previewState.status === "error"}
-            disabled={previewState.status === "error"}
-          >
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <ToggleGroupItem value="offline" className="min-w-[6.5rem]">
-                  <WifiOff data-icon="inline-start" />
-                  Offline
-                </ToggleGroupItem>
-              </TooltipTrigger>
-              <TooltipContent>Local assets only. Scripts and external requests are blocked.</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <ToggleGroupItem
-                  value="connected"
-                  className="min-w-[6.5rem]"
-                  aria-label={previewState.status === "error"
-                    ? "Connected preview is unavailable while using the static Offline fallback."
-                    : "Connected. Runs artifact scripts and may send preview content to external HTTPS sites."}
-                >
-                  <Wifi data-icon="inline-start" />
-                  Connected
-                </ToggleGroupItem>
-              </TooltipTrigger>
-              <TooltipContent>
-                {previewState.status === "error"
-                  ? "Connected preview is unavailable while using the static Offline fallback."
-                  : "Runs artifact scripts. Preview content may be sent to external HTTPS sites."}
-              </TooltipContent>
-            </Tooltip>
-          </ToggleGroup>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Reload website preview"
-                onClick={() => setReloadVersion((current) => current + 1)}
-              >
-                <RefreshCw />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Reload preview</TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      </div>
+      <WorkspaceHtmlPreviewToolbar
+        viewMode={viewMode}
+        onViewModeChange={onViewModeChange}
+        networkMode={networkMode}
+        onNetworkModeChange={selectMode}
+        networkUnavailable={previewState.status === "error"}
+        onReload={() => setReloadVersion((current) => current + 1)}
+        openAction={openAction}
+        testIdPrefix={testIdPrefix}
+      />
 
       {previewState.status === "loading" ? (
         <div

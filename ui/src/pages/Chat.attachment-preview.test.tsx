@@ -396,6 +396,11 @@ vi.mock("@/api/issues", () => ({
 
 vi.mock("@/api/orgs", () => ({
   organizationsApi: {
+    createWorkspaceWebPreviewSession: vi.fn(async (_organizationId: string, request: { networkMode: "connected" | "offline" }) => ({
+      previewUrl: "http://preview.localhost:3100/workspace-preview/test-token/index.html",
+      networkMode: request.networkMode,
+      expiresAt: "2026-07-15T12:00:00.000Z",
+    })),
     readWorkspaceFile: vi.fn(),
     listWorkspaceFiles: vi.fn(),
     updateWorkspaceFile: (...args: unknown[]) => mockState.updateWorkspaceFile(...args),
@@ -2597,7 +2602,7 @@ describe("Chat Side Panel link handling", () => {
     expect(container.textContent).not.toContain("No inline preview is available for this file.");
   });
 
-  it.each([false, true])("offers Desktop app launch targets for a Library file when expanded is %s", async (expanded) => {
+  it.each([false, true])("offers Desktop app launch targets from the HTML toolbar when expanded is %s", async (expanded) => {
     const openWorkspaceFileLocation = vi.fn(async () => {});
     const openWorkspaceFileInIde = vi.fn(async () => {});
     Object.defineProperty(window, "desktopShell", {
@@ -2613,11 +2618,11 @@ describe("Chat Side Panel link handling", () => {
       },
     });
     mockState.workspaceFiles = {
-      "reports/activity.md": {
+      "reports/activity.html": {
         rootPath: "/Users/tester/Documents/Rudder/rudder",
-        filePath: "reports/activity.md",
-        content: "# Activity report\n",
-        contentType: "text/markdown",
+        filePath: "reports/activity.html",
+        content: "<!doctype html><html><body><h1>Activity report</h1></body></html>",
+        contentType: "text/html",
         previewKind: "text",
         contentPath: null,
         truncated: false,
@@ -2636,7 +2641,7 @@ describe("Chat Side Panel link handling", () => {
             <ChatSidePanel
               expanded={expanded}
               selectedOrganizationId="org-1"
-              target={{ kind: "library_file", filePath: "reports/activity.md", label: "activity.md" }}
+              target={{ kind: "library_file", filePath: "reports/activity.html", label: "activity.html" }}
             />
           </SidePanelProvider>
         </ThemeProvider>,
@@ -2649,8 +2654,9 @@ describe("Chat Side Panel link handling", () => {
     expect(trigger).not.toBeNull();
     expect(trigger?.textContent).toContain("Open");
     const toolbar = container.querySelector<HTMLElement>("[data-testid='chat-side-panel-library-file-toolbar']");
-    expect(toolbar?.querySelector("nav[aria-label='Library file path']")?.textContent).toBe("reportsactivity.md");
-    expect(toolbar?.textContent).not.toContain("text/markdown");
+    expect(toolbar?.querySelector("nav[aria-label='Library file path']")?.textContent).toBe("reportsactivity.html");
+    expect(container.querySelector("[data-testid='chat-side-panel-library-html-preview-toolbar']")?.contains(trigger))
+      .toBe(true);
     await act(async () => {
       trigger?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
       await Promise.resolve();
@@ -2672,7 +2678,7 @@ describe("Chat Side Panel link handling", () => {
     });
     expect(openWorkspaceFileLocation).toHaveBeenCalledWith(
       "/Users/tester/Documents/Rudder/rudder",
-      "reports/activity.md",
+      "reports/activity.html",
       "terminal",
     );
   }, 15_000);

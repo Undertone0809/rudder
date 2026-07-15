@@ -1229,17 +1229,9 @@ function ChatSidePanelLibraryFileView({
     </DropdownMenu>
   );
   const showSourceAction = previewMode === "preview";
-  const fileModeToggleLabel = showSourceAction
-    ? "Show source"
-    : html
-      ? "Show webpage"
-      : "Show table";
-  const FileModeToggleIcon = showSourceAction
-    ? FileCode2
-    : html
-      ? Globe2
-      : Table2;
-  const fileModeToggle = html || csv ? (
+  const fileModeToggleLabel = showSourceAction ? "Show source" : "Show table";
+  const FileModeToggleIcon = showSourceAction ? FileCode2 : Table2;
+  const fileModeToggle = csv ? (
     <TooltipProvider delayDuration={120}>
       <Tooltip>
         <TooltipTrigger asChild>
@@ -1311,9 +1303,11 @@ function ChatSidePanelLibraryFileView({
           </Tooltip>
         </TooltipProvider>
         {fileModeToggle}
-        <div className="shrink-0" data-testid="chat-side-panel-library-open-in">
-          {openInMenu}
-        </div>
+        {!html ? (
+          <div className="shrink-0" data-testid="chat-side-panel-library-open-in">
+            {openInMenu}
+          </div>
+        ) : null}
       </div>
       {markdown && !libraryFile.truncated ? (
         <ChatSidePanelMarkdownFileEditor
@@ -1336,6 +1330,12 @@ function ChatSidePanelLibraryFileView({
             file={libraryFile}
             organizationId={organizationId}
             mode={previewMode}
+            onModeChange={setPreviewMode}
+            htmlOpenAction={html ? (
+              <div className="shrink-0" data-testid="chat-side-panel-library-open-in">
+                {openInMenu}
+              </div>
+            ) : undefined}
             testIdPrefix="chat-side-panel-library"
           />
         </>

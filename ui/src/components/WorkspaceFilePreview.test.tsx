@@ -76,6 +76,7 @@ function workspaceFile(
 async function renderPreview(
   file: OrganizationWorkspaceFileDetail,
   mode: "preview" | "source" = "preview",
+  onModeChange = vi.fn(),
 ) {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -94,6 +95,8 @@ async function renderPreview(
             file={file}
             organizationId="org-1"
             mode={mode}
+            onModeChange={onModeChange}
+            htmlOpenAction={<button type="button" data-testid="test-file-open">Open</button>}
             testIdPrefix="test-file"
           />
         </ImagePreviewProvider>
@@ -129,19 +132,24 @@ describe("WorkspaceFilePreview", () => {
       content: "<!doctype html><html><body><h1>Rendered report</h1></body></html>",
       contentType: "text/html",
     });
-    const previewContainer = await renderPreview(file);
+    const onModeChange = vi.fn();
+    const previewContainer = await renderPreview(file, "preview", onModeChange);
     const preview = previewContainer.querySelector<HTMLIFrameElement>("[data-testid='test-file-html-preview']");
+    const toolbar = previewContainer.querySelector<HTMLElement>("[data-testid='test-file-html-preview-toolbar']");
 
     expect(preview?.getAttribute("sandbox")).toBe("allow-scripts");
     expect(preview?.getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(preview?.getAttribute("src")).toContain("preview.localhost:3100/workspace-preview/");
-    expect(previewContainer.querySelector("[data-slot='toggle-group']")).not.toBeNull();
-    const modeButtons = Array.from(previewContainer.querySelectorAll<HTMLButtonElement>("button"));
-    const offlineButton = modeButtons.find((button) => button.textContent?.includes("Offline"));
-    const connectedButton = modeButtons.find((button) => button.textContent?.includes("Connected"));
-    expect(offlineButton?.getAttribute("aria-checked")).toBe("false");
-    expect(connectedButton?.getAttribute("aria-checked")).toBe("true");
-    expect(connectedButton?.getAttribute("aria-label")).toContain("may send preview content");
+    expect(toolbar).not.toBeNull();
+    expect(toolbar?.querySelector("[role='group'][aria-label='HTML file mode']")).not.toBeNull();
+    expect(toolbar?.querySelector("[data-testid='test-file-open']")).not.toBeNull();
+    const connectedMenu = toolbar?.querySelector<HTMLButtonElement>("[data-testid='test-file-html-preview-network-menu']");
+    expect(connectedMenu?.textContent).toContain("Connected");
+    expect(connectedMenu?.getAttribute("aria-label")).toContain("may send preview content");
+    const sourceButton = Array.from(toolbar?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+      .find((button) => button.textContent === "Source");
+    await act(async () => sourceButton?.click());
+    expect(onModeChange).toHaveBeenCalledWith("source");
     expect(createWorkspaceWebPreviewSession).toHaveBeenCalledWith("org-1", {
       entryPath: "reports/report.html",
       networkMode: "connected",
@@ -152,6 +160,9 @@ describe("WorkspaceFilePreview", () => {
     const source = sourceContainer.querySelector("[data-testid='test-file-code-preview']");
     expect(source?.getAttribute("data-read-only")).toBe("true");
     expect(source?.textContent).toContain("Rendered report");
+    expect(sourceContainer.querySelector("[data-testid='test-file-html-preview-toolbar']")).not.toBeNull();
+    expect(sourceContainer.querySelector("[data-testid='test-file-html-preview-network-menu']")).toBeNull();
+    expect(sourceContainer.querySelector("[data-testid='test-file-open']")).not.toBeNull();
   });
 
   it("creates a new Offline session after explicit selection", async () => {
@@ -167,10 +178,17 @@ describe("WorkspaceFilePreview", () => {
       expiresAt: "2026-07-15T12:00:00.000Z",
     });
 
-    const offlineButton = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Offline"));
+    const networkMenu = container.querySelector<HTMLButtonElement>(
+      "[data-testid='test-file-html-preview-network-menu']",
+    );
     await act(async () => {
-      offlineButton?.click();
+      networkMenu?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+    const offlineItem = Array.from(document.body.querySelectorAll<HTMLElement>("[role='menuitemradio']"))
+      .find((item) => item.textContent?.includes("Offline"));
+    await act(async () => {
+      offlineItem?.click();
       await Promise.resolve();
     });
 
@@ -182,6 +200,72 @@ describe("WorkspaceFilePreview", () => {
       networkMode: "offline",
       htmlContent: file.content,
     });
+  });
+
+  it("resets to Connected whenever another HTML file becomes active", async () => {
+    const firstFile = workspaceFile({
+      filePath: "reports/first.html",
+      content: "<!doctype html><h1>First</h1>",
+      contentType: "text/html",
+    });
+    const secondFile = workspaceFile({
+      filePath: "reports/second.html",
+      content: "<!doctype html><h1>Second</h1>",
+      contentType: "text/html",
+    });
+    createWorkspaceWebPreviewSession.mockImplementation(async (_organizationId, request) => ({
+      previewUrl: `http://preview.localhost:3100/workspace-preview/${request.networkMode}/${request.entryPath}`,
+      networkMode: request.networkMode,
+      expiresAt: "2026-07-15T12:00:00.000Z",
+    }));
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    roots.push(root);
+    const renderFile = async (file: OrganizationWorkspaceFileDetail) => {
+      await act(async () => {
+        root.render(
+          <WorkspaceFilePreview
+            file={file}
+            organizationId="org-1"
+            mode="preview"
+            testIdPrefix="identity-file"
+          />,
+        );
+      });
+    };
+
+    await renderFile(firstFile);
+    const networkMenu = container.querySelector<HTMLButtonElement>(
+      "[data-testid='identity-file-html-preview-network-menu']",
+    );
+    await act(async () => {
+      networkMenu?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+    const offlineItem = Array.from(document.body.querySelectorAll<HTMLElement>("[role='menuitemradio']"))
+      .find((item) => item.textContent?.includes("Offline"));
+    await act(async () => {
+      offlineItem?.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector("iframe")?.getAttribute("sandbox")).toBe("");
+
+    await renderFile(secondFile);
+    expect(createWorkspaceWebPreviewSession).toHaveBeenLastCalledWith("org-1", {
+      entryPath: secondFile.filePath,
+      networkMode: "connected",
+      htmlContent: secondFile.content,
+    });
+    expect(container.querySelector("iframe")?.getAttribute("sandbox")).toBe("allow-scripts");
+
+    await renderFile(firstFile);
+    expect(createWorkspaceWebPreviewSession).toHaveBeenLastCalledWith("org-1", {
+      entryPath: firstFile.filePath,
+      networkMode: "connected",
+      htmlContent: firstFile.content,
+    });
+    expect(container.querySelector("iframe")?.getAttribute("sandbox")).toBe("allow-scripts");
   });
 
   it("falls back to a static Offline document when the preview runtime is unavailable", async () => {
@@ -214,12 +298,12 @@ describe("WorkspaceFilePreview", () => {
     expect(fallback?.getAttribute("srcdoc")).toContain("script-src 'none'");
     expect(fallback?.getAttribute("srcdoc")?.indexOf("Content-Security-Policy"))
       .toBeLessThan(fallback?.getAttribute("srcdoc")?.indexOf("<h1>Static fallback</h1>") ?? 0);
-    const modeButtons = Array.from(container.querySelectorAll<HTMLButtonElement>("button"));
-    const offlineButton = modeButtons.find((button) => button.textContent?.includes("Offline"));
-    const connectedButton = modeButtons.find((button) => button.textContent?.includes("Connected"));
-    expect(offlineButton?.getAttribute("aria-checked")).toBe("true");
-    expect(connectedButton?.getAttribute("aria-checked")).toBe("false");
-    expect(connectedButton?.disabled).toBe(true);
+    const networkMenu = container.querySelector<HTMLButtonElement>(
+      "[data-testid='fallback-file-html-preview-network-menu']",
+    );
+    expect(networkMenu?.textContent).toContain("Offline");
+    expect(networkMenu?.getAttribute("aria-label")).toContain("Connected preview is unavailable");
+    expect(networkMenu?.disabled).toBe(true);
   });
 
   it("deduplicates the initial preview session request in React StrictMode", async () => {

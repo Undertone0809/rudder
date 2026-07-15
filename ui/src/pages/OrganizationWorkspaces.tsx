@@ -37,6 +37,7 @@ import {
   type OrganizationWorkspaceFileEntry,
   type Project,
   type ProjectResourceAttachment,
+  type WorkspaceWebPreviewNetworkMode,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -85,7 +86,7 @@ import { PageSkeleton } from "../components/PageSkeleton";
 import { ProjectIcon } from "../components/ProjectIdentity";
 import { ResourceLocatorField } from "../components/ResourceLocatorField";
 import { getWorkspaceCodeLanguageLabel, isWorkspaceCodeFilePath, WorkspaceCodeEditor } from "../components/WorkspaceCodeEditor";
-import { WorkspaceHtmlPreview } from "../components/WorkspaceHtmlPreview";
+import { WorkspaceHtmlPreview, WorkspaceHtmlPreviewToolbar } from "../components/WorkspaceHtmlPreview";
 import { WorkspacePdfPreview } from "../components/WorkspacePdfPreview";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useI18n } from "../context/I18nContext";
@@ -4043,6 +4044,11 @@ export function OrganizationWorkspaceBrowser({
     : initialSelectedFilePath;
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(initialSafeSelectedFilePath);
   const [htmlFileMode, setHtmlFileMode] = useState<"preview" | "source">("preview");
+  const initialHtmlPreviewIdentity = `${viewedOrganizationId ?? ""}:${initialSafeSelectedFilePath ?? ""}`;
+  const [htmlNetworkSelection, setHtmlNetworkSelection] = useState<{
+    identity: string;
+    mode: WorkspaceWebPreviewNetworkMode;
+  }>({ identity: initialHtmlPreviewIdentity, mode: "connected" });
   const [csvFileMode, setCsvFileMode] = useState<"table" | "source">("table");
   const [showHiddenMarkdownSections, setShowHiddenMarkdownSections] = useState(false);
   const [markdownOutlineCollapsed, setMarkdownOutlineCollapsed] = useState(false);
@@ -4127,8 +4133,12 @@ export function OrganizationWorkspaceBrowser({
 
   useEffect(() => {
     setHtmlFileMode("preview");
+    setHtmlNetworkSelection({
+      identity: `${viewedOrganizationId ?? ""}:${selectedFilePath ?? ""}`,
+      mode: "connected",
+    });
     setCsvFileMode("table");
-  }, [selectedFilePath]);
+  }, [selectedFilePath, viewedOrganizationId]);
 
   useEffect(() => {
     const clearRootDropState = () => {
@@ -5391,6 +5401,10 @@ export function OrganizationWorkspaceBrowser({
     && (isWorkspaceHtmlFilePath(selectedFilePath) || isWorkspaceHtmlContentType(selectedFileDetail?.contentType)),
   );
   const selectedFileUsesHtmlPreview = selectedFileCanRenderHtml && htmlFileMode === "preview";
+  const selectedHtmlPreviewIdentity = `${viewedOrganizationId ?? ""}:${selectedFilePath ?? ""}`;
+  const selectedHtmlNetworkMode = htmlNetworkSelection.identity === selectedHtmlPreviewIdentity
+    ? htmlNetworkSelection.mode
+    : "connected";
   const selectedMarkdownOutlineWithHidden = selectedFileUsesMarkdownEditor
     ? extractDocumentOutline(selectedMarkdownParts.body, { includeHidden: true })
     : [];
@@ -5456,29 +5470,59 @@ export function OrganizationWorkspaceBrowser({
   const tabContextMenuIndex = tabContextMenu ? openFilePaths.indexOf(tabContextMenu.filePath) : -1;
   const canCloseOtherTabs = Boolean(tabContextMenu && openFilePaths.length > 1);
   const canCloseTabsToRight = tabContextMenuIndex >= 0 && tabContextMenuIndex < openFilePaths.length - 1;
-
-  function renderHtmlFileModeToggle(currentMode: "preview" | "source") {
-    return (
-      <ToggleGroup
-        type="single"
-        variant="outline"
-        size="sm"
-        spacing={0}
-        value={currentMode}
-        onValueChange={(value) => {
-          if (value === "preview" || value === "source") setHtmlFileMode(value);
-        }}
-        aria-label="HTML file mode"
-      >
-        <ToggleGroupItem value="preview">
-          Preview
-        </ToggleGroupItem>
-        <ToggleGroupItem value="source">
-          Source
-        </ToggleGroupItem>
-      </ToggleGroup>
-    );
-  }
+  const selectedHtmlFileOpenTargets = selectedFilePath
+    && workspaceRootPath
+    && typeof readDesktopShell()?.openWorkspaceFileInIde === "function"
+    ? workspaceFileOpenTargets(workspaceLaunchTargets)
+    : [];
+  const selectedHtmlFileEntry: OrganizationWorkspaceFileEntry | null = selectedFilePath
+    ? {
+        name: displayWorkspaceFileTabLabel(selectedFilePath),
+        path: selectedFilePath,
+        isDirectory: false,
+      }
+    : null;
+  const selectedHtmlFileOpenAction = selectedHtmlFileEntry ? (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          aria-label="Open file options"
+          data-testid="org-workspaces-html-open-menu"
+        >
+          <ExternalLink className="workspace-html-preview-open-icon" data-icon="inline-start" />
+          Open
+          <ChevronDown data-icon="inline-end" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-60">
+        {selectedHtmlFileOpenTargets.length > 0 ? (
+          selectedHtmlFileOpenTargets.map((target) => (
+            <DropdownMenuItem
+              key={target.id}
+              disabled={openingWorkspaceTargetId !== null}
+              data-testid={`org-workspaces-html-open-target-${target.id}`}
+              onSelect={() => void handleOpenEntryTarget(selectedHtmlFileEntry, target)}
+            >
+              {openingWorkspaceTargetId === target.id ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <WorkspaceLaunchTargetIcon target={target} />
+              )}
+              <span className="min-w-0 flex-1 truncate">{target.label}</span>
+            </DropdownMenuItem>
+          ))
+        ) : (
+          <DropdownMenuItem disabled>
+            <ExternalLink />
+            Available in Rudder Desktop
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  ) : null;
 
   function scrollToSelectedMarkdownOutlineItem(item: DocumentOutlineItem) {
     const editorScrollElement = editorScrollElementRef.current;
@@ -6283,18 +6327,22 @@ export function OrganizationWorkspaceBrowser({
                   data-testid="org-workspaces-html-preview-scroll"
                   className="scrollbar-auto-hide flex h-full min-h-[420px] flex-col overflow-auto bg-white"
                 >
-                  <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-[color:var(--surface-elevated)] px-4 py-2">
-                    <div className="min-w-0 truncate text-xs text-muted-foreground">
-                      {selectedFileDetail?.message ?? "HTML preview"}
-                    </div>
-                    {renderHtmlFileModeToggle("preview")}
-                  </div>
                   {viewedOrganizationId && selectedFilePath ? (
                     <WorkspaceHtmlPreview
                       key={`${viewedOrganizationId}:${selectedFilePath}`}
                       organizationId={viewedOrganizationId}
                       filePath={selectedFilePath}
                       htmlContent={selectedEditorContent}
+                      viewMode="preview"
+                      onViewModeChange={setHtmlFileMode}
+                      networkMode={selectedHtmlNetworkMode}
+                      onNetworkModeChange={(networkMode) => {
+                        setHtmlNetworkSelection({
+                          identity: selectedHtmlPreviewIdentity,
+                          mode: networkMode,
+                        });
+                      }}
+                      openAction={selectedHtmlFileOpenAction}
                       testIdPrefix="org-workspaces"
                     />
                   ) : null}
@@ -6314,10 +6362,12 @@ export function OrganizationWorkspaceBrowser({
                     </div>
                   ) : null}
                   {selectedFileCanRenderHtml ? (
-                    <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-[color:var(--surface-page)] px-4 py-2">
-                      <div className="min-w-0 truncate text-xs text-muted-foreground">HTML source</div>
-                      {renderHtmlFileModeToggle("source")}
-                    </div>
+                    <WorkspaceHtmlPreviewToolbar
+                      viewMode="source"
+                      onViewModeChange={setHtmlFileMode}
+                      openAction={selectedHtmlFileOpenAction}
+                      testIdPrefix="org-workspaces"
+                    />
                   ) : null}
                   {selectedFileUsesCsvEditor ? (
                     <CsvWorkspaceEditor

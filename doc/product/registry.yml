@@ -747,6 +747,30 @@ contracts:
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-06-30-org-library-folder-and-backup-zip.md
+  LIBRARY.WEB.PREVIEW.001:
+    owner: product
+    domain: library-and-context
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/library-and-context/website-preview.md
+    related_code:
+      - packages/shared/src/types/organization.ts
+      - packages/shared/src/validators/organization.ts
+      - server/src/services/workspace-web-preview.ts
+      - server/src/routes/orgs.ts
+      - server/src/bootstrap/create-http-app.ts
+      - ui/src/components/WorkspaceHtmlPreview.tsx
+      - ui/src/components/WorkspaceFilePreview.tsx
+      - ui/src/pages/OrganizationWorkspaces.tsx
+      - ui/src/pages/Chat.side-panel.tsx
+    related_tests:
+      - server/src/__tests__/workspace-web-preview.test.ts
+      - ui/src/components/WorkspaceFilePreview.test.tsx
+      - ui/src/lib/workspace-html-preview.test.ts
+      - tests/e2e/organization-workspaces-image-preview.spec.ts
+      - tests/e2e/chat-side-panel-html-preview.spec.ts
+    related_plans:
+      - doc/plans/2026-07-15-isolated-library-website-preview.md
   WORKSPACE.PROJECT.001:
     owner: product
     domain: library-and-context

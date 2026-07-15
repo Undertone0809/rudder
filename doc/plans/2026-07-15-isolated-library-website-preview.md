@@ -47,23 +47,27 @@ HEAD asset reads; Rudder APIs do not exist on that host. The frame does not
 receive form submission, popups, downloads, top-level navigation, or connection
 APIs such as `fetch()`, XHR, WebSocket, EventSource, or beacon.
 
-Affected current product contract:
+Affected current product contracts:
 
 - `LIBRARY.FILES.001`
+- `LIBRARY.WEB.PREVIEW.001`
 
-Proposed Product Logic delta:
+Completed Product Logic synchronization:
 
-- Add `LIBRARY.WEB_PREVIEW.001` as a `logic_contract` owned by
+- Added `LIBRARY.WEB.PREVIEW.001` as a `logic_contract` owned by
   `library-and-context`.
-- Define the artifact root, Offline/Connected modes, capability lifetime,
+- Defined the artifact root, Offline/Connected modes, capability lifetime,
   isolation boundary, supported resource types, visible failure states, and
   Library/Messenger parity.
-- Keep `LIBRARY.FILES.001` as the file lifecycle and generic inline-document
-  contract, and have it reference the new website-preview contract.
+- Kept `LIBRARY.FILES.001` as the file lifecycle and generic inline-document
+  contract, and linked it to the new website-preview contract.
+- Added the unified HTML toolbar contract: Preview/Source, the current network
+  mode, Open, and Reload share one control row in Library and Messenger; new
+  previews default to Connected.
 
-`doc/product/**` is guarded. This proposal records the concrete delta, but the
-registry change remains deferred until the user explicitly authorizes editing
-the Product Logic Registry.
+The user explicitly authorized this Product Logic Registry update. The guarded
+contract, registry entry, Library file-contract reference, and surface-domain
+mapping are synchronized with the delivered behavior.
 
 ## What Is The Problem?
 
@@ -106,7 +110,10 @@ cannot inspect the actual result inside the work surface.
   document has a unique opaque origin.
 - Serve strict response headers, correct MIME types, `nosniff`, no referrer,
   no-store caching, and a CSP derived from the selected network mode.
-- Add `Offline` and `Connected` controls shared by Library and Messenger.
+- Add one current-network-mode menu shared by Library and Messenger. It starts
+  in Connected and lets the operator switch explicitly to Offline.
+- Consolidate Preview/Source, network mode, Open, and Reload into one HTML
+  toolbar instead of scattering controls across the file header and preview.
 - Keep Preview/Source behavior and render unsaved HTML source through an
   in-memory entry-file override inside the preview capability.
 - Show explicit loading, expired-session, missing-resource, and preview-start
@@ -217,8 +224,8 @@ cannot inspect the actual result inside the work surface.
 
 ### Accessibility And Usability
 
-- Offline/Connected is a labeled segmented mode control with clear selected
-  state and tooltips.
+- The current network mode is a labeled menu with clear selected state and
+  disclosure text; Preview/Source remains a compact segmented control.
 - Loading and errors use status/alert semantics without resizing the stable
   preview surface.
 - The narrow Messenger frame remains usable and offers the existing expanded
@@ -381,8 +388,8 @@ No new third-party dependency or remote service is required.
 
 New HTTP endpoints are limited to session creation and capability asset reads.
 The Preview Host accepts only GET and HEAD and has no API, authentication, UI,
-or mutation router. Connected mode lets the browser contact artifact-declared
-HTTPS origins only after the operator changes the mode. Rudder does not proxy
+or mutation router. Connected mode is the disclosed default and lets the
+browser contact artifact-declared HTTPS origins. Rudder does not proxy
 those resources, which avoids introducing an SSRF surface. Referrers remain
 suppressed, but the operator is warned that preview-owned content can be sent to
 those HTTPS origins.
@@ -462,35 +469,33 @@ control-plane mutation. Existing non-HTML previews remain unchanged.
 
 ### Pass / Fail
 
-- Unit/service tests: passed, including 21 server/config tests, 85 focused UI
-  tests, and dedicated URL-normalization regressions for encoded TAB/LF/C0
-  external schemes.
-- Server typecheck: passed.
-- E2E: passed. The final Chromium runs cover the adversarial multi-file Library
-  flow, static Offline fallback navigation, Library/Messenger parity, and the
-  existing Messenger HTML report regression (`4/4`), followed by a focused C0
-  fallback rerun (`1/1`).
+- Focused unit/service tests: passed, including 12 website-preview server tests
+  (with a 15-second timeout for macOS descriptor verification) and 84 focused
+  UI tests.
+- Workspace typecheck: passed for all 21 participating projects.
+- E2E: passed. The final Chromium runs cover eight Library and Messenger paths,
+  including multi-file Connected/Offline behavior, Offline persistence across
+  Source, original-file Open targets, and a 340px docked Side Panel (`8/8`).
 - Browser visual verification: passed at desktop and mobile widths. Evidence is
   stored outside the repository under `/tmp`.
-- `pnpm lint`: passed before final hand-off changes; the final edits are covered
-  by focused lint-compatible tests and the final lint run recorded at hand-off.
-- `pnpm product-logic:check`: passed with 72 guarded contracts; no
-  `doc/product/**` files were changed for this feature.
-- Full repository typecheck/build: passed after concurrent `Layout.tsx` work
-  settled. Production build emitted only the existing CSS pseudo-element and
-  chunk-size warnings.
-- Full `pnpm test:run`: 4,015 tests passed and 30 failed. Failures were outside
-  this feature: Git/worktree/release timeouts, concurrent `ToastContext` mock
-  drift, one chat-route assertion, and runtime-service/resource failures.
-  Preview-focused tests and E2E are green.
+- `pnpm lint`: passed across 1,935 tracked JavaScript and TypeScript files.
+- `pnpm product-logic:check`: passed with 73 guarded contracts, including the
+  synchronized website-preview contract and registry mappings.
+- Full repository build: passed. Production build emitted only the existing
+  chunk-size warning.
+- Full `pnpm test:run`: 3,869 tests passed, 13 failed, and 165 skipped. The
+  failures are existing repository/environment issues: seven embedded-Postgres
+  suite initialization failures, stale `ToastContext` mocks, two unrelated API
+  assertions, and default-timeout failures in Git/macOS descriptor checks. All
+  preview-focused tests pass with the bounded macOS timeout noted above.
 
 ## Documentation Changes
 
 - This proposal records architecture and delivery scope.
-- After explicit Product Logic Registry authorization:
-  - add `doc/product/domains/library-and-context/website-preview.md`
-  - register `LIBRARY.WEB_PREVIEW.001` as `logic_contract`
-  - update `LIBRARY.FILES.001` and the surface-domain map to reference it
+- Product Logic Registry synchronization is complete:
+  - added `doc/product/domains/library-and-context/website-preview.md`
+  - registered `LIBRARY.WEB.PREVIEW.001` as `logic_contract`
+  - updated `LIBRARY.FILES.001` and the surface-domain map to reference it
 - No public `docs/` change is required unless website preview becomes part of
   onboarding or advertised Library behavior.
 

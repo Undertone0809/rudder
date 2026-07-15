@@ -80,6 +80,8 @@ owning domain contract.
 
 - Library file lifecycle, protected paths, and references:
   `LIBRARY.FILES.001`.
+- Isolated multi-file HTML rendering, Connected/Offline behavior, unified
+  preview controls, and preview Open actions: `LIBRARY.WEB.PREVIEW.001`.
 - Organization/project resources: `CONTEXT.RESOURCES.001`.
 - Project and execution workspace policy: `WORKSPACE.PROJECT.001`,
   `WORKSPACE.RUN.001`.
@@ -96,6 +98,9 @@ owning domain contract.
   object workbench behavior: `CHAT.SIDE.PANEL.001`, with target-specific
   behavior still owned by the issue, automation, Library, chat, and Messenger
   contracts below.
+- HTML Library references rendered in the Side Panel follow
+  `LIBRARY.WEB.PREVIEW.001` for the isolated runtime, Connected default, shared
+  toolbar, and Open in Library behavior.
 - Messenger thread attention, unread/read state, ordering, pin/archive, and
   issue/approval/run attention: `MESSENGER.ATTENTION.001`.
 - Messenger Issue Detail as the post-create destination for every non-Issues

@@ -207,6 +207,25 @@ test.describe("Organization workspaces image preview", () => {
   });
 
   test("renders a multi-file website in Connected by default and Offline modes", async ({ page, request }) => {
+    await page.addInitScript(() => {
+      const openedWorkspaceFiles: Array<{ rootPath: string; filePath: string; ideId?: string }> = [];
+      Object.defineProperty(window, "__rudderOpenedWorkspaceFiles", {
+        configurable: true,
+        value: openedWorkspaceFiles,
+        writable: false,
+      });
+      Object.defineProperty(window, "desktopShell", {
+        configurable: true,
+        value: {
+          listWorkspaceLaunchTargets: async () => [
+            { id: "vscode", label: "VS Code", kind: "ide" },
+          ],
+          openWorkspaceFileInIde: async (rootPath: string, filePath: string, ideId?: string) => {
+            openedWorkspaceFiles.push({ rootPath, filePath, ideId });
+          },
+        },
+      });
+    });
     const externalRequests: string[] = [];
     const blockedRequests: string[] = [];
     const completedRudderMutationRequests: string[] = [];
@@ -326,11 +345,20 @@ test.describe("Organization workspaces image preview", () => {
     await expect(preview).toHaveAttribute("sandbox", "allow-scripts");
     await expect(preview).toHaveAttribute("referrerpolicy", "no-referrer");
     await expect(preview).toHaveAttribute("src", /http:\/\/preview\.localhost:\d+\/workspace-preview\//);
-    const networkMode = page.getByRole("group", { name: "Website preview network mode" });
-    const connectedButton = networkMode.getByRole("radio", { name: /^Connected/ });
-    const offlineButton = networkMode.getByRole("radio", { name: "Offline" });
-    await expect(connectedButton).toHaveAttribute("aria-checked", "true");
-    await expect(offlineButton).toHaveAttribute("aria-checked", "false");
+    const toolbar = page.getByTestId("org-workspaces-html-preview-toolbar");
+    await expect(toolbar).toHaveCount(1);
+    await expect(toolbar.getByRole("group", { name: "HTML file mode" })).toBeVisible();
+    const networkMenu = toolbar.getByRole("button", { name: /^Network mode: Connected/ });
+    await expect(networkMenu).toContainText("Connected");
+    const openMenu = toolbar.getByRole("button", { name: "Open file options" });
+    await expect(openMenu).toBeVisible();
+    await openMenu.click();
+    await page.getByTestId("org-workspaces-html-open-target-vscode").click();
+    await expect.poll(async () => page.evaluate(() => (window as typeof window & {
+      __rudderOpenedWorkspaceFiles?: Array<{ rootPath: string; filePath: string; ideId?: string }>;
+    }).__rudderOpenedWorkspaceFiles ?? [])).toEqual([
+      expect.objectContaining({ filePath: htmlFilePath, ideId: "vscode" }),
+    ]);
     const frame = preview.contentFrame();
     const heading = frame.getByRole("heading", { name: "Rendered website artifact" });
     await expect(heading).toBeVisible();
@@ -359,10 +387,10 @@ test.describe("Organization workspaces image preview", () => {
     await page.screenshot({ path: "/tmp/rudder-website-preview-library.png", fullPage: false });
 
     externalRequests.length = 0;
-    await offlineButton.click();
+    await networkMenu.click();
+    await page.getByRole("menuitemradio", { name: /Offline/ }).click();
     await expect(preview).toHaveAttribute("sandbox", "");
-    await expect(connectedButton).toHaveAttribute("aria-checked", "false");
-    await expect(offlineButton).toHaveAttribute("aria-checked", "true");
+    await expect(toolbar.getByRole("button", { name: /^Network mode: Offline/ })).toContainText("Offline");
     await expect(frame.locator("#script-state")).toHaveText("Scripts blocked");
     await expect(frame.locator("body")).not.toHaveAttribute("data-module-state", "ready");
     await expect(frame.locator("body")).not.toHaveAttribute("data-external-script", "ready");
@@ -379,6 +407,9 @@ test.describe("Organization workspaces image preview", () => {
     const sourceEditor = page.getByTestId("org-workspaces-editor-textarea");
     await expect(sourceEditor).toBeVisible();
     await expect(sourceEditor).toHaveValue(/Rendered website artifact/);
+    await expect(page.getByTestId("org-workspaces-html-preview-toolbar")).toHaveCount(1);
+    await expect(page.getByTestId("org-workspaces-html-preview-network-menu")).toHaveCount(0);
+    await expect(page.getByTestId("org-workspaces-html-open-menu")).toBeVisible();
 
     const updatedHtml = [
       "<!doctype html>",
@@ -401,7 +432,8 @@ test.describe("Organization workspaces image preview", () => {
 
     await page.getByRole("group", { name: "HTML file mode" }).getByRole("radio", { name: "Preview" }).click();
     await expect(preview.contentFrame().getByRole("heading", { name: "Updated website artifact" })).toBeVisible();
-    await expect(preview).toHaveAttribute("sandbox", "allow-scripts");
+    await expect(preview).toHaveAttribute("sandbox", "");
+    await expect(toolbar.getByRole("button", { name: /^Network mode: Offline/ })).toContainText("Offline");
   });
 
   test("keeps the static Offline fallback from navigating externally", async ({ page, request }) => {
@@ -470,9 +502,9 @@ test.describe("Organization workspaces image preview", () => {
     await expect(page).toHaveURL(fallbackUrl);
     expect(externalRequests).toEqual([]);
 
-    const networkMode = page.getByRole("group", { name: "Website preview network mode" });
-    await expect(networkMode.getByRole("radio", { name: "Offline", exact: true })).toHaveAttribute("aria-checked", "true");
-    await expect(networkMode.getByRole("radio", { name: /^Connected/ })).toBeDisabled();
+    const networkMenu = page.getByRole("button", { name: /^Network mode: Offline/ });
+    await expect(networkMenu).toContainText("Offline");
+    await expect(networkMenu).toBeDisabled();
   });
 
   test("renders the same website preview in the Messenger Side Panel", async ({ page, request }) => {
@@ -533,8 +565,9 @@ test.describe("Organization workspaces image preview", () => {
     const preview = sidePanel.getByTestId("chat-side-panel-library-html-preview");
     await expect(preview).toBeVisible();
     await expect(preview).toHaveAttribute("sandbox", "allow-scripts");
-    await expect(sidePanel.getByRole("group", { name: "Website preview network mode" })
-      .getByRole("radio", { name: /^Connected/ })).toHaveAttribute("aria-checked", "true");
+    const toolbar = sidePanel.getByTestId("chat-side-panel-library-html-preview-toolbar");
+    await expect(toolbar.getByRole("button", { name: /^Network mode: Connected/ })).toContainText("Connected");
+    await expect(toolbar.getByRole("button", { name: "Open file options" })).toBeVisible();
     const heading = preview.contentFrame().getByRole("heading", { name: "Messenger website preview" });
     await expect(heading).toBeVisible();
     await expect(heading).toHaveCSS("color", "rgb(148, 57, 49)");

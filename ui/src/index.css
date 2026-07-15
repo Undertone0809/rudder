@@ -5704,3 +5704,24 @@ a.rudder-mention-chip[data-mention-kind="library_directory"]::before {
   background: transparent !important;
   color: var(--muted-foreground) !important;
 }
+/* HTML preview controls respond to their panel, not the browser viewport. */
+.workspace-html-preview-toolbar {
+  container-type: inline-size;
+}
+
+.workspace-html-preview-mode-label,
+.workspace-html-preview-network-chevron,
+.workspace-html-preview-open-icon {
+  display: none;
+}
+
+@container (min-width: 32rem) {
+  .workspace-html-preview-mode-label {
+    display: inline;
+  }
+
+  .workspace-html-preview-network-chevron,
+  .workspace-html-preview-open-icon {
+    display: block;
+  }
+}
