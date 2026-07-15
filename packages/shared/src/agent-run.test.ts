@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toAgentRun, type HeartbeatRun } from "./index.js";
+import { toAgentRun, toHeartbeatRun, type HeartbeatRun } from "./index.js";
 
 function heartbeatRun(overrides: Partial<HeartbeatRun>): HeartbeatRun {
   return {
@@ -41,6 +41,29 @@ function heartbeatRun(overrides: Partial<HeartbeatRun>): HeartbeatRun {
 }
 
 describe("toAgentRun", () => {
+  it("strips internal recovery and terminal-effect fields from public run shapes", () => {
+    const internalRun = {
+      ...heartbeatRun({ id: "internal-run" }),
+      executionOwnerToken: "owner-secret",
+      executionLeaseExpiresAt: new Date(),
+      processExitedAt: new Date(),
+      terminalEffectsPending: true,
+      terminalEffectsJson: { transcript: "large-secret" },
+      terminalEffectsClaimToken: "claim-secret",
+      terminalEffectsLastError: "internal-error",
+    } as HeartbeatRun;
+
+    for (const publicRun of [toHeartbeatRun(internalRun), toAgentRun(internalRun)]) {
+      expect(publicRun).not.toHaveProperty("executionOwnerToken");
+      expect(publicRun).not.toHaveProperty("executionLeaseExpiresAt");
+      expect(publicRun).not.toHaveProperty("processExitedAt");
+      expect(publicRun).not.toHaveProperty("terminalEffectsPending");
+      expect(publicRun).not.toHaveProperty("terminalEffectsJson");
+      expect(publicRun).not.toHaveProperty("terminalEffectsClaimToken");
+      expect(publicRun).not.toHaveProperty("terminalEffectsLastError");
+    }
+  });
+
   it("normalizes chat run scene and target from legacy heartbeat fields", () => {
     const run = toAgentRun(heartbeatRun({
       id: "chat-run",

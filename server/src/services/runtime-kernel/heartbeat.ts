@@ -17,6 +17,7 @@ import {
   summarizeTokenUsage
 } from "@rudderhq/shared";
 import { and, asc, desc, eq, gt, gte, inArray, lte, or, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import type {
   AgentRuntimeExecutionResult
 } from "../../agent-runtimes/index.js";
@@ -53,17 +54,24 @@ import { createHeartbeatMiscHandlers } from "./heartbeat.misc.js";
 import { createHeartbeatRecoveryHandlers } from "./heartbeat.recovery.js";
 import { createHeartbeatReleaseHandlers } from "./heartbeat.release.js";
 import {
+  checkpointHeartbeatRunTerminalEffect,
+  claimExpiredHeartbeatRunExecution,
   claimHeartbeatRunTerminalEffects,
   completeHeartbeatRunTerminalEffects,
+  failHeartbeatRunTerminalEffect,
   markHeartbeatRunProcessExited,
   reconcileHeartbeatRunEvidence,
   reconcileHeartbeatRunTerminalEffectsIntent,
   releaseHeartbeatRunTerminalEffectsClaim,
+  renewHeartbeatRunExecutionLease,
   renewHeartbeatRunTerminalEffectsClaim,
+  RUN_EXECUTION_LEASE_MS,
   setWakeupStatusMonotonic,
+  terminalEffectNames,
   transitionHeartbeatRunToTerminal,
   type RunActivityWatermark,
   type TerminalEffectIntent,
+  type TerminalEffectName,
 } from "./heartbeat.terminal.js";
 import { createHeartbeatWakeupHandlers } from "./heartbeat.wakeup.js";
 
@@ -588,6 +596,7 @@ export function heartbeatService(db: Db) {
       terminalEffectsPending?: boolean;
       terminalEffectsIntent?: TerminalEffectIntent | null;
       processExitedAt?: Date | null;
+      expectedExecutionOwnerToken?: string | null;
     },
   ) {
     const updated = await transitionHeartbeatRunToTerminal(db, {
@@ -599,6 +608,7 @@ export function heartbeatService(db: Db) {
       terminalEffectsPending: opts?.terminalEffectsPending,
       terminalEffectsIntent: opts?.terminalEffectsIntent,
       processExitedAt: opts?.processExitedAt,
+      expectedExecutionOwnerToken: opts?.expectedExecutionOwnerToken,
     });
     if (updated) publishRunStatus(updated);
     return updated;
@@ -640,10 +650,21 @@ export function heartbeatService(db: Db) {
     tx: any,
     values: typeof agentWakeupRequests.$inferInsert,
   ) {
-    return tx
+    const inserted = await tx
       .insert(agentWakeupRequests)
       .values(values)
+      .onConflictDoNothing()
       .returning()
+      .then((rows: Array<typeof agentWakeupRequests.$inferSelect>) => rows[0] ?? null);
+    if (inserted || !values.idempotencyKey) return inserted;
+    return tx
+      .select()
+      .from(agentWakeupRequests)
+      .where(and(
+        eq(agentWakeupRequests.orgId, values.orgId),
+        eq(agentWakeupRequests.agentId, values.agentId),
+        eq(agentWakeupRequests.idempotencyKey, values.idempotencyKey),
+      ))
       .then((rows: Array<typeof agentWakeupRequests.$inferSelect>) => rows[0] ?? null);
   }
 
@@ -656,6 +677,7 @@ export function heartbeatService(db: Db) {
       color?: string;
       message?: string;
       payload?: Record<string, unknown>;
+      idempotencyKey?: string | null;
     },
   ) {
     const currentUserRedactionOptions = await getCurrentUserRedactionOptions();
@@ -676,6 +698,7 @@ export function heartbeatService(db: Db) {
       color: event.color,
       message: sanitizedMessage,
       payload: sanitizedPayload,
+      idempotencyKey: event.idempotencyKey ?? null,
     });
 
     publishLiveEvent({
@@ -741,6 +764,7 @@ export function heartbeatService(db: Db) {
     run: typeof heartbeatRuns.$inferSelect,
     agentRuntimeType: string,
   ) {
+    if (run.processExitedAt) return true;
     runAbortControllers.get(run.id)?.abort();
     const tracked = runningProcesses.get(run.id);
     if (tracked) {
@@ -761,6 +785,10 @@ export function heartbeatService(db: Db) {
 
   async function acknowledgeRunProcessExit(runId: string) {
     return markHeartbeatRunProcessExited(db, runId);
+  }
+
+  async function renewRunExecutionLease(runId: string, ownerToken: string) {
+    return renewHeartbeatRunExecutionLease(db, runId, ownerToken);
   }
 
   async function countRunningRunsForAgent(agentId: string, excludeRunId?: string) {
@@ -887,6 +915,8 @@ export function heartbeatService(db: Db) {
         .set({
           status: "running",
           startedAt: run.startedAt ?? claimedAt,
+          executionOwnerToken: randomUUID(),
+          executionLeaseExpiresAt: new Date(claimedAt.getTime() + RUN_EXECUTION_LEASE_MS),
           updatedAt: claimedAt,
         })
         .where(and(eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.status, "queued")))
@@ -968,9 +998,10 @@ export function heartbeatService(db: Db) {
     }
   }
 
-  async function reapOrphanedRuns(opts?: { staleThresholdMs?: number }) {
+  async function reapOrphanedRuns(opts?: { staleThresholdMs?: number; now?: Date; recoveryCutoff?: Date }) {
     const staleThresholdMs = opts?.staleThresholdMs ?? 0;
-    const now = new Date();
+    const now = opts?.now ?? new Date();
+    const recoveryCutoff = opts?.recoveryCutoff ?? now;
 
     // Find all runs stuck in "running" state (queued runs are legitimately waiting; resumeQueuedRuns handles them)
     const activeRuns = await db
@@ -985,12 +1016,12 @@ export function heartbeatService(db: Db) {
     const reaped: string[] = [];
 
     for (const { run, agentRuntimeType } of activeRuns) {
-      if (!run.terminalEffectsPending && (runningProcesses.has(run.id) || activeRunExecutions.has(run.id))) continue;
-
       if (run.terminalEffectsPending) {
-        const exited = await terminateRunProcessAndWait(run, agentRuntimeType);
-        if (!exited || activeRunExecutions.has(run.id)) continue;
-        await acknowledgeRunProcessExit(run.id);
+        if (!run.processExitedAt) {
+          const exited = await terminateRunProcessAndWait(run, agentRuntimeType);
+          if (!exited || activeRunExecutions.has(run.id)) continue;
+          await acknowledgeRunProcessExit(run.id);
+        }
         const completed = await completeTerminalControlEffects(run);
         if (!completed) continue;
         reaped.push(run.id);
@@ -1003,15 +1034,19 @@ export function heartbeatService(db: Db) {
         if (now.getTime() - refTime < staleThresholdMs) continue;
       }
 
+      const recoveryClaim = await claimExpiredHeartbeatRunExecution(db, run.id, { now, recoveryCutoff });
+      if (!recoveryClaim) continue;
+      const claimedRun = recoveryClaim.run;
+
       const tracksLocalChild = isTrackedLocalChildProcessAdapter(agentRuntimeType);
       let detachedTerminationMessage: string | null = null;
-      if (tracksLocalChild && run.processPid && isProcessAlive(run.processPid)) {
-        const termination = await terminateOrphanedProcess(run.processPid);
+      if (!claimedRun.processExitedAt && tracksLocalChild && claimedRun.processPid && isProcessAlive(claimedRun.processPid)) {
+        const termination = await terminateOrphanedProcess(claimedRun.processPid);
         if (termination.stillAlive) {
           const detachedMessage = termination.error
-            ? `Lost in-memory process handle, child pid ${run.processPid} is still alive, and Rudder could not terminate it: ${termination.error}`
-            : `Lost in-memory process handle, but child pid ${run.processPid} is still alive`;
-          const detachedRun = await setRunStatus(run.id, "running", {
+            ? `Lost in-memory process handle, child pid ${claimedRun.processPid} is still alive, and Rudder could not terminate it: ${termination.error}`
+            : `Lost in-memory process handle, but child pid ${claimedRun.processPid} is still alive`;
+          const detachedRun = await setRunStatus(claimedRun.id, "running", {
             error: detachedMessage,
             errorCode: DETACHED_PROCESS_ERROR_CODE,
           });
@@ -1022,32 +1057,33 @@ export function heartbeatService(db: Db) {
               level: "warn",
               message: detachedMessage,
               payload: {
-                processPid: run.processPid,
+                processPid: claimedRun.processPid,
               },
             });
           }
           continue;
         }
         detachedTerminationMessage = termination.terminationSignal
-          ? `Terminated detached child pid ${run.processPid} with ${termination.terminationSignal} after Rudder lost its process handle`
-          : `Detached child pid ${run.processPid} exited before Rudder could terminate it`;
+          ? `Terminated detached child pid ${claimedRun.processPid} with ${termination.terminationSignal} after Rudder lost its process handle`
+          : `Detached child pid ${claimedRun.processPid} exited before Rudder could terminate it`;
       }
 
-      const shouldRetry = tracksLocalChild && !!run.processPid && (run.processLossRetryCount ?? 0) < 1;
-      const baseMessage = run.processPid
-        ? `Process lost -- child pid ${run.processPid} is no longer running`
+      const shouldRetry = tracksLocalChild && !!claimedRun.processPid && (claimedRun.processLossRetryCount ?? 0) < 1;
+      const baseMessage = claimedRun.processPid
+        ? `Process lost -- child pid ${claimedRun.processPid} is no longer running`
         : "Process lost -- server may have restarted";
 
-      let finalizedRun = await transitionRunToTerminal(run.id, "failed", {
+      let finalizedRun = await transitionRunToTerminal(claimedRun.id, "failed", {
         error: shouldRetry ? `${baseMessage}; retrying once` : baseMessage,
         errorCode: "process_lost",
         finishedAt: now,
       }, {
         processExitedAt: now,
         terminalEffectsIntent: shouldRetry ? { version: 1, processLossRetry: true } : { version: 1 },
+        expectedExecutionOwnerToken: recoveryClaim.ownerToken,
       });
       if (!finalizedRun) continue;
-      await setWakeupStatus(run.wakeupRequestId, "failed", {
+      await setWakeupStatus(claimedRun.wakeupRequestId, "failed", {
         finishedAt: now,
         error: shouldRetry ? `${baseMessage}; retrying once` : baseMessage,
       });
@@ -1058,7 +1094,7 @@ export function heartbeatService(db: Db) {
           level: "warn",
           message: detachedTerminationMessage,
           payload: {
-            ...(run.processPid ? { processPid: run.processPid } : {}),
+            ...(claimedRun.processPid ? { processPid: claimedRun.processPid } : {}),
           },
         });
       }
@@ -1071,13 +1107,13 @@ export function heartbeatService(db: Db) {
           ? `${baseMessage}; retry will be queued after terminal effects complete`
           : baseMessage,
         payload: {
-          ...(run.processPid ? { processPid: run.processPid } : {}),
+          ...(claimedRun.processPid ? { processPid: claimedRun.processPid } : {}),
         },
       });
 
       await completeTerminalControlEffects(finalizedRun);
-      runningProcesses.delete(run.id);
-      reaped.push(run.id);
+      runningProcesses.delete(claimedRun.id);
+      reaped.push(claimedRun.id);
     }
 
     if (reaped.length > 0) {
@@ -1086,7 +1122,7 @@ export function heartbeatService(db: Db) {
     return { reaped: reaped.length, runIds: reaped };
   }
 
-  async function reapInactiveRuns(opts?: { maxInactivityMs?: number; now?: Date }) {
+  async function reapInactiveRuns(opts?: { maxInactivityMs?: number; now?: Date; recoveryCutoff?: Date }) {
     const maxInactivityMs = opts?.maxInactivityMs ?? DEFAULT_HEARTBEAT_RUN_INACTIVITY_TIMEOUT_MS;
     if (!Number.isFinite(maxInactivityMs) || maxInactivityMs <= 0) {
       return { timedOut: 0, runIds: [] };
@@ -1109,6 +1145,7 @@ export function heartbeatService(db: Db) {
     const timedOut: string[] = [];
 
     for (const { run, agentRuntimeType, lastEventAt, eventCount } of activeRuns) {
+      if (opts?.recoveryCutoff && new Date(run.createdAt).getTime() >= opts.recoveryCutoff.getTime()) continue;
       const activityTimes = [
         run.updatedAt,
         lastEventAt,
@@ -1128,7 +1165,7 @@ export function heartbeatService(db: Db) {
       const processExitPending =
         activeRunExecutions.has(run.id)
         || runningProcesses.has(run.id)
-        || (isTrackedLocalChildProcessAdapter(agentRuntimeType) && !!run.processPid && isProcessAlive(run.processPid));
+        || (!run.processExitedAt && isTrackedLocalChildProcessAdapter(agentRuntimeType) && !!run.processPid && isProcessAlive(run.processPid));
       const finalizedRun = await transitionRunToTerminal(run.id, "timed_out", {
         finishedAt: now,
         error: message,
@@ -1140,6 +1177,7 @@ export function heartbeatService(db: Db) {
           eventCount: Number(eventCount ?? 0),
         },
         processExitedAt: processExitPending ? null : now,
+        expectedExecutionOwnerToken: run.executionOwnerToken,
       });
       if (!finalizedRun) continue;
       await setWakeupStatus(run.wakeupRequestId, "timed_out", {
@@ -1179,7 +1217,7 @@ export function heartbeatService(db: Db) {
     return { timedOut: timedOut.length, runIds: timedOut };
   }
 
-  async function reapTimedOutRuns(opts?: { maxRuntimeMs?: number; now?: Date }) {
+  async function reapTimedOutRuns(opts?: { maxRuntimeMs?: number; now?: Date; recoveryCutoff?: Date }) {
     const maxRuntimeMs = opts?.maxRuntimeMs ?? DEFAULT_HEARTBEAT_RUN_TIMEOUT_MS;
     if (!Number.isFinite(maxRuntimeMs) || maxRuntimeMs <= 0) {
       return { timedOut: 0, runIds: [] };
@@ -1198,6 +1236,7 @@ export function heartbeatService(db: Db) {
     const timedOut: string[] = [];
 
     for (const { run, agentRuntimeType } of activeRuns) {
+      if (opts?.recoveryCutoff && new Date(run.createdAt).getTime() >= opts.recoveryCutoff.getTime()) continue;
       const startedAt = run.startedAt ? new Date(run.startedAt).getTime() : null;
       if (!startedAt || !Number.isFinite(startedAt)) continue;
 
@@ -1208,13 +1247,16 @@ export function heartbeatService(db: Db) {
       const processExitPending =
         activeRunExecutions.has(run.id)
         || runningProcesses.has(run.id)
-        || (isTrackedLocalChildProcessAdapter(agentRuntimeType) && !!run.processPid && isProcessAlive(run.processPid));
+        || (!run.processExitedAt && isTrackedLocalChildProcessAdapter(agentRuntimeType) && !!run.processPid && isProcessAlive(run.processPid));
       const finalizedRun = await transitionRunToTerminal(run.id, "timed_out", {
         finishedAt: now,
         error: message,
         errorCode: "timeout",
         terminalEffectsPending: true,
-      }, { processExitedAt: processExitPending ? null : now });
+      }, {
+        processExitedAt: processExitPending ? null : now,
+        expectedExecutionOwnerToken: run.executionOwnerToken,
+      });
       if (!finalizedRun) continue;
       await setWakeupStatus(run.wakeupRequestId, "timed_out", {
         finishedAt: now,
@@ -1365,10 +1407,14 @@ export function heartbeatService(db: Db) {
     const claim = await claimHeartbeatRunTerminalEffects(db, run.id);
     if (!claim) return;
     const current = claim.run;
+    let claimReleased = false;
     try {
       const runContext = parseObject(current.contextSnapshot);
       const intent = parseObject(current.terminalEffectsJson) as TerminalEffectIntent;
-      const runClaimedEffect = async <T>(effect: () => Promise<T>) => {
+      const completedEffects = new Set(current.terminalEffectsCompletedJson ?? []);
+      const deadLetteredEffects = new Set(current.terminalEffectsDeadLetteredJson ?? []);
+      const runClaimedEffect = async <T>(effectName: TerminalEffectName, effect: () => Promise<T>) => {
+        if (completedEffects.has(effectName) || deadLetteredEffects.has(effectName)) return undefined;
         const renewClaim = async () => {
           if (!await renewHeartbeatRunTerminalEffectsClaim(db, current.id, claim.claimToken)) {
             throw new Error("Heartbeat terminal effects claim was lost");
@@ -1390,39 +1436,73 @@ export function heartbeatService(db: Db) {
           await renewal;
           if (renewalError) throw renewalError;
           await renewClaim();
+          if (!await checkpointHeartbeatRunTerminalEffect(db, current.id, claim.claimToken, effectName)) {
+            throw new Error(`Heartbeat terminal effect ${effectName} checkpoint was lost`);
+          }
+          completedEffects.add(effectName);
           return result;
+        } catch (error) {
+          const failure = await failHeartbeatRunTerminalEffect(
+            db,
+            current.id,
+            claim.claimToken,
+            effectName,
+            error,
+          );
+          if (!failure) throw error;
+          if (failure.deadLettered) {
+            deadLetteredEffects.add(effectName);
+            return undefined;
+          }
+          claimReleased = true;
+          throw error;
         } finally {
           clearInterval(renewalTimer);
         }
       };
-      await runClaimedEffect(() => publishAutomationRunOutputToChat(db, {
-        issueId: readNonEmptyString(runContext.issueId),
-        output: opts?.automationOutput ?? intent.automation?.output ?? current.error,
-        status: current.status,
-        transcript: opts?.automationTranscript ?? (intent.automation?.transcript as any[] | undefined) ?? [],
-      }));
+      if (intent.automation) {
+        await runClaimedEffect("automation_chat", () => publishAutomationRunOutputToChat(db, {
+          issueId: readNonEmptyString(runContext.issueId),
+          output: opts?.automationOutput ?? intent.automation?.output ?? current.error,
+          status: current.status,
+          transcript: opts?.automationTranscript ?? [],
+        }));
+      }
 
       const agent = await getAgent(current.agentId);
       const runtimeIntent = intent.runtime;
-      if (agent && runtimeIntent) {
-        await runClaimedEffect(() => updateRuntimeState(
-          agent,
-          current,
-          runtimeIntent.adapterResult as unknown as AgentRuntimeExecutionResult,
-          { legacySessionId: runtimeIntent.legacySessionId },
-          runtimeIntent.normalizedUsage as UsageTotals | null | undefined,
-          { ownsTerminal: runtimeIntent.ownsTerminal !== false },
-        ));
+      if (runtimeIntent) {
+        await runClaimedEffect("runtime_cost", () => {
+          if (!agent) throw new Error("Agent not found while replaying runtime terminal effect");
+          return updateRuntimeState(
+            agent,
+            current,
+            {
+              exitCode: null,
+              signal: null,
+              timedOut: false,
+              errorMessage: runtimeIntent.errorMessage,
+              provider: runtimeIntent.provider,
+              biller: runtimeIntent.biller,
+              model: runtimeIntent.model,
+              billingType: runtimeIntent.billingType as AgentRuntimeExecutionResult["billingType"],
+              costUsd: runtimeIntent.costUsd,
+            },
+            { legacySessionId: runtimeIntent.legacySessionId },
+            runtimeIntent.normalizedUsage as UsageTotals | null | undefined,
+            { ownsTerminal: runtimeIntent.ownsTerminal !== false },
+          );
+        });
       }
       const taskSessionIntent = intent.taskSession;
       if (taskSessionIntent?.operation === "clear") {
-        await runClaimedEffect(() => clearTaskSessions(taskSessionIntent.orgId, taskSessionIntent.agentId, {
+        await runClaimedEffect("task_session", () => clearTaskSessions(taskSessionIntent.orgId, taskSessionIntent.agentId, {
           taskKey: taskSessionIntent.taskKey,
           agentRuntimeType: taskSessionIntent.agentRuntimeType,
           sourceRunId: taskSessionIntent.lastRunId ?? current.id,
         }));
       } else if (taskSessionIntent?.operation === "upsert") {
-        await runClaimedEffect(() => upsertTaskSession({
+        await runClaimedEffect("task_session", () => upsertTaskSession({
           orgId: taskSessionIntent.orgId,
           agentId: taskSessionIntent.agentId,
           agentRuntimeType: taskSessionIntent.agentRuntimeType,
@@ -1434,11 +1514,18 @@ export function heartbeatService(db: Db) {
         }));
       }
 
-      if (intent.processLossRetry && agent) {
-        await runClaimedEffect(() => enqueueProcessLossRetry(current, agent, current.finishedAt ?? new Date()));
+      if (intent.processLossRetry) {
+        await runClaimedEffect("process_loss_retry", () => {
+          if (!agent) throw new Error("Agent not found while replaying process-loss retry");
+          return enqueueProcessLossRetry(current, agent, current.finishedAt ?? new Date());
+        });
       }
 
-      await runClaimedEffect(() => releaseIssueExecutionAndPromote(current, { startNext: false }));
+      await runClaimedEffect("issue_release", () => releaseIssueExecutionAndPromote(current, { startNext: false }));
+      const requiredEffects = terminalEffectNames(intent);
+      if (!requiredEffects.every((effect) => completedEffects.has(effect) || deadLetteredEffects.has(effect))) {
+        throw new Error("Heartbeat terminal effects did not converge");
+      }
       const completed = await completeHeartbeatRunTerminalEffects(db, current.id, claim.claimToken);
       if (!completed) return;
       if (completed.agent) {
@@ -1457,7 +1544,9 @@ export function heartbeatService(db: Db) {
       if (opts?.startNext !== false) await resumeQueuedRuns();
       return completed;
     } catch (error) {
-      await releaseHeartbeatRunTerminalEffectsClaim(db, current.id, claim.claimToken, error);
+      if (!claimReleased) {
+        await releaseHeartbeatRunTerminalEffectsClaim(db, current.id, claim.claimToken, error);
+      }
       throw error;
     }
   }
@@ -1536,7 +1625,7 @@ export function heartbeatService(db: Db) {
 
   const baseContext = {
     db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets,
-    getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, terminateRunProcessAndWait, acknowledgeRunProcessExit, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, reapInactiveRuns, reapTimedOutRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent,
+    getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, terminateRunProcessAndWait, acknowledgeRunProcessExit, renewRunExecutionLease, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, reapInactiveRuns, reapTimedOutRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent,
   } as any;
   const recoveryHandlers = createHeartbeatRecoveryHandlers({ ...baseContext, startNextQueuedRunForAgent });
   const wakeupHandlers = createHeartbeatWakeupHandlers({ ...baseContext, ...recoveryHandlers, startNextQueuedRunForAgent });

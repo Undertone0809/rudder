@@ -1,5 +1,5 @@
 {
-  "id": "490aa184-b989-4510-b8cf-e95304e340e3",
+  "id": "7024eca9-832b-4f43-8250-6ff490bfcd39",
   "prevId": "614a5962-bb0b-4178-9866-7350fe795a7a",
   "version": "7",
   "dialect": "postgresql",
@@ -67,6 +67,12 @@
         "details": {
           "name": "details",
           "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -165,6 +171,28 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "activity_log_org_idempotency_key_uq": {
+          "name": "activity_log_org_idempotency_key_uq",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "idempotency_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"activity_log\".\"idempotency_key\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -2504,6 +2532,34 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "agent_wakeup_requests_company_agent_idempotency_key_uq": {
+          "name": "agent_wakeup_requests_company_agent_idempotency_key_uq",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "agent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "idempotency_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"agent_wakeup_requests\".\"idempotency_key\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -7887,6 +7943,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "budget_evaluated_at": {
+          "name": "budget_evaluated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "billing_code": {
           "name": "billing_code",
           "type": "text",
@@ -8080,6 +8148,27 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "cost_events_company_idempotency_key_uq": {
+          "name": "cost_events_company_idempotency_key_uq",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "idempotency_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -10405,6 +10494,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -10473,6 +10568,28 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "heartbeat_run_events_run_idempotency_key_uq": {
+          "name": "heartbeat_run_events_run_idempotency_key_uq",
+          "columns": [
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "idempotency_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"heartbeat_run_events\".\"idempotency_key\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -10707,12 +10824,91 @@
           "primaryKey": false,
           "notNull": false
         },
+        "process_exited_at": {
+          "name": "process_exited_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "execution_owner_token": {
+          "name": "execution_owner_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "execution_lease_expires_at": {
+          "name": "execution_lease_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "terminal_effects_pending": {
           "name": "terminal_effects_pending",
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,
           "default": false
+        },
+        "terminal_effects_json": {
+          "name": "terminal_effects_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "terminal_effects_completed_json": {
+          "name": "terminal_effects_completed_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "terminal_effects_dead_lettered_json": {
+          "name": "terminal_effects_dead_lettered_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "terminal_effects_attempts_json": {
+          "name": "terminal_effects_attempts_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "terminal_effects_next_attempt_at": {
+          "name": "terminal_effects_next_attempt_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "terminal_effects_dead_lettered_at": {
+          "name": "terminal_effects_dead_lettered_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "terminal_effects_claim_token": {
+          "name": "terminal_effects_claim_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "terminal_effects_claimed_at": {
+          "name": "terminal_effects_claimed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "terminal_effects_attempt_count": {
+          "name": "terminal_effects_attempt_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "terminal_effects_last_error": {
+          "name": "terminal_effects_last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "retry_of_run_id": {
           "name": "retry_of_run_id",
@@ -10820,6 +11016,33 @@
             },
             {
               "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "heartbeat_runs_status_execution_lease_created_idx": {
+          "name": "heartbeat_runs_status_execution_lease_created_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "execution_lease_expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

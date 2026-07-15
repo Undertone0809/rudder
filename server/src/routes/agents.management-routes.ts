@@ -7,6 +7,8 @@ import {
   createAgentSchema,
   toAgentRun,
   toAgentRuns,
+  toHeartbeatRun,
+  toHeartbeatRuns,
   updateAgentInstructionsBundleSchema,
   updateAgentInstructionsPathSchema,
   updateAgentPermissionsSchema,
@@ -1097,7 +1099,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       details: { agentId: id },
     });
 
-    res.status(202).json(run);
+    res.status(202).json(toHeartbeatRun(run));
   });
 
   router.post("/agents/:id/heartbeat/invoke", async (req, res) => {
@@ -1146,7 +1148,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       details: { agentId: id },
     });
 
-    res.status(202).json(run);
+    res.status(202).json(toHeartbeatRun(run));
   });
 
   router.post("/agents/:id/claude-login", async (req, res) => {
@@ -1184,7 +1186,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const runs = await listRunsForRequest(req, orgId);
-    res.json(runs);
+    res.json(toHeartbeatRuns(runs));
   });
 
   router.get("/orgs/:orgId/agent-runs", async (req, res) => {
@@ -1279,7 +1281,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   router.get("/heartbeat-runs/:runId", async (req, res) => {
     const run = await getAuthorizedRun(req, res, "Heartbeat run not found");
     if (!run) return;
-    res.json(redactCurrentUserValue(run, await getCurrentUserRedactionOptions()));
+    res.json(redactCurrentUserValue(toHeartbeatRun(run), await getCurrentUserRedactionOptions()));
   });
 
   router.get("/agent-runs/:runId", async (req, res) => {
@@ -1304,7 +1306,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
 
   router.post("/heartbeat-runs/:runId/cancel", async (req, res) => {
     const run = await cancelRunForRequest(req, "Heartbeat run not found");
-    res.json(run);
+    res.json(run ? toHeartbeatRun(run) : run);
   });
 
   router.post("/agent-runs/:runId/cancel", async (req, res) => {
@@ -1344,7 +1346,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   router.post("/heartbeat-runs/:runId/retry", async (req, res) => {
     const run = await retryRunForRequest(req, res, "Heartbeat run not found");
     if (!run) return;
-    res.json(redactCurrentUserValue(run, await getCurrentUserRedactionOptions()));
+    res.json(redactCurrentUserValue(toHeartbeatRun(run), await getCurrentUserRedactionOptions()));
   });
 
   router.post("/agent-runs/:runId/retry", async (req, res) => {

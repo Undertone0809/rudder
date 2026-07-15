@@ -349,11 +349,11 @@ describe("heartbeat passive issue closeout", () => {
       requestedByActorId: "issue_review_followup",
     });
 
-    const activity = await db
+    const activity = await waitFor(() => db
       .select()
       .from(activityLog)
       .where(eq(activityLog.action, "issue.review_closeout_missing"))
-      .then((rows) => rows[0] ?? null);
+      .then((rows) => rows[0] ?? null));
     expect(activity?.details).toMatchObject({
       issueId,
       reviewerAgentId: agentId,
@@ -365,7 +365,7 @@ describe("heartbeat passive issue closeout", () => {
     });
   });
 
-  it("does not treat a skipped reviewer wake as durable terminal closeout", async () => {
+  it("dead-letters a permanently skipped reviewer wake without freezing admission", async () => {
     const { orgId, agentId, issueId } = await seedFixture({
       issueStatus: "in_review",
       reviewerAgent: true,
@@ -402,26 +402,38 @@ describe("heartbeat passive issue closeout", () => {
       .set({ executionRunId: runId, executionAgentNameKey: "builder", executionLockedAt: new Date() })
       .where(eq(issues.id, issueId));
 
-    for (const service of [heartbeatService(db), heartbeatService(db)]) {
-      await expect(service.reapOrphanedRuns()).rejects.toThrow(
-        "Reviewer follow-up could not be persisted as actionable work",
-      );
-    }
+    const [firstRecovery, secondRecovery] = await Promise.all([
+      heartbeatService(db).reapOrphanedRuns(),
+      heartbeatService(db).reapOrphanedRuns(),
+    ]);
+    expect(firstRecovery.reaped + secondRecovery.reaped).toBe(1);
 
     const replayed = await getRun(runId);
     expect(replayed).toMatchObject({
       status: "succeeded",
-      terminalEffectsPending: true,
-      terminalEffectsLastError: expect.stringContaining("actionable work"),
+      terminalEffectsPending: false,
+      terminalEffectsJson: null,
+      terminalEffectsClaimToken: null,
     });
     const issue = await getIssue(issueId);
-    expect(issue?.executionRunId).toBe(runId);
+    expect(issue?.executionRunId).toBeNull();
     const closeoutWakes = await db
       .select()
       .from(agentWakeupRequests)
       .where(eq(agentWakeupRequests.idempotencyKey, `issue_review_closeout_missing:${runId}`));
-    expect(closeoutWakes.length).toBeGreaterThan(1);
+    expect(closeoutWakes).toHaveLength(1);
     expect(closeoutWakes.every((wakeup) => wakeup.status === "skipped")).toBe(true);
+    const deadLetterEvents = await db
+      .select()
+      .from(heartbeatRunEvents)
+      .where(eq(heartbeatRunEvents.eventType, "terminal_effect.dead_lettered"));
+    expect(deadLetterEvents).toHaveLength(1);
+    expect(deadLetterEvents[0]?.payload).toMatchObject({ effect: "issue_release", attempt: 1 });
+    const operatorAttention = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "heartbeat.terminal_effect_dead_lettered"));
+    expect(operatorAttention).toHaveLength(1);
   });
 
   it("queues reviewer closeout when a blocked review run exits without a structured decision", async () => {

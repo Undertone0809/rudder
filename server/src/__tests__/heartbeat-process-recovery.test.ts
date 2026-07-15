@@ -1,4 +1,5 @@
 import {
+  activityLog,
   agentRuntimeState,
   agents,
   agentTaskSessions,
@@ -24,7 +25,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { runningProcesses } from "../agent-runtimes/index.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
 import { appendHeartbeatRunEvent } from "../services/run-events.ts";
-import { transitionHeartbeatRunToTerminal } from "../services/runtime-kernel/heartbeat.terminal.ts";
+import {
+  claimHeartbeatRunTerminalEffects,
+  failHeartbeatRunTerminalEffect,
+  transitionHeartbeatRunToTerminal,
+} from "../services/runtime-kernel/heartbeat.terminal.ts";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -146,9 +151,10 @@ describe("heartbeat orphaned process recovery", () => {
     for (let attempt = 0; attempt < 6; attempt += 1) {
       try {
         await db.delete(issues);
+        await db.delete(activityLog);
         await db.delete(heartbeatRunEvents);
-        await db.delete(heartbeatRuns);
         await db.delete(agentTaskSessions);
+        await db.delete(heartbeatRuns);
         await db.delete(agentRuntimeState);
         await db.delete(agentWakeupRequests);
         await db.delete(organizationSkills);
@@ -560,6 +566,173 @@ describe("heartbeat orphaned process recovery", () => {
     });
     expect(recovered?.terminalEffectsAttemptCount).toBe(1);
     expect(recoveryResults.reduce((total, result) => total + result.reaped, 0)).toBe(1);
+  });
+
+  it("backs off transient terminal effects and dead-letters the fifth attempt", async () => {
+    const { runId } = await seedRunFixture({ processPid: null, includeIssue: false });
+    await transitionHeartbeatRunToTerminal(db, {
+      runId,
+      status: "failed",
+      patch: { finishedAt: new Date() },
+      processExitedAt: new Date(),
+      terminalEffectsIntent: { version: 2, runtime: { legacySessionId: null, provider: "test" } },
+    });
+    let now = new Date("2026-03-19T01:00:00.000Z");
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      const claim = await claimHeartbeatRunTerminalEffects(db, runId, { now });
+      expect(claim).not.toBeNull();
+      const failure = await failHeartbeatRunTerminalEffect(
+        db,
+        runId,
+        claim!.claimToken,
+        "runtime_cost",
+        new Error("transient ledger outage"),
+        { now },
+      );
+      expect(failure?.attempt).toBe(attempt);
+      expect(failure?.deadLettered).toBe(attempt === 5);
+      if (attempt < 5) {
+        expect(failure?.nextAttemptAt).not.toBeNull();
+        const beforeDue = new Date(failure!.nextAttemptAt!.getTime() - 1);
+        await expect(claimHeartbeatRunTerminalEffects(db, runId, { now: beforeDue })).resolves.toBeNull();
+        now = failure!.nextAttemptAt!;
+      }
+    }
+    const events = await db
+      .select()
+      .from(heartbeatRunEvents)
+      .where(eq(heartbeatRunEvents.eventType, "terminal_effect.dead_lettered"));
+    expect(events).toHaveLength(1);
+  });
+
+  it("never touches a persisted pid after process exit was acknowledged", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+    const { runId } = await seedRunFixture({
+      runStatus: "failed",
+      processPid: child.pid ?? null,
+      includeIssue: false,
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({
+        processExitedAt: new Date(),
+        terminalEffectsPending: true,
+        terminalEffectsJson: { version: 2 },
+      })
+      .where(eq(heartbeatRuns.id, runId));
+
+    await heartbeatService(db).reapOrphanedRuns();
+
+    expect(() => process.kill(child.pid ?? 0, 0)).not.toThrow();
+    const current = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0]);
+    expect(current?.terminalEffectsPending).toBe(false);
+    expect(current?.processExitedAt).not.toBeNull();
+  });
+
+  it("excludes post-cutoff admissions from startup orphan recovery", async () => {
+    const startupCutoff = new Date("2026-03-19T00:00:00.000Z");
+    const admittedAt = new Date("2026-03-19T00:00:01.000Z");
+    const checkedAt = new Date("2026-03-19T00:10:00.000Z");
+    const { runId } = await seedRunFixture({
+      processPid: null,
+      includeIssue: false,
+      startedAt: admittedAt,
+      updatedAt: admittedAt,
+    });
+
+    const result = await heartbeatService(db).reapOrphanedRuns({
+      now: checkedAt,
+      recoveryCutoff: startupCutoff,
+    });
+
+    expect(result).toEqual({ reaped: 0, runIds: [] });
+    const current = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0]);
+    expect(current?.status).toBe("running");
+  });
+
+  it("persists only bounded replay intent and clears it after completion", async () => {
+    const { orgId, agentId, runId } = await seedRunFixture({ processPid: null, includeIssue: false });
+    const oversizedMarker = `unbounded-marker-${"x".repeat(100_000)}`;
+    const terminal = await transitionHeartbeatRunToTerminal(db, {
+      runId,
+      status: "succeeded",
+      patch: { finishedAt: new Date() },
+      processExitedAt: new Date(),
+      terminalEffectsIntent: {
+        version: 1,
+        automation: { output: "done", transcript: [{ text: oversizedMarker }] },
+        runtime: {
+          adapterResult: { resultJson: { raw: oversizedMarker }, provider: "test", model: "model" },
+          legacySessionId: null,
+        },
+        taskSession: {
+          operation: "upsert",
+          orgId,
+          agentId,
+          agentRuntimeType: "codex_local",
+          taskKey: "bounded-intent",
+          sessionParamsJson: { raw: oversizedMarker },
+          sessionDisplayId: "session-1",
+          lastRunId: runId,
+        },
+      },
+    });
+    const persisted = JSON.stringify(terminal?.terminalEffectsJson);
+    expect(Buffer.byteLength(persisted, "utf8")).toBeLessThan(80 * 1024);
+    expect(persisted).not.toContain("unbounded-marker");
+    expect(terminal?.terminalEffectsJson).toMatchObject({
+      version: 2,
+      automation: { output: "done" },
+      runtime: { provider: "test", model: "model" },
+      taskSession: { sessionParamsJson: null },
+    });
+
+    await heartbeatService(db).reapOrphanedRuns();
+    const completed = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0]);
+    expect(completed?.terminalEffectsPending).toBe(false);
+    expect(completed?.terminalEffectsJson).toBeNull();
+  });
+
+  it("keeps issue release audit exactly once when replay resumes after a lost checkpoint", async () => {
+    const { runId, issueId } = await seedRunFixture({ processPid: null });
+    await transitionHeartbeatRunToTerminal(db, {
+      runId,
+      status: "failed",
+      patch: { finishedAt: new Date(), error: "adapter failed" },
+      processExitedAt: new Date(),
+      terminalEffectsIntent: { version: 2 },
+    });
+
+    const heartbeat = heartbeatService(db);
+    await heartbeat.reapOrphanedRuns();
+
+    // Model a crash after the release transaction committed but before the
+    // terminal-effect checkpoint became durable.
+    await db
+      .update(heartbeatRuns)
+      .set({
+        terminalEffectsPending: true,
+        terminalEffectsJson: { version: 2 },
+        terminalEffectsClaimToken: null,
+        terminalEffectsClaimedAt: null,
+      })
+      .where(eq(heartbeatRuns.id, runId));
+    await heartbeat.reapOrphanedRuns();
+
+    const issue = await db.select().from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0]);
+    expect(issue?.executionRunId).toBeNull();
+    const releaseEvents = await db
+      .select()
+      .from(heartbeatRunEvents)
+      .where(eq(heartbeatRunEvents.eventType, "issue.execution_released"));
+    expect(releaseEvents).toHaveLength(1);
+    const releaseActivities = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "issue.execution_released"));
+    expect(releaseActivities).toHaveLength(1);
   });
 
   it("does not overwrite a protected agent status while replaying terminal effects", async () => {

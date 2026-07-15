@@ -1,8 +1,9 @@
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
 import { chatMessages, heartbeatRuns } from "@rudderhq/db";
-import type { ChatConversation, HeartbeatRun } from "@rudderhq/shared";
+import { toHeartbeatRun, type ChatConversation, type HeartbeatRun } from "@rudderhq/shared";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import type { AgentRuntimeInvocationMeta } from "../agent-runtimes/index.js";
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import { publishLiveEvent } from "./live-events.js";
@@ -10,12 +11,34 @@ import { isPostgresError } from "./postgres-errors.js";
 import { appendHeartbeatRunEvent } from "./run-events.js";
 import { buildHeartbeatAdapterInvokePayload } from "./runtime-kernel/heartbeat.core.js";
 import {
+  claimExpiredHeartbeatRunExecution,
   reconcileHeartbeatRunEvidence,
+  renewHeartbeatRunExecutionLease,
+  RUN_EXECUTION_LEASE_MS,
+  RUN_EXECUTION_LEASE_RENEW_INTERVAL_MS,
   transitionHeartbeatRunToTerminal,
 } from "./runtime-kernel/heartbeat.terminal.js";
 
 const MAX_EVENT_TEXT_CHARS = 2_000;
 const ACTIVE_CHAT_RUN_UNIQUE_INDEX = "heartbeat_runs_active_chat_conversation_uq";
+const ownedChatRuns = new Map<string, {
+  ownerToken: string;
+  renewalTimer: ReturnType<typeof setInterval> | null;
+}>();
+
+function stopRenewingChatRun(runId: string, ownerToken: string) {
+  const owned = ownedChatRuns.get(runId);
+  if (!owned || owned.ownerToken !== ownerToken || !owned.renewalTimer) return;
+  clearInterval(owned.renewalTimer);
+  owned.renewalTimer = null;
+}
+
+function stopOwningChatRun(runId: string, ownerToken?: string | null) {
+  const owned = ownedChatRuns.get(runId);
+  if (!owned || (ownerToken && owned.ownerToken !== ownerToken)) return;
+  if (owned.renewalTimer) clearInterval(owned.renewalTimer);
+  ownedChatRuns.delete(runId);
+}
 
 type RuntimeSkillSummary = Array<{
   key: string;
@@ -42,13 +65,13 @@ function transcriptEventPayload(entry: TranscriptEntry): Record<string, unknown>
 }
 
 function serializeRun(row: typeof heartbeatRuns.$inferSelect): HeartbeatRun {
-  return {
+  return toHeartbeatRun({
     ...row,
     invocationSource: row.invocationSource as HeartbeatRun["invocationSource"],
     triggerDetail: row.triggerDetail as HeartbeatRun["triggerDetail"],
     status: row.status as HeartbeatRun["status"],
     contextSnapshot: row.contextSnapshot as HeartbeatRun["contextSnapshot"],
-  };
+  });
 }
 
 function isActiveChatRunConflict(error: unknown) {
@@ -66,6 +89,10 @@ export function chatAgentRunService(db: Db) {
       payload?: Record<string, unknown>;
     },
   ) {
+    const owned = ownedChatRuns.get(run.id);
+    if (owned) {
+      await renewHeartbeatRunExecutionLease(db, run.id, owned.ownerToken);
+    }
     const message = boundedText(event.message, 500);
     const inserted = await appendHeartbeatRunEvent(db, {
       orgId: run.orgId,
@@ -107,6 +134,7 @@ export function chatAgentRunService(db: Db) {
     sourceMetadata?: Record<string, unknown> | null;
   }) {
     const now = new Date();
+    const executionOwnerToken = randomUUID();
     const issueId = input.conversation.primaryIssueId ?? input.linkedIssueIds[0] ?? null;
     const linkedIssueIds = [...new Set([issueId, ...input.linkedIssueIds].filter((value): value is string => Boolean(value)))];
     const contextSnapshot = {
@@ -136,6 +164,8 @@ export function chatAgentRunService(db: Db) {
         triggerDetail: input.triggerDetail,
         status: "running",
         startedAt: now,
+        executionOwnerToken,
+        executionLeaseExpiresAt: new Date(now.getTime() + RUN_EXECUTION_LEASE_MS),
         chatConversationId: input.conversation.id,
         contextSnapshot,
       })
@@ -148,6 +178,16 @@ export function chatAgentRunService(db: Db) {
         throw error;
       });
     if (!run) throw new Error("Failed to create chat agent run");
+
+    const renewalTimer = setInterval(() => {
+      void renewHeartbeatRunExecutionLease(db, run.id, executionOwnerToken).then((renewed) => {
+        // Keep the original token until finalization so a late completion stays
+        // fenced after recovery has claimed the run with a replacement owner.
+        if (!renewed) stopRenewingChatRun(run.id, executionOwnerToken);
+      }).catch(() => undefined);
+    }, RUN_EXECUTION_LEASE_RENEW_INTERVAL_MS);
+    renewalTimer.unref?.();
+    ownedChatRuns.set(run.id, { ownerToken: executionOwnerToken, renewalTimer });
 
     publishLiveEvent({
       orgId: run.orgId,
@@ -258,6 +298,7 @@ export function chatAgentRunService(db: Db) {
       resultSummaryJson: summarizeHeartbeatRunResultJson(input.resultJson),
       usageJson: input.usageJson ?? null,
     };
+    const owned = ownedChatRuns.get(runId);
     const updated = await transitionHeartbeatRunToTerminal(db, {
       runId,
       status: input.status,
@@ -270,7 +311,9 @@ export function chatAgentRunService(db: Db) {
       expectedStatuses: ["queued", "running"],
       terminalEffectsPending: false,
       processExitedAt: new Date(),
+      expectedExecutionOwnerToken: owned?.ownerToken,
     });
+    stopOwningChatRun(runId, owned?.ownerToken);
     if (!updated) {
       await reconcileHeartbeatRunEvidence(db, runId, evidence);
       return db
@@ -307,9 +350,13 @@ export function chatAgentRunService(db: Db) {
     olderThanMs?: number;
     error?: string;
     errorCode?: string;
+    now?: Date;
+    recoveryCutoff?: Date;
   } = {}) {
     const olderThanMs = input.olderThanMs ?? 30 * 60_000;
-    const cutoff = new Date(Date.now() - olderThanMs);
+    const now = input.now ?? new Date();
+    const cutoff = new Date(now.getTime() - olderThanMs);
+    const recoveryCutoff = input.recoveryCutoff ?? now;
     const conditions = [
       sql`${heartbeatRuns.chatConversationId} is not null`,
       inArray(heartbeatRuns.status, ["queued", "running"]),
@@ -323,14 +370,29 @@ export function chatAgentRunService(db: Db) {
       .from(heartbeatRuns)
       .where(and(...conditions))
       .orderBy(desc(heartbeatRuns.updatedAt));
+    let finalized = 0;
     for (const run of staleRuns) {
-      await finalizeRun(run.id, {
+      const claim = await claimExpiredHeartbeatRunExecution(db, run.id, { now, recoveryCutoff });
+      if (!claim) continue;
+      const terminal = await transitionHeartbeatRunToTerminal(db, {
+        runId: run.id,
         status: "timed_out",
-        error: input.error ?? "Chat run was left active without an in-memory generation",
-        errorCode: input.errorCode ?? "chat_run_stale",
+        patch: {
+          finishedAt: now,
+          error: input.error ?? "Chat run execution lease expired",
+          errorCode: input.errorCode ?? "chat_run_stale",
+        },
+        expectedStatuses: ["queued", "running"],
+        terminalEffectsPending: false,
+        processExitedAt: now,
+        expectedExecutionOwnerToken: claim.ownerToken,
       });
+      if (terminal) {
+        finalized += 1;
+        stopOwningChatRun(run.id);
+      }
     }
-    return staleRuns.length;
+    return finalized;
   }
 
   return {

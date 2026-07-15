@@ -142,6 +142,46 @@ describe("agent run retry route", () => {
     );
   });
 
+  it("strips internal terminal ownership fields from heartbeat and agent run details", async () => {
+    const runId = "609695f1-f90a-4b17-be61-4f0c6fe37c42";
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: runId,
+      orgId: "organization-1",
+      agentId: "agent-1",
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      status: "failed",
+      contextSnapshot: {},
+      executionOwnerToken: "owner-secret",
+      executionLeaseExpiresAt: new Date(),
+      processExitedAt: new Date(),
+      terminalEffectsPending: true,
+      terminalEffectsJson: { transcript: "large-secret" },
+      terminalEffectsClaimToken: "claim-secret",
+      terminalEffectsLastError: "internal-error",
+    });
+    const app = createManagementApp({}, {
+      type: "board",
+      userId: "board-user",
+      orgIds: ["organization-1"],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+
+    for (const path of [`/api/heartbeat-runs/${runId}`, `/api/agent-runs/${runId}`]) {
+      const res = await request(app).get(path);
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(res.body.id).toBe(runId);
+      expect(res.body).not.toHaveProperty("executionOwnerToken");
+      expect(res.body).not.toHaveProperty("executionLeaseExpiresAt");
+      expect(res.body).not.toHaveProperty("processExitedAt");
+      expect(res.body).not.toHaveProperty("terminalEffectsPending");
+      expect(res.body).not.toHaveProperty("terminalEffectsJson");
+      expect(res.body).not.toHaveProperty("terminalEffectsClaimToken");
+      expect(res.body).not.toHaveProperty("terminalEffectsLastError");
+    }
+  });
+
   it("lists normalized agent runs through the agent-runs alias", async () => {
     mockHeartbeatService.list.mockResolvedValue([
       {

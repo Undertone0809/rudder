@@ -1,5 +1,6 @@
 import { execute as executeCodexLocal } from "@rudderhq/agent-runtime-codex-local/server";
 import {
+  activityLog,
   agentRuntimeState,
   agentTaskSessions,
   agentWakeupRequests,
@@ -266,6 +267,7 @@ describe("heartbeat managed workspace preflight", () => {
     await db.delete(costMonthlySpendRollups);
     await db.delete(chatMessages);
     await db.delete(chatConversations);
+    await db.delete(activityLog);
     await db.delete(heartbeatRunEvents);
     await db.delete(heartbeatRuns);
     await db.delete(agentRuntimeState);

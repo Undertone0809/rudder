@@ -1,9 +1,22 @@
 import type { Db } from "@rudderhq/db";
-import { agents, agentWakeupRequests, heartbeatRunEvents, heartbeatRuns } from "@rudderhq/db";
-import { and, desc, eq, inArray, isNotNull, isNull, lt, notInArray, or, sql } from "drizzle-orm";
+import { activityLog, agents, agentWakeupRequests, heartbeatRunEvents, heartbeatRuns, issues } from "@rudderhq/db";
+import { and, desc, eq, inArray, isNotNull, isNull, lt, lte, notInArray, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 const TERMINAL_WAKEUP_STATUSES = ["completed", "failed", "cancelled", "timed_out", "skipped", "coalesced"];
+export const RUN_EXECUTION_LEASE_MS = 5 * 60_000;
+export const RUN_EXECUTION_LEASE_RENEW_INTERVAL_MS = 60_000;
+export const TERMINAL_EFFECT_MAX_ATTEMPTS = 5;
+const TERMINAL_EFFECT_BACKOFF_MS = [5_000, 30_000, 2 * 60_000, 10 * 60_000] as const;
+const MAX_TERMINAL_OUTPUT_CHARS = 32_000;
+const MAX_TERMINAL_SESSION_PARAMS_BYTES = 64 * 1024;
+
+export type TerminalEffectName =
+  | "automation_chat"
+  | "runtime_cost"
+  | "task_session"
+  | "process_loss_retry"
+  | "issue_release";
 
 export type RunActivityWatermark = {
   updatedAt: Date;
@@ -11,13 +24,21 @@ export type RunActivityWatermark = {
 };
 
 export type TerminalEffectIntent = {
-  version: 1;
+  version: 1 | 2;
   automation?: {
     output?: string | null;
+    /** Legacy input only. It is intentionally not persisted in v2. */
     transcript?: unknown[];
   };
   runtime?: {
-    adapterResult: Record<string, unknown>;
+    /** Legacy input only. It is normalized to bounded scalar fields. */
+    adapterResult?: Record<string, unknown>;
+    errorMessage?: string | null;
+    provider?: string | null;
+    biller?: string | null;
+    model?: string | null;
+    billingType?: string | null;
+    costUsd?: number | null;
     legacySessionId: string | null;
     normalizedUsage?: Record<string, number> | null;
     ownsTerminal?: boolean;
@@ -36,6 +57,75 @@ export type TerminalEffectIntent = {
   processLossRetry?: boolean;
 };
 
+function boundedString(value: unknown, maxChars = MAX_TERMINAL_OUTPUT_CHARS) {
+  if (typeof value !== "string") return null;
+  return value.length <= maxChars ? value : value.slice(0, maxChars);
+}
+
+function boundedRecord(value: unknown, maxBytes: number): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  try {
+    const serialized = JSON.stringify(value);
+    if (Buffer.byteLength(serialized, "utf8") > maxBytes) return null;
+    return JSON.parse(serialized) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+export function normalizeTerminalEffectIntent(intent: TerminalEffectIntent | null | undefined): TerminalEffectIntent {
+  const runtimeInput = intent?.runtime;
+  const adapterResult = runtimeInput?.adapterResult
+    && typeof runtimeInput.adapterResult === "object"
+    && !Array.isArray(runtimeInput.adapterResult)
+    ? runtimeInput.adapterResult
+    : {};
+  const normalizedUsage = boundedRecord(runtimeInput?.normalizedUsage, 8 * 1024) as Record<string, number> | null;
+  const taskSession = intent?.taskSession
+    ? {
+        ...intent.taskSession,
+        sessionParamsJson: boundedRecord(intent.taskSession.sessionParamsJson, MAX_TERMINAL_SESSION_PARAMS_BYTES),
+        sessionDisplayId: boundedString(intent.taskSession.sessionDisplayId, 4_000),
+        lastError: boundedString(intent.taskSession.lastError, 4_000),
+      }
+    : undefined;
+  return {
+    version: 2,
+    ...(intent?.automation
+      ? { automation: { output: boundedString(intent.automation.output) } }
+      : {}),
+    ...(runtimeInput
+      ? {
+          runtime: {
+            errorMessage: boundedString(runtimeInput.errorMessage ?? adapterResult.errorMessage, 4_000),
+            provider: boundedString(runtimeInput.provider ?? adapterResult.provider, 500),
+            biller: boundedString(runtimeInput.biller ?? adapterResult.biller, 500),
+            model: boundedString(runtimeInput.model ?? adapterResult.model, 500),
+            billingType: boundedString(runtimeInput.billingType ?? adapterResult.billingType, 100),
+            costUsd: typeof (runtimeInput.costUsd ?? adapterResult.costUsd) === "number"
+              ? Number(runtimeInput.costUsd ?? adapterResult.costUsd)
+              : null,
+            legacySessionId: boundedString(runtimeInput.legacySessionId, 4_000),
+            normalizedUsage,
+            ownsTerminal: runtimeInput.ownsTerminal !== false,
+          },
+        }
+      : {}),
+    ...(taskSession ? { taskSession } : {}),
+    ...(intent?.processLossRetry ? { processLossRetry: true } : {}),
+  };
+}
+
+export function terminalEffectNames(intent: TerminalEffectIntent): TerminalEffectName[] {
+  return [
+    ...(intent.automation ? ["automation_chat" as const] : []),
+    ...(intent.runtime ? ["runtime_cost" as const] : []),
+    ...(intent.taskSession ? ["task_session" as const] : []),
+    ...(intent.processLossRetry ? ["process_loss_retry" as const] : []),
+    "issue_release",
+  ];
+}
+
 export async function transitionHeartbeatRunToTerminal(
   db: Db,
   input: {
@@ -47,6 +137,7 @@ export async function transitionHeartbeatRunToTerminal(
     terminalEffectsPending?: boolean;
     terminalEffectsIntent?: TerminalEffectIntent | null;
     processExitedAt?: Date | null;
+    expectedExecutionOwnerToken?: string | null;
   },
 ) {
   return db.transaction(async (tx) => {
@@ -54,7 +145,10 @@ export async function transitionHeartbeatRunToTerminal(
     // order between the activity watermark and the terminal transition.
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${input.runId}))`);
     const owner = await tx
-      .select({ agentId: heartbeatRuns.agentId })
+      .select({
+        agentId: heartbeatRuns.agentId,
+        processExitedAt: heartbeatRuns.processExitedAt,
+      })
       .from(heartbeatRuns)
       .where(eq(heartbeatRuns.id, input.runId))
       .then((rows) => rows[0] ?? null);
@@ -73,16 +167,29 @@ export async function transitionHeartbeatRunToTerminal(
         where ${heartbeatRunEvents.runId} = ${heartbeatRuns.id}
       ) = ${input.activityWatermark.eventCount}`);
     }
+    if (input.expectedExecutionOwnerToken) {
+      conditions.push(eq(heartbeatRuns.executionOwnerToken, input.expectedExecutionOwnerToken));
+    }
 
     const terminalEffectsPending = input.terminalEffectsPending ?? true;
+    const terminalEffectsIntent = normalizeTerminalEffectIntent(input.terminalEffectsIntent);
     const updated = await tx
       .update(heartbeatRuns)
       .set({
         ...input.patch,
         status: input.status,
-        processExitedAt: input.processExitedAt,
+        ...(input.processExitedAt === undefined
+          ? {}
+          : { processExitedAt: owner.processExitedAt ?? input.processExitedAt }),
+        executionOwnerToken: null,
+        executionLeaseExpiresAt: null,
         terminalEffectsPending,
-        terminalEffectsJson: input.terminalEffectsIntent ?? null,
+        terminalEffectsJson: terminalEffectsPending ? terminalEffectsIntent : null,
+        terminalEffectsCompletedJson: null,
+        terminalEffectsDeadLetteredJson: null,
+        terminalEffectsAttemptsJson: null,
+        terminalEffectsNextAttemptAt: null,
+        terminalEffectsDeadLetteredAt: null,
         terminalEffectsClaimToken: null,
         terminalEffectsClaimedAt: null,
         terminalEffectsLastError: null,
@@ -117,9 +224,60 @@ export async function markHeartbeatRunProcessExited(db: Db, runId: string, exite
     .where(and(
       eq(heartbeatRuns.id, runId),
       eq(heartbeatRuns.terminalEffectsPending, true),
+      isNull(heartbeatRuns.processExitedAt),
     ))
     .returning()
     .then((rows) => rows[0] ?? null);
+}
+
+export async function renewHeartbeatRunExecutionLease(
+  db: Db,
+  runId: string,
+  ownerToken: string,
+  now = new Date(),
+) {
+  return db
+    .update(heartbeatRuns)
+    .set({
+      executionLeaseExpiresAt: new Date(now.getTime() + RUN_EXECUTION_LEASE_MS),
+      updatedAt: now,
+    })
+    .where(and(
+      eq(heartbeatRuns.id, runId),
+      eq(heartbeatRuns.status, "running"),
+      eq(heartbeatRuns.executionOwnerToken, ownerToken),
+    ))
+    .returning({ id: heartbeatRuns.id })
+    .then((rows) => rows[0] ?? null);
+}
+
+export async function claimExpiredHeartbeatRunExecution(
+  db: Db,
+  runId: string,
+  opts?: { now?: Date; recoveryCutoff?: Date },
+) {
+  const now = opts?.now ?? new Date();
+  const recoveryCutoff = opts?.recoveryCutoff ?? now;
+  const ownerToken = randomUUID();
+  const run = await db
+    .update(heartbeatRuns)
+    .set({
+      executionOwnerToken: ownerToken,
+      executionLeaseExpiresAt: new Date(now.getTime() + RUN_EXECUTION_LEASE_MS),
+      updatedAt: now,
+    })
+    .where(and(
+      eq(heartbeatRuns.id, runId),
+      eq(heartbeatRuns.status, "running"),
+      lt(heartbeatRuns.createdAt, recoveryCutoff),
+      or(
+        isNull(heartbeatRuns.executionLeaseExpiresAt),
+        lte(heartbeatRuns.executionLeaseExpiresAt, now),
+      ),
+    ))
+    .returning()
+    .then((rows) => rows[0] ?? null);
+  return run ? { run, ownerToken } : null;
 }
 
 export async function claimHeartbeatRunTerminalEffects(
@@ -144,6 +302,10 @@ export async function claimHeartbeatRunTerminalEffects(
       eq(heartbeatRuns.terminalEffectsPending, true),
       isNotNull(heartbeatRuns.processExitedAt),
       or(
+        isNull(heartbeatRuns.terminalEffectsNextAttemptAt),
+        lte(heartbeatRuns.terminalEffectsNextAttemptAt, now),
+      ),
+      or(
         isNull(heartbeatRuns.terminalEffectsClaimToken),
         isNull(heartbeatRuns.terminalEffectsClaimedAt),
         lt(heartbeatRuns.terminalEffectsClaimedAt, leaseCutoff),
@@ -167,6 +329,150 @@ export async function renewHeartbeatRunTerminalEffectsClaim(db: Db, runId: strin
     .then((rows) => rows[0] ?? null);
 }
 
+export async function checkpointHeartbeatRunTerminalEffect(
+  db: Db,
+  runId: string,
+  claimToken: string,
+  effect: TerminalEffectName,
+) {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select id from heartbeat_runs where id = ${runId} for update`);
+    const current = await tx
+      .select({ completed: heartbeatRuns.terminalEffectsCompletedJson })
+      .from(heartbeatRuns)
+      .where(and(
+        eq(heartbeatRuns.id, runId),
+        eq(heartbeatRuns.terminalEffectsPending, true),
+        eq(heartbeatRuns.terminalEffectsClaimToken, claimToken),
+      ))
+      .then((rows) => rows[0] ?? null);
+    if (!current) return null;
+    const completed = [...new Set([...(current.completed ?? []), effect])];
+    return tx
+      .update(heartbeatRuns)
+      .set({
+        terminalEffectsCompletedJson: completed,
+        terminalEffectsNextAttemptAt: null,
+        terminalEffectsLastError: null,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(heartbeatRuns.id, runId),
+        eq(heartbeatRuns.terminalEffectsClaimToken, claimToken),
+      ))
+      .returning()
+      .then((rows) => rows[0] ?? null);
+  });
+}
+
+export async function failHeartbeatRunTerminalEffect(
+  db: Db,
+  runId: string,
+  claimToken: string,
+  effect: TerminalEffectName,
+  error: unknown,
+  opts?: { now?: Date },
+) {
+  const now = opts?.now ?? new Date();
+  const message = (error instanceof Error ? error.message : String(error)).slice(0, 4_000);
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${runId}))`);
+    const current = await tx
+      .select()
+      .from(heartbeatRuns)
+      .where(and(
+        eq(heartbeatRuns.id, runId),
+        eq(heartbeatRuns.terminalEffectsPending, true),
+        eq(heartbeatRuns.terminalEffectsClaimToken, claimToken),
+      ))
+      .then((rows) => rows[0] ?? null);
+    if (!current) return null;
+
+    const attempts = { ...(current.terminalEffectsAttemptsJson ?? {}) };
+    const attempt = (attempts[effect] ?? 0) + 1;
+    attempts[effect] = attempt;
+    const permanentFailure = message.includes("could not be persisted as actionable work");
+    const deadLettered = permanentFailure || attempt >= TERMINAL_EFFECT_MAX_ATTEMPTS;
+    const nextAttemptAt = deadLettered
+      ? null
+      : new Date(now.getTime() + TERMINAL_EFFECT_BACKOFF_MS[Math.min(attempt - 1, TERMINAL_EFFECT_BACKOFF_MS.length - 1)]);
+    const deadLetteredEffects = deadLettered
+      ? [...new Set([...(current.terminalEffectsDeadLetteredJson ?? []), effect])]
+      : current.terminalEffectsDeadLetteredJson;
+
+    await tx
+      .update(heartbeatRuns)
+      .set({
+        terminalEffectsAttemptsJson: attempts,
+        terminalEffectsDeadLetteredJson: deadLetteredEffects,
+        terminalEffectsDeadLetteredAt: deadLettered ? now : current.terminalEffectsDeadLetteredAt,
+        terminalEffectsNextAttemptAt: nextAttemptAt,
+        terminalEffectsLastError: message,
+        terminalEffectsClaimToken: deadLettered ? claimToken : null,
+        terminalEffectsClaimedAt: deadLettered ? now : null,
+        updatedAt: now,
+      })
+      .where(and(
+        eq(heartbeatRuns.id, runId),
+        eq(heartbeatRuns.terminalEffectsClaimToken, claimToken),
+      ));
+
+    if (deadLettered) {
+      if (effect === "issue_release") {
+        await tx
+          .update(issues)
+          .set({
+            executionRunId: null,
+            executionAgentNameKey: null,
+            executionLockedAt: null,
+            updatedAt: now,
+          })
+          .where(and(
+            eq(issues.orgId, current.orgId),
+            eq(issues.executionRunId, runId),
+          ));
+      }
+      const idempotencyKey = `terminal-effect-dead-letter:${effect}`;
+      const [currentSeq] = await tx
+        .select({ maxSeq: sql<number | null>`max(${heartbeatRunEvents.seq})` })
+        .from(heartbeatRunEvents)
+        .where(eq(heartbeatRunEvents.runId, runId));
+      await tx
+        .insert(heartbeatRunEvents)
+        .values({
+          orgId: current.orgId,
+          runId,
+          agentId: current.agentId,
+          seq: Number(currentSeq?.maxSeq ?? 0) + 1,
+          eventType: "terminal_effect.dead_lettered",
+          stream: "system",
+          level: "error",
+          message: `Terminal effect ${effect} needs operator attention after ${attempt} attempts`,
+          payload: { effect, attempt, error: message },
+          idempotencyKey,
+        })
+        .onConflictDoNothing();
+      await tx
+        .insert(activityLog)
+        .values({
+          orgId: current.orgId,
+          actorType: "system",
+          actorId: "terminal_effects",
+          action: "heartbeat.terminal_effect_dead_lettered",
+          entityType: "heartbeat_run",
+          entityId: runId,
+          agentId: current.agentId,
+          runId,
+          details: { effect, attempt, error: message },
+          idempotencyKey: `${runId}:${idempotencyKey}`,
+        })
+        .onConflictDoNothing();
+    }
+
+    return { deadLettered, attempt, nextAttemptAt };
+  });
+}
+
 export async function completeHeartbeatRunTerminalEffects(db: Db, runId: string, claimToken: string) {
   return db.transaction(async (tx) => {
     const current = await tx
@@ -186,6 +492,11 @@ export async function completeHeartbeatRunTerminalEffects(db: Db, runId: string,
       .update(heartbeatRuns)
       .set({
         terminalEffectsPending: false,
+        terminalEffectsJson: null,
+        terminalEffectsCompletedJson: null,
+        terminalEffectsDeadLetteredJson: null,
+        terminalEffectsAttemptsJson: null,
+        terminalEffectsNextAttemptAt: null,
         terminalEffectsClaimToken: null,
         terminalEffectsClaimedAt: null,
         terminalEffectsLastError: null,
@@ -348,14 +659,15 @@ export async function reconcileHeartbeatRunTerminalEffectsIntent(
       .where(eq(heartbeatRuns.id, runId))
       .then((rows) => rows[0] ?? null);
     if (!current?.terminalEffectsPending) return current;
-    const existing = (current.terminalEffectsJson ?? {}) as TerminalEffectIntent;
+    const existing = normalizeTerminalEffectIntent((current.terminalEffectsJson ?? {}) as TerminalEffectIntent);
+    const incoming = normalizeTerminalEffectIntent(intent);
     const merged: TerminalEffectIntent = {
       ...existing,
-      version: 1,
-      automation: existing.automation ?? intent.automation,
-      runtime: existing.runtime ?? intent.runtime,
-      taskSession: existing.taskSession ?? intent.taskSession,
-      processLossRetry: existing.processLossRetry ?? intent.processLossRetry,
+      version: 2,
+      automation: existing.automation ?? incoming.automation,
+      runtime: existing.runtime ?? incoming.runtime,
+      taskSession: existing.taskSession ?? incoming.taskSession,
+      processLossRetry: existing.processLossRetry ?? incoming.processLossRetry,
     };
     return tx
       .update(heartbeatRuns)

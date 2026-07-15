@@ -66,25 +66,68 @@ function resolveTargetId(
 }
 
 export function toAgentRun(run: HeartbeatRun): AgentRun {
-  const context = asRecord(run.contextSnapshot);
-  const targetType = resolveTargetType(run, context);
-  const conversationId = run.chatConversationId ?? stringValue(context.conversationId);
+  const publicRun = toHeartbeatRun(run);
+  const context = asRecord(publicRun.contextSnapshot);
+  const targetType = resolveTargetType(publicRun, context);
+  const conversationId = publicRun.chatConversationId ?? stringValue(context.conversationId);
   const messageId = stringValue(context.messageId)
     ?? stringValue(context.assistantMessageId)
     ?? stringValue(context.userMessageId);
 
   return {
-    ...run,
-    scene: resolveScene(run, context),
-    triggerKind: stringValue(context.triggerKind) ?? run.triggerDetail ?? run.invocationSource,
+    ...publicRun,
+    scene: resolveScene(publicRun, context),
+    triggerKind: stringValue(context.triggerKind) ?? publicRun.triggerDetail ?? publicRun.invocationSource,
     targetType,
-    targetId: resolveTargetId(run, context, targetType),
+    targetId: resolveTargetId(publicRun, context, targetType),
     conversationId,
     messageId,
     automationRunId: stringValue(context.automationRunId),
     automationId: stringValue(context.automationId),
-    wakeupRequestId: run.wakeupRequestId ?? stringValue(context.wakeupRequestId),
+    wakeupRequestId: publicRun.wakeupRequestId ?? stringValue(context.wakeupRequestId),
   };
+}
+
+export function toHeartbeatRun(run: HeartbeatRun): HeartbeatRun {
+  return {
+    id: run.id,
+    orgId: run.orgId,
+    agentId: run.agentId,
+    invocationSource: run.invocationSource,
+    triggerDetail: run.triggerDetail,
+    status: run.status,
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt,
+    error: run.error,
+    wakeupRequestId: run.wakeupRequestId,
+    exitCode: run.exitCode,
+    signal: run.signal,
+    usageJson: run.usageJson,
+    resultJson: run.resultJson,
+    sessionIdBefore: run.sessionIdBefore,
+    sessionIdAfter: run.sessionIdAfter,
+    logStore: run.logStore,
+    logRef: run.logRef,
+    logBytes: run.logBytes,
+    logSha256: run.logSha256,
+    logCompressed: run.logCompressed,
+    stdoutExcerpt: run.stdoutExcerpt,
+    stderrExcerpt: run.stderrExcerpt,
+    errorCode: run.errorCode,
+    externalRunId: run.externalRunId,
+    chatConversationId: run.chatConversationId ?? null,
+    processPid: run.processPid,
+    processStartedAt: run.processStartedAt,
+    retryOfRunId: run.retryOfRunId,
+    processLossRetryCount: run.processLossRetryCount,
+    contextSnapshot: run.contextSnapshot,
+    createdAt: run.createdAt,
+    updatedAt: run.updatedAt,
+  };
+}
+
+export function toHeartbeatRuns(runs: HeartbeatRun[]): HeartbeatRun[] {
+  return runs.map(toHeartbeatRun);
 }
 
 export function toAgentRuns(runs: HeartbeatRun[]): AgentRun[] {

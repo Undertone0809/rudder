@@ -96,7 +96,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
         requestedByActorId: opts.requestedByActorId ?? null,
         idempotencyKey: opts.idempotencyKey ?? null,
         finishedAt: new Date(),
-      });
+      }).onConflictDoNothing();
     };
 
     if (agent.status === "terminated" || agent.status === "pending_approval") {
@@ -631,7 +631,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
           idempotencyKey: opts.idempotencyKey ?? null,
           runId: mergedRun.id,
           finishedAt: new Date(),
-        });
+        }).onConflictDoNothing();
       }
       return mergedRun;
     }

@@ -77,12 +77,14 @@ function resolveRuntimeSceneForRun(run: typeof heartbeatRuns.$inferSelect) {
 }
 
 export function createHeartbeatExecuteHandlers(context: any) {
-  const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, acknowledgeRunProcessExit, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = context;
+  const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, acknowledgeRunProcessExit, renewRunExecutionLease, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = context;
 
   async function executeRun(runId: string, opts?: { executionReserved?: boolean }) {
     const executionReserved = opts?.executionReserved === true;
     if (executionReserved && !activeRunExecutions.has(runId)) return;
     let run: Awaited<ReturnType<typeof getRun>>;
+    let executionLeaseTimer: ReturnType<typeof setInterval> | null = null;
+    let executionOwnerToken: string | null = null;
     try {
       run = await getRun(runId);
     } catch (error) {
@@ -124,13 +126,25 @@ export function createHeartbeatExecuteHandlers(context: any) {
       run = claimed;
     }
 
+    executionOwnerToken = run.executionOwnerToken;
+    if (executionOwnerToken) {
+      await renewRunExecutionLease(run.id, executionOwnerToken);
+      executionLeaseTimer = setInterval(() => {
+        void renewRunExecutionLease(run.id, executionOwnerToken).catch(() => undefined);
+      }, 60_000);
+      executionLeaseTimer.unref?.();
+    }
+
     const agent = await getAgent(run.agentId);
     if (!agent) {
       const failed = await transitionRunToTerminal(runId, "failed", {
         error: "Agent not found",
         errorCode: "agent_not_found",
         finishedAt: new Date(),
-      }, { processExitedAt: new Date() });
+      }, {
+        processExitedAt: new Date(),
+        expectedExecutionOwnerToken: executionOwnerToken,
+      });
       if (failed) {
         await setWakeupStatus(run.wakeupRequestId, "failed", {
           finishedAt: new Date(),
@@ -1009,6 +1023,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
       const claimedTerminalRun = await transitionRunToTerminal(run.id, status, terminalEvidence, {
         terminalEffectsIntent,
         processExitedAt: new Date(),
+        expectedExecutionOwnerToken: executionOwnerToken,
       });
       ownsTerminalState = Boolean(claimedTerminalRun);
       if (!claimedTerminalRun) {
@@ -1180,6 +1195,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
       const claimedFailedRun = await transitionRunToTerminal(run.id, "failed", failureEvidence, {
         terminalEffectsIntent: failureIntent,
         processExitedAt: new Date(),
+        expectedExecutionOwnerToken: executionOwnerToken,
       });
       ownsTerminalState = Boolean(claimedFailedRun);
       if (!claimedFailedRun) await reconcileRunEvidence(run.id, failureEvidence);
@@ -1242,7 +1258,10 @@ export function createHeartbeatExecuteHandlers(context: any) {
                 error: message,
                 errorCode: "adapter_failed",
                 finishedAt: new Date(),
-              }, { processExitedAt: new Date() }).catch(() => undefined)
+              }, {
+                processExitedAt: new Date(),
+                expectedExecutionOwnerToken: executionOwnerToken,
+              }).catch(() => undefined)
             : null;
           const terminalRun = claimedFailedRun ?? await getRun(runId).catch(() => latestRun);
           if (claimedFailedRun) {
@@ -1264,6 +1283,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
             await completeTerminalControlEffects(terminalRun).catch(() => undefined);
           }
         } finally {
+          if (executionLeaseTimer) clearInterval(executionLeaseTimer);
           await releaseRuntimeServicesForRun(run.id).catch(() => undefined);
           runAbortControllers.delete(run.id);
           activeRunExecutions.delete(run.id);
