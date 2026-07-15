@@ -752,9 +752,10 @@ surface and remains available from Project-level surfaces.
 ## Intent / User Job
 
 An operator returning to a long or active Chat needs to answer three questions
-quickly: what this thread produced, what input it used, which external sites the
-visible conversation cited. The manifest is an index into durable work and
-provenance, not a second chat transcript or a generic bookmark manager.
+quickly: what this thread produced, what input it used, and which external sites
+or internal Rudder work objects the visible conversation cited. The manifest is
+an index into durable work and provenance, not a second chat transcript or a
+generic bookmark manager.
 
 ## Why / Design Reasoning
 
@@ -766,11 +767,12 @@ membership must not pull work from other conversations into the current Chat
 because that creates noise and obscures which thread actually produced or used
 an object.
 
-Output classification is intentionally strict. An arbitrary assistant URL is a
-Reference, not an Output. An Output requires structured production evidence so
-Rudder does not overclaim work completion. References remain informational and
-do not become Project Context Resources until the operator explicitly admits
-them through `CONTEXT.RESOURCES.001`.
+Output classification is intentionally strict. An arbitrary assistant URL or a
+visible internal Rudder entity link is a Reference, not an Output. An Output
+requires structured production evidence so Rudder does not overclaim work
+completion. References remain informational and do not become Project Context
+Resources until the operator explicitly admits them through
+`CONTEXT.RESOURCES.001`.
 
 ## Actors / Objects / State
 
@@ -786,8 +788,9 @@ them through `CONTEXT.RESOURCES.001`.
   under the guarded `artifacts/...` output namespace.
 - Source: user attachment, user-provided URL or Library reference, or a Project
   Context Resource eligible for a project-scoped Chat Run.
-- Reference: deduplicated external HTTP(S) website in a visible user or assistant
-  message that is not promoted by the category precedence rules.
+- Reference: deduplicated external HTTP(S) website or internal Rudder `issue`,
+  `issue_comment`, `automation`, or `chat_conversation` target in a visible user
+  or assistant message that is not promoted by the category precedence rules.
 
 ## Entry Points / Inputs
 
@@ -796,6 +799,9 @@ them through `CONTEXT.RESOURCES.001`.
 - Completed assistant message bodies, Run attribution, replying Agent identity,
   and Agent-created Chat attachments.
 - `library-entry://` and `library-file://` references in visible message bodies.
+- `issue://`, `automation://`, and `chat://` references in visible user or
+  assistant message bodies, including issue-comment and chat-message locators
+  carried by those typed links.
 - The Chat's explicit Project context and that Project's attached resources.
 - Chat edit, refresh/variant, fork, attachment, and message supersession state.
 
@@ -809,6 +815,9 @@ them through `CONTEXT.RESOURCES.001`.
    stderr are excluded.
 4. User attachments, user Library references, and user HTTP(S) links become
    Source candidates. Agent-created attachments become Output candidates.
+   Internal issue, issue-comment, automation, and chat-conversation links in
+   either user or assistant messages become informational Reference candidates;
+   their message author does not turn them into Sources or Outputs.
 5. An assistant Library reference becomes an Output only when it has a producing
    Run id and resolves under `artifacts/...`; other assistant HTTP(S) links are
    Reference candidates.
@@ -839,6 +848,7 @@ them through `CONTEXT.RESOURCES.001`.
 | Agent creates a Chat attachment | Assistant attachment has Agent creator provenance | One Output with Agent/message/Run provenance where available | It must not be downgraded to a Reference | Service tests and E2E |
 | Agent links a produced Library artifact | Assistant message has a Run id and `artifacts/...` Library target | One Output that opens through Library Side Panel | A normal external link must not satisfy this rule | Extraction/service tests |
 | Agent recommends a website | Visible assistant HTTP(S) link with no production evidence | One Reference | Rudder must not claim the website was created by the Run | Extraction/service tests |
+| User or assistant cites internal Rudder work | Visible `issue://`, issue-comment, `automation://`, or `chat://` link | One informational Reference with the corresponding `issue`, `issue_comment`, `automation`, or `chat_conversation` target type; opening it reuses `CHAT.SIDE.PANEL.001` | A user-authored internal entity link must not become a Source, and the manifest must not create a separate preview drawer | Extraction, service, component, and E2E tests |
 | Link appears in tool history only | URL exists only in transcript, reasoning, stdout, or stderr | No manifest item | Tool exploration must not pollute the visible manifest | Service tests |
 | Answer is refreshed or edited | Prior message becomes superseded | Stale derived References disappear; durable Outputs remain inspectable | Refresh must not erase a real artifact | Service tests |
 | Chat is forked | Copied historical assistant rows have no producing Run id | Sources can be re-derived; copied rows do not gain Output ownership | Fork must not claim the source thread's Outputs as newly produced | Fork/service tests |
@@ -852,7 +862,9 @@ The operator sees the selected Chat, its normal transcript/composer, and a Work
 surface containing only the current thread's Outputs, Sources, and References.
 Each row exposes a readable title and type icon. Website rows expose the
 normalized URL and website icon instead of a generic link icon or redundant
-`From Agent` origin label.
+`From Agent` origin label. Internal issue/issue-comment, automation, and chat
+rows expose their matching typed icons and retain the source-message provenance
+needed for the jump action.
 
 ## Operator-Visible Output
 
@@ -866,6 +878,10 @@ normalized URL and website icon instead of a generic link icon or redundant
   edge of the Chat workspace while content spacing keeps messages and the
   composer clear of an open Work shelf.
 - Internal Library targets: existing Side Panel preview behavior.
+- Internal issue/issue-comment, automation, and chat-conversation References:
+  typed icons and the existing typed Side Panel behavior from
+  `CHAT.SIDE.PANEL.001`; opening one does not replace the Chat route or create a
+  manifest-specific preview drawer.
 - External websites: normalized URL text and website icon/fallback behavior from
   `CHAT.WEBSITE.LINK.ICON.001`, with safe link routing under
   `CHAT.SIDE.PANEL.001`.
@@ -902,7 +918,17 @@ to reconcile the projection.
    - Expected state/action: the site appears as a Reference.
    - Visible output: site title, normalized URL, and website icon.
    - Evidence: visible assistant body and normalized manifest row.
-4. Hidden exploration link:
+4. Internal work references in visible conversation:
+   - Trigger: a visible user or assistant message cites an issue or issue
+     comment, an automation, and another Chat through their typed Rudder links.
+   - Expected state/action: each entity appears as an informational Reference;
+     clicking a row opens or focuses the matching typed Side Panel target under
+     `CHAT.SIDE.PANEL.001` while the current Chat route remains stable.
+   - Visible output: issue, automation, and chat rows use distinct typed icons;
+     issue-comment and chat-message locators retain their more specific target.
+   - Evidence: visible message body, normalized manifest rows, component tests,
+     and Chat Work Manifest E2E.
+5. Hidden exploration link:
    - Trigger: a tool result or reasoning entry contains a URL absent from visible
      user/assistant bodies.
    - Expected state/action: no manifest item is created.
@@ -918,6 +944,9 @@ to reconcile the projection.
   category.
 - Outputs require structured production evidence and persist across answer
   refreshes unless explicitly hidden/archived by a future governed flow.
+- Internal issue, issue-comment, automation, and chat-conversation links from
+  visible user or assistant messages remain informational References regardless
+  of message author and reuse `CHAT.SIDE.PANEL.001` for item-open behavior.
 - Manifest References are not automatically attached to Project Context.
 - V1 does not aggregate Browser sessions, crawl tool history, implement generic
   bookmarks, create Sites/documents, or replace Library/Issue work products.
