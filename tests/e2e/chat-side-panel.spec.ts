@@ -1887,11 +1887,12 @@ test.describe("Chat Side Panel", () => {
       userSelect: document.body.style.userSelect,
     }))).toEqual({ cursor: "", userSelect: "" });
     await page.mouse.up();
-    await page.evaluate((nextPath) => {
-      window.history.pushState({}, "", nextPath);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    }, `/${organization.issuePrefix}/dashboard`);
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/dashboard$`));
+    await expect(page).toHaveURL(/\/messenger\/chat$/);
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await expect(page).toHaveURL(/\/dashboard$/);
+    await page.getByTestId("side-panel-hover-edge").hover();
+    await page.getByTestId("global-side-panel-trigger").click();
+    sidePanel = await openBrowserPanel();
     await expect(page.getByTestId("side-panel-resizer")).toBeVisible();
 
     await sidePanel.getByLabel("Close Side Panel").click();
