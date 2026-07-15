@@ -194,7 +194,7 @@ async function waitForIssueExecutionRun(
   throw new Error(`Timed out waiting for issue ${issueId} to receive an executionRunId.`);
 }
 
-async function waitForRunCompletion(
+export async function waitForRunCompletion(
   api: ReturnType<typeof resolveCommandContext>["api"],
   runId: string,
   timeoutMs: number,
@@ -216,7 +216,9 @@ async function getObservedRunDetail(
   api: ReturnType<typeof resolveCommandContext>["api"],
   runId: string,
 ): Promise<ObservedRunDetail> {
-  const detail = await api.get<ObservedRunDetail>(`/api/run-intelligence/runs/${runId}`);
+  const detail = await api.get<ObservedRunDetail>(
+    `/api/run-intelligence/runs/${encodeURIComponent(runId)}?projection=full`,
+  );
   if (!detail) throw new Error(`Observed run not found: ${runId}`);
   return detail;
 }
