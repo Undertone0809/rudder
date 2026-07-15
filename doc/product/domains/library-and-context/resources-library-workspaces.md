@@ -136,6 +136,10 @@ Product model:
   breadcrumb exposes the complete Library-relative path on hover, and the
   `Open` menu includes `Open in Library` so the operator can move from adjacent
   inspection to the same file in the full Library work surface.
+- Markdown files opened from Messenger render as directly editable documents in
+  the Side Panel. Autosave uses the last confirmed server content as a write
+  precondition so another operator, Agent, process, or window cannot be silently
+  overwritten by a stale draft.
 - Protected roots such as agent instruction, skills, and managed directories
   are excluded from normal mentionable Library surfaces unless an explicit
   management flow owns them.
@@ -157,6 +161,11 @@ Flow:
    than through the server file API.
 8. From a Messenger Library preview, the operator can open the same validated
    file path in the full Library route without changing its organization scope.
+9. A Markdown Side Panel edit saves only when its expected prior content still
+   matches. A conflict pauses autosave, preserves the local draft, and lets the
+   operator either retry the draft against the latest version (`Keep mine`) or
+   replace it with the latest server content (`Use latest`). If a save response
+   is ambiguous, Rudder rereads the file before deciding whether the save failed.
 
 Invariants:
 
@@ -186,6 +195,12 @@ Invariants:
 - The per-file `Default app` target must remain a Desktop bridge action, not a
   server-side filesystem open. It is unavailable in non-Desktop shells that
   cannot access the operator's local default application registry.
+- Markdown autosave must not silently overwrite content changed after the
+  editor's last confirmed read. Dirty drafts remain local until a conditional
+  save succeeds or the operator explicitly chooses the latest server version.
+- Concurrent in-process writes to the same workspace file are serialized, while
+  the expected-content precondition remains the authority for detecting stale
+  writes from other processes or windows.
 
 Evidence:
 
@@ -205,6 +220,10 @@ Evidence:
 - Messenger Side Panel component and E2E coverage prove PDF files render inline,
   long breadcrumbs reveal the complete Library path on hover, and `Open in
   Library` opens the selected file in the full Library work surface.
+- Messenger Side Panel component and E2E coverage prove Markdown editing,
+  autosave failure recovery, stale-write conflict detection, draft preservation,
+  both conflict decisions, ambiguous-response confirmation, and in-flight save
+  race handling.
 
 ## WORKSPACE.PROJECT.001
 
