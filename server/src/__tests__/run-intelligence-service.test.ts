@@ -10,13 +10,11 @@ import {
   getObservedRunLog,
 } from "../services/run-intelligence.ts";
 
-const mockHeartbeatListEvents = vi.hoisted(() => vi.fn());
 const mockHeartbeatReadLog = vi.hoisted(() => vi.fn());
 const mockGetGeneralSettings = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/heartbeat.js", () => ({
   heartbeatService: () => ({
-    listEvents: mockHeartbeatListEvents,
     readLog: mockHeartbeatReadLog,
   }),
 }));
@@ -46,6 +44,23 @@ function mockRunOrgLookup(orgId: string) {
   const where = vi.fn(() => ({ limit }));
   const from = vi.fn(() => ({ where }));
   const select = vi.fn(() => ({ from }));
+  return { select };
+}
+
+function mockRunEventsLookup(orgId: string, events: Array<Record<string, unknown>>) {
+  let selectCount = 0;
+  const select = vi.fn(() => {
+    selectCount += 1;
+    if (selectCount === 1) {
+      const limit = vi.fn().mockResolvedValue([{ orgId }]);
+      const where = vi.fn(() => ({ limit }));
+      return { from: vi.fn(() => ({ where })) };
+    }
+    const limit = vi.fn().mockResolvedValue(events);
+    const orderBy = vi.fn(() => ({ limit }));
+    const where = vi.fn(() => ({ orderBy }));
+    return { from: vi.fn(() => ({ where })) };
+  });
   return { select };
 }
 
@@ -200,24 +215,19 @@ describe("run intelligence skill evidence", () => {
 
 describe("run intelligence bounded evidence", () => {
   it("returns an event page after the requested sequence", async () => {
-    mockHeartbeatListEvents.mockResolvedValue([
+    const db = mockRunEventsLookup("org-1", [
       { id: 11, seq: 11, stream: "system", level: "info" },
       { id: 12, seq: 12, stream: "stdout", level: "info" },
       { id: 13, seq: 13, stream: "stderr", level: "error" },
     ]);
 
     const result = await getObservedRunEvents(
-      mockRunOrgLookup("org-1") as never,
+      db as never,
       "609695f1-f90a-4b17-be61-4f0c6fe37c42",
       { orgIds: ["org-1"] },
       { afterSeq: 10, limit: 2 },
     );
 
-    expect(mockHeartbeatListEvents).toHaveBeenCalledWith(
-      "609695f1-f90a-4b17-be61-4f0c6fe37c42",
-      10,
-      3,
-    );
     expect(result).toMatchObject({
       orgId: "org-1",
       response: {
@@ -230,7 +240,7 @@ describe("run intelligence bounded evidence", () => {
   it("redacts event secrets and current-user paths before returning evidence", async () => {
     mockGetGeneralSettings.mockResolvedValue({ censorUsernameInLogs: true });
     const homePath = `${process.env.HOME ?? "/Users/test-user"}/private-project`;
-    mockHeartbeatListEvents.mockResolvedValue([{
+    const db = mockRunEventsLookup("org-1", [{
       id: 11,
       seq: 11,
       stream: "system",
@@ -240,7 +250,7 @@ describe("run intelligence bounded evidence", () => {
     }]);
 
     const result = await getObservedRunEvents(
-      mockRunOrgLookup("org-1") as never,
+      db as never,
       "609695f1-f90a-4b17-be61-4f0c6fe37c42",
       { orgIds: ["org-1"] },
       { limit: 10 },
@@ -249,7 +259,8 @@ describe("run intelligence bounded evidence", () => {
 
     expect(serialized).not.toContain("secret-token");
     expect(serialized).not.toContain(homePath);
-    expect(result.response.items[0]?.payload).toMatchObject({ apiKey: "***REDACTED***" });
+    expect(result.response.items[0]?.payload).toBeNull();
+    expect(result.response.items[0]?.payloadPreview?.text).toContain("***REDACTED***");
   });
 
   it("returns a bounded log range and pagination metadata", async () => {

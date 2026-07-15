@@ -151,6 +151,8 @@ export type {
   ProjectResourceAttachmentInput, UpdateOrganizationResourceRequest, UpdateProjectResourceAttachmentRequest
 } from "./resource.js";
 export type {
+  RunEventCursorPage,
+  RunInspectionHeader,
   RunSummary,
   RunSummaryIssue,
   RunSummaryPage,

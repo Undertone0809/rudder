@@ -1,12 +1,13 @@
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
-import { chatMessages, heartbeatRunEvents, heartbeatRuns } from "@rudderhq/db";
+import { chatMessages, heartbeatRuns } from "@rudderhq/db";
 import type { ChatConversation, HeartbeatRun } from "@rudderhq/shared";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { AgentRuntimeInvocationMeta } from "../agent-runtimes/index.js";
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import { publishLiveEvent } from "./live-events.js";
 import { isPostgresError } from "./postgres-errors.js";
+import { appendHeartbeatRunEvent } from "./run-events.js";
 import { buildHeartbeatAdapterInvokePayload } from "./runtime-kernel/heartbeat.core.js";
 
 const MAX_EVENT_TEXT_CHARS = 2_000;
@@ -51,14 +52,6 @@ function isActiveChatRunConflict(error: unknown) {
 }
 
 export function chatAgentRunService(db: Db) {
-  async function nextSeq(runId: string) {
-    const [row] = await db
-      .select({ maxSeq: sql<number | null>`max(${heartbeatRunEvents.seq})` })
-      .from(heartbeatRunEvents)
-      .where(eq(heartbeatRunEvents.runId, runId));
-    return Number(row?.maxSeq ?? 0) + 1;
-  }
-
   async function appendEvent(
     run: Pick<typeof heartbeatRuns.$inferSelect, "id" | "orgId" | "agentId">,
     event: {
@@ -69,16 +62,15 @@ export function chatAgentRunService(db: Db) {
       payload?: Record<string, unknown>;
     },
   ) {
-    const seq = await nextSeq(run.id);
-    await db.insert(heartbeatRunEvents).values({
+    const message = boundedText(event.message, 500);
+    const inserted = await appendHeartbeatRunEvent(db, {
       orgId: run.orgId,
       runId: run.id,
       agentId: run.agentId,
-      seq,
       eventType: event.eventType,
       stream: event.stream,
       level: event.level,
-      message: boundedText(event.message, 500),
+      message,
       payload: event.payload,
     });
 
@@ -88,11 +80,11 @@ export function chatAgentRunService(db: Db) {
       payload: {
         runId: run.id,
         agentId: run.agentId,
-        seq,
+        seq: inserted.seq,
         eventType: event.eventType,
         stream: event.stream ?? null,
         level: event.level ?? null,
-        message: boundedText(event.message, 500),
+        message,
         payload: event.payload ?? null,
       },
     });

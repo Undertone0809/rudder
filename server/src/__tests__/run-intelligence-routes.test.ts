@@ -7,6 +7,7 @@ import { runIntelligenceRoutes } from "../routes/run-intelligence.js";
 const mockListObservedRuns = vi.hoisted(() => vi.fn());
 const mockListRunSummaries = vi.hoisted(() => vi.fn());
 const mockGetObservedRun = vi.hoisted(() => vi.fn());
+const mockGetRunSummary = vi.hoisted(() => vi.fn());
 const mockGetObservedRunEvents = vi.hoisted(() => vi.fn());
 const mockGetObservedRunLog = vi.hoisted(() => vi.fn());
 const mockGetObservedRunDetail = vi.hoisted(() => vi.fn());
@@ -15,6 +16,7 @@ vi.mock("../services/run-intelligence.js", () => ({
   listObservedRuns: mockListObservedRuns,
   listRunSummaries: mockListRunSummaries,
   getObservedRun: mockGetObservedRun,
+  getRunSummary: mockGetRunSummary,
   getObservedRunEvents: mockGetObservedRunEvents,
   getObservedRunLog: mockGetObservedRunLog,
   getObservedRunDetail: mockGetObservedRunDetail,
@@ -71,6 +73,7 @@ beforeEach(() => {
       runtimeConfigFingerprint: null,
     },
   });
+  mockGetRunSummary.mockResolvedValue({ id: "run-1", orgId: "org-1", status: "failed" });
   mockGetObservedRunDetail.mockResolvedValue({
     run: {
       id: "run-1",
@@ -104,10 +107,33 @@ beforeEach(() => {
 });
 
 describe("run intelligence routes", () => {
-  it("keeps the legacy full list response and defaults unchanged", async () => {
-    mockListObservedRuns.mockResolvedValue([{ run: { id: "run-1", orgId: "org-1" } }]);
+  it("returns bounded summary pages by default", async () => {
+    mockListRunSummaries.mockResolvedValue({
+      items: [{ id: "run-1", orgId: "org-1", status: "failed" }],
+      page: { limit: 50, hasMore: false, nextCursor: null },
+    });
 
     const res = await request(createApp()).get("/api/run-intelligence/orgs/org-1/runs");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      items: [{ id: "run-1", orgId: "org-1" }],
+      page: { limit: 50, hasMore: false },
+    });
+    expect(mockListRunSummaries).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      orgId: "org-1",
+      limit: 50,
+      createdBefore: null,
+    }));
+    expect(mockListObservedRuns).not.toHaveBeenCalled();
+  });
+
+  it("preserves the legacy full list behind explicit projection=full", async () => {
+    mockListObservedRuns.mockResolvedValue([{ run: { id: "run-1", orgId: "org-1" } }]);
+
+    const res = await request(createApp())
+      .get("/api/run-intelligence/orgs/org-1/runs")
+      .query({ projection: "full" });
 
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
@@ -201,7 +227,13 @@ describe("run intelligence routes", () => {
     expect(res.body.page).toEqual({ afterSeq: 10, limit: 25, hasMore: true, nextAfterSeq: 12 });
     expect(mockGetObservedRunEvents).toHaveBeenCalledWith(expect.anything(), "run-1", {
       orgIds: ["org-1"],
-    }, { afterSeq: 10, limit: 25 });
+    }, {
+      cursor: null,
+      afterSeq: 10,
+      limit: 25,
+      includePayload: false,
+      maxPayloadChars: 1200,
+    });
   });
 
   it("returns bounded log ranges with no-store caching", async () => {
@@ -239,38 +271,18 @@ describe("run intelligence routes", () => {
     expect(res.status).toBe(403);
   });
 
-  it("passes used skill filters to run list queries", async () => {
-    mockListObservedRuns.mockResolvedValue([
-      {
-        run: { id: "run-1", orgId: "org-1" },
-        agentName: "Agent",
-        orgName: "Org",
-        issue: { id: "issue-1", identifier: "ZST-1", title: "Fix skill" },
-        bundle: {
-          agentRuntimeType: "codex_local",
-          agentConfigRevisionId: null,
-          agentConfigRevisionCreatedAt: null,
-          agentConfigFingerprint: null,
-          runtimeConfigFingerprint: null,
-        },
-        skillEvidence: {
-          evidenceType: "used",
-          matchedSkillKey: "skill-optimizer",
-          matchedSkillLabel: "Skill Optimizer",
-          sourceEventType: "adapter.skill_usage",
-          sourceEventId: 12,
-          sourceEventCreatedAt: "2026-06-11T00:00:02.000Z",
-        },
-        errorSummary: null,
-      },
-    ]);
+  it("passes used skill filters to bounded summary queries", async () => {
+    mockListRunSummaries.mockResolvedValue({
+      items: [{ id: "run-1", orgId: "org-1", skillEvidence: { evidenceType: "used", matchedSkillKey: "skill-optimizer" } }],
+      page: { limit: 20, hasMore: false, nextCursor: null },
+    });
 
     const res = await request(createApp())
       .get("/api/run-intelligence/orgs/org-1/runs")
       .query({ usedSkill: "skill-optimizer", limit: "20" });
 
     expect(res.status).toBe(200);
-    expect(mockListObservedRuns).toHaveBeenCalledWith(expect.anything(), {
+    expect(mockListRunSummaries).toHaveBeenCalledWith(expect.anything(), {
       orgId: "org-1",
       updatedAfter: null,
       runIdPrefix: null,
@@ -281,9 +293,10 @@ describe("run intelligence routes", () => {
       usedSkill: "skill-optimizer",
       loadedSkill: null,
       createdBefore: null,
+      cursor: null,
       limit: 20,
     });
-    expect(res.body[0]?.skillEvidence).toMatchObject({
+    expect(res.body.items[0]?.skillEvidence).toMatchObject({
       evidenceType: "used",
       matchedSkillKey: "skill-optimizer",
     });
@@ -296,22 +309,11 @@ describe("run intelligence routes", () => {
 
     expect(res.status).toBe(400);
     expect(mockListObservedRuns).not.toHaveBeenCalled();
+    expect(mockListRunSummaries).not.toHaveBeenCalled();
   });
 
-  it("enforces org access on single-run lookup", async () => {
-    mockGetObservedRun.mockResolvedValue({
-      run: { id: "run-2", orgId: "org-2" },
-      agentName: "Agent",
-      orgName: "Other Org",
-      issue: null,
-      bundle: {
-        agentRuntimeType: "process",
-        agentConfigRevisionId: null,
-        agentConfigRevisionCreatedAt: null,
-        agentConfigFingerprint: null,
-        runtimeConfigFingerprint: null,
-      },
-    });
+  it("enforces org access on default single-run summaries", async () => {
+    mockGetRunSummary.mockResolvedValue({ id: "run-2", orgId: "org-2", status: "failed" });
 
     const res = await request(createApp()).get("/api/run-intelligence/runs/run-2");
 
@@ -322,15 +324,27 @@ describe("run intelligence routes", () => {
     const res = await request(createApp()).get("/api/run-intelligence/runs/609695f1f90a");
 
     expect(res.status).toBe(200);
+    expect(mockGetRunSummary).toHaveBeenCalledWith(expect.anything(), "609695f1f90a", {
+      orgIds: ["org-1"],
+    });
+  });
+
+  it("returns full single-run detail only with explicit projection=full", async () => {
+    const res = await request(createApp())
+      .get("/api/run-intelligence/runs/609695f1f90a")
+      .query({ projection: "full" });
+
+    expect(res.status).toBe(200);
     expect(mockGetObservedRun).toHaveBeenCalledWith(expect.anything(), "609695f1f90a", {
       orgIds: ["org-1"],
     });
+    expect(mockGetRunSummary).not.toHaveBeenCalled();
   });
 
   it("returns newest-first clipped transcript rows from server-side run detail", async () => {
     const res = await request(createApp())
       .get("/api/run-intelligence/runs/run-1/transcript")
-      .query({ maxChars: "20" });
+      .query({ maxChars: "20", includeOutput: "true" });
 
     expect(res.status).toBe(200);
     expect(res.body.order).toBe("newest");
@@ -464,6 +478,16 @@ describe("run intelligence routes", () => {
         command: "rudder runs transcript 609695f1f90a --around-error step-1",
       },
     });
+  });
+
+  it("does not repeat the run-level error after an error cursor", async () => {
+    const res = await request(createApp())
+      .get("/api/run-intelligence/runs/run-1/errors")
+      .query({ cursor: "step-3" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.page.cursor).toBe("step-3");
+    expect(res.body.errors.map((error: { id: string }) => error.id)).toEqual(["step-4"]);
   });
 
   it("enforces org access on transcript routes", async () => {

@@ -22,8 +22,11 @@ export async function listObservedRuns(
   orgId: string,
   params?: URLSearchParams,
 ): Promise<RunExportRow[]> {
-  const qs = params && [...params.keys()].length > 0 ? `?${params.toString()}` : "";
-  return fetchJson<RunExportRow[]>(`${apiBaseUrl}/run-intelligence/orgs/${encodeURIComponent(orgId)}/runs${qs}`);
+  const query = new URLSearchParams(params);
+  query.set("projection", "full");
+  return fetchJson<RunExportRow[]>(
+    `${apiBaseUrl}/run-intelligence/orgs/${encodeURIComponent(orgId)}/runs?${query.toString()}`,
+  );
 }
 
 export async function listObservedRunSummaries(
@@ -39,14 +42,16 @@ export async function listObservedRunSummaries(
 }
 
 export async function getObservedRun(apiBaseUrl: string, runId: string): Promise<RunExportRow> {
-  return fetchJson<RunExportRow>(`${apiBaseUrl}/run-intelligence/runs/${encodeURIComponent(runId)}`);
+  return fetchJson<RunExportRow>(
+    `${apiBaseUrl}/run-intelligence/runs/${encodeURIComponent(runId)}?projection=full`,
+  );
 }
 
 interface RunEventsPage {
   items: HeartbeatRunEvent[];
   page: {
     hasMore: boolean;
-    nextAfterSeq: number | null;
+    nextCursor: string | null;
   };
 }
 
@@ -60,14 +65,16 @@ interface RunLogPage {
 
 export async function getRunEvents(apiBaseUrl: string, runId: string): Promise<HeartbeatRunEvent[]> {
   const events: HeartbeatRunEvent[] = [];
-  let afterSeq = 0;
+  let cursor: string | null = null;
   do {
+    const query = new URLSearchParams({ limit: "200", projection: "full" });
+    if (cursor) query.set("cursor", cursor);
     const page = await fetchJson<RunEventsPage>(
-      `${apiBaseUrl}/run-intelligence/runs/${encodeURIComponent(runId)}/events?afterSeq=${afterSeq}&limit=999`,
+      `${apiBaseUrl}/run-intelligence/runs/${encodeURIComponent(runId)}/events?${query.toString()}`,
     );
     events.push(...page.items);
-    if (!page.page.hasMore || page.page.nextAfterSeq === null) return events;
-    afterSeq = page.page.nextAfterSeq;
+    if (!page.page.hasMore || page.page.nextCursor === null) return events;
+    cursor = page.page.nextCursor;
   } while (true);
 }
 

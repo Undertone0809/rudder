@@ -35,6 +35,7 @@ import { summarizeHeartbeatRunResultJson } from "../heartbeat-run-summary.js";
 import { instanceSettingsService } from "../instance-settings.js";
 import { issueService } from "../issues.js";
 import { publishLiveEvent } from "../live-events.js";
+import { appendHeartbeatRunEvent } from "../run-events.js";
 import { getRunLogStore } from "../run-log-store.js";
 import { workspaceOperationService } from "../workspace-operations.js";
 
@@ -542,7 +543,6 @@ export function heartbeatService(db: Db) {
 
   async function appendRunEvent(
     run: typeof heartbeatRuns.$inferSelect,
-    seq: number,
     event: {
       eventType: string;
       stream?: "system" | "stdout" | "stderr";
@@ -560,11 +560,10 @@ export function heartbeatService(db: Db) {
       ? redactCurrentUserValue(event.payload, currentUserRedactionOptions)
       : event.payload;
 
-    await db.insert(heartbeatRunEvents).values({
+    const inserted = await appendHeartbeatRunEvent(db, {
       orgId: run.orgId,
       runId: run.id,
       agentId: run.agentId,
-      seq,
       eventType: event.eventType,
       stream: event.stream,
       level: event.level,
@@ -579,7 +578,7 @@ export function heartbeatService(db: Db) {
       payload: {
         runId: run.id,
         agentId: run.agentId,
-        seq,
+        seq: inserted.seq,
         eventType: event.eventType,
         stream: event.stream ?? null,
         level: event.level ?? null,
@@ -589,14 +588,6 @@ export function heartbeatService(db: Db) {
       },
     });
 
-  }
-
-  async function nextRunEventSeq(runId: string) {
-    const [row] = await db
-      .select({ maxSeq: sql<number | null>`max(${heartbeatRunEvents.seq})` })
-      .from(heartbeatRunEvents)
-      .where(eq(heartbeatRunEvents.runId, runId));
-    return Number(row?.maxSeq ?? 0) + 1;
   }
 
   async function persistRunProcessMetadata(
@@ -631,7 +622,7 @@ export function heartbeatService(db: Db) {
       .then((rows) => rows[0] ?? null);
     if (!updated) return null;
 
-    await appendRunEvent(updated, await nextRunEventSeq(updated.id), {
+    await appendRunEvent(updated, {
       eventType: "lifecycle",
       stream: "system",
       level: "info",
@@ -681,7 +672,7 @@ export function heartbeatService(db: Db) {
         error: reason,
       });
       if (cancelled) {
-        await appendRunEvent(cancelled, 1, {
+        await appendRunEvent(cancelled, {
           eventType: "lifecycle",
           stream: "system",
           level: "warn",
@@ -845,7 +836,7 @@ export function heartbeatService(db: Db) {
             errorCode: DETACHED_PROCESS_ERROR_CODE,
           });
           if (detachedRun) {
-            await appendRunEvent(detachedRun, await nextRunEventSeq(detachedRun.id), {
+            await appendRunEvent(detachedRun, {
               eventType: "lifecycle",
               stream: "system",
               level: "warn",
@@ -880,7 +871,7 @@ export function heartbeatService(db: Db) {
       if (!finalizedRun) continue;
 
       if (detachedTerminationMessage) {
-        await appendRunEvent(finalizedRun, await nextRunEventSeq(finalizedRun.id), {
+        await appendRunEvent(finalizedRun, {
           eventType: "lifecycle",
           stream: "system",
           level: "warn",
@@ -901,7 +892,7 @@ export function heartbeatService(db: Db) {
         await releaseIssueExecutionAndPromote(finalizedRun);
       }
 
-      await appendRunEvent(finalizedRun, await nextRunEventSeq(finalizedRun.id), {
+      await appendRunEvent(finalizedRun, {
         eventType: "lifecycle",
         stream: "system",
         level: "error",
@@ -991,7 +982,7 @@ export function heartbeatService(db: Db) {
       const terminalRun = finalizedRun ?? await getRun(run.id);
       if (!terminalRun) continue;
 
-      await appendRunEvent(terminalRun, await nextRunEventSeq(terminalRun.id), {
+      await appendRunEvent(terminalRun, {
         eventType: "lifecycle",
         stream: "system",
         level: "error",
@@ -1074,7 +1065,7 @@ export function heartbeatService(db: Db) {
       const terminalRun = finalizedRun ?? await getRun(run.id);
       if (!terminalRun) continue;
 
-      await appendRunEvent(terminalRun, await nextRunEventSeq(terminalRun.id), {
+      await appendRunEvent(terminalRun, {
         eventType: "lifecycle",
         stream: "system",
         level: "error",
@@ -1230,7 +1221,7 @@ export function heartbeatService(db: Db) {
 
   const baseContext = {
     db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets,
-    getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, nextRunEventSeq, persistRunProcessMetadata, clearDetachedRunWarning, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, reapInactiveRuns, reapTimedOutRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent,
+    getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, reapInactiveRuns, reapTimedOutRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent,
   } as any;
   const recoveryHandlers = createHeartbeatRecoveryHandlers({ ...baseContext, startNextQueuedRunForAgent });
   const wakeupHandlers = createHeartbeatWakeupHandlers({ ...baseContext, ...recoveryHandlers, startNextQueuedRunForAgent });

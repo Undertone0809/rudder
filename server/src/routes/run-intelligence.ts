@@ -4,6 +4,7 @@ import {
   type ObservedRunDetail,
   type ObservedRunStep,
 } from "@rudderhq/run-intelligence-core";
+import type { RunInspectionHeader } from "@rudderhq/shared";
 import { Router } from "express";
 import { badRequest, notFound } from "../errors.js";
 import { formatShortRunId } from "../services/heartbeat-run-reference.js";
@@ -12,6 +13,7 @@ import {
   getObservedRunDetail,
   getObservedRunEvents,
   getObservedRunLog,
+  getRunSummary,
   listObservedRuns,
   listRunSummaries,
 } from "../services/run-intelligence.js";
@@ -90,6 +92,39 @@ function compactTranscriptRow(step: ObservedRunStep, maxChars: number, includeOu
     isModelEntry: step.isModelEntry,
     output: includeOutput ? clipText(step.detailText, maxChars) : null,
   };
+}
+
+function compactRunHeader(run: ObservedRunDetail["run"]): RunInspectionHeader {
+  return {
+    id: run.id,
+    orgId: run.orgId,
+    agentId: run.agentId,
+    invocationSource: run.invocationSource,
+    triggerDetail: run.triggerDetail,
+    status: run.status,
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt,
+    error: run.error ? clipText(run.error, 2_000).text : null,
+    errorCode: run.errorCode,
+    exitCode: run.exitCode,
+    signal: run.signal,
+    chatConversationId: run.chatConversationId ?? null,
+    logBytes: run.logBytes,
+    createdAt: run.createdAt,
+    updatedAt: run.updatedAt,
+  };
+}
+
+function limitRowsByJsonBytes<Row>(rows: Row[], maxBytes: number) {
+  const included: Row[] = [];
+  let bytes = 2;
+  for (const row of rows) {
+    const rowBytes = Buffer.byteLength(JSON.stringify(row), "utf8") + (included.length > 0 ? 1 : 0);
+    if (included.length > 0 && bytes + rowBytes > maxBytes) break;
+    included.push(row);
+    bytes += rowBytes;
+  }
+  return included;
 }
 
 function filterTranscriptSteps(
@@ -231,7 +266,7 @@ export function runIntelligenceRoutes(db: Db) {
       createdBefore: asDateOrNull(req.query.createdBefore),
     };
 
-    if (projection === "summary") {
+    if (projection !== "full") {
       const page = await listRunSummaries(db, {
         ...commonInput,
         cursor: asString(req.query.cursor),
@@ -252,18 +287,28 @@ export function runIntelligenceRoutes(db: Db) {
   router.get("/run-intelligence/runs/:runId", async (req, res) => {
     const runId = req.params.runId as string;
     const scope = { orgIds: getAuthorizedOrgScope(req) };
-    const row = await getObservedRun(db, runId, scope);
-    if (!row) throw notFound("Agent run not found");
-    assertCompanyAccess(req, row.run.orgId);
-    res.json(row);
+    if (req.query.projection === "full") {
+      const row = await getObservedRun(db, runId, scope);
+      if (!row) throw notFound("Agent run not found");
+      assertCompanyAccess(req, row.run.orgId);
+      res.json(row);
+      return;
+    }
+    const summary = await getRunSummary(db, runId, scope);
+    if (!summary) throw notFound("Agent run not found");
+    assertCompanyAccess(req, summary.orgId);
+    res.json(summary);
   });
 
   router.get("/run-intelligence/runs/:runId/events", async (req, res) => {
     const runId = req.params.runId as string;
     const scope = { orgIds: getAuthorizedOrgScope(req) };
     const result = await getObservedRunEvents(db, runId, scope, {
+      cursor: asString(req.query.cursor),
       afterSeq: asNonNegativeInteger(req.query.afterSeq, 0),
-      limit: asPositiveInteger(req.query.limit, 200, 999),
+      limit: asPositiveInteger(req.query.limit, 200, 200),
+      includePayload: req.query.projection === "full",
+      maxPayloadChars: asPositiveInteger(req.query.maxChars, 1_200, 4_000),
     });
     assertCompanyAccess(req, result.orgId);
     res.json(result.response);
@@ -274,7 +319,7 @@ export function runIntelligenceRoutes(db: Db) {
     const scope = { orgIds: getAuthorizedOrgScope(req) };
     const result = await getObservedRunLog(db, runId, scope, {
       offset: asNonNegativeInteger(req.query.offset, 0),
-      limitBytes: Math.max(4, asPositiveInteger(req.query.limitBytes, 256_000, 1_000_000)),
+      limitBytes: Math.max(4, asPositiveInteger(req.query.limitBytes, 256_000, 500_000)),
     });
     assertCompanyAccess(req, result.orgId);
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -294,9 +339,7 @@ export function runIntelligenceRoutes(db: Db) {
     const cursor = asString(req.query.cursor);
     const outputMode = req.query.output === "full" ? "full" : "compact";
     const includeOutputQuery = req.query.includeOutputs ?? req.query.includeOutput;
-    const includeOutputs = outputMode === "full" || includeOutputQuery === undefined
-      ? true
-      : asBoolean(includeOutputQuery);
+    const includeOutputs = outputMode === "full" || asBoolean(includeOutputQuery);
     const order = req.query.order === "oldest" || req.query.order === "chronological"
       ? "oldest"
       : "newest";
@@ -308,10 +351,13 @@ export function runIntelligenceRoutes(db: Db) {
     });
     const orderedSteps = order === "newest" ? [...filtered].reverse() : filtered;
     const paged = paginateTranscriptSteps(orderedSteps, { cursor, turnLimit });
-    const rows = paged.rows.map((step) => compactTranscriptRow(step, maxChars, includeOutputs));
+    const allRows = paged.rows.map((step) => compactTranscriptRow(step, maxChars, includeOutputs));
+    const rows = outputMode === "full" ? allRows : limitRowsByJsonBytes(allRows, 400_000);
+    const responseHasMore = rows.length < allRows.length || paged.page.hasMore;
+    const responseSteps = paged.rows.slice(0, rows.length);
 
     res.json({
-      run: detail.run,
+      run: outputMode === "full" ? detail.run : compactRunHeader(detail.run),
       agentName: detail.agentName,
       orgName: detail.orgName,
       issue: detail.issue,
@@ -319,12 +365,17 @@ export function runIntelligenceRoutes(db: Db) {
       output: outputMode,
       page: {
         ...paged.page,
+        hasMore: responseHasMore,
+        nextCursor: responseHasMore && responseSteps.length > 0
+          ? stepStableId(responseSteps[responseSteps.length - 1]!)
+          : null,
+        returnedSteps: responseSteps.length,
         order,
       },
       rows,
       ...(outputMode === "full"
         ? {
-          entries: paged.rows.map((step) => ({
+          entries: responseSteps.map((step) => ({
             id: stepStableId(step),
             index: step.index,
             turnIndex: step.turnIndex,
@@ -349,12 +400,23 @@ export function runIntelligenceRoutes(db: Db) {
     if (!detail) throw notFound("Agent run not found");
     assertCompanyAccess(req, detail.run.orgId);
     const maxChars = asPositiveInteger(req.query.maxChars, 1200, 20000);
+    const cursorIndex = parseStepStableId(asString(req.query.cursor));
+    const allErrors = buildRunErrors(detail, maxChars)
+      .filter((error) => cursorIndex === null || (error.index !== null && error.index > cursorIndex));
+    const errors = limitRowsByJsonBytes(allErrors.slice(0, 200), 400_000);
+    const hasMore = errors.length < allErrors.length;
+    const lastIndexedError = [...errors].reverse().find((error) => error.index !== null);
     res.json({
-      run: detail.run,
+      run: compactRunHeader(detail.run),
       agentName: detail.agentName,
       orgName: detail.orgName,
       issue: detail.issue,
-      errors: buildRunErrors(detail, maxChars),
+      errors,
+      page: {
+        cursor: asString(req.query.cursor),
+        hasMore,
+        nextCursor: hasMore && lastIndexedError ? `step-${lastIndexedError.index}` : null,
+      },
     });
   });
 

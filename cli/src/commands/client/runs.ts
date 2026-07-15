@@ -1,4 +1,4 @@
-import type { HeartbeatRun, HeartbeatRunEvent, RunSummary, RunSummaryPage } from "@rudderhq/shared";
+import type { HeartbeatRun, HeartbeatRunEvent, RunInspectionHeader, RunSummary, RunSummaryPage } from "@rudderhq/shared";
 import { Command } from "commander";
 import { getAgentCliCapabilityById } from "../../agent-v1-registry.js";
 import {
@@ -46,7 +46,10 @@ interface RunLogOptions extends BaseClientOptions {
 
 interface RunEventsOptions extends BaseClientOptions {
   afterSeq?: string;
+  cursor?: string;
   limit?: string;
+  maxChars?: string;
+  full?: boolean;
 }
 
 interface RunTranscriptOptions extends BaseClientOptions {
@@ -61,10 +64,16 @@ interface RunTranscriptOptions extends BaseClientOptions {
   maxOutputChars?: string;
   includeOutput?: boolean;
   includeOutputs?: boolean;
+  full?: boolean;
 }
 
 interface RunErrorsOptions extends BaseClientOptions {
   maxChars?: string;
+  cursor?: string;
+}
+
+interface RunGetOptions extends BaseClientOptions {
+  full?: boolean;
 }
 
 interface RunExportRow {
@@ -139,7 +148,7 @@ interface RunTranscriptEntry {
 }
 
 interface RunTranscriptResponse {
-  run: HeartbeatRun;
+  run: HeartbeatRun | RunInspectionHeader;
   agentName: string | null;
   orgName: string | null;
   issue: RunExportRow["issue"];
@@ -286,10 +295,14 @@ export function registerRunsCommands(program: Command): void {
       .command("get")
       .description(getAgentCliCapabilityById("runs.get").description)
       .argument("<runId>", "Run ID or short run ID")
-      .action(async (runId: string, opts: BaseClientOptions) => {
+      .option("--full", "Include raw run result, context, excerpts, and session fields")
+      .action(async (runId: string, opts: RunGetOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
-          const row = await ctx.api.get<RunExportRow>(`/api/run-intelligence/runs/${encodeURIComponent(runId)}`);
+          const projection = opts.full ? "full" : "summary";
+          const row = await ctx.api.get<RunExportRow | RunSummary>(
+            `/api/run-intelligence/runs/${encodeURIComponent(runId)}?projection=${projection}`,
+          );
           printOutput(row, { json: ctx.json });
         } catch (err) {
           handleCommandError(err);
@@ -302,15 +315,21 @@ export function registerRunsCommands(program: Command): void {
       .command("events")
       .description(getAgentCliCapabilityById("runs.events").description)
       .argument("<runId>", "Run ID or short run ID")
-      .option("--after-seq <n>", "Return events after this sequence number", "0")
+      .option("--cursor <cursor>", "Opaque total-order cursor returned in page.nextCursor")
+      .option("--after-seq <n>", "Legacy sequence-only cursor; prefer --cursor", "0")
       .option("--limit <n>", "Maximum events to return", "200")
+      .option("--max-chars <n>", "Maximum payload preview characters per event", "1200")
+      .option("--full", "Include raw event payloads; unavailable through MCP")
       .action(async (runId: string, opts: RunEventsOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
           const params = new URLSearchParams({
             afterSeq: String(parseNonNegativeInteger(opts.afterSeq, 0)),
             limit: String(parseLimit(opts.limit, 200)),
+            maxChars: String(parseLimit(opts.maxChars, 1200)),
+            projection: opts.full ? "full" : "compact",
           });
+          if (opts.cursor) params.set("cursor", opts.cursor);
           const page = await ctx.api.get<{ items: HeartbeatRunEvent[]; page: Record<string, unknown> }>(
             `/api/run-intelligence/runs/${encodeURIComponent(runId)}/events?${params}`,
           );
@@ -366,6 +385,7 @@ export function registerRunsCommands(program: Command): void {
       .option("--max-output-chars <n>", "Alias for --max-chars")
       .option("--include-output", "Include row output in compact human transcript rows")
       .option("--include-outputs", "Alias for --include-output")
+      .option("--full", "Return raw lossless transcript entries; unavailable through MCP")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
           {
@@ -378,7 +398,8 @@ export function registerRunsCommands(program: Command): void {
           },
         ],
         cautions: [
-          "Human output is compact and clipped by default; use --json only when a script needs the full payload.",
+          "Human and JSON output use the same compact projection; --json changes encoding only.",
+          "Use --full only from a direct trusted CLI when lossless provider entries are required.",
           "Use --around-error from runs errors when investigating a failure instead of reading the entire run first.",
         ],
       }))
@@ -386,7 +407,7 @@ export function registerRunsCommands(program: Command): void {
         try {
           const ctx = resolveCommandContext(opts);
           const payload = await ctx.api.get<RunTranscriptResponse>(
-            `/api/run-intelligence/runs/${encodeURIComponent(runId)}/transcript?${buildTranscriptQuery(opts, { json: ctx.json })}`,
+            `/api/run-intelligence/runs/${encodeURIComponent(runId)}/transcript?${buildTranscriptQuery(opts)}`,
           );
           if (ctx.json) {
             printOutput(payload, { json: true });
@@ -407,6 +428,7 @@ export function registerRunsCommands(program: Command): void {
       .description(getAgentCliCapabilityById("runs.errors").description)
       .argument("<runId>", "Run ID or short run ID")
       .option("--max-chars <n>", "Maximum output characters per error", "1200")
+      .option("--cursor <cursor>", "Cursor returned in page.nextCursor")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
           {
@@ -428,6 +450,7 @@ export function registerRunsCommands(program: Command): void {
           const ctx = resolveCommandContext(opts);
           const params = new URLSearchParams();
           params.set("maxChars", String(parseLimit(opts.maxChars, 1200)));
+          if (opts.cursor) params.set("cursor", opts.cursor);
           const payload = await ctx.api.get<RunErrorsResponse>(
             `/api/run-intelligence/runs/${encodeURIComponent(runId)}/errors?${params.toString()}`,
           );
@@ -514,7 +537,7 @@ function parseSkillEvidenceType(value: string | undefined): "used" | "loaded" {
   throw new Error("--evidence must be either 'used' or 'loaded'.");
 }
 
-function buildTranscriptQuery(opts: RunTranscriptOptions, output: { json: boolean }) {
+function buildTranscriptQuery(opts: RunTranscriptOptions) {
   const params = new URLSearchParams();
   if (opts.errorsOnly) params.set("errorsOnly", "true");
   if (opts.aroundError) params.set("aroundError", opts.aroundError);
@@ -522,8 +545,8 @@ function buildTranscriptQuery(opts: RunTranscriptOptions, output: { json: boolea
   if (opts.turnLimit) params.set("turnLimit", String(parseLimit(opts.turnLimit, 20)));
   params.set("contextTurns", String(parseLimit(opts.contextTurns, 1)));
   params.set("order", opts.chronological || opts.narrative ? "oldest" : "newest");
-  params.set("output", output.json ? "full" : "compact");
-  const includeOutputs = output.json || Boolean(opts.includeOutput || opts.includeOutputs || opts.narrative);
+  params.set("output", opts.full ? "full" : "compact");
+  const includeOutputs = Boolean(opts.full || opts.includeOutput || opts.includeOutputs || opts.narrative);
   params.set("includeOutputs", includeOutputs ? "true" : "false");
   params.set("maxChars", String(parseLimit(opts.maxOutputChars ?? opts.maxChars, 1200)));
   return params.toString();

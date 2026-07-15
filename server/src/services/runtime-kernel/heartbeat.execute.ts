@@ -79,7 +79,7 @@ function resolveRuntimeSceneForRun(run: typeof heartbeatRuns.$inferSelect) {
 }
 
 export function createHeartbeatExecuteHandlers(context: any) {
-  const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, nextRunEventSeq, persistRunProcessMetadata, clearDetachedRunWarning, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = context;
+  const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = context;
 
   async function executeRun(runId: string) {
     let run = await getRun(runId);
@@ -498,7 +498,6 @@ export function createHeartbeatExecuteHandlers(context: any) {
       taskKey,
     };
 
-    let seq = 1;
     let handle: RunLogHandle | null = null;
     let stdoutExcerpt = "";
     let stderrExcerpt = "";
@@ -516,7 +515,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
       scan: ReturnType<typeof detectForbiddenRuntimeSkillMarker>,
     ) => {
       if (!scan.observed) return;
-      await appendRunEvent(eventRun, seq++, {
+      await appendRunEvent(eventRun, {
         eventType: "adapter.forbidden_marker",
         stream: "system",
         level: "error",
@@ -572,7 +571,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
       }
 
       const currentRun = run;
-      await appendRunEvent(currentRun, seq++, {
+      await appendRunEvent(currentRun, {
         eventType: "lifecycle",
         stream: "system",
         level: "info",
@@ -716,7 +715,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
             if (key in meta.env) meta.env[key] = "***REDACTED***";
           }
         }
-        await appendRunEvent(currentRun, seq++, {
+        await appendRunEvent(currentRun, {
           eventType: "adapter.invoke",
           stream: "system",
           level: "info",
@@ -953,7 +952,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
         await appendForbiddenMarkerEvent(finalizedRun, forbiddenMarkerScan);
         const transcriptUsedSkills = inferUsedSkillsFromTranscript(executionTranscript);
         if (transcriptUsedSkills.length > 0) {
-          await appendRunEvent(finalizedRun, seq++, {
+          await appendRunEvent(finalizedRun, {
             eventType: "adapter.skill_usage",
             stream: "system",
             level: "info",
@@ -970,7 +969,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
             },
           });
         }
-        await appendRunEvent(finalizedRun, seq++, {
+        await appendRunEvent(finalizedRun, {
           eventType: "lifecycle",
           stream: "system",
           level: outcome === "succeeded" ? "info" : "error",
@@ -1067,7 +1066,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
 
       if (failedRun) {
         await appendForbiddenMarkerEvent(failedRun, buildForbiddenMarkerScan(null));
-        await appendRunEvent(failedRun, seq++, {
+        await appendRunEvent(failedRun, {
           eventType: isWorkspacePreflightFailure ? "runtime.workspace_preflight_failed" : "error",
           stream: "system",
           level: "error",
@@ -1160,7 +1159,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
           if (failedRun) {
             // Emit a run-log event so the failure is visible in the run timeline,
             // consistent with what the inner catch block does for adapter failures.
-            await appendRunEvent(failedRun, 1, {
+            await appendRunEvent(failedRun, {
               eventType: "error",
               stream: "system",
               level: "error",

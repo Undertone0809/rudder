@@ -133,16 +133,17 @@ describe("Rudder summary loaders", () => {
     expect(urls[1]?.searchParams.get("projection")).toBe("summary");
     expect(urls[1]?.searchParams.get("runIdPrefix")).toBe("run-abc");
     expect(urls[2]?.pathname).toBe("/api/run-intelligence/runs/run-abcdef");
+    expect(urls[2]?.searchParams.get("projection")).toBe("full");
   });
 
   it("walks bounded event and log pages when hydrating one explicit run", async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = new URL(String(input));
       if (url.pathname.endsWith("/events")) {
-        const afterSeq = url.searchParams.get("afterSeq");
-        return new Response(JSON.stringify(afterSeq === "0"
-          ? { items: [makeTranscriptEvent(1, { kind: "assistant", text: "one" })], page: { hasMore: true, nextAfterSeq: 1 } }
-          : { items: [makeTranscriptEvent(2, { kind: "assistant", text: "two" })], page: { hasMore: false, nextAfterSeq: null } }), { status: 200 });
+        const cursor = url.searchParams.get("cursor");
+        return new Response(JSON.stringify(cursor === null
+          ? { items: [makeTranscriptEvent(1, { kind: "assistant", text: "one" })], page: { hasMore: true, nextCursor: "event-1" } }
+          : { items: [makeTranscriptEvent(2, { kind: "assistant", text: "two" })], page: { hasMore: false, nextCursor: null } }), { status: 200 });
       }
       const offset = url.searchParams.get("offset");
       return new Response(JSON.stringify(offset === "0"
@@ -155,8 +156,14 @@ describe("Rudder summary loaders", () => {
     await expect(getRunLog("http://localhost:3100/api", "run-1")).resolves.toEqual({ content: "firstsecond" });
 
     const urls = fetchMock.mock.calls.map(([input]) => new URL(String(input)));
-    expect(urls.filter((url) => url.pathname.endsWith("/events")).map((url) => url.searchParams.get("afterSeq")))
-      .toEqual(["0", "1"]);
+    expect(urls.filter((url) => url.pathname.endsWith("/events")).map((url) => ({
+      cursor: url.searchParams.get("cursor"),
+      projection: url.searchParams.get("projection"),
+      limit: url.searchParams.get("limit"),
+    }))).toEqual([
+      { cursor: null, projection: "full", limit: "200" },
+      { cursor: "event-1", projection: "full", limit: "200" },
+    ]);
     expect(urls.filter((url) => url.pathname.endsWith("/log")).map((url) => url.searchParams.get("offset")))
       .toEqual(["0", "5"]);
   });

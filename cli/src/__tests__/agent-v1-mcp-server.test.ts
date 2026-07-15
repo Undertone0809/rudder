@@ -71,8 +71,8 @@ const SAMPLE_INPUT_BY_TOOL: Record<string, Record<string, unknown>> = {
   rudder_chat_create: { title: "MCP chat" },
   rudder_chat_send: { chat: "chat_123", body: "Hello" },
   rudder_chat_archive: { chat: "chat_123" },
-  rudder_runs_list: { cursor: "next-run-page", full: true },
-  rudder_runs_by_skill: { skill: "rudder", cursor: "next-skill-page", full: true },
+  rudder_runs_list: { cursor: "next-run-page" },
+  rudder_runs_by_skill: { skill: "rudder", cursor: "next-skill-page" },
   rudder_runs_get: { run: "run_123" },
   rudder_runs_events: { run: "run_123", afterSeq: 40, limit: 20 },
   rudder_runs_log: { run: "run_123", maxChars: 2000, offset: 256000, limitBytes: 256000 },
@@ -160,7 +160,6 @@ describe("agent-v1 MCP server", () => {
     const plan = buildAgentV1ToolCallPlan(
       "rudder_agent_skills_enable",
       {
-        runtimeAgent: "also-wrong",
         selectionRefs: ["rudder/rudder"],
       },
       {
@@ -324,34 +323,33 @@ describe("agent-v1 MCP server", () => {
     }
   });
 
-  it("passes run summary pagination and explicit full compatibility options", () => {
+  it("keeps raw full compatibility out of MCP run summary tools", () => {
     const env = {
       RUDDER_API_URL: "http://127.0.0.1:3100",
       RUDDER_API_KEY: "runtime-key",
       RUDDER_ORG_ID: "runtime-org",
     };
 
-    expect(buildAgentV1ToolCallPlan("rudder_runs_list", { cursor: "next-page", full: true }, env).args).toEqual([
+    expect(buildAgentV1ToolCallPlan("rudder_runs_list", { cursor: "next-page" }, env).args).toEqual([
       "runs",
       "list",
       "--cursor",
       "next-page",
-      "--full",
       "--json",
     ]);
     expect(buildAgentV1ToolCallPlan("rudder_runs_by_skill", {
       skill: "rudder",
       cursor: "next-skill-page",
-      full: true,
     }, env).args).toEqual([
       "runs",
       "by-skill",
       "rudder",
       "--cursor",
       "next-skill-page",
-      "--full",
       "--json",
     ]);
+    expect(() => buildAgentV1ToolCallPlan("rudder_runs_list", { includeOutput: false }, env))
+      .toThrow(/unsupported argument/i);
   });
 
   it("advertises every sampled MCP tool input argument in strict schemas", () => {
@@ -496,6 +494,78 @@ describe("agent-v1 MCP server", () => {
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("keeps a 50-row runs list JSON-RPC response below 200 KiB without duplicating structured data", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-mcp-runs-list-"));
+    try {
+      const shimPath = path.join(tempDir, process.platform === "win32" ? "rudder.cmd" : "rudder");
+      const marker = "bounded-summary-marker";
+      const output = JSON.stringify({
+        items: Array.from({ length: 50 }, (_, index) => ({
+          id: `run-${index}`,
+          status: "failed",
+          outcome: `${marker}-${index}-${"S".repeat(2_000)}`,
+        })),
+        page: { limit: 50, hasMore: false, nextCursor: null },
+      });
+      if (process.platform === "win32") {
+        await fs.writeFile(shimPath, `@echo off\r\necho ${output.replaceAll('"', '\\"')}\r\n`, "utf8");
+      } else {
+        await fs.writeFile(shimPath, `#!/bin/sh\nprintf '%s\\n' '${output}'\n`, "utf8");
+        await fs.chmod(shimPath, 0o755);
+      }
+
+      const response = await runAgentV1McpJsonRpcMessage({
+        jsonrpc: "2.0",
+        id: 30,
+        method: "tools/call",
+        params: { name: "rudder_runs_list", arguments: { limit: 50 } },
+      }, buildMcpServerEnv({
+        PATH: tempDir,
+        RUDDER_API_URL: "http://127.0.0.1:3100",
+        RUDDER_API_KEY: "runtime-key",
+        RUDDER_ORG_ID: "runtime-org",
+      }));
+
+      expect(Buffer.byteLength(JSON.stringify(response), "utf8")).toBeLessThanOrEqual(200 * 1024);
+      const result = response!.result as {
+        content: Array<{ text: string }>;
+        structuredContent: { items: unknown[] };
+        isError: boolean;
+      };
+      expect(result.isError).toBe(false);
+      expect(result.structuredContent.items).toHaveLength(50);
+      expect(result.content[0]?.text).not.toContain(marker);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("replaces an oversized final JSON-RPC tool result with a bounded error", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(
+      JSON.stringify({ payload: "X".repeat(1_100_000) }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ));
+
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 31,
+      method: "tools/call",
+      params: { name: "rudder_agent_me", arguments: {} },
+    }, buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+    }));
+
+    expect(Buffer.byteLength(JSON.stringify(response), "utf8")).toBeLessThan(10_000);
+    expect(response?.result).toMatchObject({
+      isError: true,
+      structuredContent: {
+        code: "rudder_mcp_response_too_large",
+        details: { maxBytes: 1_000_000 },
+      },
+    });
   });
 
   it("executes core MCP tools through the runtime API context without shelling out to rudder", async () => {

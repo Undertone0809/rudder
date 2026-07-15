@@ -13,6 +13,8 @@ import {
 import { RudderApiClient } from "./client/http.js";
 
 export const RUDDER_MCP_SERVER_NAME = "rudder-control-plane";
+const RUDDER_MCP_MAX_TOOL_RESULT_BYTES = 1_000_000;
+const RUDDER_MCP_MAX_INLINE_TEXT_BYTES = 32_000;
 
 type JsonRpcId = string | number | null;
 
@@ -99,6 +101,7 @@ export function buildAgentV1ToolCallPlan(
   }
   const capability = getAgentCliCapabilityById(capabilityId);
   rejectModelProvidedRuntimeIdentity(input);
+  rejectUnsupportedToolArguments(toolName, input);
   assertBrowserCapabilityEnabled(capabilityId, env);
   assertRuntimeMcpContext(capability, env);
 
@@ -146,7 +149,7 @@ export async function runAgentV1McpJsonRpcMessage(
           }).tools.map(toMcpToolListEntry),
         });
       case "tools/call":
-        return rpcResult(id, await callToolSafely(message.params, env));
+        return boundedToolCallRpcResponse(id, await callToolSafely(message.params, env));
       default:
         if (isNotification) return null;
         return rpcError(id, -32601, `Unsupported JSON-RPC method: ${String(message.method ?? "")}`);
@@ -269,11 +272,7 @@ async function callTool(params: unknown, env: McpServerEnv): Promise<Record<stri
     const result = await runRudderCli(materializedArgs, plan.env);
     if (result.exitCode === 0) {
       const text = result.stdout.trim() || "{}";
-      return {
-        content: [{ type: "text", text }],
-        ...structuredContentFromJsonText(text),
-        isError: false,
-      };
+      return mcpSuccessFromJsonText(text);
     }
     const payload = {
       status: "error",
@@ -404,11 +403,51 @@ function mcpApiClient(env: McpServerEnv): RudderApiClient {
 }
 
 function mcpSuccess(data: unknown): Record<string, unknown> {
-  const text = JSON.stringify(data ?? {});
-  return {
-    content: [{ type: "text", text }],
-    ...structuredContentFromJsonText(text),
+  return mcpSuccessFromJsonText(JSON.stringify(data ?? {}));
+}
+
+function mcpSuccessFromJsonText(text: string): Record<string, unknown> {
+  const structured = structuredContentFromJsonText(text);
+  const textBytes = Buffer.byteLength(text, "utf8");
+  const inlineText = textBytes <= RUDDER_MCP_MAX_INLINE_TEXT_BYTES
+    ? text
+    : JSON.stringify({
+      status: "ok",
+      output: "structuredContent",
+      originalLength: text.length,
+      originalBytes: textBytes,
+    });
+  const result = {
+    content: [{ type: "text", text: inlineText }],
+    ...structured,
     isError: false,
+  };
+  const resultBytes = Buffer.byteLength(JSON.stringify(result), "utf8");
+  if (resultBytes <= RUDDER_MCP_MAX_TOOL_RESULT_BYTES) return result;
+  return mcpResponseTooLarge(resultBytes);
+}
+
+function boundedToolCallRpcResponse(id: JsonRpcId, result: Record<string, unknown>): Record<string, unknown> {
+  const response = rpcResult(id, result);
+  const responseBytes = Buffer.byteLength(JSON.stringify(response), "utf8");
+  if (responseBytes <= RUDDER_MCP_MAX_TOOL_RESULT_BYTES) return response;
+  return rpcResult(id, mcpResponseTooLarge(responseBytes));
+}
+
+function mcpResponseTooLarge(responseBytes: number): Record<string, unknown> {
+  const payload = {
+    status: "error",
+    code: "rudder_mcp_response_too_large",
+    message: "Rudder MCP response exceeded the bounded tool-result budget. Use pagination or a ranged log read.",
+    details: {
+      maxBytes: RUDDER_MCP_MAX_TOOL_RESULT_BYTES,
+      responseBytes,
+    },
+  };
+  return {
+    content: [{ type: "text", text: JSON.stringify(payload) }],
+    structuredContent: payload,
+    isError: true,
   };
 }
 
@@ -819,7 +858,6 @@ function cliArgsForCapability(
       pushOptional(args, "--created-before", input.createdBefore);
       pushOptional(args, "--cursor", input.cursor);
       pushOptional(args, "--limit", input.limit);
-      pushBoolean(args, "--full", input.full);
       return args;
     }
     case "runs.by-skill": {
@@ -832,15 +870,16 @@ function cliArgsForCapability(
       pushOptional(args, "--created-before", input.createdBefore);
       pushOptional(args, "--cursor", input.cursor);
       pushOptional(args, "--limit", input.limit);
-      pushBoolean(args, "--full", input.full);
       return args;
     }
     case "runs.get":
       return ["runs", "get", requiredString(input, "run")];
     case "runs.events": {
       const args = ["runs", "events", requiredString(input, "run")];
+      pushOptional(args, "--cursor", input.cursor);
       pushOptional(args, "--after-seq", input.afterSeq);
       pushOptional(args, "--limit", input.limit);
+      pushOptional(args, "--max-chars", input.maxChars);
       return args;
     }
     case "runs.log": {
@@ -866,6 +905,7 @@ function cliArgsForCapability(
     case "runs.errors": {
       const args = ["runs", "errors", requiredString(input, "run")];
       pushOptional(args, "--max-chars", input.maxChars);
+      pushOptional(args, "--cursor", input.cursor);
       return args;
     }
     case "runs.cancel":
@@ -989,6 +1029,17 @@ function rejectModelProvidedRuntimeIdentity(input: Record<string, unknown>): voi
   if (reserved.length === 0) return;
   const err = new Error(`Rudder MCP runtime identity is managed by the server; do not pass these arguments: ${reserved.sort().join(", ")}`);
   (err as Error & { code?: string }).code = "rudder_mcp_reserved_identity_argument";
+  throw err;
+}
+
+function rejectUnsupportedToolArguments(toolName: string, input: Record<string, unknown>): void {
+  const tool = buildAgentV1McpToolsManifest("agent-v1").tools.find((entry) => entry.name === toolName);
+  if (!tool) return;
+  const supported = new Set(Object.keys(tool.inputSchema.properties));
+  const unsupported = Object.keys(input).filter((key) => !supported.has(key)).sort();
+  if (unsupported.length === 0) return;
+  const err = new Error(`Unsupported argument${unsupported.length === 1 ? "" : "s"} for ${toolName}: ${unsupported.join(", ")}`);
+  (err as Error & { code?: string }).code = "rudder_mcp_invalid_arguments";
   throw err;
 }
 

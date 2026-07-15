@@ -64,3 +64,31 @@ export interface RunSummaryPage {
     nextCursor: string | null;
   };
 }
+
+export interface RunInspectionHeader {
+  id: string;
+  orgId: string;
+  agentId: string;
+  invocationSource: HeartbeatInvocationSource;
+  triggerDetail: WakeupTriggerDetail | null;
+  status: HeartbeatRunStatus;
+  startedAt: Date | null;
+  finishedAt: Date | null;
+  error: string | null;
+  errorCode: string | null;
+  exitCode: number | null;
+  signal: string | null;
+  chatConversationId: string | null;
+  logBytes: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface RunEventCursorPage {
+  cursor: string | null;
+  limit: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+  /** Legacy sequence-only pagination input. New clients must use cursor. */
+  afterSeq: number | null;
+}

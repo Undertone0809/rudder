@@ -996,11 +996,11 @@ describe("CLI automation/chat/runs parity", () => {
     expect(fullUrl.searchParams.get("limit")).toBe("200");
   });
 
-  it("requests full run transcript JSON with cursor and output controls", async () => {
+  it("keeps run transcript JSON compact with cursor and output controls", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       run: { id: "run-1", status: "failed" },
       order: "newest",
-      output: "full",
+      output: "compact",
       page: {
         cursor: "step-9",
         nextCursor: null,
@@ -1010,17 +1010,14 @@ describe("CLI automation/chat/runs parity", () => {
         returnedSteps: 1,
         totalFilteredSteps: 10,
       },
-      rows: [],
-      entries: [
-        {
-          id: "step-10",
-          index: 10,
-          turnIndex: 2,
-          entry: { kind: "tool_result", content: "Y".repeat(200) },
-          output: { text: "Y".repeat(200), clipped: false, originalLength: 200 },
-        },
-      ],
-      transcript: [{ kind: "tool_result", content: "Y".repeat(200) }],
+      rows: [{
+        id: "step-10",
+        index: 10,
+        turnIndex: 2,
+        kind: "tool_result",
+        preview: "Y".repeat(40),
+        output: { text: "Y".repeat(40), clipped: true, originalLength: 200 },
+      }],
       trace: { turnCount: 2, stepCount: 10, payloadStepCount: 8, filteredStepCount: 10 },
     }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
@@ -1049,24 +1046,61 @@ describe("CLI automation/chat/runs parity", () => {
     const [url] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     const requestedUrl = new URL(url);
     expect(requestedUrl.pathname).toBe("/api/run-intelligence/runs/run-1/transcript");
-    expect(requestedUrl.searchParams.get("output")).toBe("full");
+    expect(requestedUrl.searchParams.get("output")).toBe("compact");
     expect(requestedUrl.searchParams.get("cursor")).toBe("step-9");
     expect(requestedUrl.searchParams.get("turnLimit")).toBe("2");
     expect(requestedUrl.searchParams.get("includeOutputs")).toBe("true");
     expect(requestedUrl.searchParams.get("maxChars")).toBe("40");
     expect(JSON.parse(output.stdoutText())).toMatchObject({
-      output: "full",
-      entries: [
+      output: "compact",
+      rows: [
         {
-          entry: {
-            content: "Y".repeat(200),
-          },
           output: {
-            clipped: false,
+            clipped: true,
             originalLength: 200,
           },
         },
       ],
+    });
+  });
+
+  it("requests a lossless transcript only with explicit --full", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      run: { id: "run-1", status: "failed" },
+      order: "newest",
+      output: "full",
+      entries: [{
+        id: "step-10",
+        index: 10,
+        turnIndex: 2,
+        entry: { kind: "tool_result", content: "lossless output" },
+      }],
+      transcript: [{ kind: "tool_result", content: "lossless output" }],
+      trace: { turnCount: 2, stepCount: 10, payloadStepCount: 8, filteredStepCount: 10 },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const output = captureOutput();
+
+    await expect(runCli([
+      process.execPath,
+      "rudder",
+      "runs",
+      "transcript",
+      "run-1",
+      "--full",
+      "--api-base",
+      "http://localhost:3100",
+      "--api-key",
+      "token-1",
+      "--json",
+    ])).resolves.toBe(0);
+
+    const [[requestedUrlValue]] = fetchMock.mock.calls as unknown as [[string, RequestInit]];
+    const requestedUrl = new URL(requestedUrlValue);
+    expect(requestedUrl.searchParams.get("output")).toBe("full");
+    expect(JSON.parse(output.stdoutText())).toMatchObject({
+      output: "full",
+      entries: [{ entry: { content: "lossless output" } }],
     });
   });
 

@@ -15,6 +15,7 @@ import {
   summarizeTokenUsage,
   type HeartbeatRun,
   type HeartbeatRunEvent,
+  type RunEventCursorPage,
   type RunSummary,
   type RunSummaryPage,
 } from "@rudderhq/shared";
@@ -201,6 +202,11 @@ interface RunSummaryCursor {
   id: string;
 }
 
+interface RunEventCursor {
+  seq: number;
+  id: number;
+}
+
 type SummaryRunRow = {
   id: string;
   orgId: string;
@@ -255,6 +261,29 @@ function decodeRunSummaryCursor(value: string): { createdAt: Date; id: string } 
     return { createdAt, id: parsed.id };
   } catch {
     throw badRequest("Invalid run summary cursor.");
+  }
+}
+
+function encodeRunEventCursor(row: Pick<HeartbeatRunEvent, "seq" | "id">) {
+  return Buffer.from(JSON.stringify({ seq: row.seq, id: row.id } satisfies RunEventCursor), "utf8").toString("base64url");
+}
+
+function decodeRunEventCursor(value: string): RunEventCursor {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<RunEventCursor>;
+    if (
+      typeof parsed.seq !== "number"
+      || !Number.isSafeInteger(parsed.seq)
+      || parsed.seq < 0
+      || typeof parsed.id !== "number"
+      || !Number.isSafeInteger(parsed.id)
+      || parsed.id < 0
+    ) {
+      throw new Error("invalid cursor payload");
+    }
+    return { seq: parsed.seq, id: parsed.id };
+  } catch {
+    throw badRequest("Invalid run event cursor.");
   }
 }
 
@@ -743,6 +772,23 @@ export async function listRunSummaries(db: Db, input: ListRunSummariesInput): Pr
   };
 }
 
+export async function getRunSummary(
+  db: Db,
+  runId: string,
+  scope: RunIdResolutionScope = {},
+): Promise<RunSummary | null> {
+  const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
+  const orgId = await loadRunOrgId(db, resolvedRunId);
+  if (!orgId) return null;
+  assertRunOrgScope(orgId, scope);
+  const page = await listRunSummaries(db, {
+    orgId,
+    runIdPrefix: resolvedRunId,
+    limit: 1,
+  });
+  return page.items.find((row) => row.id === resolvedRunId) ?? null;
+}
+
 type RunIdResolutionScope = { orgIds?: string[] };
 
 function assertRunOrgScope(orgId: string, scope: RunIdResolutionScope) {
@@ -778,36 +824,79 @@ export async function getObservedRunEvents(
   db: Db,
   runId: string,
   scope: RunIdResolutionScope = {},
-  input: { afterSeq?: number; limit?: number } = {},
+  input: {
+    cursor?: string | null;
+    afterSeq?: number;
+    limit?: number;
+    includePayload?: boolean;
+    maxPayloadChars?: number;
+  } = {},
 ) {
   const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
   const orgId = await loadRunOrgId(db, resolvedRunId);
   if (!orgId) throw notFound("Agent run not found");
   assertRunOrgScope(orgId, scope);
-  const heartbeat = heartbeatService(db);
   const afterSeq = Math.max(0, Math.floor(input.afterSeq ?? 0));
-  const limit = Math.max(1, Math.min(999, Math.floor(input.limit ?? 200)));
-  const fetched = await heartbeat.listEvents(resolvedRunId, afterSeq, limit + 1);
+  const cursor = input.cursor ? decodeRunEventCursor(input.cursor) : null;
+  const limit = Math.max(1, Math.min(200, Math.floor(input.limit ?? 200)));
+  const conditions = [eq(heartbeatRunEvents.runId, resolvedRunId)];
+  if (cursor) {
+    conditions.push(or(
+      gt(heartbeatRunEvents.seq, cursor.seq),
+      and(eq(heartbeatRunEvents.seq, cursor.seq), gt(heartbeatRunEvents.id, cursor.id)),
+    )!);
+  } else if (afterSeq > 0) {
+    conditions.push(gt(heartbeatRunEvents.seq, afterSeq));
+  }
+  const fetched = await db
+    .select()
+    .from(heartbeatRunEvents)
+    .where(and(...conditions))
+    .orderBy(asc(heartbeatRunEvents.seq), asc(heartbeatRunEvents.id))
+    .limit(limit + 1);
   const hasMore = fetched.length > limit;
   const currentUserRedactionOptions = {
     enabled: (await instanceSettingsService(db).getGeneral()).censorUsernameInLogs,
   };
-  const items = (hasMore ? fetched.slice(0, limit) : fetched).map((event) =>
-    redactCurrentUserValue({
+  const maxPayloadChars = Math.max(100, Math.min(4_000, Math.floor(input.maxPayloadChars ?? 1_200)));
+  const items = (hasMore ? fetched.slice(0, limit) : fetched).map((event) => {
+    const redacted = redactCurrentUserValue({
       ...event,
       stream: event.stream as HeartbeatRunEvent["stream"],
       level: event.level as HeartbeatRunEvent["level"],
       payload: redactEventPayload(event.payload),
-    }, currentUserRedactionOptions),
-  );
+    }, currentUserRedactionOptions);
+    const payloadText = redacted.payload == null ? "" : JSON.stringify(redacted.payload);
+    return {
+      ...redacted,
+      payload: input.includePayload ? redacted.payload : null,
+      payloadPreview: payloadText
+        ? {
+          text: payloadText.length <= maxPayloadChars
+            ? payloadText
+            : `${payloadText.slice(0, maxPayloadChars - 1)}…`,
+          clipped: payloadText.length > maxPayloadChars,
+          originalLength: payloadText.length,
+        }
+        : null,
+    };
+  });
+  const nextCursor = hasMore && items.length > 0
+    ? encodeRunEventCursor(items[items.length - 1]!)
+    : null;
+  const page: RunEventCursorPage = {
+    cursor: input.cursor ?? null,
+    afterSeq: input.cursor ? null : afterSeq,
+    limit,
+    hasMore,
+    nextCursor,
+  };
   return {
     orgId,
     response: {
       items,
       page: {
-        afterSeq,
-        limit,
-        hasMore,
+        ...page,
         nextAfterSeq: hasMore && items.length > 0 ? items[items.length - 1]!.seq : null,
       },
     },

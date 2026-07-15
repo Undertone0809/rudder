@@ -100,10 +100,10 @@ Direct API fallback is allowed for heartbeat close-out only when a required CLI 
 | `rudder_chat_archive` | `rudder chat archive <chat-id>` | Archive a chat conversation without deleting it. | yes | no | no | attached when available |
 | `rudder_runs_list` | `rudder runs list --org-id <id> [--used-skill <skill>] [--loaded-skill <skill>] [--cursor <cursor>] [--full]` | List lightweight run summaries with stable pagination and filters; use --full only for legacy full-row compatibility. | no | required | no | no |
 | `rudder_runs_by_skill` | `rudder runs by-skill <skill> --org-id <id> [--evidence <used-or-loaded>] [--cursor <cursor>] [--full]` | Build a paginated skill evidence packet from lightweight run summaries; use --full only for legacy full-row compatibility. | no | required | no | no |
-| `rudder_runs_get` | `rudder runs get <run-id>` | Read one observed run detail. | no | no | no | no |
-| `rudder_runs_events` | `rudder runs events <run-id> [--after-seq <n>] [--limit <n>]` | List a bounded page of persisted run events with a sequence cursor. | no | no | no | no |
+| `rudder_runs_get` | `rudder runs get <run-id> [--full]` | Read one bounded run summary; use --full only from a direct trusted CLI for raw detail. | no | no | no | no |
+| `rudder_runs_events` | `rudder runs events <run-id> [--cursor <cursor>] [--after-seq <n>] [--limit <n>] [--full]` | List a bounded page of persisted run events with a lossless opaque cursor and clipped payload previews. | no | no | no | no |
 | `rudder_runs_log` | `rudder runs log <run-id> [--offset <bytes>] [--limit-bytes <n>]` | Read a bounded byte range of stored run log content. | no | no | no | no |
-| `rudder_runs_transcript` | `rudder runs transcript <run-id> [--turn-limit <n>] [--cursor <cursor>] [--include-output]` | Read the server-normalized run transcript; human output is compact and JSON includes full entries. | no | no | no | no |
+| `rudder_runs_transcript` | `rudder runs transcript <run-id> [--turn-limit <n>] [--cursor <cursor>] [--include-output] [--full]` | Read a compact server-normalized transcript; --json changes encoding only and --full is direct-CLI-only raw access. | no | no | no | no |
 | `rudder_runs_errors` | `rudder runs errors <run-id>` | List failed tool calls, stderr, runtime failures, and jump-to-context commands. | no | no | no | no |
 | `rudder_runs_cancel` | `rudder runs cancel <run-id>` | Cancel a heartbeat run through the governed server route. | yes | no | no | attached when available |
 | `rudder_runs_retry` | `rudder runs retry <run-id>` | Retry a failed, timed out, or cancelled run through the governed server route. | yes | no | no | attached when available |

@@ -8,7 +8,7 @@ import {
   organizations,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import express from "express";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -19,6 +19,7 @@ import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { runIntelligenceRoutes } from "../routes/run-intelligence.js";
+import { appendHeartbeatRunEvent } from "../services/run-events.js";
 import { getRunLogStore } from "../services/run-log-store.js";
 
 type EmbeddedPostgresInstance = {
@@ -217,7 +218,7 @@ describe("run intelligence real route workflow", () => {
         error: "command failed",
         errorCode: "command_error",
         usageJson: { inputTokens: 200, cachedInputTokens: 50, outputTokens: 30, costUsd: 0.02 },
-        resultJson: { summary: "Fix failed", raw: "raw-result-marker".repeat(20_000) },
+        resultJson: { summary: "Fix failed", stdout: `raw-result-marker:${"R".repeat(5 * 1024 * 1024)}` },
         resultSummaryJson: { summary: "Fix failed", costUsd: 0.02 },
         contextSnapshot: { targetType: "issue", targetId: "RIE-1" },
         createdAt: startedAt,
@@ -252,7 +253,7 @@ describe("run intelligence real route workflow", () => {
         ts: "2026-07-14T10:00:03.000Z",
         toolUseId: "tool-1",
         toolName: "exec_command",
-        content: `failure-marker:${"E".repeat(4_000)}`,
+        content: `failure-marker:${"E".repeat(5 * 1024 * 1024)}`,
         isError: true,
       },
       {
@@ -288,6 +289,17 @@ describe("run intelligence real route workflow", () => {
       seq: index + 1,
       payload,
     })));
+    await db.insert(heartbeatRunEvents).values({
+      orgId,
+      runId,
+      agentId,
+      seq: 2,
+      eventType: "lifecycle",
+      stream: "system",
+      level: "info",
+      message: "historical duplicate sequence",
+      createdAt: new Date("2026-07-14T10:00:02.500Z"),
+    });
 
     const logStore = getRunLogStore();
     const logHandle = await logStore.begin({ orgId, agentId, runId });
@@ -331,19 +343,41 @@ describe("run intelligence real route workflow", () => {
     expect(firstEvents.status).toBe(200);
     expect(firstEvents.body.items.map((event: { seq: number }) => event.seq)).toEqual([1, 2]);
     expect(firstEvents.body.page).toEqual({
+      cursor: null,
       afterSeq: 0,
       limit: 2,
       hasMore: true,
       nextAfterSeq: 2,
+      nextCursor: expect.any(String),
     });
 
     const nextEvents = await request(app)
       .get(`/api/run-intelligence/runs/${runId}/events`)
-      .query({ afterSeq: String(firstEvents.body.page.nextAfterSeq), limit: "2" });
+      .query({ cursor: firstEvents.body.page.nextCursor, limit: "2" });
     expect(nextEvents.status).toBe(200);
     expect(nextEvents.body).toHaveProperty("items");
-    expect(nextEvents.body.items.map((event: { seq: number }) => event.seq)).toEqual([3, 4]);
-    expect(nextEvents.body.page).toMatchObject({ afterSeq: 2, nextAfterSeq: 4, hasMore: true });
+    expect(nextEvents.body.items.map((event: { seq: number }) => event.seq)).toEqual([2, 3]);
+    expect(nextEvents.body.page).toMatchObject({
+      cursor: firstEvents.body.page.nextCursor,
+      afterSeq: null,
+      nextAfterSeq: 3,
+      hasMore: true,
+    });
+
+    const pagedEventIds: number[] = [];
+    let eventCursor: string | null = null;
+    for (let pageCount = 0; pageCount < 20; pageCount += 1) {
+      const pageResponse = await request(app)
+        .get(`/api/run-intelligence/runs/${runId}/events`)
+        .query({ ...(eventCursor ? { cursor: eventCursor } : {}), limit: "1" });
+      expect(pageResponse.status).toBe(200);
+      pagedEventIds.push(...pageResponse.body.items.map((event: { id: number }) => event.id));
+      if (!pageResponse.body.page.hasMore) break;
+      eventCursor = pageResponse.body.page.nextCursor;
+      expect(eventCursor).toEqual(expect.any(String));
+    }
+    expect(pagedEventIds).toHaveLength(entries.length + 1);
+    expect(new Set(pagedEventIds).size).toBe(entries.length + 1);
 
     const errors = await request(app)
       .get(`/api/run-intelligence/runs/${runId}/errors`)
@@ -352,8 +386,18 @@ describe("run intelligence real route workflow", () => {
     const transcriptError = errors.body.errors.find((error: { type: string }) => error.type === "tool_result");
     expect(transcriptError).toMatchObject({
       id: "step-3",
-      output: { clipped: true, originalLength: 4015 },
+      output: { clipped: true, originalLength: (5 * 1024 * 1024) + 15 },
     });
+
+    const compactTranscript = await request(app)
+      .get(`/api/run-intelligence/runs/${runId}/transcript`)
+      .query({ aroundError: transcriptError.id, contextTurns: "1", includeOutput: "true", maxChars: "80" });
+    expect(compactTranscript.status).toBe(200);
+    expect(compactTranscript.body.output).toBe("compact");
+    expect(compactTranscript.body.entries).toBeUndefined();
+    expect(compactTranscript.body.run.resultJson).toBeUndefined();
+    expect(Buffer.byteLength(JSON.stringify(compactTranscript.body), "utf8")).toBeLessThan(400_000);
+    expect(JSON.stringify(compactTranscript.body)).not.toContain("E".repeat(10_000));
 
     const transcript = await request(app)
       .get(`/api/run-intelligence/runs/${runId}/transcript`)
@@ -378,6 +422,7 @@ describe("run intelligence real route workflow", () => {
       "step-3",
       "step-4",
     ]);
+    expect(transcript.body.entries[2].entry.content).toHaveLength((5 * 1024 * 1024) + 15);
     expect(transcript.body.transcript).toBeUndefined();
     expect(JSON.stringify(transcript.body)).not.toContain("second-turn-marker");
 
@@ -403,8 +448,15 @@ describe("run intelligence real route workflow", () => {
 
     const detail = await request(app).get(`/api/run-intelligence/runs/${runId}`);
     expect(detail.status).toBe(200);
-    expect(detail.body.run).toMatchObject({ id: runId, orgId, status: "failed" });
-    expect(detail.body.run.resultJson.raw).toContain("raw-result-marker");
+    expect(detail.body).toMatchObject({ id: runId, orgId, status: "failed" });
+    expect(JSON.stringify(detail.body)).not.toContain("raw-result-marker");
+
+    const fullDetail = await request(app)
+      .get(`/api/run-intelligence/runs/${runId}`)
+      .query({ projection: "full" });
+    expect(fullDetail.status).toBe(200);
+    expect(fullDetail.body.run).toMatchObject({ id: runId, orgId, status: "failed" });
+    expect(fullDetail.body.run.resultJson.stdout).toContain("raw-result-marker");
 
     const otherOrgList = await request(app)
       .get(`/api/run-intelligence/orgs/${otherOrgId}/runs`)
@@ -419,5 +471,54 @@ describe("run intelligence real route workflow", () => {
     const otherOrgLog = await request(app).get(`/api/run-intelligence/runs/${otherRunId}/log`);
     expect(otherOrgLog.status).toBe(403);
     expect(otherOrgLog.body.error).toContain("does not have access");
+  });
+
+  it("allocates unique event sequences under concurrent writers", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Concurrent Event Writers",
+      urlKey: deriveOrganizationUrlKey(`Concurrent Event Writers ${orgId}`),
+      issuePrefix: "CEW",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Writer Agent",
+      role: "engineer",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      status: "running",
+    });
+
+    await Promise.all(Array.from({ length: 100 }, (_, index) => appendHeartbeatRunEvent(db, {
+      orgId,
+      runId,
+      agentId,
+      eventType: "concurrent.test",
+      stream: "system",
+      level: "info",
+      message: `event ${index}`,
+    })));
+
+    const rows = await db
+      .select({ id: heartbeatRunEvents.id, seq: heartbeatRunEvents.seq })
+      .from(heartbeatRunEvents)
+      .where(eq(heartbeatRunEvents.runId, runId))
+      .orderBy(asc(heartbeatRunEvents.seq), asc(heartbeatRunEvents.id));
+    expect(rows).toHaveLength(100);
+    expect(rows.map((row) => row.seq)).toEqual(Array.from({ length: 100 }, (_, index) => index + 1));
+    expect(new Set(rows.map((row) => row.seq)).size).toBe(100);
   });
 });

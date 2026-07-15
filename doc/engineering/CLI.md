@@ -422,10 +422,10 @@ Bad cases to avoid:
 ```sh
 pnpm rudder runs list --org-id <org-id> [--status failed] [--agent-id <id>] [--issue-id <id>] [--runtime codex_local] [--used-skill <skill-key>] [--loaded-skill <skill-key>] [--limit 50] [--cursor <cursor>] [--full]
 pnpm rudder runs by-skill <skill-key-or-name> --org-id <org-id> [--evidence used|loaded] [--limit 50] [--cursor <cursor>] [--full]
-pnpm rudder runs get <run-id>
-pnpm rudder runs events <run-id> [--after-seq 0] [--limit 200]
+pnpm rudder runs get <run-id> [--full]
+pnpm rudder runs events <run-id> [--cursor <cursor>] [--after-seq 0] [--limit 200] [--max-chars 1200] [--full]
 pnpm rudder runs log <run-id> [--offset 0] [--limit-bytes 256000] [--max-chars 12000]
-pnpm rudder runs transcript <run-id> [--turn-limit 20] [--cursor <cursor>] [--include-output] [--max-output-chars 1200] [--errors-only] [--around-error step-12] [--context-turns 1] [--chronological] [--narrative]
+pnpm rudder runs transcript <run-id> [--turn-limit 20] [--cursor <cursor>] [--include-output] [--max-output-chars 1200] [--errors-only] [--around-error step-12] [--context-turns 1] [--chronological] [--narrative] [--full]
 pnpm rudder runs errors <run-id> [--max-chars 1200]
 pnpm rudder runs cancel <run-id>
 pnpm rudder runs retry <run-id>
@@ -455,12 +455,18 @@ summary page metadata.
 Run IDs rendered by the CLI are short IDs by default, and every `runs <run-id>`
 follow-up command accepts those short IDs directly.
 
+`runs get`, `runs events`, and `runs transcript` default to bounded projections.
+Event pages use the opaque `page.nextCursor`, which preserves total order even
+for historical rows that share a sequence number; `--after-seq` remains a
+legacy compatibility cursor. Event payloads are clipped previews by default.
+
 `runs transcript` is normalized server-side from persisted run detail and log
-content. Human output is compact, clipped, and newest-first by default; pass
-`--chronological` or `--narrative` for explicit reading modes. Human compact
-rows omit detailed output unless `--include-output` is set. `--json` requests
-the full stable payload with raw transcript entries, page metadata, trace
-counts, and unclipped entry output for scripts and agents.
+content. Human and JSON output use the same compact, clipped, newest-first
+projection by default; `--json` changes encoding only. Compact rows omit
+detailed output unless `--include-output` is set. Pass `--chronological` or
+`--narrative` for explicit reading modes. Raw run detail, event payloads, and
+lossless transcript entries require `--full` from a direct trusted CLI and are
+not exposed through MCP.
 `runs errors` provides the error-first path for failed tool calls, stderr/result
 failures, and runtime failures, including a stable `step-N` context command such
 as `rudder runs transcript <run-id> --around-error step-12`.
@@ -496,7 +502,7 @@ Bad cases to avoid:
 
 - Starting a run audit with `runs list --full --json`; prefer the bounded summary projection, then open one run's evidence.
 - Expecting `runs list` to act as a projection/summary transcript endpoint. Use `runs errors` or `runs transcript` for details.
-- Using `--json` transcript output when a compact human view is enough; full payloads can include large raw entries.
+- Treating `--json` as raw access; it changes encoding only. Use explicit direct-CLI `--full` only when raw entries are required.
 - Cancelling or retrying a run without checking whether it belongs to another active issue owner.
 
 ## Agent Commands

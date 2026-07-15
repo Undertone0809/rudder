@@ -77,7 +77,9 @@ describe("client command help examples and cautions", () => {
       "Inspect the neighborhood around a failing step",
       "--around-error",
       "--include-output",
-      "Human output is compact and clipped",
+      "Human and JSON output use the same compact projection",
+      "--json changes encoding only",
+      "Use --full only from a direct trusted CLI",
     ]);
   });
 

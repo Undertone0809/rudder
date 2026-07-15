@@ -1048,9 +1048,9 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   },
   {
     id: "runs.get",
-    command: "rudder runs get <run-id>",
+    command: "rudder runs get <run-id> [--full]",
     category: "runs",
-    description: "Read one observed run detail.",
+    description: "Read one bounded run summary; use --full only from a direct trusted CLI for raw detail.",
     mutating: false,
     contract: "agent-v1",
     requiresOrgId: false,
@@ -1060,9 +1060,9 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   },
   {
     id: "runs.events",
-    command: "rudder runs events <run-id> [--after-seq <n>] [--limit <n>]",
+    command: "rudder runs events <run-id> [--cursor <cursor>] [--after-seq <n>] [--limit <n>] [--full]",
     category: "runs",
-    description: "List a bounded page of persisted run events with a sequence cursor.",
+    description: "List a bounded page of persisted run events with a lossless opaque cursor and clipped payload previews.",
     mutating: false,
     contract: "agent-v1",
     requiresOrgId: false,
@@ -1084,9 +1084,9 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   },
   {
     id: "runs.transcript",
-    command: "rudder runs transcript <run-id> [--turn-limit <n>] [--cursor <cursor>] [--include-output]",
+    command: "rudder runs transcript <run-id> [--turn-limit <n>] [--cursor <cursor>] [--include-output] [--full]",
     category: "runs",
-    description: "Read the server-normalized run transcript; human output is compact and JSON includes full entries.",
+    description: "Read a compact server-normalized transcript; --json changes encoding only and --full is direct-CLI-only raw access.",
     mutating: false,
     contract: "agent-v1",
     requiresOrgId: false,
@@ -1207,6 +1207,76 @@ function mcpInputSchemaForCapability(id: string): AgentV1McpToolManifestEntry["i
     properties[key] = value;
   };
 
+  if (id.startsWith("runs.")) {
+    const addString = (key: string, description: string) => add(key, mcpString(description));
+    const addNumber = (key: string, description: string) => add(key, mcpNumber(description));
+    const addBoolean = (key: string, description: string) => add(key, mcpBoolean(description));
+    switch (id) {
+      case "runs.list":
+        addString("updatedAfter", "Only runs updated after this timestamp.");
+        addString("runIdPrefix", "Run id prefix filter.");
+        addString("relatedAgentId", "Agent id filter.");
+        addString("status", "Run status filter.");
+        addString("runtime", "Runtime type filter.");
+        addString("issueId", "Linked issue id filter.");
+        addString("usedSkill", "Used skill filter.");
+        addString("loadedSkill", "Loaded skill filter.");
+        addString("createdBefore", "Only runs created before this timestamp.");
+        addString("cursor", "Stable summary cursor.");
+        addNumber("limit", "Summary page size, capped by the server.");
+        break;
+      case "runs.by-skill":
+        addString("skill", "Skill key or display name.");
+        addString("evidence", "Evidence type: used or loaded.");
+        addString("relatedAgentId", "Agent id filter.");
+        addString("status", "Run status filter.");
+        addString("runtime", "Runtime type filter.");
+        addString("issueId", "Linked issue id filter.");
+        addString("createdBefore", "Only runs created before this timestamp.");
+        addString("cursor", "Stable summary cursor.");
+        addNumber("limit", "Summary page size, capped by the server.");
+        break;
+      case "runs.events":
+        addString("run", "Run id or short run id.");
+        addString("cursor", "Opaque total-order event cursor.");
+        addNumber("afterSeq", "Legacy sequence-only cursor.");
+        addNumber("limit", "Event page size, capped by the server.");
+        addNumber("maxChars", "Maximum payload preview characters per event.");
+        break;
+      case "runs.log":
+        addString("run", "Run id or short run id.");
+        addNumber("maxChars", "Maximum log characters for display.");
+        addNumber("offset", "Byte offset for the ranged read.");
+        addNumber("limitBytes", "Maximum bytes for the ranged read.");
+        break;
+      case "runs.transcript":
+        addString("run", "Run id or short run id.");
+        addBoolean("errorsOnly", "Return only error rows.");
+        addString("aroundError", "Transcript error step id.");
+        addNumber("contextTurns", "Turns around the selected error.");
+        addString("cursor", "Stable transcript cursor.");
+        addNumber("turnLimit", "Maximum turns to return.");
+        addBoolean("chronological", "Return oldest-first rows.");
+        addBoolean("narrative", "Use narrative row formatting.");
+        addNumber("maxChars", "Maximum output characters per row.");
+        addBoolean("includeOutput", "Include clipped row output.");
+        break;
+      case "runs.errors":
+        addString("run", "Run id or short run id.");
+        addString("cursor", "Error page cursor.");
+        addNumber("maxChars", "Maximum output characters per error.");
+        break;
+      default:
+        addString("run", "Run id or short run id.");
+        break;
+    }
+    return {
+      type: "object",
+      additionalProperties: false,
+      properties,
+    };
+  }
+
   if (id.startsWith("issue.")) {
     add("issue", mcpString("Issue UUID, identifier, or short reference."));
     add("body", mcpString("Direct Markdown body for issue comments or close-out notes."));
@@ -1244,7 +1314,6 @@ function mcpInputSchemaForCapability(id: string): AgentV1McpToolManifestEntry["i
     add("chat", mcpString("Chat conversation id."));
     add("body", mcpString("Agent-authored chat message body."));
   }
-  if (id.startsWith("runs.")) add("run", mcpString("Run id or short run id."));
   if (id.startsWith("agent.skills.")) {
     add("selectionRefs", { type: "array", items: { type: "string" }, description: "Skill selection refs." });
     add("skills", { type: "array", items: { type: "string" }, description: "Skill selection refs alias." });
