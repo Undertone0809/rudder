@@ -12,10 +12,26 @@ describe("Browser Side Panel targets", () => {
     expect(normalizeBrowserSidePanelUrl("localhost:4173/app")).toBe("http://localhost:4173/app");
     expect(normalizeBrowserSidePanelUrl("browser automation")).toBe("https://www.google.com/search?q=browser%20automation");
     expect(normalizeBrowserSidePanelUrl("file:///tmp/private.txt")).toBe("file:///tmp/private.txt");
+    expect(normalizeBrowserSidePanelUrl("file:///C:/Users/example/report.html"))
+      .toBe("file:///C:/Users/example/report.html");
+    expect(normalizeBrowserSidePanelUrl("file://remote-host/share/private.txt"))
+      .toBe("https://www.google.com/search?q=file%3A%2F%2Fremote-host%2Fshare%2Fprivate.txt");
+    expect(normalizeBrowserSidePanelUrl("file:relative.txt"))
+      .toBe("https://www.google.com/search?q=file%3Arelative.txt");
     expect(normalizeBrowserSidePanelUrl("javascript:alert(1)")).toBe(
       "https://www.google.com/search?q=javascript%3Aalert(1)",
     );
     expect(normalizeBrowserSidePanelUrl("")).toBe(BROWSER_SIDE_PANEL_BLANK_URL);
+  });
+
+  it.each([
+    "file:////server/share/private.txt",
+    "file:///\\\\server\\share\\private.txt",
+    "file:///%2F%2Fserver/share/private.txt",
+    "file:///%5C%5Cserver%5Cshare%5Cprivate.txt",
+  ])("searches instead of navigating UNC-equivalent file URL %s", (target) => {
+    expect(normalizeBrowserSidePanelUrl(target))
+      .toBe(`https://www.google.com/search?q=${encodeURIComponent(target)}`);
   });
 
   it("keeps tab identity unique while giving ordinary links a stable URL dedupe key", () => {

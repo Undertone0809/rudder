@@ -1,4 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 type DesktopWebLinkRequest = {
   url: string;
@@ -152,6 +156,62 @@ test.describe("Built-in Browser", () => {
     await expect.poll(() => page.evaluate(() => (
       window as typeof window & { __rudderBrowserExternalUrls: string[] }
     ).__rudderBrowserExternalUrls)).not.toContain("https://example.net/disabled");
+  });
+
+  test("accepts local absolute file URLs from the Browser address bar", async ({ page }) => {
+    const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "rudder-browser-e2e-file-"));
+    const fixturePath = path.join(fixtureRoot, "local-report.html");
+    const missingPath = path.join(fixtureRoot, "missing-report.html");
+    await writeFile(fixturePath, "<!doctype html><title>Local report</title><h1>Local report fixture</h1>");
+
+    try {
+      const orgRes = await page.request.post("/api/orgs", {
+        data: {
+          name: `Built-in Browser File ${Date.now()}`,
+          issuePrefix: `BRF${Date.now().toString().slice(-6)}`,
+        },
+      });
+      expect(orgRes.ok(), await orgRes.text()).toBe(true);
+      const organization = await orgRes.json() as { issuePrefix: string };
+
+      await page.goto(`/${organization.issuePrefix}/dashboard`);
+      const rudderUrl = page.url();
+      await page.getByTestId("side-panel-hover-edge").hover();
+      await page.getByTestId("global-side-panel-trigger").click();
+      const sidePanel = page.getByTestId("chat-side-panel");
+      await expect(sidePanel).toBeVisible();
+      const browserView = sidePanel.getByTestId("chat-side-panel-browser-view");
+      if (!(await browserView.isVisible().catch(() => false))) {
+        await sidePanel.getByTestId("chat-side-panel-empty-browser-target").click();
+      }
+      await expect(browserView).toBeVisible();
+
+      const fileUrl = pathToFileURL(fixturePath).href;
+      const browserUrlInput = browserView.getByLabel("Browser URL");
+      await browserUrlInput.fill(fileUrl);
+      await browserUrlInput.press("Enter");
+      const webview = sidePanel.getByTestId("chat-side-panel-browser-webview");
+      await expect(webview).toHaveAttribute("src", fileUrl);
+      await expect(sidePanel.getByTestId("chat-side-panel-tab").filter({ hasText: "local-report.html" }))
+        .toHaveCount(1);
+      expect(page.url()).toBe(rudderUrl);
+
+      const missingUrl = pathToFileURL(missingPath).href;
+      await browserUrlInput.fill(missingUrl);
+      await browserUrlInput.press("Enter");
+      await expect(webview).toHaveAttribute("src", missingUrl);
+      await webview.evaluate((element, failedUrl) => {
+        element.dispatchEvent(Object.assign(new Event("did-fail-load"), {
+          errorDescription: "ERR_FILE_NOT_FOUND",
+          isMainFrame: true,
+          validatedURL: failedUrl,
+        }));
+      }, missingUrl);
+      await expect(sidePanel.getByTestId("chat-side-panel-browser-error")).toContainText("ERR_FILE_NOT_FOUND");
+      expect(page.url()).toBe(rudderUrl);
+    } finally {
+      await rm(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   test("configures, imports, and clears the shared Browser profile", async ({ page }, testInfo) => {

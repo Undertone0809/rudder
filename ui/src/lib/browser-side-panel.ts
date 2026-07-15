@@ -26,6 +26,19 @@ function fileUrlLabel(url: URL): string {
   return pathname.split("/").filter(Boolean).at(-1) || "File";
 }
 
+function isLocalAbsoluteFileUrl(value: string, url: URL): boolean {
+  try {
+    const decodedPathname = decodeURIComponent(url.pathname);
+    return /^file:\/\/\//i.test(value)
+      && url.protocol === "file:"
+      && url.hostname === ""
+      && decodedPathname.startsWith("/")
+      && !/^\/[\\/]/.test(decodedPathname);
+  } catch {
+    return false;
+  }
+}
+
 export function browserSidePanelLabel(url: string): string {
   const trimmed = url.trim();
   if (!trimmed || trimmed === BROWSER_SIDE_PANEL_BLANK_URL) return "New tab";
@@ -45,7 +58,7 @@ export function normalizeBrowserSidePanelUrl(value: string): string {
   if (/^(https?|file):/i.test(trimmed)) {
     try {
       const url = new URL(trimmed);
-      return url.protocol === "http:" || url.protocol === "https:" || url.protocol === "file:"
+      return url.protocol === "http:" || url.protocol === "https:" || isLocalAbsoluteFileUrl(trimmed, url)
         ? url.toString()
         : searchUrl(trimmed);
     } catch {

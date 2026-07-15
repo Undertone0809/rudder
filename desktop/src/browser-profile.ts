@@ -112,15 +112,23 @@ export function isAllowedBrowserNavigationUrl(target: string, controlPlaneOrigin
   }
 }
 
-export function isAllowedOperatorBrowserNavigationUrl(target: string, controlPlaneOrigins: string[]): boolean {
+export function isLocalAbsoluteFileUrl(target: string): boolean {
+  if (!/^file:\/\/\//i.test(target)) return false;
   try {
     const parsed = new URL(target);
-    if (parsed.protocol === "file:") return true;
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-    return !isBlockedBrowserControlPlaneUrl(target, controlPlaneOrigins);
+    const decodedPathname = decodeURIComponent(parsed.pathname);
+    return parsed.protocol === "file:"
+      && parsed.hostname === ""
+      && decodedPathname.startsWith("/")
+      && !/^\/[\\/]/.test(decodedPathname);
   } catch {
     return false;
   }
+}
+
+export function isAllowedOperatorBrowserNavigationUrl(target: string, controlPlaneOrigins: string[]): boolean {
+  if (isLocalAbsoluteFileUrl(target)) return true;
+  return isAllowedBrowserNavigationUrl(target, controlPlaneOrigins);
 }
 
 export function isAllowedBrowserBootstrapUrl(target: string, controlPlaneOrigins: string[]): boolean {

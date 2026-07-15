@@ -3,14 +3,12 @@ import { createBrowserSidePanelTarget } from "./browser-side-panel";
 import type { DesktopWebLinkRequest } from "./desktop-shell";
 import type { SidePanelTarget } from "./side-panel-targets";
 
-function browserRoutableProtocol(value: string): "web" | "file" | null {
+function isWebUrl(value: string): boolean {
   try {
     const protocol = new URL(value).protocol;
-    if (protocol === "http:" || protocol === "https:") return "web";
-    if (protocol === "file:") return "file";
-    return null;
+    return protocol === "http:" || protocol === "https:";
   } catch {
-    return null;
+    return false;
   }
 }
 
@@ -21,26 +19,19 @@ export async function routeDesktopWebLink(options: {
   forceOpenExternal(url: string): void | Promise<void>;
 }): Promise<"built_in" | "default_browser" | "ignored"> {
   const { request } = options;
-  const protocol = browserRoutableProtocol(request.url);
-  if (!protocol) return "ignored";
-
-  if (request.source === "browser_popup") {
-    options.openBuiltIn(createBrowserSidePanelTarget(request.url, { newTab: true }));
-    return "built_in";
-  }
+  if (!isWebUrl(request.url)) return "ignored";
 
   let settings: InstanceBrowserSettings;
   try {
     settings = await options.getSettings();
   } catch {
-    if (protocol === "file") return "ignored";
     await options.forceOpenExternal(request.url);
     return "default_browser";
   }
 
-  if (settings.openLinksIn === "built_in" || protocol === "file") {
+  if (settings.openLinksIn === "built_in" || request.source === "browser_popup") {
     options.openBuiltIn(createBrowserSidePanelTarget(request.url, {
-      newTab: false,
+      newTab: request.source === "browser_popup",
     }));
     return "built_in";
   }

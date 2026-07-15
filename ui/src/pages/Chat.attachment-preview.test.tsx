@@ -2583,12 +2583,18 @@ describe("Chat Side Panel link handling", () => {
       reload,
     });
 
+    const removeEventListener = vi.spyOn(webview!, "removeEventListener");
     await act(async () => {
       webview!.dispatchEvent(new Event("dom-ready"));
       webview!.dispatchEvent(Object.assign(new Event("did-start-navigation"), {
         isMainFrame: true,
         url: "http://127.0.0.1:3201/",
       }));
+      await Promise.resolve();
+    });
+    expect(removeEventListener).not.toHaveBeenCalledWith("did-fail-load", expect.any(Function));
+
+    await act(async () => {
       webview!.dispatchEvent(Object.assign(new Event("did-fail-load"), {
         errorDescription: "ERR_CONNECTION_REFUSED",
         isMainFrame: true,
