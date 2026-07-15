@@ -617,15 +617,52 @@ export function createHeartbeatWakeupHandlers(context: any) {
       return mergedRun;
     }
 
-    const wakeupRequest = existingWakeupRequestId
-      ? await updateWakeupRequestRecord(db, existingWakeupRequestId, {
+    const queuedOutcome = await db.transaction(async (tx) => {
+      let wakeupRequest;
+      if (existingWakeupRequestId) {
+        await tx.execute(
+          sql`select ${agentWakeupRequests.id} from ${agentWakeupRequests}
+              where ${agentWakeupRequests.id} = ${existingWakeupRequestId}
+                and ${agentWakeupRequests.orgId} = ${agent.orgId}
+                and ${agentWakeupRequests.agentId} = ${agentId}
+              for update`,
+        );
+        const currentRequest = await tx
+          .select()
+          .from(agentWakeupRequests)
+          .where(
+            and(
+              eq(agentWakeupRequests.id, existingWakeupRequestId),
+              eq(agentWakeupRequests.orgId, agent.orgId),
+              eq(agentWakeupRequests.agentId, agentId),
+            ),
+          )
+          .then((rows) => rows[0] ?? null);
+        if (!currentRequest) throw notFound("Wakeup request not found");
+
+        if (currentRequest.runId) {
+          const existingRun = await tx
+            .select()
+            .from(heartbeatRuns)
+            .where(
+              and(
+                eq(heartbeatRuns.id, currentRequest.runId),
+                eq(heartbeatRuns.wakeupRequestId, currentRequest.id),
+              ),
+            )
+            .then((rows) => rows[0] ?? null);
+          if (existingRun) return { run: existingRun, created: false };
+        }
+
+        wakeupRequest = await updateWakeupRequestRecord(tx, existingWakeupRequestId, {
           status: "queued",
           runId: null,
           claimedAt: null,
           finishedAt: null,
           error: null,
-        })
-      : await insertWakeupRequestRecord(db, {
+        });
+      } else {
+        wakeupRequest = await insertWakeupRequestRecord(tx, {
           orgId: agent.orgId,
           agentId,
           source,
@@ -637,41 +674,48 @@ export function createHeartbeatWakeupHandlers(context: any) {
           requestedByActorId: opts.requestedByActorId ?? null,
           idempotencyKey: opts.idempotencyKey ?? null,
         });
+      }
 
-    const newRun = await db
-      .insert(heartbeatRuns)
-      .values({
-        orgId: agent.orgId,
-        agentId,
-        invocationSource: source,
-        triggerDetail,
+      if (!wakeupRequest) throw notFound("Wakeup request not found");
+      const newRun = await tx
+        .insert(heartbeatRuns)
+        .values({
+          orgId: agent.orgId,
+          agentId,
+          invocationSource: source,
+          triggerDetail,
+          status: "queued",
+          wakeupRequestId: wakeupRequest.id,
+          contextSnapshot: enrichedContextSnapshot,
+          sessionIdBefore: sessionBefore,
+        })
+        .returning()
+        .then((rows) => rows[0]);
+
+      await updateWakeupRequestRecord(tx, wakeupRequest.id, {
         status: "queued",
-        wakeupRequestId: wakeupRequest.id,
-        contextSnapshot: enrichedContextSnapshot,
-        sessionIdBefore: sessionBefore,
-      })
-      .returning()
-      .then((rows) => rows[0]);
-
-    await updateWakeupRequestRecord(db, wakeupRequest.id, {
-      status: "queued",
-      runId: newRun.id,
-      claimedAt: null,
-      finishedAt: null,
-      error: null,
-    });
-
-    publishLiveEvent({
-      orgId: newRun.orgId,
-      type: "heartbeat.run.queued",
-      payload: {
         runId: newRun.id,
-        agentId: newRun.agentId,
-        invocationSource: newRun.invocationSource,
-        triggerDetail: newRun.triggerDetail,
-        wakeupRequestId: newRun.wakeupRequestId,
-      },
+        claimedAt: null,
+        finishedAt: null,
+        error: null,
+      });
+      return { run: newRun, created: true };
     });
+    const newRun = queuedOutcome.run;
+
+    if (queuedOutcome.created) {
+      publishLiveEvent({
+        orgId: newRun.orgId,
+        type: "heartbeat.run.queued",
+        payload: {
+          runId: newRun.id,
+          agentId: newRun.agentId,
+          invocationSource: newRun.invocationSource,
+          triggerDetail: newRun.triggerDetail,
+          wakeupRequestId: newRun.wakeupRequestId,
+        },
+      });
+    }
 
     await startNextQueuedRunForAgent(agent.id);
 
@@ -813,6 +857,26 @@ export function createHeartbeatWakeupHandlers(context: any) {
         await resolveSessionBeforeForWakeup(agent, taskKey);
       const now = new Date();
       const recoveredRun = await db.transaction(async (tx) => {
+        await tx.execute(
+          sql`select ${agentWakeupRequests.id} from ${agentWakeupRequests}
+              where ${agentWakeupRequests.id} = ${pendingWakeup.id}
+                and ${agentWakeupRequests.orgId} = ${agent.orgId}
+                and ${agentWakeupRequests.agentId} = ${agent.id}
+              for update`,
+        );
+        const currentRequest = await tx
+          .select({ runId: agentWakeupRequests.runId })
+          .from(agentWakeupRequests)
+          .where(
+            and(
+              eq(agentWakeupRequests.id, pendingWakeup.id),
+              eq(agentWakeupRequests.orgId, agent.orgId),
+              eq(agentWakeupRequests.agentId, agent.id),
+            ),
+          )
+          .then((rows) => rows[0] ?? null);
+        if (!currentRequest || currentRequest.runId) return null;
+
         const wakeupRequest = await updateWakeupRequestRecord(tx, pendingWakeup.id, {
           status: "queued",
           payload: pendingPayload,
@@ -821,7 +885,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
           finishedAt: null,
           error: null,
         });
-        if (!wakeupRequest || wakeupRequest.runId) return null;
+        if (!wakeupRequest) return null;
 
         const newRun = await tx
           .insert(heartbeatRuns)

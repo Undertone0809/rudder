@@ -1,6 +1,7 @@
 import type { Db } from "@rudderhq/db";
 import {
   agents,
+  agentWakeupRequests,
   assets,
   issueAttachments,
   issueComments,
@@ -21,6 +22,7 @@ import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { redactCurrentUserText } from "../log-redaction.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
+import { DEFERRED_WAKE_CONTEXT_KEY } from "./runtime-kernel/heartbeat.core.js";
 
 import { MAX_ISSUE_COMMENT_PAGE_LIMIT } from "./issues.helpers.js";
 
@@ -29,6 +31,65 @@ type IssueCommentAttachmentMethodContext = {
   instanceSettings: ReturnType<typeof instanceSettingsService>;
   redactIssueComment: <T extends { body: string }>(comment: T, censorUsernameInLogs: boolean) => T;
 };
+
+type CommentMentionWakeupInput = {
+  issue: {
+    id: string;
+    title: string;
+    description: string | null;
+    status: string;
+    priority: string;
+  };
+  comment: {
+    id: string;
+    body: string;
+    authorAgentId: string | null;
+    authorUserId: string | null;
+  };
+  actor: {
+    actorType: "user" | "agent";
+    actorId: string;
+  };
+  mutation?: "comment_edit";
+};
+
+export function buildCommentMentionWakeup({ issue, comment, actor, mutation }: CommentMentionWakeupInput) {
+  return {
+    source: "automation" as const,
+    triggerDetail: "system" as const,
+    reason: "issue_comment_mentioned",
+    payload: {
+      issueId: issue.id,
+      commentId: comment.id,
+      ...(mutation ? { mutation } : {}),
+    },
+    requestedByActorType: actor.actorType,
+    requestedByActorId: actor.actorId,
+    contextSnapshot: {
+      issueId: issue.id,
+      taskId: issue.id,
+      commentId: comment.id,
+      wakeCommentId: comment.id,
+      wakeReason: "issue_comment_mentioned",
+      wakeSource: "comment.mention",
+      source: "comment.mention",
+      ...(mutation ? { mutation } : {}),
+      issue: {
+        id: issue.id,
+        title: issue.title,
+        description: issue.description,
+        status: issue.status,
+        priority: issue.priority,
+      },
+      comment: {
+        id: comment.id,
+        body: comment.body,
+        authorAgentId: comment.authorAgentId,
+        authorUserId: comment.authorUserId,
+      },
+    },
+  };
+}
 
 export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentMethodContext) {
   const { db, instanceSettings, redactIssueComment } = ctx;
@@ -42,34 +103,6 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
       : redacted;
     if (!withShortRef.deletedAt) return withShortRef;
     return { ...withShortRef, body: "" };
-  }
-
-  async function getMutableUserComment(issueId: string, commentId: string, userId: string) {
-    const issue = await db
-      .select({ id: issues.id, orgId: issues.orgId })
-      .from(issues)
-      .where(eq(issues.id, issueId))
-      .then((rows) => rows[0] ?? null);
-    if (!issue) throw notFound("Issue not found");
-
-    const comment = await db
-      .select()
-      .from(issueComments)
-      .where(
-        and(
-          eq(issueComments.id, commentId),
-          eq(issueComments.issueId, issue.id),
-          eq(issueComments.orgId, issue.orgId),
-        ),
-      )
-      .then((rows) => rows[0] ?? null);
-    if (!comment) throw notFound("Comment not found");
-    if (comment.deletedAt) throw forbidden("Deleted comments cannot be modified");
-    if (comment.authorAgentId || !comment.authorUserId || comment.authorUserId !== userId) {
-      throw forbidden("Only the comment author can modify this comment");
-    }
-
-    return { issue, comment };
   }
 
   async function getDeletableComment(
@@ -186,25 +219,152 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
     return match.id;
   }
 
-  return {
-    findMentionedAgents: async (orgId: string, body: string) => {
-      const explicitAgentMentionRefs = extractAgentWakeMentionIds(body);
-      if (explicitAgentMentionRefs.length === 0) return [];
+  async function findMentionedAgents(orgId: string, body: string) {
+    const explicitAgentMentionRefs = extractAgentWakeMentionIds(body);
+    if (explicitAgentMentionRefs.length === 0) return [];
 
-      const rows = await db.select({ id: agents.id, name: agents.name })
-        .from(agents).where(eq(agents.orgId, orgId));
-      const orgAgentIds = new Set(rows.map((agent) => agent.id));
-      const resolved = new Set<string>();
-      for (const agentRef of explicitAgentMentionRefs) {
-        if (isUuidLike(agentRef)) {
-          if (orgAgentIds.has(agentRef)) resolved.add(agentRef);
-          continue;
-        }
-        const agentId = resolveAgentShortRefInRows(rows, agentRef);
-        if (agentId) resolved.add(agentId);
+    const rows = await db.select({ id: agents.id, name: agents.name })
+      .from(agents).where(eq(agents.orgId, orgId));
+    const orgAgentIds = new Set(rows.map((agent) => agent.id));
+    const resolved = new Set<string>();
+    for (const agentRef of explicitAgentMentionRefs) {
+      if (isUuidLike(agentRef)) {
+        if (orgAgentIds.has(agentRef)) resolved.add(agentRef);
+        continue;
       }
-      return [...resolved];
-    },
+      const agentId = resolveAgentShortRefInRows(rows, agentRef);
+      if (agentId) resolved.add(agentId);
+    }
+    return [...resolved];
+  }
+
+  async function updateCommentWithMentionWakeups(
+    issueId: string,
+    commentId: string,
+    body: string,
+    actor: { userId: string },
+  ) {
+    return db.transaction(async (tx) => {
+      const issue = await tx
+        .select({
+          id: issues.id,
+          orgId: issues.orgId,
+          title: issues.title,
+          description: issues.description,
+          status: issues.status,
+          priority: issues.priority,
+        })
+        .from(issues)
+        .where(eq(issues.id, issueId))
+        .then((rows) => rows[0] ?? null);
+      if (!issue) throw notFound("Issue not found");
+
+      await tx.execute(
+        sql`select ${issueComments.id} from ${issueComments}
+            where ${issueComments.id} = ${commentId}
+              and ${issueComments.issueId} = ${issue.id}
+              and ${issueComments.orgId} = ${issue.orgId}
+            for update`,
+      );
+      const previousComment = await tx
+        .select()
+        .from(issueComments)
+        .where(
+          and(
+            eq(issueComments.id, commentId),
+            eq(issueComments.issueId, issue.id),
+            eq(issueComments.orgId, issue.orgId),
+          ),
+        )
+        .then((rows) => rows[0] ?? null);
+      if (!previousComment) throw notFound("Comment not found");
+      if (previousComment.deletedAt) throw forbidden("Deleted comments cannot be modified");
+      if (previousComment.authorAgentId || !previousComment.authorUserId || previousComment.authorUserId !== actor.userId) {
+        throw forbidden("Only the comment author can modify this comment");
+      }
+
+      const currentUserRedactionOptions = {
+        enabled: (await instanceSettings.getGeneral()).censorUsernameInLogs,
+      };
+      const canonicalBody = await canonicalizeAgentWakeMentions(issue.orgId, body);
+      const redactedBody = redactCurrentUserText(canonicalBody, currentUserRedactionOptions);
+      const [previousMentionedIds, currentMentionedIds] = await Promise.all([
+        findMentionedAgents(issue.orgId, previousComment.body),
+        findMentionedAgents(issue.orgId, redactedBody),
+      ]);
+      const previousMentionedIdSet = new Set(previousMentionedIds);
+      const newlyMentionedIds = currentMentionedIds.filter((agentId) => !previousMentionedIdSet.has(agentId));
+      const now = new Date();
+      const [updatedComment] = await tx
+        .update(issueComments)
+        .set({
+          body: redactedBody,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(issueComments.id, commentId),
+            eq(issueComments.issueId, issue.id),
+            eq(issueComments.orgId, issue.orgId),
+            isNull(issueComments.deletedAt),
+          ),
+        )
+        .returning();
+      if (!updatedComment) throw notFound("Comment not found");
+
+      await tx
+        .update(issues)
+        .set({ updatedAt: now })
+        .where(eq(issues.id, issueId));
+
+      const comment = serializeCommentForResponse(updatedComment, currentUserRedactionOptions.enabled);
+      const wakeupsByAgentId = new Map(newlyMentionedIds.map((agentId) => [
+        agentId,
+        buildCommentMentionWakeup({
+          issue,
+          comment,
+          actor: { actorType: "user", actorId: actor.userId },
+          mutation: "comment_edit",
+        }),
+      ]));
+      const wakeupRequestRows = wakeupsByAgentId.size > 0
+        ? await tx
+          .insert(agentWakeupRequests)
+          .values([...wakeupsByAgentId.entries()].map(([agentId, wakeup]) => ({
+            orgId: issue.orgId,
+            agentId,
+            source: wakeup.source,
+            triggerDetail: wakeup.triggerDetail,
+            reason: wakeup.reason,
+            payload: {
+              ...wakeup.payload,
+              [DEFERRED_WAKE_CONTEXT_KEY]: wakeup.contextSnapshot,
+            },
+            status: "queued",
+            requestedByActorType: wakeup.requestedByActorType,
+            requestedByActorId: wakeup.requestedByActorId,
+            idempotencyKey: `issue_comment_edit:${comment.id}:${now.toISOString()}:${agentId}`,
+            updatedAt: now,
+          })))
+          .returning({ id: agentWakeupRequests.id, agentId: agentWakeupRequests.agentId })
+        : [];
+
+      return {
+        comment,
+        mentionWakeups: wakeupRequestRows.map((row) => ({
+          agentId: row.agentId,
+          wakeupRequestId: row.id,
+          options: {
+            ...wakeupsByAgentId.get(row.agentId)!,
+            existingWakeupRequestId: row.id,
+          },
+        })),
+      };
+    });
+  }
+
+  return {
+    findMentionedAgents,
 
     findMentionedProjectIds: async (issueId: string) => {
       const issue = await db
@@ -394,39 +554,10 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
       return serializeCommentForResponse(comment, currentUserRedactionOptions.enabled);
     },
 
-    updateComment: async (issueId: string, commentId: string, body: string, actor: { userId: string }) => {
-      const { issue } = await getMutableUserComment(issueId, commentId, actor.userId);
-      const currentUserRedactionOptions = {
-        enabled: (await instanceSettings.getGeneral()).censorUsernameInLogs,
-      };
-      const canonicalBody = await canonicalizeAgentWakeMentions(issue.orgId, body);
-      const redactedBody = redactCurrentUserText(canonicalBody, currentUserRedactionOptions);
-      const now = new Date();
-      const [comment] = await db
-        .update(issueComments)
-        .set({
-          body: redactedBody,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(issueComments.id, commentId),
-            eq(issueComments.issueId, issue.id),
-            eq(issueComments.orgId, issue.orgId),
-            isNull(issueComments.deletedAt),
-          ),
-        )
-        .returning();
+    updateComment: async (issueId: string, commentId: string, body: string, actor: { userId: string }) =>
+      (await updateCommentWithMentionWakeups(issueId, commentId, body, actor)).comment,
 
-      if (!comment) throw notFound("Comment not found");
-
-      await db
-        .update(issues)
-        .set({ updatedAt: now })
-        .where(eq(issues.id, issueId));
-
-      return serializeCommentForResponse(comment, currentUserRedactionOptions.enabled);
-    },
+    updateCommentWithMentionWakeups,
 
     deleteComment: async (
       issueId: string,

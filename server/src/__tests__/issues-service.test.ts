@@ -1,6 +1,7 @@
 import {
   activityLog,
   agents,
+  agentWakeupRequests,
   applyPendingMigrations,
   assets,
   createDb,
@@ -18,7 +19,7 @@ import {
   projectWorkspaces,
 } from "@rudderhq/db";
 import { buildAgentMentionHref, deriveOrganizationUrlKey, shortRefFor } from "@rudderhq/shared";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -116,6 +117,7 @@ describe("issueService.list participantAgentId", () => {
     await db.delete(labels);
     await db.delete(assets);
     await db.delete(heartbeatRuns);
+    await db.delete(agentWakeupRequests);
     await db.delete(projects);
     await db.delete(agents);
     await db.delete(organizations);
@@ -579,6 +581,95 @@ describe("issueService.list participantAgentId", () => {
       .then((rows) => rows[0]!);
     expect(storedDeleted.body).toBe("Updated user body");
     expect(storedDeleted.deletedAt).toBeTruthy();
+  });
+
+  it("serializes edited mention deltas and persists each new wake intent atomically", async () => {
+    const orgId = randomUUID();
+    const issueId = randomUUID();
+    const commentId = randomUUID();
+    const agentId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Comment Edit Wakeups",
+      urlKey: deriveOrganizationUrlKey("Comment Edit Wakeups"),
+      issuePrefix: `W${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Mentioned Agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Concurrent comment edits",
+      status: "todo",
+      priority: "medium",
+      createdByUserId: "author-user",
+    });
+    await db.insert(issueComments).values({
+      id: commentId,
+      orgId,
+      issueId,
+      authorUserId: "author-user",
+      body: "No mention yet.",
+    });
+
+    const mentionedBody = `[Mentioned Agent](${buildAgentMentionHref(agentId, "code", "wake")}) please review.`;
+    const concurrentResults = await Promise.all([
+      svc.updateCommentWithMentionWakeups(issueId, commentId, mentionedBody, { userId: "author-user" }),
+      svc.updateCommentWithMentionWakeups(issueId, commentId, mentionedBody, { userId: "author-user" }),
+    ]);
+    expect(concurrentResults.flatMap((result) => result.mentionWakeups)).toHaveLength(1);
+
+    const removed = await svc.updateCommentWithMentionWakeups(
+      issueId,
+      commentId,
+      "Mention removed.",
+      { userId: "author-user" },
+    );
+    expect(removed.mentionWakeups).toHaveLength(0);
+
+    const readded = await svc.updateCommentWithMentionWakeups(
+      issueId,
+      commentId,
+      mentionedBody,
+      { userId: "author-user" },
+    );
+    expect(readded.mentionWakeups).toHaveLength(1);
+
+    const wakeupRequests = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(and(
+        eq(agentWakeupRequests.orgId, orgId),
+        eq(agentWakeupRequests.agentId, agentId),
+        eq(agentWakeupRequests.reason, "issue_comment_mentioned"),
+      ));
+    expect(wakeupRequests).toHaveLength(2);
+    for (const wakeupRequest of wakeupRequests) {
+      expect(wakeupRequest.status).toBe("queued");
+      expect(wakeupRequest.runId).toBeNull();
+      expect(wakeupRequest.payload).toEqual(expect.objectContaining({
+        issueId,
+        commentId,
+        mutation: "comment_edit",
+        _paperclipWakeContext: expect.objectContaining({
+          issueId,
+          commentId,
+          wakeSource: "comment.mention",
+          mutation: "comment_edit",
+        }),
+      }));
+    }
   });
 
   it("excludes soft-deleted comments from issue comment lists and cursors", async () => {

@@ -23,6 +23,7 @@ const mockIssueService = vi.hoisted(() => ({
   reorder: vi.fn(),
   resolveCommentReference: vi.fn(),
   updateComment: vi.fn(),
+  updateCommentWithMentionWakeups: vi.fn(),
   deleteComment: vi.fn(),
   update: vi.fn(),
 }));
@@ -247,6 +248,15 @@ describe("issue lifecycle routes", () => {
       deletedByUserId: null,
       authorAgentId: null,
       authorUserId: author.userId,
+    }));
+    mockIssueService.updateCommentWithMentionWakeups.mockImplementation(async (
+      issueId: string,
+      commentId: string,
+      body: string,
+      author: { userId: string },
+    ) => ({
+      comment: await mockIssueService.updateComment(issueId, commentId, body, author),
+      mentionWakeups: [],
     }));
     mockIssueService.deleteComment.mockImplementation(async (_issueId: string, commentId: string, author: { userId: string }) => ({
       id: commentId,
@@ -1868,7 +1878,7 @@ describe("issue lifecycle routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.body).toBe("Updated comment body");
-    expect(mockIssueService.updateComment).toHaveBeenCalledWith(
+    expect(mockIssueService.updateCommentWithMentionWakeups).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
       "comment-1",
       "Updated comment body",
@@ -1888,6 +1898,92 @@ describe("issue lifecycle routes", () => {
         }),
       }),
     );
+  });
+
+  it("wakes an agent newly mentioned by an issue comment edit", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue());
+    const editedBody = `[Peer Agent](${buildAgentMentionHref(PEER_AGENT_ID, "code", "wake")}) please review.`;
+    const updatedComment = {
+      id: "comment-1",
+      issueId: "11111111-1111-4111-8111-111111111111",
+      orgId: "organization-1",
+      body: editedBody,
+      authorAgentId: null,
+      authorUserId: "local-board",
+    };
+    const wakeupOptions = {
+      source: "automation",
+      triggerDetail: "system",
+      reason: "issue_comment_mentioned",
+      payload: { issueId: updatedComment.issueId, commentId: updatedComment.id, mutation: "comment_edit" },
+      requestedByActorType: "user",
+      requestedByActorId: "local-board",
+      existingWakeupRequestId: "wakeup-request-1",
+      contextSnapshot: {
+        commentId: updatedComment.id,
+        wakeCommentId: updatedComment.id,
+        wakeReason: "issue_comment_mentioned",
+        wakeSource: "comment.mention",
+        mutation: "comment_edit",
+        comment: updatedComment,
+      },
+    };
+    mockIssueService.updateCommentWithMentionWakeups.mockResolvedValueOnce({
+      comment: updatedComment,
+      mentionWakeups: [{
+        agentId: PEER_AGENT_ID,
+        wakeupRequestId: "wakeup-request-1",
+        options: wakeupOptions,
+      }],
+    });
+
+    const res = await request(createApp())
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111/comments/comment-1")
+      .send({ body: editedBody });
+
+    expect(res.status).toBe(200);
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledTimes(1);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      PEER_AGENT_ID,
+      wakeupOptions,
+    );
+  });
+
+  it("starts persisted mention wakeups even when edit activity logging fails", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue());
+    const editedBody = `[Peer Agent](${buildAgentMentionHref(PEER_AGENT_ID, "code", "wake")}) please review.`;
+    const updatedComment = {
+      id: "comment-1",
+      issueId: "11111111-1111-4111-8111-111111111111",
+      orgId: "organization-1",
+      body: editedBody,
+      authorAgentId: null,
+      authorUserId: "local-board",
+    };
+    const wakeupOptions = {
+      source: "automation",
+      reason: "issue_comment_mentioned",
+      existingWakeupRequestId: "wakeup-request-1",
+    };
+    mockIssueService.updateCommentWithMentionWakeups.mockResolvedValueOnce({
+      comment: updatedComment,
+      mentionWakeups: [{
+        agentId: PEER_AGENT_ID,
+        wakeupRequestId: "wakeup-request-1",
+        options: wakeupOptions,
+      }],
+    });
+    mockLogActivity.mockRejectedValueOnce(new Error("activity store unavailable"));
+
+    const res = await request(createApp())
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111/comments/comment-1")
+      .send({ body: editedBody });
+
+    expect(res.status).toBe(500);
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledTimes(1);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(PEER_AGENT_ID, wakeupOptions);
   });
 
   it("allows a board user to delete their own issue comment without logging the deleted body", async () => {

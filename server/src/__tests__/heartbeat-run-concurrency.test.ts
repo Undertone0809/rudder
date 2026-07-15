@@ -580,6 +580,53 @@ describe("heartbeat run concurrency", () => {
     expect((liveRuns[0]?.contextSnapshot as Record<string, unknown>)?.issueId).toBe(issueId);
   });
 
+  it("claims one persisted comment-mention wake request across concurrent consumers", async () => {
+    const { orgId, agentId } = await seedAgentFixture(3);
+    const issueId = await seedIssueFixture({ orgId });
+    const wakeCommentId = randomUUID();
+    const wakeupRequestId = await seedRunlessWakeup({
+      orgId,
+      agentId,
+      status: "queued",
+      source: "automation",
+      reason: "issue_comment_mentioned",
+      issueId,
+      wakeSource: "comment.mention",
+      wakeCommentId,
+    });
+    const heartbeat = heartbeatService(db);
+    const wakeupOptions = {
+      source: "automation" as const,
+      triggerDetail: "system" as const,
+      reason: "issue_comment_mentioned",
+      payload: { issueId, commentId: wakeCommentId, mutation: "comment_edit" },
+      contextSnapshot: {
+        issueId,
+        wakeCommentId,
+        wakeReason: "issue_comment_mentioned",
+        wakeSource: "comment.mention",
+        mutation: "comment_edit",
+      },
+      existingWakeupRequestId: wakeupRequestId,
+    };
+
+    const [firstRun, secondRun] = await Promise.all([
+      heartbeat.wakeup(agentId, wakeupOptions),
+      heartbeat.wakeup(agentId, wakeupOptions),
+    ]);
+
+    expect(firstRun?.id).toBeTruthy();
+    expect(secondRun?.id).toBe(firstRun?.id);
+    const linkedRuns = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.wakeupRequestId, wakeupRequestId));
+    expect(linkedRuns).toHaveLength(1);
+    const wakeups = await listWakeupRequestsForAgent(agentId);
+    expect(wakeups.find((wakeup) => wakeup.id === wakeupRequestId)?.runId).toBe(firstRun?.id);
+    await waitForCondition(async () => mockRuntimeAdapter.calls.length === 1);
+  });
+
   it("skips timer heartbeats before launching the runtime when no actionable work exists", async () => {
     await disableExistingTimerAgents();
     const createdAt = new Date("2026-04-27T04:00:00.000Z");

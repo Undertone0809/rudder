@@ -14,6 +14,7 @@ import { validate } from "../middleware/validate.js";
 import {
   logActivity
 } from "../services/index.js";
+import { buildCommentMentionWakeup } from "../services/issues.comments-attachments.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
@@ -109,9 +110,17 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
 
     const actor = getActorInfo(req);
     const resolvedCommentId = await svc.resolveCommentReference(id, commentId);
-    const comment = await svc.updateComment(id, resolvedCommentId, req.body.body, {
+    const { comment, mentionWakeups } = await svc.updateCommentWithMentionWakeups(id, resolvedCommentId, req.body.body, {
       userId: actor.actorId,
     });
+
+    // The update transaction already persisted each new mention as a queued
+    // wake request, so activity logging or process failure cannot lose intent.
+    for (const wakeup of mentionWakeups) {
+      heartbeat
+        .wakeup(wakeup.agentId, wakeup.options)
+        .catch((err: unknown) => logger.warn({ err, issueId: issue.id, commentId: comment.id, agentId: wakeup.agentId }, "failed to wake agent on edited issue comment"));
+    }
 
     await logActivity(db, {
       orgId: issue.orgId,
@@ -377,36 +386,11 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
       for (const mentionedId of mentionedIds) {
         if (wakeups.has(mentionedId)) continue;
         if (actorIsAgent && actor.actorId === mentionedId) continue;
-        wakeups.set(mentionedId, {
-          source: "automation",
-          triggerDetail: "system",
-          reason: "issue_comment_mentioned",
-          payload: { issueId: id, commentId: comment.id },
-          requestedByActorType: actor.actorType,
-          requestedByActorId: actor.actorId,
-          contextSnapshot: {
-            issueId: id,
-            taskId: id,
-            commentId: comment.id,
-            wakeCommentId: comment.id,
-            wakeReason: "issue_comment_mentioned",
-            wakeSource: "comment.mention",
-            source: "comment.mention",
-            issue: {
-              id: currentIssue.id,
-              title: currentIssue.title,
-              description: currentIssue.description,
-              status: currentIssue.status,
-              priority: currentIssue.priority,
-            },
-            comment: {
-              id: comment.id,
-              body: comment.body,
-              authorAgentId: comment.authorAgentId,
-              authorUserId: comment.authorUserId,
-            },
-          },
-        });
+        wakeups.set(mentionedId, buildCommentMentionWakeup({
+          issue: currentIssue,
+          comment,
+          actor,
+        }));
       }
 
       for (const [agentId, wakeup] of wakeups.entries()) {

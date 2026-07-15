@@ -194,10 +194,149 @@ test("issue comment composer uses the chat-style mention panel without exposing 
   expect(afterExplicitReassign.assigneeUserId).toBeNull();
 });
 
+test("editing an issue comment wakes only agents newly mentioned by the edit", async ({ page }) => {
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Edit-Wake-Comment-Mention-${Date.now()}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+  const firstAgentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+    data: {
+      name: "Dylan Edit Wake",
+      role: "engineer",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {
+        command: process.execPath,
+        args: ["-e", "process.exit(0)"],
+      },
+    },
+  });
+  expect(firstAgentRes.ok()).toBe(true);
+  const firstAgent = await firstAgentRes.json() as { id: string; name: string };
+
+  const secondAgentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+    data: {
+      name: "Morgan Followup",
+      role: "engineer",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {
+        command: process.execPath,
+        args: ["-e", "process.exit(0)"],
+      },
+    },
+  });
+  expect(secondAgentRes.ok()).toBe(true);
+  const secondAgent = await secondAgentRes.json() as { id: string; name: string };
+
+  const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Edited comment mention wake",
+      description: "A newly added mention should wake exactly that agent.",
+      status: "todo",
+      priority: "medium",
+      assigneeUserId: "local-board",
+    },
+  });
+  expect(issueRes.ok()).toBe(true);
+  const issue = await issueRes.json() as { id: string; identifier: string | null };
+
+  const commentRes = await page.request.post(`/api/issues/${issue.id}/comments`, {
+    data: { body: "Initial feedback without an agent mention." },
+  });
+  expect(commentRes.ok()).toBe(true);
+  const comment = await commentRes.json() as { id: string };
+
+  const editMentionRuns = async (agentId: string) => {
+    const runsRes = await page.request.get(`/api/orgs/${organization.id}/heartbeat-runs?agentId=${agentId}&limit=20`);
+    expect(runsRes.ok()).toBe(true);
+    const runs = await runsRes.json() as Array<{ contextSnapshot?: Record<string, unknown> | null }>;
+    return runs.filter((run) =>
+      run.contextSnapshot?.wakeReason === "issue_comment_mentioned"
+      && run.contextSnapshot?.wakeSource === "comment.mention"
+      && run.contextSnapshot?.commentId === comment.id
+      && run.contextSnapshot?.mutation === "comment_edit"
+    );
+  };
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
+
+  const commentBlock = page.locator(`#comment-${comment.id}`);
+  await expect(commentBlock).toBeVisible();
+  const beginEdit = async () => {
+    await commentBlock.getByRole("button", { name: "Comment actions" }).click();
+    await page.getByRole("menuitem", { name: "Edit" }).click();
+    const editor = commentBlock.locator('.rudder-milkdown-content [contenteditable="true"]').first();
+    await expect(editor).toBeVisible();
+    return editor;
+  };
+  const saveEdit = async () => {
+    const [response] = await Promise.all([
+      page.waitForResponse((candidate) =>
+        candidate.request().method() === "PATCH"
+        && new URL(candidate.url()).pathname.endsWith(`/comments/${comment.id}`)),
+      commentBlock.getByRole("button", { name: "Save" }).click(),
+    ]);
+    expect(response.ok()).toBe(true);
+  };
+
+  let editComposer = await beginEdit();
+  await editComposer.click();
+  await editComposer.press("End");
+  await page.keyboard.type(" @dylan");
+  const firstAgentOption = page.getByTestId(`markdown-mention-option-agent:${firstAgent.id}`);
+  await expect(firstAgentOption).toBeVisible({ timeout: 15_000 });
+  await firstAgentOption.click();
+  await page.keyboard.type(" please review.");
+  await saveEdit();
+
+  await expect.poll(async () => (await editMentionRuns(firstAgent.id)).length, {
+    timeout: 15_000,
+    intervals: [250, 500, 1_000],
+  }).toBe(1);
+  const firstWake = (await editMentionRuns(firstAgent.id))[0];
+  expect(firstWake.contextSnapshot?.comment).toEqual(expect.objectContaining({
+    id: comment.id,
+  }));
+
+  editComposer = await beginEdit();
+  await editComposer.click();
+  await editComposer.press("End");
+  await page.keyboard.type(" Additional context only.");
+  await saveEdit();
+  await page.waitForTimeout(1_000);
+  expect(await editMentionRuns(firstAgent.id)).toHaveLength(1);
+
+  editComposer = await beginEdit();
+  await editComposer.click();
+  await editComposer.press("End");
+  await page.keyboard.type(" @morgan");
+  const secondAgentOption = page.getByTestId(`markdown-mention-option-agent:${secondAgent.id}`);
+  await expect(secondAgentOption).toBeVisible({ timeout: 15_000 });
+  await secondAgentOption.click();
+  await page.keyboard.type(" please join.");
+  await saveEdit();
+
+  await expect.poll(async () => (await editMentionRuns(secondAgent.id)).length, {
+    timeout: 15_000,
+    intervals: [250, 500, 1_000],
+  }).toBe(1);
+  await page.waitForTimeout(1_000);
+  expect(await editMentionRuns(firstAgent.id)).toHaveLength(1);
+  await expect(commentBlock.getByRole("link", { name: /Dylan Edit Wake/ })).toBeVisible();
+  await expect(commentBlock.getByRole("link", { name: /Morgan Followup/ })).toBeVisible();
+  await expect(commentBlock).toContainText("edited");
+});
+
 test("issue comment composer renders enough matching Library files for smooth menu scrolling", async ({ page }) => {
   const suffix = Date.now();
   const orgRes = await page.request.post("/api/orgs", {
-    data: { name: `Issue-Comment-Library-Mention-Scroll-${suffix}` },
+    data: { name: `Library-Comment-Mention-Scroll-${suffix}` },
   });
   expect(orgRes.ok()).toBe(true);
   const organization = await orgRes.json() as { id: string; issuePrefix: string };

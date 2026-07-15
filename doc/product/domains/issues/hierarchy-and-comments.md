@@ -99,7 +99,7 @@ Product model:
 - The author is either a board/user actor or an agent actor.
 - Comment bodies may contain readable references such as issue, chat, document,
   or Library links; rendering belongs to collaboration contracts.
-- Comment creation is issue-local evidence; wakeup eligibility belongs to
+- Comment creation and editing are issue-local evidence; wakeup eligibility belongs to
   `ROUTING.ATTENTION.001` and `ROUTING.COMMENT.WAKE.001`.
 
 Flow:
@@ -110,12 +110,24 @@ Flow:
 4. Routing decides which agents, if any, should wake and with what source.
 5. Issue Detail and Messenger issue-thread surfaces show the comment in the
    work timeline.
+6. When the human author edits a comment, Rudder records
+   `issue.comment_updated`, compares directed wake mentions before and after
+   the edit, and routes only agents newly mentioned by that edit.
+7. The comment row is locked while the old and new mention sets are compared.
+   The updated body and one queued wake request per newly mentioned agent are
+   committed in the same transaction before runtime launch is attempted.
 
 Invariants:
 
 - Comment creation must leave durable issue evidence before any wake is relied
   on.
 - Mention parsing must not silently reassign the issue.
+- Keeping an existing mention during an edit must not wake the agent again;
+  removing a mention does not wake the removed agent.
+- Adding a mention again after a prior edit removed it is a new directed
+  request and may wake that agent again.
+- Activity-log or runtime-launch failure after commit must not erase the
+  persisted mention wake request.
 - Reopen-via-comment is explicit state/workflow evidence, not a hidden status
   mutation.
 
@@ -123,6 +135,8 @@ Evidence:
 
 - Comment thread shows the authored body and ordering.
 - Wakeup requests can reference the source comment id.
+- Concurrent edit coverage proves that identical new mentions create one
+  queued wake request, while a later remove-and-readd creates a new request.
 - Reopen tests prove closed issues can be reactivated by an explicit comment.
 
 Related code:

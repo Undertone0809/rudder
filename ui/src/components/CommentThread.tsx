@@ -503,6 +503,7 @@ const TimelineList = memo(function TimelineList({
   operatorDisplayName,
   agentMentions,
   skillReferences,
+  mentions,
   emptyMessage,
   currentUserId,
   onUpdate,
@@ -521,6 +522,7 @@ const TimelineList = memo(function TimelineList({
   operatorDisplayName?: string | null;
   agentMentions?: MarkdownAgentMentionPreview[];
   skillReferences?: MarkdownSkillReferencePreview[];
+  mentions: MentionOption[];
   emptyMessage: string;
   currentUserId?: string | null;
   onUpdate?: (commentId: string, body: string) => Promise<void>;
@@ -910,7 +912,8 @@ const TimelineList = memo(function TimelineList({
                   value={editBody}
                   onChange={setEditBody}
                   placeholder="Edit comment..."
-                  mentions={[]}
+                  mentions={mentions}
+                  agentMentionIntent="wake"
                   imageUploadHandler={imageUploadHandler}
                   className="rounded-[var(--radius-md)] bg-transparent"
                   contentClassName="min-h-[92px] bg-transparent text-[15px] leading-7 text-foreground"
@@ -1411,6 +1414,7 @@ export function CommentThread({
       operatorDisplayName={operatorDisplayName}
       agentMentions={agentMentions}
       skillReferences={skillReferences}
+      mentions={mentions}
       emptyMessage={emptyMessage}
       currentUserId={currentUserId}
       onUpdate={onUpdate}

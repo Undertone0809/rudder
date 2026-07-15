@@ -35,11 +35,13 @@ vi.mock("./MarkdownEditor", async () => {
       (
         {
           agentMentionIntent,
+          mentions,
           onChange,
           placeholder,
           value,
         }: {
           agentMentionIntent?: string;
+          mentions?: Array<{ id: string }>;
           onChange?: (value: string) => void;
           placeholder?: string;
           value?: string;
@@ -55,6 +57,7 @@ vi.mock("./MarkdownEditor", async () => {
             ref={textareaRef}
             aria-label={placeholder ?? "Markdown editor"}
             data-agent-mention-intent={agentMentionIntent ?? ""}
+            data-mention-option-count={mentions?.length ?? 0}
             onChange={(event) => onChange?.(event.currentTarget.value)}
             onInput={(event) => onChange?.(event.currentTarget.value)}
             value={value ?? ""}
@@ -1065,6 +1068,12 @@ describe("CommentThread", () => {
           ]}
           onAdd={async () => undefined}
           currentUserId="user-1"
+          mentions={[{
+            id: "agent:agent-1",
+            name: "Holden (Reviewer)",
+            kind: "agent",
+            agentId: "agent-1",
+          }]}
           onUpdate={onUpdate}
           onDelete={onDelete}
         />
@@ -1075,7 +1084,10 @@ describe("CommentThread", () => {
     expect(container.textContent).toContain("Delete");
 
     await click([...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Edit")) ?? null);
-    change(container.querySelector('textarea[aria-label="Edit comment..."]'), "Updated body");
+    const editEditor = container.querySelector('textarea[aria-label="Edit comment..."]');
+    expect(editEditor?.getAttribute("data-agent-mention-intent")).toBe("wake");
+    expect(editEditor?.getAttribute("data-mention-option-count")).toBe("1");
+    change(editEditor, "Updated body");
     await click([...container.querySelectorAll("button")].find((button) => button.textContent === "Save") ?? null);
     await vi.waitFor(() => expect(onUpdate).toHaveBeenCalledWith("comment-1", "Updated body"));
 
