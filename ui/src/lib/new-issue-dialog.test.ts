@@ -11,6 +11,7 @@ import {
   readIssueAutosave,
   readNewIssuePreferences,
   readSavedIssueDraft,
+  resolveCreatedIssueNavigation,
   resolveDefaultNewIssueProjectId,
   resolveDraftBackedNewIssueValues,
   saveIssueAutosave,
@@ -91,6 +92,99 @@ describe("resolveDefaultNewIssueProjectId", () => {
         projects,
       }),
     ).toBe("");
+  });
+});
+
+describe("resolveCreatedIssueNavigation", () => {
+  const issue = { id: "issue-uuid", identifier: "RUD-42" };
+  const organizations = [{ id: "org-1", issuePrefix: "RUD", urlKey: "rudder-labs" }];
+
+  it.each([
+    ["Issues list", "/rudder-labs/issues", "?projectId=project-1"],
+    ["Issues detail", "/rudder-labs/issues/RUD-41", ""],
+  ])("keeps creation from %s in the primary Issues surface", (_label, pathname, search) => {
+    expect(resolveCreatedIssueNavigation({
+      issue,
+      orgId: "org-1",
+      organizations,
+      openContextLocation: { pathname, search },
+    })).toEqual({
+      destination: "issues",
+      detailHref: "/rudder-labs/issues/RUD-42",
+      breadcrumbLabel: "Issues",
+      breadcrumbHref: `${pathname}${search}`,
+    });
+  });
+
+  it.each([
+    ["a legacy issue-prefix route", "/RUD/issues", "?projectId=project-1"],
+    ["an unprefixed route", "/issues", "?status=backlog"],
+  ])("canonicalizes the Issues breadcrumb from %s", (_label, pathname, search) => {
+    expect(resolveCreatedIssueNavigation({
+      issue,
+      orgId: "org-1",
+      organizations,
+      openContextLocation: { pathname, search },
+    })).toMatchObject({
+      destination: "issues",
+      detailHref: "/rudder-labs/issues/RUD-42",
+      breadcrumbLabel: "Issues",
+      breadcrumbHref: `/rudder-labs/issues${search}`,
+    });
+  });
+
+  it("uses the created issue organization for an Issues breadcrumb after an organization switch", () => {
+    expect(resolveCreatedIssueNavigation({
+      issue,
+      orgId: "org-2",
+      organizations: [
+        ...organizations,
+        { id: "org-2", issuePrefix: "NEW", urlKey: "new-org" },
+      ],
+      openContextLocation: {
+        pathname: "/rudder-labs/issues",
+        search: "?projectId=project-2",
+      },
+    })).toEqual({
+      destination: "issues",
+      detailHref: "/new-org/issues/RUD-42",
+      breadcrumbLabel: "Issues",
+      breadcrumbHref: "/new-org/issues?projectId=project-2",
+    });
+  });
+
+  it.each([
+    ["Messenger", "/rudder-labs/messenger"],
+    ["Messenger chat", "/rudder-labs/messenger/chat/chat-1"],
+    ["Library", "/rudder-labs/library"],
+    ["Agent", "/rudder-labs/agents/agent-1"],
+    ["Project issues", "/rudder-labs/projects/project-1/issues"],
+  ])("routes creation from %s to Messenger Issue Detail", (_label, pathname) => {
+    expect(resolveCreatedIssueNavigation({
+      issue,
+      orgId: "org-1",
+      organizations,
+      openContextLocation: { pathname, search: "" },
+    })).toEqual({
+      destination: "messenger",
+      detailHref: "/rudder-labs/messenger/issues/RUD-42",
+      breadcrumbLabel: "Messenger",
+      breadcrumbHref: "/rudder-labs/messenger/issues",
+    });
+  });
+
+  it("falls back to the unprefixed Issues route when open context is unavailable", () => {
+    expect(resolveCreatedIssueNavigation({
+      issue: { id: "issue-uuid", identifier: null },
+      orgId: "org-without-prefix",
+      organizations: [],
+      openContextLocation: null,
+    })).toEqual({
+      destination: "issues",
+      detailHref: "/issues/issue-uuid",
+      breadcrumbLabel: "Issues",
+      breadcrumbHref: "/issues",
+    });
   });
 });
 

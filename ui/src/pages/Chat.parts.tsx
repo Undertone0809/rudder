@@ -50,7 +50,6 @@ export const EMPTY_STATE_PROMPT_GROUPS = [
     id: "create",
     label: "Create a file or build a site",
     trigger: "Create a",
-    prompt: "Create a new website for a business. Start by asking me about the business, its customers, and what the website should help them do.",
     suggestions: [
       {
         id: "create-document",
@@ -78,7 +77,6 @@ export const EMPTY_STATE_PROMPT_GROUPS = [
     id: "research",
     label: "Research and plan next steps",
     trigger: "Figure out next steps",
-    prompt: "Figure out next steps for a strategy or project. Start by asking me what goal or initiative I'm planning around.",
     suggestions: [
       {
         id: "research-topic",
@@ -106,7 +104,6 @@ export const EMPTY_STATE_PROMPT_GROUPS = [
     id: "briefing",
     label: "Get a briefing on recent work",
     trigger: "Brief me on",
-    prompt: "Brief me on a project. Start by asking me which project to cover.",
     suggestions: [
       {
         id: "briefing-project",
@@ -134,7 +131,6 @@ export const EMPTY_STATE_PROMPT_GROUPS = [
     id: "automate",
     label: "Automate routine and recurring work",
     trigger: "Automate",
-    prompt: "Automate my morning prep. Start by asking me what I want included each morning.",
     suggestions: [
       {
         id: "automate-report",
@@ -268,16 +264,61 @@ export function ChatEmptyStatePromptIcon({
   return <Clock3 className={className} aria-hidden />;
 }
 
+export function ChatEmptyStatePromptStarters({
+  active = true,
+  onGroupSelect,
+}: {
+  active?: boolean;
+  onGroupSelect: (group: EmptyStatePromptGroup) => void;
+}) {
+  return (
+    <div
+      data-testid="chat-empty-state-starters"
+      aria-label="Start with a task"
+      aria-hidden={active ? undefined : true}
+      className={cn(
+        "t-stagger w-full space-y-1 px-1 py-1",
+        active ? "is-shown" : "is-hiding",
+      )}
+    >
+      {EMPTY_STATE_PROMPT_GROUPS.map((group, index) => (
+        <button
+          key={group.id}
+          type="button"
+          tabIndex={active ? 0 : -1}
+          data-testid={`chat-empty-state-starter-${group.id}`}
+          onClick={() => onGroupSelect(group)}
+          className={cn(
+            "t-stagger-line group flex min-h-10 w-full items-center gap-3 rounded-[var(--radius-md)] px-3 py-2 text-left text-sm text-muted-foreground outline-none",
+            `t-stagger-line--${index + 1}`,
+            "transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/35",
+          )}
+        >
+          <ChatEmptyStatePromptIcon
+            groupId={group.id}
+            className="h-4 w-4 shrink-0 text-[color:var(--rudder-doc-link)]"
+          />
+          <span className="min-w-0 flex-1 truncate">{group.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function ChatEmptyStatePromptOptions({
   suggestions,
   optionsId,
   activeIndex,
+  active = true,
+  interactive = true,
   onActiveIndexChange,
   onSuggestionSelect,
 }: {
   suggestions: readonly EmptyStatePromptSuggestion[];
   optionsId: string;
   activeIndex: number;
+  active?: boolean;
+  interactive?: boolean;
   onActiveIndexChange: (index: number) => void;
   onSuggestionSelect: (suggestion: EmptyStatePromptSuggestion) => void;
 }) {
@@ -287,7 +328,12 @@ export function ChatEmptyStatePromptOptions({
       data-testid="chat-empty-state-prompt-options"
       role="listbox"
       aria-label="Suggested prompts"
-      className="motion-content-reveal w-full max-w-3xl space-y-1 px-1 py-1"
+      aria-hidden={active ? undefined : true}
+      data-interactive={interactive ? "true" : "false"}
+      className={cn(
+        "motion-chat-prompt-options t-stagger w-full space-y-1 px-1 py-1",
+        active ? "is-shown" : "is-hiding",
+      )}
     >
       {suggestions.map((suggestion, index) => {
         const active = index === activeIndex;
@@ -303,19 +349,22 @@ export function ChatEmptyStatePromptOptions({
             role="option"
             tabIndex={-1}
             aria-selected={active}
+            aria-disabled={interactive ? undefined : true}
+            disabled={!interactive}
             data-chat-option
             data-active={active ? "true" : "false"}
-            onMouseMove={() => onActiveIndexChange(index)}
+            onMouseMove={() => { if (interactive) onActiveIndexChange(index); }}
             onMouseDown={(event) => event.preventDefault()}
-            onFocus={() => onActiveIndexChange(index)}
-            onClick={() => onSuggestionSelect(suggestion)}
+            onFocus={() => { if (interactive) onActiveIndexChange(index); }}
+            onClick={() => { if (interactive) onSuggestionSelect(suggestion); }}
             className={cn(
-              "group flex min-h-10 w-full items-center gap-3 rounded-[var(--radius-md)] px-3 py-2 text-left text-sm text-muted-foreground outline-none transition-colors",
-              "hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/35",
+              "t-stagger-line group flex min-h-10 w-full items-center gap-3 rounded-[var(--radius-md)] px-3 py-2 text-left text-sm text-muted-foreground outline-none",
+              `t-stagger-line--${index + 1}`,
+              "transition-colors focus-visible:ring-2 focus-visible:ring-ring/35",
               active && "bg-[color:var(--surface-active)] text-foreground",
             )}
           >
-            <ChatEmptyStatePromptIcon groupId={suggestion.groupId} className="h-4 w-4 shrink-0" />
+            <ChatEmptyStatePromptIcon groupId={suggestion.groupId} className="h-4 w-4 shrink-0 text-[color:var(--rudder-doc-link)]" />
             <span className="min-w-0 flex-1 truncate">
               {emphasizedPrefix ? (
                 <>

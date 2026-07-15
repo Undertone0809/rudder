@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyChatPromptToDraft,
   ChatEmptyStatePromptOptions,
+  ChatEmptyStatePromptStarters,
   ChatEmptyStateRecentConversations,
   ChatLongMessageBody,
   chatPromptGroupForExactTrigger,
@@ -112,15 +113,44 @@ function chatConversation(overrides: Partial<ChatConversation> = {}): ChatConver
 }
 
 describe("Chat empty-state prompt starters", () => {
-  it("uses the four Codex task categories with complete editable prompts", () => {
+  it("uses the four Codex task categories as two-step prompt groups", () => {
     expect(EMPTY_STATE_PROMPT_GROUPS.map((group) => group.label)).toEqual([
       "Create a file or build a site",
       "Research and plan next steps",
       "Get a briefing on recent work",
       "Automate routine and recurring work",
     ]);
-    expect(EMPTY_STATE_PROMPT_GROUPS.every((group) => group.prompt.includes("Start by asking me"))).toBe(true);
+    expect(EMPTY_STATE_PROMPT_GROUPS.map((group) => group.trigger)).toEqual([
+      "Create a",
+      "Figure out next steps",
+      "Brief me on",
+      "Automate",
+    ]);
     expect(EMPTY_STATE_PROMPT_GROUPS.every((group) => group.suggestions.length === 4)).toBe(true);
+    expect(EMPTY_STATE_PROMPT_GROUPS.every((group) => (
+      group.suggestions.every((suggestion) => suggestion.prompt.includes("Start by asking me"))
+    ))).toBe(true);
+  });
+
+  it("renders lightweight starter rows and selects a group before a complete prompt", () => {
+    const onGroupSelect = vi.fn();
+    const container = render(
+      <ChatEmptyStatePromptStarters active onGroupSelect={onGroupSelect} />,
+    );
+    const starter = container.querySelector<HTMLButtonElement>("[data-testid='chat-empty-state-starter-automate']");
+
+    expect(container.querySelector("[data-testid='chat-empty-state-starters']")?.className).toContain("t-stagger");
+    expect(starter?.className).toContain("t-stagger-line");
+    expect(starter?.className).not.toContain("h-[124px]");
+
+    act(() => {
+      starter?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onGroupSelect).toHaveBeenCalledWith(expect.objectContaining({
+      id: "automate",
+      trigger: "Automate",
+    }));
   });
 
   it("matches typed task intent and narrows the suggestion list", () => {
@@ -194,6 +224,7 @@ describe("Chat empty-state prompt starters", () => {
       .find((button) => button.textContent?.includes("Automate my morning prep"));
 
     expect(listbox?.getAttribute("aria-label")).toBe("Suggested prompts");
+    expect(listbox?.className).toContain("t-stagger");
     expect(morningPrepButton?.getAttribute("type")).toBe("button");
     expect(morningPrepButton?.getAttribute("tabindex")).toBe("-1");
     expect(morningPrepButton?.getAttribute("aria-selected")).toBe("true");
@@ -206,6 +237,35 @@ describe("Chat empty-state prompt starters", () => {
       id: "automate-morning-prep",
       prompt: automateGroup().suggestions[1].prompt,
     }));
+  });
+
+  it("keeps prompt options inert while the secondary page enters", () => {
+    const onSuggestionSelect = vi.fn();
+    const suggestions = automateGroup().suggestions.map((suggestion) => ({
+      ...suggestion,
+      groupId: automateGroup().id,
+    }));
+    const container = render(
+      <ChatEmptyStatePromptOptions
+        suggestions={suggestions}
+        optionsId="chat-empty-state-prompt-options"
+        activeIndex={0}
+        interactive={false}
+        onActiveIndexChange={vi.fn()}
+        onSuggestionSelect={onSuggestionSelect}
+      />,
+    );
+
+    const listbox = container.querySelector<HTMLElement>("[role='listbox']");
+    const firstOption = container.querySelector<HTMLButtonElement>("[role='option']");
+    expect(listbox?.dataset.interactive).toBe("false");
+    expect(firstOption?.disabled).toBe(true);
+    expect(firstOption?.getAttribute("aria-disabled")).toBe("true");
+
+    act(() => {
+      firstOption?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onSuggestionSelect).not.toHaveBeenCalled();
   });
 
   it("emphasizes each prompt group's shared trigger", () => {
@@ -241,7 +301,6 @@ describe("ChatEmptyStateRecentConversations", () => {
             latestReplyPreview: "Confirmed: release-maintainer was forked and can be used directly.",
           }),
         ]}
-        projectName="Rudder dev"
         visible
         conversationPath={(id) => `/chat/${id}`}
         onPrefetchConversation={vi.fn()}
@@ -265,7 +324,6 @@ describe("ChatEmptyStateRecentConversations", () => {
             latestReplyPreview: "Confirmed: release-maintainer was forked and can be used directly.",
           }),
         ]}
-        projectName="Rudder dev"
         visible
         conversationPath={(id) => `/chat/${id}`}
         onPrefetchConversation={vi.fn()}
@@ -289,7 +347,6 @@ describe("ChatEmptyStateRecentConversations", () => {
             latestReplyPreview: "Assistant reply should stay hidden.",
           }),
         ]}
-        projectName="Rudder dev"
         visible
         conversationPath={(id) => `/chat/${id}`}
         onPrefetchConversation={vi.fn()}
@@ -308,7 +365,6 @@ describe("ChatEmptyStateRecentConversations", () => {
     const visibleContainer = render(
       <ChatEmptyStateRecentConversations
         conversations={[chatConversation()]}
-        projectName="Rudder dev"
         visible
         conversationPath={(id) => `/chat/${id}`}
         onPrefetchConversation={vi.fn()}
@@ -330,7 +386,6 @@ describe("ChatEmptyStateRecentConversations", () => {
     const hiddenContainer = render(
       <ChatEmptyStateRecentConversations
         conversations={[chatConversation()]}
-        projectName="Rudder dev"
         visible={false}
         conversationPath={(id) => `/chat/${id}`}
         onPrefetchConversation={vi.fn()}
@@ -377,7 +432,6 @@ describe("ChatEmptyStateRecentConversations", () => {
       const container = render(
         <ChatEmptyStateRecentConversations
           conversations={[chatConversation()]}
-          projectName="Rudder dev"
           visible
           conversationPath={(id) => `/chat/${id}`}
           onPrefetchConversation={vi.fn()}

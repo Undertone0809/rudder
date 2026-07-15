@@ -55,6 +55,7 @@ related_code:
   - ui/src/components/MessengerContextSidebar.tsx
   - ui/src/components/WorkspaceFilePreview.tsx
   - ui/src/components/WorkspacePdfPreview.tsx
+  - ui/src/motion.css
   - ui/src/pages/Chat.parts.tsx
   - ui/src/pages/Chat.side-panel.tsx
   - ui/src/pages/Chat.work-manifest.tsx
@@ -93,6 +94,7 @@ related_tests:
   - ui/src/pages/Chat.test.tsx
   - ui/src/pages/Chat.empty-state.test.tsx
   - ui/src/context/ChatGenerationContext.test.tsx
+  - ui/src/lib/motion-css.test.ts
   - ui/src/lib/chat-stream-state.test.ts
   - ui/src/pages/Chat.attachment-preview.test.tsx
   - ui/src/pages/Chat.messages.test.tsx
@@ -104,6 +106,7 @@ related_tests:
   - tests/e2e/messenger-hover-preview.spec.ts
   - tests/e2e/chat-edit-stream-layout.spec.ts
   - tests/e2e/chat-options-menu.spec.ts
+  - tests/e2e/chat-prompt-starters.spec.ts
   - tests/e2e/chat-fork.spec.ts
   - tests/e2e/chat-rich-references.spec.ts
   - tests/e2e/chat-side-panel.spec.ts
@@ -170,38 +173,46 @@ Product model:
   label. Recent-conversation rows keep full-width straight separators at rest;
   pointer hover alone insets the active row and adds the shared control radius
   and quiet surface emphasis without changing conversation order or content.
+- A new Chat's `Use cases` page begins with four compact task-category rows.
+  Selecting one writes only that category's short trigger into the composer,
+  preserves selected Skill, Project, and Agent context, and moves to a second
+  page of four complete editable prompt suggestions. Selecting a suggestion
+  replaces the trigger with the full prompt but does not create a conversation
+  or submit work until the operator sends it.
 
 Flow:
 
 1. User creates or opens chat.
-2. Composer may include attachments, mentions, rich references, selected agent,
+2. On an empty new Chat, the operator may select a compact task category and
+   then a complete prompt suggestion before editing or sending the draft.
+3. Composer may include attachments, mentions, rich references, selected agent,
    selected skills, and structured proposal payloads.
-3. Server persists user message and context links.
-4. If a runtime assistant is invoked, Rudder creates a chat Agent Run and
+4. Server persists user message and context links.
+5. If a runtime assistant is invoked, Rudder creates a chat Agent Run and
    streams/persists assistant messages.
-5. Chat can continue executing the task conversationally or create/link an
+6. Chat can continue executing the task conversationally or create/link an
    issue, automation, or approval when the operator asks for that additional
    structure. The assistant must not emit an issue proposal merely because the
    work is large, durable, assignable, or issue-shaped.
-6. When the operator refreshes a completed assistant answer, Rudder reuses the
+7. When the operator refreshes a completed assistant answer, Rudder reuses the
    original turn context, creates a new turn variant, and surfaces branch
    controls for moving between variants.
-7. While the refreshed or edited variant is still streaming, the operator may
+8. While the refreshed or edited variant is still streaming, the operator may
    switch the visible turn branch back to an earlier variant to inspect prior
    user and assistant content. The current stream continues in the background,
    generation controls remain available, and returning to the active/latest
    variant shows the live stream draft again.
-8. If the operator sends another local follow-up while the selected chat has an
+9. If the operator sends another local follow-up while the selected chat has an
    active generation, Rudder creates a queued follow-up with the current draft,
    attachments, selected project, skills, model/effort, access mode, and
    expected active generation id.
-9. The queue renders beside the composer with stable ordering. The first queued
+10. The queue renders beside the composer with stable ordering. The first queued
    item is marked as next, later items show their queue position, and editable
    queued items expose edit/delete controls.
-10. When the current reply completes, Rudder claims the next queued follow-up,
+11. When the current reply completes, Rudder claims the next queued follow-up,
    sends it as the next chat turn, and hides the queued row after it is linked
    to the delivered user message.
-11. If the current reply is stopped, fails, or is otherwise not completed,
+12. If the current reply is stopped, fails, or is otherwise not completed,
    queued follow-ups stay parked. The operator can edit/delete them, but Rudder
    does not auto-deliver them as if the interrupted reply had completed.
 
@@ -256,6 +267,10 @@ Invariants:
 - Project-scoped recent-conversation rows must remain visually scan-friendly at
   rest: separators span the list width and rows do not carry rounded corners or
   inset margins until the operator hovers that row.
+- Prompt suggestions must remain inert while the category-to-suggestions page
+  transition is running; reduced-motion mode moves directly to the same usable
+  state. Hidden prompt pages remain mounted so focus, dimensions, and exit
+  animation do not depend on remounting the list.
 
 Evidence:
 
@@ -278,6 +293,9 @@ Evidence:
 - Chat empty-state UI and E2E coverage verify aligned tabs/Project context,
   full-width square resting rows, and inset rounded hover emphasis for recent
   Project conversations.
+- Chat prompt-flow UI, motion-contract, and E2E coverage verify compact starters,
+  the two-page transition lock, reduced-motion behavior, context preservation,
+  editable prompt completion, retained hidden DOM, and the existing-chat boundary.
 
 ## CHAT.TITLE.GENERATION.001
 
