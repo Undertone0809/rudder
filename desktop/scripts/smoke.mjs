@@ -1498,10 +1498,14 @@ async function runStartupRecoveryScenario(mode) {
   const ports = await allocateSmokePorts();
   const invalidPostgresBinDir = path.join(scenarioRoot, "missing-postgres-bin");
   const supportHandoffPath = path.join(scenarioRoot, "support-handoffs.jsonl");
+  const bugReportHandoffPath = path.join(scenarioRoot, "bug-report-handoffs.jsonl");
   const { electronApp, page } = await launchDesktopWindow(scenarioRoot, mode, ports, {
     RUDDER_POSTGRES_BIN_DIR: invalidPostgresBinDir,
     RUDDER_DESKTOP_SMOKE_SUPPORT_HANDOFF_PATH: supportHandoffPath,
     RUDDER_DESKTOP_SMOKE_SUPPORT_HANDOFF_SEQUENCE: "resolve,resolve,reject",
+    RUDDER_DESKTOP_SMOKE_BUG_REPORT_HANDOFF_PATH: bugReportHandoffPath,
+    RUDDER_DESKTOP_SMOKE_BUG_REPORT_HANDOFF_SEQUENCE: "resolve,resolve,resolve,reject,reject",
+    RUDDER_DESKTOP_SMOKE_BUG_REPORT_HANDOFF_DELAY_SEQUENCE: "80,80,700,1500,80",
   });
 
   try {
@@ -1525,6 +1529,11 @@ async function runStartupRecoveryScenario(mode) {
       "support email should be available after failure",
     );
     assert.equal(
+      await page.getByRole("button", { name: "Report on GitHub" }).isEnabled(),
+      true,
+      "the fixed GitHub bug report should be available after failure",
+    );
+    assert.equal(
       await page.locator("#technical-details").evaluate((details) => details.open),
       false,
       "technical details should stay collapsed until the operator asks for them",
@@ -1534,8 +1543,15 @@ async function runStartupRecoveryScenario(mode) {
     const bridgeShape = await page.evaluate(() => ({
       hasBootBridge: typeof window.rudderBoot === "object",
       hasFullDesktopShell: typeof window.desktopShell !== "undefined",
+      hasBugReportIntent: typeof window.rudderBoot.openBugReport === "function",
+      bugReportIntentArgumentCount: window.rudderBoot.openBugReport.length,
     }));
-    assert.deepEqual(bridgeShape, { hasBootBridge: true, hasFullDesktopShell: false });
+    assert.deepEqual(bridgeShape, {
+      hasBootBridge: true,
+      hasFullDesktopShell: false,
+      hasBugReportIntent: true,
+      bugReportIntentArgumentCount: 0,
+    });
 
     const emailButton = page.getByRole("button", { name: "Email support" });
     await emailButton.click();
@@ -1565,10 +1581,48 @@ async function runStartupRecoveryScenario(mode) {
     handoffs = await readSupportHandoffs(supportHandoffPath);
     assert.equal(handoffs.length, 3, "the rejected handoff should be recorded as one distinct attempt");
 
+    const issueButton = page.getByRole("button", { name: "Report on GitHub" });
+    await issueButton.click();
+    await page.locator("#inline-status").filter({ hasText: "GitHub opened" }).waitFor();
+    assert.equal(await issueButton.isEnabled(), true, "GitHub reporting should be reusable after handoff completes");
+    let issueHandoffs = await readSupportHandoffs(bugReportHandoffPath);
+    assert.equal(issueHandoffs.length, 1, "the first GitHub action should perform one OS handoff");
+    assert.equal(
+      issueHandoffs[0].url,
+      "https://github.com/Undertone0809/rudder/issues/new?template=bug_report.yml",
+      "the boot renderer must route to the fixed repository bug template",
+    );
+
+    await page.evaluate(() => Promise.all([
+      window.rudderBoot.openBugReport(),
+      window.rudderBoot.openBugReport(),
+    ]));
+    issueHandoffs = await readSupportHandoffs(bugReportHandoffPath);
+    assert.equal(issueHandoffs.length, 2, "concurrent GitHub intents should coalesce into one additional handoff");
+
+    await issueButton.click();
+    await page.locator("#inline-status").filter({ hasText: "Opening the GitHub bug report" }).waitFor();
+    await electronApp.evaluate(({ app, BrowserWindow }) => {
+      app.emit("browser-window-focus", {}, BrowserWindow.getAllWindows()[0]);
+    });
+    await page.locator("#inline-status").filter({ hasText: "GitHub opened" }).waitFor();
+    assert.equal(
+      await issueButton.isEnabled(),
+      true,
+      "a duplicate state broadcast for the same failure must not strand the handoff button disabled",
+    );
+    issueHandoffs = await readSupportHandoffs(bugReportHandoffPath);
+    assert.equal(issueHandoffs.length, 3, "the same-failure state replay should not create another handoff");
+
     await page.locator("#technical-details summary").click();
     assert.match(await page.locator("#diagnostic-grid").innerText(), /Failure ID/u);
     assert.match(await page.locator("#diagnostic-grid").innerText(), /Instance folder/u);
+    await page.getByRole("button", { name: "Copy diagnostic" }).click();
+    const copiedDiagnostic = await electronApp.evaluate(({ clipboard }) => clipboard.readText());
+    assert.doesNotMatch(copiedDiagnostic, /Instance folder|\/Users\//u, "shareable diagnostic should omit local paths");
 
+    await issueButton.click();
+    await page.locator("#inline-status").filter({ hasText: "Opening the GitHub bug report" }).waitFor();
     await page.getByRole("button", { name: "Try again" }).dblclick();
     await page.waitForFunction(
       (attempt) => {
@@ -1581,12 +1635,39 @@ async function runStartupRecoveryScenario(mode) {
     );
     const retryState = await page.evaluate(() => window.rudderBoot.getState());
     assert.equal(retryState.failure?.attempt, 2, "double-click retry should produce one new startup attempt");
+    await page.waitForTimeout(1_700);
+    assert.doesNotMatch(
+      await page.locator("#inline-status").innerText(),
+      /Rudder could not open GitHub/u,
+      "a rejected handoff from the prior failure must not overwrite the new failure state",
+    );
+    assert.equal(
+      await page.getByRole("button", { name: "Copy issue link" }).isVisible(),
+      false,
+      "a stale rejection must not expose fallback actions on the new failure",
+    );
+    issueHandoffs = await readSupportHandoffs(bugReportHandoffPath);
+    assert.equal(issueHandoffs.length, 4, "the stale rejected handoff should still finish exactly once");
+
+    await issueButton.click();
+    await page.locator("#inline-status").filter({ hasText: "Rudder could not open GitHub" }).waitFor();
+    const copyIssueLinkButton = page.getByRole("button", { name: "Copy issue link" });
+    assert.equal(await copyIssueLinkButton.isVisible(), true);
+    await copyIssueLinkButton.click();
+    assert.equal(
+      await electronApp.evaluate(({ clipboard }) => clipboard.readText()),
+      "https://github.com/Undertone0809/rudder/issues/new?template=bug_report.yml",
+      "the fallback should copy the fixed bug report URL",
+    );
+    issueHandoffs = await readSupportHandoffs(bugReportHandoffPath);
+    assert.equal(issueHandoffs.length, 5, "the current failure rejection should be recorded as one distinct attempt");
+
     assert.equal(
       electronApp.windows().filter((candidate) => !candidate.isClosed()).length,
       1,
       "startup retry should remain in one Desktop window",
     );
-    console.log("[desktop-smoke] startup recovery kept diagnostics hidden, used a narrow bridge, and coalesced retry");
+    console.log("[desktop-smoke] startup recovery kept diagnostics hidden, used fixed support intents, and coalesced retry");
   } finally {
     await closeDesktop(electronApp).catch(() => {});
   }

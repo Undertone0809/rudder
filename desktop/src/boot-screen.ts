@@ -103,7 +103,8 @@ export function createBootScreenHtml(
       .boot-shell {
         min-height: 100vh;
         display: grid;
-        place-items: center;
+        justify-items: center;
+        align-items: safe center;
         padding: 72px 28px 40px;
       }
       .loading-view {
@@ -231,10 +232,20 @@ export function createBootScreenHtml(
         font-size: 13px;
         line-height: 1.55;
       }
-      .support-guide strong { display: block; margin-bottom: 5px; color: var(--text); font-weight: 620; }
-      .support-guide ul { margin: 7px 0 0; padding-left: 18px; }
-      .support-guide li + li { margin-top: 3px; }
-      .privacy-note { margin-top: 9px; }
+      .support-guide > strong { display: block; color: var(--text); font-weight: 620; }
+      .report-paths {
+        margin: 10px 0 0;
+        display: grid;
+        grid-template-columns: max-content minmax(0, 1fr);
+        gap: 6px 12px;
+      }
+      .report-paths dt { color: var(--text); font-weight: 620; }
+      .report-paths dd { margin: 0; }
+      .report-checklist-title { margin-top: 14px; }
+      .support-guide ol { margin: 7px 0 0; padding-left: 20px; }
+      .support-guide li + li { margin-top: 4px; }
+      .privacy-note { margin-top: 12px; }
+      .privacy-note strong { color: var(--text); font-weight: 620; }
       details { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
       summary { width: fit-content; cursor: pointer; color: var(--text); font-size: 13px; font-weight: 600; }
       .diagnostic-grid {
@@ -257,6 +268,8 @@ export function createBootScreenHtml(
       @media (max-width: 620px) {
         .boot-shell { padding-inline: 18px; }
         .failure-sheet { width: min(100%, 560px); padding: 20px; }
+        .report-paths { grid-template-columns: 1fr; gap: 2px; }
+        .report-paths dd + dt { margin-top: 6px; }
         .diagnostic-grid { grid-template-columns: 1fr; gap: 3px; }
         .diagnostic-grid dd + dt { margin-top: 7px; }
       }
@@ -286,26 +299,38 @@ export function createBootScreenHtml(
           <div class="brand-mark">${brandMark}</div>
         </div>
       </section>
-      <section class="failure-sheet" id="failure-sheet" role="alert" aria-labelledby="failure-title"${initialFailure ? "" : " hidden"}>
+      <section class="failure-sheet" id="failure-sheet" role="region" aria-labelledby="failure-title"${initialFailure ? "" : " hidden"}>
         <div class="failure-header">
           <div class="failure-mark" aria-hidden="true">${brandMark}</div>
           <div>
             <h1 id="failure-title" tabindex="-1">Rudder could not start</h1>
-            <p class="failure-summary" id="failure-summary">The local runtime did not start cleanly.</p>
+            <p class="failure-summary" id="failure-summary" role="alert">The local runtime did not start cleanly.</p>
           </div>
         </div>
         <div class="actions">
           <button class="primary" id="retry-button" type="button">Try again</button>
           <button class="secondary" id="email-button" type="button">Email support</button>
+          <button class="secondary" id="issue-button" type="button">Report on GitHub</button>
         </div>
         <div class="support-guide">
-          <strong>Your mail app will receive an editable draft.</strong>
-          Add the context Rudder cannot collect:
-          <ul>
-            <li>What you were trying to do.</li>
-            <li>What changed before this started.</li>
-          </ul>
-          <p class="privacy-note">Do not attach .env, config.json, databases, API keys, credentials, or private workspace files.</p>
+          <strong>Choose a support path</strong>
+          <dl class="report-paths">
+            <dt>Email support</dt>
+            <dd>Opens an editable draft. Rudder adds the failure ID, time, version, system, startup stage, category, attempt, profile, and instance.</dd>
+            <dt>GitHub Issue</dt>
+            <dd>Opens a public bug form. Use <b>Copy diagnostic</b> below and paste it into <b>Environment details</b>.</dd>
+          </dl>
+          <strong class="report-checklist-title">A useful report includes</strong>
+          <ol>
+            <li>A one- or two-sentence summary of what broke and who is blocked.</li>
+            <li>The smallest numbered steps that reproduce the failure.</li>
+            <li>What happened, and what you expected instead.</li>
+            <li>When it began and what changed beforehand, such as an install, update, configuration, or system change.</li>
+            <li>Whether <b>Try again</b> changed the result.</li>
+            <li>Your workflow impact, severity, and any workaround.</li>
+            <li>A screenshot or only the relevant log lines, after reviewing them for private data.</li>
+          </ol>
+          <p class="privacy-note"><strong>Review before sharing.</strong> Remove API keys, tokens, cookies, passwords, private URLs, prompts, command output, and private paths. Do not attach .env, config.json, databases, credentials, or private workspace files.</p>
         </div>
         <details id="technical-details">
           <summary>Technical details</summary>
@@ -317,7 +342,8 @@ export function createBootScreenHtml(
         </details>
         <p class="inline-status" id="inline-status" role="status" aria-live="polite"></p>
         <div class="fallback-actions" id="fallback-actions" hidden>
-          <button class="tertiary" id="copy-email-button" type="button">Copy support email</button>
+          <button class="tertiary" id="copy-email-button" type="button" hidden>Copy support email</button>
+          <button class="tertiary" id="copy-issue-button" type="button" hidden>Copy issue link</button>
         </div>
       </section>
     </main>
@@ -331,13 +357,20 @@ export function createBootScreenHtml(
       const technicalDetails = document.getElementById("technical-details");
       const retryButton = document.getElementById("retry-button");
       const emailButton = document.getElementById("email-button");
+      const issueButton = document.getElementById("issue-button");
       const copyDiagnosticButton = document.getElementById("copy-diagnostic-button");
       const openInstanceButton = document.getElementById("open-instance-button");
       const inlineStatus = document.getElementById("inline-status");
       const fallbackActions = document.getElementById("fallback-actions");
       const copyEmailButton = document.getElementById("copy-email-button");
+      const copyIssueButton = document.getElementById("copy-issue-button");
       let latestState = ${initialStateJson};
       let failureWasVisible = false;
+      let viewGeneration = 0;
+
+      function syncFallbackActions() {
+        fallbackActions.hidden = copyEmailButton.hidden && copyIssueButton.hidden;
+      }
 
       function renderDiagnostic(state) {
         diagnosticGrid.replaceChildren();
@@ -363,6 +396,11 @@ export function createBootScreenHtml(
       }
 
       function applyState(state) {
+        const stateIdentityChanged = (
+          latestState?.view !== state?.view
+          || latestState?.failure?.id !== state?.failure?.id
+        );
+        if (stateIdentityChanged) viewGeneration += 1;
         latestState = state;
         const failed = state?.view === "failed";
         document.body.dataset.bootView = failed ? "failed" : "loading";
@@ -373,10 +411,13 @@ export function createBootScreenHtml(
         if (!failed) {
           failureWasVisible = false;
           inlineStatus.textContent = "";
-          fallbackActions.hidden = true;
           technicalDetails.open = false;
           retryButton.disabled = false;
           emailButton.disabled = false;
+          issueButton.disabled = false;
+          copyEmailButton.hidden = true;
+          copyIssueButton.hidden = true;
+          syncFallbackActions();
           return;
         }
         failureSummary.textContent = state.failure?.summary || "The local runtime did not start cleanly.";
@@ -389,8 +430,10 @@ export function createBootScreenHtml(
 
       retryButton.addEventListener("click", async () => {
         if (retryButton.disabled) return;
+        viewGeneration += 1;
         retryButton.disabled = true;
         emailButton.disabled = true;
+        issueButton.disabled = true;
         inlineStatus.textContent = "Trying again…";
         try {
           await window.rudderBoot.retryStartup();
@@ -398,21 +441,59 @@ export function createBootScreenHtml(
           inlineStatus.textContent = "Rudder could not begin another startup attempt.";
           retryButton.disabled = false;
           emailButton.disabled = false;
+          issueButton.disabled = false;
         }
       });
       emailButton.addEventListener("click", async () => {
         if (emailButton.disabled) return;
+        const actionGeneration = viewGeneration;
+        const failureId = latestState.failure?.id;
+        const actionIsCurrent = () => (
+          actionGeneration === viewGeneration
+          && latestState.view === "failed"
+          && latestState.failure?.id === failureId
+        );
         emailButton.disabled = true;
-        fallbackActions.hidden = true;
+        copyEmailButton.hidden = true;
+        syncFallbackActions();
         inlineStatus.textContent = "Handing the draft to your mail app…";
         try {
           await window.rudderBoot.openSupportDraft();
+          if (!actionIsCurrent()) return;
           inlineStatus.textContent = "The draft was handed to your mail app. Review it before sending.";
         } catch {
-          fallbackActions.hidden = false;
+          if (!actionIsCurrent()) return;
+          copyEmailButton.hidden = false;
+          syncFallbackActions();
           inlineStatus.textContent = "Rudder could not hand off the draft. Copy the support email and diagnostic instead.";
         } finally {
-          emailButton.disabled = false;
+          if (actionIsCurrent()) emailButton.disabled = false;
+        }
+      });
+      issueButton.addEventListener("click", async () => {
+        if (issueButton.disabled) return;
+        const actionGeneration = viewGeneration;
+        const failureId = latestState.failure?.id;
+        const actionIsCurrent = () => (
+          actionGeneration === viewGeneration
+          && latestState.view === "failed"
+          && latestState.failure?.id === failureId
+        );
+        issueButton.disabled = true;
+        copyIssueButton.hidden = true;
+        syncFallbackActions();
+        inlineStatus.textContent = "Opening the GitHub bug report…";
+        try {
+          await window.rudderBoot.openBugReport();
+          if (!actionIsCurrent()) return;
+          inlineStatus.textContent = "GitHub opened. Review the public issue before submitting.";
+        } catch {
+          if (!actionIsCurrent()) return;
+          copyIssueButton.hidden = false;
+          syncFallbackActions();
+          inlineStatus.textContent = "Rudder could not open GitHub. Copy the issue link and open it in your browser.";
+        } finally {
+          if (actionIsCurrent()) issueButton.disabled = false;
         }
       });
       copyDiagnosticButton.addEventListener("click", async () => {
@@ -436,6 +517,14 @@ export function createBootScreenHtml(
           inlineStatus.textContent = "Support email copied.";
         } catch {
           inlineStatus.textContent = "Rudder could not copy the support email.";
+        }
+      });
+      copyIssueButton.addEventListener("click", async () => {
+        try {
+          await window.rudderBoot.copyBugReportUrl();
+          inlineStatus.textContent = "GitHub issue link copied.";
+        } catch {
+          inlineStatus.textContent = "Rudder could not copy the issue link.";
         }
       });
 

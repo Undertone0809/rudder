@@ -37,11 +37,11 @@ startup experience and a failure-only recovery surface. A healthy startup shows
 only the Rudder identity and motion. It does not show `Starting Rudder`, phase
 labels, runtime metadata, filesystem paths, or recovery actions.
 
-When managed local server startup fails, the same window expands into a compact recovery surface. It
-prioritizes retry, explains how to email useful support information to
-`zeeland4work@gmail.com`, and keeps technical diagnostics behind explicit
-disclosure. The email action opens an editable draft and never sends mail
-silently.
+When managed local server startup fails, the same window expands into a compact
+recovery surface. It prioritizes retry, explains how to prepare a useful report,
+offers an editable email to `zeeland4work@gmail.com` and the repository's public
+GitHub bug form, and keeps technical diagnostics behind explicit disclosure.
+Neither support path sends, submits, attaches, or uploads anything silently.
 
 ## What Is The Problem?
 
@@ -72,9 +72,14 @@ is the visible expression of the fix, not the product decision by itself.
 5. Support collection must minimize disclosure. Guidance should prefer a small
    generated diagnostic summary over config files, `.env`, databases, or whole
    workspaces.
-6. The operator remains the sender. Rudder may prepare a draft and copy useful
-   diagnostics, but it must not send mail or upload local data without an
-   explicit future product decision.
+6. The operator remains the sender or publisher. Rudder may prepare a draft,
+   open a fixed issue form, and copy useful diagnostics, but it must not send
+   mail, submit an issue, or upload local data without an explicit future
+   product decision.
+7. A useful report needs reproducibility and impact, not just a technical error.
+   Guidance must ask for the smallest steps, actual versus expected behavior,
+   onset and preceding change, retry result, workflow impact, workaround, and
+   reviewed evidence.
 
 ## What Will Be Changed?
 
@@ -88,15 +93,20 @@ is the visible expression of the fix, not the product decision by itself.
 - Respect `prefers-reduced-motion` with a static branded mark and non-moving
   state treatment.
 - On `stage === "error"`, reveal a compact failure panel in the same window with
-  one primary action (`Try again`), an `Email support` action, and a native
-  disclosure control for technical details.
+  one primary action (`Try again`), secondary `Email support` and `Report on
+  GitHub` actions, and a native disclosure control for technical details.
 - Prefill the support draft with a concise main-process-owned failure summary
   derived from the current boot state, app version, platform, architecture,
   attempt count, and failure id.
 - Add visible guidance asking for only the human context Rudder cannot know:
-  what the operator was trying to do and what changed before the failure.
-- Add a warning not to attach `.env`, `config.json`, databases, credentials, API
-  keys, or private workspace files.
+  summary, smallest reproduction, actual and expected behavior, onset and
+  preceding change, retry result, impact/workaround, reviewed evidence, and
+  remaining environment context.
+- Make the GitHub destination explicitly public and guide the operator to paste
+  the copied safe diagnostic into its Environment details field.
+- Add a warning to remove secrets, private URLs, prompts, command output, and
+  private paths and not to attach `.env`, `config.json`, databases, credentials,
+  or private workspace files.
 - Keep `Open data folder` and `Copy diagnostic` as secondary technical recovery
   actions inside the disclosed details rather than the default surface.
 - Extend automated coverage for markup safety, failure-only disclosure, email
@@ -111,14 +121,17 @@ is the visible expression of the fix, not the product decision by itself.
 - Reduced-motion mode removes continuous transforms while retaining a clear
   branded loading state, a visually hidden one-time status announcement, and
   discrete state changes when real boot events arrive.
-- A startup error reveals one plain-language heading, retry and email actions,
-  and a collapsed technical-details control.
-- Technical paths and allowlisted failure metadata are absent until the operator
-  opens the details disclosure. Raw exception text stays in the main-process log.
+- A startup error reveals one plain-language heading, retry, email, and GitHub
+  actions, detailed report guidance, and a collapsed technical-details control.
+- Technical paths and allowlisted failure metadata remain behind explicit
+  disclosure. Raw exception text stays in the main-process log and does not
+  enter the boot renderer or copied diagnostic.
 - The email action opens a draft addressed to `zeeland4work@gmail.com` with a
   bounded subject and body. It does not send automatically.
 - The support surface tells the operator what to add and what sensitive material
   not to attach.
+- The GitHub action can open only the fixed repository bug-report template;
+  opener rejection exposes a fixed-link copy fallback.
 - Startup retry returns the same window to the quiet loading state without
   creating another window.
 - Concurrent retry and email clicks are coalesced in the main process.
@@ -187,20 +200,26 @@ is the visible expression of the fix, not the product decision by itself.
 3. `Try again` is primary. Activating it immediately restores the quiet loading
    state while the existing restart flow runs.
 4. `Email support` opens an editable draft addressed to the maintainer with a
-   bounded diagnostic summary. Main-process single-flight prevents duplicate
-   handoffs.
-5. Guidance beside the action asks the operator to add what they were doing and
-   what changed before the failure. Attempt and retry context are automatic.
-6. `Technical details` remains collapsed. Opening it reveals failure id, time,
-   stage, attempt, category, profile, instance, version when available, and
-   instance path, plus `Copy diagnostic` and `Open data folder`. The original
-   exception remains only in the main-process log.
+   bounded diagnostic summary and detailed bracketed report prompts.
+   Main-process single-flight prevents duplicate handoffs.
+5. `Report on GitHub` opens the fixed public repository bug template. Main-process
+   single-flight prevents duplicate handoffs, and the UI explains how to copy
+   the safe diagnostic into Environment details.
+6. Guidance beside the actions asks for a reproducible report, actual and
+   expected behavior, onset/change context, retry result, impact/workaround,
+   and reviewed evidence. Safe technical context is automatic in email and
+   separately copyable for GitHub.
+7. `Technical details` remains collapsed. Opening it reveals the allowlisted
+   failure fields, profile, instance, version when available, and instance path,
+   plus `Copy diagnostic` and `Open data folder`. The original exception remains
+   only in the main-process log.
 
 ### Mail client unavailable
 
-1. Rudder reports that it could not hand the draft to the operating system.
-2. The operator can copy the support email address and diagnostic summary from
-   the failure surface.
+1. Rudder reports that it could not hand the email draft or GitHub form to the
+   operating system.
+2. The operator can copy the fixed support email or issue URL and the diagnostic
+   summary from the failure surface.
 
 ## Implementation
 
@@ -212,9 +231,9 @@ is the visible expression of the fix, not the product decision by itself.
   It uses a fixed recipient/subject grammar, rejects header controls, and keeps
   the encoded URL within a bounded length.
 - Add a dedicated boot preload that exposes only state subscription, retry,
-  support-draft, fixed-address copy, safe-diagnostic copy, and instance-folder
-  intents. It does not expose Browser, update, arbitrary path, or arbitrary
-  clipboard APIs.
+  support-draft, fixed bug-report, fixed-address/link copy, safe-diagnostic
+  copy, and instance-folder intents. It does not expose Browser, update,
+  arbitrary URL/path, or arbitrary clipboard APIs.
 - Keep mail and recovery payload construction in main. The boot renderer sends
   no path, error, subject, recipient, or body.
 - Add sender, top-level frame, current-state, single-flight, and cooldown guards
@@ -287,14 +306,17 @@ is unchanged.
 4. Double-clicking retry produces one main-process attempt and no additional
    window; the original failure window returns to loading before retry work.
 5. Email support sends intent only and builds the expected recipient, subject,
-   and body without attachment, cc, or bcc parameters. Concurrent intent is
-   coalesced and opener rejection exposes fallback actions.
-6. HTML/error injection is escaped and mail fields are percent encoded.
-7. Light, dark, reduced-motion, high-contrast, keyboard, focus-transfer, and
+   and detailed editable body without attachment, cc, or bcc parameters.
+   Concurrent intent is coalesced and opener rejection exposes fallback actions.
+6. GitHub reporting sends an argument-free intent, opens only the fixed bug
+   template URL, coalesces concurrent handoffs, and exposes `Copy issue link`
+   after opener rejection.
+7. HTML/error injection is escaped and mail fields are percent encoded.
+8. Light, dark, reduced-motion, high-contrast, keyboard, focus-transfer, and
    overflow checks at `1440x960` and `1080x720`, including 200% zoom.
-8. A real isolated startup rejection in development-shell and packaged Desktop
+9. A real isolated startup rejection in development-shell and packaged Desktop
    smoke exercises failure disclosure and retry single-flight.
-9. Repository lint, typecheck, test, and build gates.
+10. Repository lint, typecheck, test, and build gates.
 
 ### Expected Results
 
@@ -305,18 +327,22 @@ collection, and no regression to runtime startup or renderer recovery.
 
 Passed for the shipped managed-local-startup scope:
 
-- 21 focused unit tests cover boot markup, safe failure classification,
+- 22 focused unit tests cover boot markup, safe failure classification,
   diagnostic allowlisting, bounded mailto construction, encoding, and injection
   resistance.
-- A real isolated development Electron startup failure covers the narrow boot
-  bridge, failure-only disclosure, focus transfer, retry single-flight, email
-  preload-to-IPC handoff, safe recipient/parameters, concurrent coalescing, and
-  opener-rejection fallback.
-- Light, dark, reduced-motion, keyboard, focus, responsive overflow, and 200%
-  zoom checks passed. Contrast and forced-colors fallbacks are present in the
-  generated boot document.
-- Desktop TypeScript compilation, lint, repository typecheck, product-logic
-  structural validation, and build passed during implementation.
+- Real isolated development and packaged Electron startup failures cover the
+  narrow boot bridge, failure-only disclosure, focus transfer, retry
+  single-flight, fixed email/GitHub preload-to-IPC handoffs, safe
+  recipient/parameters, concurrent coalescing, opener-rejection fallbacks, and
+  rejection from an old failure settling after a new startup attempt.
+- Fresh light `1440x960`, dark `1080x720`, and narrow `480x800` renders have no
+  horizontal overflow. The detailed surface stays reachable by vertical scroll;
+  contrast, forced-colors, and reduced-motion fallbacks remain in the generated
+  boot document.
+- Shareable diagnostics omit the locally visible instance path. Desktop
+  TypeScript compilation, import lint, product-logic structural validation,
+  production build, package integrity checks, and focused dev/packaged smoke
+  passed during implementation.
 
 An additional initial renderer-load black-box probe was not retained as a gate:
 Electron 37.10.3 on macOS 26.3.1 exited in native code with
@@ -329,10 +355,10 @@ semantics otherwise remain outside this managed startup feature.
 ## Documentation Changes
 
 - Update `doc/engineering/DESKTOP.md` to document quiet startup, failure-only
-  disclosure, email guidance, and attachment limitations.
-- Do not edit guarded `doc/product/**` in this iteration without explicit user
-  authorization for that registry delta. After implementation, propose a focused
-  Desktop startup/recovery contract if the user wants this behavior guarded.
+  disclosure, detailed reporting guidance, fixed email/GitHub handoffs, public
+  issue visibility, and attachment limitations.
+- Add `CONTROL.DESKTOP.STARTUP.RECOVERY.001` to the guarded Product Logic
+  Registry with explicit user authorization.
 
 ## Open Issues
 
@@ -360,6 +386,13 @@ Accepted changes:
   and macOS chrome-safe-area behavior
 - real isolated Electron failure recovery in automated smoke coverage
 - automatic technical mail fields with only two human-context prompts
+- a fixed, argument-free public GitHub bug-report intent and link-copy fallback
+- detailed editable report prompts and visible reproducibility/impact guidance
+- failure-scoped support single-flight plus renderer generation guards so stale
+  handoffs cannot overwrite a later startup attempt
+- public-safe copied diagnostics that omit the locally visible instance path
+- a short summary alert inside a labelled recovery region so assistive
+  technology does not assertively announce the full checklist and controls
 
 Deferred with explicit rationale:
 

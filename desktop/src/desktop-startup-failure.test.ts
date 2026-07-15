@@ -41,11 +41,11 @@ describe("desktop startup failure view", () => {
       arch: "arm64",
       profile: "prod_local",
       instance: "default",
-      instanceRoot: "/Users/alice/.rudder/instances/default",
     });
 
     expect(diagnostic).toContain("Failure ID: failure-456");
-    expect(diagnostic).toContain("Instance folder: /Users/alice/.rudder/instances/default");
+    expect(diagnostic).not.toContain("/Users/alice");
+    expect(diagnostic).not.toContain("Instance folder");
     expect(diagnostic).not.toContain("token=secret");
     expect(diagnostic).not.toContain("config.json");
     expect(diagnostic).not.toContain(".env");
