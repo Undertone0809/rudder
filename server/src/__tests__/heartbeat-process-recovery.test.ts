@@ -13,7 +13,7 @@ import {
   organizationSkills,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -23,6 +23,7 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { runningProcesses } from "../agent-runtimes/index.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
+import { appendHeartbeatRunEvent } from "../services/run-events.ts";
 import { transitionHeartbeatRunToTerminal } from "../services/runtime-kernel/heartbeat.terminal.ts";
 
 type EmbeddedPostgresInstance = {
@@ -447,16 +448,14 @@ describe("heartbeat orphaned process recovery", () => {
       .where(eq(heartbeatRuns.id, runId))
       .then((rows) => rows[0]!);
 
-    await db.insert(heartbeatRunEvents).values({
+    await appendHeartbeatRunEvent(db, {
       orgId,
       agentId,
       runId,
-      seq: 1,
       eventType: "stdout",
       stream: "stdout",
       level: "info",
       message: "new activity after the reaper scan",
-      createdAt: recentAt,
     });
 
     const claimed = await transitionHeartbeatRunToTerminal(db, {
@@ -481,6 +480,103 @@ describe("heartbeat orphaned process recovery", () => {
       .then((rows) => rows[0]);
     expect(current?.status).toBe("running");
     expect(current?.terminalEffectsPending).toBe(false);
+  });
+
+  it("orders a concurrent activity commit before the inactivity terminal CAS", async () => {
+    const staleAt = new Date("2026-03-19T00:00:00.000Z");
+    const { orgId, agentId, runId } = await seedRunFixture({
+      processPid: null,
+      startedAt: staleAt,
+      updatedAt: staleAt,
+    });
+    let releaseActivity!: () => void;
+    let activityLocked!: () => void;
+    const activityGate = new Promise<void>((resolve) => { releaseActivity = resolve; });
+    const locked = new Promise<void>((resolve) => { activityLocked = resolve; });
+
+    const activityCommit = db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${runId}))`);
+      activityLocked();
+      await activityGate;
+      await tx.insert(heartbeatRunEvents).values({
+        orgId,
+        agentId,
+        runId,
+        seq: 1,
+        eventType: "stdout",
+        stream: "stdout",
+        level: "info",
+        message: "activity committed while terminal CAS is waiting",
+      });
+    });
+    await locked;
+
+    const terminalClaim = transitionHeartbeatRunToTerminal(db, {
+      runId,
+      status: "timed_out",
+      patch: { finishedAt: new Date(), errorCode: "inactivity_timeout" },
+      activityWatermark: { updatedAt: staleAt, eventCount: 0 },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    releaseActivity();
+    await activityCommit;
+
+    await expect(terminalClaim).resolves.toBeNull();
+    const current = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0]);
+    expect(current?.status).toBe("running");
+  });
+
+  it("reclaims an expired terminal-effects lease after a worker crash", async () => {
+    const { runId } = await seedRunFixture({ processPid: null });
+    const terminal = await transitionHeartbeatRunToTerminal(db, {
+      runId,
+      status: "failed",
+      patch: { finishedAt: new Date(), error: "worker crashed after CAS" },
+      processExitedAt: new Date(),
+      terminalEffectsIntent: { version: 1 },
+    });
+    expect(terminal?.terminalEffectsPending).toBe(true);
+    await db
+      .update(heartbeatRuns)
+      .set({
+        terminalEffectsClaimToken: randomUUID(),
+        terminalEffectsClaimedAt: new Date(Date.now() - 6 * 60_000),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+
+    const recoveryA = heartbeatService(db);
+    const recoveryB = heartbeatService(db);
+    const recoveryResults = await Promise.all([
+      recoveryA.reapOrphanedRuns(),
+      recoveryB.reapOrphanedRuns(),
+    ]);
+
+    const recovered = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0]);
+    expect(recovered).toMatchObject({
+      status: "failed",
+      terminalEffectsPending: false,
+      terminalEffectsClaimToken: null,
+      terminalEffectsLastError: null,
+    });
+    expect(recovered?.terminalEffectsAttemptCount).toBe(1);
+    expect(recoveryResults.reduce((total, result) => total + result.reaped, 0)).toBe(1);
+  });
+
+  it("does not overwrite a protected agent status while replaying terminal effects", async () => {
+    const { agentId, runId } = await seedRunFixture({ processPid: null });
+    await transitionHeartbeatRunToTerminal(db, {
+      runId,
+      status: "failed",
+      patch: { finishedAt: new Date(), error: "replay after pause" },
+      processExitedAt: new Date(),
+      terminalEffectsIntent: { version: 1 },
+    });
+    await db.update(agents).set({ status: "paused", pauseReason: "manual" }).where(eq(agents.id, agentId));
+
+    await heartbeatService(db).reapOrphanedRuns();
+
+    const currentAgent = await db.select().from(agents).where(eq(agents.id, agentId)).then((rows) => rows[0]);
+    expect(currentAgent).toMatchObject({ status: "paused", pauseReason: "manual" });
   });
 
   it("allows only one concurrent terminal claimant", async () => {

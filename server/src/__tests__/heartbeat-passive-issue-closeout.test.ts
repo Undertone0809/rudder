@@ -365,6 +365,65 @@ describe("heartbeat passive issue closeout", () => {
     });
   });
 
+  it("does not treat a skipped reviewer wake as durable terminal closeout", async () => {
+    const { orgId, agentId, issueId } = await seedFixture({
+      issueStatus: "in_review",
+      reviewerAgent: true,
+      runtimeConfig: { heartbeat: { wakeOnDemand: false } },
+    });
+    const runId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "review",
+      triggerDetail: "system",
+      status: "succeeded",
+      contextSnapshot: {
+        issueId,
+        taskKey: issueId,
+        role: "reviewer",
+        wakeReason: "issue_review_requested",
+        wakeSource: "review",
+        issue: {
+          id: issueId,
+          title: "Close out the issue",
+          status: "in_review",
+          priority: "medium",
+        },
+      },
+      finishedAt: new Date(),
+      processExitedAt: new Date(),
+      terminalEffectsPending: true,
+      terminalEffectsJson: { version: 1 },
+    });
+    await db
+      .update(issues)
+      .set({ executionRunId: runId, executionAgentNameKey: "builder", executionLockedAt: new Date() })
+      .where(eq(issues.id, issueId));
+
+    for (const service of [heartbeatService(db), heartbeatService(db)]) {
+      await expect(service.reapOrphanedRuns()).rejects.toThrow(
+        "Reviewer follow-up could not be persisted as actionable work",
+      );
+    }
+
+    const replayed = await getRun(runId);
+    expect(replayed).toMatchObject({
+      status: "succeeded",
+      terminalEffectsPending: true,
+      terminalEffectsLastError: expect.stringContaining("actionable work"),
+    });
+    const issue = await getIssue(issueId);
+    expect(issue?.executionRunId).toBe(runId);
+    const closeoutWakes = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.idempotencyKey, `issue_review_closeout_missing:${runId}`));
+    expect(closeoutWakes.length).toBeGreaterThan(1);
+    expect(closeoutWakes.every((wakeup) => wakeup.status === "skipped")).toBe(true);
+  });
+
   it("queues reviewer closeout when a blocked review run exits without a structured decision", async () => {
     const { agentId, issueId } = await seedFixture({
       issueStatus: "blocked",

@@ -571,7 +571,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
         },
       });
 
-      await startNextQueuedRunForAgent(agent.id);
+      if (opts.startImmediately !== false) await startNextQueuedRunForAgent(agent.id);
       return newRun;
     }
 
@@ -736,7 +736,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
       });
     }
 
-    await startNextQueuedRunForAgent(agent.id);
+    if (opts.startImmediately !== false) await startNextQueuedRunForAgent(agent.id);
 
     return newRun;
   }

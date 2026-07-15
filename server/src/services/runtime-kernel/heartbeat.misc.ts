@@ -26,7 +26,7 @@ const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBE
 const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
 
 export function createHeartbeatMiscHandlers(context: any) {
-  const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, transitionRunToTerminal, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, terminateRunProcessAndWait, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, executeRun, releaseIssueExecutionAndPromote, enqueueWakeup } = context;
+  const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, transitionRunToTerminal, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, terminateRunProcessAndWait, acknowledgeRunProcessExit, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, executeRun, releaseIssueExecutionAndPromote, enqueueWakeup } = context;
 
   async function resumeDeferredWakeupsForAgent(agentId: string) {
     const agent = await getAgent(agentId);
@@ -208,7 +208,10 @@ export function createHeartbeatMiscHandlers(context: any) {
       finishedAt: new Date(),
       error: reason,
       errorCode: "cancelled",
-    }, { expectedStatuses: [run.status] });
+    }, {
+      expectedStatuses: [run.status],
+      processExitedAt: run.status === "queued" ? new Date() : null,
+    });
     if (!cancelled) return await getRun(run.id);
 
     await setWakeupStatus(run.wakeupRequestId, "cancelled", {
@@ -226,7 +229,10 @@ export function createHeartbeatMiscHandlers(context: any) {
       const agent = await getAgent(run.agentId);
       const exited = run.status === "queued"
         || await terminateRunProcessAndWait(cancelled, agent?.agentRuntimeType ?? "");
-      if (exited) await completeTerminalControlEffects(cancelled);
+      if (exited && !activeRunExecutions.has(cancelled.id)) {
+        await acknowledgeRunProcessExit(cancelled.id);
+        await completeTerminalControlEffects(cancelled);
+      }
     }
 
     return cancelled;
@@ -243,7 +249,10 @@ export function createHeartbeatMiscHandlers(context: any) {
         finishedAt: new Date(),
         error: reason,
         errorCode: "cancelled",
-      }, { expectedStatuses: [run.status] });
+      }, {
+        expectedStatuses: [run.status],
+        processExitedAt: run.status === "queued" ? new Date() : null,
+      });
       if (!cancelled) continue;
 
       await setWakeupStatus(run.wakeupRequestId, "cancelled", {
@@ -254,7 +263,10 @@ export function createHeartbeatMiscHandlers(context: any) {
       const agent = await getAgent(run.agentId);
       const exited = run.status === "queued"
         || await terminateRunProcessAndWait(cancelled, agent?.agentRuntimeType ?? "");
-      if (exited) await completeTerminalControlEffects(cancelled);
+      if (exited && !activeRunExecutions.has(cancelled.id)) {
+        await acknowledgeRunProcessExit(cancelled.id);
+        await completeTerminalControlEffects(cancelled);
+      }
     }
 
     return runs.length;
@@ -301,6 +313,12 @@ export function createHeartbeatMiscHandlers(context: any) {
     if (run.status !== "failed" && run.status !== "timed_out" && run.status !== "cancelled") {
       throw conflict("Only failed, timed out, or cancelled runs can be retried", {
         status: run.status,
+      });
+    }
+    if (run.terminalEffectsPending) {
+      throw conflict("Run terminal effects must complete before it can be retried", {
+        status: run.status,
+        terminalEffectsPending: true,
       });
     }
 

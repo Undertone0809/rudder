@@ -39,9 +39,11 @@ export async function publishAutomationRunOutputToChat(
   },
 ) {
   if (!input.issueId) return null;
+  const issueId = input.issueId;
 
-  const row = await db
-    .select({
+  return db.transaction(async (tx) => {
+    const row = await tx
+      .select({
       issueId: issues.id,
       automationId: automations.id,
       automationTitle: automations.title,
@@ -51,18 +53,27 @@ export async function publishAutomationRunOutputToChat(
       runId: automationRuns.id,
       orgId: automationRuns.orgId,
       linkedChatConversationId: automationRuns.linkedChatConversationId,
-    })
-    .from(issues)
-    .innerJoin(automationRuns, sql<boolean>`${issues.originRunId} = ${automationRuns.id}::text`)
-    .innerJoin(automations, eq(automationRuns.automationId, automations.id))
-    .where(and(eq(issues.id, input.issueId), eq(issues.originKind, "automation_execution")))
-    .then((rows) => rows[0] ?? null);
+      })
+      .from(issues)
+      .innerJoin(automationRuns, sql<boolean>`${issues.originRunId} = ${automationRuns.id}::text`)
+      .innerJoin(automations, eq(automationRuns.automationId, automations.id))
+      .where(and(eq(issues.id, issueId), eq(issues.originKind, "automation_execution")))
+      .then((rows) => rows[0] ?? null);
 
-  if (!row || row.automationOutputMode !== "chat_output") return null;
+    if (!row || row.automationOutputMode !== "chat_output") return null;
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`automation-chat-output:${row.runId}`}))`);
 
-  let conversationId = row.linkedChatConversationId;
-  if (!conversationId) {
-    const [conversation] = await db
+    let conversationId = row.linkedChatConversationId;
+    if (!conversationId) {
+      const currentRun = await tx
+        .select({ linkedChatConversationId: automationRuns.linkedChatConversationId })
+        .from(automationRuns)
+        .where(eq(automationRuns.id, row.runId))
+        .then((rows) => rows[0] ?? null);
+      conversationId = currentRun?.linkedChatConversationId ?? null;
+    }
+    if (!conversationId) {
+      const [conversation] = await tx
       .insert(chatConversations)
       .values({
         orgId: row.orgId,
@@ -73,46 +84,56 @@ export async function publishAutomationRunOutputToChat(
         planMode: false,
       })
       .returning({ id: chatConversations.id });
-    conversationId = conversation?.id ?? null;
-    if (!conversationId) return null;
-    if (row.projectId) {
-      await db
-        .insert(chatContextLinks)
-        .values({
-          orgId: row.orgId,
-          conversationId,
-          entityType: "project",
-          entityId: row.projectId,
-          metadata: null,
+      conversationId = conversation?.id ?? null;
+      if (!conversationId) return null;
+      if (row.projectId) {
+        await tx
+          .insert(chatContextLinks)
+          .values({
+            orgId: row.orgId,
+            conversationId,
+            entityType: "project",
+            entityId: row.projectId,
+            metadata: null,
+          })
+          .onConflictDoNothing();
+      }
+      await tx
+        .update(automationRuns)
+        .set({
+          linkedChatConversationId: conversationId,
+          updatedAt: new Date(),
         })
-        .onConflictDoNothing();
+        .where(eq(automationRuns.id, row.runId));
     }
-    await db
-      .update(automationRuns)
-      .set({
-        linkedChatConversationId: conversationId,
-        updatedAt: new Date(),
-      })
-      .where(eq(automationRuns.id, row.runId));
-  }
-  const existing = await db
-    .select()
-    .from(chatMessages)
-    .where(
-      and(
-        eq(chatMessages.conversationId, conversationId),
-        eq(chatMessages.role, "assistant"),
-        sql<boolean>`${chatMessages.structuredPayload}->>'eventType' = 'automation_run_result'`,
-        sql<boolean>`${chatMessages.structuredPayload}->>'runId' = ${row.runId}::text`,
-      ),
-    )
-    .then((rows) => rows[0] ?? null);
-  if (existing) return existing;
+    const existing = await tx
+      .select()
+      .from(chatMessages)
+      .where(
+        and(
+          eq(chatMessages.conversationId, conversationId),
+          eq(chatMessages.role, "assistant"),
+          sql<boolean>`${chatMessages.structuredPayload}->>'eventType' = 'automation_run_result'`,
+          sql<boolean>`${chatMessages.structuredPayload}->>'runId' = ${row.runId}::text`,
+        ),
+      )
+      .then((rows) => rows[0] ?? null);
+    if (existing) {
+      await tx
+        .update(automationRuns)
+        .set({
+          terminalChatMessageId: existing.id,
+          lastChatMessageId: existing.id,
+          updatedAt: new Date(),
+        })
+        .where(eq(automationRuns.id, row.runId));
+      return existing;
+    }
 
-  const now = new Date();
-  const [message] = await db
-    .insert(chatMessages)
-    .values({
+    const now = new Date();
+    const [message] = await tx
+      .insert(chatMessages)
+      .values({
       orgId: row.orgId,
       conversationId,
       role: "assistant",
@@ -135,23 +156,24 @@ export async function publishAutomationRunOutputToChat(
       },
       createdAt: now,
       updatedAt: now,
-    })
-    .returning();
-  if (!message) return null;
+      })
+      .returning();
+    if (!message) return null;
 
-  await db
-    .update(chatConversations)
-    .set({ lastMessageAt: message.createdAt, updatedAt: message.createdAt })
-    .where(eq(chatConversations.id, conversationId));
-  await db
-    .update(automationRuns)
-    .set({
-      linkedChatConversationId: conversationId,
-      terminalChatMessageId: message.id,
-      lastChatMessageId: message.id,
-      updatedAt: new Date(),
-    })
-    .where(eq(automationRuns.id, row.runId));
+    await tx
+      .update(chatConversations)
+      .set({ lastMessageAt: message.createdAt, updatedAt: message.createdAt })
+      .where(eq(chatConversations.id, conversationId));
+    await tx
+      .update(automationRuns)
+      .set({
+        linkedChatConversationId: conversationId,
+        terminalChatMessageId: message.id,
+        lastChatMessageId: message.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(automationRuns.id, row.runId));
 
-  return message;
+    return message;
+  });
 }

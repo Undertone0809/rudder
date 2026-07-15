@@ -204,6 +204,7 @@ export interface WakeupOptions {
   contextSnapshot?: Record<string, unknown>;
   existingWakeupRequestId?: string | null;
   originTerminalRunId?: string | null;
+  startImmediately?: boolean;
 }
 
 export type UsageTotals = {

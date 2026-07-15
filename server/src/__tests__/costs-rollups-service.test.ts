@@ -14,8 +14,16 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { costService } from "../services/costs.js";
+
+const mockBudgetService = vi.hoisted(() => ({
+  evaluateCostEvent: vi.fn(),
+}));
+
+vi.mock("../services/budgets.js", () => ({
+  budgetService: () => mockBudgetService,
+}));
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -116,6 +124,7 @@ describe("costService monthly spend rollups", () => {
   }, 20_000);
 
   afterEach(async () => {
+    vi.clearAllMocks();
     await db.delete(costEvents);
     await db.delete(costMonthlySpendRollups);
     await db.delete(heartbeatRuns);
@@ -258,6 +267,19 @@ describe("costService monthly spend rollups", () => {
     const costs = costService(db);
     let onInsertCalls = 0;
 
+    await costs.createEvent(orgId, {
+      agentId,
+      heartbeatRunId: run!.id,
+      provider: "manual",
+      biller: "manual",
+      billingType: "metered_api",
+      model: "operator-entry",
+      inputTokens: 1,
+      outputTokens: 0,
+      costCents: 1,
+      occurredAt: currentMonthDate(),
+    });
+
     const results = await Promise.all(Array.from({ length: 10 }, () =>
       costs.createHeartbeatRunEventOnce(orgId, {
         agentId,
@@ -281,14 +303,112 @@ describe("costService monthly spend rollups", () => {
       .select()
       .from(costEvents)
       .where(eq(costEvents.heartbeatRunId, run!.id));
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ costCents: 25, inputTokens: 100, outputTokens: 10 });
+    expect(events).toHaveLength(2);
+    expect(events).toContainEqual(expect.objectContaining({
+      idempotencyKey: `heartbeat-run-finalizer:${run!.id}`,
+      costCents: 25,
+      inputTokens: 100,
+      outputTokens: 10,
+    }));
 
     const rollups = await db
       .select()
       .from(costMonthlySpendRollups)
       .where(eq(costMonthlySpendRollups.orgId, orgId));
     expect(rollups).toHaveLength(2);
+    expect(rollups.every((row) => row.spendCents === 26)).toBe(true);
+  });
+
+  it("adopts a matching pre-idempotency heartbeat finalizer without charging twice", async () => {
+    const { orgId, agentId } = await seedOrgAndAgent();
+    const [run] = await db
+      .insert(heartbeatRuns)
+      .values({
+        orgId,
+        agentId,
+        status: "failed",
+        invocationSource: "on_demand",
+        finishedAt: new Date(),
+      })
+      .returning();
+    const costs = costService(db);
+    const payload = {
+      agentId,
+      heartbeatRunId: run!.id,
+      provider: "openai",
+      biller: "openai",
+      billingType: "metered_api" as const,
+      model: "gpt-5",
+      inputTokens: 100,
+      cachedInputTokens: 20,
+      outputTokens: 10,
+      costCents: 25,
+      occurredAt: currentMonthDate(),
+    };
+    await costs.createEvent(orgId, payload);
+    let onInsertCalls = 0;
+
+    const replay = await costs.createHeartbeatRunEventOnce(orgId, {
+      ...payload,
+      occurredAt: new Date(payload.occurredAt.getTime() + 60_000),
+    }, async () => {
+      onInsertCalls += 1;
+    });
+
+    expect(replay.inserted).toBe(false);
+    expect(onInsertCalls).toBe(0);
+    const events = await db.select().from(costEvents).where(eq(costEvents.heartbeatRunId, run!.id));
+    expect(events).toHaveLength(1);
+    expect(events[0]?.idempotencyKey).toBe(`heartbeat-run-finalizer:${run!.id}`);
+    const rollups = await db
+      .select()
+      .from(costMonthlySpendRollups)
+      .where(eq(costMonthlySpendRollups.orgId, orgId));
+    expect(rollups).toHaveLength(2);
     expect(rollups.every((row) => row.spendCents === 25)).toBe(true);
+  });
+
+  it("replays budget enforcement after an idempotent finalizer event already committed", async () => {
+    const { orgId, agentId } = await seedOrgAndAgent();
+    const [run] = await db
+      .insert(heartbeatRuns)
+      .values({
+        orgId,
+        agentId,
+        invocationSource: "on_demand",
+        status: "failed",
+      })
+      .returning();
+    const costs = costService(db);
+    let onInsertCalls = 0;
+    const payload = {
+      agentId,
+      heartbeatRunId: run!.id,
+      provider: "openai",
+      biller: "openai",
+      billingType: "metered_api" as const,
+      model: "gpt-5",
+      inputTokens: 100,
+      cachedInputTokens: 0,
+      outputTokens: 10,
+      costCents: 25,
+      occurredAt: currentMonthDate(),
+    };
+    mockBudgetService.evaluateCostEvent
+      .mockRejectedValueOnce(new Error("budget hook interrupted after ledger commit"))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(costs.createHeartbeatRunEventOnce(orgId, payload, async () => {
+      onInsertCalls += 1;
+    })).rejects.toThrow("budget hook interrupted");
+    const replay = await costs.createHeartbeatRunEventOnce(orgId, payload, async () => {
+      onInsertCalls += 1;
+    });
+
+    expect(replay.inserted).toBe(false);
+    expect(onInsertCalls).toBe(1);
+    expect(mockBudgetService.evaluateCostEvent).toHaveBeenCalledTimes(2);
+    const events = await db.select().from(costEvents).where(eq(costEvents.heartbeatRunId, run!.id));
+    expect(events).toHaveLength(1);
   });
 });

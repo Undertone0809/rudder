@@ -688,6 +688,7 @@ describe("heartbeat managed workspace preflight", () => {
   it("preserves watchdog terminal ownership when the adapter returns late", async () => {
     const { agentId } = await seedAgentFixture();
     const heartbeat = heartbeatService(db);
+    const watchdog = heartbeatService(db);
     mockRuntimeAdapter.defer();
 
     const run = await heartbeat.wakeup(agentId, {
@@ -709,7 +710,7 @@ describe("heartbeat managed workspace preflight", () => {
       .set({ createdAt: staleAt })
       .where(eq(heartbeatRunEvents.runId, run!.id));
 
-    const reaped = await heartbeat.reapInactiveRuns({
+    const reaped = await watchdog.reapInactiveRuns({
       maxInactivityMs: 30 * 60 * 1000,
       now: timedOutAt,
     });

@@ -195,6 +195,18 @@ describe("chatAgentRunService", () => {
     expect(timedOutRun?.status).toBe("timed_out");
     expect(timedOutRun?.errorCode).toBe("test_chat_run_stale");
 
+    await svc.finalizeRun(firstRun.id, {
+      status: "succeeded",
+      resultJson: { summary: "late chat completion" },
+      usageJson: { inputTokens: 10, outputTokens: 2 },
+    });
+    const [lateFinalizedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, firstRun.id));
+    expect(lateFinalizedRun).toMatchObject({
+      status: "timed_out",
+      errorCode: "test_chat_run_stale",
+      resultJson: { summary: "late chat completion" },
+    });
+
     const secondRun = await svc.createRun({
       conversation,
       agentId,

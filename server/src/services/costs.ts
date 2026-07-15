@@ -1,7 +1,7 @@
 import type { Db } from "@rudderhq/db";
 import { activityLog, agents, costEvents, costMonthlySpendRollups, issues, organizations, projects } from "@rudderhq/db";
 import { ADDITIONAL_CACHED_INPUT_TOKEN_PROVIDERS } from "@rudderhq/shared";
-import { and, desc, eq, gte, isNotNull, lt, lte, or, sql, type SQLWrapper } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, isNull, lt, lte, or, sql, type SQLWrapper } from "drizzle-orm";
 import { notFound, unprocessable } from "../errors.js";
 import { budgetService, type BudgetServiceHooks } from "./budgets.js";
 
@@ -258,18 +258,59 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
       throw unprocessable("Agent does not belong to organization");
     }
 
+    const idempotencyKey = options?.oncePerHeartbeatRun && data.heartbeatRunId
+      ? `heartbeat-run-finalizer:${data.heartbeatRunId}`
+      : data.idempotencyKey ?? null;
+
     const result = await db.transaction(async (tx) => {
       if (options?.oncePerHeartbeatRun && data.heartbeatRunId) {
         await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`heartbeat-run-cost:${data.heartbeatRunId}`}))`);
-        const existing = await tx
+        let existing = await tx
           .select()
           .from(costEvents)
           .where(and(
             eq(costEvents.orgId, orgId),
-            eq(costEvents.heartbeatRunId, data.heartbeatRunId),
+            eq(costEvents.idempotencyKey, idempotencyKey!),
           ))
           .limit(1)
           .then((rows) => rows[0] ?? null);
+        if (!existing) {
+          const normalizedBiller = data.biller ?? data.provider;
+          const normalizedBillingType = data.billingType ?? "unknown";
+          const normalizedCachedInputTokens = data.cachedInputTokens ?? 0;
+          const legacy = await tx
+            .select()
+            .from(costEvents)
+            .where(and(
+              eq(costEvents.orgId, orgId),
+              eq(costEvents.heartbeatRunId, data.heartbeatRunId),
+              isNull(costEvents.idempotencyKey),
+              eq(costEvents.agentId, data.agentId),
+              sql`${costEvents.issueId} is not distinct from ${data.issueId ?? null}`,
+              sql`${costEvents.projectId} is not distinct from ${data.projectId ?? null}`,
+              sql`${costEvents.goalId} is not distinct from ${data.goalId ?? null}`,
+              sql`${costEvents.billingCode} is not distinct from ${data.billingCode ?? null}`,
+              eq(costEvents.provider, data.provider),
+              eq(costEvents.biller, normalizedBiller),
+              eq(costEvents.billingType, normalizedBillingType),
+              eq(costEvents.model, data.model),
+              eq(costEvents.inputTokens, data.inputTokens ?? 0),
+              eq(costEvents.cachedInputTokens, normalizedCachedInputTokens),
+              eq(costEvents.outputTokens, data.outputTokens ?? 0),
+              eq(costEvents.costCents, data.costCents),
+            ))
+            .orderBy(desc(costEvents.createdAt), desc(costEvents.id))
+            .limit(1)
+            .then((rows) => rows[0] ?? null);
+          if (legacy) {
+            existing = await tx
+              .update(costEvents)
+              .set({ idempotencyKey })
+              .where(and(eq(costEvents.id, legacy.id), isNull(costEvents.idempotencyKey)))
+              .returning()
+              .then((rows) => rows[0] ?? null);
+          }
+        }
         if (existing) return { event: existing, inserted: false };
       }
 
@@ -278,6 +319,7 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         .values({
           ...data,
           orgId,
+          idempotencyKey,
           biller: data.biller ?? data.provider,
           billingType: data.billingType ?? "unknown",
           cachedInputTokens: data.cachedInputTokens ?? 0,
@@ -328,7 +370,31 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
       return { event: inserted, inserted: true };
     });
 
-    if (result.inserted) await budgets.evaluateCostEvent(result.event);
+    if (options?.oncePerHeartbeatRun) {
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`heartbeat-run-budget:${result.event.id}`}))`);
+        const current = await tx
+          .select()
+          .from(costEvents)
+          .where(eq(costEvents.id, result.event.id))
+          .then((rows) => rows[0] ?? null);
+        if (!current || current.budgetEvaluatedAt) return;
+
+        // The ledger commit precedes this replayable side effect. Holding the
+        // advisory lock serializes concurrent finalizers; a thrown evaluation
+        // leaves the marker empty so the next terminal-effects attempt retries.
+        await budgets.evaluateCostEvent(current);
+        await tx
+          .update(costEvents)
+          .set({ budgetEvaluatedAt: new Date() })
+          .where(and(
+            eq(costEvents.id, current.id),
+            isNull(costEvents.budgetEvaluatedAt),
+          ));
+      });
+    } else if (result.inserted) {
+      await budgets.evaluateCostEvent(result.event);
+    }
     return result;
   }
 

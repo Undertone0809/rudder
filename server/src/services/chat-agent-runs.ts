@@ -9,6 +9,10 @@ import { publishLiveEvent } from "./live-events.js";
 import { isPostgresError } from "./postgres-errors.js";
 import { appendHeartbeatRunEvent } from "./run-events.js";
 import { buildHeartbeatAdapterInvokePayload } from "./runtime-kernel/heartbeat.core.js";
+import {
+  reconcileHeartbeatRunEvidence,
+  transitionHeartbeatRunToTerminal,
+} from "./runtime-kernel/heartbeat.terminal.js";
 
 const MAX_EVENT_TEXT_CHARS = 2_000;
 const ACTIVE_CHAT_RUN_UNIQUE_INDEX = "heartbeat_runs_active_chat_conversation_uq";
@@ -249,21 +253,32 @@ export function chatAgentRunService(db: Db) {
       usageJson?: Record<string, unknown> | null;
     },
   ) {
-    const [updated] = await db
-      .update(heartbeatRuns)
-      .set({
-        status: input.status,
+    const evidence = {
+      resultJson: input.resultJson ?? null,
+      resultSummaryJson: summarizeHeartbeatRunResultJson(input.resultJson),
+      usageJson: input.usageJson ?? null,
+    };
+    const updated = await transitionHeartbeatRunToTerminal(db, {
+      runId,
+      status: input.status,
+      patch: {
         finishedAt: new Date(),
         error: input.error ?? null,
         errorCode: input.errorCode ?? null,
-        resultJson: input.resultJson ?? null,
-        resultSummaryJson: summarizeHeartbeatRunResultJson(input.resultJson),
-        usageJson: input.usageJson ?? null,
-        updatedAt: new Date(),
-      })
-      .where(eq(heartbeatRuns.id, runId))
-      .returning();
-    if (!updated) return null;
+        ...evidence,
+      },
+      expectedStatuses: ["queued", "running"],
+      terminalEffectsPending: false,
+      processExitedAt: new Date(),
+    });
+    if (!updated) {
+      await reconcileHeartbeatRunEvidence(db, runId, evidence);
+      return db
+        .select()
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, runId))
+        .then((rows) => rows[0] ? serializeRun(rows[0]) : null);
+    }
 
     publishLiveEvent({
       orgId: updated.orgId,

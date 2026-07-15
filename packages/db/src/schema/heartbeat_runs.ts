@@ -47,7 +47,13 @@ export const heartbeatRuns = pgTable(
     }),
     processPid: integer("process_pid"),
     processStartedAt: timestamp("process_started_at", { withTimezone: true }),
+    processExitedAt: timestamp("process_exited_at", { withTimezone: true }),
     terminalEffectsPending: boolean("terminal_effects_pending").notNull().default(false),
+    terminalEffectsJson: jsonb("terminal_effects_json").$type<Record<string, unknown>>(),
+    terminalEffectsClaimToken: text("terminal_effects_claim_token"),
+    terminalEffectsClaimedAt: timestamp("terminal_effects_claimed_at", { withTimezone: true }),
+    terminalEffectsAttemptCount: integer("terminal_effects_attempt_count").notNull().default(0),
+    terminalEffectsLastError: text("terminal_effects_last_error"),
     retryOfRunId: uuid("retry_of_run_id").references((): AnyPgColumn => heartbeatRuns.id, {
       onDelete: "set null",
     }),
