@@ -82,12 +82,23 @@ test("new-chat prompt starters fill complete prompts and keep composer context",
   await expect(composer.locator("[data-skill-token='true']")).toHaveCount(1);
   await expect(starters).toBeVisible();
 
-  await page.getByRole("button", { name: "Automate routine and recurring work" }).click();
-  await expect(composer).toContainText("Automate my morning prep. Start by asking me what I want included each morning.");
+  await page.getByRole("button", { name: "Create a file or build a site" }).click();
+  await expect(composer).toContainText("Create a");
+  await expect(composer).toHaveCSS("font-weight", "600");
+  await expect(suggestions).toBeVisible();
+  await expect(suggestions.getByRole("option")).toHaveCount(4);
+  await expect(suggestions.getByRole("option").locator("strong")).toHaveText([
+    "Create a",
+    "Create a",
+    "Create a",
+    "Create a",
+  ]);
   await expect(composer.locator("[data-skill-token='true']")).toHaveCount(1);
   await expect(composer).toContainText(skill.slug);
   await expect(composer).toBeFocused();
   await expect(starters).toHaveCount(0);
+  await suggestions.getByRole("option", { name: "Create a new website" }).click();
+  await expect(composer).toContainText("Create a new website for a business. Start by asking me about the business, its customers, and what the website should help them do.");
   await expect(suggestions).toHaveCount(0);
   await expect(page.getByTestId("chat-project-selector")).toContainText(project.name);
   await expect(page.getByTestId("chat-agent-selector")).toContainText(agent.name);

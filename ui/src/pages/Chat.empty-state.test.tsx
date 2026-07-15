@@ -11,6 +11,7 @@ import {
   ChatEmptyStatePromptOptions,
   ChatEmptyStateRecentConversations,
   ChatLongMessageBody,
+  chatPromptGroupForExactTrigger,
   chatPromptQueryFromDraft,
   chatPromptSuggestionsForDraft,
   EMPTY_STATE_PROMPT_GROUPS,
@@ -137,6 +138,12 @@ describe("Chat empty-state prompt starters", () => {
     ]);
   });
 
+  it("recognizes only an exact prompt-group trigger for composer emphasis", () => {
+    expect(chatPromptGroupForExactTrigger("Create a")?.id).toBe("create");
+    expect(chatPromptGroupForExactTrigger("Create a new")).toBeNull();
+    expect(chatPromptGroupForExactTrigger("Automate")?.id).toBe("automate");
+  });
+
   it.each([
     ["file", "create"],
     ["plan", "research"],
@@ -199,6 +206,26 @@ describe("Chat empty-state prompt starters", () => {
       id: "automate-morning-prep",
       prompt: automateGroup().suggestions[1].prompt,
     }));
+  });
+
+  it("emphasizes each prompt group's shared trigger", () => {
+    const container = render(
+      <ChatEmptyStatePromptOptions
+        suggestions={EMPTY_STATE_PROMPT_GROUPS.flatMap((group) => (
+          group.suggestions.map((suggestion) => ({ ...suggestion, groupId: group.id }))
+        ))}
+        optionsId="chat-empty-state-prompt-options"
+        activeIndex={0}
+        onActiveIndexChange={vi.fn()}
+        onSuggestionSelect={vi.fn()}
+      />,
+    );
+
+    const options = Array.from(container.querySelectorAll<HTMLElement>("[role='option']"));
+    expect(options).toHaveLength(16);
+    expect(options.map((option) => option.querySelector("strong")?.textContent)).toEqual(
+      EMPTY_STATE_PROMPT_GROUPS.flatMap((group) => Array(4).fill(group.trigger)),
+    );
   });
 });
 

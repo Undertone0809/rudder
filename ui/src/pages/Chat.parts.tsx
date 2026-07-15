@@ -170,6 +170,11 @@ export type EmptyStatePromptSuggestion = EmptyStatePromptGroup["suggestions"][nu
   groupId: EmptyStatePromptGroupId;
 };
 
+export function chatPromptGroupForExactTrigger(draft: string) {
+  const query = chatPromptQueryKey(draft);
+  return EMPTY_STATE_PROMPT_GROUPS.find((group) => normalizedPromptQuery(group.trigger) === query) ?? null;
+}
+
 const CHAT_SKILL_REFERENCE_PATTERN = /\[[^\]\n]+\]\(skill:\/\/[^)\n]+\)/gu;
 
 function normalizedPromptQuery(value: string) {
@@ -286,6 +291,10 @@ export function ChatEmptyStatePromptOptions({
     >
       {suggestions.map((suggestion, index) => {
         const active = index === activeIndex;
+        const group = EMPTY_STATE_PROMPT_GROUPS.find((candidate) => candidate.id === suggestion.groupId);
+        const emphasizedPrefix = group && suggestion.label.startsWith(group.trigger)
+          ? group.trigger
+          : null;
         return (
           <button
             key={suggestion.id}
@@ -307,7 +316,14 @@ export function ChatEmptyStatePromptOptions({
             )}
           >
             <ChatEmptyStatePromptIcon groupId={suggestion.groupId} className="h-4 w-4 shrink-0" />
-            <span className="min-w-0 flex-1 truncate">{suggestion.label}</span>
+            <span className="min-w-0 flex-1 truncate">
+              {emphasizedPrefix ? (
+                <>
+                  <strong className="font-semibold text-foreground">{emphasizedPrefix}</strong>
+                  {suggestion.label.slice(emphasizedPrefix.length)}
+                </>
+              ) : suggestion.label}
+            </span>
           </button>
         );
       })}
