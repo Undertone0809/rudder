@@ -235,6 +235,7 @@ test.describe("Automations index layout", () => {
     await expect(createButton).toBeVisible();
     await expect(emptyState).toBeVisible();
     await expect(templateGrid).toBeVisible();
+    await expect(page.getByRole("button", { name: /Daily review/ })).toBeVisible();
     await expect(page.getByRole("button", { name: /Bug triage/ })).toBeVisible();
     await expect(page.getByRole("button", { name: /Daily standup review/ })).toBeVisible();
     await expect(page.getByRole("button", { name: /Weekly progress report/ })).toBeVisible();
@@ -304,38 +305,85 @@ test.describe("Automations index layout", () => {
     expect(createdAutomation?.outputMode).toBe("track_issue");
   });
 
-  test("applies the documentation check template from the composer header", async ({ page }, testInfo) => {
+  test("applies and creates the Daily review template from the composer header", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 900 });
 
     const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
       data: {
-        name: `Automations-Advisor-Template-${Date.now()}`,
+        name: `Automations-Daily-Review-Template-${Date.now()}`,
+        issuePrefix: `ADR${Date.now().toString(36).slice(-6)}`.toUpperCase(),
       },
     });
     expect(orgRes.ok()).toBe(true);
     const organization = (await orgRes.json()) as { id: string; issuePrefix: string };
+    const agentRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Daily Review Agent",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: { model: "gpt-5.4" },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = (await agentRes.json()) as { id: string };
 
     await selectOrganization(page, organization.id);
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/automations`);
 
     await page.getByTestId("automations-list-card-header").getByRole("button", { name: "Create automation" }).click();
+    await page.getByPlaceholder("Automation title").fill("Temporary custom draft");
+    await page.getByRole("button", { name: /^Assignee$/ }).click();
+    await page.getByRole("button", { name: /Daily Review Agent/ }).click();
+    await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "Use template" }).click();
 
     const templatePicker = page.getByTestId("automation-template-picker");
     await expect(templatePicker).toBeVisible();
     await expect(templatePicker.getByRole("button", { name: /Advisor review loop/ })).toHaveCount(0);
     await expect(templatePicker.getByRole("button", { name: /Dependency audit/ })).toHaveCount(0);
-    await templatePicker.getByRole("button", { name: /Documentation check/ }).click();
+    await templatePicker.getByRole("button", { name: /Daily review/ }).click();
 
-    await expect(page.getByPlaceholder("Automation title")).toHaveValue("Documentation check");
-    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("Review merged product or engineering changes");
-    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("documentation tasks");
-    await expect(page.getByText("Every Wed at 14:00")).toBeVisible();
+    await expect(page.getByPlaceholder("Automation title")).toHaveValue("Daily review");
+    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("Review what I worked on today");
+    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("highest-priority next action for tomorrow");
+    await expect(page.getByText("Every day at 18:00")).toBeVisible();
+    await expect(page.getByTestId("automation-create-output-mode")).toContainText("Send to chat");
+    await expect(page.getByTestId("automation-create-chat-destination")).toContainText("New chat per run");
+    await expect(page.getByRole("button", { name: /Daily Review Agent/ }).first()).toBeVisible();
 
     await page.screenshot({
-      path: testInfo.outputPath("automations-documentation-template-composer.png"),
+      path: testInfo.outputPath("automations-daily-review-template-composer.png"),
       fullPage: true,
     });
+
+    await page.getByRole("button", { name: /^Create$/ }).click();
+    await expect(page.getByTestId("automation-composer-shell")).toHaveCount(0);
+    await expect(page.getByText("Daily review", { exact: true }).first()).toBeVisible();
+
+    const automationsRes = await page.request.get(`${E2E_BASE_URL}/api/orgs/${organization.id}/automations`);
+    expect(automationsRes.ok()).toBe(true);
+    const createdAutomation = ((await automationsRes.json()) as Array<{
+      id: string;
+      title: string;
+      assigneeAgentId: string | null;
+      outputMode: string;
+    }>).find((automation) => automation.title === "Daily review");
+    expect(createdAutomation).toMatchObject({
+      assigneeAgentId: agent.id,
+      outputMode: "chat_output",
+    });
+
+    let detail: {
+      description: string;
+      triggers: Array<{ kind: string; cronExpression: string | null }>;
+    } | null = null;
+    await expect.poll(async () => {
+      const detailRes = await page.request.get(`${E2E_BASE_URL}/api/automations/${createdAutomation!.id}`);
+      expect(detailRes.ok()).toBe(true);
+      detail = await detailRes.json() as typeof detail;
+      return detail?.triggers.find((trigger) => trigger.kind === "schedule")?.cronExpression ?? null;
+    }).toBe("0 18 * * *");
+    expect(detail?.description).toContain("Review what I worked on today");
   });
 
   test("keeps composer selectors scrollable above the dialog footer", async ({ page }, testInfo) => {
@@ -603,6 +651,7 @@ test.describe("Automations index layout", () => {
     const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
       data: {
         name: `Automations-ZH-${Date.now()}`,
+        issuePrefix: `AZH${Date.now().toString(36).slice(-6)}`.toUpperCase(),
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -619,15 +668,34 @@ test.describe("Automations index layout", () => {
 
     await expect(page.getByRole("button", { name: /日会/ })).toBeVisible();
     await expect(page.getByRole("button", { name: /Bug 分诊/ })).toBeVisible();
-    await page.getByRole("button", { name: /日会/ }).click();
+    await page.getByRole("button", { name: "创建自动化", exact: true }).click();
+    await page.getByRole("button", { name: "使用模板" }).click();
 
-    await expect(page.getByPlaceholder("Automation title")).toHaveValue("日会");
-    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("上一个工作日以来更新的进行中任务");
-    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("发送到新的 Rudder chat");
-    await expect(page.getByRole("button", { name: /Send to chat/ })).toBeEnabled();
+    const templatePicker = page.getByTestId("automation-template-picker");
+    await expect(templatePicker).toBeVisible();
+    await expect(templatePicker.getByText("模板", { exact: true })).toBeVisible();
+    const templatePickerBox = await templatePicker.boundingBox();
+    expect(templatePickerBox).not.toBeNull();
+    expect(templatePickerBox!.x).toBeGreaterThanOrEqual(0);
+    expect(templatePickerBox!.x + templatePickerBox!.width).toBeLessThanOrEqual(390);
+    expect(templatePickerBox!.y).toBeGreaterThanOrEqual(0);
+    expect(templatePickerBox!.y + templatePickerBox!.height).toBeLessThanOrEqual(844);
 
     await page.screenshot({
-      path: testInfo.outputPath("automations-zh-narrow-composer.png"),
+      path: testInfo.outputPath("automations-zh-narrow-template-picker.png"),
+      fullPage: false,
+    });
+
+    await templatePicker.getByRole("button", { name: /每日回顾/ }).click();
+
+    await expect(page.getByPlaceholder("Automation title")).toHaveValue("每日回顾");
+    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("回顾我今天完成的工作");
+    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("推荐明天优先级最高的行动");
+    await expect(page.getByText("每天 18:00")).toBeVisible();
+    await expect(page.getByTestId("automation-create-output-mode")).toContainText("发送到聊天");
+
+    await page.screenshot({
+      path: testInfo.outputPath("automations-zh-narrow-daily-review.png"),
       fullPage: true,
     });
   });

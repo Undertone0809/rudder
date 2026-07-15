@@ -417,6 +417,7 @@ describe("Automations", () => {
 
     expect(container.textContent).toContain("No automations yet");
     expect(container.textContent).not.toContain("Advisor review loop");
+    expect(container.textContent).toContain("Daily review");
     expect(container.textContent).toContain("Bug triage");
     expect(container.textContent).toContain("Daily standup review");
     expect(container.textContent).toContain("Weekly progress report");
@@ -549,6 +550,56 @@ describe("Automations", () => {
     expect(runbookInput?.placeholder).toBe("Add instructions e.g. look for crashes in Sentry");
   });
 
+  it("applies the Daily review template from the composer header", async () => {
+    renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const headerContainer = renderHeaderActions();
+    await act(async () => {
+      headerContainer.querySelector("button")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const titleInput = document.querySelector('textarea[placeholder="Automation title"]') as HTMLTextAreaElement | null;
+    const runbookInput = document.querySelector('textarea[aria-label="Instructions"]') as HTMLTextAreaElement | null;
+    expect(titleInput).toBeTruthy();
+    expect(runbookInput).toBeTruthy();
+
+    await act(async () => {
+      setTextareaValue(titleInput!, "Temporary custom draft");
+      setTextareaValue(runbookInput!, "Temporary instructions");
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes("Use template"))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const templatePicker = document.body.querySelector('[data-testid="automation-template-picker"]');
+    expect(templatePicker).toBeTruthy();
+    expect(templatePicker?.textContent).toContain("Daily review");
+
+    await act(async () => {
+      Array.from(templatePicker?.querySelectorAll("button") ?? [])
+        .find((button) => button.textContent?.includes("Daily review"))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(titleInput?.value).toBe("Daily review");
+    expect(runbookInput?.value).toContain("Review what I worked on today");
+    expect(runbookInput?.value).toContain("highest-priority next action for tomorrow");
+    expect(document.body.textContent).toContain("Schedule 0 18 * * *");
+    expect(document.body.textContent).toContain("Send to chat");
+    expect(document.body.querySelector('[data-testid="automation-template-picker"]')).toBeNull();
+  });
+
   it("renders localized use-case templates for Chinese UI", async () => {
     document.documentElement.lang = "zh-CN";
     automationListState.items = [];
@@ -558,23 +609,46 @@ describe("Automations", () => {
       await Promise.resolve();
     });
 
+    expect(container.textContent).toContain("每日回顾");
     expect(container.textContent).toContain("Bug 分诊");
     expect(container.textContent).toContain("日会");
     expect(container.textContent).toContain("周进展报告");
     expect(container.textContent).not.toContain("依赖审计");
 
+    const headerContainer = renderHeaderActions();
     await act(async () => {
-      Array.from(container.querySelectorAll("button"))
-        .find((button) => button.textContent?.includes("日会"))
+      headerContainer.querySelector("button")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const useTemplateButton = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("使用模板"));
+    expect(useTemplateButton).toBeTruthy();
+
+    await act(async () => {
+      useTemplateButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const templatePicker = document.body.querySelector('[data-testid="automation-template-picker"]');
+    expect(templatePicker?.textContent).toContain("模板");
+    expect(templatePicker?.textContent).toContain("每日回顾");
+    expect(templatePicker?.textContent).toContain("回顾今天的工作并生成简短状态更新");
+
+    await act(async () => {
+      Array.from(templatePicker?.querySelectorAll("button") ?? [])
+        .find((button) => button.textContent?.includes("每日回顾"))
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
     const titleInput = document.querySelector('textarea[placeholder="Automation title"]') as HTMLTextAreaElement | null;
     const runbookInput = document.querySelector('textarea[aria-label="Instructions"]') as HTMLTextAreaElement | null;
-    expect(titleInput?.value).toBe("日会");
-    expect(runbookInput?.value).toContain("上一个工作日以来更新的进行中任务");
-    expect(runbookInput?.value).toContain("发送到新的 Rudder chat");
+    expect(titleInput?.value).toBe("每日回顾");
+    expect(runbookInput?.value).toContain("回顾我今天完成的工作");
+    expect(runbookInput?.value).toContain("推荐明天优先级最高的行动");
+    expect(document.body.textContent).toContain("Schedule 0 18 * * *");
     expect(document.body.textContent).toContain("发送到聊天");
 
     await act(async () => {
