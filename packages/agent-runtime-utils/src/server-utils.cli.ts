@@ -11,6 +11,7 @@ import type {
 } from "./types.js";
 
 const LOCAL_CLI_CREDENTIAL_AUTH_CHECK_TIMEOUT_MS = 3000;
+const RUDDER_DESKTOP_CLI_ENTRY_ENV = "RUDDER_DESKTOP_CLI_ENTRY";
 
 export function ensurePathInEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   if (typeof env.PATH === "string" && env.PATH.length > 0) return env;
@@ -66,7 +67,22 @@ export function shellQuote(arg: string): string {
   return `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 
+async function resolveExplicitDesktopCliEntry(env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+  const configured = env[RUDDER_DESKTOP_CLI_ENTRY_ENV]?.trim();
+  if (!configured) return null;
+  const cliEntry = path.resolve(configured);
+  return await fileExists(cliEntry) ? cliEntry : null;
+}
+
 export async function resolveRudderCliShimTarget(moduleDir: string): Promise<SpawnTarget | null> {
+  const explicitDesktopCli = await resolveExplicitDesktopCliEntry();
+  if (explicitDesktopCli) {
+    return {
+      command: process.execPath,
+      args: [explicitDesktopCli],
+    };
+  }
+
   const packagedCli = await findAncestorWithFile(moduleDir, "desktop-cli.js");
   if (packagedCli) {
     return {

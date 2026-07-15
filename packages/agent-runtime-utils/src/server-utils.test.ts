@@ -23,6 +23,7 @@ const ORIGINAL_RUDDER_OPERATOR_HOME = process.env.RUDDER_OPERATOR_HOME;
 const ORIGINAL_ZDOTDIR = process.env.ZDOTDIR;
 const ORIGINAL_GIT_AUTHOR_EMAIL = process.env.GIT_AUTHOR_EMAIL;
 const ORIGINAL_GIT_COMMITTER_EMAIL = process.env.GIT_COMMITTER_EMAIL;
+const ORIGINAL_RUDDER_DESKTOP_CLI_ENTRY = process.env.RUDDER_DESKTOP_CLI_ENTRY;
 
 afterEach(() => {
   if (ORIGINAL_HOME === undefined) delete process.env.HOME;
@@ -35,6 +36,8 @@ afterEach(() => {
   else process.env.GIT_AUTHOR_EMAIL = ORIGINAL_GIT_AUTHOR_EMAIL;
   if (ORIGINAL_GIT_COMMITTER_EMAIL === undefined) delete process.env.GIT_COMMITTER_EMAIL;
   else process.env.GIT_COMMITTER_EMAIL = ORIGINAL_GIT_COMMITTER_EMAIL;
+  if (ORIGINAL_RUDDER_DESKTOP_CLI_ENTRY === undefined) delete process.env.RUDDER_DESKTOP_CLI_ENTRY;
+  else process.env.RUDDER_DESKTOP_CLI_ENTRY = ORIGINAL_RUDDER_DESKTOP_CLI_ENTRY;
 });
 
 function readPathValue(env: NodeJS.ProcessEnv): string {
@@ -100,6 +103,40 @@ describe("ensureRudderCliInPath", () => {
       const shimPath = path.join(firstPathEntry!, shimName());
       const shim = await fs.readFile(shimPath, "utf8");
 
+      expect(shim).toContain(desktopCli);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the Desktop CLI entry when the server runs from an external runtime cache", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cli-external-runtime-shim-"));
+    const runtimeModuleDir = path.join(root, "runtimes", "0.4.6", "node_modules", "@rudderhq", "agent-runtime-utils", "dist");
+    const desktopCli = path.join(root, "Desktop.app", "Contents", "Resources", "server-package", "desktop-cli.js");
+    const staleBinDir = path.join(root, "stale-bin");
+    const staleRudder = path.join(staleBinDir, shimName());
+
+    try {
+      await fs.mkdir(runtimeModuleDir, { recursive: true });
+      await fs.mkdir(path.dirname(desktopCli), { recursive: true });
+      await fs.mkdir(staleBinDir, { recursive: true });
+      await fs.writeFile(desktopCli, "console.log('fresh desktop cli');\n", "utf8");
+      await fs.writeFile(
+        staleRudder,
+        process.platform === "win32" ? "@echo off\r\necho stale\r\n" : "#!/bin/sh\necho stale\n",
+        "utf8",
+      );
+      await fs.chmod(staleRudder, 0o755);
+      process.env.RUDDER_DESKTOP_CLI_ENTRY = desktopCli;
+
+      const env = await ensureRudderCliInPath(runtimeModuleDir, {
+        PATH: staleBinDir,
+      });
+      const firstPathEntry = readPathValue(env).split(path.delimiter)[0];
+      const shimPath = path.join(firstPathEntry!, shimName());
+      const shim = await fs.readFile(shimPath, "utf8");
+
+      expect(firstPathEntry).not.toBe(staleBinDir);
       expect(shim).toContain(desktopCli);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
