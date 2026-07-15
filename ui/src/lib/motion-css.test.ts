@@ -74,6 +74,15 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain("filter: blur(3px)");
   });
 
+  it("defines a reduced-motion two-step transition for chat prompt choices", () => {
+    expect(motionCss).toContain(".motion-chat-prompt-flow");
+    expect(motionCss).toContain(".t-page-slide");
+    expect(motionCss).toContain(".t-stagger-line--4");
+    expect(motionCss).toContain("grid-template-rows: 0fr");
+    expect(motionCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.t-stagger-line,[\s\S]*?\.t-page-slide \.t-page,[\s\S]*?animation: none !important/);
+    expect(motionCss).toMatch(/\.motion-chat-prompt-flow,\n\s+\.t-page-slide \.t-page,\n\s+\.t-stagger-line,[\s\S]*?transition: none !important/);
+  });
+
   it("defines an enter animation for recent conversations when project context changes", () => {
     expect(motionCss).toContain('.motion-chat-empty-recent-conversations[data-state="open"]');
     expect(motionCss).toContain("@keyframes rudder-chat-empty-recent-project-enter");

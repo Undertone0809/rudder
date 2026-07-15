@@ -36,19 +36,21 @@ describe("Desktop Browser link router", () => {
     }));
   });
 
-  it("rejects file requests from renderer links and Browser popups", async () => {
+  it("opens Browser file requests in the built-in Side Panel Browser", async () => {
     const openBuiltIn = vi.fn();
     const forceOpenExternal = vi.fn();
-    for (const source of ["link", "browser_popup"] as const) {
-      await expect(routeDesktopWebLink({
-        request: { url: "file:///tmp/report.html", source },
-        getSettings: async () => ({ enabled: true, openLinksIn: "built_in" }),
-        openBuiltIn,
-        forceOpenExternal,
-      })).resolves.toBe("ignored");
-    }
+    await expect(routeDesktopWebLink({
+      request: { url: "file:///tmp/report.html", source: "browser_popup" },
+      getSettings: async () => { throw new Error("settings should not be required for Browser popups"); },
+      openBuiltIn,
+      forceOpenExternal,
+    })).resolves.toBe("built_in");
 
-    expect(openBuiltIn).not.toHaveBeenCalled();
+    expect(openBuiltIn).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "browser",
+      url: "file:///tmp/report.html",
+      tabId: expect.any(String),
+    }));
     expect(forceOpenExternal).not.toHaveBeenCalled();
   });
 

@@ -62,8 +62,11 @@ test("new-chat prompt starters fill complete prompts and keep composer context",
   const composer = page.locator(".chat-composer .rudder-mdxeditor-content").first();
   const starters = page.getByTestId("chat-empty-state-starters");
   const suggestions = page.getByTestId("chat-empty-state-prompt-options");
+  const promptFlow = page.getByTestId("chat-empty-state-prompt-flow");
   await expect(composer).toBeVisible({ timeout: 15_000 });
   await expect(starters).toBeVisible();
+  await expect(promptFlow).toHaveAttribute("data-state", "starters");
+  await expect(promptFlow.locator(".t-page-slide")).toHaveAttribute("data-page", "1");
   await expect(starters.getByRole("button")).toHaveCount(4);
   await expect(page.getByRole("button", { name: "Create a file or build a site" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Research and plan next steps" })).toBeVisible();
@@ -82,30 +85,44 @@ test("new-chat prompt starters fill complete prompts and keep composer context",
   await expect(composer.locator("[data-skill-token='true']")).toHaveCount(1);
   await expect(starters).toBeVisible();
 
-  await page.getByRole("button", { name: "Create a file or build a site" }).click();
-  await expect(composer).toContainText("Create a");
+  await page.getByRole("button", { name: "Automate routine and recurring work" }).click({
+    clickCount: 2,
+    delay: 35,
+  });
+  await expect(composer).toContainText("Automate");
+  await expect(composer).not.toContainText("Start by asking me");
   await expect(composer).toHaveCSS("font-weight", "600");
-  await expect(suggestions).toBeVisible();
-  await expect(suggestions.getByRole("option")).toHaveCount(4);
-  await expect(suggestions.getByRole("option").locator("strong")).toHaveText([
-    "Create a",
-    "Create a",
-    "Create a",
-    "Create a",
-  ]);
   await expect(composer.locator("[data-skill-token='true']")).toHaveCount(1);
   await expect(composer).toContainText(skill.slug);
   await expect(composer).toBeFocused();
-  await expect(starters).toHaveCount(0);
-  await suggestions.getByRole("option", { name: "Create a new website" }).click();
-  await expect(composer).toContainText("Create a new website for a business. Start by asking me about the business, its customers, and what the website should help them do.");
-  await expect(suggestions).toHaveCount(0);
+  await expect(starters).toHaveAttribute("aria-hidden", "true");
+  await expect.poll(() => promptFlow.locator("[data-page-id='1']").evaluate((element) => getComputedStyle(element).opacity)).toBe("0");
+  await expect(suggestions).toBeVisible();
+  await expect(suggestions.getByRole("option")).toHaveCount(4);
+  await expect(suggestions.getByRole("option").locator("strong")).toHaveText([
+    "Automate",
+    "Automate",
+    "Automate",
+    "Automate",
+  ]);
+  await expect(promptFlow).toHaveAttribute("data-state", "suggestions");
+  await expect(promptFlow.locator(".t-page-slide")).toHaveAttribute("data-page", "2");
+  await expect(suggestions).toHaveAttribute("data-interactive", "true");
+  await expect(suggestions.getByRole("option").first()).toBeEnabled();
   await expect(page.getByTestId("chat-project-selector")).toContainText(project.name);
   await expect(page.getByTestId("chat-agent-selector")).toContainText(agent.name);
 
   const chatsAfterStarterRes = await page.request.get(`/api/orgs/${organization.id}/chats?status=all&limit=40`);
   expect(chatsAfterStarterRes.ok(), await chatsAfterStarterRes.text()).toBe(true);
   expect(await chatsAfterStarterRes.json()).toEqual([]);
+
+  await suggestions.getByRole("option", { name: "Automate my morning prep" }).click();
+  await expect(composer).toContainText("Automate my morning prep. Start by asking me what I want included each morning.");
+  await expect(composer.locator("[data-skill-token='true']")).toHaveCount(1);
+  await expect(suggestions).toHaveAttribute("aria-hidden", "true");
+  await expect.poll(() => promptFlow.locator("[data-page-id='2']").evaluate((element) => getComputedStyle(element).opacity)).toBe("0");
+  await expect(suggestions.locator("[role='option']")).toHaveCount(4);
+  await expect(promptFlow).toHaveAttribute("data-state", "hidden");
 
   await resetComposer(composer);
   await composer.fill("Automate");
@@ -128,7 +145,7 @@ test("new-chat prompt starters fill complete prompts and keep composer context",
   await composer.press("ArrowDown");
   await composer.press("Enter");
   await expect(composer).toHaveText("Automate my morning prep. Start by asking me what I want included each morning.");
-  await expect(suggestions).toHaveCount(0);
+  await expect(suggestions).toHaveAttribute("aria-hidden", "true");
   await expect(composer).toHaveAttribute("aria-expanded", "false");
 
   await resetComposer(composer);
@@ -137,7 +154,7 @@ test("new-chat prompt starters fill complete prompts and keep composer context",
   await composer.press("Tab");
   await expect(composer).toHaveText("Brief me on a project. Start by asking me which project to cover.");
   await expect(composer).toBeFocused();
-  await expect(suggestions).toHaveCount(0);
+  await expect(suggestions).toHaveAttribute("aria-hidden", "true");
 
   await resetComposer(composer);
   await page.getByRole("button", { name: "Skills" }).click();
@@ -157,7 +174,7 @@ test("new-chat prompt starters fill complete prompts and keep composer context",
   await composer.fill("Automate");
   await expect(suggestions).toBeVisible();
   await composer.press("Escape");
-  await expect(suggestions).toHaveCount(0);
+  await expect(suggestions).toHaveAttribute("aria-hidden", "true");
   await expect(composer).toHaveText("Automate");
   await composer.pressSequentially(" my");
   await expect(suggestions.getByRole("option")).toHaveCount(1);
@@ -165,7 +182,7 @@ test("new-chat prompt starters fill complete prompts and keep composer context",
 
   await resetComposer(composer);
   await composer.fill("Write a haiku about release notes");
-  await expect(suggestions).toHaveCount(0);
+  await expect(suggestions).toHaveAttribute("aria-hidden", "true");
 
   await resetComposer(composer);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -181,6 +198,7 @@ test("new-chat prompt starters fill complete prompts and keep composer context",
   }));
   expect(mobileMetrics.bodyWidth).toBeLessThanOrEqual(mobileMetrics.viewportWidth);
   expect(new Set(mobileMetrics.starterHeights).size).toBe(1);
+  expect(mobileMetrics.starterHeights.every((height) => height <= 48)).toBe(true);
   expect(mobileMetrics.starterOverflows).toEqual([false, false, false, false]);
 
   const existingChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {

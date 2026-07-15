@@ -1,8 +1,7 @@
 import {
   isAllowedBrowserBootstrapUrl,
-  isAllowedBrowserNavigationUrl,
+  isAllowedOperatorBrowserNavigationUrl,
   isBlockedBrowserControlPlaneUrl,
-  isLocalAbsoluteFileUrl,
 } from "./browser-profile.js";
 
 type PreventableEvent = {
@@ -97,7 +96,12 @@ function isWebProtocolUrl(target: string): boolean {
 }
 
 function isAllowedMainFrameRequestUrl(target: string): boolean {
-  return isWebProtocolUrl(target) || isLocalAbsoluteFileUrl(target);
+  try {
+    const protocol = new URL(target).protocol;
+    return protocol === "http:" || protocol === "https:" || protocol === "file:";
+  } catch {
+    return false;
+  }
 }
 
 export function installBrowserSessionPolicy(browserSession: BrowserSessionPolicyTarget, options: {
@@ -178,13 +182,13 @@ export function installBrowserWebviewPolicy(hostContents: BrowserWebviewHost, op
     options.registerGuest(guest);
     guest.setWindowOpenHandler(({ url }) => {
       if (options.isBrowserAvailable()
-        && isAllowedBrowserNavigationUrl(url, options.getControlPlaneOrigins())) {
+        && isAllowedOperatorBrowserNavigationUrl(url, options.getControlPlaneOrigins())) {
         setImmediate(() => options.openBrowserPopup?.(url));
       }
       return { action: "deny" };
     });
     const preventUnsafeNavigation = (event: PreventableEvent, targetUrl: string) => {
-      if (!isAllowedBrowserNavigationUrl(targetUrl, options.getControlPlaneOrigins())) {
+      if (!isAllowedOperatorBrowserNavigationUrl(targetUrl, options.getControlPlaneOrigins())) {
         event.preventDefault();
       }
     };

@@ -16,10 +16,12 @@ related_code:
   - ui/src/pages/Issues.tsx
 related_tests:
   - ui/src/components/InlineEditor.test.tsx
+  - ui/src/lib/new-issue-dialog.test.ts
   - ui/src/pages/IssueDetail.test.tsx
   - tests/e2e/codex-model-order.spec.ts
   - tests/e2e/issue-detail-toolbar-actions.spec.ts
   - tests/e2e/issue-board-display-properties.spec.ts
+  - tests/e2e/new-issue-project-context.spec.ts
 edit_policy: user_confirmed_only
 ---
 
@@ -48,6 +50,15 @@ Behavior:
 - Submitted Agent options persist on the issue as assignee runtime overrides.
   They change this issue's assigned run configuration without changing the
   durable default runtime configuration on the agent.
+- After New Issue succeeds, the destination follows the Primary Rail surface
+  where the dialog opened. Creation from the Primary Rail Issues list or one of
+  its Issue Detail routes opens the created Issue Detail under Issues. Creation
+  from Messenger, Library, Agents, Organization, Projects, Automations, or any
+  other non-Issues primary surface opens the created Issue Detail under
+  Messenger at `/messenger/issues/:issueRef`.
+- The created Issue destination uses the organization's canonical route key.
+  The Issues branch keeps an Issues return breadcrumb; the Messenger branch
+  uses a Messenger return breadcrumb to `/messenger/issues`.
 - Failed issue mutations must surface an error; they must not silently discard
   the user's action.
 
@@ -62,6 +73,10 @@ Invariant:
   issue surface must not present them as organization defaults or silently
   write them back to the agent. Execution precedence and reassignment handling
   are owned by `RUN.EXECUTION.001`.
+- New Issue destination selection must use the route captured when the dialog
+  opened. A later render or modal transition must not silently reclassify a
+  non-Issues creation as Issues, and project-local issue lists do not count as
+  the Primary Rail Issues surface.
 
 Rationale:
 
@@ -72,6 +87,9 @@ Rationale:
   or make the user re-parse the work item.
 - A local override lets an operator tune one job without cloning or permanently
   reconfiguring the agent that owns the broader class of work.
+- Newly created work should land in the operator's current work system: Issues
+  remains the structured backlog surface, while every other primary surface
+  hands the new Issue to Messenger for immediate follow-up.
 
 Related code:
 
@@ -87,7 +105,9 @@ Related code:
 Related tests:
 
 - `ui/src/components/InlineEditor.test.tsx`
+- `ui/src/lib/new-issue-dialog.test.ts`
 - `ui/src/pages/IssueDetail.test.tsx`
 - `tests/e2e/codex-model-order.spec.ts`
 - `tests/e2e/issue-detail-toolbar-actions.spec.ts`
 - `tests/e2e/issue-board-display-properties.spec.ts`
+- `tests/e2e/new-issue-project-context.spec.ts`

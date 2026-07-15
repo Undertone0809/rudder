@@ -47,6 +47,8 @@ owning domain contract.
 ## Issues List
 
 - Issue state and visible issue metadata: `ISSUE.SURFACE.001`.
+- New Issue post-create routing between Primary Rail Issues and Messenger Issue
+  Detail: `ISSUE.SURFACE.001`.
 - Assignment/reviewer display and inline updates: `ROUTING.ASSIGNMENT.001`,
   `ROUTING.REVIEWER.001`.
 
@@ -96,6 +98,8 @@ owning domain contract.
   contracts below.
 - Messenger thread attention, unread/read state, ordering, pin/archive, and
   issue/approval/run attention: `MESSENGER.ATTENTION.001`.
+- Messenger Issue Detail as the post-create destination for every non-Issues
+  primary surface: `ISSUE.SURFACE.001`.
 - Messenger custom group membership, grouped-row navigation/read behavior, and
   group pin priority: `MESSENGER.CUSTOM.GROUPS.001`.
 - Feishu/IM source badges on Feishu-bound chat rows: `IM.FEISHU.001`.

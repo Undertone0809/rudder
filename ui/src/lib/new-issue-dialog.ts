@@ -1,4 +1,4 @@
-import { toOrganizationRelativePath } from "./organization-routes";
+import { getOrganizationRouteKey, toOrganizationRelativePath } from "./organization-routes";
 import { projectRouteRef } from "./utils";
 
 export const LEGACY_ISSUE_DRAFT_STORAGE_KEY = "rudder:issue-draft";
@@ -67,6 +67,13 @@ export interface BuildNewIssueCreateRequestInput {
   labelIds: string[];
   projectWorkspaceId: string;
   assigneeAgentRuntimeOverrides?: Record<string, unknown> | null;
+}
+
+export interface CreatedIssueNavigation {
+  destination: "issues" | "messenger";
+  detailHref: string;
+  breadcrumbLabel: "Issues" | "Messenger";
+  breadcrumbHref: string;
 }
 
 type NewIssueDialogProjectContext = {
@@ -383,6 +390,37 @@ export function resolveDefaultNewIssueProjectId(input: {
   if (!routeRef) return "";
 
   return input.projects.find((project) => project.id === routeRef || projectRouteRef(project) === routeRef)?.id ?? "";
+}
+
+export function resolveCreatedIssueNavigation(input: {
+  issue: { id: string; identifier: string | null };
+  orgId: string;
+  organizations: Array<{ id: string; issuePrefix: string; urlKey?: string | null }>;
+  openContextLocation: { pathname: string; search?: string } | null;
+}): CreatedIssueNavigation {
+  const organization = input.organizations.find((candidate) => candidate.id === input.orgId);
+  const organizationRouteKey = organization ? getOrganizationRouteKey(organization).trim() : "";
+  const withOrganizationPrefix = (path: string) => organizationRouteKey ? `/${organizationRouteKey}${path}` : path;
+  const sourcePathname = input.openContextLocation?.pathname ?? withOrganizationPrefix("/issues");
+  const relativeSourcePath = toOrganizationRelativePath(sourcePathname);
+  const openedFromIssues = /^\/issues(?:\/|$)/.test(relativeSourcePath);
+  const issueRef = input.issue.identifier ?? input.issue.id;
+
+  if (openedFromIssues) {
+    return {
+      destination: "issues",
+      detailHref: withOrganizationPrefix(`/issues/${issueRef}`),
+      breadcrumbLabel: "Issues",
+      breadcrumbHref: `${withOrganizationPrefix(relativeSourcePath)}${input.openContextLocation?.search ?? ""}`,
+    };
+  }
+
+  return {
+    destination: "messenger",
+    detailHref: withOrganizationPrefix(`/messenger/issues/${issueRef}`),
+    breadcrumbLabel: "Messenger",
+    breadcrumbHref: withOrganizationPrefix("/messenger/issues"),
+  };
 }
 
 export function buildNewIssueCreateRequest(input: BuildNewIssueCreateRequestInput): Record<string, unknown> {

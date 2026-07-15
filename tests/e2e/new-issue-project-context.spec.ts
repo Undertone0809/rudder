@@ -3,20 +3,23 @@ import { E2E_BASE_URL } from "./support/e2e-env";
 
 test.describe("New issue project context", () => {
   test("redirects to the created issue detail after submitting the dialog", async ({ page }) => {
+    const suffix = Date.now();
     const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
       data: {
-        name: `New-Issue-Redirect-${Date.now()}`,
+        name: `New-Issue-Redirect-${suffix}`,
+        issuePrefix: `NIR${String(suffix).slice(-6)}`,
       },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
+    const organizationRouteKey = organization.urlKey || organization.issuePrefix;
 
     await page.goto(E2E_BASE_URL);
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
-    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues`);
+    await page.goto(`${E2E_BASE_URL}/${organizationRouteKey}/issues`);
     await page.getByTestId("workspace-main-header").getByRole("button", { name: "Create Issue" }).click();
 
     const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
@@ -44,13 +47,65 @@ test.describe("New issue project context", () => {
     expect(createdIssue.goalId).toBeNull();
 
     await expect(page).toHaveURL(
-      new RegExp(`/${organization.issuePrefix}/issues/${createdIssue.identifier ?? createdIssue.id}$`),
+      new RegExp(`/${organizationRouteKey}/issues/${createdIssue.identifier ?? createdIssue.id}$`),
     );
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
     await expect(
       page.getByTestId("issue-detail-breadcrumb").getByRole("link", { name: "Issues" }),
-    ).toHaveAttribute("href", new RegExp(`/${organization.issuePrefix}/issues$`));
+    ).toHaveAttribute("href", new RegExp(`/${organizationRouteKey}/issues$`));
   });
+
+  for (const source of [
+    { label: "Messenger", path: "messenger" },
+    { label: "Library", path: "library" },
+  ]) {
+    test(`opens creation from ${source.label} in Messenger Issue Detail`, async ({ page }) => {
+      const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+        data: {
+          name: `New-Issue-${source.label}-Destination-${Date.now()}`,
+          issuePrefix: `${source.label === "Messenger" ? "NIM" : "NIL"}${String(Date.now()).slice(-5)}`,
+        },
+      });
+      expect(orgRes.ok()).toBe(true);
+      const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
+      const organizationRouteKey = organization.urlKey || organization.issuePrefix;
+
+      await page.goto(E2E_BASE_URL);
+      await page.evaluate((orgId) => {
+        window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      }, organization.id);
+      await page.goto(`${E2E_BASE_URL}/${organizationRouteKey}/${source.path}`);
+
+      await page.getByTestId("primary-rail").getByRole("button", { name: "Create" }).click();
+      await page.getByRole("menuitem", { name: "Create new issue" }).click();
+      const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
+      const title = `${source.label} routed issue ${Date.now()}`;
+      await expect(dialog).toBeVisible();
+      await dialog.getByPlaceholder("Issue title").fill(title);
+
+      const createResponse = page.waitForResponse((response) =>
+        response.request().method() === "POST"
+        && response.url().endsWith(`/api/orgs/${organization.id}/issues`)
+        && response.ok(),
+      );
+      await dialog.getByRole("button", { name: "Create Issue" }).click();
+      const createdIssue = await (await createResponse).json() as {
+        id: string;
+        identifier: string | null;
+      };
+
+      await expect(page).toHaveURL(
+        new RegExp(`/${organizationRouteKey}/messenger/issues/${createdIssue.identifier ?? createdIssue.id}$`),
+      );
+      await expect(page.getByRole("heading", { name: title })).toBeVisible();
+      await expect(
+        page.getByTestId("primary-rail").getByRole("link", { name: "Messenger" }),
+      ).toHaveAttribute("aria-current", "page");
+      await expect(
+        page.getByTestId("issue-detail-breadcrumb").getByRole("link", { name: "Messenger", exact: true }),
+      ).toHaveAttribute("href", new RegExp(`/${organizationRouteKey}/messenger/issues$`));
+    });
+  }
 
   test("prefills the selected project when opening the dialog from a project-filtered issues view", async ({ page }) => {
     const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {

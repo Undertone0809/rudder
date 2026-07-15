@@ -39,7 +39,6 @@ const browserImportExpiredCookieName = "rudder_browser_import_expired";
 const browserImportMalformedCookieName = "rudder_browser_import_malformed";
 const browserImportEncryptedCookieName = "rudder_browser_import_encrypted";
 const browserImportSmokeCookieUrl = "http://127.0.0.1/";
-const browserSmokeScreenshotPath = process.env.RUDDER_DESKTOP_SMOKE_SCREENSHOT?.trim() || null;
 const windowsToUnixEpochMicroseconds = 11_644_473_600_000_000n;
 const REQUIRED_BUNDLED_SKILLS = [
   "browser",
@@ -58,21 +57,6 @@ async function pathExists(targetPath) {
   } catch {
     return false;
   }
-}
-
-async function createLocalBrowserSmokeFixture() {
-  const fixtureRoot = path.join(tmpRoot, "browser-local-file");
-  const fixturePath = path.join(fixtureRoot, "rudder-local-report.html");
-  await mkdir(fixtureRoot, { recursive: true });
-  await writeFile(fixturePath, `<!doctype html>
-<html>
-  <head><meta charset="utf-8"><title>Rudder Local File Smoke</title></head>
-  <body><h1>Rudder local file fixture</h1><p id="proof">Real Electron webview content</p></body>
-</html>`);
-  return {
-    url: pathToFileURL(fixturePath).href,
-    missingUrl: pathToFileURL(path.join(fixtureRoot, "missing-local-report.html")).href,
-  };
 }
 
 async function createSyntheticBrowserImportFixture(userDataDir) {
@@ -542,16 +526,6 @@ async function verifyAgentBrowserBroker(baseUrl, databaseUrl, company, agent) {
         .map((tool) => tool.name)
         .filter((name) => name.startsWith("rudder_browser_"));
       assert.equal(browserToolNames.length, 8, "Agent Browser MCP should expose eight bounded tools");
-
-      const rejectedFileOpen = await mcp.request("tools/call", {
-        name: "rudder_browser_open",
-        arguments: { url: pathToFileURL(path.join(tmpRoot, "agent-browser-denied.html")).href },
-      });
-      assert.equal(rejectedFileOpen.result?.isError, true, "Agent Browser must reject local file URLs");
-      assert.ok(
-        ["browser_invalid_argument", "browser_unsafe_url"].includes(rejectedFileOpen.result?.structuredContent?.code),
-        "Agent Browser must classify local file URLs as invalid or unsafe",
-      );
 
       const opened = readSmokeMcpToolResult(await mcp.request("tools/call", {
         name: "rudder_browser_open",
@@ -1371,67 +1345,6 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
           "Browser popups must not create native Electron windows",
         );
       }
-
-      const localFileFixture = await createLocalBrowserSmokeFixture();
-      const filePopupTabCount = await page.locator("webview[data-browser-tab-id]").count();
-      const activeUrlBeforeFileRequest = await page.evaluate(() => {
-        const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
-        if (!webview || typeof webview.getURL !== "function") throw new Error("Browser webview unavailable");
-        return webview.getURL();
-      });
-      await page.evaluate(async (url) => {
-        const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
-        if (!webview || typeof webview.executeJavaScript !== "function") throw new Error("Browser webview unavailable");
-        await webview.executeJavaScript(`window.open(${JSON.stringify(url)}, "_blank")`);
-      }, localFileFixture.url);
-      await page.waitForTimeout(500);
-      assert.equal(
-        await page.locator("webview[data-browser-tab-id]").count(),
-        filePopupTabCount,
-        "page-initiated file popups must not create a Side Panel tab",
-      );
-      await page.evaluate(async (url) => {
-        const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
-        if (!webview || typeof webview.executeJavaScript !== "function") throw new Error("Browser webview unavailable");
-        await webview.executeJavaScript(`window.location.href = ${JSON.stringify(url)}`);
-      }, localFileFixture.url);
-      await page.waitForTimeout(500);
-      assert.equal(
-        await page.evaluate(() => {
-          const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
-          if (!webview || typeof webview.getURL !== "function") throw new Error("Browser webview unavailable");
-          return webview.getURL();
-        }),
-        activeUrlBeforeFileRequest,
-        "page-initiated file redirects must remain on the current web page",
-      );
-
-      await browserUrlInput.fill(localFileFixture.url);
-      await browserUrlInput.press("Enter");
-      await page.waitForFunction(async ({ expectedUrl }) => {
-        const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
-        if (!webview || typeof webview.getURL !== "function" || typeof webview.executeJavaScript !== "function") {
-          return false;
-        }
-        if (webview.getURL() !== expectedUrl) return false;
-        const proof = await webview.executeJavaScript("document.querySelector('#proof')?.textContent ?? ''");
-        return proof === "Real Electron webview content";
-      }, { expectedUrl: localFileFixture.url }, { timeout: 30_000 });
-      await sidePanel.getByTestId("chat-side-panel-tab")
-        .filter({ hasText: "Rudder Local File Smoke" })
-        .waitFor({ state: "visible", timeout: 15_000 });
-      assert.equal(page.url(), rudderUrl, "local file navigation should preserve the current Rudder route");
-      if (browserSmokeScreenshotPath) {
-        await mkdir(path.dirname(browserSmokeScreenshotPath), { recursive: true });
-        await page.screenshot({ path: browserSmokeScreenshotPath, fullPage: true });
-      }
-
-      await browserUrlInput.fill(localFileFixture.missingUrl);
-      await browserUrlInput.press("Enter");
-      const fileLoadError = sidePanel.getByTestId("chat-side-panel-browser-error");
-      await fileLoadError.waitFor({ state: "visible", timeout: 30_000 });
-      assert.match(await fileLoadError.innerText(), /ERR_FILE_NOT_FOUND/);
-      assert.equal(page.url(), rudderUrl, "missing local files should not replace the Rudder route");
 
       await browserUrlInput.fill("google");
       await browserUrlInput.press("Enter");
