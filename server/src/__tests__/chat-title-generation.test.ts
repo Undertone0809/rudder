@@ -104,4 +104,40 @@ describe("chat title generation service", () => {
       "Available skills inquiry",
     );
   });
+
+  it("keeps the numbered title of a fork after its first new user message", async () => {
+    const chats = {
+      updateDefaultTitle: vi.fn(async () => null),
+      replaceSystemGeneratedTitle: vi.fn(async () => null),
+    };
+    const productIntelligence = {
+      execute: vi.fn(async () => ({
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        stdout: "Should not be used",
+      })),
+    };
+    const service = chatTitleGenerationService({ chats, productIntelligence });
+
+    service.startAutomaticGeneration(
+      {
+        id: "chat-fork-2",
+        orgId: "org-1",
+        title: "Launch plan (2)",
+        forkedFromConversationId: "chat-root",
+      },
+      {
+        id: "message-1",
+        role: "user",
+        kind: "message",
+        body: "Explore a different launch plan",
+      },
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(chats.updateDefaultTitle).not.toHaveBeenCalled();
+    expect(chats.replaceSystemGeneratedTitle).not.toHaveBeenCalled();
+    expect(productIntelligence.execute).not.toHaveBeenCalled();
+  });
 });
