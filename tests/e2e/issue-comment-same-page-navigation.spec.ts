@@ -188,7 +188,8 @@ test("issue detail body and activity move through one scroll flow", async ({ pag
     const timelineFlow = document.querySelector<HTMLElement>("[data-testid='comment-thread-timeline-flow']");
     const composer = Array.from(document.querySelectorAll<HTMLElement>(".chat-composer")).at(-1);
     const activity = document.querySelector<HTMLElement>("section[aria-label='Activity']");
-    if (!mainScroll || !timelineFlow || !composer || !activity) return null;
+    const workspaceMain = document.querySelector<HTMLElement>("#main-content");
+    if (!mainScroll || !timelineFlow || !composer || !activity || !workspaceMain) return null;
 
     const before = {
       activityTop: activity.getBoundingClientRect().top,
@@ -226,6 +227,7 @@ test("issue detail body and activity move through one scroll flow", async ({ pag
       composerHeight: Math.round(afterMiddleScroll.composerBox.height),
       beforeActivityTop: Math.round(before.activityTop),
       beforeComposerTop: Math.round(before.composerTop),
+      scrollRightGap: Math.round(workspaceMain.getBoundingClientRect().right - mainScrollRect.right),
       hasInternalTimelineScroll: Boolean(document.querySelector("[data-testid='comment-thread-timeline-scroll']")),
     };
   });
@@ -242,6 +244,8 @@ test("issue detail body and activity move through one scroll flow", async ({ pag
   expect(metrics!.timelineFlowTop).toBeLessThan(metrics!.composerTop);
   expect(metrics!.timelineFlowBottom).toBeGreaterThan(metrics!.composerTop);
   expect(metrics!.composerHeight).toBeGreaterThan(80);
+  expect(metrics!.scrollRightGap).toBeGreaterThanOrEqual(0);
+  expect(metrics!.scrollRightGap).toBeLessThanOrEqual(24);
 
   await page.screenshot({
     path: testInfo.outputPath("issue-detail-single-scroll-flow.png"),

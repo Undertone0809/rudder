@@ -1109,6 +1109,10 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   const [issuePinPending, setIssuePinPending] = useState(false);
   const issueFindRootRef = useRef<HTMLDivElement | null>(null);
   const issueDetailScrollRef = useScrollbarActivityRef("rudder:issue-detail-main");
+  const setIssueDetailRootRef = useCallback((element: HTMLDivElement | null) => {
+    issueFindRootRef.current = element;
+    issueDetailScrollRef(element);
+  }, [issueDetailScrollRef]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
 
@@ -2052,16 +2056,16 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
 
   return (
     <div
-      ref={issueFindRootRef}
-      data-testid={embedded ? "embedded-issue-detail" : undefined}
-      className="mx-auto flex h-full min-h-0 max-w-6xl flex-col xl:grid xl:grid-cols-[minmax(0,1fr)_280px] xl:items-stretch xl:gap-6"
+      ref={setIssueDetailRootRef}
+      data-testid={embedded ? "embedded-issue-detail" : "issue-detail-main-scroll"}
+      className={cn(
+        "h-full min-h-0 w-full",
+        embedded ? "overflow-visible" : "scrollbar-auto-hide overflow-y-auto overscroll-contain",
+      )}
     >
       <IssueDetailFind rootRef={issueFindRootRef} refreshKey={issueFindRefreshKey} />
-      <div
-        ref={issueDetailScrollRef}
-        className="scrollbar-auto-hide min-w-0 space-y-6 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:pr-1"
-        data-testid="issue-detail-main-scroll"
-      >
+      <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col xl:grid xl:grid-cols-[minmax(0,1fr)_280px] xl:gap-6">
+      <div className="min-w-0 space-y-6">
         <div
           className="min-w-0 space-y-6"
           data-testid="issue-detail-primary-content"
@@ -2612,7 +2616,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
       </Sheet>
       <ScrollToBottom />
       </div>
-      <aside className="mt-6 xl:mt-0 xl:min-h-0 xl:overflow-y-auto">
+      <aside className="mt-6 xl:mt-0 xl:min-h-0">
         <div className="space-y-3">
           <div className="hidden xl:flex justify-end">
             {renderDesktopIssueActions({
@@ -2645,6 +2649,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
         attaching={attachWorkspaceFile.isPending}
         error={attachmentError}
       />
+      </div>
     </div>
   );
 }
