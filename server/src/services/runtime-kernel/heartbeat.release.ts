@@ -418,6 +418,7 @@ export function createHeartbeatReleaseHandlers(context: any) {
             requestedByActorId: "issue_closure_governance",
           }),
           idempotencyKey: `issue_convergence_review_requested:${passiveClosure.originRunId}`,
+          originTerminalRunId: run.id,
         }).catch((err) => {
           logger.warn({ err, issueId: passiveClosure.issue.id }, "failed to wake reviewer after passive issue close-out exhaustion");
           return null;
@@ -471,6 +472,7 @@ export function createHeartbeatReleaseHandlers(context: any) {
             requestedByActorId: "issue_review_followup",
           }),
           idempotencyKey: `${ISSUE_REVIEW_CLOSEOUT_REASON}:${run.id}`,
+          originTerminalRunId: run.id,
         }).catch((err) => {
           logger.warn({ err, issueId: passiveClosure.issue.id }, "failed to wake reviewer after missing review close-out");
           return null;

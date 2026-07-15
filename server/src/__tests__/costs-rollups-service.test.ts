@@ -5,6 +5,7 @@ import {
   costMonthlySpendRollups,
   createDb,
   ensurePostgresDatabase,
+  heartbeatRuns,
   organizations,
 } from "@rudderhq/db";
 import { and, eq } from "drizzle-orm";
@@ -117,6 +118,7 @@ describe("costService monthly spend rollups", () => {
   afterEach(async () => {
     await db.delete(costEvents);
     await db.delete(costMonthlySpendRollups);
+    await db.delete(heartbeatRuns);
     await db.delete(agents);
     await db.delete(organizations);
   });
@@ -239,5 +241,54 @@ describe("costService monthly spend rollups", () => {
     expect(agent?.spentMonthlyCents).toBe(20);
     expect(org?.spentMonthlyCents).toBe(20);
     expect(currentRollups).toHaveLength(2);
+  });
+
+  it("records heartbeat usage and cost exactly once under concurrent reconciliation", async () => {
+    const { orgId, agentId } = await seedOrgAndAgent();
+    const [run] = await db
+      .insert(heartbeatRuns)
+      .values({
+        orgId,
+        agentId,
+        status: "timed_out",
+        invocationSource: "on_demand",
+        finishedAt: new Date(),
+      })
+      .returning();
+    const costs = costService(db);
+    let onInsertCalls = 0;
+
+    const results = await Promise.all(Array.from({ length: 10 }, () =>
+      costs.createHeartbeatRunEventOnce(orgId, {
+        agentId,
+        heartbeatRunId: run!.id,
+        provider: "openai",
+        biller: "openai",
+        billingType: "metered_api",
+        model: "gpt-5",
+        inputTokens: 100,
+        cachedInputTokens: 20,
+        outputTokens: 10,
+        costCents: 25,
+        occurredAt: currentMonthDate(),
+      }, async () => {
+        onInsertCalls += 1;
+      })));
+
+    expect(results.filter((result) => result.inserted)).toHaveLength(1);
+    expect(onInsertCalls).toBe(1);
+    const events = await db
+      .select()
+      .from(costEvents)
+      .where(eq(costEvents.heartbeatRunId, run!.id));
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ costCents: 25, inputTokens: 100, outputTokens: 10 });
+
+    const rollups = await db
+      .select()
+      .from(costMonthlySpendRollups)
+      .where(eq(costMonthlySpendRollups.orgId, orgId));
+    expect(rollups).toHaveLength(2);
+    expect(rollups.every((row) => row.spendCents === 25)).toBe(true);
   });
 });

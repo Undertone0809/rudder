@@ -2,7 +2,7 @@ import type { AgentRuntimeExecutionContext, AgentRuntimeExecutionResult } from "
 import { asNumber, asString, parseObject } from "../utils.js";
 
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
-  const { config, runId, agent, context } = ctx;
+  const { config, runId, agent, context, abortSignal } = ctx;
   const url = asString(config.url, "");
   if (!url) throw new Error("HTTP adapter missing url");
 
@@ -14,6 +14,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
   const controller = new AbortController();
   const timer = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  const abortFromContext = () => controller.abort();
+  if (abortSignal?.aborted) controller.abort();
+  else abortSignal?.addEventListener("abort", abortFromContext, { once: true });
 
   try {
     const res = await fetch(url, {
@@ -23,7 +26,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         ...headers,
       },
       body: JSON.stringify(body),
-      ...(timer ? { signal: controller.signal } : {}),
+      ...((timer || abortSignal) ? { signal: controller.signal } : {}),
     });
 
     if (!res.ok) {
@@ -38,5 +41,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     };
   } finally {
     if (timer) clearTimeout(timer);
+    abortSignal?.removeEventListener("abort", abortFromContext);
   }
 }

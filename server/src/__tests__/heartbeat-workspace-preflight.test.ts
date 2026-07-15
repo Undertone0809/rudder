@@ -8,6 +8,7 @@ import {
   chatConversations,
   chatMessages,
   costEvents,
+  costMonthlySpendRollups,
   createDb,
   ensurePostgresDatabase,
   heartbeatRunEvents,
@@ -33,13 +34,42 @@ const mockBudgetService = vi.hoisted(() => ({
 }));
 
 const mockRuntimeAdapter = vi.hoisted(() => ({
-  execute: vi.fn(async () => ({
-    summary: "preflight ok",
-    resultJson: null,
-    timedOut: false,
-    exitCode: 0,
-    errorMessage: null,
-  })),
+  pendingResolve: null as ((value: Record<string, unknown>) => void) | null,
+  pendingPromise: null as Promise<Record<string, unknown>> | null,
+  execute: vi.fn(async function () {
+    if (mockRuntimeAdapter.pendingPromise) return await mockRuntimeAdapter.pendingPromise;
+    return {
+      summary: "preflight ok",
+      resultJson: null,
+      timedOut: false,
+      exitCode: 0,
+      errorMessage: null,
+    };
+  }),
+  defer() {
+    mockRuntimeAdapter.pendingPromise = new Promise((resolve) => {
+      mockRuntimeAdapter.pendingResolve = resolve;
+    });
+  },
+  resolve(value: Record<string, unknown>) {
+    mockRuntimeAdapter.pendingResolve?.(value);
+    mockRuntimeAdapter.pendingResolve = null;
+    mockRuntimeAdapter.pendingPromise = null;
+  },
+  reset() {
+    mockRuntimeAdapter.pendingResolve = null;
+    mockRuntimeAdapter.pendingPromise = null;
+    mockRuntimeAdapter.execute.mockImplementation(async () => {
+      if (mockRuntimeAdapter.pendingPromise) return await mockRuntimeAdapter.pendingPromise;
+      return {
+        summary: "preflight ok",
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      };
+    });
+  },
 }));
 
 const mockPreflight = vi.hoisted(() => ({
@@ -218,6 +248,7 @@ describe("heartbeat managed workspace preflight", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockRuntimeAdapter.reset();
     mockBudgetService.evaluateCostEvent.mockResolvedValue(undefined);
     mockBudgetService.getInvocationBlock.mockResolvedValue(null);
     mockPreflight.fail = false;
@@ -232,6 +263,7 @@ describe("heartbeat managed workspace preflight", () => {
   afterEach(async () => {
     await db.delete(agentTaskSessions);
     await db.delete(costEvents);
+    await db.delete(costMonthlySpendRollups);
     await db.delete(chatMessages);
     await db.delete(chatConversations);
     await db.delete(heartbeatRunEvents);
@@ -651,6 +683,100 @@ describe("heartbeat managed workspace preflight", () => {
         ]),
       },
     });
+  });
+
+  it("preserves watchdog terminal ownership when the adapter returns late", async () => {
+    const { agentId } = await seedAgentFixture();
+    const heartbeat = heartbeatService(db);
+    mockRuntimeAdapter.defer();
+
+    const run = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      reason: "terminal_race_test",
+      contextSnapshot: { taskKey: "terminal-race" },
+    });
+    expect(run).toBeTruthy();
+    await waitForCondition(async () => {
+      const current = await heartbeat.getRun(run!.id);
+      return current?.status === "running" && mockRuntimeAdapter.execute.mock.calls.length > 0;
+    });
+
+    const staleAt = new Date();
+    const timedOutAt = new Date(staleAt.getTime() + 31 * 60 * 1000);
+    await db.update(heartbeatRuns).set({ updatedAt: staleAt }).where(eq(heartbeatRuns.id, run!.id));
+    await db
+      .update(heartbeatRunEvents)
+      .set({ createdAt: staleAt })
+      .where(eq(heartbeatRunEvents.runId, run!.id));
+
+    const reaped = await heartbeat.reapInactiveRuns({
+      maxInactivityMs: 30 * 60 * 1000,
+      now: timedOutAt,
+    });
+    expect(reaped).toEqual({ timedOut: 1, runIds: [run!.id] });
+    const watchdogRun = await heartbeat.getRun(run!.id);
+    expect(watchdogRun).toMatchObject({
+      status: "timed_out",
+      errorCode: "inactivity_timeout",
+      error: "Run had no recorded activity for 30m 0s",
+      terminalEffectsPending: true,
+    });
+    const watchdogFinishedAt = watchdogRun?.finishedAt?.toISOString();
+
+    mockRuntimeAdapter.resolve({
+      summary: "late success must remain evidence only",
+      resultJson: { stdout: "late stdout" },
+      timedOut: false,
+      exitCode: 0,
+      errorMessage: null,
+      sessionId: "late-session",
+      usage: { inputTokens: 100, cachedInputTokens: 20, outputTokens: 10 },
+      costUsd: 0.25,
+      provider: "openai",
+      model: "gpt-5",
+      billingType: "metered_api",
+    });
+
+    await waitForCondition(async () => (await heartbeat.getRun(run!.id))?.terminalEffectsPending === false);
+    const finalRun = await heartbeat.getRun(run!.id);
+    expect(finalRun).toMatchObject({
+      status: "timed_out",
+      errorCode: "inactivity_timeout",
+      error: "Run had no recorded activity for 30m 0s",
+      sessionIdAfter: null,
+      exitCode: 0,
+    });
+    expect(finalRun?.finishedAt?.toISOString()).toBe(watchdogFinishedAt);
+    expect(finalRun?.resultJson).toMatchObject({ stdout: "late stdout" });
+    expect(finalRun?.usageJson).toMatchObject({ inputTokens: 100, outputTokens: 10 });
+
+    const [runtimeState] = await db
+      .select()
+      .from(agentRuntimeState)
+      .where(eq(agentRuntimeState.agentId, agentId));
+    expect(runtimeState).toMatchObject({
+      sessionId: null,
+      lastRunId: null,
+      totalInputTokens: 100,
+      totalCachedInputTokens: 20,
+      totalOutputTokens: 10,
+      totalCostCents: 25,
+    });
+    const taskSessions = await db
+      .select()
+      .from(agentTaskSessions)
+      .where(eq(agentTaskSessions.agentId, agentId));
+    expect(taskSessions).toHaveLength(0);
+    const runCosts = await db
+      .select()
+      .from(costEvents)
+      .where(eq(costEvents.heartbeatRunId, run!.id));
+    expect(runCosts).toHaveLength(1);
+    const [wakeup] = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.runId, run!.id));
+    expect(wakeup?.status).toBe("timed_out");
   });
 
   it("preserves adapter failure codes when forbidden marker evidence is also present", async () => {

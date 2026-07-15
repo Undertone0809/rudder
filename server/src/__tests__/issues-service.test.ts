@@ -70,6 +70,16 @@ async function getAvailablePort(): Promise<number> {
 }
 
 async function startTempDatabase() {
+  const externalConnectionString = process.env.RUDDER_ISSUES_TEST_DATABASE_URL?.trim();
+  if (externalConnectionString) {
+    const parsed = new URL(externalConnectionString);
+    const databaseName = parsed.pathname.replace(/^\//, "");
+    parsed.pathname = "/postgres";
+    await ensurePostgresDatabase(parsed.toString(), databaseName);
+    await applyPendingMigrations(externalConnectionString);
+    return { connectionString: externalConnectionString, dataDir: "", instance: null };
+  }
+
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-issues-service-"));
   const port = await getAvailablePort();
   const EmbeddedPostgres = await getEmbeddedPostgresCtor();
@@ -1939,6 +1949,7 @@ describe("issueService.list participantAgentId", () => {
         agentId,
         invocationSource: "automation",
         status: "failed",
+        terminalEffectsPending: true,
       },
       {
         id: resumedRunId,
@@ -1963,6 +1974,14 @@ describe("issueService.list participantAgentId", () => {
       executionLockedAt: new Date(),
       startedAt: new Date(),
     });
+
+    await expect(svc.assertCheckoutOwner(issueId, agentId, resumedRunId)).rejects.toThrow(
+      /Issue run ownership conflict/i,
+    );
+    await db
+      .update(heartbeatRuns)
+      .set({ terminalEffectsPending: false })
+      .where(eq(heartbeatRuns.id, staleRunId));
 
     const ownership = await svc.assertCheckoutOwner(issueId, agentId, resumedRunId);
     expect(ownership).toMatchObject({

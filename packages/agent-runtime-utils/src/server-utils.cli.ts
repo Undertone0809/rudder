@@ -31,7 +31,7 @@ export function prependPathEntry(env: NodeJS.ProcessEnv, entry: string): NodeJS.
   };
 }
 
-function killChildProcessTree(child: ChildProcessWithEvents, force: boolean): void {
+export function killChildProcessTree(child: ChildProcessWithEvents, force: boolean): void {
   if (process.platform === "win32" && typeof child.pid === "number" && child.pid > 0) {
     const args = ["/pid", String(child.pid), "/t"];
     if (force) args.push("/f");
@@ -1029,8 +1029,12 @@ export async function runChildProcess(
             }, Math.max(1, opts.graceSec) * 1000);
           };
 
-          opts.abortSignal.addEventListener("abort", onAbort, { once: true });
-          abortCleanup = () => opts.abortSignal?.removeEventListener("abort", onAbort);
+          if (opts.abortSignal.aborted) {
+            onAbort();
+          } else {
+            opts.abortSignal.addEventListener("abort", onAbort, { once: true });
+            abortCleanup = () => opts.abortSignal?.removeEventListener("abort", onAbort);
+          }
         }
 
         child.stdout?.on("data", (chunk: unknown) => {

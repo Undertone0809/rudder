@@ -5,7 +5,7 @@ import {
   heartbeatRuns,
   issues
 } from "@rudderhq/db";
-import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lte, or, sql } from "drizzle-orm";
 import { conflict, notFound } from "../../errors.js";
 import { publishLiveEvent } from "../live-events.js";
 
@@ -26,6 +26,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
     const reason = opts.reason ?? null;
     const payload = opts.payload ?? null;
     const existingWakeupRequestId = readNonEmptyString(opts.existingWakeupRequestId);
+    const originTerminalRunId = readNonEmptyString(opts.originTerminalRunId);
     const {
       contextSnapshot: enrichedContextSnapshot,
       issueIdFromPayload,
@@ -277,7 +278,21 @@ export function createHeartbeatWakeupHandlers(context: any) {
             .then((rows) => rows[0] ?? null)
           : null;
 
-        if (activeExecutionRun && activeExecutionRun.status !== "queued" && activeExecutionRun.status !== "running") {
+        if (
+          activeExecutionRun
+          && activeExecutionRun.status !== "queued"
+          && activeExecutionRun.status !== "running"
+          && !activeExecutionRun.terminalEffectsPending
+        ) {
+          activeExecutionRun = null;
+        }
+
+        if (
+          activeExecutionRun?.id === originTerminalRunId
+          && activeExecutionRun.terminalEffectsPending
+          && activeExecutionRun.status !== "queued"
+          && activeExecutionRun.status !== "running"
+        ) {
           activeExecutionRun = null;
         }
 
@@ -300,8 +315,12 @@ export function createHeartbeatWakeupHandlers(context: any) {
             .where(
               and(
                 eq(heartbeatRuns.orgId, issue.orgId),
-                inArray(heartbeatRuns.status, ["queued", "running"]),
+                or(
+                  inArray(heartbeatRuns.status, ["queued", "running"]),
+                  eq(heartbeatRuns.terminalEffectsPending, true),
+                ),
                 sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issue.id}`,
+                ...(originTerminalRunId ? [sql`${heartbeatRuns.id} <> ${originTerminalRunId}`] : []),
               ),
             )
             .orderBy(
@@ -346,7 +365,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
             activeExecutionRun.status === "running" &&
             isSameExecutionAgent;
 
-          if (isSameExecutionAgent && !shouldQueueFollowupForCommentWake) {
+          if (isSameExecutionAgent && !shouldQueueFollowupForCommentWake && !activeExecutionRun.terminalEffectsPending) {
             const mergedContextSnapshot = mergeCoalescedContextSnapshot(
               activeExecutionRun.contextSnapshot,
               enrichedContextSnapshot,
@@ -800,7 +819,10 @@ export function createHeartbeatWakeupHandlers(context: any) {
               .where(
                 and(
                   eq(heartbeatRuns.id, issue.executionRunId),
-                  inArray(heartbeatRuns.status, ["queued", "running"]),
+                  or(
+                    inArray(heartbeatRuns.status, ["queued", "running"]),
+                    eq(heartbeatRuns.terminalEffectsPending, true),
+                  ),
                 ),
               )
               .then((rows) => rows[0] ?? null)

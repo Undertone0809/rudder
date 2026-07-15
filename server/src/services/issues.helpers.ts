@@ -20,7 +20,7 @@ import {
   type IssueSearchField,
   type IssueSearchMatch
 } from "@rudderhq/shared";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import { conflict } from "../errors.js";
 import { isPostgresError } from "./postgres-errors.js";
 
@@ -93,6 +93,7 @@ export type IssueActiveRunRow = {
   startedAt: Date | null;
   finishedAt: Date | null;
   createdAt: Date;
+  terminalEffectsPending: boolean;
 };
 export type IssueWithLabels = IssueRow & { labels: IssueLabelRow[]; labelIds: string[] };
 export type IssueWithLabelsAndRun = IssueWithLabels & { activeRun: IssueActiveRunRow | null };
@@ -399,12 +400,16 @@ export async function activeRunMapForIssues(
       startedAt: heartbeatRuns.startedAt,
       finishedAt: heartbeatRuns.finishedAt,
       createdAt: heartbeatRuns.createdAt,
+      terminalEffectsPending: heartbeatRuns.terminalEffectsPending,
     })
     .from(heartbeatRuns)
     .where(
       and(
         inArray(heartbeatRuns.id, runIds),
-        inArray(heartbeatRuns.status, ACTIVE_RUN_STATUSES),
+        or(
+          inArray(heartbeatRuns.status, ACTIVE_RUN_STATUSES),
+          eq(heartbeatRuns.terminalEffectsPending, true),
+        ),
       ),
     );
 

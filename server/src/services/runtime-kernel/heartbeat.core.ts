@@ -203,6 +203,7 @@ export interface WakeupOptions {
   requestedByActorId?: string | null;
   contextSnapshot?: Record<string, unknown>;
   existingWakeupRequestId?: string | null;
+  originTerminalRunId?: string | null;
 }
 
 export type UsageTotals = {

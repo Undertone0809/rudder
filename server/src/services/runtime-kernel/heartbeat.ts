@@ -16,18 +16,19 @@ import type { AgentSkillAnalytics } from "@rudderhq/shared";
 import {
   summarizeTokenUsage
 } from "@rudderhq/shared";
-import { and, asc, desc, eq, gt, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, lte, or, sql } from "drizzle-orm";
 import type {
   AgentRuntimeExecutionResult
 } from "../../agent-runtimes/index.js";
 import { runningProcesses } from "../../agent-runtimes/index.js";
-import { parseObject } from "../../agent-runtimes/utils.js";
+import { killChildProcessTree, parseObject } from "../../agent-runtimes/utils.js";
 import { notFound } from "../../errors.js";
 import { redactCurrentUserText, redactCurrentUserValue } from "../../log-redaction.js";
 import { logger } from "../../middleware/logger.js";
 import {
   agentRunContextService
 } from "../agent-run-context.js";
+import { publishAutomationRunOutputToChat } from "../automation-chat-output.js";
 import { budgetService, type BudgetEnforcementScope } from "../budgets.js";
 import { costService } from "../costs.js";
 import { runWorkspaceService } from "../execution-workspaces.js";
@@ -51,6 +52,12 @@ import { createHeartbeatExecuteHandlers } from "./heartbeat.execute.js";
 import { createHeartbeatMiscHandlers } from "./heartbeat.misc.js";
 import { createHeartbeatRecoveryHandlers } from "./heartbeat.recovery.js";
 import { createHeartbeatReleaseHandlers } from "./heartbeat.release.js";
+import {
+  reconcileHeartbeatRunEvidence,
+  setWakeupStatusMonotonic,
+  transitionHeartbeatRunToTerminal,
+  type RunActivityWatermark,
+} from "./heartbeat.terminal.js";
 import { createHeartbeatWakeupHandlers } from "./heartbeat.wakeup.js";
 
 const DEFAULT_HEARTBEAT_RUN_TIMEOUT_MS = 12 * 60 * 60 * 1000;
@@ -78,6 +85,8 @@ export function heartbeatService(db: Db) {
   const executionWorkspacesSvc = runWorkspaceService(db);
   const workspaceOperationsSvc = workspaceOperationService(db);
   const activeRunExecutions = new Set<string>();
+  const runAbortControllers = new Map<string, AbortController>();
+  const terminalEffectsCompletions = new Map<string, Promise<void>>();
   const budgetHooks = {
     cancelWorkForScope: (scope: BudgetEnforcementScope) => cancelBudgetScopeWork(scope),
   };
@@ -471,11 +480,32 @@ export function heartbeatService(db: Db) {
       .then((rows) => rows[0]);
   }
 
+  function publishRunStatus(updated: typeof heartbeatRuns.$inferSelect) {
+    publishLiveEvent({
+      orgId: updated.orgId,
+      type: "heartbeat.run.status",
+      payload: {
+        runId: updated.id,
+        agentId: updated.agentId,
+        status: updated.status,
+        invocationSource: updated.invocationSource,
+        triggerDetail: updated.triggerDetail,
+        error: updated.error ?? null,
+        errorCode: updated.errorCode ?? null,
+        startedAt: updated.startedAt ? new Date(updated.startedAt).toISOString() : null,
+        finishedAt: updated.finishedAt ? new Date(updated.finishedAt).toISOString() : null,
+      },
+    });
+  }
+
   async function setRunStatus(
     runId: string,
     status: string,
     patch?: Partial<typeof heartbeatRuns.$inferInsert>,
   ) {
+    if (["succeeded", "failed", "cancelled", "timed_out"].includes(status)) {
+      throw new Error("Terminal heartbeat run updates must use transitionRunToTerminal");
+    }
     const updated = await db
       .update(heartbeatRuns)
       .set({ status, ...patch, updatedAt: new Date() })
@@ -483,26 +513,33 @@ export function heartbeatService(db: Db) {
       .returning()
       .then((rows) => rows[0] ?? null);
 
-    if (updated) {
-      publishLiveEvent({
-        orgId: updated.orgId,
-        type: "heartbeat.run.status",
-        payload: {
-          runId: updated.id,
-          agentId: updated.agentId,
-          status: updated.status,
-          invocationSource: updated.invocationSource,
-          triggerDetail: updated.triggerDetail,
-          error: updated.error ?? null,
-          errorCode: updated.errorCode ?? null,
-          startedAt: updated.startedAt ? new Date(updated.startedAt).toISOString() : null,
-          finishedAt: updated.finishedAt ? new Date(updated.finishedAt).toISOString() : null,
-        },
-      });
-
-    }
+    if (updated) publishRunStatus(updated);
 
     return updated;
+  }
+
+  async function transitionRunToTerminal(
+    runId: string,
+    status: "succeeded" | "failed" | "cancelled" | "timed_out",
+    patch: Partial<typeof heartbeatRuns.$inferInsert>,
+    opts?: { expectedStatuses?: string[]; activityWatermark?: RunActivityWatermark },
+  ) {
+    const updated = await transitionHeartbeatRunToTerminal(db, {
+      runId,
+      status,
+      patch,
+      expectedStatuses: opts?.expectedStatuses,
+      activityWatermark: opts?.activityWatermark,
+    });
+    if (updated) publishRunStatus(updated);
+    return updated;
+  }
+
+  async function reconcileRunEvidence(
+    runId: string,
+    patch: Parameters<typeof reconcileHeartbeatRunEvidence>[2],
+  ) {
+    return reconcileHeartbeatRunEvidence(db, runId, patch);
   }
 
   async function setWakeupStatus(
@@ -510,11 +547,7 @@ export function heartbeatService(db: Db) {
     status: string,
     patch?: Partial<typeof agentWakeupRequests.$inferInsert>,
   ) {
-    if (!wakeupRequestId) return;
-    await db
-      .update(agentWakeupRequests)
-      .set({ status, ...patch, updatedAt: new Date() })
-      .where(eq(agentWakeupRequests.id, wakeupRequestId));
+    return setWakeupStatusMonotonic(db, wakeupRequestId, status, patch);
   }
 
   async function updateWakeupRequestRecord(
@@ -602,7 +635,7 @@ export function heartbeatService(db: Db) {
         processStartedAt: Number.isNaN(startedAt.getTime()) ? new Date() : startedAt,
         updatedAt: new Date(),
       })
-      .where(eq(heartbeatRuns.id, runId))
+      .where(and(eq(heartbeatRuns.id, runId), eq(heartbeatRuns.status, "running")))
       .returning()
       .then((rows) => rows[0] ?? null);
 
@@ -631,11 +664,51 @@ export function heartbeatService(db: Db) {
     return updated;
   }
 
-  async function countRunningRunsForAgent(agentId: string) {
+  async function terminateRunProcessAndWait(
+    run: typeof heartbeatRuns.$inferSelect,
+    agentRuntimeType: string,
+  ) {
+    runAbortControllers.get(run.id)?.abort();
+    const tracked = runningProcesses.get(run.id);
+    if (tracked) {
+      const pid = tracked.child.pid;
+      killChildProcessTree(tracked.child, false);
+      if (typeof pid !== "number" || pid <= 0) return true;
+      const graceMs = Math.max(1, tracked.graceSec) * 1000;
+      if (await waitForProcessExit(pid, graceMs)) return true;
+      killChildProcessTree(tracked.child, true);
+      return waitForProcessExit(pid, ORPHANED_PROCESS_KILL_WAIT_MS);
+    }
+
+    if (isTrackedLocalChildProcessAdapter(agentRuntimeType) && run.processPid && isProcessAlive(run.processPid)) {
+      return !(await terminateOrphanedProcess(run.processPid)).stillAlive;
+    }
+    return !activeRunExecutions.has(run.id);
+  }
+
+  async function acknowledgeRunProcessExit(runId: string) {
+    return db
+      .update(heartbeatRuns)
+      .set({ terminalEffectsPending: false, updatedAt: new Date() })
+      .where(and(eq(heartbeatRuns.id, runId), eq(heartbeatRuns.terminalEffectsPending, true)))
+      .returning()
+      .then((rows) => rows[0] ?? null);
+  }
+
+  async function countRunningRunsForAgent(agentId: string, excludeRunId?: string) {
+    const pendingExecutionIds = [...activeRunExecutions].filter((runId) => runId !== excludeRunId);
     const [{ count }] = await db
       .select({ count: sql<number>`count(*)` })
       .from(heartbeatRuns)
-      .where(and(eq(heartbeatRuns.agentId, agentId), eq(heartbeatRuns.status, "running")));
+      .where(and(
+        eq(heartbeatRuns.agentId, agentId),
+        or(
+          eq(heartbeatRuns.status, "running"),
+          eq(heartbeatRuns.terminalEffectsPending, true),
+          ...(pendingExecutionIds.length > 0 ? [inArray(heartbeatRuns.id, pendingExecutionIds)] : []),
+        ),
+        ...(excludeRunId ? [sql`${heartbeatRuns.id} <> ${excludeRunId}`] : []),
+      ));
     return Number(count ?? 0);
   }
 
@@ -662,11 +735,12 @@ export function heartbeatService(db: Db) {
     }
 
     async function cancelQueuedRunDuringClaim(reason: string) {
-      const cancelled = await setRunStatus(run.id, "cancelled", {
+      const cancelled = await transitionRunToTerminal(run.id, "cancelled", {
         finishedAt: new Date(),
         error: reason,
         errorCode: "cancelled",
-      });
+      }, { expectedStatuses: ["queued"] });
+      if (!cancelled) return null;
       await setWakeupStatus(run.wakeupRequestId, "cancelled", {
         finishedAt: new Date(),
         error: reason,
@@ -678,9 +752,8 @@ export function heartbeatService(db: Db) {
           level: "warn",
           message: "run cancelled",
         });
-        await releaseIssueExecutionAndPromote(cancelled);
+        await completeTerminalControlEffects(cancelled, { startNext: false });
       }
-      await finalizeAgentStatus(run.agentId, "cancelled");
       return null;
     }
 
@@ -755,6 +828,7 @@ export function heartbeatService(db: Db) {
   async function finalizeAgentStatus(
     agentId: string,
     outcome: "succeeded" | "failed" | "cancelled" | "timed_out",
+    runId?: string,
   ) {
     const existing = await getAgent(agentId);
     if (!existing) return;
@@ -763,7 +837,7 @@ export function heartbeatService(db: Db) {
       return;
     }
 
-    const runningCount = await countRunningRunsForAgent(agentId);
+    const runningCount = await countRunningRunsForAgent(agentId, runId);
     const nextStatus =
       runningCount > 0
         ? "running"
@@ -810,12 +884,20 @@ export function heartbeatService(db: Db) {
       })
       .from(heartbeatRuns)
       .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
-      .where(eq(heartbeatRuns.status, "running"));
+      .where(or(eq(heartbeatRuns.status, "running"), eq(heartbeatRuns.terminalEffectsPending, true)));
 
     const reaped: string[] = [];
 
     for (const { run, agentRuntimeType } of activeRuns) {
-      if (runningProcesses.has(run.id) || activeRunExecutions.has(run.id)) continue;
+      if (!run.terminalEffectsPending && (runningProcesses.has(run.id) || activeRunExecutions.has(run.id))) continue;
+
+      if (run.terminalEffectsPending) {
+        const exited = await terminateRunProcessAndWait(run, agentRuntimeType);
+        if (!exited) continue;
+        await completeTerminalControlEffects(run);
+        reaped.push(run.id);
+        continue;
+      }
 
       // Apply staleness threshold to avoid false positives
       if (staleThresholdMs > 0) {
@@ -858,18 +940,16 @@ export function heartbeatService(db: Db) {
         ? `Process lost -- child pid ${run.processPid} is no longer running`
         : "Process lost -- server may have restarted";
 
-      let finalizedRun = await setRunStatus(run.id, "failed", {
+      let finalizedRun = await transitionRunToTerminal(run.id, "failed", {
         error: shouldRetry ? `${baseMessage}; retrying once` : baseMessage,
         errorCode: "process_lost",
         finishedAt: now,
       });
+      if (!finalizedRun) continue;
       await setWakeupStatus(run.wakeupRequestId, "failed", {
         finishedAt: now,
         error: shouldRetry ? `${baseMessage}; retrying once` : baseMessage,
       });
-      if (!finalizedRun) finalizedRun = await getRun(run.id);
-      if (!finalizedRun) continue;
-
       if (detachedTerminationMessage) {
         await appendRunEvent(finalizedRun, {
           eventType: "lifecycle",
@@ -888,8 +968,6 @@ export function heartbeatService(db: Db) {
         if (agent) {
           retriedRun = await enqueueProcessLossRetry(finalizedRun, agent, now);
         }
-      } else {
-        await releaseIssueExecutionAndPromote(finalizedRun);
       }
 
       await appendRunEvent(finalizedRun, {
@@ -905,8 +983,7 @@ export function heartbeatService(db: Db) {
         },
       });
 
-      await finalizeAgentStatus(run.agentId, "failed");
-      await startNextQueuedRunForAgent(run.agentId);
+      await completeTerminalControlEffects(finalizedRun);
       runningProcesses.delete(run.id);
       reaped.push(run.id);
     }
@@ -929,6 +1006,7 @@ export function heartbeatService(db: Db) {
         run: heartbeatRuns,
         agentRuntimeType: agents.agentRuntimeType,
         lastEventAt: sql<Date | null>`max(${heartbeatRunEvents.createdAt})`,
+        eventCount: sql<number>`count(${heartbeatRunEvents.id})::int`,
       })
       .from(heartbeatRuns)
       .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
@@ -938,7 +1016,7 @@ export function heartbeatService(db: Db) {
 
     const timedOut: string[] = [];
 
-    for (const { run, agentRuntimeType, lastEventAt } of activeRuns) {
+    for (const { run, agentRuntimeType, lastEventAt, eventCount } of activeRuns) {
       const activityTimes = [
         run.updatedAt,
         lastEventAt,
@@ -955,34 +1033,28 @@ export function heartbeatService(db: Db) {
       if (inactiveMs < maxInactivityMs) continue;
 
       const message = `Run had no recorded activity for ${formatDurationMs(maxInactivityMs)}`;
-      const running = runningProcesses.get(run.id);
-      if (running) {
-        const pid = running.child.pid;
-        running.child.kill("SIGTERM");
-        const graceMs = Math.max(1, running.graceSec) * 1000;
-        setTimeout(() => {
-          if (typeof pid === "number" && isProcessAlive(pid)) {
-            running.child.kill("SIGKILL");
-          }
-        }, graceMs);
-      } else if (isTrackedLocalChildProcessAdapter(agentRuntimeType) && run.processPid && isProcessAlive(run.processPid)) {
-        await terminateOrphanedProcess(run.processPid);
-      }
-
-      const finalizedRun = await setRunStatus(run.id, "timed_out", {
+      const processExitPending =
+        activeRunExecutions.has(run.id)
+        || runningProcesses.has(run.id)
+        || (isTrackedLocalChildProcessAdapter(agentRuntimeType) && !!run.processPid && isProcessAlive(run.processPid));
+      const finalizedRun = await transitionRunToTerminal(run.id, "timed_out", {
         finishedAt: now,
         error: message,
         errorCode: "inactivity_timeout",
+        terminalEffectsPending: true,
+      }, {
+        activityWatermark: {
+          updatedAt: run.updatedAt,
+          eventCount: Number(eventCount ?? 0),
+        },
       });
+      if (!finalizedRun) continue;
       await setWakeupStatus(run.wakeupRequestId, "timed_out", {
         finishedAt: now,
         error: message,
       });
 
-      const terminalRun = finalizedRun ?? await getRun(run.id);
-      if (!terminalRun) continue;
-
-      await appendRunEvent(terminalRun, {
+      await appendRunEvent(finalizedRun, {
         eventType: "lifecycle",
         stream: "system",
         level: "error",
@@ -995,10 +1067,11 @@ export function heartbeatService(db: Db) {
           ...(run.processPid ? { processPid: run.processPid } : {}),
         },
       });
-      await releaseIssueExecutionAndPromote(terminalRun);
-      await finalizeAgentStatus(run.agentId, "timed_out");
-      await startNextQueuedRunForAgent(run.agentId);
-      runningProcesses.delete(run.id);
+      const processExited = !processExitPending || await terminateRunProcessAndWait(finalizedRun, agentRuntimeType);
+      if (processExited) {
+        await completeTerminalControlEffects(finalizedRun);
+        runningProcesses.delete(run.id);
+      }
       timedOut.push(run.id);
     }
 
@@ -1038,34 +1111,23 @@ export function heartbeatService(db: Db) {
       if (runtimeMs < maxRuntimeMs) continue;
 
       const message = `Run exceeded maximum duration of ${formatDurationMs(maxRuntimeMs)}`;
-      const running = runningProcesses.get(run.id);
-      if (running) {
-        const pid = running.child.pid;
-        running.child.kill("SIGTERM");
-        const graceMs = Math.max(1, running.graceSec) * 1000;
-        setTimeout(() => {
-          if (typeof pid === "number" && isProcessAlive(pid)) {
-            running.child.kill("SIGKILL");
-          }
-        }, graceMs);
-      } else if (isTrackedLocalChildProcessAdapter(agentRuntimeType) && run.processPid && isProcessAlive(run.processPid)) {
-        await terminateOrphanedProcess(run.processPid);
-      }
-
-      const finalizedRun = await setRunStatus(run.id, "timed_out", {
+      const processExitPending =
+        activeRunExecutions.has(run.id)
+        || runningProcesses.has(run.id)
+        || (isTrackedLocalChildProcessAdapter(agentRuntimeType) && !!run.processPid && isProcessAlive(run.processPid));
+      const finalizedRun = await transitionRunToTerminal(run.id, "timed_out", {
         finishedAt: now,
         error: message,
         errorCode: "timeout",
+        terminalEffectsPending: true,
       });
+      if (!finalizedRun) continue;
       await setWakeupStatus(run.wakeupRequestId, "timed_out", {
         finishedAt: now,
         error: message,
       });
 
-      const terminalRun = finalizedRun ?? await getRun(run.id);
-      if (!terminalRun) continue;
-
-      await appendRunEvent(terminalRun, {
+      await appendRunEvent(finalizedRun, {
         eventType: "lifecycle",
         stream: "system",
         level: "error",
@@ -1078,10 +1140,11 @@ export function heartbeatService(db: Db) {
           ...(run.processPid ? { processPid: run.processPid } : {}),
         },
       });
-      await releaseIssueExecutionAndPromote(terminalRun);
-      await finalizeAgentStatus(run.agentId, "timed_out");
-      await startNextQueuedRunForAgent(run.agentId);
-      runningProcesses.delete(run.id);
+      const processExited = !processExitPending || await terminateRunProcessAndWait(finalizedRun, agentRuntimeType);
+      if (processExited) {
+        await completeTerminalControlEffects(finalizedRun);
+        runningProcesses.delete(run.id);
+      }
       timedOut.push(run.id);
     }
 
@@ -1113,6 +1176,7 @@ export function heartbeatService(db: Db) {
     result: AgentRuntimeExecutionResult,
     session: { legacySessionId: string | null },
     normalizedUsage?: UsageTotals | null,
+    opts?: { ownsTerminal?: boolean },
   ) {
     await ensureRuntimeState(agent);
     const usage = normalizedUsage ?? normalizeUsageTotals(result.usage);
@@ -1132,25 +1196,23 @@ export function heartbeatService(db: Db) {
     const biller = resolveLedgerBiller(result);
     const ledgerScope = await resolveLedgerScopeForRun(db, agent.orgId, run);
 
-    await db
-      .update(agentRuntimeState)
-      .set({
+    if (opts?.ownsTerminal) {
+      await db
+        .update(agentRuntimeState)
+        .set({
         agentRuntimeType: agent.agentRuntimeType,
         sessionId: session.legacySessionId,
         lastRunId: run.id,
         lastRunStatus: run.status,
         lastError: result.errorMessage ?? null,
-        totalInputTokens: sql`${agentRuntimeState.totalInputTokens} + ${tokenSummary.promptTokens}`,
-        totalOutputTokens: sql`${agentRuntimeState.totalOutputTokens} + ${outputTokens}`,
-        totalCachedInputTokens: sql`${agentRuntimeState.totalCachedInputTokens} + ${cachedInputTokens}`,
-        totalCostCents: sql`${agentRuntimeState.totalCostCents} + ${additionalCostCents}`,
         updatedAt: new Date(),
       })
-      .where(eq(agentRuntimeState.agentId, agent.id));
+        .where(eq(agentRuntimeState.agentId, agent.id));
+    }
 
     if (additionalCostCents > 0 || hasTokenUsage) {
       const costs = costService(db, budgetHooks);
-      await costs.createEvent(agent.orgId, {
+      await costs.createHeartbeatRunEventOnce(agent.orgId, {
         heartbeatRunId: run.id,
         agentId: agent.id,
         issueId: ledgerScope.issueId,
@@ -1164,7 +1226,63 @@ export function heartbeatService(db: Db) {
         outputTokens,
         costCents: additionalCostCents,
         occurredAt: new Date(),
+      }, async (tx) => {
+        await tx
+          .update(agentRuntimeState)
+          .set({
+            totalInputTokens: sql`${agentRuntimeState.totalInputTokens} + ${tokenSummary.promptTokens}`,
+            totalOutputTokens: sql`${agentRuntimeState.totalOutputTokens} + ${outputTokens}`,
+            totalCachedInputTokens: sql`${agentRuntimeState.totalCachedInputTokens} + ${cachedInputTokens}`,
+            totalCostCents: sql`${agentRuntimeState.totalCostCents} + ${additionalCostCents}`,
+            updatedAt: new Date(),
+          })
+          .where(eq(agentRuntimeState.agentId, agent.id));
       });
+    }
+  }
+
+  async function completeTerminalControlEffects(
+    run: typeof heartbeatRuns.$inferSelect,
+    opts?: {
+      startNext?: boolean;
+      automationOutput?: string | null;
+      automationTranscript?: Parameters<typeof publishAutomationRunOutputToChat>[1]["transcript"];
+    },
+  ) {
+    const existing = terminalEffectsCompletions.get(run.id);
+    if (existing) return existing;
+
+    const completion = (async () => {
+      const current = await getRun(run.id);
+      if (!current?.terminalEffectsPending) return;
+
+      const runContext = parseObject(current.contextSnapshot);
+      const outcome =
+        current.status === "succeeded" || current.status === "cancelled" || current.status === "timed_out"
+          ? current.status
+          : "failed";
+      await publishAutomationRunOutputToChat(db, {
+        issueId: readNonEmptyString(runContext.issueId),
+        output: opts?.automationOutput ?? current.error,
+        status: current.status,
+        transcript: opts?.automationTranscript ?? [],
+      }).catch((err) => {
+        logger.warn({ err, runId: current.id }, "failed to publish terminal automation output");
+        return null;
+      });
+      await releaseIssueExecutionAndPromote(current);
+      await finalizeAgentStatus(current.agentId, outcome, current.id);
+      await acknowledgeRunProcessExit(current.id);
+      if (opts?.startNext !== false) await startNextQueuedRunForAgent(current.agentId);
+    })();
+
+    terminalEffectsCompletions.set(run.id, completion);
+    try {
+      await completion;
+    } finally {
+      if (terminalEffectsCompletions.get(run.id) === completion) {
+        terminalEffectsCompletions.delete(run.id);
+      }
     }
   }
 
@@ -1220,8 +1338,8 @@ export function heartbeatService(db: Db) {
 
 
   const baseContext = {
-    db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets,
-    getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, reapInactiveRuns, reapTimedOutRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent,
+    db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets,
+    getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, terminateRunProcessAndWait, acknowledgeRunProcessExit, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, reapInactiveRuns, reapTimedOutRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent,
   } as any;
   const recoveryHandlers = createHeartbeatRecoveryHandlers({ ...baseContext, startNextQueuedRunForAgent });
   const wakeupHandlers = createHeartbeatWakeupHandlers({ ...baseContext, ...recoveryHandlers, startNextQueuedRunForAgent });
@@ -1519,7 +1637,10 @@ export function heartbeatService(db: Db) {
         .where(
           and(
             eq(heartbeatRuns.agentId, agentId),
-            eq(heartbeatRuns.status, "running"),
+            or(
+              eq(heartbeatRuns.status, "running"),
+              eq(heartbeatRuns.terminalEffectsPending, true),
+            ),
           ),
         )
         .orderBy(desc(heartbeatRuns.startedAt))

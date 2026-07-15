@@ -348,6 +348,8 @@ describe("heartbeat run concurrency", () => {
     orgId: string;
     agentId: string;
     issueId: string;
+    status?: "running" | "timed_out";
+    terminalEffectsPending?: boolean;
   }) {
     const runId = randomUUID();
     await db.insert(heartbeatRuns).values({
@@ -356,7 +358,8 @@ describe("heartbeat run concurrency", () => {
       agentId: input.agentId,
       invocationSource: "assignment",
       triggerDetail: "system",
-      status: "running",
+      status: input.status ?? "running",
+      terminalEffectsPending: input.terminalEffectsPending ?? false,
       contextSnapshot: {
         issueId: input.issueId,
         taskKey: `issue:${input.issueId}`,
@@ -578,6 +581,45 @@ describe("heartbeat run concurrency", () => {
     expect(liveRuns).toHaveLength(1);
     expect(mockRuntimeAdapter.calls).toHaveLength(1);
     expect((liveRuns[0]?.contextSnapshot as Record<string, unknown>)?.issueId).toBe(issueId);
+  });
+
+  it("defers same-agent issue wakeups while terminal effects are pending", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "in_progress" });
+    const terminalRunId = await seedLiveIssueExecution({
+      orgId,
+      agentId,
+      issueId,
+      status: "timed_out",
+      terminalEffectsPending: true,
+    });
+    const heartbeat = heartbeatService(db);
+
+    const run = await heartbeat.wakeup(agentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      reason: "issue_assigned",
+      payload: { issueId },
+      contextSnapshot: { issueId, wakeReason: "issue_assigned" },
+    });
+
+    expect(run).toBeNull();
+    const currentTerminalRun = await heartbeat.getRun(terminalRunId);
+    expect(currentTerminalRun).toMatchObject({
+      status: "timed_out",
+      terminalEffectsPending: true,
+    });
+    const wakeups = await listWakeupRequestsForAgent(agentId);
+    expect(wakeups).toContainEqual(expect.objectContaining({
+      status: "deferred_issue_execution",
+      reason: "issue_execution_deferred",
+      runId: null,
+    }));
+    const issueRuns = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    expect(issueRuns).toHaveLength(1);
   });
 
   it("claims one persisted comment-mention wake request across concurrent consumers", async () => {

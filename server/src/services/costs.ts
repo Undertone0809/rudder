@@ -235,77 +235,116 @@ async function getMonthlySpendTotalsFromRollups(
 
 export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
   const budgets = budgetService(db, budgetHooks);
-  return {
-    createEvent: async (orgId: string, data: Omit<typeof costEvents.$inferInsert, "orgId">) => {
-      const agent = await db
-        .select()
-        .from(agents)
-        .where(eq(agents.id, data.agentId))
-        .then((rows) => rows[0] ?? null);
+  async function createEventInternal(
+    orgId: string,
+    data: Omit<typeof costEvents.$inferInsert, "orgId">,
+    options?: {
+      oncePerHeartbeatRun?: boolean;
+      onInsert?: (tx: any, event: typeof costEvents.$inferSelect) => Promise<void>;
+    },
+  ) {
+    if (options?.oncePerHeartbeatRun && !data.heartbeatRunId) {
+      throw unprocessable("heartbeatRunId is required for idempotent cost events");
+    }
 
-      if (!agent) throw notFound("Agent not found");
-      if (agent.orgId !== orgId) {
-        throw unprocessable("Agent does not belong to organization");
+    const agent = await db
+      .select()
+      .from(agents)
+      .where(eq(agents.id, data.agentId))
+      .then((rows) => rows[0] ?? null);
+
+    if (!agent) throw notFound("Agent not found");
+    if (agent.orgId !== orgId) {
+      throw unprocessable("Agent does not belong to organization");
+    }
+
+    const result = await db.transaction(async (tx) => {
+      if (options?.oncePerHeartbeatRun && data.heartbeatRunId) {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`heartbeat-run-cost:${data.heartbeatRunId}`}))`);
+        const existing = await tx
+          .select()
+          .from(costEvents)
+          .where(and(
+            eq(costEvents.orgId, orgId),
+            eq(costEvents.heartbeatRunId, data.heartbeatRunId),
+          ))
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+        if (existing) return { event: existing, inserted: false };
       }
 
-      const event = await db.transaction(async (tx) => {
-        const inserted = await tx
-          .insert(costEvents)
-          .values({
-            ...data,
+      const inserted = await tx
+        .insert(costEvents)
+        .values({
+          ...data,
+          orgId,
+          biller: data.biller ?? data.provider,
+          billingType: data.billingType ?? "unknown",
+          cachedInputTokens: data.cachedInputTokens ?? 0,
+        })
+        .returning()
+        .then((rows) => rows[0]);
+
+      await options?.onInsert?.(tx, inserted);
+
+      const { start, end } = currentUtcMonthWindow();
+      const totals = isWithinWindow(inserted.occurredAt, start, end)
+        ? {
+          agentTotal: await incrementMonthlySpendRollup(tx, {
             orgId,
-            biller: data.biller ?? data.provider,
-            billingType: data.billingType ?? "unknown",
-            cachedInputTokens: data.cachedInputTokens ?? 0,
-          })
-          .returning()
-          .then((rows) => rows[0]);
+            scopeType: "agent",
+            scopeId: inserted.agentId,
+            monthStart: start,
+            monthEnd: end,
+            costCents: inserted.costCents,
+          }),
+          organizationTotal: await incrementMonthlySpendRollup(tx, {
+            orgId,
+            scopeType: "organization",
+            scopeId: orgId,
+            monthStart: start,
+            monthEnd: end,
+            costCents: inserted.costCents,
+          }),
+        }
+        : await getMonthlySpendTotalsFromRollups(tx, inserted);
 
-        const { start, end } = currentUtcMonthWindow();
-        const totals = isWithinWindow(inserted.occurredAt, start, end)
-          ? {
-            agentTotal: await incrementMonthlySpendRollup(tx, {
-              orgId,
-              scopeType: "agent",
-              scopeId: inserted.agentId,
-              monthStart: start,
-              monthEnd: end,
-              costCents: inserted.costCents,
-            }),
-            organizationTotal: await incrementMonthlySpendRollup(tx, {
-              orgId,
-              scopeType: "organization",
-              scopeId: orgId,
-              monthStart: start,
-              monthEnd: end,
-              costCents: inserted.costCents,
-            }),
-          }
-          : await getMonthlySpendTotalsFromRollups(tx, inserted);
+      await tx
+        .update(agents)
+        .set({
+          spentMonthlyCents: totals.agentTotal,
+          updatedAt: new Date(),
+        })
+        .where(eq(agents.id, inserted.agentId));
 
-        await tx
-          .update(agents)
-          .set({
-            spentMonthlyCents: totals.agentTotal,
-            updatedAt: new Date(),
-          })
-          .where(eq(agents.id, inserted.agentId));
+      await tx
+        .update(organizations)
+        .set({
+          spentMonthlyCents: totals.organizationTotal,
+          updatedAt: new Date(),
+        })
+        .where(eq(organizations.id, orgId));
 
-        await tx
-          .update(organizations)
-          .set({
-            spentMonthlyCents: totals.organizationTotal,
-            updatedAt: new Date(),
-          })
-          .where(eq(organizations.id, orgId));
+      return { event: inserted, inserted: true };
+    });
 
-        return inserted;
-      });
+    if (result.inserted) await budgets.evaluateCostEvent(result.event);
+    return result;
+  }
 
-      await budgets.evaluateCostEvent(event);
-
-      return event;
+  return {
+    createEvent: async (orgId: string, data: Omit<typeof costEvents.$inferInsert, "orgId">) => {
+      return (await createEventInternal(orgId, data)).event;
     },
+
+    createHeartbeatRunEventOnce: async (
+      orgId: string,
+      data: Omit<typeof costEvents.$inferInsert, "orgId">,
+      onInsert?: (tx: any, event: typeof costEvents.$inferSelect) => Promise<void>,
+    ) => createEventInternal(orgId, data, {
+      oncePerHeartbeatRun: true,
+      onInsert,
+    }),
 
     summary: async (orgId: string, range?: CostDateRange) => {
       const organization = await db

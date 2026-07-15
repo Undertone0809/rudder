@@ -47,6 +47,7 @@ export const heartbeatRuns = pgTable(
     }),
     processPid: integer("process_pid"),
     processStartedAt: timestamp("process_started_at", { withTimezone: true }),
+    terminalEffectsPending: boolean("terminal_effects_pending").notNull().default(false),
     retryOfRunId: uuid("retry_of_run_id").references((): AnyPgColumn => heartbeatRuns.id, {
       onDelete: "set null",
     }),
@@ -79,6 +80,6 @@ export const heartbeatRuns = pgTable(
     ),
     activeChatConversationUniqueIdx: uniqueIndex("heartbeat_runs_active_chat_conversation_uq")
       .on(table.orgId, table.chatConversationId)
-      .where(sql`${table.chatConversationId} is not null and ${table.status} in ('queued', 'running')`),
+      .where(sql`${table.chatConversationId} is not null and (${table.status} in ('queued', 'running') or ${table.terminalEffectsPending} = true)`),
   }),
 );

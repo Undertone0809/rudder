@@ -113,9 +113,19 @@ export function createHeartbeatRecoveryHandlers(context: any) {
           .from(heartbeatRuns)
           .where(eq(heartbeatRuns.id, issueRow.executionRunId))
           .then((rows) => rows[0] ?? null);
+        const isSourceTerminalOwner =
+          activeExecutionRun?.id === run.id
+          && activeExecutionRun.terminalEffectsPending
+          && activeExecutionRun.status !== "queued"
+          && activeExecutionRun.status !== "running";
         const isActiveExecutionRun =
           activeExecutionRun &&
-          (activeExecutionRun.status === "queued" || activeExecutionRun.status === "running");
+          !isSourceTerminalOwner &&
+          (
+            activeExecutionRun.status === "queued"
+            || activeExecutionRun.status === "running"
+            || activeExecutionRun.terminalEffectsPending
+          );
 
         if (!isActiveExecutionRun) {
           await tx

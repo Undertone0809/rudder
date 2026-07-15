@@ -330,12 +330,15 @@ export function issueService(db: Db) {
 
   async function isTerminalOrMissingHeartbeatRun(runId: string) {
     const run = await db
-      .select({ status: heartbeatRuns.status })
+      .select({
+        status: heartbeatRuns.status,
+        terminalEffectsPending: heartbeatRuns.terminalEffectsPending,
+      })
       .from(heartbeatRuns)
       .where(eq(heartbeatRuns.id, runId))
       .then((rows) => rows[0] ?? null);
     if (!run) return true;
-    return TERMINAL_HEARTBEAT_RUN_STATUSES.has(run.status);
+    return TERMINAL_HEARTBEAT_RUN_STATUSES.has(run.status) && !run.terminalEffectsPending;
   }
 
   async function adoptStaleCheckoutRun(input: {

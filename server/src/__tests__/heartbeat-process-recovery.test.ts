@@ -23,6 +23,7 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { runningProcesses } from "../agent-runtimes/index.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
+import { transitionHeartbeatRunToTerminal } from "../services/runtime-kernel/heartbeat.terminal.ts";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -67,6 +68,16 @@ async function getAvailablePort(): Promise<number> {
 }
 
 async function startTempDatabase() {
+  const externalConnectionString = process.env.RUDDER_HEARTBEAT_RECOVERY_TEST_DATABASE_URL?.trim();
+  if (externalConnectionString) {
+    const parsed = new URL(externalConnectionString);
+    const databaseName = parsed.pathname.replace(/^\//, "");
+    parsed.pathname = "/postgres";
+    await ensurePostgresDatabase(parsed.toString(), databaseName);
+    await applyPendingMigrations(externalConnectionString);
+    return { connectionString: externalConnectionString, instance: null, dataDir: "" };
+  }
+
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-heartbeat-recovery-"));
   const port = await getAvailablePort();
   const EmbeddedPostgres = await getEmbeddedPostgresCtor();
@@ -420,6 +431,83 @@ describe("heartbeat orphaned process recovery", () => {
       .where(eq(heartbeatRuns.id, runId))
       .then((rows) => rows[0] ?? null);
     expect(run?.status).toBe("running");
+  });
+
+  it("rejects an inactivity terminal claim when its activity watermark is stale", async () => {
+    const staleAt = new Date("2026-03-19T00:00:00.000Z");
+    const recentAt = new Date("2026-03-19T00:31:00.000Z");
+    const { orgId, agentId, runId } = await seedRunFixture({
+      processPid: null,
+      startedAt: staleAt,
+      updatedAt: staleAt,
+    });
+    const observed = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0]!);
+
+    await db.insert(heartbeatRunEvents).values({
+      orgId,
+      agentId,
+      runId,
+      seq: 1,
+      eventType: "stdout",
+      stream: "stdout",
+      level: "info",
+      message: "new activity after the reaper scan",
+      createdAt: recentAt,
+    });
+
+    const claimed = await transitionHeartbeatRunToTerminal(db, {
+      runId,
+      status: "timed_out",
+      patch: {
+        finishedAt: recentAt,
+        error: "stale timeout",
+        errorCode: "inactivity_timeout",
+      },
+      activityWatermark: {
+        updatedAt: observed.updatedAt,
+        eventCount: 0,
+      },
+    });
+
+    expect(claimed).toBeNull();
+    const current = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0]);
+    expect(current?.status).toBe("running");
+    expect(current?.terminalEffectsPending).toBe(false);
+  });
+
+  it("allows only one concurrent terminal claimant", async () => {
+    const { runId } = await seedRunFixture({ processPid: null });
+    const finishedAt = new Date("2026-03-19T00:31:00.000Z");
+
+    const claims = await Promise.all([
+      transitionHeartbeatRunToTerminal(db, {
+        runId,
+        status: "timed_out",
+        patch: { finishedAt, error: "inactivity", errorCode: "inactivity_timeout" },
+      }),
+      transitionHeartbeatRunToTerminal(db, {
+        runId,
+        status: "failed",
+        patch: { finishedAt, error: "adapter failed", errorCode: "adapter_failed" },
+      }),
+    ]);
+
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    const current = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0]);
+    expect(["timed_out", "failed"]).toContain(current?.status);
+    expect(current?.terminalEffectsPending).toBe(true);
   });
 
   it("terminates a detached local child and queues a retry instead of leaving the run stuck", async () => {

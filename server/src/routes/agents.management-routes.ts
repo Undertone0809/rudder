@@ -14,7 +14,7 @@ import {
   upsertAgentInstructionsFileSchema,
   wakeAgentSchema
 } from "@rudderhq/shared";
-import { and, asc, desc, eq, inArray, not, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, not, or, sql } from "drizzle-orm";
 import { Router, type Request } from "express";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
@@ -1244,7 +1244,10 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       .where(
         and(
           eq(heartbeatRuns.orgId, orgId),
-          inArray(heartbeatRuns.status, ["queued", "running"]),
+          or(
+            inArray(heartbeatRuns.status, ["queued", "running"]),
+            eq(heartbeatRuns.terminalEffectsPending, true),
+          ),
         ),
       )
       .orderBy(desc(heartbeatRuns.createdAt));
@@ -1259,6 +1262,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
           and(
             eq(heartbeatRuns.orgId, orgId),
             not(inArray(heartbeatRuns.status, ["queued", "running"])),
+            eq(heartbeatRuns.terminalEffectsPending, false),
             ...(activeIds.length > 0 ? [not(inArray(heartbeatRuns.id, activeIds))] : []),
           ),
         )
@@ -1538,7 +1542,10 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       .where(
         and(
           eq(heartbeatRuns.orgId, issue.orgId),
-          inArray(heartbeatRuns.status, ["queued", "running"]),
+          or(
+            inArray(heartbeatRuns.status, ["queued", "running"]),
+            eq(heartbeatRuns.terminalEffectsPending, true),
+          ),
           sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issue.id}`,
         ),
       )
@@ -1559,7 +1566,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     assertCompanyAccess(req, issue.orgId);
 
     let run = issue.executionRunId ? await heartbeat.getRun(issue.executionRunId) : null;
-    if (run && run.status !== "queued" && run.status !== "running") {
+    if (run && run.status !== "queued" && run.status !== "running" && !run.terminalEffectsPending) {
       run = null;
     }
 
