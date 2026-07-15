@@ -451,14 +451,14 @@ function ChatScrollMap({
       {showPreview ? createPortal(
         <div
           data-testid="chat-scroll-map-preview"
-          className="pointer-events-none fixed z-50 w-[40rem] max-w-[calc(100vw-2rem)] -translate-y-1/2 rounded-[18px] border border-white/10 bg-[rgba(42,42,42,0.94)] px-4 py-3.5 text-left shadow-[0_24px_70px_-34px_rgb(0_0_0/0.88)] backdrop-blur-xl"
+          className="chat-scroll-map-preview pointer-events-none fixed z-50 w-[40rem] max-w-[calc(100vw-2rem)] -translate-y-1/2 rounded-[18px] border border-white/10 bg-[rgba(42,42,42,0.94)] px-4 py-3.5 text-left shadow-[0_24px_70px_-34px_rgb(0_0_0/0.88)] backdrop-blur-xl"
           style={{ left: previewPosition!.left, top: previewPosition!.top }}
         >
-          <MarkdownBody className="line-clamp-1 text-[15px] font-semibold leading-6 text-white [&_*]:text-current [&_a]:pointer-events-none [&_a]:align-baseline [&_code]:bg-white/10 [&_code]:text-white/92 [&_p]:inline">
+          <MarkdownBody className="chat-scroll-map-preview-title line-clamp-1 text-[15px] font-semibold leading-6 [&_*]:text-current [&_a]:pointer-events-none [&_a]:align-baseline [&_code]:bg-white/10 [&_p]:inline">
             {hoveredPreview?.title ?? ""}
           </MarkdownBody>
           {hoveredPreview?.summary ? (
-            <MarkdownBody className="mt-1.5 line-clamp-3 text-[15px] leading-6 text-white/48 [&_*]:text-current [&_a]:pointer-events-none [&_a]:align-baseline [&_code]:bg-white/10 [&_code]:text-white/70 [&_p]:inline">
+            <MarkdownBody className="chat-scroll-map-preview-summary mt-1.5 line-clamp-3 text-[15px] leading-6 [&_*]:text-current [&_a]:pointer-events-none [&_a]:align-baseline [&_code]:bg-white/10 [&_p]:inline">
               {hoveredPreview.summary}
             </MarkdownBody>
           ) : null}

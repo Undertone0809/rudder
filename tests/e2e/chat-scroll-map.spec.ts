@@ -128,17 +128,63 @@ test.describe("Chat message scroll map", () => {
     const floatingPreviewGeometry = await page.evaluate((targetMessageId) => {
       const marker = document.querySelector<HTMLElement>(`[data-testid="chat-scroll-map-marker-${targetMessageId}"]`);
       const previewCard = document.querySelector<HTMLElement>('[data-testid="chat-scroll-map-preview"]');
+      const previewTitle = previewCard?.querySelector<HTMLElement>(".chat-scroll-map-preview-title");
+      const previewSummary = previewCard?.querySelector<HTMLElement>(".chat-scroll-map-preview-summary");
+      const previewTitleText = previewTitle?.querySelector<HTMLElement>("p") ?? previewTitle;
+      const previewSummaryText = previewSummary?.querySelector<HTMLElement>("p") ?? previewSummary;
       const agentMention = previewCard?.querySelector<HTMLElement>('[data-mention-kind="agent"]');
       const issueMention = previewCard?.querySelector<HTMLElement>('[data-mention-kind="issue"]');
-      if (!marker || !previewCard) return null;
+      if (!marker || !previewCard || !previewTitleText || !previewSummaryText) return null;
       const markerBounds = marker.getBoundingClientRect();
       const previewBounds = previewCard.getBoundingClientRect();
       const style = window.getComputedStyle(previewCard);
+      const titleStyle = window.getComputedStyle(previewTitleText);
+      const summaryStyle = window.getComputedStyle(previewSummaryText);
+      type RgbaColor = [number, number, number, number];
+      const parseColor = (value: string): RgbaColor | null => {
+        const channels = value.match(/[\d.]+/gu)?.map(Number) ?? [];
+        if (channels.length < 3) return null;
+        return [channels[0] ?? 0, channels[1] ?? 0, channels[2] ?? 0, channels[3] ?? 1];
+      };
+      const compositeColor = (foreground: RgbaColor, background: RgbaColor): RgbaColor => {
+        const alpha = foreground[3] + background[3] * (1 - foreground[3]);
+        if (alpha === 0) return [0, 0, 0, 0];
+        return [
+          (foreground[0] * foreground[3] + background[0] * background[3] * (1 - foreground[3])) / alpha,
+          (foreground[1] * foreground[3] + background[1] * background[3] * (1 - foreground[3])) / alpha,
+          (foreground[2] * foreground[3] + background[2] * background[3] * (1 - foreground[3])) / alpha,
+          alpha,
+        ];
+      };
+      const luminance = (channels: RgbaColor) => {
+        const [red = 0, green = 0, blue = 0] = channels.map((channel) => {
+          const normalized = channel / 255;
+          return normalized <= 0.04045
+            ? normalized / 12.92
+            : ((normalized + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+      };
+      const contrastRatio = (foreground: string, background: string) => {
+        const foregroundChannels = parseColor(foreground);
+        const backgroundChannels = parseColor(background);
+        if (!foregroundChannels || !backgroundChannels) return 0;
+        const canvas: RgbaColor = [255, 255, 255, 1];
+        const resolvedBackground = compositeColor(backgroundChannels, canvas);
+        const resolvedForeground = compositeColor(foregroundChannels, resolvedBackground);
+        const lighter = Math.max(luminance(resolvedForeground), luminance(resolvedBackground));
+        const darker = Math.min(luminance(resolvedForeground), luminance(resolvedBackground));
+        return (lighter + 0.05) / (darker + 0.05);
+      };
       return {
         previewOffsetFromMarker: previewBounds.left - markerBounds.right,
         previewWidth: previewBounds.width,
         previewRadius: style.borderRadius,
         previewBackground: style.backgroundColor,
+        previewTitleColor: titleStyle.color,
+        previewSummaryColor: summaryStyle.color,
+        previewTitleContrast: contrastRatio(titleStyle.color, style.backgroundColor),
+        previewSummaryContrast: contrastRatio(summaryStyle.color, style.backgroundColor),
         previewVisibleTop: previewBounds.top >= 0,
         previewVisibleBottom: previewBounds.bottom <= window.innerHeight,
         hasAgentMention: Boolean(agentMention),
@@ -151,6 +197,10 @@ test.describe("Chat message scroll map", () => {
     expect(floatingPreviewGeometry?.previewWidth).toBeGreaterThanOrEqual(620);
     expect(floatingPreviewGeometry?.previewRadius).toBe("18px");
     expect(floatingPreviewGeometry?.previewBackground).toBe("rgba(42, 42, 42, 0.94)");
+    expect(floatingPreviewGeometry?.previewTitleColor).toBe("rgba(255, 255, 255, 0.96)");
+    expect(floatingPreviewGeometry?.previewSummaryColor).toBe("rgba(255, 255, 255, 0.68)");
+    expect(floatingPreviewGeometry?.previewTitleContrast).toBeGreaterThanOrEqual(4.5);
+    expect(floatingPreviewGeometry?.previewSummaryContrast).toBeGreaterThanOrEqual(4.5);
     expect(floatingPreviewGeometry?.previewVisibleTop).toBe(true);
     expect(floatingPreviewGeometry?.previewVisibleBottom).toBe(true);
     expect(floatingPreviewGeometry?.hasAgentMention).toBe(true);

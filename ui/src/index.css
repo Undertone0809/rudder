@@ -2489,6 +2489,23 @@
     }
   }
 
+  .chat-scroll-map-preview {
+    --foreground: rgb(255 255 255 / 0.96);
+    --muted-foreground: rgb(255 255 255 / 0.68);
+    --accent: rgb(255 255 255 / 0.12);
+    --border: rgb(255 255 255 / 0.18);
+  }
+
+  .chat-scroll-map-preview-title {
+    --foreground: rgb(255 255 255 / 0.96);
+    color: var(--foreground);
+  }
+
+  .chat-scroll-map-preview-summary {
+    --foreground: rgb(255 255 255 / 0.68);
+    color: var(--foreground);
+  }
+
   .chat-message-user {
     --foreground: var(--ink-strong);
     --muted-foreground: var(--ink-muted);
