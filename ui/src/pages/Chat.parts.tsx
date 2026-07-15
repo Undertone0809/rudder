@@ -731,7 +731,6 @@ export function recentConversationPreview(
 
 type ChatEmptyStateRecentConversationsProps = {
   conversations: ChatConversation[];
-  projectName: string | null;
   visible: boolean;
   conversationPath: (id: string) => string;
   onPrefetchConversation: (id: string) => void;
@@ -743,7 +742,6 @@ type ChatEmptyStateRecentConversationsProps = {
 
 export function ChatEmptyStateRecentConversations({
   conversations,
-  projectName,
   visible,
   conversationPath,
   onPrefetchConversation,
@@ -786,13 +784,9 @@ export function ChatEmptyStateRecentConversations({
       aria-label="Recent project conversations"
       aria-hidden={!visible}
     >
-      <div className="flex h-4 items-center justify-end gap-3">
-        {projectName ? (
-          <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">{projectName}</span>
-        ) : null}
-      </div>
       <div
         ref={setScrollRef}
+        data-testid="chat-empty-state-recent-conversations-scroll"
         className="scrollbar-auto-hide max-h-[min(34vh,360px)] overflow-y-auto border-y border-[color:var(--border-soft)]"
       >
         <div className="divide-y divide-[color:var(--border-soft)]">
@@ -802,7 +796,7 @@ export function ChatEmptyStateRecentConversations({
               to={conversationPath(conversation.id)}
               data-testid={`chat-empty-state-recent-conversation-${conversation.id}`}
               tabIndex={visible ? undefined : -1}
-              className="group flex min-w-0 items-center gap-3 px-1 py-2.5 text-sm transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-active)_58%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+              className="group mx-1 flex min-w-0 items-center gap-3 rounded-[var(--radius-md)] px-3 py-2.5 text-sm transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-active)_58%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
               onPointerDown={() => {
                 if (visible) onPrefetchConversation(conversation.id);
               }}

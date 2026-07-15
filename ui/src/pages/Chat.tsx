@@ -2467,14 +2467,21 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 {showEmptyStateSupplementalContent ? (
                   hasRecentProjectConversations ? (
                     <Tabs value={emptyStateActiveTab} onValueChange={(value) => setEmptyStateActiveTab(value as "recent" | "use-cases")} className="mb-4 w-full max-w-3xl gap-2" data-testid="chat-empty-state-tabs">
-                      <TabsList variant="line" aria-label="New chat empty state" className="mb-2 h-auto gap-1 border-transparent bg-transparent px-0">
-                        <TabsTrigger value="use-cases" id="chat-empty-state-tab-use-cases" data-testid="chat-empty-state-tab-use-cases" className="h-8 flex-none rounded-[var(--radius-md)] border border-transparent px-3 text-sm data-[state=active]:!border-[color:var(--border-soft)] data-[state=active]:!bg-[color:var(--surface-active)] data-[state=active]:shadow-none after:hidden">
-                          <span>Use cases</span>
-                        </TabsTrigger>
-                        <TabsTrigger value="recent" id="chat-empty-state-tab-recent" data-testid="chat-empty-state-tab-recent" className="h-8 flex-none rounded-[var(--radius-md)] border border-transparent px-3 text-sm data-[state=active]:!border-[color:var(--border-soft)] data-[state=active]:!bg-[color:var(--surface-active)] data-[state=active]:shadow-none after:hidden">
-                          <span>Chats</span>
-                        </TabsTrigger>
-                      </TabsList>
+                      <div className="mb-2 flex min-h-8 items-center justify-between gap-4 px-1">
+                        <TabsList variant="line" aria-label="New chat empty state" className="h-8 gap-1 border-transparent bg-transparent p-0">
+                          <TabsTrigger value="use-cases" id="chat-empty-state-tab-use-cases" data-testid="chat-empty-state-tab-use-cases" className="h-8 flex-none rounded-[var(--radius-md)] border border-transparent px-3 text-sm data-[state=active]:!border-[color:var(--border-soft)] data-[state=active]:!bg-[color:var(--surface-active)] data-[state=active]:shadow-none after:hidden">
+                            <span>Use cases</span>
+                          </TabsTrigger>
+                          <TabsTrigger value="recent" id="chat-empty-state-tab-recent" data-testid="chat-empty-state-tab-recent" className="h-8 flex-none rounded-[var(--radius-md)] border border-transparent px-3 text-sm data-[state=active]:!border-[color:var(--border-soft)] data-[state=active]:!bg-[color:var(--surface-active)] data-[state=active]:shadow-none after:hidden">
+                            <span>Chats</span>
+                          </TabsTrigger>
+                        </TabsList>
+                        {activeProject ? (
+                          <span data-testid="chat-empty-state-project-label" className="hidden max-w-[50%] truncate text-xs text-muted-foreground sm:block">
+                            {projectDisplayName(activeProject)}
+                          </span>
+                        ) : null}
+                      </div>
                       <TabsContent value="use-cases" id="chat-empty-state-use-cases-panel" aria-labelledby="chat-empty-state-tab-use-cases" className="mt-0 flex flex-col items-center">
                         {renderEmptyStateUseCases()}
                       </TabsContent>
@@ -2483,7 +2490,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                           key={activeProject ? `project:${activeProject.id}` : "no-project"}
                           className="!mt-0"
                           conversations={recentProjectConversations}
-                          projectName={activeProject ? projectDisplayName(activeProject) : null}
                           visible={emptyStateActiveTab === "recent"}
                           conversationPath={chatConversationPath}
                           onPrefetchConversation={(conversationId) => void prefetchChatConversation(queryClient, selectedOrganizationId, conversationId)}
