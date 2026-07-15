@@ -83,6 +83,7 @@ import { PageSkeleton } from "../components/PageSkeleton";
 import { ProjectIcon } from "../components/ProjectIdentity";
 import { ResourceLocatorField } from "../components/ResourceLocatorField";
 import { getWorkspaceCodeLanguageLabel, isWorkspaceCodeFilePath, WorkspaceCodeEditor } from "../components/WorkspaceCodeEditor";
+import { WorkspaceHtmlPreview } from "../components/WorkspaceHtmlPreview";
 import { WorkspacePdfPreview } from "../components/WorkspacePdfPreview";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useI18n } from "../context/I18nContext";
@@ -102,7 +103,6 @@ import {
 } from "../lib/resource-options";
 import { normalizeWorkspaceCsvRows, parseWorkspaceCsvContent, serializeWorkspaceCsvRows } from "../lib/workspace-csv";
 import {
-  buildWorkspaceHtmlPreviewSrcDoc,
   isWorkspaceHtmlContentType,
   isWorkspaceHtmlFilePath,
 } from "../lib/workspace-html-preview";
@@ -5393,9 +5393,6 @@ export function OrganizationWorkspaceBrowser({
     && (isWorkspaceHtmlFilePath(selectedFilePath) || isWorkspaceHtmlContentType(selectedFileDetail?.contentType)),
   );
   const selectedFileUsesHtmlPreview = selectedFileCanRenderHtml && htmlFileMode === "preview";
-  const selectedHtmlPreviewSrcDoc = selectedFileCanRenderHtml
-    ? buildWorkspaceHtmlPreviewSrcDoc(selectedEditorContent)
-    : "";
   const selectedMarkdownOutlineWithHidden = selectedFileUsesMarkdownEditor
     ? extractDocumentOutline(selectedMarkdownParts.body, { includeHidden: true })
     : [];
@@ -6302,14 +6299,15 @@ export function OrganizationWorkspaceBrowser({
                     </div>
                     {renderHtmlFileModeToggle("preview", "bg-[color:var(--surface-page)]")}
                   </div>
-                  <iframe
-                    data-testid="org-workspaces-html-preview"
-                    title={selectedFilePath ?? "Library HTML preview"}
-                    srcDoc={selectedHtmlPreviewSrcDoc}
-                    sandbox=""
-                    referrerPolicy="no-referrer"
-                    className="block min-h-[420px] w-full flex-1 border-0 bg-white"
-                  />
+                  {viewedOrganizationId && selectedFilePath ? (
+                    <WorkspaceHtmlPreview
+                      key={`${viewedOrganizationId}:${selectedFilePath}`}
+                      organizationId={viewedOrganizationId}
+                      filePath={selectedFilePath}
+                      htmlContent={selectedEditorContent}
+                      testIdPrefix="org-workspaces"
+                    />
+                  ) : null}
                 </div>
               ) : canEditSelectedFile ? (
                 <div className="flex h-full min-h-0 flex-col">

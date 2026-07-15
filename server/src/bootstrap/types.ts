@@ -13,6 +13,7 @@ export interface RudderAppOptions {
   deploymentExposure: DeploymentExposure;
   allowedHostnames: string[];
   bindHost: string;
+  workspacePreviewOrigin?: string;
   authReady: boolean;
   companyDeletionEnabled: boolean;
   instanceId?: string;

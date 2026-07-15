@@ -1,12 +1,12 @@
 import type { OrganizationWorkspaceFileDetail } from "@rudderhq/shared";
 import { normalizeWorkspaceCsvRows, parseWorkspaceCsvContent } from "../lib/workspace-csv";
 import {
-  buildWorkspaceHtmlPreviewSrcDoc,
   isWorkspaceHtmlContentType,
   isWorkspaceHtmlFilePath,
 } from "../lib/workspace-html-preview";
 import { MarkdownBody } from "./MarkdownBody";
 import { WorkspaceCodeEditor } from "./WorkspaceCodeEditor";
+import { WorkspaceHtmlPreview } from "./WorkspaceHtmlPreview";
 import { WorkspacePdfPreview } from "./WorkspacePdfPreview";
 
 const WORKSPACE_MARKDOWN_FILE_EXTENSIONS = [".md", ".markdown", ".mdown", ".mdx"];
@@ -125,26 +125,25 @@ function WorkspaceCsvPreview({ content, testId }: { content: string; testId: str
 
 export function WorkspaceFilePreview({
   file,
+  organizationId,
   mode = "preview",
   testIdPrefix = "workspace-file",
 }: {
   file: OrganizationWorkspaceFileDetail;
+  organizationId: string;
   mode?: WorkspaceFilePreviewMode;
   testIdPrefix?: string;
 }) {
   if (file.previewKind === "text" && file.content !== null) {
     if (isWorkspaceHtmlPreviewFile(file) && mode === "preview") {
       return (
-        <div className="flex min-h-[420px] flex-1 bg-white" data-testid={`${testIdPrefix}-html-preview-frame`}>
-          <iframe
-            data-testid={`${testIdPrefix}-html-preview`}
-            title={file.filePath || "Library HTML preview"}
-            srcDoc={buildWorkspaceHtmlPreviewSrcDoc(file.content)}
-            sandbox=""
-            referrerPolicy="no-referrer"
-            className="block min-h-[420px] w-full flex-1 border-0 bg-white"
-          />
-        </div>
+        <WorkspaceHtmlPreview
+          key={`${organizationId}:${file.filePath}`}
+          organizationId={organizationId}
+          filePath={file.filePath}
+          htmlContent={file.content}
+          testIdPrefix={testIdPrefix}
+        />
       );
     }
 

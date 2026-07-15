@@ -708,8 +708,10 @@ function ChatSidePanelLibraryTreeNode({
 
 function ChatSidePanelLibraryFileView({
   libraryFile,
+  organizationId,
 }: {
   libraryFile: OrganizationWorkspaceFileDetail;
+  organizationId: string;
 }) {
   const { pushToast } = useToast();
   const { selectedOrganization } = useOrganization();
@@ -934,6 +936,7 @@ function ChatSidePanelLibraryFileView({
       </div>
       <WorkspaceFilePreview
         file={libraryFile}
+        organizationId={organizationId}
         mode={previewMode}
         testIdPrefix="chat-side-panel-library"
       />
@@ -1716,8 +1719,12 @@ export function ChatSidePanel({
                 ))}
               </div>
             </div>
-          ) : libraryFilePreviewPath && libraryFile ? (
-            <ChatSidePanelLibraryFileView key={libraryFile.filePath} libraryFile={libraryFile} />
+          ) : libraryFilePreviewPath && libraryFile && selectedOrganizationId ? (
+            <ChatSidePanelLibraryFileView
+              key={libraryFile.filePath}
+              libraryFile={libraryFile}
+              organizationId={selectedOrganizationId}
+            />
           ) : libraryDirectoryTarget ? (
             <div className="flex min-h-full flex-col" data-testid="chat-side-panel-library-directory-view">
               {libraryDirectory ? (

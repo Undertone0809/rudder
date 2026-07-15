@@ -66,6 +66,18 @@ export const updateOrganizationWorkspaceFileSchema = z.object({
 
 export type UpdateOrganizationWorkspaceFile = z.infer<typeof updateOrganizationWorkspaceFileSchema>;
 
+export const workspaceWebPreviewNetworkModeSchema = z.enum(["offline", "connected"]);
+
+export const createOrganizationWorkspaceWebPreviewSessionSchema = z.object({
+  entryPath: z.string().trim().min(1).max(1000),
+  networkMode: workspaceWebPreviewNetworkModeSchema,
+  htmlContent: z.string().optional(),
+});
+
+export type CreateOrganizationWorkspaceWebPreviewSession = z.infer<
+  typeof createOrganizationWorkspaceWebPreviewSessionSchema
+>;
+
 export const createOrganizationWorkspaceFileSchema = z.object({
   filePath: z.string().trim().min(1).max(1000),
   content: z.string().optional().default(""),

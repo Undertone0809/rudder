@@ -59,6 +59,20 @@ export interface OrganizationWorkspaceFileUpdateRequest {
   content: string;
 }
 
+export type WorkspaceWebPreviewNetworkMode = "offline" | "connected";
+
+export interface OrganizationWorkspaceWebPreviewSessionRequest {
+  entryPath: string;
+  networkMode: WorkspaceWebPreviewNetworkMode;
+  htmlContent?: string;
+}
+
+export interface OrganizationWorkspaceWebPreviewSession {
+  previewUrl: string;
+  networkMode: WorkspaceWebPreviewNetworkMode;
+  expiresAt: string;
+}
+
 export interface OrganizationWorkspaceFileCreateRequest {
   filePath: string;
   content?: string;

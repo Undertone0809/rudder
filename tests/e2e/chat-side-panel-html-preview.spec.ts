@@ -119,17 +119,46 @@ test("renders a Library HTML report in the Messenger Side Panel by default", asy
   await expect(sidePanel).toBeVisible({ timeout: 15_000 });
   const preview = sidePanel.getByTestId("chat-side-panel-library-html-preview");
   await expect(preview).toBeVisible();
-  await expect(preview).toHaveAttribute("sandbox", "");
+  await expect(preview).toHaveAttribute("sandbox", "allow-scripts");
   await expect(preview).toHaveAttribute("referrerpolicy", "no-referrer");
-  await expect(preview).toHaveAttribute("srcdoc", /Content-Security-Policy/);
+  await expect(preview).toHaveAttribute("src", /http:\/\/preview\.localhost:\d+\/workspace-preview\//);
+  await expect(preview).not.toHaveAttribute("srcdoc", /.+/);
+  const networkMode = sidePanel.getByRole("group", { name: "Website preview network mode" });
+  const connectedButton = networkMode.getByRole("radio", { name: /^Connected/ });
+  const offlineButton = networkMode.getByRole("radio", { name: "Offline" });
+  await expect(connectedButton).toHaveAttribute("aria-pressed", "true");
+  await expect(offlineButton).toHaveAttribute("aria-pressed", "false");
+  const [offlineRadii, connectedRadii] = await Promise.all([
+    offlineButton.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { left: style.borderTopLeftRadius, right: style.borderTopRightRadius };
+    }),
+    connectedButton.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { left: style.borderTopLeftRadius, right: style.borderTopRightRadius };
+    }),
+  ]);
+  expect(offlineRadii.left).not.toBe("0px");
+  expect(offlineRadii.right).toBe("0px");
+  expect(connectedRadii.left).toBe("0px");
+  expect(connectedRadii.right).not.toBe("0px");
   await expect(preview.contentFrame().getByRole("heading", { name: "Rendered Messenger report" })).toBeVisible();
   await expect(preview.contentFrame().getByRole("heading", { name: "Rendered Messenger report" })).toHaveCSS("color", "rgb(24, 96, 78)");
   await expect(preview.contentFrame().getByText("The report should open as a webpage instead of source code.")).toBeVisible();
+  await expect(preview.contentFrame().locator("body")).toHaveAttribute("data-script-ran", "yes");
+  await expectPreviewFillsFileView(sidePanel, sidePanel.getByTestId("chat-side-panel-library-html-preview-frame"));
+  await page.waitForTimeout(500);
+  expect(externalAssetRequested).toBe(true);
+  await page.screenshot({ path: "/tmp/rudder-messenger-html-preview.png", fullPage: false });
+
+  externalAssetRequested = false;
+  await offlineButton.click();
+  await expect(preview).toHaveAttribute("sandbox", "");
+  await expect(connectedButton).toHaveAttribute("aria-pressed", "false");
+  await expect(offlineButton).toHaveAttribute("aria-pressed", "true");
   await expect(preview.contentFrame().locator("body")).not.toHaveAttribute("data-script-ran", "yes");
-  await expectPreviewFillsFileView(sidePanel, preview);
   await page.waitForTimeout(500);
   expect(externalAssetRequested).toBe(false);
-  await page.screenshot({ path: "/tmp/rudder-messenger-html-preview.png", fullPage: false });
 
   const modeToggle = sidePanel.getByTestId("chat-side-panel-library-file-mode-toggle");
   await expect(modeToggle).toHaveCount(1);
@@ -144,6 +173,7 @@ test("renders a Library HTML report in the Messenger Side Panel by default", asy
   await modeToggle.click();
   await expect(sidePanel.getByTestId("chat-side-panel-library-html-preview").contentFrame()
     .getByRole("heading", { name: "Rendered Messenger report" })).toBeVisible();
+  await expect(sidePanel.getByTestId("chat-side-panel-library-html-preview")).toHaveAttribute("sandbox", "allow-scripts");
   await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -152,7 +182,8 @@ test("renders a Library HTML report in the Messenger Side Panel by default", asy
   await assistantMessage.getByRole("link", { name: fileName }).click();
   const mobilePreview = sidePanel.getByTestId("chat-side-panel-library-html-preview");
   await expect(mobilePreview.contentFrame().getByRole("heading", { name: "Rendered Messenger report" })).toBeVisible();
-  await expectPreviewFillsFileView(sidePanel, mobilePreview);
+  await expect(mobilePreview).toHaveAttribute("sandbox", "allow-scripts");
+  await expectPreviewFillsFileView(sidePanel, sidePanel.getByTestId("chat-side-panel-library-html-preview-frame"));
   await expect.poll(async () => {
     const box = await sidePanel.boundingBox();
     if (!box) return Number.POSITIVE_INFINITY;
