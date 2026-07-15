@@ -928,7 +928,14 @@ function canRenameWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "pa
     && !isProtectedOrganizationSkillsEntryPath(entry.path);
 }
 
-function canDeleteWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "path">) {
+function canDeleteWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "path" | "entityType">) {
+  if (
+    entry.entityType === "orphaned_agent_workspace"
+    && isProtectedAgentWorkspaceContainerPath(entry.path)
+    && entry.path !== "agents"
+  ) {
+    return true;
+  }
   return !isProtectedAgentWorkspaceContainerPath(entry.path)
     && !isProtectedAgentInstructionsEntryPath(entry.path)
     && !isProtectedAgentManagedEntryPath(entry.path)
@@ -1737,6 +1744,15 @@ function WorkspaceTreeNode({
                 Delete
               </DropdownMenuItem>
             ) : null}
+          </>
+        ) : null}
+        {isProtectedContainer && canDeleteEntry ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onSelect={() => onStartDelete(entry)}>
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
+            </DropdownMenuItem>
           </>
         ) : null}
       </DropdownMenuContent>
@@ -3936,9 +3952,15 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
       }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete entry</DialogTitle>
+            <DialogTitle>
+              {deleteTarget?.entityType === "orphaned_agent_workspace"
+                ? "Delete deleted agent folder?"
+                : "Delete entry"}
+            </DialogTitle>
             <DialogDescription>
-              This will permanently delete {deleteTarget?.path ?? "this entry"} from the organization Library.
+              {deleteTarget?.entityType === "orphaned_agent_workspace"
+                ? `This folder is no longer linked to an active agent. This will permanently delete ${deleteTarget.path} and everything inside it from the organization Library.`
+                : `This will permanently delete ${deleteTarget?.path ?? "this entry"} from the organization Library.`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -6738,9 +6760,15 @@ export function OrganizationWorkspaceBrowser({
       }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete entry</DialogTitle>
+            <DialogTitle>
+              {deleteTarget?.entityType === "orphaned_agent_workspace"
+                ? "Delete deleted agent folder?"
+                : "Delete entry"}
+            </DialogTitle>
             <DialogDescription>
-              This will permanently delete {deleteTarget?.path ?? "this entry"} from the organization Library.
+              {deleteTarget?.entityType === "orphaned_agent_workspace"
+                ? `This folder is no longer linked to an active agent. This will permanently delete ${deleteTarget.path} and everything inside it from the organization Library.`
+                : `This will permanently delete ${deleteTarget?.path ?? "this entry"} from the organization Library.`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

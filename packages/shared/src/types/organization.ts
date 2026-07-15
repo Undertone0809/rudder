@@ -11,7 +11,9 @@ export interface OrganizationWorkspace {
 
 export type OrganizationWorkspaceRootSource = "org_root";
 
-export type OrganizationWorkspaceFileEntryEntityType = "agent_workspace";
+export type OrganizationWorkspaceFileEntryEntityType =
+  | "agent_workspace"
+  | "orphaned_agent_workspace";
 
 export interface OrganizationWorkspaceFileEntry {
   name: string;

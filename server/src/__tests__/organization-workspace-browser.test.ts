@@ -205,6 +205,67 @@ describe("organization workspace browser", () => {
     ]);
   });
 
+  it("classifies deleted-agent workspace folders as orphaned and only deletes them while unregistered", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const workspaceKey = buildAgentWorkspaceKey("Retired Agent", agentId);
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Workspace Browser Orphan Agent Org",
+      urlKey: deriveOrganizationUrlKey("Workspace Browser Orphan Agent Org"),
+      issuePrefix: "WAO",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const workspaceRoot = path.join(resolveOrganizationWorkspaceRoot(orgId), "agents", workspaceKey);
+    await fs.mkdir(path.join(workspaceRoot, "instructions"), { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "instructions", "SOUL.md"), "# Retired\n", "utf8");
+
+    const orphanedListing = await workspaceBrowser.listFiles(orgId, "agents");
+    expect(orphanedListing.entries).toEqual([
+      expect.objectContaining({
+        name: workspaceKey,
+        path: `agents/${workspaceKey}`,
+        isDirectory: true,
+        entityType: "orphaned_agent_workspace",
+        workspaceKey,
+      }),
+    ]);
+
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Restored Agent",
+      workspaceKey,
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    await expect(workspaceBrowser.deleteEntry(orgId, `agents/${workspaceKey}`)).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(fs.stat(workspaceRoot)).resolves.toBeTruthy();
+
+    await db.delete(agents).where(eq(agents.id, agentId));
+
+    await expect(workspaceBrowser.deleteEntry(orgId, `agents/${workspaceKey}`)).resolves.toEqual({
+      path: `agents/${workspaceKey}`,
+      isDirectory: true,
+      libraryEntryId: null,
+    });
+    await expect(fs.stat(workspaceRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("returns inline preview metadata for image files", async () => {
     const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
     cleanupDirs.add(rudderHome);

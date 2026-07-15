@@ -33,6 +33,31 @@ describe("LiveUpdatesProvider issue invalidation", () => {
   });
 });
 
+describe("LiveUpdatesProvider agent workspace invalidation", () => {
+  it("refreshes agent Library folders when agent activity changes their ownership", () => {
+    const invalidations: unknown[] = [];
+    const queryClient = {
+      invalidateQueries: (input: unknown) => {
+        invalidations.push(input);
+      },
+      getQueryData: () => undefined,
+    };
+
+    __liveUpdatesTestUtils.invalidateActivityQueries(
+      queryClient as never,
+      "organization-1",
+      {
+        entityType: "agent",
+        entityId: "agent-1",
+      },
+    );
+
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.organizations.workspaceFiles("organization-1", "agents"),
+    });
+  });
+});
+
 describe("LiveUpdatesProvider visible issue toast suppression", () => {
   it("suppresses activity toasts for the issue page currently in view", () => {
     const queryClient = {

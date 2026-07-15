@@ -1,10 +1,15 @@
 import { expect, test } from "@playwright/test";
 
+function uniqueIssuePrefix(namespace: string) {
+  return `${namespace}${Date.now().toString(36).slice(-7)}`.toUpperCase();
+}
+
 test.describe("Organization workspaces agent avatar", () => {
   test("shows each agent workspace with the agent's generated avatar", async ({ page, request }) => {
     const organizationRes = await request.post("/api/orgs", {
       data: {
         name: `Organization-Workspaces-Agent-Avatar-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix("AVA"),
       },
     });
     expect(organizationRes.ok()).toBe(true);
@@ -44,6 +49,7 @@ test.describe("Organization workspaces agent avatar", () => {
     const organizationRes = await request.post("/api/orgs", {
       data: {
         name: `Organization-Workspaces-Protected-Managed-Entries-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix("GRD"),
       },
     });
     expect(organizationRes.ok()).toBe(true);
@@ -124,7 +130,7 @@ test.describe("Organization workspaces agent avatar", () => {
       await page.getByTestId(`org-workspaces-entry-more-${entryPath}`).click();
 
       const menu = page.getByRole("menu");
-      await expect(menu).toContainText("Copy file path");
+      await expect(menu).toContainText("Copy absolute path");
       if (options?.includesNewFile) {
         await expect(menu).toContainText("New file");
       }
@@ -139,7 +145,7 @@ test.describe("Organization workspaces agent avatar", () => {
     await legacyHeartbeatDialog.getByRole("button", { name: "Keep files for now" }).click();
 
     await page.goto(`/${organization.issuePrefix}/library?directory=${encodeURIComponent(instructionsPath)}`);
-    await expectProtectedMenu(instructionsPath, { includesNewFile: true });
+    await expectProtectedMenu(instructionsPath);
 
     await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(memoryPath)}`);
     await expectProtectedMenu(`${agentWorkspace!.path}/memory`, { includesNewFile: true });
@@ -150,14 +156,113 @@ test.describe("Organization workspaces agent avatar", () => {
     await expectProtectedMenu(agentSkillPath);
 
     await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(orgSkillPath)}`);
-    await expectProtectedMenu("skills", { includesNewFile: true });
+    await expectProtectedMenu("skills");
     await expectProtectedMenu(orgSkillPath);
+  });
+
+  test("deletes a Library workspace folder after its agent has been deleted", async ({ page, request }) => {
+    const organizationRes = await request.post("/api/orgs", {
+      data: {
+        name: `Organization-Workspaces-Orphan-Agent-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix("ORP"),
+      },
+    });
+    expect(organizationRes.ok()).toBe(true);
+    const organization = await organizationRes.json() as { id: string; issuePrefix: string };
+
+    const agentRes = await request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Disposable Library Agent",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+
+    const instructionsRes = await request.put(`/api/agents/${agent.id}/instructions-bundle/file`, {
+      data: {
+        path: "SOUL.md",
+        content: "# Disposable Library Agent\n",
+      },
+    });
+    expect(instructionsRes.ok()).toBe(true);
+
+    const activeListingRes = await request.get(
+      `/api/orgs/${organization.id}/workspace/files?path=${encodeURIComponent("agents")}`,
+    );
+    expect(activeListingRes.ok()).toBe(true);
+    const activeListing = await activeListingRes.json() as {
+      entries: Array<{ path: string; displayLabel?: string; entityType?: string }>;
+    };
+    const activeWorkspace = activeListing.entries.find((entry) => entry.displayLabel === "Disposable Library Agent");
+    expect(activeWorkspace?.entityType).toBe("agent_workspace");
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/library`);
+
+    await page.getByRole("button", { name: /^agents$/i }).click();
+    const orphanedWorkspacePath = activeWorkspace!.path;
+    const orphanedRow = page.locator(`[data-workspace-entry-path="${orphanedWorkspacePath}"]`);
+    await expect(orphanedRow).toBeVisible();
+    await expect(orphanedRow.getByTestId("org-workspaces-agent-badge")).toHaveText("Agent");
+    await orphanedRow.hover();
+    await page.getByTestId(`org-workspaces-entry-more-${orphanedWorkspacePath}`).click();
+
+    let menu = page.getByRole("menu");
+    await expect(menu.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+
+    const workspaceReclassifiedPromise = page.waitForResponse((response) => (
+      response.request().method() === "GET"
+      && response.url().includes(`/api/orgs/${organization.id}/workspace/files`)
+      && new URL(response.url()).searchParams.get("path") === "agents"
+    ));
+    const deleteAgentRes = await request.delete(`/api/agents/${agent.id}`);
+    expect(deleteAgentRes.ok()).toBe(true);
+    const workspaceReclassifiedResponse = await workspaceReclassifiedPromise;
+    expect(workspaceReclassifiedResponse.ok()).toBe(true);
+
+    await expect(orphanedRow.getByTestId("org-workspaces-agent-badge")).toHaveCount(0);
+    await orphanedRow.hover();
+    await page.getByTestId(`org-workspaces-entry-more-${orphanedWorkspacePath}`).click();
+
+    menu = page.getByRole("menu");
+    await expect(menu.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+    await menu.getByRole("menuitem", { name: "Delete" }).click();
+
+    const dialog = page.getByRole("dialog", { name: "Delete deleted agent folder?" });
+    await expect(dialog).toContainText("This folder is no longer linked to an active agent.");
+    await expect(dialog).toContainText(orphanedWorkspacePath);
+
+    const deleteWorkspaceResponsePromise = page.waitForResponse((response) => (
+      response.request().method() === "DELETE"
+      && response.url().includes(`/api/orgs/${organization.id}/workspace/entry`)
+    ));
+    await dialog.getByRole("button", { name: "Delete", exact: true }).click();
+    const deleteWorkspaceResponse = await deleteWorkspaceResponsePromise;
+    expect(deleteWorkspaceResponse.ok()).toBe(true);
+    await expect(orphanedRow).toHaveCount(0);
+
+    const deletedListingRes = await request.get(
+      `/api/orgs/${organization.id}/workspace/files?path=${encodeURIComponent("agents")}`,
+    );
+    expect(deletedListingRes.ok()).toBe(true);
+    const deletedListing = await deletedListingRes.json() as { entries: Array<{ path: string }> };
+    expect(deletedListing.entries.some((entry) => entry.path === orphanedWorkspacePath)).toBe(false);
   });
 
   test("moves entries by drag-and-drop and supports VS Code-style tree keyboard selection", async ({ page, request }) => {
     const organizationRes = await request.post("/api/orgs", {
       data: {
         name: `Organization-Workspaces-Tree-Interaction-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix("TRE"),
       },
     });
     expect(organizationRes.ok()).toBe(true);
@@ -210,6 +315,7 @@ test.describe("Organization workspaces agent avatar", () => {
     const organizationRes = await request.post("/api/orgs", {
       data: {
         name: `Organization-Workspaces-Mention-Tokens-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix("MNT"),
       },
     });
     expect(organizationRes.ok()).toBe(true);

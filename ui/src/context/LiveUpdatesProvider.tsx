@@ -681,6 +681,7 @@ function invalidateActivityQueries(
   if (entityType === "agent") {
     queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(orgId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.org(orgId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.organizations.workspaceFiles(orgId, "agents") });
     if (entityId) {
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(entityId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.agentRuns(orgId, entityId) });
