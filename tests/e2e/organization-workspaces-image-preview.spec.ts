@@ -297,8 +297,8 @@ test.describe("Organization workspaces image preview", () => {
     const networkMode = page.getByRole("group", { name: "Website preview network mode" });
     const connectedButton = networkMode.getByRole("radio", { name: /^Connected/ });
     const offlineButton = networkMode.getByRole("radio", { name: "Offline" });
-    await expect(connectedButton).toHaveAttribute("aria-pressed", "true");
-    await expect(offlineButton).toHaveAttribute("aria-pressed", "false");
+    await expect(connectedButton).toHaveAttribute("aria-checked", "true");
+    await expect(offlineButton).toHaveAttribute("aria-checked", "false");
     const frame = preview.contentFrame();
     const heading = frame.getByRole("heading", { name: "Rendered website artifact" });
     await expect(heading).toBeVisible();
@@ -329,8 +329,8 @@ test.describe("Organization workspaces image preview", () => {
     externalRequests.length = 0;
     await offlineButton.click();
     await expect(preview).toHaveAttribute("sandbox", "");
-    await expect(connectedButton).toHaveAttribute("aria-pressed", "false");
-    await expect(offlineButton).toHaveAttribute("aria-pressed", "true");
+    await expect(connectedButton).toHaveAttribute("aria-checked", "false");
+    await expect(offlineButton).toHaveAttribute("aria-checked", "true");
     await expect(frame.locator("#script-state")).toHaveText("Scripts blocked");
     await expect(frame.locator("body")).not.toHaveAttribute("data-module-state", "ready");
     await expect(frame.locator("body")).not.toHaveAttribute("data-external-script", "ready");
@@ -439,7 +439,7 @@ test.describe("Organization workspaces image preview", () => {
     expect(externalRequests).toEqual([]);
 
     const networkMode = page.getByRole("group", { name: "Website preview network mode" });
-    await expect(networkMode.getByRole("radio", { name: "Offline", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(networkMode.getByRole("radio", { name: "Offline", exact: true })).toHaveAttribute("aria-checked", "true");
     await expect(networkMode.getByRole("radio", { name: /^Connected/ })).toBeDisabled();
   });
 
@@ -502,7 +502,7 @@ test.describe("Organization workspaces image preview", () => {
     await expect(preview).toBeVisible();
     await expect(preview).toHaveAttribute("sandbox", "allow-scripts");
     await expect(sidePanel.getByRole("group", { name: "Website preview network mode" })
-      .getByRole("radio", { name: /^Connected/ })).toHaveAttribute("aria-pressed", "true");
+      .getByRole("radio", { name: /^Connected/ })).toHaveAttribute("aria-checked", "true");
     const heading = preview.contentFrame().getByRole("heading", { name: "Messenger website preview" });
     await expect(heading).toBeVisible();
     await expect(heading).toHaveCSS("color", "rgb(148, 57, 49)");

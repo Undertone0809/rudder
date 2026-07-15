@@ -126,8 +126,8 @@ test("renders a Library HTML report in the Messenger Side Panel by default", asy
   const networkMode = sidePanel.getByRole("group", { name: "Website preview network mode" });
   const connectedButton = networkMode.getByRole("radio", { name: /^Connected/ });
   const offlineButton = networkMode.getByRole("radio", { name: "Offline" });
-  await expect(connectedButton).toHaveAttribute("aria-pressed", "true");
-  await expect(offlineButton).toHaveAttribute("aria-pressed", "false");
+  await expect(connectedButton).toHaveAttribute("aria-checked", "true");
+  await expect(offlineButton).toHaveAttribute("aria-checked", "false");
   const [offlineRadii, connectedRadii] = await Promise.all([
     offlineButton.evaluate((element) => {
       const style = getComputedStyle(element);
@@ -154,8 +154,8 @@ test("renders a Library HTML report in the Messenger Side Panel by default", asy
   externalAssetRequested = false;
   await offlineButton.click();
   await expect(preview).toHaveAttribute("sandbox", "");
-  await expect(connectedButton).toHaveAttribute("aria-pressed", "false");
-  await expect(offlineButton).toHaveAttribute("aria-pressed", "true");
+  await expect(connectedButton).toHaveAttribute("aria-checked", "false");
+  await expect(offlineButton).toHaveAttribute("aria-checked", "true");
   await expect(preview.contentFrame().locator("body")).not.toHaveAttribute("data-script-ran", "yes");
   await page.waitForTimeout(500);
   expect(externalAssetRequested).toBe(false);

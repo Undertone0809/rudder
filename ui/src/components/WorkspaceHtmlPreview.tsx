@@ -5,8 +5,8 @@ import type {
 import { Loader2, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { useEffect, useState } from "react";
 import { organizationsApi } from "../api/orgs";
-import { buildWorkspaceHtmlStaticFallbackSrcDoc } from "../lib/workspace-html-preview";
 import { cn } from "../lib/utils";
+import { buildWorkspaceHtmlStaticFallbackSrcDoc } from "../lib/workspace-html-preview";
 import { Button } from "./ui/button";
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
@@ -121,79 +121,48 @@ export function WorkspaceHtmlPreview({
     >
       <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border bg-[color:var(--surface-elevated)] px-2">
         <TooltipProvider delayDuration={120}>
-          {previewState.status === "error" ? (
-            <div className="flex" role="group" aria-label="Website preview network mode" aria-disabled="true">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="min-w-[6.5rem] rounded-r-none bg-secondary text-secondary-foreground disabled:opacity-100"
-                role="radio"
-                aria-checked="true"
-                aria-pressed="true"
-                disabled
-              >
-                <WifiOff data-icon="inline-start" />
-                Offline
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="-ml-px min-w-[6.5rem] rounded-l-none"
-                role="radio"
-                aria-checked="false"
-                aria-pressed="false"
-                aria-label="Connected preview is unavailable while using the static Offline fallback."
-                disabled
-              >
-                <Wifi data-icon="inline-start" />
-                Connected
-              </Button>
-            </div>
-          ) : (
-            <ToggleGroup
-              type="single"
-              variant="outline"
-              size="sm"
-              spacing={0}
-              value={networkMode}
-              onValueChange={(value) => {
-                if (value === "offline" || value === "connected") selectMode(value);
-              }}
-              aria-label="Website preview network mode"
-            >
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <ToggleGroupItem
-                    value="offline"
-                    className="min-w-[6.5rem]"
-                    aria-pressed={networkMode === "offline"}
-                  >
-                    <WifiOff data-icon="inline-start" />
-                    Offline
-                  </ToggleGroupItem>
-                </TooltipTrigger>
-                <TooltipContent>Local assets only. Scripts and external requests are blocked.</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <ToggleGroupItem
-                    value="connected"
-                    className="min-w-[6.5rem]"
-                    aria-pressed={networkMode === "connected"}
-                    aria-label="Connected. Runs artifact scripts and may send preview content to external HTTPS sites."
-                  >
-                    <Wifi data-icon="inline-start" />
-                    Connected
-                  </ToggleGroupItem>
-                </TooltipTrigger>
-                <TooltipContent>
-                  Runs artifact scripts. Preview content may be sent to external HTTPS sites.
-                </TooltipContent>
-              </Tooltip>
-            </ToggleGroup>
-          )}
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            spacing={0}
+            value={previewState.status === "error" ? "offline" : networkMode}
+            onValueChange={(value) => {
+              if (value === "offline" || value === "connected") selectMode(value);
+            }}
+            aria-label="Website preview network mode"
+            aria-disabled={previewState.status === "error"}
+            disabled={previewState.status === "error"}
+          >
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <ToggleGroupItem value="offline" className="min-w-[6.5rem]">
+                  <WifiOff data-icon="inline-start" />
+                  Offline
+                </ToggleGroupItem>
+              </TooltipTrigger>
+              <TooltipContent>Local assets only. Scripts and external requests are blocked.</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <ToggleGroupItem
+                  value="connected"
+                  className="min-w-[6.5rem]"
+                  aria-label={previewState.status === "error"
+                    ? "Connected preview is unavailable while using the static Offline fallback."
+                    : "Connected. Runs artifact scripts and may send preview content to external HTTPS sites."}
+                >
+                  <Wifi data-icon="inline-start" />
+                  Connected
+                </ToggleGroupItem>
+              </TooltipTrigger>
+              <TooltipContent>
+                {previewState.status === "error"
+                  ? "Connected preview is unavailable while using the static Offline fallback."
+                  : "Runs artifact scripts. Preview content may be sent to external HTTPS sites."}
+              </TooltipContent>
+            </Tooltip>
+          </ToggleGroup>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useNavigate, useSearchParams } from "@/lib/router";
 import { cn } from "@/lib/utils";
@@ -2270,28 +2271,24 @@ function CsvWorkspaceEditor({
           {rows.length.toLocaleString()} {rows.length === 1 ? "row" : "rows"} / {columnCount.toLocaleString()} {columnCount === 1 ? "column" : "columns"}
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <div className="inline-flex shrink-0 overflow-hidden rounded-md border border-border bg-[color:var(--surface-elevated)] p-0.5" role="group" aria-label="CSV file mode">
-            <Button
-              type="button"
-              variant={mode === "table" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-7 rounded-[4px] px-2 text-xs"
-              aria-pressed={mode === "table"}
-              onClick={() => onModeChange("table")}
-            >
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            spacing={0}
+            value={mode}
+            onValueChange={(value) => {
+              if (value === "table" || value === "source") onModeChange(value);
+            }}
+            aria-label="CSV file mode"
+          >
+            <ToggleGroupItem value="table">
               Table
-            </Button>
-            <Button
-              type="button"
-              variant={mode === "source" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-7 rounded-[4px] px-2 text-xs"
-              aria-pressed={mode === "source"}
-              onClick={() => onModeChange("source")}
-            >
+            </ToggleGroupItem>
+            <ToggleGroupItem value="source">
               Source
-            </Button>
-          </div>
+            </ToggleGroupItem>
+          </ToggleGroup>
           {mode === "table" ? (
             <>
               <Button
@@ -5459,34 +5456,26 @@ export function OrganizationWorkspaceBrowser({
   const canCloseOtherTabs = Boolean(tabContextMenu && openFilePaths.length > 1);
   const canCloseTabsToRight = tabContextMenuIndex >= 0 && tabContextMenuIndex < openFilePaths.length - 1;
 
-  function renderHtmlFileModeToggle(currentMode: "preview" | "source", surfaceClassName: string) {
+  function renderHtmlFileModeToggle(currentMode: "preview" | "source") {
     return (
-      <div
-        className={cn("inline-flex shrink-0 overflow-hidden rounded-md border border-border p-0.5", surfaceClassName)}
-        role="group"
+      <ToggleGroup
+        type="single"
+        variant="outline"
+        size="sm"
+        spacing={0}
+        value={currentMode}
+        onValueChange={(value) => {
+          if (value === "preview" || value === "source") setHtmlFileMode(value);
+        }}
         aria-label="HTML file mode"
       >
-        <Button
-          type="button"
-          variant={currentMode === "preview" ? "secondary" : "ghost"}
-          size="sm"
-          className="h-7 rounded-[4px] px-2 text-xs"
-          aria-pressed={currentMode === "preview"}
-          onClick={() => setHtmlFileMode("preview")}
-        >
+        <ToggleGroupItem value="preview">
           Preview
-        </Button>
-        <Button
-          type="button"
-          variant={currentMode === "source" ? "secondary" : "ghost"}
-          size="sm"
-          className="h-7 rounded-[4px] px-2 text-xs"
-          aria-pressed={currentMode === "source"}
-          onClick={() => setHtmlFileMode("source")}
-        >
+        </ToggleGroupItem>
+        <ToggleGroupItem value="source">
           Source
-        </Button>
-      </div>
+        </ToggleGroupItem>
+      </ToggleGroup>
     );
   }
 
@@ -6297,7 +6286,7 @@ export function OrganizationWorkspaceBrowser({
                     <div className="min-w-0 truncate text-xs text-muted-foreground">
                       {selectedFileDetail?.message ?? "HTML preview"}
                     </div>
-                    {renderHtmlFileModeToggle("preview", "bg-[color:var(--surface-page)]")}
+                    {renderHtmlFileModeToggle("preview")}
                   </div>
                   {viewedOrganizationId && selectedFilePath ? (
                     <WorkspaceHtmlPreview
@@ -6326,7 +6315,7 @@ export function OrganizationWorkspaceBrowser({
                   {selectedFileCanRenderHtml ? (
                     <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-[color:var(--surface-page)] px-4 py-2">
                       <div className="min-w-0 truncate text-xs text-muted-foreground">HTML source</div>
-                      {renderHtmlFileModeToggle("source", "bg-[color:var(--surface-elevated)]")}
+                      {renderHtmlFileModeToggle("source")}
                     </div>
                   ) : null}
                   {selectedFileUsesCsvEditor ? (

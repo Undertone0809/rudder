@@ -133,8 +133,8 @@ describe("WorkspaceFilePreview", () => {
     const modeButtons = Array.from(previewContainer.querySelectorAll<HTMLButtonElement>("button"));
     const offlineButton = modeButtons.find((button) => button.textContent?.includes("Offline"));
     const connectedButton = modeButtons.find((button) => button.textContent?.includes("Connected"));
-    expect(offlineButton?.getAttribute("aria-pressed")).toBe("false");
-    expect(connectedButton?.getAttribute("aria-pressed")).toBe("true");
+    expect(offlineButton?.getAttribute("aria-checked")).toBe("false");
+    expect(connectedButton?.getAttribute("aria-checked")).toBe("true");
     expect(connectedButton?.getAttribute("aria-label")).toContain("may send preview content");
     expect(createWorkspaceWebPreviewSession).toHaveBeenCalledWith("org-1", {
       entryPath: "reports/report.html",
@@ -211,8 +211,8 @@ describe("WorkspaceFilePreview", () => {
     const modeButtons = Array.from(container.querySelectorAll<HTMLButtonElement>("button"));
     const offlineButton = modeButtons.find((button) => button.textContent?.includes("Offline"));
     const connectedButton = modeButtons.find((button) => button.textContent?.includes("Connected"));
-    expect(offlineButton?.getAttribute("aria-pressed")).toBe("true");
-    expect(connectedButton?.getAttribute("aria-pressed")).toBe("false");
+    expect(offlineButton?.getAttribute("aria-checked")).toBe("true");
+    expect(connectedButton?.getAttribute("aria-checked")).toBe("false");
     expect(connectedButton?.disabled).toBe(true);
   });
 
