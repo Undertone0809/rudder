@@ -9,6 +9,19 @@
   --motion-distance-small: 4px;
   --motion-distance-medium: 8px;
   --motion-blur-soft: 2px;
+  --page-slide-dur: 250ms;
+  --page-fade-dur: 250ms;
+  --page-slide-distance: 8px;
+  --page-blur: 3px;
+  --page-stagger: 0ms;
+  --page-exit-enabled: 1;
+  --page-slide-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --page-fade-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --stagger-dur: 500ms;
+  --stagger-distance: 12px;
+  --stagger-stagger: 40ms;
+  --stagger-blur: 3px;
+  --stagger-ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .motion-surface-pop {
@@ -437,6 +450,101 @@
 .motion-chat-empty-heading {
   animation: rudder-chat-empty-heading-enter var(--motion-duration-standard) var(--motion-ease-enter) both;
   will-change: opacity, transform, filter;
+}
+
+.motion-chat-prompt-flow {
+  display: grid;
+  grid-template-rows: 1fr;
+  margin-bottom: 0.5rem;
+  opacity: 1;
+  transition:
+    grid-template-rows var(--page-slide-dur) var(--page-slide-ease),
+    margin-bottom var(--page-slide-dur) var(--page-slide-ease),
+    opacity var(--motion-duration-fast) var(--motion-ease-exit);
+  will-change: grid-template-rows, opacity;
+}
+
+.motion-chat-prompt-flow[data-state="hidden"] {
+  grid-template-rows: 0fr;
+  margin-bottom: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition-delay: 80ms, 80ms, 0ms;
+}
+
+.motion-chat-prompt-flow-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.motion-chat-prompt-flow-pages {
+  min-height: 11.5rem;
+}
+
+.motion-chat-prompt-options[data-interactive="false"] {
+  pointer-events: none;
+}
+
+.t-page-slide {
+  position: relative;
+}
+.t-page-slide .t-page[data-page-id="1"] {
+  --t-page-from-x: calc(var(--page-slide-distance) * -1);
+}
+.t-page-slide .t-page[data-page-id="2"] {
+  --t-page-from-x: var(--page-slide-distance);
+}
+.t-page-slide .t-page {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(calc(var(--t-page-from-x, 0px) * var(--page-exit-enabled)));
+  filter: blur(calc(var(--page-blur) * var(--page-exit-enabled)));
+  transition:
+    opacity var(--page-fade-dur) var(--page-fade-ease),
+    transform var(--page-slide-dur) var(--page-slide-ease),
+    filter var(--page-slide-dur) var(--page-slide-ease);
+  will-change: opacity, transform, filter;
+}
+.t-page-slide[data-page="1"] .t-page[data-page-id="1"],
+.t-page-slide[data-page="2"] .t-page[data-page-id="2"] {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+  filter: blur(0);
+  transition-delay: var(--page-stagger);
+}
+
+.t-stagger-line {
+  display: flex;
+  opacity: 0;
+  transform: translateY(var(--stagger-distance));
+  filter: blur(var(--stagger-blur));
+  transition:
+    opacity var(--stagger-dur) var(--stagger-ease),
+    transform var(--stagger-dur) var(--stagger-ease),
+    filter var(--stagger-dur) var(--stagger-ease);
+  will-change: transform, opacity, filter;
+}
+.t-stagger-line--2 { transition-delay: var(--stagger-stagger); }
+.t-stagger-line--3 { transition-delay: calc(var(--stagger-stagger) * 2); }
+.t-stagger-line--4 { transition-delay: calc(var(--stagger-stagger) * 3); }
+
+.t-stagger.is-shown .t-stagger-line {
+  opacity: 1;
+  transform: translateY(0);
+  filter: blur(0);
+}
+.t-stagger.is-hiding .t-stagger-line {
+  opacity: 0;
+  transform: translateY(0);
+  filter: blur(0);
+  transition:
+    opacity 200ms ease,
+    transform 0s linear,
+    filter 0s linear;
+  transition-delay: 0s;
 }
 
 .motion-chat-ask-user-answer-pop {
@@ -948,8 +1056,11 @@
   .motion-chat-composer-menu-pop [data-chat-composer-menu-item],
   .motion-chat-side-panel,
   .motion-chat-empty-heading,
+  .t-stagger-line,
+  .t-page-slide .t-page,
   .motion-chat-ask-user-answer-pop,
   .motion-chat-empty-recent-conversations,
+  .motion-chat-prompt-flow,
   .motion-organization-menu-pop,
   .motion-organization-menu-pop [data-org-menu-item],
   .motion-entity-preview-pop,
@@ -972,12 +1083,21 @@
   .motion-org-layer,
   .motion-org-card,
   .motion-chat-empty-recent-conversations,
+  .motion-chat-prompt-flow,
+  .t-page-slide .t-page,
+  .t-stagger-line,
   .motion-rail-active-indicator,
   .motion-context-active-indicator,
   .motion-entity-preview-pop,
   .rudder-entity-preview-wrap > :is(a, button, [role="button"]),
   .motion-disclosure-icon {
     transition: none !important;
+  }
+
+  .t-stagger-line,
+  .t-page-slide .t-page {
+    filter: none !important;
+    transform: none !important;
   }
 
   .motion-live-surface::before {
