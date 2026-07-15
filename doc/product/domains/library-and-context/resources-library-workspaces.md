@@ -138,8 +138,8 @@ Product model:
   inspection to the same file in the full Library work surface.
 - Markdown files opened from Messenger render as directly editable documents in
   the Side Panel. Autosave uses the last confirmed server content as a write
-  precondition so another operator, Agent, process, or window cannot be silently
-  overwritten by a stale draft.
+  precondition so changes already visible at the server's final guarded read
+  produce a conflict instead of being silently overwritten by a stale draft.
 - Protected roots such as agent instruction, skills, and managed directories
   are excluded from normal mentionable Library surfaces unless an explicit
   management flow owns them.
@@ -196,11 +196,15 @@ Invariants:
   server-side filesystem open. It is unavailable in non-Desktop shells that
   cannot access the operator's local default application registry.
 - Markdown autosave must not silently overwrite content changed after the
-  editor's last confirmed read. Dirty drafts remain local until a conditional
-  save succeeds or the operator explicitly chooses the latest server version.
+  editor's last confirmed read when that change is visible to the conditional
+  save check. Dirty drafts remain local until a conditional save succeeds or the
+  operator explicitly chooses the latest server version.
 - Concurrent in-process writes to the same workspace file are serialized, while
-  the expected-content precondition remains the authority for detecting stale
-  writes from other processes or windows.
+  the expected-content precondition detects completed writes from other
+  processes or windows before the guarded comparison. Arbitrary filesystem
+  writers are not coordinated with Rudder; a write in the narrow interval
+  between Rudder's final comparison and filesystem commit remains outside this
+  guarantee.
 
 Evidence:
 

@@ -1202,13 +1202,23 @@ contracts:
       - doc/product/domains/control-plane/approvals-budgets-activity.md
     related_code:
       - server/src/services/run-intelligence.ts
+      - server/src/routes/run-intelligence.ts
       - server/src/services/heartbeat-run-summary.ts
       - server/src/services/heartbeat-run-reference.ts
+      - cli/src/commands/client/runs.ts
+      - packages/run-intelligence-core/src/loaders/rudder.ts
+      - packages/shared/src/types/run-intelligence.ts
     related_tests:
       - server/src/__tests__/heartbeat-run-summary.test.ts
+      - server/src/__tests__/run-intelligence-summary-service.test.ts
+      - server/src/__tests__/run-intelligence-routes.test.ts
+      - server/src/__tests__/run-intelligence-service.test.ts
+      - server/src/__tests__/run-intelligence-e2e.test.ts
+      - packages/run-intelligence-core/src/loaders/rudder.test.ts
       - tests/e2e/run-transcript-detail.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-07-14-run-intelligence-summary-and-bounded-evidence.md
   CONTROL.SERVER.LIFECYCLE.001:
     owner: product
     domain: control-plane
@@ -1226,6 +1236,25 @@ contracts:
       - scripts/smoke/server-runtime-lifecycle-child.ts
     related_plans:
       - doc/plans/2026-07-13-runtime-supervisor-resource-lifecycle.md
+  CONTROL.DESKTOP.STARTUP.RECOVERY.001:
+    owner: product
+    domain: control-plane
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/control-plane/desktop-startup-recovery.md
+    related_code:
+      - desktop/src/boot-screen.ts
+      - desktop/src/boot-preload.ts
+      - desktop/src/desktop-startup-failure.ts
+      - desktop/src/desktop-support-mail.ts
+      - desktop/src/main.ts
+    related_tests:
+      - desktop/src/boot-screen.test.ts
+      - desktop/src/desktop-startup-failure.test.ts
+      - desktop/src/desktop-support-mail.test.ts
+      - desktop/scripts/smoke.mjs
+    related_plans:
+      - doc/plans/2026-07-15-desktop-startup-loading-recovery.md
   REVIEW.DECISION.001:
     owner: product
     domain: review-feedback-learning

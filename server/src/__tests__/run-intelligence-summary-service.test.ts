@@ -5,6 +5,7 @@ import {
   ensurePostgresDatabase,
   heartbeatRunEvents,
   heartbeatRuns,
+  issues,
   organizations,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
@@ -15,7 +16,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { listRunSummaries } from "../services/run-intelligence.ts";
+import { getObservedRun, listObservedRuns, listRunSummaries } from "../services/run-intelligence.ts";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -318,6 +319,43 @@ describe("listRunSummaries", () => {
     ]) {
       expect(serialized).not.toContain(forbidden);
     }
+  });
+
+  it("does not hydrate issue metadata across organization boundaries", async () => {
+    const foreignIssueId = randomUUID();
+    const runId = randomUUID();
+    await db.insert(issues).values({
+      id: foreignIssueId,
+      orgId: otherOrgId,
+      title: "Foreign organization secret issue",
+      identifier: "OTH-SECRET-1",
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      status: "succeeded",
+      contextSnapshot: { issueId: foreignIssueId },
+    });
+
+    const summary = await listRunSummaries(db, {
+      orgId,
+      runIdPrefix: runId.slice(0, 12),
+      limit: 1,
+    });
+    const observed = await listObservedRuns(db, {
+      orgId,
+      runIdPrefix: runId.slice(0, 12),
+      limit: 1,
+    });
+    const detail = await getObservedRun(db, runId, { orgIds: [orgId] });
+
+    expect(summary.items).toHaveLength(1);
+    expect(summary.items[0]?.issue).toBeNull();
+    expect(observed).toHaveLength(1);
+    expect(observed[0]?.issue).toBeNull();
+    expect(detail?.issue).toBeNull();
+    expect(JSON.stringify({ summary, observed, detail })).not.toContain("Foreign organization secret issue");
   });
 
   it("rejects malformed cursors", async () => {

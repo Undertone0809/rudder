@@ -113,8 +113,8 @@ is the visible expression of the fix, not the product decision by itself.
   discrete state changes when real boot events arrive.
 - A startup error reveals one plain-language heading, retry and email actions,
   and a collapsed technical-details control.
-- Technical paths and raw error text are absent until the operator opens the
-  details disclosure.
+- Technical paths and allowlisted failure metadata are absent until the operator
+  opens the details disclosure. Raw exception text stays in the main-process log.
 - The email action opens a draft addressed to `zeeland4work@gmail.com` with a
   bounded subject and body. It does not send automatically.
 - The support surface tells the operator what to add and what sensitive material
@@ -164,8 +164,8 @@ is the visible expression of the fix, not the product decision by itself.
   scrolling, visible keyboard focus, semantic buttons/details, a one-time
   visually hidden loading status, an announced/focused failure state, and
   reduced-motion behavior across loading, reveal, hover, and disclosure.
-- **Observability:** preserve the original startup error for technical details
-  and copying while keeping it out of the initial visual hierarchy.
+- **Observability:** preserve the original startup error in the main-process log.
+  Renderer and copied diagnostics use only bounded, allowlisted failure metadata.
 
 ## User Experience Walkthrough
 
@@ -191,9 +191,10 @@ is the visible expression of the fix, not the product decision by itself.
    handoffs.
 5. Guidance beside the action asks the operator to add what they were doing and
    what changed before the failure. Attempt and retry context are automatic.
-6. `Technical details` remains collapsed. Opening it reveals failure stage,
-   profile, instance, version when available, instance path, and sanitized raw
-   error text, plus `Copy diagnostic` and `Open data folder`.
+6. `Technical details` remains collapsed. Opening it reveals failure id, time,
+   stage, attempt, category, profile, instance, version when available, and
+   instance path, plus `Copy diagnostic` and `Open data folder`. The original
+   exception remains only in the main-process log.
 
 ### Mail client unavailable
 
@@ -340,8 +341,8 @@ semantics otherwise remain outside this managed startup feature.
 - Raw server logs may contain private request context and are therefore excluded.
   A future diagnostic bundle requires a separate redaction and consent design.
 - Default mail clients differ in supported mailto body length. The initial draft
-  must keep diagnostics concise and leave copying full technical details as a
-  separate operator action.
+  must keep diagnostics concise and leave copying the bounded technical
+  allowlist as a separate operator action.
 
 ## Adversarial Review Decisions
 

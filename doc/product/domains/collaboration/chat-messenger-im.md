@@ -1144,8 +1144,10 @@ Invariants:
 - Side Panel Library views must preserve `LIBRARY.FILES.001` path safety,
   protected paths, previews, and stable reference behavior.
 - Side Panel Markdown editing must preserve `LIBRARY.FILES.001` conditional
-  write semantics. External updates, failed responses, and overlapping saves
-  must not silently discard or overwrite a dirty draft.
+  write semantics. External updates visible to the server's guarded comparison,
+  failed responses, and overlapping in-process saves must not silently discard
+  or overwrite a dirty draft. Arbitrary filesystem writes retain the narrow
+  cross-process commit boundary defined by `LIBRARY.FILES.001`.
 - Side Panel PDF previews must use the organization-scoped inline workspace
   content endpoint. Full-path hover text and full-Library navigation must use
   the Library-relative path rather than exposing an absolute filesystem root.

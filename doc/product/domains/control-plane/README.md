@@ -31,6 +31,7 @@ edit_policy: user_confirmed_only
 - Activity log taxonomy and audit references.
 - Dashboard and run-intelligence rollups derived from underlying domain facts.
 - Server process availability across startup, shutdown, and restart boundaries.
+- Desktop startup presentation and failure-only operator recovery.
 
 ## Contract Index
 
@@ -47,3 +48,6 @@ edit_policy: user_confirmed_only
 - `CONTROL.SERVER.LIFECYCLE.001`: the server releases resources registered with
   its lifecycle owner consistently across normal stop, repeated stop, startup
   failure, and restart.
+- `CONTROL.DESKTOP.STARTUP.RECOVERY.001`: Desktop keeps healthy startup quiet and
+  reveals retry, support-email guidance, and bounded diagnostics only after a
+  managed local startup failure.

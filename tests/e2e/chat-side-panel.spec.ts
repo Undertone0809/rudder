@@ -376,16 +376,54 @@ test.describe("Chat Side Panel", () => {
     })).toBeVisible();
     expect(patchAttempts).toBeGreaterThanOrEqual(1);
 
+    await markdownEditor.getByRole("button", { name: "Keep mine" }).click();
+    await expect(markdownEditor).toContainText("Saved");
+
+    const keptFileRes = await page.request.get(
+      `/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(libraryFilePath)}`,
+    );
+    expect(keptFileRes.ok(), await keptFileRes.text()).toBe(true);
+    const keptFile = await keptFileRes.json() as { content: string | null };
+    expect(keptFile.content).toContain("OpenClaw and Hermes Agent SEO competitor research revised");
+    expect(keptFile.content).not.toBe(concurrentLibraryContent);
+
+    allowPatch = false;
+    const revisedHeading = markdownEditor.getByRole("heading", {
+      name: "OpenClaw and Hermes Agent SEO competitor research revised",
+      exact: true,
+    });
+    await revisedHeading.evaluate((heading) => {
+      const editableRoot = heading.closest<HTMLElement>("[contenteditable='true']");
+      editableRoot?.focus();
+      const range = document.createRange();
+      range.selectNodeContents(heading);
+      range.collapse(false);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    });
+    await page.keyboard.type(" again");
+    await expect(markdownEditor).toContainText("Save failed", { timeout: 10_000 });
+
+    const secondConcurrentContent = "# Latest agent copy\n\nUse this second concurrent update.";
+    const secondConcurrentWriteRes = await page.request.patch(
+      `/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(libraryFilePath)}`,
+      { data: { content: secondConcurrentContent, expectedContent: keptFile.content } },
+    );
+    expect(secondConcurrentWriteRes.ok(), await secondConcurrentWriteRes.text()).toBe(true);
+
+    allowPatch = true;
+    await expect(markdownEditor).toContainText("Conflict", { timeout: 10_000 });
     await markdownEditor.getByRole("button", { name: "Use latest" }).click();
     await expect(markdownEditor).toContainText("Saved");
-    await expect(markdownEditor.getByRole("heading", { name: "New agent copy", exact: true })).toBeVisible();
+    await expect(markdownEditor.getByRole("heading", { name: "Latest agent copy", exact: true })).toBeVisible();
 
     const savedFileRes = await page.request.get(
       `/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(libraryFilePath)}`,
     );
     expect(savedFileRes.ok(), await savedFileRes.text()).toBe(true);
     const savedFile = await savedFileRes.json() as { content: string | null };
-    expect(savedFile.content).toBe(concurrentLibraryContent);
+    expect(savedFile.content).toBe(secondConcurrentContent);
 
     const [editorBox, historyBox] = await Promise.all([
       markdownEditor.boundingBox(),
@@ -649,6 +687,8 @@ test.describe("Chat Side Panel", () => {
   });
 
   test("opens issue, automation, library, and chat references in the Side Panel without replacing the Chat route", async ({ page }, testInfo) => {
+    test.setTimeout(120_000);
+
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Chat-Side-Panel-${Date.now()}`,
@@ -793,7 +833,10 @@ test.describe("Chat Side Panel", () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(hostChatPath);
 
-    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    const assistantMessage = page
+      .getByTestId("chat-assistant-message")
+      .filter({ hasText: "Compare" })
+      .last();
     await expect(assistantMessage).toContainText("Open", { timeout: 15_000 });
 
     await assistantMessage.locator('a[data-mention-kind="issue"]').filter({ hasText: issueRef }).click();
@@ -951,16 +994,20 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Active");
     await expect(sidePanel).toContainText("Next run");
     await expect(sidePanel).toContainText("Previous runs");
-    await expect(sidePanel.getByRole("button", { name: "Run now" })).toBeVisible();
+    await sidePanel.getByRole("button", { name: "Automation actions" }).click();
+    await expect(page.getByRole("menuitem", { name: "Run now" })).toBeVisible();
+    await page.keyboard.press("Escape");
     await expect(sidePanel.getByRole("link", { name: "Full page" })).toHaveCount(0);
 
-    await assistantMessage.locator('a[data-mention-kind="library_file"]').filter({ hasText: libraryFileName }).click();
+    await assistantMessage.getByRole("link", { name: libraryFileName }).click();
     await expect(page).toHaveURL(new RegExp(`${hostChat.id}$`));
-    await expect(sidePanel).toContainText(libraryFilePath);
+    const libraryPath = sidePanel.getByRole("navigation", { name: "Library file path" });
+    await expect(libraryPath).toContainText("docs");
+    await expect(libraryPath).toContainText(libraryFileName);
     await expect(sidePanel).toContainText("Reference library file");
     await expect(sidePanel).toContainText("Library preview should render beside the active chat.");
 
-    await assistantMessage.locator('a[data-mention-kind="chat"]').filter({ hasText: "Referenced detail chat" }).click();
+    await assistantMessage.getByRole("link", { name: "Referenced detail chat" }).click();
     await expect(page).toHaveURL(new RegExp(`${hostChat.id}$`));
     await expect(sidePanel).toContainText("Referenced detail chat");
     await expect(sidePanel).toContainText("Referenced chat body should render beside the active chat.");

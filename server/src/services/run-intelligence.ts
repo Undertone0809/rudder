@@ -293,7 +293,7 @@ function resolveBundleForRun(
   };
 }
 
-async function loadIssuesForRuns(db: Db, runRows: Array<Pick<RunRow, "issueId">>) {
+async function loadIssuesForRuns(db: Db, orgId: string, runRows: Array<Pick<RunRow, "issueId">>) {
   const issueIds = [...new Set(runRows.map((row) => row.issueId).filter((value): value is string => Boolean(value)))];
   if (issueIds.length === 0) return new Map<string, { id: string; identifier: string | null; title: string | null }>();
 
@@ -304,7 +304,7 @@ async function loadIssuesForRuns(db: Db, runRows: Array<Pick<RunRow, "issueId">>
       title: issues.title,
     })
     .from(issues)
-    .where(inArray(issues.id, issueIds));
+    .where(and(eq(issues.orgId, orgId), inArray(issues.id, issueIds)));
 
   return new Map(rows.map((row) => [row.id, row]));
 }
@@ -665,7 +665,7 @@ async function loadRunLogContent(
 export async function listObservedRuns(db: Db, input: ListObservedRunsInput): Promise<RunExportRow[]> {
   const rows = await loadRunRows(db, input);
   const [issueMap, revisionsByAgentId, skillEvidenceMap] = await Promise.all([
-    loadIssuesForRuns(db, rows),
+    loadIssuesForRuns(db, input.orgId, rows),
     loadRevisionsForRuns(db, rows),
     loadSkillEvidenceForRuns(db, rows, input),
   ]);
@@ -677,7 +677,7 @@ export async function listRunSummaries(db: Db, input: ListRunSummariesInput): Pr
   const hasMore = fetchedRows.length > input.limit;
   const rows = hasMore ? fetchedRows.slice(0, input.limit) : fetchedRows;
   const [issueMap, skillEvidenceMap] = await Promise.all([
-    loadIssuesForRuns(db, rows),
+    loadIssuesForRuns(db, input.orgId, rows),
     loadSkillEvidenceForRuns(db, rows, input, true),
   ]);
 
@@ -768,7 +768,7 @@ export async function getObservedRun(db: Db, runId: string, scope: RunIdResoluti
   const row = await loadRunRowById(db, resolvedRunId);
   if (!row) return null;
   const [issueMap, revisionsByAgentId] = await Promise.all([
-    loadIssuesForRuns(db, [row]),
+    loadIssuesForRuns(db, orgId, [row]),
     loadRevisionsForRuns(db, [row]),
   ]);
   return serializeRunRow(row, issueMap, revisionsByAgentId);
