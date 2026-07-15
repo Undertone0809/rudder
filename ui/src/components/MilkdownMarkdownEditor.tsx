@@ -1142,29 +1142,25 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   useEffect(() => {
     const activeElement = typeof document !== "undefined" ? document.activeElement : null;
     const editable = containerRef.current?.querySelector('[contenteditable="true"]');
-    const shouldRestoreFocus = Boolean(
+    const isFocusedMentionQuery = Boolean(
       mentionStateRef.current
       && editable instanceof HTMLElement
-      && activeElement instanceof Node
-      && editable.contains(activeElement),
+      && activeElement === editable,
     );
     mentionsRef.current = mentions ?? [];
-    const editor = loading ? get() : getInstance();
-    editor?.action((ctx) => {
-      const view = getMilkdownProseMirrorView(ctx);
-      if (!view) return;
-      const transaction = view.state.tr.setMeta?.("rudderMentionOptionsUpdated", true) ?? view.state.tr;
-      view.dispatch(transaction);
-    });
-    requestAnimationFrame(() => refreshMilkdownMentionTokenStyles(containerRef.current, mentionsRef.current));
-    if (shouldRestoreFocus) {
-      requestAnimationFrame(() => {
-        const currentEditor = loading ? get() : getInstance();
-        currentEditor?.action((ctx) => {
-          getMilkdownProseMirrorView(ctx)?.focus?.();
-        });
+    // Async mention results only affect the open React menu. Dispatching an
+    // editor decoration transaction while the user is still typing can restore
+    // a stale ProseMirror selection and move the browser caret.
+    if (!isFocusedMentionQuery) {
+      const editor = loading ? get() : getInstance();
+      editor?.action((ctx) => {
+        const view = getMilkdownProseMirrorView(ctx);
+        if (!view) return;
+        const transaction = view.state.tr.setMeta?.("rudderMentionOptionsUpdated", true) ?? view.state.tr;
+        view.dispatch(transaction);
       });
     }
+    requestAnimationFrame(() => refreshMilkdownMentionTokenStyles(containerRef.current, mentionsRef.current));
   }, [get, getInstance, loading, mentions]);
 
   useEffect(() => {

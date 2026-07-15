@@ -1,7 +1,6 @@
 import type { Db } from "@rudderhq/db";
 import {
   agents,
-  agentWakeupRequests,
   assets,
   issueAttachments,
   issueComments,
@@ -22,7 +21,6 @@ import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { redactCurrentUserText } from "../log-redaction.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
-import { DEFERRED_WAKE_CONTEXT_KEY } from "./runtime-kernel/heartbeat.core.js";
 
 import { MAX_ISSUE_COMMENT_PAGE_LIMIT } from "./issues.helpers.js";
 
@@ -327,37 +325,11 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
           mutation: "comment_edit",
         }),
       ]));
-      const wakeupRequestRows = wakeupsByAgentId.size > 0
-        ? await tx
-          .insert(agentWakeupRequests)
-          .values([...wakeupsByAgentId.entries()].map(([agentId, wakeup]) => ({
-            orgId: issue.orgId,
-            agentId,
-            source: wakeup.source,
-            triggerDetail: wakeup.triggerDetail,
-            reason: wakeup.reason,
-            payload: {
-              ...wakeup.payload,
-              [DEFERRED_WAKE_CONTEXT_KEY]: wakeup.contextSnapshot,
-            },
-            status: "queued",
-            requestedByActorType: wakeup.requestedByActorType,
-            requestedByActorId: wakeup.requestedByActorId,
-            idempotencyKey: `issue_comment_edit:${comment.id}:${now.toISOString()}:${agentId}`,
-            updatedAt: now,
-          })))
-          .returning({ id: agentWakeupRequests.id, agentId: agentWakeupRequests.agentId })
-        : [];
-
       return {
         comment,
-        mentionWakeups: wakeupRequestRows.map((row) => ({
-          agentId: row.agentId,
-          wakeupRequestId: row.id,
-          options: {
-            ...wakeupsByAgentId.get(row.agentId)!,
-            existingWakeupRequestId: row.id,
-          },
+        mentionWakeups: [...wakeupsByAgentId.entries()].map(([agentId, options]) => ({
+          agentId,
+          options,
         })),
       };
     });

@@ -114,8 +114,8 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
       userId: actor.actorId,
     });
 
-    // The update transaction already persisted each new mention as a queued
-    // wake request, so activity logging or process failure cannot lose intent.
+    // Start newly added mention wakes before activity logging so a logging
+    // failure cannot suppress the directed agent request.
     for (const wakeup of mentionWakeups) {
       heartbeat
         .wakeup(wakeup.agentId, wakeup.options)

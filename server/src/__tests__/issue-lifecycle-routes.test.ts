@@ -1918,7 +1918,6 @@ describe("issue lifecycle routes", () => {
       payload: { issueId: updatedComment.issueId, commentId: updatedComment.id, mutation: "comment_edit" },
       requestedByActorType: "user",
       requestedByActorId: "local-board",
-      existingWakeupRequestId: "wakeup-request-1",
       contextSnapshot: {
         commentId: updatedComment.id,
         wakeCommentId: updatedComment.id,
@@ -1932,7 +1931,6 @@ describe("issue lifecycle routes", () => {
       comment: updatedComment,
       mentionWakeups: [{
         agentId: PEER_AGENT_ID,
-        wakeupRequestId: "wakeup-request-1",
         options: wakeupOptions,
       }],
     });
@@ -1950,7 +1948,7 @@ describe("issue lifecycle routes", () => {
     );
   });
 
-  it("starts persisted mention wakeups even when edit activity logging fails", async () => {
+  it("starts mention wakeups even when edit activity logging fails", async () => {
     mockIssueService.getById.mockResolvedValue(makeIssue());
     const editedBody = `[Peer Agent](${buildAgentMentionHref(PEER_AGENT_ID, "code", "wake")}) please review.`;
     const updatedComment = {
@@ -1964,13 +1962,11 @@ describe("issue lifecycle routes", () => {
     const wakeupOptions = {
       source: "automation",
       reason: "issue_comment_mentioned",
-      existingWakeupRequestId: "wakeup-request-1",
     };
     mockIssueService.updateCommentWithMentionWakeups.mockResolvedValueOnce({
       comment: updatedComment,
       mentionWakeups: [{
         agentId: PEER_AGENT_ID,
-        wakeupRequestId: "wakeup-request-1",
         options: wakeupOptions,
       }],
     });

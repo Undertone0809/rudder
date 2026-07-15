@@ -114,8 +114,8 @@ Flow:
    `issue.comment_updated`, compares directed wake mentions before and after
    the edit, and routes only agents newly mentioned by that edit.
 7. The comment row is locked while the old and new mention sets are compared.
-   The updated body and one queued wake request per newly mentioned agent are
-   committed in the same transaction before runtime launch is attempted.
+   The updated body and mention delta are committed before runtime launch is
+   requested through the existing comment-mention wake path.
 
 Invariants:
 
@@ -126,8 +126,6 @@ Invariants:
   removing a mention does not wake the removed agent.
 - Adding a mention again after a prior edit removed it is a new directed
   request and may wake that agent again.
-- Activity-log or runtime-launch failure after commit must not erase the
-  persisted mention wake request.
 - Reopen-via-comment is explicit state/workflow evidence, not a hidden status
   mutation.
 
@@ -135,8 +133,8 @@ Evidence:
 
 - Comment thread shows the authored body and ordering.
 - Wakeup requests can reference the source comment id.
-- Concurrent edit coverage proves that identical new mentions create one
-  queued wake request, while a later remove-and-readd creates a new request.
+- Concurrent edit coverage proves that identical new mentions produce one wake
+  request, while a later remove-and-readd produces a new request.
 - Reopen tests prove closed issues can be reactivated by an explicit comment.
 
 Related code:

@@ -42,8 +42,8 @@ Behavior:
   by that edit. Mentions preserved from the previous body are not re-enqueued,
   and removed mentions do not wake an agent.
 - Comment-edit mention comparison is serialized under a comment-row lock. The
-  edited body and queued wake requests commit atomically before runtime launch;
-  retaining the same mention in concurrent edits cannot create two intents.
+  edited body and mention delta commit before runtime launch is requested;
+  retaining the same mention in concurrent edits cannot create two requests.
 - Comment, reopen, and mention wake context includes issue and comment details.
 - Rudder skips self-waking the agent that authored the comment or mention.
 - Comment wakeups from the same comment are merged into one enqueue per target
@@ -95,9 +95,7 @@ Flow:
 2. Routing parses explicit wake mentions such as agent links with wake intent.
    For an edit, it compares the persisted old body with the canonical updated
    body under a row lock and considers only newly added target agents.
-   The edit and its queued wake requests commit together before the route asks
-   heartbeat execution to consume those requests. Competing immediate and
-   recovery consumers lock the request row and reuse its existing run.
+   The route then asks heartbeat execution to wake those newly added targets.
 3. Ordinary comments without wake mentions do not enqueue agent wakeups.
 4. Reopen comment wake uses `issue_reopened_via_comment`. If the assignee is
    eligible to wake and was not mentioned by the author, Rudder appends a wake
@@ -124,19 +122,14 @@ Invariants:
   wake; adding another target later wakes only that newly mentioned agent.
 - Removing and later re-adding a target is a new directed request. Concurrent
   edits that retain the same target are not.
-- A failure after the edit transaction commits must leave the queued wake
-  request available for immediate consumption or later recovery.
-- One persisted wake request must create at most one heartbeat run even when
-  immediate dispatch and timer recovery race.
 
 Evidence:
 
 - `agent_wakeup_requests` records source/reason/comment context.
 - Route tests prove ordinary comments do not wake assignees, assignee wake
   mentions do wake, and reopen comments append the assignee mention when needed.
-- Service tests prove concurrent edit serialization, atomic queued wake
-  evidence, and remove-then-readd behavior; route tests prove activity failure
-  does not prevent consumption of an already persisted edit wake.
+- Service tests prove concurrent edit serialization and remove-then-readd
+  behavior; route tests prove activity failure does not suppress an edit wake.
 - Mention boundary tests prove non-wake references do not wake agents.
 - Comment mention tests prove wake mentions enqueue the intended agent.
 

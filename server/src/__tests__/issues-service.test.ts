@@ -1,7 +1,6 @@
 import {
   activityLog,
   agents,
-  agentWakeupRequests,
   applyPendingMigrations,
   assets,
   createDb,
@@ -19,7 +18,7 @@ import {
   projectWorkspaces,
 } from "@rudderhq/db";
 import { buildAgentMentionHref, deriveOrganizationUrlKey, shortRefFor } from "@rudderhq/shared";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -117,7 +116,6 @@ describe("issueService.list participantAgentId", () => {
     await db.delete(labels);
     await db.delete(assets);
     await db.delete(heartbeatRuns);
-    await db.delete(agentWakeupRequests);
     await db.delete(projects);
     await db.delete(agents);
     await db.delete(organizations);
@@ -583,7 +581,7 @@ describe("issueService.list participantAgentId", () => {
     expect(storedDeleted.deletedAt).toBeTruthy();
   });
 
-  it("serializes edited mention deltas and persists each new wake intent atomically", async () => {
+  it("serializes edited mention deltas so each newly added target wakes once", async () => {
     const orgId = randomUUID();
     const issueId = randomUUID();
     const commentId = randomUUID();
@@ -646,30 +644,16 @@ describe("issueService.list participantAgentId", () => {
     );
     expect(readded.mentionWakeups).toHaveLength(1);
 
-    const wakeupRequests = await db
-      .select()
-      .from(agentWakeupRequests)
-      .where(and(
-        eq(agentWakeupRequests.orgId, orgId),
-        eq(agentWakeupRequests.agentId, agentId),
-        eq(agentWakeupRequests.reason, "issue_comment_mentioned"),
-      ));
-    expect(wakeupRequests).toHaveLength(2);
-    for (const wakeupRequest of wakeupRequests) {
-      expect(wakeupRequest.status).toBe("queued");
-      expect(wakeupRequest.runId).toBeNull();
-      expect(wakeupRequest.payload).toEqual(expect.objectContaining({
+    expect(readded.mentionWakeups[0]?.options).toEqual(expect.objectContaining({
+      reason: "issue_comment_mentioned",
+      payload: expect.objectContaining({ issueId, commentId, mutation: "comment_edit" }),
+      contextSnapshot: expect.objectContaining({
         issueId,
         commentId,
+        wakeSource: "comment.mention",
         mutation: "comment_edit",
-        _paperclipWakeContext: expect.objectContaining({
-          issueId,
-          commentId,
-          wakeSource: "comment.mention",
-          mutation: "comment_edit",
-        }),
-      }));
-    }
+      }),
+    }));
   });
 
   it("excludes soft-deleted comments from issue comment lists and cursors", async () => {
