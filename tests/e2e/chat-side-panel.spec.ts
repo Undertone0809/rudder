@@ -1779,4 +1779,88 @@ test.describe("Chat Side Panel", () => {
     }).toBeLessThanOrEqual(2);
     await page.screenshot({ path: "/tmp/rudder-side-panel-equal-width.png", fullPage: true });
   });
+
+  test("resizes and collapses the Browser Side Panel in two- and three-column workspaces", async ({ page }) => {
+    await installBrowserDesktopStub(page);
+    await installEnabledBrowserSettingsStub(page);
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Side-Panel-Resize-${Date.now()}`,
+        issuePrefix: `SPR${randomUUID().replaceAll("-", "").slice(0, 7).toUpperCase()}`,
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Side Panel resize host",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+
+    const openBrowserPanel = async () => {
+      const sidePanel = page.getByTestId("chat-side-panel");
+      await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+      await sidePanel.getByRole("button", { name: /Browser/ }).click();
+      await sidePanel.getByLabel("Browser URL").fill("http://127.0.0.1:3201/audience");
+      await sidePanel.getByLabel("Browser URL").press("Enter");
+      await expect(sidePanel.getByTestId("chat-side-panel-browser-webview")).toBeVisible();
+      return sidePanel;
+    };
+
+    const dragResizer = async (targetX: number) => {
+      const resizer = page.getByTestId("side-panel-resizer");
+      const box = await resizer.boundingBox();
+      expect(box).not.toBeNull();
+      const pointerY = box!.y + box!.height / 2;
+      await page.mouse.move(box!.x + box!.width / 2, pointerY);
+      await page.mouse.down();
+      await expect(page.getByTestId("side-panel-resize-shield")).toBeVisible();
+      await page.mouse.move(targetX, pointerY, { steps: 12 });
+      await page.mouse.up();
+      await expect(page.getByTestId("side-panel-resize-shield")).toHaveCount(0);
+    };
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await page.getByTestId("side-panel-hover-edge").hover();
+    await page.getByTestId("global-side-panel-trigger").click();
+    let sidePanel = await openBrowserPanel();
+    const initialTwoColumnPanel = await sidePanel.boundingBox();
+    const twoColumnResizer = await page.getByTestId("side-panel-resizer").boundingBox();
+    const twoColumnHitTarget = await page.getByTestId("side-panel-resizer-hit-target").boundingBox();
+    expect(initialTwoColumnPanel).not.toBeNull();
+    expect(twoColumnResizer).not.toBeNull();
+    expect(twoColumnHitTarget).not.toBeNull();
+    expect(twoColumnHitTarget!.width).toBeGreaterThanOrEqual(10);
+    await dragResizer(twoColumnResizer!.x - 80);
+    const widenedTwoColumnPanel = await sidePanel.boundingBox();
+    const twoColumnMain = await page.getByTestId("workspace-main-card").boundingBox();
+    expect(widenedTwoColumnPanel).not.toBeNull();
+    expect(twoColumnMain).not.toBeNull();
+    expect(widenedTwoColumnPanel!.width).toBeGreaterThan(initialTwoColumnPanel!.width + 20);
+    expect(twoColumnMain!.width).toBeGreaterThanOrEqual(340);
+
+    await sidePanel.getByLabel("Close Side Panel").click();
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    await page.getByTestId("chat-side-panel-trigger").click();
+    sidePanel = await openBrowserPanel();
+    await expect(page.getByTestId("workspace-context-card")).toBeVisible();
+    const threeColumnResizer = await page.getByTestId("side-panel-resizer").boundingBox();
+    expect(threeColumnResizer).not.toBeNull();
+    await page.screenshot({ path: "/tmp/zst-774-side-panel-resize.png", fullPage: true });
+
+    await dragResizer(page.viewportSize()!.width - 16);
+    await expect(sidePanel).toBeHidden();
+    await page.getByTestId("side-panel-hover-edge").hover();
+    await expect(page.getByTestId("global-side-panel-trigger")).toBeVisible();
+  });
 });

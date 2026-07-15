@@ -9,7 +9,7 @@ import { Link, Outlet, useLocation, useNavigate, useNavigationType, useParams } 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BookOpen, PanelLeft, PanelRight, Settings, X } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import { accessApi } from "../api/access";
 import { chatsApi } from "../api/chats";
 import { healthApi } from "../api/health";
@@ -69,6 +69,9 @@ const SIDE_PANEL_MIN_WIDTH = 340;
 const SIDE_PANEL_MAX_WIDTH = 560;
 const SIDE_PANEL_EXPANDED_WIDTH = 720;
 const SIDE_PANEL_COLLAPSE_WIDTH = 292;
+const SIDE_PANEL_RESIZER_WIDTH = 4;
+const SIDE_PANEL_RESIZER_HIT_WIDTH = 10;
+const SIDE_PANEL_MIN_MAIN_WIDTH = 340;
 
 type WorkspaceColumnFamily = "chat" | "messenger" | "issues" | "calendar" | "projects" | "agents" | "org" | "backups";
 
@@ -457,9 +460,32 @@ function readRememberedWorkspaceColumnWidth(family: WorkspaceColumnFamily): numb
   }
 }
 
-function clampSidePanelWidth(value: number, viewportWidth: number | null = getCurrentViewportWidth()): number {
-  const viewportMax = viewportWidth === null ? SIDE_PANEL_MAX_WIDTH : Math.max(SIDE_PANEL_MIN_WIDTH, Math.floor(viewportWidth * 0.42));
-  return Math.min(Math.min(SIDE_PANEL_EXPANDED_WIDTH, viewportMax), Math.max(SIDE_PANEL_MIN_WIDTH, Math.round(value)));
+function getSidePanelMaxWidth(
+  viewportWidth: number | null = getCurrentViewportWidth(),
+  workspaceWidth: number | null = null,
+): number {
+  if (workspaceWidth !== null && Number.isFinite(workspaceWidth)) {
+    return Math.max(
+      SIDE_PANEL_MIN_WIDTH,
+      Math.min(
+        SIDE_PANEL_EXPANDED_WIDTH,
+        Math.floor(workspaceWidth - SIDE_PANEL_RESIZER_WIDTH - SIDE_PANEL_MIN_MAIN_WIDTH),
+      ),
+    );
+  }
+  if (viewportWidth === null) return SIDE_PANEL_MAX_WIDTH;
+  return Math.min(
+    SIDE_PANEL_EXPANDED_WIDTH,
+    Math.max(SIDE_PANEL_MIN_WIDTH, Math.floor(viewportWidth * 0.42)),
+  );
+}
+
+function clampSidePanelWidth(
+  value: number,
+  viewportWidth: number | null = getCurrentViewportWidth(),
+  workspaceWidth: number | null = null,
+): number {
+  return Math.min(getSidePanelMaxWidth(viewportWidth, workspaceWidth), Math.max(SIDE_PANEL_MIN_WIDTH, Math.round(value)));
 }
 
 export function resolveProportionalWorkspaceColumnWidth(
@@ -473,15 +499,16 @@ export function resolveProportionalWorkspaceColumnWidth(
 export function resolveProportionalSidePanelWidth(
   widthRatioValue: number,
   viewportWidth: number,
+  workspaceWidth: number | null = null,
 ): number {
-  return clampSidePanelWidth(widthRatioValue * viewportWidth, viewportWidth);
+  return clampSidePanelWidth(widthRatioValue * viewportWidth, viewportWidth, workspaceWidth);
 }
 
 export function resolveDefaultSidePanelWidth(
   workspaceWidth: number,
   viewportWidth: number | null = getCurrentViewportWidth(),
 ): number {
-  return clampSidePanelWidth((workspaceWidth - 4) / 2, viewportWidth);
+  return clampSidePanelWidth((workspaceWidth - SIDE_PANEL_RESIZER_WIDTH) / 2, viewportWidth, workspaceWidth);
 }
 
 export function shouldAutoExpandSidePanel(panelWidth: number, workspaceWidth: number): boolean {
@@ -528,6 +555,7 @@ function DesktopSidePanelSlot({
   const [sidePanelWidth, setSidePanelWidth] = useState(readRememberedSidePanelWidth);
   const sidePanelWidthRatioRef = useRef(widthRatio(sidePanelWidth));
   const [resizingSidePanel, setResizingSidePanel] = useState(false);
+  const sidePanelResizeActiveRef = useRef(false);
   const [renderSidePanel, setRenderSidePanel] = useState(sidePanel.open);
   const [sidePanelExiting, setSidePanelExiting] = useState(false);
   const hasBrowserTabs = sidePanel.tabs.some((target) => target.kind === "browser");
@@ -581,18 +609,19 @@ function DesktopSidePanelSlot({
       sidePanelWidthRatioRef.current = widthRatio(sidePanelWidth, viewportWidth);
       return;
     }
-    setSidePanelWidth(resolveProportionalSidePanelWidth(sidePanelWidthRatio, viewportWidth));
-  }, [viewportWidth]);
+    setSidePanelWidth(resolveProportionalSidePanelWidth(sidePanelWidthRatio, viewportWidth, workspaceWidth));
+  }, [viewportWidth, workspaceWidth]);
 
   const setProportionalSidePanelWidth = useCallback((nextWidth: number) => {
-    const clampedWidth = clampSidePanelWidth(nextWidth, viewportWidth);
+    const clampedWidth = clampSidePanelWidth(nextWidth, viewportWidth, workspaceWidth);
     sidePanelWidthRatioRef.current = widthRatio(clampedWidth, viewportWidth);
     setSidePanelWidth(clampedWidth);
     return clampedWidth;
-  }, [viewportWidth]);
+  }, [viewportWidth, workspaceWidth]);
 
   const resetSidePanelWidth = useCallback(() => {
     setUseEqualDefaultWidth(true);
+    hasRememberedWidthRef.current = false;
     widthInitializedRef.current = false;
     try {
       window.localStorage.removeItem(SIDE_PANEL_WIDTH_KEY);
@@ -605,13 +634,26 @@ function DesktopSidePanelSlot({
     return setProportionalSidePanelWidth(nextWidth);
   }, [setProportionalSidePanelWidth, viewportWidth, workspaceWidth]);
 
-  const startSidePanelResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!sidePanel.open) return;
+  const dockedPanelWidth = useEqualDefaultWidth && workspaceWidth !== null
+    ? resolveDefaultSidePanelWidth(workspaceWidth, viewportWidth)
+    : sidePanelWidth;
+
+  const startSidePanelResize = useCallback((event: ReactPointerEvent<HTMLDivElement> | ReactMouseEvent<HTMLDivElement>) => {
+    if (!sidePanel.open || sidePanelResizeActiveRef.current) return;
     event.preventDefault();
+    sidePanelResizeActiveRef.current = true;
     setUseEqualDefaultWidth(false);
+    hasRememberedWidthRef.current = true;
     widthInitializedRef.current = true;
     const startX = event.clientX;
-    const startWidth = sidePanelWidth;
+    const resizeHandle = event.currentTarget;
+    const resizeWorkspace = workspaceAnchorRef.current?.parentElement;
+    const renderedPanelWidth = resizeWorkspace
+      ?.querySelector<HTMLElement>("[data-testid='chat-side-panel']")
+      ?.getBoundingClientRect().width ?? null;
+    const resizeWorkspaceWidth = resizeWorkspace?.getBoundingClientRect().width ?? workspaceWidth;
+    const startWidth = renderedPanelWidth !== null && renderedPanelWidth > 0 ? renderedPanelWidth : dockedPanelWidth;
+    const pointerId = "pointerId" in event ? event.pointerId : null;
     let latestWidth = startWidth;
     let collapsedByDrag = false;
     const cleanupStyle = {
@@ -621,12 +663,20 @@ function DesktopSidePanelSlot({
 
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
+    if (pointerId !== null) {
+      try {
+        resizeHandle.setPointerCapture(pointerId);
+      } catch {
+        // The window listeners and drag shield still keep resizing active.
+      }
+    }
+    setProportionalSidePanelWidth(startWidth);
     setResizingSidePanel(true);
 
-    const onPointerMove = (moveEvent: PointerEvent) => {
+    const onPointerMove = (moveEvent: PointerEvent | MouseEvent) => {
       const deltaX = moveEvent.clientX - startX;
       latestWidth = startWidth - deltaX;
-      if (workspaceWidth !== null && shouldAutoExpandSidePanel(latestWidth, workspaceWidth)) {
+      if (resizeWorkspaceWidth !== null && shouldAutoExpandSidePanel(latestWidth, resizeWorkspaceWidth)) {
         stopResizing();
         onExpandedChange(true);
         return;
@@ -644,9 +694,19 @@ function DesktopSidePanelSlot({
     const stopResizing = () => {
       document.body.style.cursor = cleanupStyle.cursor;
       document.body.style.userSelect = cleanupStyle.userSelect;
+      if (pointerId !== null) {
+        try {
+          if (resizeHandle.hasPointerCapture(pointerId)) resizeHandle.releasePointerCapture(pointerId);
+        } catch {
+          // Ignore pointer capture release races after cancellation.
+        }
+      }
+      sidePanelResizeActiveRef.current = false;
       setResizingSidePanel(false);
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", stopResizing);
+      window.removeEventListener("mousemove", onPointerMove);
+      window.removeEventListener("mouseup", stopResizing);
       if (!collapsedByDrag && latestWidth <= SIDE_PANEL_COLLAPSE_WIDTH) {
         sidePanel.hidePanel();
         resetSidePanelWidth();
@@ -655,7 +715,9 @@ function DesktopSidePanelSlot({
 
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", stopResizing, { once: true });
-  }, [onExpandedChange, resetSidePanelWidth, setProportionalSidePanelWidth, sidePanel, sidePanelWidth, workspaceWidth]);
+    window.addEventListener("mousemove", onPointerMove);
+    window.addEventListener("mouseup", stopResizing, { once: true });
+  }, [dockedPanelWidth, onExpandedChange, resetSidePanelWidth, setProportionalSidePanelWidth, sidePanel, workspaceWidth]);
 
   const panelVisible = contextReady && (sidePanel.open || sidePanelExiting);
   const expandedVisible = contextReady && sidePanel.open && expanded;
@@ -682,18 +744,32 @@ function DesktopSidePanelSlot({
         key="resizer"
         data-testid="side-panel-resizer"
         className={cn(
-          "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center transition-[width,opacity,transform] duration-200 ease-out motion-reduce:transition-none",
+          "workspace-column-resizer group relative z-20 flex shrink-0 cursor-col-resize touch-none select-none items-stretch justify-center transition-[width,opacity,transform] duration-200 ease-out motion-reduce:transition-none",
           sidePanelExiting ? "translate-x-2 opacity-0" : "translate-x-0 opacity-100",
           resizingSidePanel && "is-resizing",
         )}
-        style={{ flexBasis: 4, maxWidth: 4, minWidth: 4, width: 4 }}
+        style={{ flexBasis: SIDE_PANEL_RESIZER_WIDTH, maxWidth: SIDE_PANEL_RESIZER_WIDTH, minWidth: SIDE_PANEL_RESIZER_WIDTH, width: SIDE_PANEL_RESIZER_WIDTH }}
         onPointerDown={startSidePanelResize}
+        onMouseDown={startSidePanelResize}
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize Side Panel"
       >
+        <span
+          data-testid="side-panel-resizer-hit-target"
+          className="absolute inset-y-0 left-1/2 -translate-x-1/2"
+          style={{ width: SIDE_PANEL_RESIZER_HIT_WIDTH }}
+          aria-hidden="true"
+        />
         <div className="workspace-column-resizer-line" />
       </div> : null}
+      {resizingSidePanel ? (
+        <div
+          data-testid="side-panel-resize-shield"
+          className="fixed inset-0 z-[200] cursor-col-resize"
+          aria-hidden="true"
+        />
+      ) : null}
       {shouldMountSidePanel ? <div
         key="panel"
         className={expandedVisible ? "absolute inset-y-0 left-0 right-0 z-30 flex min-w-0" : "contents"}
