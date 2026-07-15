@@ -1173,11 +1173,123 @@ async function verifyOrganizationWorkspacesNavigation(electronApp, page, company
   return page;
 }
 
+async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expectedUrl) {
+  console.log("[desktop-smoke] verifying Side Panel resize across the native Browser webview");
+  assert.ok(electronApp, "native Side Panel resize requires the Electron application");
+  const readActiveWebviewUrl = () => page.evaluate(() => {
+    const webview = document.querySelector(
+      "[data-testid='chat-side-panel-browser-webview'][data-active='true']",
+    );
+    return webview && typeof webview.getURL === "function" ? webview.getURL() : null;
+  });
+  const waitForActiveWebview = async () => {
+    await page.waitForFunction(({ url }) => {
+      const webview = document.querySelector(
+        "[data-testid='chat-side-panel-browser-webview'][data-active='true']",
+      );
+      return webview && typeof webview.getURL === "function" && webview.getURL() === url;
+    }, { url: expectedUrl }, { timeout: 30_000 });
+    return readActiveWebviewUrl();
+  };
+  assert.equal(
+    await waitForActiveWebview(),
+    expectedUrl,
+    "resize smoke requires a real Electron Browser webview",
+  );
+
+  const dragResizer = async (targetX) => {
+    const resizer = page.getByTestId("side-panel-resizer");
+    const box = await resizer.boundingBox();
+    assert.ok(box, "Side Panel resizer should have geometry");
+    const pointerY = box.y + box.height / 2;
+    await page.mouse.move(box.x + box.width / 2, pointerY);
+    await page.mouse.down();
+    await page.getByTestId("side-panel-resize-shield").waitFor({ state: "visible", timeout: 5_000 });
+    await page.mouse.move(targetX, pointerY, { steps: 12 });
+    await page.mouse.up();
+    await page.getByTestId("side-panel-resize-shield").waitFor({ state: "detached", timeout: 5_000 });
+  };
+
+  const initialPanelBox = await sidePanel.boundingBox();
+  const initialResizerBox = await page.getByTestId("side-panel-resizer").boundingBox();
+  assert.ok(initialPanelBox && initialResizerBox, "Side Panel should be docked before native resize");
+  await dragResizer(initialResizerBox.x - 80);
+  const expandedPanelBox = await sidePanel.boundingBox();
+  assert.ok(
+    expandedPanelBox && expandedPanelBox.width > initialPanelBox.width + 30,
+    "dragging left should continuously widen the Side Panel",
+  );
+
+  const cancelResizerBox = await page.getByTestId("side-panel-resizer").boundingBox();
+  assert.ok(cancelResizerBox, "Side Panel resizer should remain available after widening");
+  const cancelY = cancelResizerBox.y + cancelResizerBox.height / 2;
+  await page.mouse.move(cancelResizerBox.x + cancelResizerBox.width / 2, cancelY);
+  await page.mouse.down();
+  await page.getByTestId("side-panel-resize-shield").waitFor({ state: "visible", timeout: 5_000 });
+  await page.mouse.move(cancelResizerBox.x + 36, cancelY, { steps: 4 });
+  const releasedPointerId = await page.getByTestId("side-panel-resizer").evaluate((element) => {
+    window.__rudderDesktopSmokeLostCaptureCount = 0;
+    element.addEventListener("lostpointercapture", () => {
+      window.__rudderDesktopSmokeLostCaptureCount += 1;
+    }, { once: true });
+    for (let pointerId = 0; pointerId <= 32; pointerId += 1) {
+      if (!element.hasPointerCapture(pointerId)) continue;
+      element.releasePointerCapture(pointerId);
+      return pointerId;
+    }
+    return null;
+  });
+  assert.notEqual(releasedPointerId, null, "native Electron resizer should hold pointer capture");
+  await page.waitForFunction(() => window.__rudderDesktopSmokeLostCaptureCount === 1, null, { timeout: 5_000 });
+  await page.getByTestId("side-panel-resize-shield").waitFor({ state: "detached", timeout: 5_000 });
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      cursor: document.body.style.cursor,
+      userSelect: document.body.style.userSelect,
+    })),
+    { cursor: "", userSelect: "" },
+    "cancelled native resize should restore body interaction styles",
+  );
+  await page.waitForTimeout(250);
+  const widthAfterCancel = (await sidePanel.boundingBox())?.width;
+  assert.ok(widthAfterCancel, "Side Panel should remain visible after resize cancellation");
+  await page.mouse.move(cancelResizerBox.x - 120, cancelY, { steps: 4 });
+  assert.equal(
+    Math.round((await sidePanel.boundingBox())?.width ?? 0),
+    Math.round(widthAfterCancel),
+    "removed resize listeners must ignore pointer movement after cancellation",
+  );
+  await page.mouse.up();
+
+  const restartResizerBox = await page.getByTestId("side-panel-resizer").boundingBox();
+  assert.ok(restartResizerBox, "cancelled resize should release the active lifecycle");
+  await dragResizer(restartResizerBox.x + 40);
+  assert.ok(
+    (await sidePanel.boundingBox())?.width < widthAfterCancel - 20,
+    "a new resize should start after cancellation",
+  );
+
+  const collapsePanelBox = await sidePanel.boundingBox();
+  assert.ok(collapsePanelBox, "Side Panel should remain visible before collapse drag");
+  await dragResizer(collapsePanelBox.x + collapsePanelBox.width - 12);
+  await sidePanel.waitFor({ state: "hidden", timeout: 5_000 });
+  await page.getByTestId("side-panel-hover-edge").hover();
+  await page.getByTestId("global-side-panel-trigger").click();
+  await sidePanel.waitFor({ state: "visible", timeout: 5_000 });
+  assert.equal(
+    await waitForActiveWebview(),
+    expectedUrl,
+    "reopening after collapse should preserve the native Browser guest",
+  );
+  console.log("[desktop-smoke] native Browser webview resize, cancel, collapse, and reopen passed");
+}
+
 async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix, options = {}) {
   console.log("[desktop-smoke] verifying chat Side Panel Browser webview");
   const {
     electronApp = null,
     exerciseRouting = true,
+    exerciseResize = exerciseRouting,
     expectCookie = null,
     expectStorage = null,
     fixture: providedFixture = null,
@@ -1227,6 +1339,10 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
       const bodyText = await webview.executeJavaScript("document.body?.innerText ?? ''");
       return bodyText.includes("Rudder Browser fixture");
     }, { expectedUrl: fixtureUrl }, { timeout: 30_000 });
+
+    if (exerciseResize) {
+      await verifyNativeSidePanelResize(electronApp, page, sidePanel, fixtureUrl);
+    }
 
     const existingCookies = await page.evaluate(async () => {
       const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");

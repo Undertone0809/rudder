@@ -1849,6 +1849,51 @@ test.describe("Chat Side Panel", () => {
     expect(widenedTwoColumnPanel!.width).toBeGreaterThan(initialTwoColumnPanel!.width + 20);
     expect(twoColumnMain!.width).toBeGreaterThanOrEqual(340);
 
+    const cancelStartBox = await page.getByTestId("side-panel-resizer").boundingBox();
+    expect(cancelStartBox).not.toBeNull();
+    const cancelY = cancelStartBox!.y + cancelStartBox!.height / 2;
+    await page.mouse.move(cancelStartBox!.x + cancelStartBox!.width / 2, cancelY);
+    await page.mouse.down();
+    await expect(page.getByTestId("side-panel-resize-shield")).toBeVisible();
+    await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+    await expect(page.getByTestId("side-panel-resize-shield")).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => ({
+      cursor: document.body.style.cursor,
+      userSelect: document.body.style.userSelect,
+    }))).toEqual({ cursor: "", userSelect: "" });
+    const widthAfterCancel = (await sidePanel.boundingBox())!.width;
+    await page.mouse.move(cancelStartBox!.x - 120, cancelY, { steps: 4 });
+    await expect.poll(async () => (await sidePanel.boundingBox())!.width).toBeCloseTo(widthAfterCancel, 0);
+    await page.mouse.up();
+
+    const restartBox = await page.getByTestId("side-panel-resizer").boundingBox();
+    expect(restartBox).not.toBeNull();
+    await dragResizer(restartBox!.x + 40);
+    expect((await sidePanel.boundingBox())!.width).toBeLessThan(widthAfterCancel - 20);
+
+    const unmountBox = await page.getByTestId("side-panel-resizer").boundingBox();
+    expect(unmountBox).not.toBeNull();
+    const unmountY = unmountBox!.y + unmountBox!.height / 2;
+    await page.mouse.move(unmountBox!.x + unmountBox!.width / 2, unmountY);
+    await page.mouse.down();
+    await expect(page.getByTestId("side-panel-resize-shield")).toBeVisible();
+    await page.evaluate(() => {
+      window.history.pushState({}, "", "/auth");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await expect(page.getByTestId("side-panel-resize-shield")).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => ({
+      cursor: document.body.style.cursor,
+      userSelect: document.body.style.userSelect,
+    }))).toEqual({ cursor: "", userSelect: "" });
+    await page.mouse.up();
+    await page.evaluate((nextPath) => {
+      window.history.pushState({}, "", nextPath);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    }, `/${organization.issuePrefix}/dashboard`);
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/dashboard$`));
+    await expect(page.getByTestId("side-panel-resizer")).toBeVisible();
+
     await sidePanel.getByLabel("Close Side Panel").click();
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
     await page.getByTestId("chat-side-panel-trigger").click();

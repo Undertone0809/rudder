@@ -59,6 +59,7 @@ import { SettingsSidebar } from "./SettingsSidebar";
 import { ThreeColumnContextSidebar } from "./ThreeColumnContextSidebar";
 import { WorkspaceBackupFilesSidebar } from "./WorkspaceBackupFilesSidebar";
 import { WorktreeBanner } from "./WorktreeBanner";
+import { startSidePanelResizeLifecycle, type SidePanelResizeMoveEvent } from "./side-panel-resize-lifecycle";
 
 const INSTANCE_SETTINGS_MEMORY_KEY = "rudder.lastInstanceSettingsPath";
 const LAST_WORKSPACE_PATH_KEY = "rudder.lastWorkspacePath";
@@ -556,6 +557,7 @@ function DesktopSidePanelSlot({
   const sidePanelWidthRatioRef = useRef(widthRatio(sidePanelWidth));
   const [resizingSidePanel, setResizingSidePanel] = useState(false);
   const sidePanelResizeActiveRef = useRef(false);
+  const sidePanelResizeCleanupRef = useRef<(() => void) | null>(null);
   const [renderSidePanel, setRenderSidePanel] = useState(sidePanel.open);
   const [sidePanelExiting, setSidePanelExiting] = useState(false);
   const hasBrowserTabs = sidePanel.tabs.some((target) => target.kind === "browser");
@@ -638,6 +640,10 @@ function DesktopSidePanelSlot({
     ? resolveDefaultSidePanelWidth(workspaceWidth, viewportWidth)
     : sidePanelWidth;
 
+  useEffect(() => () => {
+    sidePanelResizeCleanupRef.current?.();
+  }, []);
+
   const startSidePanelResize = useCallback((event: ReactPointerEvent<HTMLDivElement> | ReactMouseEvent<HTMLDivElement>) => {
     if (!sidePanel.open || sidePanelResizeActiveRef.current) return;
     event.preventDefault();
@@ -656,24 +662,11 @@ function DesktopSidePanelSlot({
     const pointerId = "pointerId" in event ? event.pointerId : null;
     let latestWidth = startWidth;
     let collapsedByDrag = false;
-    const cleanupStyle = {
-      cursor: document.body.style.cursor,
-      userSelect: document.body.style.userSelect,
-    };
-
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-    if (pointerId !== null) {
-      try {
-        resizeHandle.setPointerCapture(pointerId);
-      } catch {
-        // The window listeners and drag shield still keep resizing active.
-      }
-    }
     setProportionalSidePanelWidth(startWidth);
     setResizingSidePanel(true);
 
-    const onPointerMove = (moveEvent: PointerEvent | MouseEvent) => {
+    let stopResizing = () => {};
+    const onPointerMove = (moveEvent: SidePanelResizeMoveEvent) => {
       const deltaX = moveEvent.clientX - startX;
       latestWidth = startWidth - deltaX;
       if (resizeWorkspaceWidth !== null && shouldAutoExpandSidePanel(latestWidth, resizeWorkspaceWidth)) {
@@ -691,32 +684,22 @@ function DesktopSidePanelSlot({
       setProportionalSidePanelWidth(latestWidth);
     };
 
-    const stopResizing = () => {
-      document.body.style.cursor = cleanupStyle.cursor;
-      document.body.style.userSelect = cleanupStyle.userSelect;
-      if (pointerId !== null) {
-        try {
-          if (resizeHandle.hasPointerCapture(pointerId)) resizeHandle.releasePointerCapture(pointerId);
-        } catch {
-          // Ignore pointer capture release races after cancellation.
+    const lifecycle = startSidePanelResizeLifecycle({
+      resizeHandle,
+      pointerId,
+      onMove: onPointerMove,
+      onStop: () => {
+        sidePanelResizeCleanupRef.current = null;
+        sidePanelResizeActiveRef.current = false;
+        setResizingSidePanel(false);
+        if (!collapsedByDrag && latestWidth <= SIDE_PANEL_COLLAPSE_WIDTH) {
+          sidePanel.hidePanel();
+          resetSidePanelWidth();
         }
-      }
-      sidePanelResizeActiveRef.current = false;
-      setResizingSidePanel(false);
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", stopResizing);
-      window.removeEventListener("mousemove", onPointerMove);
-      window.removeEventListener("mouseup", stopResizing);
-      if (!collapsedByDrag && latestWidth <= SIDE_PANEL_COLLAPSE_WIDTH) {
-        sidePanel.hidePanel();
-        resetSidePanelWidth();
-      }
-    };
-
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", stopResizing, { once: true });
-    window.addEventListener("mousemove", onPointerMove);
-    window.addEventListener("mouseup", stopResizing, { once: true });
+      },
+    });
+    stopResizing = lifecycle.stop;
+    sidePanelResizeCleanupRef.current = lifecycle.isActive() ? stopResizing : null;
   }, [dockedPanelWidth, onExpandedChange, resetSidePanelWidth, setProportionalSidePanelWidth, sidePanel, workspaceWidth]);
 
   const panelVisible = contextReady && (sidePanel.open || sidePanelExiting);
