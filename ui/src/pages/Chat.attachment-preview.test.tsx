@@ -3028,6 +3028,28 @@ describe("Chat Side Panel link handling", () => {
     await act(async () => {
       webview!.dispatchEvent(Object.assign(new Event("did-fail-load"), {
         errorDescription: "ERR_CONNECTION_REFUSED",
+        isMainFrame: false,
+        validatedURL: "http://127.0.0.1:3201/subframe",
+      }));
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='chat-side-panel-browser-error']")).toBeNull();
+    expect(webview?.className).not.toContain("invisible");
+
+    await act(async () => {
+      webview!.dispatchEvent(Object.assign(new Event("did-fail-load"), {
+        errorDescription: "ERR_ABORTED",
+        isMainFrame: true,
+        validatedURL: "http://127.0.0.1:3201/",
+      }));
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='chat-side-panel-browser-error']")).toBeNull();
+    expect(webview?.className).not.toContain("invisible");
+
+    await act(async () => {
+      webview!.dispatchEvent(Object.assign(new Event("did-fail-load"), {
+        errorDescription: "ERR_CONNECTION_REFUSED",
         isMainFrame: true,
         validatedURL: "http://127.0.0.1:3201/",
       }));
