@@ -54,6 +54,8 @@ contracts:
     related_code:
       - packages/db/src/schema/issues.ts
       - packages/shared/src/validators/issue.ts
+      - ui/src/components/InspectableImage.tsx
+      - ui/src/context/ImagePreviewContext.tsx
       - ui/src/components/InlineEditor.tsx
       - ui/src/components/NewIssueDialog.tsx
       - ui/src/lib/new-issue-dialog.ts
@@ -66,6 +68,7 @@ contracts:
       - ui/src/pages/IssueDetail.test.tsx
       - tests/e2e/codex-model-order.spec.ts
       - tests/e2e/issue-detail-toolbar-actions.spec.ts
+      - tests/e2e/issue-description-image-preview.spec.ts
       - tests/e2e/issue-board-display-properties.spec.ts
       - tests/e2e/new-issue-project-context.spec.ts
     related_plans:
@@ -717,6 +720,9 @@ contracts:
       - server/src/routes/orgs.ts
       - server/src/services/library-entries.ts
       - server/src/services/organization-workspace-browser.ts
+      - ui/src/components/ImagePreviewDialog.tsx
+      - ui/src/components/InspectableImage.tsx
+      - ui/src/context/ImagePreviewContext.tsx
       - ui/src/components/WorkspaceFilePreview.tsx
       - ui/src/components/WorkspacePdfPreview.tsx
       - ui/src/pages/OrganizationResources.tsx
@@ -728,6 +734,8 @@ contracts:
       - server/src/__tests__/library-path-markdown.test.ts
       - server/src/__tests__/organization-workspace-browser.test.ts
       - desktop/src/ide-opener.test.ts
+      - ui/src/components/ImagePreviewDialog.test.tsx
+      - ui/src/context/ImagePreviewContext.test.tsx
       - ui/src/pages/Chat.attachment-preview.test.tsx
       - ui/src/pages/OrganizationWorkspaceFilesSidebar.test.tsx
       - ui/src/pages/OrganizationWorkspaces.scrollbars.test.tsx
@@ -1012,6 +1020,10 @@ contracts:
       - server/src/services/chat-work-manifest.ts
       - server/src/routes/chats.ts
       - ui/src/api/chats.ts
+      - ui/src/components/ImagePreviewDialog.tsx
+      - ui/src/components/InspectableImage.tsx
+      - ui/src/context/ImagePreviewContext.tsx
+      - ui/src/lib/image-actions.ts
       - ui/src/pages/Chat.work-manifest.tsx
       - ui/src/pages/Chat.tsx
     related_tests:
@@ -1019,7 +1031,10 @@ contracts:
       - server/src/__tests__/chat-work-manifest.test.ts
       - server/src/__tests__/chat-routes.test.ts
       - ui/src/pages/Chat.work-manifest.test.tsx
+      - ui/src/context/ImagePreviewContext.test.tsx
+      - ui/src/lib/image-actions.test.ts
       - tests/e2e/chat-work-manifest.spec.ts
+      - tests/e2e/chat-work-manifest-image-preview.spec.ts
     related_plans:
       - doc/plans/2026-07-12-chat-work-manifest.md
   CHAT.SIDE.PANEL.001:
@@ -1502,10 +1517,15 @@ contracts:
       - server/src/services/knowledge-portability/organization-portability.export.ts
       - server/src/services/knowledge-portability/organization-portability.import.ts
       - server/src/services/export-jobs.ts
+      - ui/src/components/ImagePreviewDialog.tsx
+      - ui/src/components/InspectableImage.tsx
+      - ui/src/context/ImagePreviewContext.tsx
       - ui/src/pages/OrganizationExport.tsx
       - ui/src/pages/OrganizationImport.tsx
     related_tests:
       - server/src/__tests__/export-jobs.test.ts
+      - ui/src/components/ImagePreviewDialog.test.tsx
+      - ui/src/context/ImagePreviewContext.test.tsx
       - tests/e2e/organization-export-build-job.spec.ts
       - tests/e2e/profile-context-import.spec.ts
     related_plans:

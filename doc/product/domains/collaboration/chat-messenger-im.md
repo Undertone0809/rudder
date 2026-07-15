@@ -931,6 +931,12 @@ them through `CONTEXT.RESOURCES.001`.
     compact Work trigger. An empty manifest renders no Work control or shelf.
     Opening an internal target reuses Side Panel behavior from
     `CHAT.SIDE.PANEL.001`.
+11. Opening an image attachment uses the application-level image preview shared
+    with Chat message and Markdown images. The overlay exposes an explicit close
+    control plus copy/download actions, closes on `Escape`, and does not create a
+    Browser Side Panel tab. Non-image attachments keep their normal file-open
+    behavior. Switching to another Chat closes the current image preview so an
+    attachment from the previous conversation cannot remain over the new one.
 
 ## Decision Table
 
@@ -946,6 +952,7 @@ them through `CONTEXT.RESOURCES.001`.
 | Chat has a linked Project | Other Project conversations contain manifest rows | Current rows stay unchanged; separate Project count is shown | Project rows must not mix into current Chat sections | API and E2E |
 | No items exist | Reconciliation returns no candidates and the Project roll-up is empty | No Work control or empty shelf is rendered | UI must not reserve space or invent Create Site/Browser capability | Component/E2E tests |
 | Manifest request fails | Current manifest state cannot be confirmed | Show the compact Work error state instead of treating the result as empty | Operators must be able to distinguish retrieval failure from confirmed absence | Component/E2E tests |
+| Operator opens an image attachment | Attachment has an image content type, or a known image extension when content type is absent | Open the shared image preview with close, copy, and download actions | The attachment must not be routed into the built-in Browser or leave the operator without an exit | Image preview component tests and Chat Work Manifest E2E |
 
 ## Actor-Visible Input
 
@@ -967,6 +974,8 @@ generic link icon or redundant `From Agent` origin label.
   edge of the Chat workspace while content spacing keeps messages and the
   composer clear of an open Work shelf.
 - Internal Library targets: existing Side Panel preview behavior.
+- Image attachments: the shared application-level image preview with explicit
+  close, copy, and download controls; `Escape` returns to the same Chat.
 - External websites: normalized URL text and website icon/fallback behavior from
   `CHAT.WEBSITE.LINK.ICON.001`, with safe link routing under
   `CHAT.SIDE.PANEL.001`.
@@ -1018,6 +1027,9 @@ to reconcile the projection.
 - Outputs require structured production evidence and persist across answer
   refreshes unless explicitly hidden/archived by a future governed flow.
 - Manifest References are not automatically attached to Project Context.
+- Image attachment inspection is an application overlay, not Browser
+  navigation. Closing it preserves the Chat route, Work shelf, and Side Panel
+  state.
 - V1 does not aggregate Browser sessions, crawl tool history, implement generic
   bookmarks, create Sites/documents, or replace Library/Issue work products.
 
@@ -1043,6 +1055,9 @@ Related code:
 - `server/src/routes/chats.ts`
 - `ui/src/pages/Chat.work-manifest.tsx`
 - `ui/src/pages/Chat.tsx`
+- `ui/src/context/ImagePreviewContext.tsx`
+- `ui/src/components/ImagePreviewDialog.tsx`
+- `ui/src/components/InspectableImage.tsx`
 
 Related tests:
 
@@ -1050,7 +1065,10 @@ Related tests:
 - `server/src/__tests__/chat-work-manifest.test.ts`
 - `server/src/__tests__/chat-routes.test.ts`
 - `ui/src/pages/Chat.work-manifest.test.tsx`
+- `ui/src/context/ImagePreviewContext.test.tsx`
+- `ui/src/lib/image-actions.test.ts`
 - `tests/e2e/chat-work-manifest.spec.ts`
+- `tests/e2e/chat-work-manifest-image-preview.spec.ts`
 
 Known gaps:
 
@@ -1077,6 +1095,9 @@ Product model:
   links preserve normal navigation behavior.
 - Chat Work manifest internal targets use the same typed Side Panel target model;
   the manifest is an index and does not create a second preview drawer.
+- Chat and Work manifest image attachments are intentionally not Side Panel
+  Browser targets. They use the shared image preview overlay so image inspection
+  has one consistent toolbar and exit path across Chat surfaces.
 - Side Panel targets are typed objects: issue, automation, Library file,
   Library directory, chat, browser tab, and explicit placeholders for target
   classes that need a link/search before loading a concrete object.
@@ -1227,6 +1248,9 @@ Invariants:
   application privileges beyond the embedded browser shell. Local non-control-
   plane web apps may be navigated, but Rudder board/API origins stay in the
   Rudder renderer and are rejected by the Browser profile.
+- Application-owned asset image URLs must not be promoted to Browser tabs merely
+  because they are opened from Work. The shared image preview owns those URLs
+  and closing it must preserve the existing Side Panel tabs and Browser guest.
 - Browser tabs must use the dedicated persistent Browser partition and its
   sandbox, protocol, popup, permission, and download policy. They must not share
   the Rudder UI/API session partition or gain Node/application privileges.

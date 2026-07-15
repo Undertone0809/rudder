@@ -77,6 +77,7 @@ import { organizationsApi } from "../api/orgs";
 import { projectsApi } from "../api/projects";
 import { AgentIcon } from "../components/AgentIconPicker";
 import { EmptyState } from "../components/EmptyState";
+import { InspectableImage } from "../components/InspectableImage";
 import { IssueDetailFind } from "../components/IssueDetailFind";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { MarkdownEditor, type InlineTokenClickEvent, type MarkdownEditorRef, type MentionOption } from "../components/MarkdownEditor";
@@ -6471,11 +6472,16 @@ export function OrganizationWorkspaceBrowser({
                   data-testid="org-workspaces-image-preview-scroll"
                   className="scrollbar-auto-hide flex h-full min-h-[420px] items-center justify-center overflow-auto bg-accent/10 p-4"
                 >
-                  <img
+                  <InspectableImage
                     data-testid="org-workspaces-image-preview"
                     src={selectedFileDetail.contentPath}
                     alt={selectedFilePath ?? "Workspace image preview"}
+                    name={selectedFilePath ?? "Workspace image preview"}
                     className="max-h-full max-w-full rounded-md object-contain shadow-sm"
+                    previewTestId="org-workspaces-image-preview-dialog"
+                    previewTitleFallback="Library image preview"
+                    triggerClassName="max-h-full"
+                    wrapperClassName="max-h-full"
                   />
                 </div>
               ) : selectedFileDetail?.previewKind === "pdf" && selectedFileDetail.contentPath ? (

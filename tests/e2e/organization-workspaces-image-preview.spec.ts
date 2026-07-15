@@ -98,6 +98,12 @@ test.describe("Organization workspaces image preview", () => {
   });
 
   test("renders image files inline in the workspace browser", async ({ page, request }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, "desktopShell", {
+        configurable: true,
+        value: { showImageInFolder: async () => undefined },
+      });
+    });
     const organizationRes = await request.post("/api/orgs", {
       data: {
         name: `Organization-Workspaces-Image-Preview-${Date.now()}`,
@@ -126,6 +132,29 @@ test.describe("Organization workspaces image preview", () => {
     );
     await expect(preview).toHaveJSProperty("naturalWidth", 1);
     await expect(preview).toHaveJSProperty("naturalHeight", 1);
+
+    await page.getByRole("button", { name: `Open image preview: ${imageFilePath}` }).click();
+    const dialog = page.getByTestId("org-workspaces-image-preview-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Close image preview" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Copy Image" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Download Image" })).toBeVisible();
+    const showInFolder = dialog.getByRole("button", { name: "Show in folder" });
+    await expect(showInFolder).toBeVisible();
+    await expect.poll(async () => (await dialog.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(168);
+    const [dialogBox, closeBox, folderBox] = await Promise.all([
+      dialog.boundingBox(),
+      dialog.getByRole("button", { name: "Close image preview" }).boundingBox(),
+      showInFolder.boundingBox(),
+    ]);
+    expect(dialogBox).not.toBeNull();
+    expect(closeBox).not.toBeNull();
+    expect(folderBox).not.toBeNull();
+    expect(dialogBox!.width).toBeGreaterThanOrEqual(168);
+    expect(folderBox!.x + folderBox!.width).toBeLessThanOrEqual(closeBox!.x);
+    await page.screenshot({ path: "/tmp/rudder-library-image-preview.png", fullPage: false });
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
   });
 
   test("renders PDF files inline in the workspace browser", async ({ page, request }) => {

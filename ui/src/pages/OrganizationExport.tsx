@@ -25,6 +25,7 @@ import { authApi } from "../api/auth";
 import { organizationsApi } from "../api/orgs";
 import { projectsApi } from "../api/projects";
 import { EmptyState } from "../components/EmptyState";
+import { InspectableImage } from "../components/InspectableImage";
 import { MarkdownBody } from "../components/MarkdownBody";
 import {
   FRONTMATTER_FIELD_LABELS,
@@ -543,7 +544,16 @@ function ExportPreviewPane({
           <MarkdownBody resolveImageSrc={resolveImageSrc}>{textContent ?? ""}</MarkdownBody>
         ) : imageSrc ? (
           <div className="flex min-h-[520px] items-center justify-center rounded-lg border border-border bg-accent/10 p-6">
-            <img src={imageSrc} alt={selectedFile} className="max-h-[480px] max-w-full object-contain" />
+            <InspectableImage
+              src={imageSrc}
+              alt={selectedFile}
+              name={selectedFile}
+              className="max-h-[480px] max-w-full object-contain"
+              previewTestId="organization-export-image-preview-dialog"
+              previewTitleFallback="Export image preview"
+              triggerClassName="max-h-[480px]"
+              wrapperClassName="max-h-[480px]"
+            />
           </div>
         ) : textContent !== null ? (
           <pre className="overflow-x-auto whitespace-pre-wrap break-words border-0 bg-transparent p-0 font-mono text-sm text-foreground">

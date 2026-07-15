@@ -1,6 +1,7 @@
-import { ImagePreviewDialog, type ImagePreviewState } from "@/components/ImagePreviewDialog";
 import { useI18n } from "@/context/I18nContext";
+import { useImagePreview } from "@/context/ImagePreviewContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
+import { getImagePreviewElementDetails, getImagePreviewName } from "@/lib/image-preview";
 import { useNavigate } from "@/lib/router";
 import {
   CodeMirrorEditor,
@@ -873,19 +874,6 @@ function isSameMentionRange(a: MentionState | null, b: MentionState | null) {
   );
 }
 
-function getPreviewImageName(image: HTMLImageElement) {
-  const alt = image.getAttribute("alt")?.trim();
-  if (alt) return alt;
-  try {
-    const url = new URL(image.currentSrc || image.src, window.location.href);
-    const filename = url.pathname.split("/").pop()?.trim();
-    if (filename) return decodeURIComponent(filename);
-  } catch {
-    // Ignore malformed URLs and fall back to a generic label.
-  }
-  return "Image preview";
-}
-
 function getMentionPanelPosition(anchor: HTMLElement) {
   const rect = anchor.getBoundingClientRect();
   return getMentionPanelPositionForViewport(
@@ -1169,7 +1157,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
   const latestValueRef = useRef(value);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
-  const [imagePreview, setImagePreview] = useState<ImagePreviewState | null>(null);
+  const { openImagePreview } = useImagePreview();
   const dragDepthRef = useRef(0);
 
   // Stable ref for imageUploadHandler so plugins don't recreate on every render
@@ -2174,14 +2162,11 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
         if (!(image instanceof HTMLImageElement) || !image.src) return;
         event.preventDefault();
         event.stopPropagation();
-        setImagePreview({
-          alt: image.alt,
-          name: getPreviewImageName(image),
-          src: image.currentSrc || image.src,
-          naturalSize:
-            image.naturalWidth > 0 && image.naturalHeight > 0
-              ? { width: image.naturalWidth, height: image.naturalHeight }
-              : null,
+        openImagePreview({
+          ...getImagePreviewElementDetails(image),
+          name: getImagePreviewName(image.getAttribute("alt"), image.currentSrc || image.src),
+          testId: "markdown-editor-image-preview-dialog",
+          titleFallback: "Image preview",
         });
       }}
       onDragOver={(evt) => {
@@ -2402,14 +2387,6 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
         <p className="px-3 pb-2 text-xs text-destructive">{uploadError}</p>
       )}
 
-      <ImagePreviewDialog
-        preview={imagePreview}
-        testId="markdown-editor-image-preview-dialog"
-        titleFallback="Image preview"
-        onOpenChange={(open) => {
-          if (!open) setImagePreview(null);
-        }}
-      />
     </div>
   );
 });

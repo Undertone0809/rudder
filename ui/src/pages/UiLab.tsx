@@ -110,7 +110,6 @@ import {
   AssistantDraftItem,
   ChatAssistantAttributionRow,
   ChatAttachmentList,
-  ChatAttachmentPreviewDialog,
   ChatEmptyStatePromptOptions,
   ChatFileAttachmentChip,
   ChatImageAttachmentTile,
@@ -122,7 +121,6 @@ import {
   OptimisticUserDraftItem,
   PendingAttachmentPreview,
   StreamTranscriptItem,
-  type AttachmentPreviewState,
 } from "./Chat.parts";
 import { DesignGuide } from "./DesignGuide";
 import { RunTranscriptUxLab } from "./RunTranscriptUxLab";
@@ -325,7 +323,6 @@ export const uiLabCoverage: CoverageEntry[] = [
   { componentId: "ChatFileAttachmentChip", category: "workflow", sourcePath: "ui/src/pages/Chat.attachments.tsx", status: "fixture-backed", exampleKind: "fixture" },
   { componentId: "PendingAttachmentPreview", category: "workflow", sourcePath: "ui/src/pages/Chat.attachments.tsx", status: "fixture-backed", exampleKind: "fixture" },
   { componentId: "ChatAttachmentList", category: "workflow", sourcePath: "ui/src/pages/Chat.attachments.tsx", status: "fixture-backed", exampleKind: "fixture" },
-  { componentId: "ChatAttachmentPreviewDialog", category: "workflow", sourcePath: "ui/src/pages/Chat.attachments.tsx", status: "fixture-backed", exampleKind: "fixture" },
   { componentId: "ChatAssistantAttributionRow", category: "workflow", sourcePath: "ui/src/pages/Chat.messages.tsx", status: "fixture-backed", exampleKind: "fixture" },
   { componentId: "ProposalCard", category: "workflow", sourcePath: "ui/src/pages/Chat.messages.tsx", status: "fixture-backed", exampleKind: "fixture" },
   { componentId: "ChatLongMessageBody", category: "workflow", sourcePath: "ui/src/pages/Chat.messages.tsx", status: "fixture-backed", exampleKind: "fixture" },
@@ -1201,7 +1198,6 @@ function CommonComponentsSection() {
   const [checkedFiles, setCheckedFiles] = useState(() => new Set(["ui/src/components/StatusBadge.tsx", "ui/src/pages/UiLab.tsx"]));
   const [selectedEntity, setSelectedEntity] = useState("issue-ui-lab");
   const [reportsTo, setReportsTo] = useState<string | null>("agent-cto");
-  const [chatPreview, setChatPreview] = useState<AttachmentPreviewState | null>(null);
   const [chatDecisionNote, setChatDecisionNote] = useState("");
   const pendingChatFile = useMemo(() => {
     if (typeof File === "undefined") return null;
@@ -1500,7 +1496,6 @@ function CommonComponentsSection() {
                 onEditUserMessage={() => {}}
                 onContinueInterruptedMessage={() => {}}
                 onRetryFailedMessage={() => {}}
-                onOpenImage={setChatPreview}
                 onOpenFile={() => {}}
                 skillReferences={[]}
               />
@@ -1521,7 +1516,6 @@ function CommonComponentsSection() {
                 onEditUserMessage={() => {}}
                 onContinueInterruptedMessage={() => {}}
                 onRetryFailedMessage={() => {}}
-                onOpenImage={setChatPreview}
                 onOpenFile={() => {}}
                 skillReferences={[]}
               />
@@ -1542,7 +1536,6 @@ function CommonComponentsSection() {
                 onEditUserMessage={() => {}}
                 onContinueInterruptedMessage={() => {}}
                 onRetryFailedMessage={() => {}}
-                onOpenImage={setChatPreview}
                 onOpenFile={() => {}}
                 skillReferences={[]}
               />
@@ -1648,7 +1641,6 @@ function CommonComponentsSection() {
                 <div data-testid="chat-pending-attachments" className="mt-2.5 flex flex-wrap gap-2">
                   <PendingAttachmentPreview
                     file={pendingChatFile}
-                    onOpenImage={setChatPreview}
                     onRemove={() => {}}
                   />
                 </div>
@@ -1683,7 +1675,6 @@ function CommonComponentsSection() {
               <ChatImageAttachmentTile
                 src={fixtureChatImageSrc}
                 name="chat-preview.svg"
-                onOpen={() => setChatPreview({ src: fixtureChatImageSrc, name: "chat-preview.svg" })}
               />
               <ChatFileAttachmentChip
                 name="DESIGN.md"
@@ -1693,7 +1684,6 @@ function CommonComponentsSection() {
               {pendingChatFile ? (
                 <PendingAttachmentPreview
                   file={pendingChatFile}
-                  onOpenImage={setChatPreview}
                   onRemove={() => {}}
                 />
               ) : null}
@@ -1703,7 +1693,6 @@ function CommonComponentsSection() {
               <p className="mb-2 text-xs font-medium text-muted-foreground">Attachment list</p>
               <ChatAttachmentList
                 attachments={fixtureChatAttachments}
-                onOpenImage={setChatPreview}
                 onOpenFile={() => {}}
               />
             </div>
@@ -1729,15 +1718,8 @@ function CommonComponentsSection() {
               pendingFiles={pendingChatFile ? [pendingChatFile] : []}
               onAddAttachment={() => {}}
               onRemovePendingFile={() => {}}
-              onOpenAttachmentPreview={setChatPreview}
               onPasteAttachment={() => {}}
               onSubmit={() => {}}
-            />
-            <ChatAttachmentPreviewDialog
-              preview={chatPreview}
-              onOpenChange={(open) => {
-                if (!open) setChatPreview(null);
-              }}
             />
           </div>
         </LabExample>

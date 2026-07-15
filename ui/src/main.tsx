@@ -14,6 +14,7 @@ import { ChatGenerationProvider } from "./context/ChatGenerationContext";
 import { DesktopUpdateProgressProvider } from "./context/DesktopUpdateProgressContext";
 import { DialogProvider } from "./context/DialogContext";
 import { I18nProvider } from "./context/I18nContext";
+import { ImagePreviewProvider } from "./context/ImagePreviewContext";
 import { LiveUpdatesProvider } from "./context/LiveUpdatesProvider";
 import { OrganizationProvider } from "./context/OrganizationContext";
 import { PanelProvider } from "./context/PanelContext";
@@ -131,9 +132,11 @@ createRoot(document.getElementById("root")!).render(
                             <PanelProvider>
                               <PluginLauncherProvider>
                                 <DialogProvider>
-                                  <ChatGenerationProvider>
-                                    <AppRoot />
-                                  </ChatGenerationProvider>
+                                  <ImagePreviewProvider>
+                                    <ChatGenerationProvider>
+                                      <AppRoot />
+                                    </ChatGenerationProvider>
+                                  </ImagePreviewProvider>
                                 </DialogProvider>
                               </PluginLauncherProvider>
                             </PanelProvider>

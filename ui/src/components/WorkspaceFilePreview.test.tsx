@@ -6,7 +6,9 @@ import type {
 } from "@rudderhq/shared";
 import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ImagePreviewProvider } from "../context/ImagePreviewContext";
 import { WorkspaceFilePreview } from "./WorkspaceFilePreview";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -86,12 +88,16 @@ async function renderPreview(
   });
   await act(async () => {
     root.render(
-      <WorkspaceFilePreview
-        file={file}
-        organizationId="org-1"
-        mode={mode}
-        testIdPrefix="test-file"
-      />,
+      <MemoryRouter>
+        <ImagePreviewProvider>
+          <WorkspaceFilePreview
+            file={file}
+            organizationId="org-1"
+            mode={mode}
+            testIdPrefix="test-file"
+          />
+        </ImagePreviewProvider>
+      </MemoryRouter>,
     );
   });
   return container;
@@ -336,6 +342,11 @@ describe("WorkspaceFilePreview", () => {
     }));
     expect(imageContainer.querySelector("[data-testid='test-file-image-preview']")?.getAttribute("src"))
       .toBe("/api/image");
+    await act(async () => {
+      imageContainer.querySelector<HTMLButtonElement>(".rudder-inspectable-image-trigger")?.click();
+    });
+    expect(document.body.querySelector("[data-testid='test-file-image-preview-dialog']"))
+      .not.toBeNull();
 
     const pdfContainer = await renderPreview(workspaceFile({
       filePath: "reports/report.pdf",

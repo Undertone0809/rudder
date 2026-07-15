@@ -221,7 +221,6 @@ function renderChatMessageItem(messageToRender: ChatMessage, options?: { canRefr
         onRetryFailedMessage={vi.fn()}
         canRefreshAssistantMessage={options?.canRefreshAssistantMessage ?? false}
         onRefreshAssistantMessage={vi.fn()}
-        onOpenImage={vi.fn()}
         onOpenFile={vi.fn()}
         skillReferences={[]}
       />

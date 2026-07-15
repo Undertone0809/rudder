@@ -1,10 +1,12 @@
 import { WebsiteLinkIcon } from "@/components/MarkdownBody";
+import { isPreviewableImage } from "@/lib/image-actions";
 import { cn } from "@/lib/utils";
 import { isWorkspaceHtmlFilePath } from "@/lib/workspace-html-preview";
 import type { ChatWorkManifestItem, ChatWorkManifestResponse } from "@rudderhq/shared";
 import {
   BriefcaseBusiness,
   ChevronDown,
+  FileImage,
   FileOutput,
   FileText,
   Globe2,
@@ -76,6 +78,9 @@ function ManifestItemIcon({ item }: { item: ChatWorkManifestItem }) {
 
   if (isWorkspaceHtmlFilePath(filePath) || contentType === "text/html") {
     return <Globe2 {...iconProps} data-file-icon="website" />;
+  }
+  if (item.targetType === "attachment" && isPreviewableImage(contentType, filePath)) {
+    return <FileImage {...iconProps} data-file-icon="image" />;
   }
   if (hasFileExtension || item.targetType !== "attachment") {
     return <FileText {...iconProps} data-file-icon="document" />;

@@ -4,6 +4,7 @@ import {
   isWorkspaceHtmlContentType,
   isWorkspaceHtmlFilePath,
 } from "../lib/workspace-html-preview";
+import { InspectableImage } from "./InspectableImage";
 import { MarkdownBody } from "./MarkdownBody";
 import { WorkspaceCodeEditor } from "./WorkspaceCodeEditor";
 import { WorkspaceHtmlPreview } from "./WorkspaceHtmlPreview";
@@ -182,11 +183,16 @@ export function WorkspaceFilePreview({
   if (file.previewKind === "image" && file.contentPath) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4" data-testid={`${testIdPrefix}-image-preview-frame`}>
-        <img
+        <InspectableImage
           data-testid={`${testIdPrefix}-image-preview`}
           src={file.contentPath}
           alt={file.filePath}
+          name={file.filePath || "Library image preview"}
           className="max-h-full max-w-full object-contain"
+          previewTestId={`${testIdPrefix}-image-preview-dialog`}
+          previewTitleFallback="Library image preview"
+          triggerClassName="max-h-full"
+          wrapperClassName="max-h-full"
         />
       </div>
     );

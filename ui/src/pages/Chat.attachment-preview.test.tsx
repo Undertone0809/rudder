@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
+import { ImagePreviewProvider } from "@/context/ImagePreviewContext";
 import { SidePanelProvider, useSidePanel } from "@/context/SidePanelContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { readChatAskUserDraft } from "@/lib/chat-draft-storage";
@@ -304,6 +305,7 @@ vi.mock("@/context/BreadcrumbContext", () => ({
 }));
 
 vi.mock("@/context/ToastContext", () => ({
+  useOptionalToast: () => null,
   useToast: () => ({ pushToast: mockState.pushToast }),
 }));
 
@@ -975,16 +977,18 @@ function renderChat({ expanded = false }: { expanded?: boolean } = {}) {
   const render = (targetRoot: Root) => {
     targetRoot.render(
       <ThemeProvider>
-        <SidePanelProvider>
-          <SidePanelTestContextBinder />
-          <Chat />
-          <ChatSidePanel
-            selectedOrganizationId="org-1"
-            desktopWidth={420}
-            expanded={expanded}
-            onToggleExpanded={toggleSidePanelExpanded}
-          />
-        </SidePanelProvider>
+        <ImagePreviewProvider>
+          <SidePanelProvider>
+            <SidePanelTestContextBinder />
+            <Chat />
+            <ChatSidePanel
+              selectedOrganizationId="org-1"
+              desktopWidth={420}
+              expanded={expanded}
+              onToggleExpanded={toggleSidePanelExpanded}
+            />
+          </SidePanelProvider>
+        </ImagePreviewProvider>
       </ThemeProvider>,
     );
   };

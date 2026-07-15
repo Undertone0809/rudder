@@ -8,6 +8,8 @@ contract_ids:
 related_code:
   - packages/db/src/schema/issues.ts
   - packages/shared/src/validators/issue.ts
+  - ui/src/components/InspectableImage.tsx
+  - ui/src/context/ImagePreviewContext.tsx
   - ui/src/components/InlineEditor.tsx
   - ui/src/components/NewIssueDialog.tsx
   - ui/src/lib/new-issue-dialog.ts
@@ -20,6 +22,7 @@ related_tests:
   - ui/src/pages/IssueDetail.test.tsx
   - tests/e2e/codex-model-order.spec.ts
   - tests/e2e/issue-detail-toolbar-actions.spec.ts
+  - tests/e2e/issue-description-image-preview.spec.ts
   - tests/e2e/issue-board-display-properties.spec.ts
   - tests/e2e/new-issue-project-context.spec.ts
 edit_policy: user_confirmed_only
@@ -44,6 +47,10 @@ Behavior:
 - Issue detail description reading and editing are the same content surface:
   headings, lists, paragraphs, links, images, and multiline spacing must keep
   the same readable rhythm when the operator enters edit mode.
+- Issue description and issue-level attachment images open in the shared
+  application image-preview overlay with explicit close, copy, and download
+  controls plus `Escape` dismissal. They do not open as Built-in Browser
+  targets. Closing the overlay preserves the Issue Detail route and state.
 - New Issue exposes per-issue `Agent options` for supported assignee runtimes:
   Codex, Claude, and OpenCode can override the selected model and supported
   thinking-effort field, while Claude may also enable its Chrome option.
@@ -69,6 +76,9 @@ Invariant:
 - Issue description edit mode must not introduce a different Markdown box model
   from display mode. Any editor-specific implementation must opt into the same
   issue-description typography contract used by the read state.
+- Image evidence on Issue Detail must retain an application-owned exit path
+  while the image is loading or unavailable; image size and load failure must
+  not clip the preview controls.
 - Per-issue Agent options belong to the issue's current agent assignee. The
   issue surface must not present them as organization defaults or silently
   write them back to the agent. Execution precedence and reassignment handling
@@ -95,6 +105,8 @@ Related code:
 
 - `packages/db/src/schema/issues.ts`
 - `packages/shared/src/validators/issue.ts`
+- `ui/src/components/InspectableImage.tsx`
+- `ui/src/context/ImagePreviewContext.tsx`
 - `ui/src/components/InlineEditor.tsx`
 - `ui/src/components/NewIssueDialog.tsx`
 - `ui/src/lib/new-issue-dialog.ts`
@@ -109,5 +121,6 @@ Related tests:
 - `ui/src/pages/IssueDetail.test.tsx`
 - `tests/e2e/codex-model-order.spec.ts`
 - `tests/e2e/issue-detail-toolbar-actions.spec.ts`
+- `tests/e2e/issue-description-image-preview.spec.ts`
 - `tests/e2e/issue-board-display-properties.spec.ts`
 - `tests/e2e/new-issue-project-context.spec.ts`

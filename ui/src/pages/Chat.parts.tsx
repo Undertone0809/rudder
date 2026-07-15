@@ -31,20 +31,10 @@ import {
   Loader2
 } from "lucide-react";
 import { useCallback, useEffect, useRef, type CSSProperties } from "react";
-export { ChatAttachmentList, ChatAttachmentPreviewDialog, ChatFileAttachmentChip, ChatImageAttachmentTile, PendingAttachmentPreview } from "./Chat.attachments";
+export { ChatAttachmentList, ChatFileAttachmentChip, ChatImageAttachmentTile, PendingAttachmentPreview } from "./Chat.attachments";
 export { AskUserAnswerBubble, AskUserHistoryRecord, AskUserPanel, AssistantDraftItem, ChatAssistantAttributionRow, chatIssueApprovalPayloadWithProposalOverride, ChatLongMessageBody, chatMessageHoverBarClass, ChatMessageItem, ChatMessagesLoadingState, ChatSystemMessageBody, issueCreatedSystemMessageParts, LazyStreamTranscriptItem, OptimisticUserDraftItem, ProposalCard, readStructuredPayloadString, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, StreamTranscriptItem } from "./Chat.messages";
 
 export type ApprovalAction = "approve" | "reject" | "requestRevision";
-export type AttachmentPreviewState = {
-  src: string;
-  name: string;
-};
-
-export type ChatImageContextMenuPosition = {
-  left: number;
-  top: number;
-};
-
 export const EMPTY_STATE_PROMPT_GROUPS = [
   {
     id: "create",
@@ -628,14 +618,6 @@ export function pendingAttachmentKey(file: File) {
 
 export function attachmentDisplayName(input: { originalFilename?: string | null; assetId?: string; name?: string }) {
   return input.originalFilename ?? input.name ?? input.assetId ?? "attachment";
-}
-
-export function clampChatImageContextMenuPosition(left: number, top: number): ChatImageContextMenuPosition {
-  if (typeof window === "undefined") return { left, top };
-  return {
-    left: Math.min(left, Math.max(8, window.innerWidth - 190)),
-    top: Math.min(top, Math.max(8, window.innerHeight - 96)),
-  };
 }
 
 export function shouldHandlePlainChatLinkClick(event: Parameters<MarkdownLinkClickHandler>[0]["event"]) {

@@ -1,5 +1,5 @@
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { useToast } from "@/context/ToastContext";
+import { useOptionalToast } from "@/context/ToastContext";
 import {
   canShowImageInFolder,
   copyImage,
@@ -8,6 +8,7 @@ import {
 } from "@/lib/image-actions";
 import {
   getContainedImagePreviewSize,
+  getImagePreviewMediaSize,
   getImagePreviewViewportBounds,
   isValidImageNaturalSize,
   type ImageNaturalSize,
@@ -29,14 +30,6 @@ function getViewportSize() {
   return { width: window.innerWidth, height: window.innerHeight };
 }
 
-function useMaybeToast() {
-  try {
-    return useToast();
-  } catch {
-    return null;
-  }
-}
-
 export function ImagePreviewDialog({
   preview,
   onOpenChange,
@@ -48,7 +41,7 @@ export function ImagePreviewDialog({
   testId: string;
   titleFallback: string;
 }) {
-  const toast = useMaybeToast();
+  const toast = useOptionalToast();
   const [naturalSize, setNaturalSize] = useState<ImageNaturalSize | null>(preview?.naturalSize ?? null);
   const [viewportSize, setViewportSize] = useState(() => getViewportSize());
   const canShowInFolder = canShowImageInFolder();
@@ -99,6 +92,15 @@ export function ImagePreviewDialog({
     () => getImagePreviewViewportBounds(viewportSize.width, viewportSize.height),
     [viewportSize.height, viewportSize.width],
   );
+  const mediaSize = useMemo(
+    () => getImagePreviewMediaSize(
+      containedSize ?? { width: 0, height: 0 },
+      viewportSize.width,
+      viewportSize.height,
+      canShowInFolder ? 3 : 2,
+    ),
+    [canShowInFolder, containedSize, viewportSize.height, viewportSize.width],
+  );
   const runImageAction = async (
     title: string,
     action: () => Promise<void> | void,
@@ -122,11 +124,12 @@ export function ImagePreviewDialog({
   return (
     <Dialog open={preview !== null} onOpenChange={onOpenChange}>
       <DialogContent
+        aria-describedby={undefined}
         showCloseButton={false}
         className="rudder-markdown-editor-image-preview-panel top-[50%] w-fit translate-y-[-50%] border-0 bg-transparent p-0 shadow-none"
         style={{
           maxWidth: `${viewportBounds.maxWidth}px`,
-          width: containedSize ? `${containedSize.width}px` : undefined,
+          width: `${mediaSize.width}px`,
         }}
       >
         <DialogTitle className="sr-only">{preview?.name ?? titleFallback}</DialogTitle>
@@ -134,11 +137,7 @@ export function ImagePreviewDialog({
           <div
             data-testid={testId}
             className="rudder-markdown-editor-image-preview-media relative flex w-fit max-w-full items-center justify-center overflow-hidden"
-            style={
-              containedSize
-                ? { width: `${containedSize.width}px`, height: `${containedSize.height}px` }
-                : { maxWidth: `${viewportBounds.maxWidth}px`, maxHeight: `${viewportBounds.maxHeight}px` }
-            }
+            style={{ width: `${mediaSize.width}px`, height: `${mediaSize.height}px` }}
           >
             <DialogClose className="absolute right-2 top-2 z-10 flex size-8 items-center justify-center rounded-sm bg-black/55 text-white shadow-[0_6px_18px_rgb(0_0_0/0.28)] transition-colors hover:bg-black/70 focus:outline-none focus:ring-2 focus:ring-white/80">
               <X className="size-4" aria-hidden="true" />

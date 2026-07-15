@@ -104,7 +104,7 @@ describe("ChatWorkManifest", () => {
     expect(container.querySelector("[data-website-icon]")).not.toBeNull();
   });
 
-  it("matches inline file links by using a website icon for HTML and a document icon for other files", () => {
+  it("uses typed website, image, document, and attachment icons", () => {
     const fileManifest: ChatWorkManifestResponse = {
       ...manifest,
       totalCount: 7,
@@ -139,7 +139,7 @@ describe("ChatWorkManifest", () => {
       ?.querySelector("[data-file-icon]")
       ?.getAttribute("data-file-icon");
     expect(iconFor("index.html")).toBe("website");
-    expect(iconFor("hero.png")).toBe("document");
+    expect(iconFor("hero.png")).toBe("image");
     expect(iconFor("results.csv")).toBe("document");
     expect(iconFor("styles.css")).toBe("document");
     expect(iconFor("README.md")).toBe("document");

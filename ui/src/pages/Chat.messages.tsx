@@ -73,7 +73,7 @@ import {
   Sparkles
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
-import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, AttachmentPreviewState, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, statusChipClassName } from "./Chat.parts";
+import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, statusChipClassName } from "./Chat.parts";
 
 export function ChatAssistantAttributionRow({
   replyingAgentId,
@@ -1673,7 +1673,6 @@ export function AskUserPanel({
   pendingFiles,
   onAddAttachment,
   onRemovePendingFile,
-  onOpenAttachmentPreview,
   onPasteAttachment,
   onSubmit,
 }: {
@@ -1683,7 +1682,6 @@ export function AskUserPanel({
   pendingFiles: File[];
   onAddAttachment: () => void;
   onRemovePendingFile: (fileKey: string) => void;
-  onOpenAttachmentPreview: (preview: AttachmentPreviewState) => void;
   onPasteAttachment: (event: ReactClipboardEvent<HTMLDivElement>) => void;
   onSubmit: (body: string) => void;
 }) {
@@ -1981,7 +1979,6 @@ export function AskUserPanel({
                         <div key={fileKey} data-testid="chat-ask-user-pending-attachment" className="max-w-full">
                           <PendingAttachmentPreview
                             file={file}
-                            onOpenImage={onOpenAttachmentPreview}
                             onRemove={() => onRemovePendingFile(fileKey)}
                           />
                         </div>
@@ -2003,7 +2000,6 @@ export function AskUserPanel({
               <div key={fileKey} data-testid="chat-ask-user-pending-attachment" className="max-w-full">
                 <PendingAttachmentPreview
                   file={file}
-                  onOpenImage={onOpenAttachmentPreview}
                   onRemove={() => onRemovePendingFile(fileKey)}
                 />
               </div>
@@ -2088,7 +2084,6 @@ export function ChatMessageItem({
   onRetryFailedMessage,
   canRefreshAssistantMessage = false,
   onRefreshAssistantMessage,
-  onOpenImage,
   onOpenFile,
   onMarkdownLinkClick,
   turnBranchControls,
@@ -2121,7 +2116,6 @@ export function ChatMessageItem({
   onRetryFailedMessage?: (message: ChatMessage) => void;
   canRefreshAssistantMessage?: boolean;
   onRefreshAssistantMessage?: (message: ChatMessage) => void;
-  onOpenImage: (preview: AttachmentPreviewState) => void;
   onOpenFile: (targetPath: string) => void;
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
   skillReferences: MarkdownSkillReferencePreview[];
@@ -2281,7 +2275,6 @@ export function ChatMessageItem({
           <ChatRichReferences message={message} />
           <ChatAttachmentList
             attachments={message.attachments}
-            onOpenImage={onOpenImage}
             onOpenFile={onOpenFile}
           />
           {!isEmptyStreamingAssistant ? (
@@ -2369,7 +2362,6 @@ export function ChatMessageItem({
               <div className="mt-2">
                 <ChatAttachmentList
                   attachments={message.attachments}
-                  onOpenImage={onOpenImage}
                   onOpenFile={onOpenFile}
                 />
               </div>
@@ -2409,7 +2401,6 @@ export function ChatMessageItem({
             />
             <ChatAttachmentList
               attachments={message.attachments}
-              onOpenImage={onOpenImage}
               onOpenFile={onOpenFile}
             />
           </div>
@@ -2417,7 +2408,6 @@ export function ChatMessageItem({
         {askUserAnswer && message.attachments.length > 0 ? (
           <ChatAttachmentList
             attachments={message.attachments}
-            onOpenImage={onOpenImage}
             onOpenFile={onOpenFile}
           />
         ) : null}

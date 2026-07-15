@@ -25,6 +25,9 @@ related_code:
   - server/src/routes/orgs.ts
   - server/src/services/agent-run-context.ts
   - ui/src/pages/OrganizationResources.tsx
+  - ui/src/components/ImagePreviewDialog.tsx
+  - ui/src/components/InspectableImage.tsx
+  - ui/src/context/ImagePreviewContext.tsx
   - ui/src/components/WorkspaceFilePreview.tsx
   - ui/src/components/WorkspacePdfPreview.tsx
   - ui/src/pages/OrganizationWorkspaces.tsx
@@ -42,6 +45,8 @@ related_tests:
   - server/src/__tests__/workspace-backups.test.ts
   - server/src/__tests__/workspace-backups-routes.test.ts
   - ui/src/pages/OrganizationWorkspaceFilesSidebar.test.tsx
+  - ui/src/components/ImagePreviewDialog.test.tsx
+  - ui/src/context/ImagePreviewContext.test.tsx
   - ui/src/components/WorkspaceFilePreview.test.tsx
   - ui/src/components/WorkspacePdfPreview.test.tsx
   - ui/src/pages/Chat.attachment-preview.test.tsx
@@ -136,6 +141,11 @@ Product model:
   breadcrumb exposes the complete Library-relative path on hover, and the
   `Open` menu includes `Open in Library` so the operator can move from adjacent
   inspection to the same file in the full Library work surface.
+- Image files shown in either the full Library work surface or a Messenger
+  Library preview open through the shared application image overlay. The
+  overlay provides explicit close, copy, and download actions, keeps the
+  underlying Library route and selected file intact, and adds the Desktop-only
+  reveal action when that capability exists.
 - Protected roots such as agent instruction, skills, and managed directories
   are excluded from normal mentionable Library surfaces unless an explicit
   management flow owns them.
@@ -157,6 +167,8 @@ Flow:
    than through the server file API.
 8. From a Messenger Library preview, the operator can open the same validated
    file path in the full Library route without changing its organization scope.
+9. From either Library surface, selecting an image opens the shared image
+   overlay without replacing the current Library route or Side Panel target.
 
 Invariants:
 
@@ -178,6 +190,9 @@ Invariants:
 - `Open in Library` resolves only the current organization-scoped
   Library-relative file path; it must not expose or navigate to an absolute
   filesystem root.
+- Inspectable Library images must not be routed into a Browser target or a new
+  window. Loading, broken, and very small images must retain a non-overlapping
+  close control alongside every available image action.
 - Desktop bridge handlers must require the renderer-provided root to resolve
   inside the configured organization workspace home, then resolve both the root
   and file through filesystem real paths before opening either the file or its
@@ -205,6 +220,9 @@ Evidence:
 - Messenger Side Panel component and E2E coverage prove PDF files render inline,
   long breadcrumbs reveal the complete Library path on hover, and `Open in
   Library` opens the selected file in the full Library work surface.
+- Shared image preview component tests cover Web and Desktop control-safe
+  sizing, and Organization Workspaces E2E proves Library image inspection opens
+  and exits through the application overlay.
 
 ## WORKSPACE.PROJECT.001
 
