@@ -223,6 +223,35 @@ describe("chatWorkManifestService", () => {
     expect(manifest.references).toHaveLength(0);
   });
 
+  it("includes visible Rudder entity links in references", async () => {
+    const { orgId, conversationId } = await seedBase("References");
+    await db.insert(chatMessages).values({
+      orgId,
+      conversationId,
+      role: "user",
+      body: [
+        "[Issue](issue://issue-1?r=REF-1)",
+        "[Automation](automation://automation-1?t=Daily%20report)",
+        "[Chat](chat://chat-1?messageId=message-1)",
+      ].join(" "),
+    });
+
+    await svc.reconcileConversation(conversationId);
+    const manifest = await svc.getConversationManifest(conversationId);
+
+    expect(manifest.references.map((item) => item.targetType)).toEqual([
+      "issue",
+      "automation",
+      "chat_conversation",
+    ]);
+    expect(manifest.references.map((item) => item.title)).toEqual(["Issue", "Automation", "Chat"]);
+    expect(manifest.references.map((item) => item.metadata)).toEqual([
+      { issueId: "issue-1", ref: "REF-1", commentId: null },
+      { automationId: "automation-1" },
+      { conversationId: "chat-1", messageId: "message-1" },
+    ]);
+  });
+
   it("keeps project resources in the project roll-up and enforces organization boundaries", async () => {
     const first = await seedBase("Project");
     const second = await seedBase("Other");

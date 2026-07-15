@@ -49,6 +49,23 @@ function item(id: string, category: "output" | "source" | "reference", title: st
   };
 }
 
+function referenceItem(
+  id: string,
+  targetType: "issue" | "automation" | "chat_conversation",
+  title: string,
+): ChatWorkManifestItem {
+  return {
+    ...item(id, "reference", title),
+    targetType,
+    url: null,
+    metadata: targetType === "issue"
+      ? { issueId: id }
+      : targetType === "automation"
+        ? { automationId: id }
+        : { conversationId: id },
+  };
+}
+
 const manifest: ChatWorkManifestResponse = {
   conversationId: "chat-1",
   totalCount: 6,
@@ -94,6 +111,42 @@ describe("ChatWorkManifest", () => {
     expect(text).not.toContain("From Agent");
     expect(text).toContain("https://ref-1.example/");
     expect(container.querySelector("[data-website-icon]")).not.toBeNull();
+  });
+
+  it("uses typed icons for Rudder references", () => {
+    const referenceManifest: ChatWorkManifestResponse = {
+      ...manifest,
+      totalCount: 3,
+      outputs: [],
+      sources: [],
+      references: [
+        referenceItem("issue-1", "issue", "ZST-1"),
+        referenceItem("automation-1", "automation", "Daily report"),
+        referenceItem("chat-2", "chat_conversation", "Planning chat"),
+      ],
+    };
+    const container = render(
+      <ChatWorkManifest
+        manifest={referenceManifest}
+        loading={false}
+        error={null}
+        sidePanelOpen={false}
+        {...wideProps}
+        {...handlers}
+      />,
+    );
+
+    const references = container.querySelector("section[aria-label='References']");
+    const expandButton = Array.from(references?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+      .find((button) => button.textContent?.includes("View all 3"));
+    act(() => expandButton?.click());
+    const iconFor = (title: string) => Array.from(references?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+      .find((button) => button.title === title)
+      ?.querySelector("[data-file-icon]")
+      ?.getAttribute("data-file-icon");
+    expect(iconFor("ZST-1")).toBe("issue");
+    expect(iconFor("Daily report")).toBe("automation");
+    expect(iconFor("Planning chat")).toBe("chat");
   });
 
   it("does not render while loading or when thread work is empty", () => {

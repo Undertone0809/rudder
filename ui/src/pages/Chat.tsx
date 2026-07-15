@@ -1252,6 +1252,39 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     revealChatMessageElement(target);
   }, []); const openWorkManifestItem = useCallback((item: ChatWorkManifestItem) => {
     const metadata = item.metadata ?? {};
+    if (item.targetType === "issue" || item.targetType === "issue_comment") {
+      const issueId = typeof metadata.issueId === "string" ? metadata.issueId : null;
+      if (!issueId) return;
+      openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), {
+        kind: "issue",
+        issueId,
+        ref: typeof metadata.ref === "string" ? metadata.ref : null,
+        commentId: typeof metadata.commentId === "string" ? metadata.commentId : null,
+        label: item.title,
+      });
+      return;
+    }
+    if (item.targetType === "automation") {
+      const automationId = typeof metadata.automationId === "string" ? metadata.automationId : null;
+      if (!automationId) return;
+      openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), {
+        kind: "automation",
+        automationId,
+        label: item.title,
+      });
+      return;
+    }
+    if (item.targetType === "chat_conversation") {
+      const targetConversationId = typeof metadata.conversationId === "string" ? metadata.conversationId : null;
+      if (!targetConversationId) return;
+      openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), {
+        kind: "chat",
+        conversationId: targetConversationId,
+        messageId: typeof metadata.messageId === "string" ? metadata.messageId : null,
+        label: item.title,
+      });
+      return;
+    }
     if (item.targetType === "library_entry") {
       const entryId = typeof metadata.entryId === "string" ? metadata.entryId : null;
       if (!entryId) return;

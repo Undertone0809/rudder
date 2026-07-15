@@ -1,4 +1,7 @@
 import {
+  parseAutomationMentionHref,
+  parseChatMentionHref,
+  parseIssueMentionHref,
   parseLibraryEntryMentionHref,
   parseLibraryFileMentionHref,
 } from "./project-mentions.js";
@@ -6,7 +9,7 @@ import {
 export type ChatWorkManifestCategory = "output" | "source" | "reference";
 
 export interface ExtractedChatWorkTarget {
-  targetType: "external_url" | "library_entry" | "library_file";
+  targetType: "automation" | "chat_conversation" | "external_url" | "issue" | "issue_comment" | "library_entry" | "library_file";
   targetKey: string;
   title: string;
   url: string | null;
@@ -97,6 +100,54 @@ function libraryTarget(href: string, label: string): ExtractedChatWorkTarget | n
   };
 }
 
+function chatMessageId(href: string): string | null {
+  try {
+    const url = new URL(href);
+    return (url.searchParams.get("messageId") ?? url.searchParams.get("targetMessageId") ?? "").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function rudderReferenceTarget(href: string, label: string): ExtractedChatWorkTarget | null {
+  const issue = parseIssueMentionHref(href);
+  if (issue) {
+    return {
+      targetType: issue.commentId ? "issue_comment" : "issue",
+      targetKey: issue.commentId ? `issue-comment:${issue.issueId}:${issue.commentId}` : `issue:${issue.issueId}`,
+      title: label || issue.ref || "Issue",
+      url: null,
+      metadata: {
+        issueId: issue.issueId,
+        ref: issue.ref,
+        commentId: issue.commentId,
+      },
+    };
+  }
+
+  const automation = parseAutomationMentionHref(href);
+  if (automation) {
+    return {
+      targetType: "automation",
+      targetKey: `automation:${automation.automationId}`,
+      title: label || automation.title || "Automation",
+      url: null,
+      metadata: { automationId: automation.automationId },
+    };
+  }
+
+  const chat = parseChatMentionHref(href);
+  if (!chat) return null;
+  const messageId = chatMessageId(href);
+  return {
+    targetType: "chat_conversation",
+    targetKey: messageId ? `chat:${chat.conversationId}:${messageId}` : `chat:${chat.conversationId}`,
+    title: label || chat.title || "Chat",
+    url: null,
+    metadata: { conversationId: chat.conversationId, messageId },
+  };
+}
+
 export function extractVisibleChatWorkTargets(markdown: string): ExtractedChatWorkTarget[] {
   if (!markdown.trim()) return [];
   const source = stripMarkdownCode(markdown);
@@ -111,7 +162,9 @@ export function extractVisibleChatWorkTargets(markdown: string): ExtractedChatWo
     if (imageMarker) continue;
     const label = cleanMarkdownLabel(rawLabel);
     const destination = markdownDestination(rawDestination);
-    const target = libraryTarget(destination, label) ?? externalTarget(destination, label);
+    const target = libraryTarget(destination, label)
+      ?? rudderReferenceTarget(destination, label)
+      ?? externalTarget(destination, label);
     if (target && !targets.has(target.targetKey)) targets.set(target.targetKey, target);
   }
 

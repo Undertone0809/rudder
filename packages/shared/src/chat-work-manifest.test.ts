@@ -72,6 +72,37 @@ describe("chat work manifest extraction", () => {
     ]);
   });
 
+  it("extracts visible Rudder entity references", () => {
+    expect(extractVisibleChatWorkTargets([
+      "[ZST-772](issue://issue-1?r=ZST-772&c=comment-1)",
+      "[Daily report](automation://automation-1?t=Daily%20report)",
+      "[Planning chat](chat://chat-1?messageId=message-1)",
+      "`[Hidden](issue://issue-hidden)`",
+    ].join("\n"))).toEqual([
+      {
+        targetType: "issue_comment",
+        targetKey: "issue-comment:issue-1:comment-1",
+        title: "ZST-772",
+        url: null,
+        metadata: { issueId: "issue-1", ref: "ZST-772", commentId: "comment-1" },
+      },
+      {
+        targetType: "automation",
+        targetKey: "automation:automation-1",
+        title: "Daily report",
+        url: null,
+        metadata: { automationId: "automation-1" },
+      },
+      {
+        targetType: "chat_conversation",
+        targetKey: "chat:chat-1:message-1",
+        title: "Planning chat",
+        url: null,
+        metadata: { conversationId: "chat-1", messageId: "message-1" },
+      },
+    ]);
+  });
+
   it("normalizes only HTTP(S) URLs and removes fragments and default ports", () => {
     expect(normalizeChatWorkExternalUrl("HTTPS://Example.COM:443/a/../guide?q=1#part")).toBe(
       "https://example.com/guide?q=1",

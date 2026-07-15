@@ -28,6 +28,28 @@ test.describe("Chat Work Manifest", () => {
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
     const agent = await createE2EChatAgent(page.request, organization.id, { name: "Manifest Agent" });
 
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Manifest reference issue",
+        description: "Referenced from a user message in the Work manifest.",
+        status: "todo",
+        priority: "medium",
+      },
+    });
+    expect(issueRes.ok(), await issueRes.text()).toBe(true);
+    const issue = await issueRes.json() as { id: string; identifier: string };
+
+    const automationRes = await page.request.post(`/api/orgs/${organization.id}/automations`, {
+      data: {
+        title: "Manifest reference automation",
+        description: "Referenced from a user message in the Work manifest.",
+        assigneeAgentId: agent.id,
+        priority: "medium",
+      },
+    });
+    expect(automationRes.ok(), await automationRes.text()).toBe(true);
+    const automation = await automationRes.json() as { id: string; title: string };
+
     const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
       data: { name: "Manifest Project", status: "in_progress" },
     });
@@ -112,7 +134,12 @@ test.describe("Chat Work Manifest", () => {
         orgId: organization.id,
         conversationId: chat.id,
         role: "user",
-        body: `Use https://source.example/research and ${sourceFile.markdownLink}.`,
+        body: [
+          `Use https://source.example/research and ${sourceFile.markdownLink}.`,
+          `[${issue.identifier}](issue://${issue.id}?r=${encodeURIComponent(issue.identifier)})`,
+          `[${automation.title}](automation://${automation.id}?t=${encodeURIComponent(automation.title)})`,
+          `[Other project chat](chat://${otherChat.id})`,
+        ].join(" "),
         status: "completed",
       },
       {
@@ -156,8 +183,16 @@ test.describe("Chat Work Manifest", () => {
     await expect(shelf).toContainText("References");
     await expect(shelf).toContainText("report.md");
     await expect(shelf).not.toContainText("From Agent");
-    await expect(shelf).toContainText("https://reference.example/docs");
-    await expect(shelf.getByRole("button", { name: /reference\.example/ }).locator("[data-website-icon]"))
+    const references = shelf.locator("section[aria-label='References']");
+    await references.getByRole("button", { name: "View all 4" }).click();
+    await expect(references).toContainText("https://reference.example/docs");
+    await expect(references.getByRole("button", { name: /reference\.example/ }).locator("[data-website-icon]"))
+      .toBeVisible();
+    await expect(references.getByRole("button", { name: new RegExp(issue.identifier) }).locator("[data-file-icon='issue']"))
+      .toBeVisible();
+    await expect(references.getByRole("button", { name: new RegExp(automation.title) }).locator("[data-file-icon='automation']"))
+      .toBeVisible();
+    await expect(references.getByRole("button", { name: /Other project chat/ }).locator("[data-file-icon='chat']"))
       .toBeVisible();
     await expect(shelf).not.toContainText("Project work");
     await expect(shelf).not.toContainText("Project research source");
@@ -165,6 +200,17 @@ test.describe("Chat Work Manifest", () => {
     await expect(shelf).not.toContainText("Browser");
     await expect(shelf.getByRole("button", { name: /source\.example https:\/\/source\.example\/research/ }))
       .toHaveCount(1);
+    await page.screenshot({ path: `${screenshotDir}/references.png`, fullPage: true });
+
+    await references.getByRole("button", { name: issue.identifier, exact: true }).click();
+    const issueSidePanel = page.getByTestId("chat-side-panel");
+    await expect(issueSidePanel).toBeVisible();
+    await expect(issueSidePanel).toContainText("Manifest reference issue");
+    await page.screenshot({ path: `${screenshotDir}/issue-side-panel.png`, fullPage: true });
+    await issueSidePanel.getByTestId("chat-side-panel-tab").hover();
+    await issueSidePanel.getByTestId("chat-side-panel-tab-close").click();
+    await expect(issueSidePanel).toHaveCount(0);
+    await expect(shelf).toBeVisible();
 
     const [scrollBox, workspaceBox] = await Promise.all([
       page.getByTestId("chat-messages-scroll-region").boundingBox(),

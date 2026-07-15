@@ -4,12 +4,15 @@ import type { ChatWorkManifestItem, ChatWorkManifestResponse } from "@rudderhq/s
 import {
   BriefcaseBusiness,
   ChevronDown,
+  ClipboardList,
   FileOutput,
   Link2,
   ListFilter,
   MessageSquare,
+  MessagesSquare,
   Paperclip,
   Plus,
+  Repeat2,
   X,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -43,6 +46,28 @@ function websiteUrl(item: ChatWorkManifestItem) {
   } catch {
     return null;
   }
+}
+
+function ManifestItemIcon({ item }: { item: ChatWorkManifestItem }) {
+  const iconClassName = "size-3.5 shrink-0 text-muted-foreground";
+  if (item.targetType === "issue" || item.targetType === "issue_comment") {
+    return <ClipboardList className={iconClassName} data-file-icon="issue" aria-hidden="true" />;
+  }
+  if (item.targetType === "automation") {
+    return <Repeat2 className={iconClassName} data-file-icon="automation" aria-hidden="true" />;
+  }
+  if (item.targetType === "chat_conversation") {
+    return <MessagesSquare className={iconClassName} data-file-icon="chat" aria-hidden="true" />;
+  }
+  const externalUrl = websiteUrl(item);
+  if (externalUrl) {
+    return (
+      <span className="shrink-0 text-sm text-muted-foreground">
+        <WebsiteLinkIcon url={externalUrl} />
+      </span>
+    );
+  }
+  return <Paperclip className={iconClassName} aria-hidden="true" />;
 }
 
 export function ChatWorkManifestToggle({
@@ -93,13 +118,7 @@ function ManifestRow({
         onClick={onOpen}
         title={item.title}
       >
-        {externalUrl ? (
-          <span className="shrink-0 text-sm text-muted-foreground">
-            <WebsiteLinkIcon url={externalUrl} />
-          </span>
-        ) : (
-          <Paperclip className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-        )}
+        <ManifestItemIcon item={item} />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-xs font-medium text-foreground">{item.title}</span>
           {externalUrl ? (
