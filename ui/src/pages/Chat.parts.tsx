@@ -791,25 +791,26 @@ export function ChatEmptyStateRecentConversations({
       >
         <div className="divide-y divide-[color:var(--border-soft)]">
           {conversations.map((conversation) => (
-            <Link
-              key={conversation.id}
-              to={conversationPath(conversation.id)}
-              data-testid={`chat-empty-state-recent-conversation-${conversation.id}`}
-              tabIndex={visible ? undefined : -1}
-              className="group mx-1 flex min-w-0 items-center gap-3 rounded-[var(--radius-md)] px-3 py-2.5 text-sm transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-active)_58%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-              onPointerDown={() => {
-                if (visible) onPrefetchConversation(conversation.id);
-              }}
-              onMouseEnter={() => {
-                if (visible) onPrefetchConversation(conversation.id);
-              }}
-            >
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-medium text-foreground">{recentConversationDisplayTitle(conversation)}</span>
-                <span className="mt-0.5 block truncate text-xs text-muted-foreground">{recentConversationPreview(conversation)}</span>
-              </span>
-              <span className="shrink-0 text-xs text-muted-foreground">{relativeTime(conversation.lastMessageAt ?? conversation.updatedAt)}</span>
-            </Link>
+            <div key={conversation.id}>
+              <Link
+                to={conversationPath(conversation.id)}
+                data-testid={`chat-empty-state-recent-conversation-${conversation.id}`}
+                tabIndex={visible ? undefined : -1}
+                className="group flex min-w-0 items-center gap-3 px-3 py-2.5 text-sm transition-[background-color,border-radius] hover:mx-1 hover:rounded-[var(--radius-md)] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_58%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/30"
+                onPointerDown={() => {
+                  if (visible) onPrefetchConversation(conversation.id);
+                }}
+                onMouseEnter={() => {
+                  if (visible) onPrefetchConversation(conversation.id);
+                }}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium text-foreground">{recentConversationDisplayTitle(conversation)}</span>
+                  <span className="mt-0.5 block truncate text-xs text-muted-foreground">{recentConversationPreview(conversation)}</span>
+                </span>
+                <span className="shrink-0 text-xs text-muted-foreground">{relativeTime(conversation.lastMessageAt ?? conversation.updatedAt)}</span>
+              </Link>
+            </div>
           ))}
         </div>
         {hasMoreConversations || loadingMoreConversations ? (

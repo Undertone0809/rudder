@@ -874,11 +874,13 @@ contracts:
       - server/src/services/chat-assistant.ts
       - server/src/services/chat-assistant.helpers.ts
       - ui/src/context/ChatGenerationContext.tsx
+      - ui/src/pages/Chat.parts.tsx
       - ui/src/pages/Chat.tsx
       - ui/src/pages/Chat.messages.tsx
     related_tests:
       - server/src/__tests__/chat-routes.test.ts
       - server/src/__tests__/chat-assistant.test.ts
+      - ui/src/pages/Chat.empty-state.test.tsx
       - ui/src/pages/Chat.test.tsx
       - ui/src/pages/Chat.attachment-preview.test.tsx
       - ui/src/context/ChatGenerationContext.test.tsx
@@ -886,6 +888,7 @@ contracts:
       - tests/e2e/chat-error-toast.spec.ts
       - tests/e2e/chat-concurrent-streaming.spec.ts
       - tests/e2e/chat-edit-stream-layout.spec.ts
+      - tests/e2e/chat-options-menu.spec.ts
       - tests/e2e/chat-rich-references.spec.ts
       - tests/e2e/chat-streaming.spec.ts
     related_plans:

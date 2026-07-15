@@ -55,6 +55,7 @@ related_code:
   - ui/src/components/MessengerContextSidebar.tsx
   - ui/src/components/WorkspaceFilePreview.tsx
   - ui/src/components/WorkspacePdfPreview.tsx
+  - ui/src/pages/Chat.parts.tsx
   - ui/src/pages/Chat.side-panel.tsx
   - ui/src/pages/Chat.work-manifest.tsx
   - ui/src/pages/Chat.tsx
@@ -90,6 +91,7 @@ related_tests:
   - ui/src/components/WorkspacePdfPreview.test.tsx
   - ui/src/pages/AgentDetail.runs.test.ts
   - ui/src/pages/Chat.test.tsx
+  - ui/src/pages/Chat.empty-state.test.tsx
   - ui/src/context/ChatGenerationContext.test.tsx
   - ui/src/lib/chat-stream-state.test.ts
   - ui/src/pages/Chat.attachment-preview.test.tsx
@@ -101,6 +103,7 @@ related_tests:
   - tests/e2e/messenger-contract.spec.ts
   - tests/e2e/messenger-hover-preview.spec.ts
   - tests/e2e/chat-edit-stream-layout.spec.ts
+  - tests/e2e/chat-options-menu.spec.ts
   - tests/e2e/chat-fork.spec.ts
   - tests/e2e/chat-rich-references.spec.ts
   - tests/e2e/chat-side-panel.spec.ts
@@ -162,6 +165,11 @@ Product model:
 - Chat-native work remains inspectable through the conversation, Agent Runs,
   Work manifest, and linked outputs. Creating or linking an issue is optional
   structured coordination, not a prerequisite for real or durable work.
+- When a new Chat has recent conversations for its selected Project, the empty
+  state offers `Use cases` and `Chats` in one header aligned with the Project
+  label. Recent-conversation rows keep full-width straight separators at rest;
+  pointer hover alone insets the active row and adds the shared control radius
+  and quiet surface emphasis without changing conversation order or content.
 
 Flow:
 
@@ -245,6 +253,9 @@ Invariants:
 - Agent attribution is visible enough to navigate from message to run/agent.
 - Work-manifest reconciliation must not read hidden reasoning, transcript tool
   payloads, stdout, or stderr as user-visible Sources or References.
+- Project-scoped recent-conversation rows must remain visually scan-friendly at
+  rest: separators span the list width and rows do not carry rounded corners or
+  inset margins until the operator hovers that row.
 
 Evidence:
 
@@ -264,6 +275,9 @@ Evidence:
 - Chat route and UI tests cover queue snapshots, active-generation reporting,
   queued follow-up editing/cancellation/claiming, hidden delivered rows,
   retained parked rows, and Feishu-bound queue mutation rejection.
+- Chat empty-state UI and E2E coverage verify aligned tabs/Project context,
+  full-width square resting rows, and inset rounded hover emphasis for recent
+  Project conversations.
 
 ## CHAT.TITLE.GENERATION.001
 
