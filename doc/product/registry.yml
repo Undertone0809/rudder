@@ -54,6 +54,8 @@ contracts:
     related_code:
       - packages/db/src/schema/issues.ts
       - packages/shared/src/validators/issue.ts
+      - ui/src/components/InspectableImage.tsx
+      - ui/src/context/ImagePreviewContext.tsx
       - ui/src/components/InlineEditor.tsx
       - ui/src/components/NewIssueDialog.tsx
       - ui/src/lib/new-issue-dialog.ts
@@ -62,10 +64,13 @@ contracts:
       - ui/src/pages/Issues.tsx
     related_tests:
       - ui/src/components/InlineEditor.test.tsx
+      - ui/src/lib/new-issue-dialog.test.ts
       - ui/src/pages/IssueDetail.test.tsx
       - tests/e2e/codex-model-order.spec.ts
       - tests/e2e/issue-detail-toolbar-actions.spec.ts
+      - tests/e2e/issue-description-image-preview.spec.ts
       - tests/e2e/issue-board-display-properties.spec.ts
+      - tests/e2e/new-issue-project-context.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
   RUN.WAKEUP.001:
@@ -715,6 +720,9 @@ contracts:
       - server/src/routes/orgs.ts
       - server/src/services/library-entries.ts
       - server/src/services/organization-workspace-browser.ts
+      - ui/src/components/ImagePreviewDialog.tsx
+      - ui/src/components/InspectableImage.tsx
+      - ui/src/context/ImagePreviewContext.tsx
       - ui/src/components/WorkspaceFilePreview.tsx
       - ui/src/components/WorkspacePdfPreview.tsx
       - ui/src/pages/OrganizationResources.tsx
@@ -726,6 +734,8 @@ contracts:
       - server/src/__tests__/library-path-markdown.test.ts
       - server/src/__tests__/organization-workspace-browser.test.ts
       - desktop/src/ide-opener.test.ts
+      - ui/src/components/ImagePreviewDialog.test.tsx
+      - ui/src/context/ImagePreviewContext.test.tsx
       - ui/src/pages/Chat.attachment-preview.test.tsx
       - ui/src/pages/OrganizationWorkspaceFilesSidebar.test.tsx
       - ui/src/pages/OrganizationWorkspaces.scrollbars.test.tsx
@@ -737,6 +747,30 @@ contracts:
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-06-30-org-library-folder-and-backup-zip.md
+  LIBRARY.WEB.PREVIEW.001:
+    owner: product
+    domain: library-and-context
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/library-and-context/website-preview.md
+    related_code:
+      - packages/shared/src/types/organization.ts
+      - packages/shared/src/validators/organization.ts
+      - server/src/services/workspace-web-preview.ts
+      - server/src/routes/orgs.ts
+      - server/src/bootstrap/create-http-app.ts
+      - ui/src/components/WorkspaceHtmlPreview.tsx
+      - ui/src/components/WorkspaceFilePreview.tsx
+      - ui/src/pages/OrganizationWorkspaces.tsx
+      - ui/src/pages/Chat.side-panel.tsx
+    related_tests:
+      - server/src/__tests__/workspace-web-preview.test.ts
+      - ui/src/components/WorkspaceFilePreview.test.tsx
+      - ui/src/lib/workspace-html-preview.test.ts
+      - tests/e2e/organization-workspaces-image-preview.spec.ts
+      - tests/e2e/chat-side-panel-html-preview.spec.ts
+    related_plans:
+      - doc/plans/2026-07-15-isolated-library-website-preview.md
   WORKSPACE.PROJECT.001:
     owner: product
     domain: library-and-context
@@ -802,6 +836,7 @@ contracts:
     related_tests:
       - server/src/__tests__/automations-service.test.ts
       - server/src/__tests__/automations-routes.test.ts
+      - ui/src/pages/Automations.test.tsx
       - tests/e2e/automations-index-layout.spec.ts
       - tests/e2e/automation-detail-layout.spec.ts
     related_plans:
@@ -815,10 +850,13 @@ contracts:
     related_code:
       - server/src/routes/automations.ts
       - server/src/services/automations.scheduler.ts
+      - ui/src/pages/Automations.tsx
       - ui/src/components/ScheduleEditor.tsx
     related_tests:
       - server/src/__tests__/automations-service.test.ts
       - server/src/__tests__/automations-routes.test.ts
+      - ui/src/pages/Automations.test.tsx
+      - tests/e2e/automations-index-layout.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
   AUTOMATION.RUN.001:
@@ -870,18 +908,24 @@ contracts:
       - server/src/services/chat-assistant.ts
       - server/src/services/chat-assistant.helpers.ts
       - ui/src/context/ChatGenerationContext.tsx
+      - ui/src/motion.css
+      - ui/src/pages/Chat.parts.tsx
       - ui/src/pages/Chat.tsx
       - ui/src/pages/Chat.messages.tsx
     related_tests:
       - server/src/__tests__/chat-routes.test.ts
       - server/src/__tests__/chat-assistant.test.ts
+      - ui/src/pages/Chat.empty-state.test.tsx
       - ui/src/pages/Chat.test.tsx
       - ui/src/pages/Chat.attachment-preview.test.tsx
       - ui/src/context/ChatGenerationContext.test.tsx
       - ui/src/lib/chat-stream-state.test.ts
+      - ui/src/lib/motion-css.test.ts
       - tests/e2e/chat-error-toast.spec.ts
       - tests/e2e/chat-concurrent-streaming.spec.ts
       - tests/e2e/chat-edit-stream-layout.spec.ts
+      - tests/e2e/chat-options-menu.spec.ts
+      - tests/e2e/chat-prompt-starters.spec.ts
       - tests/e2e/chat-rich-references.spec.ts
       - tests/e2e/chat-streaming.spec.ts
     related_plans:
@@ -895,6 +939,7 @@ contracts:
     related_code:
       - packages/db/src/schema/chat_conversations.ts
       - server/src/routes/chats.ts
+      - server/src/services/chat-title-generation.ts
       - server/src/services/chats.ts
       - server/src/services/product-intelligence.ts
       - server/src/services/organization-intelligence-profiles.ts
@@ -902,10 +947,12 @@ contracts:
       - ui/src/components/MessengerContextSidebar.tsx
     related_tests:
       - server/src/__tests__/chat-routes.test.ts
+      - server/src/__tests__/chat-title-generation.test.ts
       - server/src/__tests__/messenger-service.test.ts
       - server/src/__tests__/product-intelligence.test.ts
       - server/src/__tests__/organization-intelligence-profiles.test.ts
       - ui/src/components/MessengerContextSidebar.actions.test.tsx
+      - tests/e2e/chat-fork.spec.ts
       - tests/e2e/messenger-chat-title-regenerate.spec.ts
     related_plans:
       - doc/plans/2026-06-18-chat-title-defaults.md
@@ -923,6 +970,7 @@ contracts:
       - packages/shared/src/validators/chat.ts
       - server/src/routes/chats.stream-routes.ts
       - server/src/routes/chats.ts
+      - server/src/services/chat-title-generation.ts
       - server/src/services/chats.ts
       - ui/src/api/chats.ts
       - ui/src/pages/Chat.tsx
@@ -930,6 +978,7 @@ contracts:
       - ui/src/components/MessengerContextSidebar.tsx
     related_tests:
       - server/src/__tests__/chat-routes.test.ts
+      - server/src/__tests__/chat-title-generation.test.ts
       - server/src/__tests__/messenger-service.test.ts
       - ui/src/pages/Chat.messages.test.tsx
       - ui/src/pages/Chat.attachment-preview.test.tsx
@@ -995,6 +1044,10 @@ contracts:
       - server/src/services/chat-work-manifest.ts
       - server/src/routes/chats.ts
       - ui/src/api/chats.ts
+      - ui/src/components/ImagePreviewDialog.tsx
+      - ui/src/components/InspectableImage.tsx
+      - ui/src/context/ImagePreviewContext.tsx
+      - ui/src/lib/image-actions.ts
       - ui/src/pages/Chat.work-manifest.tsx
       - ui/src/pages/Chat.tsx
     related_tests:
@@ -1002,7 +1055,10 @@ contracts:
       - server/src/__tests__/chat-work-manifest.test.ts
       - server/src/__tests__/chat-routes.test.ts
       - ui/src/pages/Chat.work-manifest.test.tsx
+      - ui/src/context/ImagePreviewContext.test.tsx
+      - ui/src/lib/image-actions.test.ts
       - tests/e2e/chat-work-manifest.spec.ts
+      - tests/e2e/chat-work-manifest-image-preview.spec.ts
     related_plans:
       - doc/plans/2026-07-12-chat-work-manifest.md
   CHAT.SIDE.PANEL.001:
@@ -1514,10 +1570,15 @@ contracts:
       - server/src/services/knowledge-portability/organization-portability.export.ts
       - server/src/services/knowledge-portability/organization-portability.import.ts
       - server/src/services/export-jobs.ts
+      - ui/src/components/ImagePreviewDialog.tsx
+      - ui/src/components/InspectableImage.tsx
+      - ui/src/context/ImagePreviewContext.tsx
       - ui/src/pages/OrganizationExport.tsx
       - ui/src/pages/OrganizationImport.tsx
     related_tests:
       - server/src/__tests__/export-jobs.test.ts
+      - ui/src/components/ImagePreviewDialog.test.tsx
+      - ui/src/context/ImagePreviewContext.test.tsx
       - tests/e2e/organization-export-build-job.spec.ts
       - tests/e2e/profile-context-import.spec.ts
     related_plans:

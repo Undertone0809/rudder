@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useNavigate, useSearchParams } from "@/lib/router";
 import { cn } from "@/lib/utils";
@@ -36,6 +37,7 @@ import {
   type OrganizationWorkspaceFileEntry,
   type Project,
   type ProjectResourceAttachment,
+  type WorkspaceWebPreviewNetworkMode,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -76,6 +78,7 @@ import { organizationsApi } from "../api/orgs";
 import { projectsApi } from "../api/projects";
 import { AgentIcon } from "../components/AgentIconPicker";
 import { EmptyState } from "../components/EmptyState";
+import { InspectableImage } from "../components/InspectableImage";
 import { IssueDetailFind } from "../components/IssueDetailFind";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { MarkdownEditor, type InlineTokenClickEvent, type MarkdownEditorRef, type MentionOption } from "../components/MarkdownEditor";
@@ -83,6 +86,7 @@ import { PageSkeleton } from "../components/PageSkeleton";
 import { ProjectIcon } from "../components/ProjectIdentity";
 import { ResourceLocatorField } from "../components/ResourceLocatorField";
 import { getWorkspaceCodeLanguageLabel, isWorkspaceCodeFilePath, WorkspaceCodeEditor } from "../components/WorkspaceCodeEditor";
+import { WorkspaceHtmlPreview, WorkspaceHtmlPreviewToolbar } from "../components/WorkspaceHtmlPreview";
 import { WorkspacePdfPreview } from "../components/WorkspacePdfPreview";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useI18n } from "../context/I18nContext";
@@ -102,7 +106,6 @@ import {
 } from "../lib/resource-options";
 import { normalizeWorkspaceCsvRows, parseWorkspaceCsvContent, serializeWorkspaceCsvRows } from "../lib/workspace-csv";
 import {
-  buildWorkspaceHtmlPreviewSrcDoc,
   isWorkspaceHtmlContentType,
   isWorkspaceHtmlFilePath,
 } from "../lib/workspace-html-preview";
@@ -928,7 +931,14 @@ function canRenameWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "pa
     && !isProtectedOrganizationSkillsEntryPath(entry.path);
 }
 
-function canDeleteWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "path">) {
+function canDeleteWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "path" | "entityType">) {
+  if (
+    entry.entityType === "orphaned_agent_workspace"
+    && isProtectedAgentWorkspaceContainerPath(entry.path)
+    && entry.path !== "agents"
+  ) {
+    return true;
+  }
   return !isProtectedAgentWorkspaceContainerPath(entry.path)
     && !isProtectedAgentInstructionsEntryPath(entry.path)
     && !isProtectedAgentManagedEntryPath(entry.path)
@@ -1739,6 +1749,15 @@ function WorkspaceTreeNode({
             ) : null}
           </>
         ) : null}
+        {isProtectedContainer && canDeleteEntry ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onSelect={() => onStartDelete(entry)}>
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
+            </DropdownMenuItem>
+          </>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -2254,28 +2273,24 @@ function CsvWorkspaceEditor({
           {rows.length.toLocaleString()} {rows.length === 1 ? "row" : "rows"} / {columnCount.toLocaleString()} {columnCount === 1 ? "column" : "columns"}
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <div className="inline-flex shrink-0 overflow-hidden rounded-md border border-border bg-[color:var(--surface-elevated)] p-0.5" role="group" aria-label="CSV file mode">
-            <Button
-              type="button"
-              variant={mode === "table" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-7 rounded-[4px] px-2 text-xs"
-              aria-pressed={mode === "table"}
-              onClick={() => onModeChange("table")}
-            >
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            spacing={0}
+            value={mode}
+            onValueChange={(value) => {
+              if (value === "table" || value === "source") onModeChange(value);
+            }}
+            aria-label="CSV file mode"
+          >
+            <ToggleGroupItem value="table">
               Table
-            </Button>
-            <Button
-              type="button"
-              variant={mode === "source" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-7 rounded-[4px] px-2 text-xs"
-              aria-pressed={mode === "source"}
-              onClick={() => onModeChange("source")}
-            >
+            </ToggleGroupItem>
+            <ToggleGroupItem value="source">
               Source
-            </Button>
-          </div>
+            </ToggleGroupItem>
+          </ToggleGroup>
           {mode === "table" ? (
             <>
               <Button
@@ -3936,9 +3951,15 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
       }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete entry</DialogTitle>
+            <DialogTitle>
+              {deleteTarget?.entityType === "orphaned_agent_workspace"
+                ? "Delete deleted agent folder?"
+                : "Delete entry"}
+            </DialogTitle>
             <DialogDescription>
-              This will permanently delete {deleteTarget?.path ?? "this entry"} from the organization Library.
+              {deleteTarget?.entityType === "orphaned_agent_workspace"
+                ? `This folder is no longer linked to an active agent. This will permanently delete ${deleteTarget.path} and everything inside it from the organization Library.`
+                : `This will permanently delete ${deleteTarget?.path ?? "this entry"} from the organization Library.`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -4023,6 +4044,11 @@ export function OrganizationWorkspaceBrowser({
     : initialSelectedFilePath;
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(initialSafeSelectedFilePath);
   const [htmlFileMode, setHtmlFileMode] = useState<"preview" | "source">("preview");
+  const initialHtmlPreviewIdentity = `${viewedOrganizationId ?? ""}:${initialSafeSelectedFilePath ?? ""}`;
+  const [htmlNetworkSelection, setHtmlNetworkSelection] = useState<{
+    identity: string;
+    mode: WorkspaceWebPreviewNetworkMode;
+  }>({ identity: initialHtmlPreviewIdentity, mode: "connected" });
   const [csvFileMode, setCsvFileMode] = useState<"table" | "source">("table");
   const [showHiddenMarkdownSections, setShowHiddenMarkdownSections] = useState(false);
   const [markdownOutlineCollapsed, setMarkdownOutlineCollapsed] = useState(false);
@@ -4107,8 +4133,12 @@ export function OrganizationWorkspaceBrowser({
 
   useEffect(() => {
     setHtmlFileMode("preview");
+    setHtmlNetworkSelection({
+      identity: `${viewedOrganizationId ?? ""}:${selectedFilePath ?? ""}`,
+      mode: "connected",
+    });
     setCsvFileMode("table");
-  }, [selectedFilePath]);
+  }, [selectedFilePath, viewedOrganizationId]);
 
   useEffect(() => {
     const clearRootDropState = () => {
@@ -5371,9 +5401,10 @@ export function OrganizationWorkspaceBrowser({
     && (isWorkspaceHtmlFilePath(selectedFilePath) || isWorkspaceHtmlContentType(selectedFileDetail?.contentType)),
   );
   const selectedFileUsesHtmlPreview = selectedFileCanRenderHtml && htmlFileMode === "preview";
-  const selectedHtmlPreviewSrcDoc = selectedFileCanRenderHtml
-    ? buildWorkspaceHtmlPreviewSrcDoc(selectedEditorContent)
-    : "";
+  const selectedHtmlPreviewIdentity = `${viewedOrganizationId ?? ""}:${selectedFilePath ?? ""}`;
+  const selectedHtmlNetworkMode = htmlNetworkSelection.identity === selectedHtmlPreviewIdentity
+    ? htmlNetworkSelection.mode
+    : "connected";
   const selectedMarkdownOutlineWithHidden = selectedFileUsesMarkdownEditor
     ? extractDocumentOutline(selectedMarkdownParts.body, { includeHidden: true })
     : [];
@@ -5439,37 +5470,59 @@ export function OrganizationWorkspaceBrowser({
   const tabContextMenuIndex = tabContextMenu ? openFilePaths.indexOf(tabContextMenu.filePath) : -1;
   const canCloseOtherTabs = Boolean(tabContextMenu && openFilePaths.length > 1);
   const canCloseTabsToRight = tabContextMenuIndex >= 0 && tabContextMenuIndex < openFilePaths.length - 1;
-
-  function renderHtmlFileModeToggle(currentMode: "preview" | "source", surfaceClassName: string) {
-    return (
-      <div
-        className={cn("inline-flex shrink-0 overflow-hidden rounded-md border border-border p-0.5", surfaceClassName)}
-        role="group"
-        aria-label="HTML file mode"
-      >
+  const selectedHtmlFileOpenTargets = selectedFilePath
+    && workspaceRootPath
+    && typeof readDesktopShell()?.openWorkspaceFileInIde === "function"
+    ? workspaceFileOpenTargets(workspaceLaunchTargets)
+    : [];
+  const selectedHtmlFileEntry: OrganizationWorkspaceFileEntry | null = selectedFilePath
+    ? {
+        name: displayWorkspaceFileTabLabel(selectedFilePath),
+        path: selectedFilePath,
+        isDirectory: false,
+      }
+    : null;
+  const selectedHtmlFileOpenAction = selectedHtmlFileEntry ? (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
         <Button
           type="button"
-          variant={currentMode === "preview" ? "secondary" : "ghost"}
+          variant="outline"
           size="sm"
-          className="h-7 rounded-[4px] px-2 text-xs"
-          aria-pressed={currentMode === "preview"}
-          onClick={() => setHtmlFileMode("preview")}
+          aria-label="Open file options"
+          data-testid="org-workspaces-html-open-menu"
         >
-          Preview
+          <ExternalLink className="workspace-html-preview-open-icon" data-icon="inline-start" />
+          Open
+          <ChevronDown data-icon="inline-end" />
         </Button>
-        <Button
-          type="button"
-          variant={currentMode === "source" ? "secondary" : "ghost"}
-          size="sm"
-          className="h-7 rounded-[4px] px-2 text-xs"
-          aria-pressed={currentMode === "source"}
-          onClick={() => setHtmlFileMode("source")}
-        >
-          Source
-        </Button>
-      </div>
-    );
-  }
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-60">
+        {selectedHtmlFileOpenTargets.length > 0 ? (
+          selectedHtmlFileOpenTargets.map((target) => (
+            <DropdownMenuItem
+              key={target.id}
+              disabled={openingWorkspaceTargetId !== null}
+              data-testid={`org-workspaces-html-open-target-${target.id}`}
+              onSelect={() => void handleOpenEntryTarget(selectedHtmlFileEntry, target)}
+            >
+              {openingWorkspaceTargetId === target.id ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <WorkspaceLaunchTargetIcon target={target} />
+              )}
+              <span className="min-w-0 flex-1 truncate">{target.label}</span>
+            </DropdownMenuItem>
+          ))
+        ) : (
+          <DropdownMenuItem disabled>
+            <ExternalLink />
+            Available in Rudder Desktop
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  ) : null;
 
   function scrollToSelectedMarkdownOutlineItem(item: DocumentOutlineItem) {
     const editorScrollElement = editorScrollElementRef.current;
@@ -6274,20 +6327,25 @@ export function OrganizationWorkspaceBrowser({
                   data-testid="org-workspaces-html-preview-scroll"
                   className="scrollbar-auto-hide flex h-full min-h-[420px] flex-col overflow-auto bg-white"
                 >
-                  <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-[color:var(--surface-elevated)] px-4 py-2">
-                    <div className="min-w-0 truncate text-xs text-muted-foreground">
-                      {selectedFileDetail?.message ?? "HTML preview"}
-                    </div>
-                    {renderHtmlFileModeToggle("preview", "bg-[color:var(--surface-page)]")}
-                  </div>
-                  <iframe
-                    data-testid="org-workspaces-html-preview"
-                    title={selectedFilePath ?? "Library HTML preview"}
-                    srcDoc={selectedHtmlPreviewSrcDoc}
-                    sandbox=""
-                    referrerPolicy="no-referrer"
-                    className="block min-h-[420px] w-full flex-1 border-0 bg-white"
-                  />
+                  {viewedOrganizationId && selectedFilePath ? (
+                    <WorkspaceHtmlPreview
+                      key={`${viewedOrganizationId}:${selectedFilePath}`}
+                      organizationId={viewedOrganizationId}
+                      filePath={selectedFilePath}
+                      htmlContent={selectedEditorContent}
+                      viewMode="preview"
+                      onViewModeChange={setHtmlFileMode}
+                      networkMode={selectedHtmlNetworkMode}
+                      onNetworkModeChange={(networkMode) => {
+                        setHtmlNetworkSelection({
+                          identity: selectedHtmlPreviewIdentity,
+                          mode: networkMode,
+                        });
+                      }}
+                      openAction={selectedHtmlFileOpenAction}
+                      testIdPrefix="org-workspaces"
+                    />
+                  ) : null}
                 </div>
               ) : canEditSelectedFile ? (
                 <div className="flex h-full min-h-0 flex-col">
@@ -6304,10 +6362,12 @@ export function OrganizationWorkspaceBrowser({
                     </div>
                   ) : null}
                   {selectedFileCanRenderHtml ? (
-                    <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-[color:var(--surface-page)] px-4 py-2">
-                      <div className="min-w-0 truncate text-xs text-muted-foreground">HTML source</div>
-                      {renderHtmlFileModeToggle("source", "bg-[color:var(--surface-elevated)]")}
-                    </div>
+                    <WorkspaceHtmlPreviewToolbar
+                      viewMode="source"
+                      onViewModeChange={setHtmlFileMode}
+                      openAction={selectedHtmlFileOpenAction}
+                      testIdPrefix="org-workspaces"
+                    />
                   ) : null}
                   {selectedFileUsesCsvEditor ? (
                     <CsvWorkspaceEditor
@@ -6462,11 +6522,16 @@ export function OrganizationWorkspaceBrowser({
                   data-testid="org-workspaces-image-preview-scroll"
                   className="scrollbar-auto-hide flex h-full min-h-[420px] items-center justify-center overflow-auto bg-accent/10 p-4"
                 >
-                  <img
+                  <InspectableImage
                     data-testid="org-workspaces-image-preview"
                     src={selectedFileDetail.contentPath}
                     alt={selectedFilePath ?? "Workspace image preview"}
+                    name={selectedFilePath ?? "Workspace image preview"}
                     className="max-h-full max-w-full rounded-md object-contain shadow-sm"
+                    previewTestId="org-workspaces-image-preview-dialog"
+                    previewTitleFallback="Library image preview"
+                    triggerClassName="max-h-full"
+                    wrapperClassName="max-h-full"
                   />
                 </div>
               ) : selectedFileDetail?.previewKind === "pdf" && selectedFileDetail.contentPath ? (
@@ -6738,9 +6803,15 @@ export function OrganizationWorkspaceBrowser({
       }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete entry</DialogTitle>
+            <DialogTitle>
+              {deleteTarget?.entityType === "orphaned_agent_workspace"
+                ? "Delete deleted agent folder?"
+                : "Delete entry"}
+            </DialogTitle>
             <DialogDescription>
-              This will permanently delete {deleteTarget?.path ?? "this entry"} from the organization Library.
+              {deleteTarget?.entityType === "orphaned_agent_workspace"
+                ? `This folder is no longer linked to an active agent. This will permanently delete ${deleteTarget.path} and everything inside it from the organization Library.`
+                : `This will permanently delete ${deleteTarget?.path ?? "this entry"} from the organization Library.`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

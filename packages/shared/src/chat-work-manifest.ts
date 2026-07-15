@@ -1,4 +1,7 @@
 import {
+  parseAutomationMentionHref,
+  parseChatMentionHref,
+  parseIssueMentionHref,
   parseLibraryEntryMentionHref,
   parseLibraryFileMentionHref,
 } from "./project-mentions.js";
@@ -6,7 +9,7 @@ import {
 export type ChatWorkManifestCategory = "output" | "source" | "reference";
 
 export interface ExtractedChatWorkTarget {
-  targetType: "external_url" | "library_entry" | "library_file";
+  targetType: "automation" | "chat_conversation" | "external_url" | "issue" | "issue_comment" | "library_entry" | "library_file";
   targetKey: string;
   title: string;
   url: string | null;
@@ -37,6 +40,74 @@ function markdownDestination(value: string): string {
   const angleWrapped = trimmed.startsWith("<") && trimmed.includes(">");
   if (angleWrapped) return trimmed.slice(1, trimmed.indexOf(">"));
   return trimmed.split(/\s+["']/u, 1)[0] ?? trimmed;
+}
+
+function parseInternalRouteUrl(href: string): URL | null {
+  try {
+    return new URL(href, "http://rudder.local");
+  } catch {
+    return null;
+  }
+}
+
+function chatMessageIdFromUrl(url: URL) {
+  return (url.searchParams.get("messageId") ?? url.searchParams.get("targetMessageId") ?? "").trim() || null;
+}
+
+function issueCommentIdFromUrl(url: URL) {
+  const queryComment = (url.searchParams.get("c") ?? url.searchParams.get("commentId") ?? "").trim();
+  if (queryComment) return queryComment;
+  const hash = decodeURIComponent(url.hash.replace(/^#/, "")).trim();
+  return hash.startsWith("comment-") ? hash.slice("comment-".length).trim() || null : null;
+}
+
+function internalRouteTarget(href: string, label: string): ExtractedChatWorkTarget | null {
+  const url = parseInternalRouteUrl(href);
+  if (!url || url.origin !== "http://rudder.local") return null;
+
+  const segments = url.pathname.split("/").filter(Boolean).map((segment) => {
+    try {
+      return decodeURIComponent(segment);
+    } catch {
+      return segment;
+    }
+  });
+  const issueId = segments.length >= 2 && segments.at(-2) === "issues" ? segments.at(-1)?.trim() : "";
+  if (issueId) {
+    const commentId = issueCommentIdFromUrl(url);
+    return {
+      targetType: commentId ? "issue_comment" : "issue",
+      targetKey: commentId ? `issue-comment:${issueId}:${commentId}` : `issue:${issueId}`,
+      title: label || issueId,
+      url: null,
+      metadata: { issueId, commentId },
+    };
+  }
+
+  const automationId = segments.length >= 2 && segments.at(-2) === "automations" ? segments.at(-1)?.trim() : "";
+  if (automationId) {
+    return {
+      targetType: "automation",
+      targetKey: `automation:${automationId}`,
+      title: label || url.searchParams.get("t") || url.searchParams.get("title") || "Automation",
+      url: null,
+      metadata: { automationId },
+    };
+  }
+
+  const conversationId = segments.length >= 2 && segments.at(-2) === "chat" ? segments.at(-1)?.trim() : "";
+  if (conversationId) {
+    const messageId = chatMessageIdFromUrl(url);
+    return {
+      targetType: "chat_conversation",
+      targetKey: messageId ? `chat:${conversationId}:${messageId}` : `chat:${conversationId}`,
+      title: label || "Chat",
+      url: null,
+      metadata: { conversationId, messageId },
+    };
+  }
+
+  return null;
 }
 
 export function normalizeChatWorkExternalUrl(value: string): string | null {
@@ -97,6 +168,54 @@ function libraryTarget(href: string, label: string): ExtractedChatWorkTarget | n
   };
 }
 
+function rudderReferenceTarget(href: string, label: string): ExtractedChatWorkTarget | null {
+  const issue = parseIssueMentionHref(href);
+  if (issue) {
+    return {
+      targetType: issue.commentId ? "issue_comment" : "issue",
+      targetKey: issue.commentId ? `issue-comment:${issue.issueId}:${issue.commentId}` : `issue:${issue.issueId}`,
+      title: label || issue.ref || "Issue",
+      url: null,
+      metadata: {
+        issueId: issue.issueId,
+        ref: issue.ref,
+        commentId: issue.commentId,
+      },
+    };
+  }
+
+  const automation = parseAutomationMentionHref(href);
+  if (automation) {
+    return {
+      targetType: "automation",
+      targetKey: `automation:${automation.automationId}`,
+      title: label || automation.title || "Automation",
+      url: null,
+      metadata: {
+        automationId: automation.automationId,
+      },
+    };
+  }
+
+  const chat = parseChatMentionHref(href);
+  if (chat) {
+    const url = parseInternalRouteUrl(href);
+    const messageId = url ? chatMessageIdFromUrl(url) : null;
+    return {
+      targetType: "chat_conversation",
+      targetKey: messageId ? `chat:${chat.conversationId}:${messageId}` : `chat:${chat.conversationId}`,
+      title: label || chat.title || "Chat",
+      url: null,
+      metadata: {
+        conversationId: chat.conversationId,
+        messageId,
+      },
+    };
+  }
+
+  return internalRouteTarget(href, label);
+}
+
 export function extractVisibleChatWorkTargets(markdown: string): ExtractedChatWorkTarget[] {
   if (!markdown.trim()) return [];
   const source = stripMarkdownCode(markdown);
@@ -111,7 +230,7 @@ export function extractVisibleChatWorkTargets(markdown: string): ExtractedChatWo
     if (imageMarker) continue;
     const label = cleanMarkdownLabel(rawLabel);
     const destination = markdownDestination(rawDestination);
-    const target = libraryTarget(destination, label) ?? externalTarget(destination, label);
+    const target = libraryTarget(destination, label) ?? rudderReferenceTarget(destination, label) ?? externalTarget(destination, label);
     if (target && !targets.has(target.targetKey)) targets.set(target.targetKey, target);
   }
 

@@ -1,15 +1,23 @@
 import { WebsiteLinkIcon } from "@/components/MarkdownBody";
+import { isPreviewableImage } from "@/lib/image-actions";
 import { cn } from "@/lib/utils";
+import { isWorkspaceHtmlFilePath } from "@/lib/workspace-html-preview";
 import type { ChatWorkManifestItem, ChatWorkManifestResponse } from "@rudderhq/shared";
 import {
   BriefcaseBusiness,
   ChevronDown,
+  ClipboardList,
+  FileImage,
   FileOutput,
+  FileText,
+  Globe2,
   Link2,
   ListFilter,
   MessageSquare,
+  MessagesSquare,
   Paperclip,
   Plus,
+  Repeat2,
   X,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -43,6 +51,53 @@ function websiteUrl(item: ChatWorkManifestItem) {
   } catch {
     return null;
   }
+}
+
+function manifestFilePath(item: ChatWorkManifestItem) {
+  const metadataPath = typeof item.metadata?.filePath === "string" ? item.metadata.filePath : null;
+  return metadataPath ?? item.title;
+}
+
+function ManifestItemIcon({ item }: { item: ChatWorkManifestItem }) {
+  const externalUrl = websiteUrl(item);
+  if (externalUrl) {
+    return (
+      <span className="shrink-0 text-sm text-muted-foreground">
+        <WebsiteLinkIcon url={externalUrl} />
+      </span>
+    );
+  }
+
+  const filePath = manifestFilePath(item);
+  const filename = filePath.split(/[\\/]/u).at(-1) ?? "";
+  const hasFileExtension = /\.[^.]+$/u.test(filename);
+  const contentType = typeof item.metadata?.contentType === "string"
+    ? item.metadata.contentType.toLowerCase()
+    : "";
+  const iconProps = {
+    className: "size-3.5 shrink-0 text-muted-foreground",
+    "aria-hidden": true,
+  } as const;
+
+  if (item.targetType === "issue" || item.targetType === "issue_comment") {
+    return <ClipboardList {...iconProps} data-file-icon="issue" />;
+  }
+  if (item.targetType === "automation") {
+    return <Repeat2 {...iconProps} data-file-icon="automation" />;
+  }
+  if (item.targetType === "chat_conversation") {
+    return <MessagesSquare {...iconProps} data-file-icon="chat" />;
+  }
+  if (isWorkspaceHtmlFilePath(filePath) || contentType === "text/html") {
+    return <Globe2 {...iconProps} data-file-icon="website" />;
+  }
+  if (item.targetType === "attachment" && isPreviewableImage(contentType, filePath)) {
+    return <FileImage {...iconProps} data-file-icon="image" />;
+  }
+  if (hasFileExtension || item.targetType !== "attachment") {
+    return <FileText {...iconProps} data-file-icon="document" />;
+  }
+  return <Paperclip {...iconProps} data-file-icon="attachment" />;
 }
 
 export function ChatWorkManifestToggle({
@@ -93,13 +148,7 @@ function ManifestRow({
         onClick={onOpen}
         title={item.title}
       >
-        {externalUrl ? (
-          <span className="shrink-0 text-sm text-muted-foreground">
-            <WebsiteLinkIcon url={externalUrl} />
-          </span>
-        ) : (
-          <Paperclip className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-        )}
+        <ManifestItemIcon item={item} />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-xs font-medium text-foreground">{item.title}</span>
           {externalUrl ? (

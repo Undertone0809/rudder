@@ -358,11 +358,40 @@ test.describe("Chat Side Panel", () => {
       exact: true,
     })).toBeVisible();
     await expect(markdownEditor).toContainText("Save failed", { timeout: 10_000 });
+    allowPatch = true;
+    await markdownEditor.getByRole("button", { name: "Retry" }).click();
+    await expect(markdownEditor).toContainText("Saved", { timeout: 10_000 });
+    expect(patchAttempts).toBeGreaterThanOrEqual(2);
+
+    const retriedFileRes = await page.request.get(
+      `/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(libraryFilePath)}`,
+    );
+    expect(retriedFileRes.ok(), await retriedFileRes.text()).toBe(true);
+    const retriedFile = await retriedFileRes.json() as { content: string | null };
+    expect(retriedFile.content).toContain("# OpenClaw and Hermes Agent SEO competitor research revised");
+
+    allowPatch = false;
+    const revisedHeading = markdownEditor.getByRole("heading", {
+      name: "OpenClaw and Hermes Agent SEO competitor research revised",
+      exact: true,
+    });
+    await revisedHeading.evaluate((heading) => {
+      const editableRoot = heading.closest<HTMLElement>("[contenteditable='true']");
+      editableRoot?.focus();
+      const range = document.createRange();
+      range.selectNodeContents(heading);
+      range.collapse(false);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    });
+    await page.keyboard.type(" conflict");
+    await expect(markdownEditor).toContainText("Save failed", { timeout: 10_000 });
 
     const concurrentLibraryContent = "# New agent copy\n\nKeep this concurrent update.";
     const concurrentWriteRes = await page.request.patch(
       `/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(libraryFilePath)}`,
-      { data: { content: concurrentLibraryContent, expectedContent: initialLibraryContent } },
+      { data: { content: concurrentLibraryContent, expectedContent: retriedFile.content } },
     );
     expect(concurrentWriteRes.ok(), await concurrentWriteRes.text()).toBe(true);
 
@@ -371,10 +400,9 @@ test.describe("Chat Side Panel", () => {
     await expect(markdownEditor.getByRole("button", { name: "Keep mine" })).toBeVisible();
     await expect(markdownEditor.getByRole("button", { name: "Use latest" })).toBeVisible();
     await expect(markdownEditor.getByRole("heading", {
-      name: "OpenClaw and Hermes Agent SEO competitor research revised",
+      name: "OpenClaw and Hermes Agent SEO competitor research revised conflict",
       exact: true,
     })).toBeVisible();
-    expect(patchAttempts).toBeGreaterThanOrEqual(1);
 
     await markdownEditor.getByRole("button", { name: "Keep mine" }).click();
     await expect(markdownEditor).toContainText("Saved");
@@ -384,15 +412,15 @@ test.describe("Chat Side Panel", () => {
     );
     expect(keptFileRes.ok(), await keptFileRes.text()).toBe(true);
     const keptFile = await keptFileRes.json() as { content: string | null };
-    expect(keptFile.content).toContain("OpenClaw and Hermes Agent SEO competitor research revised");
+    expect(keptFile.content).toContain("OpenClaw and Hermes Agent SEO competitor research revised conflict");
     expect(keptFile.content).not.toBe(concurrentLibraryContent);
 
     allowPatch = false;
-    const revisedHeading = markdownEditor.getByRole("heading", {
-      name: "OpenClaw and Hermes Agent SEO competitor research revised",
+    const keptHeading = markdownEditor.getByRole("heading", {
+      name: "OpenClaw and Hermes Agent SEO competitor research revised conflict",
       exact: true,
     });
-    await revisedHeading.evaluate((heading) => {
+    await keptHeading.evaluate((heading) => {
       const editableRoot = heading.closest<HTMLElement>("[contenteditable='true']");
       editableRoot?.focus();
       const range = document.createRange();
@@ -1499,8 +1527,9 @@ test.describe("Chat Side Panel", () => {
     expect(resizerBox).not.toBeNull();
     expect(sidePanelBox).not.toBeNull();
     expect(sidePanelHeaderBox).not.toBeNull();
+    expect(resizerBox!.width).toBeGreaterThanOrEqual(10);
     expect(Math.round(resizerBox!.x - (mainCardBox!.x + mainCardBox!.width))).toBeLessThanOrEqual(2);
-    expect(Math.abs(Math.round(sidePanelBox!.x - (resizerBox!.x + resizerBox!.width)))).toBeLessThanOrEqual(2);
+    expect(Math.round(sidePanelBox!.x - (resizerBox!.x + resizerBox!.width))).toBe(0);
     expect(Math.round(sidePanelHeaderBox!.x - (mainCardBox!.x + mainCardBox!.width))).toBeLessThanOrEqual(6);
 
     await sidePanel.getByLabel("Expand Side Panel").click();
@@ -1512,14 +1541,14 @@ test.describe("Chat Side Panel", () => {
       const workspaceBox = await page.getByTestId("workspace-main-panel-stack").boundingBox();
       const expandedSidePanelBox = await sidePanel.boundingBox();
       if (!workspaceBox || !expandedSidePanelBox) return null;
-      return Math.max(
-        Math.abs(Math.round(expandedSidePanelBox.x - workspaceBox.x)),
-        Math.abs(Math.round(
+      return {
+        left: Math.abs(Math.round(expandedSidePanelBox.x - workspaceBox.x)),
+        right: Math.abs(Math.round(
           (workspaceBox.x + workspaceBox.width)
             - (expandedSidePanelBox.x + expandedSidePanelBox.width),
         )),
-      );
-    }).toBeLessThanOrEqual(2);
+      };
+    }).toEqual({ left: 0, right: 0 });
 
     await sidePanel.getByLabel("Restore Side Panel width").click();
     await expect(sidePanel.getByLabel("Expand Side Panel")).toBeVisible();
@@ -1595,9 +1624,11 @@ test.describe("Chat Side Panel", () => {
     expect(collapseStart).not.toBeNull();
     await page.mouse.move(collapseStart!.x + collapseStart!.width / 2, collapseStart!.y + collapseStart!.height / 2);
     await page.mouse.down();
+    await expect(page.getByTestId("side-panel-resize-shield")).toBeVisible();
     await page.mouse.move(page.viewportSize()!.width - 16, collapseStart!.y + collapseStart!.height / 2, { steps: 8 });
     await expect(sidePanel).toHaveCount(0);
     await page.mouse.up();
+    await expect(page.getByTestId("side-panel-resize-shield")).toHaveCount(0);
     await expect(page.getByTestId("side-panel-stable-host")).toHaveCSS("width", "0px");
 
     await page.getByTestId("side-panel-hover-edge").hover();
@@ -1749,6 +1780,94 @@ test.describe("Chat Side Panel", () => {
     await page.mouse.up();
   });
 
+  test("keeps desktop chat controls clear of interrupted messages beside the Side Panel", async ({ page }) => {
+    await installBrowserDesktopStub(page);
+    const browserSettings = await page.request.patch("/api/instance/settings/browser", {
+      data: { enabled: true, openLinksIn: "built_in" },
+    });
+    expect(browserSettings.ok(), await browserSettings.text()).toBe(true);
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Toolbar-Clearance-${Date.now()}`,
+        issuePrefix: `CTC${randomUUID().replaceAll("-", "").slice(0, 7).toUpperCase()}`,
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Interrupted chat beside Browser",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "interrupted",
+      body: "Chat run interrupted before a final reply. Continue the conversation to resume from the preserved context.",
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.setViewportSize({ width: 1200, height: 820 });
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    await page.getByRole("button", { name: "Collapse workspace sidebar" }).click();
+    await expect(page.getByRole("button", { name: "Open Messenger sidebar" })).toBeVisible();
+    await page.getByTestId("chat-side-panel-trigger").click();
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await sidePanel.getByRole("button", { name: /Browser/ }).click();
+    await expect(sidePanel.getByTestId("chat-side-panel-browser-view")).toBeVisible();
+
+    const toolbarClearance = page.getByTestId("chat-desktop-toolbar-clearance");
+    const openSidebarButton = page.getByRole("button", { name: "Open Messenger sidebar" });
+    const chatActionsButton = page.getByTestId("chat-actions-trigger");
+    const assistantMessage = page.getByTestId("chat-assistant-message");
+    await expect(toolbarClearance).toBeVisible();
+    await expect(chatActionsButton).toBeVisible();
+    await expect(assistantMessage).toContainText("Chat run interrupted before a final reply.");
+
+    const [toolbarBox, openSidebarBox, chatActionsBox, messageBox, scrollRegionBox] = await Promise.all([
+      toolbarClearance.boundingBox(),
+      openSidebarButton.boundingBox(),
+      chatActionsButton.boundingBox(),
+      assistantMessage.boundingBox(),
+      page.getByTestId("chat-messages-scroll-region").boundingBox(),
+    ]);
+    expect(toolbarBox).not.toBeNull();
+    expect(openSidebarBox).not.toBeNull();
+    expect(chatActionsBox).not.toBeNull();
+    expect(messageBox).not.toBeNull();
+    expect(scrollRegionBox).not.toBeNull();
+
+    const toolbarBottom = toolbarBox!.y + toolbarBox!.height;
+    expect(openSidebarBox!.y + openSidebarBox!.height).toBeLessThanOrEqual(toolbarBottom + 1);
+    expect(chatActionsBox!.y + chatActionsBox!.height).toBeLessThanOrEqual(toolbarBottom + 1);
+    expect(scrollRegionBox!.y).toBeGreaterThanOrEqual(toolbarBottom - 1);
+    expect(messageBox!.y).toBeGreaterThanOrEqual(toolbarBottom - 1);
+
+    await page.screenshot({
+      path: "/tmp/rudder-chat-toolbar-clearance-with-side-panel.png",
+      fullPage: true,
+    });
+  });
+
   test("opens a Browser side panel tab with URL navigation controls", async ({ page }) => {
     await installBrowserDesktopStub(page);
     const browserSettings = await page.request.patch("/api/instance/settings/browser", {
@@ -1805,6 +1924,27 @@ test.describe("Chat Side Panel", () => {
     const browserTabId = await webview.getAttribute("data-browser-tab-id");
     expect(browserTabId).toBeTruthy();
     const stableWebview = sidePanel.locator(`webview[data-browser-tab-id="${browserTabId}"]`);
+    const activeBrowserTab = sidePanel.getByTestId("chat-side-panel-tab").first();
+
+    const initialTabWidth = await activeBrowserTab.evaluate((element) => element.getBoundingClientRect().width);
+    await stableWebview.evaluate((element) => {
+      element.dispatchEvent(Object.assign(new Event("page-title-updated"), { title: "Overview" }));
+    });
+    await expect(activeBrowserTab).toContainText("Overview");
+    const shortTitleTabWidth = await activeBrowserTab.evaluate((element) => element.getBoundingClientRect().width);
+    await stableWebview.evaluate((element) => {
+      element.dispatchEvent(Object.assign(new Event("page-title-updated"), {
+        title: "Rudder MKT Command Center Daily Analytics",
+      }));
+    });
+    await expect(activeBrowserTab).toContainText("Rudder MKT Command Center Daily Analytics");
+    const longTitleTabWidth = await activeBrowserTab.evaluate((element) => element.getBoundingClientRect().width);
+    expect(shortTitleTabWidth).toBeCloseTo(initialTabWidth, 1);
+    expect(longTitleTabWidth).toBeCloseTo(initialTabWidth, 1);
+    await stableWebview.evaluate((element) => {
+      element.dispatchEvent(Object.assign(new Event("page-title-updated"), { title: "localhost" }));
+    });
+    await expect(activeBrowserTab).toContainText("localhost");
 
     await sidePanel.getByLabel("Expand Side Panel").click();
     await expect(page.getByTestId("side-panel-expanded-overlay")).toBeVisible();
@@ -1862,6 +2002,90 @@ test.describe("Chat Side Panel", () => {
     await expect.poll(() => stableWebview.evaluate((element) => (
       element as HTMLElement & { __rudderKeepaliveMarker?: string }
     ).__rudderKeepaliveMarker)).toBe("browser-guest-1");
+  });
+
+  test("renders Browser connection failure details and reloads the current URL", async ({ page }) => {
+    await installBrowserDesktopStub(page);
+    const browserSettings = await page.request.patch("/api/instance/settings/browser", {
+      data: { enabled: true, openLinksIn: "built_in" },
+    });
+    expect(browserSettings.ok(), await browserSettings.text()).toBe(true);
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Side-Panel-Browser-Error-${Date.now()}`,
+        issuePrefix: `SBE${randomUUID().replaceAll("-", "").slice(0, 7).toUpperCase()}`,
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Browser error UI host chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    await page.getByTestId("chat-side-panel-trigger").click();
+
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await sidePanel.getByRole("button", { name: /Browser/ }).click();
+    await sidePanel.getByLabel("Browser URL").fill("localhost:4173/browser-fixture");
+    await sidePanel.getByLabel("Browser URL").press("Enter");
+
+    const webview = sidePanel.getByTestId("chat-side-panel-browser-webview");
+    await expect(webview).toHaveAttribute("src", "http://localhost:4173/browser-fixture");
+    await webview.evaluate((element) => {
+      const browserElement = element as HTMLElement & { reload?: () => void };
+      browserElement.dispatchEvent(new Event("dom-ready"));
+      browserElement.reload = () => {
+        browserElement.dataset.errorReloadCount = String(
+          Number(browserElement.dataset.errorReloadCount ?? "0") + 1,
+        );
+      };
+      browserElement.dispatchEvent(Object.assign(new Event("did-start-navigation"), {
+        isMainFrame: true,
+        url: "http://127.0.0.1:3201/",
+      }));
+      browserElement.dispatchEvent(Object.assign(new Event("did-fail-load"), {
+        errorDescription: "ERR_CONNECTION_REFUSED",
+        isMainFrame: true,
+        validatedURL: "http://127.0.0.1:3201/",
+      }));
+    });
+
+    const browserError = sidePanel.getByTestId("chat-side-panel-browser-error");
+    await expect(browserError).toBeVisible();
+    await expect(browserError).toContainText("This site can't be reached");
+    await expect(browserError).toContainText("127.0.0.1 refused to connect.");
+    await expect(browserError).toContainText("ERR_CONNECTION_REFUSED");
+    await expect(sidePanel.getByLabel("Browser URL")).toHaveValue("http://127.0.0.1:3201/");
+    await expect(webview).toHaveAttribute("src", "http://localhost:4173/browser-fixture");
+    await expect(webview).toHaveClass(/invisible/);
+
+    await browserError.getByRole("button", { name: "Details" }).click();
+    await expect(browserError).toContainText("http://127.0.0.1:3201/");
+    await page.screenshot({ path: "/tmp/rudder-side-panel-browser-error.png", fullPage: true });
+
+    await browserError.getByRole("button", { name: "Reload" }).click();
+    await expect(webview).toHaveAttribute("data-error-reload-count", "1");
+    await expect(browserError).toBeVisible();
+    await webview.evaluate((element) => {
+      element.dispatchEvent(new Event("did-start-loading"));
+    });
+    await expect(browserError).toHaveCount(0);
+    await expect(webview).not.toHaveClass(/invisible/);
   });
 
   test("keeps the default Side Panel and main content at a 1:1 split while the app width changes", async ({ page }) => {

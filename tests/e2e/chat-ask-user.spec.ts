@@ -28,11 +28,20 @@ async function writeAskUserStub(
       },
     ],
   },
+  options: {
+    failFirstAnsweredAttempt?: boolean;
+    answeredDelayMs?: number;
+  } = {},
 ) {
   await fs.mkdir(E2E_BIN_DIR, { recursive: true });
   const stubPath = path.join(E2E_BIN_DIR, `${name}.js`);
+  const answeredAttemptPath = `${stubPath}.answered-attempt`;
   const stubSource = `#!/usr/bin/env node
+import fs from "node:fs";
 const requestUserInput = ${JSON.stringify(requestUserInput)};
+const answeredAttemptPath = ${JSON.stringify(answeredAttemptPath)};
+const failFirstAnsweredAttempt = ${options.failFirstAnsweredAttempt === true};
+const answeredDelayMs = ${Math.max(0, options.answeredDelayMs ?? 0)};
 let prompt = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
@@ -45,6 +54,22 @@ process.stdin.on("end", () => {
     && prompt.includes("Current user message attachments:")
     && prompt.includes("ask-user-screenshot.png")
     && prompt.includes("receipt.txt");
+  if (answered && failFirstAnsweredAttempt && !fs.existsSync(answeredAttemptPath)) {
+    fs.writeFileSync(answeredAttemptPath, "failed");
+    process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "thread-ask-user-failed", model: "gpt-5.4" }) + "\\n");
+    process.stdout.write(JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: "Partial model output before failure.",
+      },
+    }) + "\\n");
+    process.stdout.write(JSON.stringify({
+      type: "turn.failed",
+      error: { message: "model generation failed after the operator answered" },
+    }) + "\\n");
+    process.exit(1);
+  }
   const result = answered
     ? {
         kind: "message",
@@ -58,18 +83,25 @@ process.stdin.on("end", () => {
           requestUserInput,
         },
       };
-  process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "thread-ask-user", model: "gpt-5.4" }) + "\\n");
-  process.stdout.write(JSON.stringify({
-    type: "item.completed",
-    item: {
-      type: "agent_message",
-      text: result.body + "\\n" + sentinel + JSON.stringify(result),
-    },
-  }) + "\\n");
-  process.stdout.write(JSON.stringify({
-    type: "turn.completed",
-    usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 },
-  }) + "\\n");
+  const emitResult = () => {
+    process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "thread-ask-user", model: "gpt-5.4" }) + "\\n");
+    process.stdout.write(JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: result.body + "\\n" + sentinel + JSON.stringify(result),
+      },
+    }) + "\\n");
+    process.stdout.write(JSON.stringify({
+      type: "turn.completed",
+      usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 },
+    }) + "\\n");
+  };
+  if (answered && answeredDelayMs > 0) {
+    setTimeout(emitResult, answeredDelayMs);
+  } else {
+    emitResult();
+  }
 });
 `;
   await fs.writeFile(stubPath, stubSource, "utf8");
@@ -173,6 +205,42 @@ test("ask_user focuses the answer panel until the user responds", async ({ page 
   await expect(page.getByTestId("chat-ask-user-history").last()).toContainText("Answered");
   await expect(page.locator(".chat-composer").last()).toBeVisible();
   await expect(page.getByText("Continuing with the narrow path.")).toBeVisible();
+});
+
+test("retrying a failed answer does not reopen the previous ask_user panel", async ({ page }) => {
+  const command = await writeAskUserStub(
+    `ask-user-retry-${Date.now()}`,
+    undefined,
+    { failFirstAnsweredAttempt: true, answeredDelayMs: 1_500 },
+  );
+  const organization = await createAskUserOrg(page, `AskUserRetry-${Date.now()}`, command);
+
+  await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${organization.chatAgent.id}`);
+  const composer = page.locator(".rudder-mdxeditor-content").first();
+  await expect(composer).toBeVisible({ timeout: 15_000 });
+  await composer.fill("Help me choose scope, then continue");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const panel = page.getByTestId("chat-ask-user-panel");
+  await expect(panel).toBeVisible({ timeout: 15_000 });
+  await panel.getByRole("button", { name: /Narrow path/ }).click();
+  await panel.getByRole("button", { name: "Submit answer" }).click();
+
+  const failedMessage = page.getByTestId("chat-assistant-message")
+    .filter({ hasText: "Code chat_adapter_failed" });
+  await expect(failedMessage).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("chat-ask-user-panel")).toHaveCount(0);
+  await expect(page.getByTestId("chat-ask-user-history").last()).toContainText("Answered");
+
+  await failedMessage.getByRole("button", { name: "Retry" }).click();
+  await expect(page.getByText("Thinking", { exact: false }).last()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("chat-ask-user-panel")).toHaveCount(0);
+  await expect(page.getByTestId("chat-ask-user-history").last()).toContainText("Answered");
+  await expect(page.getByTestId("chat-ask-user-answer").last()).toContainText("Narrow path");
+  await expect(page.getByText("Answering the requested input:")).toHaveCount(0);
+
+  await expect(page.getByText("Continuing with the narrow path.")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("chat-ask-user-panel")).toHaveCount(0);
 });
 
 test("ask_user steps multi-question requests through one question at a time", async ({ page }) => {

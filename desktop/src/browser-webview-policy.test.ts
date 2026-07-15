@@ -134,9 +134,18 @@ describe("Rudder Browser session policy", () => {
     const blockedDnsAlias = vi.fn();
     requestHandler?.({ url: "http://localtest.me:3100/api/orgs", resourceType: "xhr" }, blockedDnsAlias);
     await vi.waitFor(() => expect(blockedDnsAlias).toHaveBeenCalledWith({ cancel: true }));
-    const blockedFileNavigation = vi.fn();
-    requestHandler?.({ url: "file:///Users/example/.ssh/id_rsa", resourceType: "mainFrame" }, blockedFileNavigation);
-    await vi.waitFor(() => expect(blockedFileNavigation).toHaveBeenCalledWith({ cancel: true }));
+    const allowedFileNavigation = vi.fn();
+    requestHandler?.({ url: "file:///Users/example/report.html", resourceType: "mainFrame" }, allowedFileNavigation);
+    await vi.waitFor(() => expect(allowedFileNavigation).toHaveBeenCalledWith({ cancel: false }));
+    const blockedRemoteFileNavigation = vi.fn();
+    requestHandler?.({ url: "file://remote-host/share/report.html", resourceType: "mainFrame" }, blockedRemoteFileNavigation);
+    await vi.waitFor(() => expect(blockedRemoteFileNavigation).toHaveBeenCalledWith({ cancel: true }));
+    const blockedUncFileNavigation = vi.fn();
+    requestHandler?.({ url: "file:////server/share/report.html", resourceType: "mainFrame" }, blockedUncFileNavigation);
+    await vi.waitFor(() => expect(blockedUncFileNavigation).toHaveBeenCalledWith({ cancel: true }));
+    const blockedFileSubframe = vi.fn();
+    requestHandler?.({ url: "file:///Users/example/frame.html", resourceType: "subFrame" }, blockedFileSubframe);
+    await vi.waitFor(() => expect(blockedFileSubframe).toHaveBeenCalledWith({ cancel: true }));
     const allowedDataSubresource = vi.fn();
     requestHandler?.({ url: "data:image/png;base64,AA==", resourceType: "image" }, allowedDataSubresource);
     await vi.waitFor(() => expect(allowedDataSubresource).toHaveBeenCalledWith({ cancel: false }));
@@ -173,6 +182,19 @@ describe("Rudder Browser guest policy", () => {
     const allowedAttachEvent = { preventDefault: vi.fn() };
     hostHandlers.get("will-attach-webview")?.(allowedAttachEvent, {}, { src: "about:blank" });
     expect(allowedAttachEvent.preventDefault).not.toHaveBeenCalled();
+    const allowedFileAttachEvent = { preventDefault: vi.fn() };
+    hostHandlers.get("will-attach-webview")?.(allowedFileAttachEvent, {}, { src: "file:///tmp/report.html" });
+    expect(allowedFileAttachEvent.preventDefault).not.toHaveBeenCalled();
+    const remoteFileAttachEvent = { preventDefault: vi.fn() };
+    hostHandlers.get("will-attach-webview")?.(
+      remoteFileAttachEvent,
+      {},
+      { src: "file://remote-host/share/report.html" },
+    );
+    expect(remoteFileAttachEvent.preventDefault).toHaveBeenCalledTimes(1);
+    const uncFileAttachEvent = { preventDefault: vi.fn() };
+    hostHandlers.get("will-attach-webview")?.(uncFileAttachEvent, {}, { src: "file:////server/share/report.html" });
+    expect(uncFileAttachEvent.preventDefault).toHaveBeenCalledTimes(1);
 
     browserAvailable = false;
     const unavailableAttachEvent = { preventDefault: vi.fn() };
@@ -198,11 +220,16 @@ describe("Rudder Browser guest policy", () => {
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(openBrowserPopup).toHaveBeenCalledWith("https://example.com/new");
     expect(popupHandler?.({ url: "file:///tmp/private.txt" })).toEqual({ action: "deny" });
+    expect(popupHandler?.({ url: "file://remote-host/share/private.txt" })).toEqual({ action: "deny" });
     expect(popupHandler?.({ url: "http://localhost:3100/api/orgs" })).toEqual({ action: "deny" });
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(openBrowserPopup).toHaveBeenCalledTimes(1);
-    const unsafeNavigation = { preventDefault: vi.fn() };
-    guestHandlers.get("will-navigate")?.(unsafeNavigation, "file:///tmp/private.txt");
-    expect(unsafeNavigation.preventDefault).toHaveBeenCalledTimes(1);
+    const fileNavigation = { preventDefault: vi.fn() };
+    guestHandlers.get("will-navigate")?.(fileNavigation, "file:///tmp/private.txt");
+    expect(fileNavigation.preventDefault).toHaveBeenCalledTimes(1);
+    const fileRedirect = { preventDefault: vi.fn() };
+    guestHandlers.get("will-redirect")?.(fileRedirect, "file:///tmp/private.txt");
+    expect(fileRedirect.preventDefault).toHaveBeenCalledTimes(1);
     const controlPlaneRedirect = { preventDefault: vi.fn() };
     guestHandlers.get("will-redirect")?.(controlPlaneRedirect, "http://127.0.0.1:3100/api/orgs");
     expect(controlPlaneRedirect.preventDefault).toHaveBeenCalledTimes(1);

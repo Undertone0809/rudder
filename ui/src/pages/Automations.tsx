@@ -28,6 +28,7 @@ import {
   CheckCircle2,
   ChevronDown,
   FolderOpen,
+  LayoutTemplate,
   MessageSquare,
   MoreHorizontal,
   PanelRight,
@@ -98,6 +99,41 @@ type AutomationTemplate = {
 };
 
 const automationTemplates: AutomationTemplate[] = [
+  {
+    id: "daily-review",
+    title: { en: "Daily review", "zh-CN": "每日回顾" },
+    summary: { en: "Review today's work and draft a short status update.", "zh-CN": "回顾今天的工作并生成简短状态更新。" },
+    scheduleCron: "0 18 * * *",
+    outputMode: "chat_output",
+    description: {
+      en: [
+        "Review what I worked on today and draft a short status update.",
+        "",
+        "Scope: Review today's issues, comments, chats, and runs, including work completed since the previous review.",
+        "",
+        "Status: Summarize what was completed, what is still in progress, and what remains unfinished or blocked.",
+        "",
+        "Decisions: Note important decisions, changes in direction, and anything that needs my review.",
+        "",
+        "Next: Recommend the highest-priority next action for tomorrow.",
+        "",
+        "Keep the update concise and evidence-based. Only create tracked work for a concrete blocker or follow-up action.",
+      ].join("\n"),
+      "zh-CN": [
+        "回顾我今天完成的工作，并生成一份简短的状态更新。",
+        "",
+        "范围：查看今天的任务、评论、聊天和运行记录，包括上次回顾后完成的工作。",
+        "",
+        "状态：汇总已完成、进行中、尚未完成或被阻塞的内容。",
+        "",
+        "决策：记录重要决策、方向变化，以及需要我 review 的事项。",
+        "",
+        "下一步：推荐明天优先级最高的行动。",
+        "",
+        "保持简洁并以实际证据为准。只有出现明确阻塞或后续行动时才创建可跟踪任务。",
+      ].join("\n"),
+    },
+  },
   {
     id: "bug-triage",
     title: { en: "Bug triage", "zh-CN": "Bug 分诊" },
@@ -346,6 +382,7 @@ export function Automations() {
   const [runningAutomationId, setRunningAutomationId] = useState<string | null>(null);
   const [statusMutationAutomationId, setStatusMutationAutomationId] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [detailCollapsed, setDetailCollapsed] = useState(false);
   const [statusFilter, setStatusFilter] = useState<AutomationStatusFilter>("all");
@@ -386,6 +423,7 @@ export function Automations() {
       outputMode: template.outputMode,
       chatConversationId: "",
     }));
+    setTemplatePickerOpen(false);
     setAdvancedOpen(false);
     setComposerOpen(true);
   }, [locale]);
@@ -514,6 +552,7 @@ export function Automations() {
     onSuccess: async (automation) => {
       resetDraft();
       setComposerOpen(false);
+      setTemplatePickerOpen(false);
       setAdvancedOpen(false);
       await queryClient.invalidateQueries({ queryKey: queryKeys.automations.list(selectedOrganizationId!) });
       pushToast({
@@ -658,6 +697,7 @@ export function Automations() {
         onOpenChange={(open) => {
           if (!createAutomation.isPending) {
             setComposerOpen(open);
+            if (!open) setTemplatePickerOpen(false);
           }
         }}
       >
@@ -682,20 +722,66 @@ export function Automations() {
                 ) : null}
                 <span className="font-medium text-foreground">New automation</span>
               </div>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                type="button"
-                className="shrink-0 text-muted-foreground"
-                onClick={() => {
-                  setComposerOpen(false);
-                  setAdvancedOpen(false);
-                }}
-                disabled={createAutomation.isPending}
-                aria-label="Close automation composer"
-              >
-                <X className="h-3.5 w-3.5" />
-              </Button>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <Popover open={templatePickerOpen} onOpenChange={setTemplatePickerOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      className="h-8 px-2.5 text-xs"
+                    >
+                      <LayoutTemplate className="mr-1.5 h-3.5 w-3.5" />
+                      {locale === "zh-CN" ? "使用模板" : "Use template"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="end"
+                    sideOffset={8}
+                    data-testid="automation-template-picker"
+                    className="max-h-[min(560px,calc(100dvh-6rem))] w-[min(520px,calc(100vw-2rem))] overflow-y-auto p-2"
+                  >
+                    <p className="px-2 pb-1.5 pt-1 text-xs font-medium text-muted-foreground">
+                      {locale === "zh-CN" ? "模板" : "Templates"}
+                    </p>
+                    <div className="space-y-0.5">
+                      {automationTemplates.map((template) => {
+                        const title = localizeText(template.title, locale);
+                        const summary = localizeText(template.summary, locale);
+                        return (
+                          <button
+                            key={template.id}
+                            type="button"
+                            className="flex w-full min-w-0 items-start gap-2.5 rounded-md px-2 py-2.5 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            onClick={() => openComposer(template)}
+                          >
+                            <LayoutTemplate className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                            <span className="min-w-0">
+                              <span className="block text-sm font-medium text-foreground">{title}</span>
+                              <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{summary}</span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  type="button"
+                  className="shrink-0 text-muted-foreground"
+                  onClick={() => {
+                    setComposerOpen(false);
+                    setTemplatePickerOpen(false);
+                    setAdvancedOpen(false);
+                  }}
+                  disabled={createAutomation.isPending}
+                  aria-label="Close automation composer"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
 
             <div
@@ -1001,6 +1087,7 @@ export function Automations() {
                   className="h-8 px-3 text-xs"
                   onClick={() => {
                     setComposerOpen(false);
+                    setTemplatePickerOpen(false);
                     setAdvancedOpen(false);
                   }}
                   disabled={createAutomation.isPending}

@@ -75,11 +75,15 @@ vi.mock("@/context/DialogContext", () => ({
   }),
 }));
 
-vi.mock("@/context/ToastContext", () => ({
-  useToast: () => ({
+vi.mock("@/context/ToastContext", () => {
+  const toast = {
     pushToast: mockState.pushToast,
-  }),
-}));
+  };
+  return {
+    useOptionalToast: () => toast,
+    useToast: () => toast,
+  };
+});
 
 vi.mock("@/hooks/useIssueFollows", () => ({
   useIssueFollows: () => ({

@@ -488,12 +488,15 @@
 .t-page-slide {
   position: relative;
 }
+
 .t-page-slide .t-page[data-page-id="1"] {
   --t-page-from-x: calc(var(--page-slide-distance) * -1);
 }
+
 .t-page-slide .t-page[data-page-id="2"] {
   --t-page-from-x: var(--page-slide-distance);
 }
+
 .t-page-slide .t-page {
   position: absolute;
   inset: 0;
@@ -507,6 +510,7 @@
     filter var(--page-slide-dur) var(--page-slide-ease);
   will-change: opacity, transform, filter;
 }
+
 .t-page-slide[data-page="1"] .t-page[data-page-id="1"],
 .t-page-slide[data-page="2"] .t-page[data-page-id="2"] {
   opacity: 1;
@@ -527,6 +531,7 @@
     filter var(--stagger-dur) var(--stagger-ease);
   will-change: transform, opacity, filter;
 }
+
 .t-stagger-line--2 { transition-delay: var(--stagger-stagger); }
 .t-stagger-line--3 { transition-delay: calc(var(--stagger-stagger) * 2); }
 .t-stagger-line--4 { transition-delay: calc(var(--stagger-stagger) * 3); }
@@ -536,6 +541,7 @@
   transform: translateY(0);
   filter: blur(0);
 }
+
 .t-stagger.is-hiding .t-stagger-line {
   opacity: 0;
   transform: translateY(0);

@@ -9,6 +9,7 @@ import { privateHostnameGuard, resolvePrivateHostnameAllowSet } from "../middlew
 import { llmRoutes } from "../routes/llms.js";
 import { pluginUiStaticRoutes } from "../routes/plugin-ui-static.js";
 import { DEFAULT_LOCAL_PLUGIN_DIR } from "../services/plugin-loader.js";
+import { workspaceWebPreviewRuntime } from "../services/workspace-web-preview.js";
 import { applyUiBranding } from "../ui-branding.js";
 import type { PluginHostRuntime } from "./plugin-host-runtime.js";
 import { registerApiRoutes } from "./register-api-routes.js";
@@ -27,11 +28,26 @@ export async function createHttpApp(
   pluginRuntime: PluginHostRuntime,
 ) {
   const app = express();
+  const previewOrigin = opts.workspacePreviewOrigin ?? `http://preview.localhost:${opts.serverPort}`;
+  const workspacePreview = workspaceWebPreviewRuntime(db, {
+    previewOrigin,
+    requireLoopbackParent: !opts.workspacePreviewOrigin,
+  });
   const privateHostnameGateEnabled =
     opts.deploymentMode === "authenticated" && opts.deploymentExposure === "private";
   const privateHostnameAllowSet = resolvePrivateHostnameAllowSet({
     allowedHostnames: opts.allowedHostnames,
     bindHost: opts.bindHost,
+  });
+
+  // Preview capabilities are bearer secrets, so this Host-only branch runs
+  // before the ordinary request logger and never mounts Rudder API/UI routes.
+  app.use(async (req, res, next) => {
+    if (await workspacePreview.handlePreviewHostRequest(req, res)) return;
+    next();
+  });
+  app.use("/workspace-preview", (_req, res) => {
+    res.status(404).type("text/plain").send("Not found");
   });
 
   app.use(express.json({
@@ -76,7 +92,7 @@ export async function createHttpApp(
     app.all("/api/auth/*authPath", opts.betterAuthHandler);
   }
   app.use(llmRoutes(db));
-  app.use("/api", registerApiRoutes(db, opts, pluginRuntime));
+  app.use("/api", registerApiRoutes(db, opts, pluginRuntime, workspacePreview));
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "API route not found" });
   });

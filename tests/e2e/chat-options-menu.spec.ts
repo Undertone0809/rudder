@@ -355,6 +355,19 @@ test.describe("Chat options menu", () => {
     await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${chatAgent.id}&projectId=${project.id}`);
     await expect(page.getByTestId("chat-project-selector")).toContainText(project.name, { timeout: 15_000 });
 
+    const tabsList = page.getByRole("tablist", { name: "New chat empty state" });
+    const projectLabel = page.getByTestId("chat-empty-state-project-label");
+    await expect(tabsList).toBeVisible();
+    await expect(projectLabel).toHaveText(project.name);
+    const headerAlignment = await Promise.all([tabsList.boundingBox(), projectLabel.boundingBox()]);
+    expect(headerAlignment[0]).not.toBeNull();
+    expect(headerAlignment[1]).not.toBeNull();
+    expect(Math.abs(
+      headerAlignment[0]!.y + headerAlignment[0]!.height / 2
+      - (headerAlignment[1]!.y + headerAlignment[1]!.height / 2),
+    )).toBeLessThanOrEqual(1);
+
+    await page.getByTestId("chat-empty-state-tab-recent").click();
     const recentSection = page.getByTestId("chat-empty-state-recent-project-conversations");
     await expect(recentSection).toBeVisible();
     await expect(recentSection).toContainText("Launch scope review");
@@ -370,6 +383,58 @@ test.describe("Chat options menu", () => {
     await expect(recentRows).toHaveCount(projectChats.length);
     const olderProjectChatRow = page.getByTestId(`chat-empty-state-recent-conversation-${olderProjectChat.id}`);
     await expect(olderProjectChatRow).toContainText("Launch kickoff decisions");
+
+    const restingGeometry = await olderProjectChatRow.evaluate((element) => {
+      const dividerRow = element.parentElement;
+      if (!dividerRow) throw new Error("Recent conversation row is missing its divider wrapper");
+      const rowBox = element.getBoundingClientRect();
+      const dividerBox = dividerRow.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return {
+        leftDelta: rowBox.x - dividerBox.x,
+        rightDelta: dividerBox.right - rowBox.right,
+        marginLeft: style.marginLeft,
+        marginRight: style.marginRight,
+        borderRadius: style.borderRadius,
+      };
+    });
+    expect(Math.abs(restingGeometry.leftDelta)).toBeLessThanOrEqual(1);
+    expect(Math.abs(restingGeometry.rightDelta)).toBeLessThanOrEqual(1);
+    expect(Number.parseFloat(restingGeometry.marginLeft)).toBe(0);
+    expect(Number.parseFloat(restingGeometry.marginRight)).toBe(0);
+    expect(Number.parseFloat(restingGeometry.borderRadius)).toBe(0);
+
+    await olderProjectChatRow.focus();
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Tab");
+    await expect(olderProjectChatRow).toBeFocused();
+    await expect.poll(
+      () => olderProjectChatRow.evaluate((element) => getComputedStyle(element).boxShadow),
+    ).toContain("inset");
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+
+    await olderProjectChatRow.hover();
+    await expect.poll(
+      () => olderProjectChatRow.evaluate((element) => getComputedStyle(element).backgroundColor),
+    ).not.toBe("rgba(0, 0, 0, 0)");
+    const hoverGeometry = await olderProjectChatRow.evaluate((element) => {
+      const dividerRow = element.parentElement;
+      if (!dividerRow) throw new Error("Recent conversation row is missing its divider wrapper");
+      const rowBox = element.getBoundingClientRect();
+      const dividerBox = dividerRow.getBoundingClientRect();
+      return {
+        leftInset: rowBox.x - dividerBox.x,
+        rightInset: dividerBox.right - rowBox.right,
+        borderRadius: getComputedStyle(element).borderRadius,
+      };
+    });
+    expect(hoverGeometry.leftInset).toBeGreaterThan(0);
+    expect(hoverGeometry.rightInset).toBeGreaterThan(0);
+    expect(Number.parseFloat(hoverGeometry.borderRadius)).toBeGreaterThan(0);
+    await page.screenshot({
+      path: testInfo.outputPath("project-new-chat-recent-conversations-hover.png"),
+      fullPage: true,
+    });
 
     const notificationDismissButtons = page.getByRole("button", { name: "Dismiss notification" });
     while (await notificationDismissButtons.count() > 0) {

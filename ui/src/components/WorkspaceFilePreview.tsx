@@ -1,12 +1,14 @@
-import type { OrganizationWorkspaceFileDetail } from "@rudderhq/shared";
+import type { OrganizationWorkspaceFileDetail, WorkspaceWebPreviewNetworkMode } from "@rudderhq/shared";
+import { useEffect, useState, type ReactNode } from "react";
 import { normalizeWorkspaceCsvRows, parseWorkspaceCsvContent } from "../lib/workspace-csv";
 import {
-  buildWorkspaceHtmlPreviewSrcDoc,
   isWorkspaceHtmlContentType,
   isWorkspaceHtmlFilePath,
 } from "../lib/workspace-html-preview";
+import { InspectableImage } from "./InspectableImage";
 import { MarkdownBody } from "./MarkdownBody";
 import { WorkspaceCodeEditor } from "./WorkspaceCodeEditor";
+import { WorkspaceHtmlPreview, WorkspaceHtmlPreviewToolbar } from "./WorkspaceHtmlPreview";
 import { WorkspacePdfPreview } from "./WorkspacePdfPreview";
 
 const WORKSPACE_MARKDOWN_FILE_EXTENSIONS = [".md", ".markdown", ".mdown", ".mdx"];
@@ -125,24 +127,72 @@ function WorkspaceCsvPreview({ content, testId }: { content: string; testId: str
 
 export function WorkspaceFilePreview({
   file,
+  organizationId,
   mode = "preview",
+  onModeChange = () => {},
+  htmlOpenAction,
   testIdPrefix = "workspace-file",
 }: {
   file: OrganizationWorkspaceFileDetail;
+  organizationId: string;
   mode?: WorkspaceFilePreviewMode;
+  onModeChange?: (mode: WorkspaceFilePreviewMode) => void;
+  htmlOpenAction?: ReactNode;
   testIdPrefix?: string;
 }) {
+  const htmlIdentity = `${organizationId}:${file.filePath}`;
+  const [htmlNetworkSelection, setHtmlNetworkSelection] = useState<{
+    identity: string;
+    mode: WorkspaceWebPreviewNetworkMode;
+  }>({ identity: htmlIdentity, mode: "connected" });
+  const htmlNetworkMode = htmlNetworkSelection.identity === htmlIdentity
+    ? htmlNetworkSelection.mode
+    : "connected";
+
+  useEffect(() => {
+    setHtmlNetworkSelection((current) => current.identity === htmlIdentity
+      ? current
+      : { identity: htmlIdentity, mode: "connected" });
+  }, [htmlIdentity]);
+
   if (file.previewKind === "text" && file.content !== null) {
-    if (isWorkspaceHtmlPreviewFile(file) && mode === "preview") {
+    if (isWorkspaceHtmlPreviewFile(file)) {
+      if (mode === "preview") {
+        return (
+          <WorkspaceHtmlPreview
+            key={`${organizationId}:${file.filePath}`}
+            organizationId={organizationId}
+            filePath={file.filePath}
+            htmlContent={file.content}
+            viewMode={mode}
+            onViewModeChange={onModeChange}
+            networkMode={htmlNetworkMode}
+            onNetworkModeChange={(networkMode) => {
+              setHtmlNetworkSelection({ identity: htmlIdentity, mode: networkMode });
+            }}
+            openAction={htmlOpenAction}
+            testIdPrefix={testIdPrefix}
+          />
+        );
+      }
+
       return (
-        <div className="flex min-h-[420px] flex-1 bg-white" data-testid={`${testIdPrefix}-html-preview-frame`}>
-          <iframe
-            data-testid={`${testIdPrefix}-html-preview`}
-            title={file.filePath || "Library HTML preview"}
-            srcDoc={buildWorkspaceHtmlPreviewSrcDoc(file.content)}
-            sandbox=""
-            referrerPolicy="no-referrer"
-            className="block min-h-[420px] w-full flex-1 border-0 bg-white"
+        <div
+          className="flex min-h-[420px] flex-1 flex-col"
+          data-testid={`${testIdPrefix}-html-source-frame`}
+        >
+          <WorkspaceHtmlPreviewToolbar
+            viewMode={mode}
+            onViewModeChange={onModeChange}
+            openAction={htmlOpenAction}
+            testIdPrefix={testIdPrefix}
+          />
+          <WorkspaceCodeEditor
+            data-testid={`${testIdPrefix}-code-preview`}
+            ariaLabel={`${file.filePath || "Library file"} source`}
+            filePath={file.filePath}
+            value={file.content}
+            readOnly
           />
         </div>
       );
@@ -183,11 +233,16 @@ export function WorkspaceFilePreview({
   if (file.previewKind === "image" && file.contentPath) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4" data-testid={`${testIdPrefix}-image-preview-frame`}>
-        <img
+        <InspectableImage
           data-testid={`${testIdPrefix}-image-preview`}
           src={file.contentPath}
           alt={file.filePath}
+          name={file.filePath || "Library image preview"}
           className="max-h-full max-w-full object-contain"
+          previewTestId={`${testIdPrefix}-image-preview-dialog`}
+          previewTitleFallback="Library image preview"
+          triggerClassName="max-h-full"
+          wrapperClassName="max-h-full"
         />
       </div>
     );

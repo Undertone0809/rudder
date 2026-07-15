@@ -1487,10 +1487,13 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(newGroup).toBeTruthy();
     await act(async () => {
       newGroup?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
     const editor = document.querySelector('[data-testid="messenger-custom-group-editor"]');
     expect(editor).toBeTruthy();
+    expect(editor?.closest('[data-testid="messenger-custom-group-popover"]')).toBeTruthy();
+    expect(editor?.closest('[data-testid="workspace-sidebar"]')).toBeNull();
     const nameInput = editor?.querySelector<HTMLInputElement>('input[aria-label="Group name"]');
     const iconPicker = editor?.querySelector('[aria-label="Group icons options"]');
     const iconButtonLabels = Array.from(iconPicker?.querySelectorAll("button") ?? [])
@@ -1527,6 +1530,36 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(mockAssignCustomGroupEntry).toHaveBeenCalledWith("org-1", "group-1", "chat:chat-1");
     expect(storage.setItem).toHaveBeenCalledWith("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ "org-1": "latest" }));
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["messenger", "org-1", "groups"] });
+  });
+
+  it("keeps focus on an outside control when it dismisses the group editor", async () => {
+    renderSidebar();
+
+    const newGroup = Array.from(document.querySelectorAll("button"))
+      .filter((button) => button.textContent?.includes("New group"))
+      .at(-1) as HTMLButtonElement | undefined;
+
+    expect(newGroup).toBeTruthy();
+    await act(async () => {
+      newGroup?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(document.querySelector('[data-testid="messenger-custom-group-editor"]')).toBeTruthy();
+    const outsideButton = document.querySelector<HTMLButtonElement>(
+      '[data-testid="messenger-thread-organization-trigger"]',
+    );
+    expect(outsideButton).toBeTruthy();
+
+    await act(async () => {
+      outsideButton?.focus();
+      outsideButton?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+      outsideButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector('[data-testid="messenger-custom-group-editor"]')).toBeNull();
+    expect(document.activeElement).toBe(outsideButton);
   });
 
   it("renames group and changes icon and color from separate group actions", async () => {

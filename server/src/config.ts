@@ -99,6 +99,7 @@ export interface Config {
   host: string;
   port: number;
   allowedHostnames: string[];
+  workspacePreviewOrigin: string | undefined;
   authBaseUrlMode: AuthBaseUrlMode;
   authPublicBaseUrl: string | undefined;
   authDisableSignUp: boolean;
@@ -155,6 +156,28 @@ function parsePositiveBytes(rawValue: string | undefined): number | null {
   const parsed = Math.floor(amount * multiplier);
   if (!Number.isSafeInteger(parsed) || parsed < 1) return null;
   return parsed;
+}
+
+export function normalizeWorkspacePreviewOrigin(rawValue: string | undefined): string | undefined {
+  const value = rawValue?.trim();
+  if (!value) return undefined;
+
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("RUDDER_WORKSPACE_PREVIEW_ORIGIN must be a valid HTTP(S) origin");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("RUDDER_WORKSPACE_PREVIEW_ORIGIN must use http or https");
+  }
+  if (url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+    throw new Error("RUDDER_WORKSPACE_PREVIEW_ORIGIN must contain only scheme, hostname, and optional port");
+  }
+  if (url.protocol === "http:" && !["localhost", "127.0.0.1", "::1", "[::1]", "preview.localhost"].includes(url.hostname)) {
+    throw new Error("RUDDER_WORKSPACE_PREVIEW_ORIGIN must use https outside loopback development");
+  }
+  return url.origin;
 }
 
 export function loadConfig(): Config {
@@ -325,6 +348,7 @@ export function loadConfig(): Config {
     host: process.env.HOST ?? fileConfig?.server.host ?? "127.0.0.1",
     port: Number(process.env.PORT) || fileConfig?.server.port || 3100,
     allowedHostnames,
+    workspacePreviewOrigin: normalizeWorkspacePreviewOrigin(process.env.RUDDER_WORKSPACE_PREVIEW_ORIGIN),
     authBaseUrlMode,
     authPublicBaseUrl,
     authDisableSignUp,

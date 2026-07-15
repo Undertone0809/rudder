@@ -9,7 +9,7 @@ import { Link, Outlet, useLocation, useNavigate, useNavigationType, useParams } 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BookOpen, PanelLeft, PanelRight, Settings, X } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import { accessApi } from "../api/access";
 import { chatsApi } from "../api/chats";
 import { healthApi } from "../api/health";
@@ -69,6 +69,8 @@ const SIDE_PANEL_MIN_WIDTH = 340;
 const SIDE_PANEL_MAX_WIDTH = 560;
 const SIDE_PANEL_EXPANDED_WIDTH = 720;
 const SIDE_PANEL_COLLAPSE_WIDTH = 292;
+const SIDE_PANEL_RESIZER_WIDTH = 10;
+const SIDE_PANEL_MIN_MAIN_WIDTH = 340;
 
 type WorkspaceColumnFamily = "chat" | "messenger" | "issues" | "calendar" | "projects" | "agents" | "org" | "backups";
 
@@ -457,9 +459,29 @@ function readRememberedWorkspaceColumnWidth(family: WorkspaceColumnFamily): numb
   }
 }
 
-function clampSidePanelWidth(value: number, viewportWidth: number | null = getCurrentViewportWidth()): number {
-  const viewportMax = viewportWidth === null ? SIDE_PANEL_MAX_WIDTH : Math.max(SIDE_PANEL_MIN_WIDTH, Math.floor(viewportWidth * 0.42));
-  return Math.min(Math.min(SIDE_PANEL_EXPANDED_WIDTH, viewportMax), Math.max(SIDE_PANEL_MIN_WIDTH, Math.round(value)));
+function getSidePanelMaxWidth(
+  viewportWidth: number | null = getCurrentViewportWidth(),
+  workspaceWidth: number | null = null,
+): number {
+  if (workspaceWidth !== null && Number.isFinite(workspaceWidth)) {
+    return Math.max(
+      SIDE_PANEL_MIN_WIDTH,
+      Math.min(
+        SIDE_PANEL_EXPANDED_WIDTH,
+        Math.floor(workspaceWidth - SIDE_PANEL_RESIZER_WIDTH - SIDE_PANEL_MIN_MAIN_WIDTH),
+      ),
+    );
+  }
+  if (viewportWidth === null) return SIDE_PANEL_MAX_WIDTH;
+  return Math.max(SIDE_PANEL_MIN_WIDTH, Math.floor(viewportWidth * 0.42));
+}
+
+function clampSidePanelWidth(
+  value: number,
+  viewportWidth: number | null = getCurrentViewportWidth(),
+  workspaceWidth: number | null = null,
+): number {
+  return Math.min(getSidePanelMaxWidth(viewportWidth, workspaceWidth), Math.max(SIDE_PANEL_MIN_WIDTH, Math.round(value)));
 }
 
 export function resolveProportionalWorkspaceColumnWidth(
@@ -473,15 +495,16 @@ export function resolveProportionalWorkspaceColumnWidth(
 export function resolveProportionalSidePanelWidth(
   widthRatioValue: number,
   viewportWidth: number,
+  workspaceWidth: number | null = null,
 ): number {
-  return clampSidePanelWidth(widthRatioValue * viewportWidth, viewportWidth);
+  return clampSidePanelWidth(widthRatioValue * viewportWidth, viewportWidth, workspaceWidth);
 }
 
 export function resolveDefaultSidePanelWidth(
   workspaceWidth: number,
   viewportWidth: number | null = getCurrentViewportWidth(),
 ): number {
-  return clampSidePanelWidth((workspaceWidth - 4) / 2, viewportWidth);
+  return clampSidePanelWidth((workspaceWidth - SIDE_PANEL_RESIZER_WIDTH) / 2, viewportWidth, workspaceWidth);
 }
 
 export function shouldAutoExpandSidePanel(panelWidth: number, workspaceWidth: number): boolean {
@@ -530,6 +553,7 @@ function DesktopSidePanelSlot({
   const [resizingSidePanel, setResizingSidePanel] = useState(false);
   const previousSidePanelOpenRef = useRef(sidePanel.open);
   const sidePanelFocusWithinRef = useRef(false);
+  const sidePanelResizeActiveRef = useRef(false);
 
   useEffect(() => {
     if (typeof window === "undefined" || !widthInitializedRef.current) return;
@@ -584,15 +608,15 @@ function DesktopSidePanelSlot({
       sidePanelWidthRatioRef.current = widthRatio(sidePanelWidth, viewportWidth);
       return;
     }
-    setSidePanelWidth(resolveProportionalSidePanelWidth(sidePanelWidthRatio, viewportWidth));
-  }, [viewportWidth]);
+    setSidePanelWidth(resolveProportionalSidePanelWidth(sidePanelWidthRatio, viewportWidth, workspaceWidth));
+  }, [viewportWidth, workspaceWidth]);
 
   const setProportionalSidePanelWidth = useCallback((nextWidth: number) => {
-    const clampedWidth = clampSidePanelWidth(nextWidth, viewportWidth);
+    const clampedWidth = clampSidePanelWidth(nextWidth, viewportWidth, workspaceWidth);
     sidePanelWidthRatioRef.current = widthRatio(clampedWidth, viewportWidth);
     setSidePanelWidth(clampedWidth);
     return clampedWidth;
-  }, [viewportWidth]);
+  }, [viewportWidth, workspaceWidth]);
 
   const resetSidePanelWidth = useCallback(() => {
     setUseEqualDefaultWidth(true);
@@ -608,13 +632,24 @@ function DesktopSidePanelSlot({
     return setProportionalSidePanelWidth(nextWidth);
   }, [setProportionalSidePanelWidth, viewportWidth, workspaceWidth]);
 
-  const startSidePanelResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!sidePanel.open) return;
+  const dockedPanelWidth = useEqualDefaultWidth && workspaceWidth !== null
+    ? resolveDefaultSidePanelWidth(workspaceWidth, viewportWidth)
+    : sidePanelWidth;
+
+  const startSidePanelResize = useCallback((event: ReactPointerEvent<HTMLDivElement> | ReactMouseEvent<HTMLDivElement>) => {
+    if (!sidePanel.open || sidePanelResizeActiveRef.current) return;
     event.preventDefault();
+    sidePanelResizeActiveRef.current = true;
     setUseEqualDefaultWidth(false);
     widthInitializedRef.current = true;
     const startX = event.clientX;
-    const startWidth = sidePanelWidth;
+    const resizeHandle = event.currentTarget;
+    const renderedPanelWidth = resizeHandle.nextElementSibling instanceof HTMLElement
+      ? resizeHandle.nextElementSibling.getBoundingClientRect().width
+      : null;
+    const resizeWorkspaceWidth = workspaceAnchorRef.current?.parentElement?.getBoundingClientRect().width ?? workspaceWidth;
+    const startWidth = renderedPanelWidth !== null && renderedPanelWidth > 0 ? renderedPanelWidth : dockedPanelWidth;
+    const pointerId = "pointerId" in event ? event.pointerId : null;
     let latestWidth = startWidth;
     let collapsedByDrag = false;
     const cleanupStyle = {
@@ -624,12 +659,19 @@ function DesktopSidePanelSlot({
 
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
+    if (pointerId !== null) {
+      try {
+        resizeHandle.setPointerCapture(pointerId);
+      } catch {
+        // The window listeners and drag shield still keep resizing active.
+      }
+    }
     setResizingSidePanel(true);
 
-    const onPointerMove = (moveEvent: PointerEvent) => {
+    const onPointerMove = (moveEvent: PointerEvent | MouseEvent) => {
       const deltaX = moveEvent.clientX - startX;
       latestWidth = startWidth - deltaX;
-      if (workspaceWidth !== null && shouldAutoExpandSidePanel(latestWidth, workspaceWidth)) {
+      if (resizeWorkspaceWidth !== null && shouldAutoExpandSidePanel(latestWidth, resizeWorkspaceWidth)) {
         stopResizing();
         onExpandedChange(true);
         return;
@@ -647,9 +689,19 @@ function DesktopSidePanelSlot({
     const stopResizing = () => {
       document.body.style.cursor = cleanupStyle.cursor;
       document.body.style.userSelect = cleanupStyle.userSelect;
+      if (pointerId !== null) {
+        try {
+          if (resizeHandle.hasPointerCapture(pointerId)) resizeHandle.releasePointerCapture(pointerId);
+        } catch {
+          // Ignore pointer capture release races after cancellation.
+        }
+      }
+      sidePanelResizeActiveRef.current = false;
       setResizingSidePanel(false);
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", stopResizing);
+      window.removeEventListener("mousemove", onPointerMove);
+      window.removeEventListener("mouseup", stopResizing);
       if (!collapsedByDrag && latestWidth <= SIDE_PANEL_COLLAPSE_WIDTH) {
         sidePanel.hidePanel();
         resetSidePanelWidth();
@@ -658,13 +710,12 @@ function DesktopSidePanelSlot({
 
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", stopResizing, { once: true });
-  }, [onExpandedChange, resetSidePanelWidth, setProportionalSidePanelWidth, sidePanel, sidePanelWidth, workspaceWidth]);
+    window.addEventListener("mousemove", onPointerMove);
+    window.addEventListener("mouseup", stopResizing, { once: true });
+  }, [dockedPanelWidth, onExpandedChange, resetSidePanelWidth, setProportionalSidePanelWidth, sidePanel, workspaceWidth]);
 
   const panelVisible = contextReady && sidePanel.open;
   const expandedVisible = contextReady && sidePanel.open && expanded;
-  const dockedPanelWidth = useEqualDefaultWidth && workspaceWidth !== null
-    ? resolveDefaultSidePanelWidth(workspaceWidth, viewportWidth)
-    : sidePanelWidth;
   const panelTargetWidth = panelVisible
     ? expandedVisible
       ? workspaceWidth ?? dockedPanelWidth
@@ -694,18 +745,26 @@ function DesktopSidePanelSlot({
         data-testid="side-panel-resizer"
         aria-hidden={!resizerVisible}
         className={cn(
-          "motion-resize workspace-column-resizer group flex shrink-0 items-stretch justify-center overflow-hidden",
+          "motion-resize workspace-column-resizer group relative z-20 flex shrink-0 touch-none select-none items-stretch justify-center overflow-hidden",
           resizerVisible ? "cursor-col-resize opacity-100" : "pointer-events-none opacity-0",
           resizingSidePanel && "is-resizing",
         )}
-        style={{ width: resizerVisible ? 4 : 0 }}
+        style={{ width: resizerVisible ? SIDE_PANEL_RESIZER_WIDTH : 0 }}
         onPointerDown={startSidePanelResize}
+        onMouseDown={startSidePanelResize}
         role={resizerVisible ? "separator" : undefined}
         aria-orientation="vertical"
         aria-label={resizerVisible ? "Resize Side Panel" : undefined}
       >
         <div className="workspace-column-resizer-line" />
       </div>
+      {resizingSidePanel ? (
+        <div
+          data-testid="side-panel-resize-shield"
+          className="fixed inset-0 z-[200] cursor-col-resize"
+          aria-hidden="true"
+        />
+      ) : null}
       <div
         key="panel"
         className={cn(

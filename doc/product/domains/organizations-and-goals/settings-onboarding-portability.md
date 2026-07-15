@@ -53,6 +53,9 @@ related_code:
   - ui/src/pages/OrganizationSettings.tsx
   - ui/src/pages/OrganizationExport.tsx
   - ui/src/pages/OrganizationImport.tsx
+  - ui/src/components/ImagePreviewDialog.tsx
+  - ui/src/components/InspectableImage.tsx
+  - ui/src/context/ImagePreviewContext.tsx
   - ui/src/pages/PluginManager.tsx
   - ui/src/pages/PluginSettings.tsx
   - ui/src/pages/InviteLanding.tsx
@@ -70,6 +73,8 @@ related_tests:
   - server/src/__tests__/organization-intelligence-profiles-routes.test.ts
   - server/src/__tests__/export-jobs.test.ts
   - ui/src/components/OnboardingWizard.runtime-config.test.tsx
+  - ui/src/components/ImagePreviewDialog.test.tsx
+  - ui/src/context/ImagePreviewContext.test.tsx
   - ui/src/components/SettingsSidebar.browser.test.tsx
   - ui/src/components/settings/SettingsScaffold.test.tsx
   - ui/src/context/ThemeContext.test.tsx
@@ -543,6 +548,8 @@ Product model:
 - Import previews dependencies, collisions, secrets/env requirements, and
   selected entities before applying.
 - Export jobs preserve progress and result artifacts.
+- Standalone image files in export and import package previews use the shared
+  application image overlay with explicit close, copy, and download actions.
 
 Flow:
 
@@ -563,6 +570,8 @@ Invariants:
   copied. A requested Issue Key that conflicts with any route identity owned by
   another organization is rejected for explicit correction.
 - Import must be previewable before mutation.
+- Inspecting a package image must preserve the current package selection and
+  must not navigate to a Browser target or new window.
 
 Evidence:
 
@@ -571,5 +580,7 @@ Evidence:
   flow.
 - `tests/e2e/profile-context-import.spec.ts` covers profile/context import
   behavior.
+- Shared image preview component tests cover the package preview's reusable
+  close and image-action behavior.
 - Known gap: every new portable entity type needs explicit manifest/import
   coverage before it is considered safe for export/import.

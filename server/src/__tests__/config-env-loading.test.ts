@@ -208,4 +208,39 @@ describe("server config env loading", () => {
 
     expect(config.databaseBackupMaxEstimatedBytes).toBe(384 * 1024 * 1024);
   });
+
+  it("accepts a dedicated HTTPS workspace preview origin", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
+    process.chdir(tempDir);
+    writeText(path.join(tempDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
+    process.env.RUDDER_WORKSPACE_PREVIEW_ORIGIN = "https://preview.rudder.example";
+
+    const loadConfig = await importLoadConfig();
+    const config = loadConfig();
+
+    expect(config.workspacePreviewOrigin).toBe("https://preview.rudder.example");
+  });
+
+  it("accepts an IPv6 loopback workspace preview origin", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
+    process.chdir(tempDir);
+    writeText(path.join(tempDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
+    process.env.RUDDER_WORKSPACE_PREVIEW_ORIGIN = "http://[::1]:3100";
+
+    const loadConfig = await importLoadConfig();
+    const config = loadConfig();
+
+    expect(config.workspacePreviewOrigin).toBe("http://[::1]:3100");
+  });
+
+  it("rejects an insecure non-loopback workspace preview origin", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
+    process.chdir(tempDir);
+    writeText(path.join(tempDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
+    process.env.RUDDER_WORKSPACE_PREVIEW_ORIGIN = "http://preview.rudder.example";
+
+    const loadConfig = await importLoadConfig();
+
+    expect(() => loadConfig()).toThrow("must use https outside loopback development");
+  });
 });

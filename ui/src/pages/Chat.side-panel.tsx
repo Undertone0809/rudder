@@ -58,6 +58,7 @@ import {
   ExternalLink,
   FileCode2,
   FileText,
+  FileWarning,
   Folder,
   FolderOpen,
   Globe2,
@@ -257,6 +258,45 @@ type BrowserWebviewInputEvent = Event & {
     shift?: boolean;
   };
 };
+
+type BrowserLoadError = {
+  code: string;
+  url: string;
+};
+
+function chatSidePanelBrowserErrorHost(url: string) {
+  try {
+    return new URL(url).hostname || url;
+  } catch {
+    return url;
+  }
+}
+
+function chatSidePanelBrowserErrorContent(error: BrowserLoadError) {
+  const host = chatSidePanelBrowserErrorHost(error.url);
+  if (error.code === "ERR_CONNECTION_REFUSED") {
+    return {
+      summary: `${host} refused to connect.`,
+      suggestions: ["Checking the connection", "Checking the proxy and firewall"],
+    };
+  }
+  if (error.code === "ERR_NAME_NOT_RESOLVED") {
+    return {
+      summary: `${host}'s server IP address could not be found.`,
+      suggestions: ["Checking the address", "Checking the connection"],
+    };
+  }
+  if (error.code === "ERR_TIMED_OUT") {
+    return {
+      summary: `${host} took too long to respond.`,
+      suggestions: ["Checking the connection", "Trying again later"],
+    };
+  }
+  return {
+    summary: `The page at ${host} could not be loaded.`,
+    suggestions: ["Checking the address", "Trying again later"],
+  };
+}
 
 function isChatSidePanelCloseShortcutInput(input: BrowserWebviewInputEvent["input"]) {
   if (!input || input.type === "keyUp") return false;
@@ -1334,17 +1374,9 @@ function ChatSidePanelLibraryFileView({
     </DropdownMenu>
   );
   const showSourceAction = previewMode === "preview";
-  const fileModeToggleLabel = showSourceAction
-    ? "Show source"
-    : html
-      ? "Show webpage"
-      : "Show table";
-  const FileModeToggleIcon = showSourceAction
-    ? FileCode2
-    : html
-      ? Globe2
-      : Table2;
-  const fileModeToggle = html || csv ? (
+  const fileModeToggleLabel = showSourceAction ? "Show source" : "Show table";
+  const FileModeToggleIcon = showSourceAction ? FileCode2 : Table2;
+  const fileModeToggle = csv ? (
     <TooltipProvider delayDuration={120}>
       <Tooltip>
         <TooltipTrigger asChild>
@@ -1416,9 +1448,11 @@ function ChatSidePanelLibraryFileView({
           </Tooltip>
         </TooltipProvider>
         {fileModeToggle}
-        <div className="shrink-0" data-testid="chat-side-panel-library-open-in">
-          {openInMenu}
-        </div>
+        {!html ? (
+          <div className="shrink-0" data-testid="chat-side-panel-library-open-in">
+            {openInMenu}
+          </div>
+        ) : null}
       </div>
       {markdown && !libraryFile.truncated ? (
         <ChatSidePanelMarkdownFileEditor
@@ -1439,7 +1473,14 @@ function ChatSidePanelLibraryFileView({
           ) : null}
           <WorkspaceFilePreview
             file={libraryFile}
+            organizationId={organizationId}
             mode={previewMode}
+            onModeChange={setPreviewMode}
+            htmlOpenAction={html ? (
+              <div className="shrink-0" data-testid="chat-side-panel-library-open-in">
+                {openInMenu}
+              </div>
+            ) : undefined}
             testIdPrefix="chat-side-panel-library"
           />
         </>
@@ -1467,13 +1508,26 @@ function ChatSidePanelBrowserView({
 }) {
   const webviewRef = useRef<BrowserWebviewElement | null>(null);
   const webviewReadyRef = useRef(false);
+  const targetUrlRef = useRef(target.url);
+  const currentUrlRef = useRef(target.url);
+  const targetRef = useRef(target);
+  const onReplaceTargetRef = useRef(onReplaceTarget);
+  const onCloseTargetRef = useRef(onCloseTarget);
+  const [webviewNode, setWebviewNode] = useState<BrowserWebviewElement | null>(null);
   const [addressValue, setAddressValue] = useState(target.url === CHAT_SIDE_PANEL_BROWSER_BLANK_URL ? "" : target.url);
   const [currentUrl, setCurrentUrl] = useState(target.url);
+  const [webviewSrc, setWebviewSrc] = useState(target.url);
   const [title, setTitle] = useState(target.label);
   const [loading, setLoading] = useState(false);
   const [navigationState, setNavigationState] = useState({ canGoBack: false, canGoForward: false });
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<BrowserLoadError | null>(null);
+  const [loadErrorDetailsOpen, setLoadErrorDetailsOpen] = useState(false);
   const isBlank = currentUrl === CHAT_SIDE_PANEL_BROWSER_BLANK_URL;
+  const loadErrorContent = loadError ? chatSidePanelBrowserErrorContent(loadError) : null;
+  currentUrlRef.current = currentUrl;
+  targetRef.current = target;
+  onReplaceTargetRef.current = onReplaceTarget;
+  onCloseTargetRef.current = onCloseTarget;
 
   const safeWebviewCall = useCallback(<T,>(callback: (webview: BrowserWebviewElement) => T, fallback: T): T => {
     const webview = webviewRef.current;
@@ -1498,37 +1552,56 @@ function ChatSidePanelBrowserView({
 
   const replaceBrowserTarget = useCallback((nextUrl: string, nextTitle = chatSidePanelBrowserLabel(nextUrl)) => {
     const nextTarget: Extract<SidePanelTarget, { kind: "browser" }> = {
-      ...target,
+      ...targetRef.current,
       url: nextUrl,
       label: nextTitle,
     };
+    currentUrlRef.current = nextUrl;
+    targetRef.current = nextTarget;
     setCurrentUrl(nextUrl);
     setTitle(nextTitle);
     setAddressValue(nextUrl === CHAT_SIDE_PANEL_BROWSER_BLANK_URL ? "" : nextUrl);
-    onReplaceTarget(targetKey, nextTarget);
-  }, [onReplaceTarget, target, targetKey]);
+    targetUrlRef.current = nextUrl;
+    onReplaceTargetRef.current(targetKey, nextTarget);
+  }, [targetKey]);
 
   useEffect(() => {
+    const externallyChangedUrl = targetUrlRef.current !== target.url;
+    targetUrlRef.current = target.url;
+    currentUrlRef.current = target.url;
+    targetRef.current = target;
     setCurrentUrl(target.url);
     setTitle(target.label);
     setAddressValue(target.url === CHAT_SIDE_PANEL_BROWSER_BLANK_URL ? "" : target.url);
-    setLoadError(null);
+    if (externallyChangedUrl) {
+      setWebviewSrc(target.url);
+      setLoadError(null);
+      setLoadErrorDetailsOpen(false);
+    }
     if (webviewReadyRef.current) updateNavigationState();
     else setNavigationState({ canGoBack: false, canGoForward: false });
   }, [target.label, target.url, updateNavigationState]);
 
   useEffect(() => {
-    const webview = webviewRef.current;
+    const webview = webviewNode;
     if (!webview || webview.tagName.toLowerCase() !== "webview") return undefined;
 
     const handleStart = () => {
       setLoading(true);
       setLoadError(null);
+      setLoadErrorDetailsOpen(false);
+    };
+    const handleStartNavigation = (event: Event) => {
+      const isMainFrame = !("isMainFrame" in event) || event.isMainFrame !== false;
+      const nextUrl = "url" in event && typeof event.url === "string" ? event.url : "";
+      if (isMainFrame && nextUrl && nextUrl !== currentUrlRef.current) {
+        replaceBrowserTarget(nextUrl, chatSidePanelBrowserLabel(nextUrl));
+      }
     };
     const handleStop = () => {
       setLoading(false);
       const nextUrl = safeCurrentWebviewUrl("");
-      if (nextUrl && nextUrl !== currentUrl) {
+      if (nextUrl && nextUrl !== currentUrlRef.current) {
         replaceBrowserTarget(nextUrl, chatSidePanelBrowserLabel(nextUrl));
       }
       updateNavigationState();
@@ -1541,19 +1614,28 @@ function ChatSidePanelBrowserView({
       updateNavigationState();
     };
     const handleTitle = (event: Event) => {
-      const nextUrl = safeCurrentWebviewUrl(currentUrl);
+      const nextUrl = safeCurrentWebviewUrl(currentUrlRef.current);
       const nextTitle = "title" in event && typeof event.title === "string" && event.title.trim()
         ? event.title.trim()
         : chatSidePanelBrowserLabel(nextUrl);
       setTitle(nextTitle);
-      onReplaceTarget(targetKey, { ...target, url: nextUrl, label: nextTitle });
+      const nextTarget = { ...targetRef.current, url: nextUrl, label: nextTitle };
+      targetRef.current = nextTarget;
+      onReplaceTargetRef.current(targetKey, nextTarget);
     };
     const handleFail = (event: Event) => {
       const errorDescription = "errorDescription" in event && typeof event.errorDescription === "string"
         ? event.errorDescription
         : "Could not load this page.";
-      setLoading(false);
-      if (errorDescription !== "ERR_ABORTED") setLoadError(errorDescription);
+      const failedUrl = "validatedURL" in event && typeof event.validatedURL === "string" && event.validatedURL
+        ? event.validatedURL
+        : currentUrlRef.current;
+      const isMainFrame = !("isMainFrame" in event) || event.isMainFrame !== false;
+      if (isMainFrame && errorDescription !== "ERR_ABORTED") {
+        setLoading(false);
+        setLoadError({ code: errorDescription, url: failedUrl });
+        setLoadErrorDetailsOpen(false);
+      }
       updateNavigationState();
     };
     const handleDomReady = () => {
@@ -1564,12 +1646,13 @@ function ChatSidePanelBrowserView({
       const inputEvent = event as BrowserWebviewInputEvent;
       if (!isChatSidePanelCloseShortcutInput(inputEvent.input)) return;
       event.preventDefault();
-      onCloseTarget(target);
+      onCloseTargetRef.current(targetRef.current);
     };
 
     webview.addEventListener("dom-ready", handleDomReady);
     webview.addEventListener("before-input-event", handleBeforeInput);
     webview.addEventListener("did-start-loading", handleStart);
+    webview.addEventListener("did-start-navigation", handleStartNavigation);
     webview.addEventListener("did-stop-loading", handleStop);
     webview.addEventListener("did-navigate", handleNavigate);
     webview.addEventListener("did-navigate-in-page", handleNavigate);
@@ -1581,25 +1664,36 @@ function ChatSidePanelBrowserView({
       webview.removeEventListener("dom-ready", handleDomReady);
       webview.removeEventListener("before-input-event", handleBeforeInput);
       webview.removeEventListener("did-start-loading", handleStart);
+      webview.removeEventListener("did-start-navigation", handleStartNavigation);
       webview.removeEventListener("did-stop-loading", handleStop);
       webview.removeEventListener("did-navigate", handleNavigate);
       webview.removeEventListener("did-navigate-in-page", handleNavigate);
       webview.removeEventListener("page-title-updated", handleTitle);
       webview.removeEventListener("did-fail-load", handleFail);
     };
-  }, [currentUrl, onCloseTarget, onReplaceTarget, replaceBrowserTarget, safeCurrentWebviewUrl, target, targetKey, updateNavigationState]);
+  }, [replaceBrowserTarget, safeCurrentWebviewUrl, targetKey, updateNavigationState, webviewNode]);
 
   const handleWebviewRef = useCallback((node: BrowserWebviewElement | null) => {
     webviewRef.current = node;
     webviewReadyRef.current = false;
+    setWebviewNode(node);
     if (!node) setNavigationState({ canGoBack: false, canGoForward: false });
   }, []);
 
   const navigateTo = useCallback((nextValue: string) => {
     const nextUrl = normalizeChatSidePanelBrowserUrl(nextValue);
     setLoadError(null);
+    setLoadErrorDetailsOpen(false);
+    setWebviewSrc(nextUrl);
     replaceBrowserTarget(nextUrl, chatSidePanelBrowserLabel(nextUrl));
   }, [replaceBrowserTarget]);
+
+  const reloadCurrentPage = useCallback(() => {
+    setLoadErrorDetailsOpen(false);
+    safeWebviewCall((webview) => {
+      webview.reload?.();
+    }, undefined);
+  }, [safeWebviewCall]);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1656,9 +1750,7 @@ function ChatSidePanelBrowserView({
           size="icon-xs"
           aria-label="Reload"
           disabled={isBlank}
-          onClick={() => safeWebviewCall((webview) => {
-            webview.reload?.();
-          }, undefined)}
+          onClick={reloadCurrentPage}
         >
           <RotateCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
         </Button>
@@ -1699,11 +1791,6 @@ function ChatSidePanelBrowserView({
           {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Globe2 className="h-3.5 w-3.5" />}
           <span className="min-w-0 truncate">{isBlank ? "New tab" : title}</span>
         </div>
-        {loadError ? (
-          <div role="alert" className="border-b border-destructive/25 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-            {loadError}
-          </div>
-        ) : null}
         {isBlank ? (
           <div className="flex min-h-[44vh] flex-1 items-center justify-center px-6 text-center" data-testid="chat-side-panel-browser-start">
             <div className="max-w-[18rem]">
@@ -1712,17 +1799,66 @@ function ChatSidePanelBrowserView({
               <p className="mt-2 text-sm text-muted-foreground">Enter a URL to open a page.</p>
             </div>
           </div>
-        ) : createElement("webview", {
-          ref: handleWebviewRef,
-          src: currentUrl,
-          className: "min-h-[52vh] flex-1 bg-[color:var(--surface-panel)]",
-          "data-testid": active ? "chat-side-panel-browser-webview" : "chat-side-panel-browser-webview-hidden",
-          "data-browser-tab-id": target.tabId,
-          "data-active": active ? "true" : "false",
-          // Lets Electron surface requests to the main-process handler, which
-          // always denies native windows before routing approved URLs.
-          allowpopups: "true",
-        })}
+        ) : (
+          <div className="relative flex min-h-[52vh] flex-1">
+            {createElement("webview", {
+              ref: handleWebviewRef,
+              src: webviewSrc,
+              className: cn(
+                "min-h-[52vh] flex-1 bg-[color:var(--surface-panel)]",
+                loadError && "invisible",
+              ),
+              "data-testid": active ? "chat-side-panel-browser-webview" : "chat-side-panel-browser-webview-hidden",
+              "data-browser-tab-id": target.tabId,
+              "data-active": active ? "true" : "false",
+              // Lets Electron surface requests to the main-process handler, which
+              // always denies native windows before routing approved URLs.
+              allowpopups: "true",
+            })}
+            {loadError ? (
+              <div
+                role="alert"
+                data-testid="chat-side-panel-browser-error"
+                className="absolute inset-0 flex overflow-y-auto bg-[color:var(--surface-panel)] px-8 py-10"
+              >
+                <div className="m-auto w-full max-w-[32rem]">
+                  <FileWarning className="h-12 w-12 text-muted-foreground" aria-hidden="true" />
+                  <h3 className="mt-6 text-xl font-semibold text-foreground">This site can&apos;t be reached</h3>
+                  <p className="mt-4 text-sm text-muted-foreground">{loadErrorContent?.summary}</p>
+                  <div className="mt-5 text-sm text-muted-foreground">
+                    <p>Try:</p>
+                    <ul className="mt-2 list-disc space-y-1 pl-6">
+                      {loadErrorContent?.suggestions.map((suggestion) => (
+                        <li key={suggestion}>{suggestion}</li>
+                      ))}
+                    </ul>
+                  </div>
+                  <p className="mt-5 font-mono text-xs text-muted-foreground">{loadError.code}</p>
+                  {loadErrorDetailsOpen ? (
+                    <p className="mt-4 break-all rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:var(--surface-inset)] px-3 py-2 font-mono text-xs text-muted-foreground">
+                      {loadError.url}
+                    </p>
+                  ) : null}
+                  <div className="mt-7 flex items-center justify-between gap-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      aria-expanded={loadErrorDetailsOpen}
+                      onClick={() => setLoadErrorDetailsOpen((open) => !open)}
+                    >
+                      Details
+                    </Button>
+                    <Button type="button" size="sm" onClick={reloadCurrentPage}>
+                      <RotateCw className="h-3.5 w-3.5" />
+                      Reload
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1980,6 +2116,7 @@ export function ChatSidePanel({
                   }}
                   className={cn(
                     "group relative flex h-7 max-w-[12.5rem] shrink-0 items-center rounded-full border pr-1 transition-[color,background-color,border-color,box-shadow,opacity]",
+                    tab.kind === "browser" && "w-[12.5rem]",
                     selected
                       ? "border-[color:var(--border-strong)] bg-[color:var(--surface-active)] text-foreground"
                       : "border-transparent text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground",

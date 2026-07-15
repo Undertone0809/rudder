@@ -2069,23 +2069,20 @@ describe("chat routes", () => {
     });
   });
 
-  it("retitles a forked chat from the first new user message when lightweight title generation is unavailable", async () => {
+  it("keeps a numbered fork title after the first new user message when lightweight title generation is unavailable", async () => {
     const conversation = createConversation({
-      title: "Inherited source title",
+      title: "Inherited source title (2)",
       forkedFromConversationId: "source-chat-1",
       forkedFromMessageId: "source-message-1",
       forkRootConversationId: "source-chat-1",
     });
-    const forkEvent = createMessage("message-fork-event", "system", "system_event", "Forked from source.");
-    forkEvent.structuredPayload = { type: "chat_fork" };
     const userMessage = createMessage("message-user", "user", "message", "What if we branch into a launch checklist?");
     const assistantMessage = createMessage("message-assistant", "assistant", "message", "I will outline it.");
 
     mockChatService.getById.mockResolvedValue(conversation);
-    mockChatService.listMessages.mockResolvedValue([forkEvent, userMessage]);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
     mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
     mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
-    mockProductIntelligenceService.execute.mockRejectedValueOnce(new Error("Fast Intelligence unavailable"));
     mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
       outcome: "completed",
       partialBody: "I will outline it.",
@@ -2103,44 +2100,25 @@ describe("chat routes", () => {
       .send({ body: "What if we branch into a launch checklist?" });
 
     expect(res.status).toBe(201);
-    await waitUntil(() => {
-      expect(mockProductIntelligenceService.execute).toHaveBeenCalledWith(expect.objectContaining({
-        orgId: "organization-1",
-        purpose: "lightweight",
-        feature: "chat_title",
-        prompt: expect.stringContaining("What if we branch into a launch checklist?"),
-      }));
-      expect(mockChatService.updateDefaultTitle).toHaveBeenCalledWith(
-        "chat-1",
-        "What if we branch into a launch checklist?",
-        "Inherited source title",
-      );
-    });
+    expect(mockProductIntelligenceService.execute).not.toHaveBeenCalled();
+    expect(mockChatService.updateDefaultTitle).not.toHaveBeenCalled();
     expect(mockChatService.replaceSystemGeneratedTitle).not.toHaveBeenCalled();
   });
 
-  it("uses lightweight title generation for the first new user message in a forked chat", async () => {
+  it("does not use configured lightweight title generation for a numbered fork", async () => {
     const conversation = createConversation({
-      title: "Inherited AI source title",
+      title: "Inherited AI source title (2)",
       forkedFromConversationId: "source-chat-1",
       forkedFromMessageId: "source-message-1",
       forkRootConversationId: "source-chat-1",
     });
-    const forkEvent = createMessage("message-fork-event", "system", "system_event", "Forked from source.");
-    forkEvent.structuredPayload = { type: "chat_fork" };
     const userMessage = createMessage("message-user", "user", "message", "Explore a pricing fork for team plans");
     const assistantMessage = createMessage("message-assistant", "assistant", "message", "I will compare team plans.");
 
     mockChatService.getById.mockResolvedValue(conversation);
-    mockChatService.listMessages.mockResolvedValue([forkEvent, userMessage]);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
     mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
     mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
-    mockProductIntelligenceService.execute.mockResolvedValueOnce({
-      exitCode: 0,
-      signal: null,
-      timedOut: false,
-      stdout: "\"Team pricing fork\"",
-    });
     mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
       outcome: "completed",
       partialBody: "I will compare team plans.",
@@ -2158,50 +2136,25 @@ describe("chat routes", () => {
       .send({ body: "Explore a pricing fork for team plans" });
 
     expect(res.status).toBe(201);
-    await waitUntil(() => {
-      expect(mockProductIntelligenceService.execute).toHaveBeenCalledWith(expect.objectContaining({
-        orgId: "organization-1",
-        purpose: "lightweight",
-        feature: "chat_title",
-        prompt: expect.stringContaining("Explore a pricing fork for team plans"),
-      }));
-      expect(mockChatService.updateDefaultTitle).toHaveBeenCalledWith(
-        "chat-1",
-        "Explore a pricing fork for team plans",
-        "Inherited AI source title",
-      );
-      expect(mockChatService.replaceSystemGeneratedTitle).toHaveBeenCalledWith(
-        "chat-1",
-        "Explore a pricing fork for team plans",
-        "Team pricing fork",
-      );
-    });
+    expect(mockProductIntelligenceService.execute).not.toHaveBeenCalled();
+    expect(mockChatService.updateDefaultTitle).not.toHaveBeenCalled();
+    expect(mockChatService.replaceSystemGeneratedTitle).not.toHaveBeenCalled();
   });
 
-  it("retitles a nested fork from the first user message after the latest fork event", async () => {
+  it("keeps a numbered nested fork title after its first user message", async () => {
     const conversation = createConversation({
-      title: "Inherited nested source title",
+      title: "Inherited source title (3)",
       forkedFromConversationId: "source-chat-2",
       forkedFromMessageId: "source-message-2",
       forkRootConversationId: "source-chat-1",
     });
-    const olderForkEvent = createMessage("message-older-fork-event", "system", "system_event", "Forked from original source.");
-    const olderForkUserMessage = createMessage("message-older-user", "user", "message", "Earlier branch prompt");
-    const latestForkEvent = createMessage("message-latest-fork-event", "system", "system_event", "Nested fork metadata.");
-    latestForkEvent.structuredPayload = { type: "chat_fork" };
     const userMessage = createMessage("message-nested-user", "user", "message", "Name the current nested branch");
     const assistantMessage = createMessage("message-nested-assistant", "assistant", "message", "I will name it.");
 
     mockChatService.getById.mockResolvedValue(conversation);
-    mockChatService.listMessages.mockResolvedValue([
-      olderForkEvent,
-      olderForkUserMessage,
-      latestForkEvent,
-      userMessage,
-    ]);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
     mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
     mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
-    mockProductIntelligenceService.execute.mockRejectedValueOnce(new Error("Fast Intelligence unavailable"));
     mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
       outcome: "completed",
       partialBody: "I will name it.",
@@ -2219,13 +2172,9 @@ describe("chat routes", () => {
       .send({ body: "Name the current nested branch" });
 
     expect(res.status).toBe(201);
-    await waitUntil(() => {
-      expect(mockChatService.updateDefaultTitle).toHaveBeenCalledWith(
-        "chat-1",
-        "Name the current nested branch",
-        "Inherited nested source title",
-      );
-    });
+    expect(mockProductIntelligenceService.execute).not.toHaveBeenCalled();
+    expect(mockChatService.updateDefaultTitle).not.toHaveBeenCalled();
+    expect(mockChatService.replaceSystemGeneratedTitle).not.toHaveBeenCalled();
   });
 
   it("regenerates an existing chat title with the organization lightweight model", async () => {

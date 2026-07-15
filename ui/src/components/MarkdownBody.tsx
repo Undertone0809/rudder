@@ -11,7 +11,6 @@ import { mentionChipInlineStyle, mentionChipNavigationPath, parseMentionChipHref
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "../lib/organization-routes";
 import { formatSkillReferenceDisplayLabel, parseSkillReference } from "../lib/skill-reference";
 import { cn } from "../lib/utils";
-import { ImagePreviewDialog, type ImagePreviewState } from "./ImagePreviewDialog";
 import { InspectableImage } from "./InspectableImage";
 import type { MentionOption } from "./MarkdownEditor";
 import { RudderEntityPreview } from "./RudderEntityPreview";
@@ -572,20 +571,6 @@ async function writeClipboardText(text: string) {
   if (!copied) throw new Error("Clipboard write failed.");
 }
 
-function getMarkdownImagePreviewName(image: HTMLImageElement) {
-  const alt = image.alt.trim();
-  if (alt) return alt;
-
-  const src = image.currentSrc || image.src;
-  try {
-    const parsed = new URL(src, window.location.href);
-    const basename = parsed.pathname.split("/").filter(Boolean).at(-1);
-    return basename ? decodeURIComponent(basename) : "Image preview";
-  } catch {
-    return "Image preview";
-  }
-}
-
 function markdownSourceAttributes(node: unknown) {
   const position = (node as {
     position?: {
@@ -774,7 +759,6 @@ export function MarkdownBody({
 }: MarkdownBodyProps) {
   const { resolvedTheme } = useTheme();
   const { mentions } = useMarkdownMentions();
-  const [imagePreview, setImagePreview] = useState<ImagePreviewState | null>(null);
   const agentMentionById = new Map(
     mentions
       .filter((mention) => mention.kind === "agent")
@@ -858,20 +842,6 @@ export function MarkdownBody({
     if (!internalRoute) return;
     event.preventDefault();
     navigateInternalAppRoute(internalRoute);
-  };
-  const handleImageInspect = (image: HTMLImageElement) => {
-    if (!enableImagePreview) return;
-    const src = image.currentSrc || image.src;
-    if (!src) return;
-    setImagePreview({
-      alt: image.alt,
-      name: getMarkdownImagePreviewName(image),
-      src,
-      naturalSize:
-        image.naturalWidth > 0 && image.naturalHeight > 0
-          ? { width: image.naturalWidth, height: image.naturalHeight }
-          : null,
-    });
   };
   const components: Components = {
     p: ({ node, children: paragraphChildren, ...paragraphProps }) => (
@@ -1120,7 +1090,8 @@ export function MarkdownBody({
           src={imageSrc}
           alt={alt ?? ""}
           name={alt?.trim() || "Markdown image"}
-          onInspect={handleImageInspect}
+          previewTestId="markdown-body-image-preview-dialog"
+          previewTitleFallback="Image preview"
         />
       );
     }
@@ -1148,16 +1119,6 @@ export function MarkdownBody({
           {normalizedChildren}
         </Markdown>
       </div>
-      {enableImagePreview ? (
-        <ImagePreviewDialog
-          preview={imagePreview}
-          onOpenChange={(open) => {
-            if (!open) setImagePreview(null);
-          }}
-          testId="markdown-body-image-preview-dialog"
-          titleFallback="Image preview"
-        />
-      ) : null}
     </>
   );
 }

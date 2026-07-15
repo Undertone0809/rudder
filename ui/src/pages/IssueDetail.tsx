@@ -62,6 +62,7 @@ import { AgentIdentity } from "../components/AgentAvatar";
 import { CommentThread, type CommentThreadActivityItem } from "../components/CommentThread";
 import { Identity } from "../components/Identity";
 import { InlineEditor } from "../components/InlineEditor";
+import { InspectableImage } from "../components/InspectableImage";
 import { IssueDetailFind } from "../components/IssueDetailFind";
 import { IssueParentContext } from "../components/IssueParentContext";
 import { IssueProperties } from "../components/IssueProperties";
@@ -73,6 +74,7 @@ import { StatusIcon } from "../components/StatusIcon";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useDialog } from "../context/DialogContext";
 import { useI18n } from "../context/I18nContext";
+import { useImagePreview } from "../context/ImagePreviewContext";
 import { useNavigationBack } from "../context/NavigationBackContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
@@ -85,6 +87,7 @@ import { formatChatAgentLabel } from "../lib/agent-labels";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { hasBrowserBackStackEntry, shouldHandleIssueDetailEscape } from "../lib/detail-escape";
+import { isImageContentType } from "../lib/image-actions";
 import { readIssueDetailBreadcrumb } from "../lib/issueDetailBreadcrumb";
 import { libraryCopy } from "../lib/library-copy";
 import { invalidateMessengerThreadSummaryQueries } from "../lib/messenger-query-cache";
@@ -1087,6 +1090,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   const location = useLocation();
   const navigateBack = useNavigationBack();
   const { pushToast } = useToast();
+  const { openImagePreview } = useImagePreview();
   const { confirm } = useDialog();
   const { locale } = useI18n();
   const operatorDisplayName = useOperatorDisplayName();
@@ -1109,6 +1113,10 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   const [issuePinPending, setIssuePinPending] = useState(false);
   const issueFindRootRef = useRef<HTMLDivElement | null>(null);
   const issueDetailScrollRef = useScrollbarActivityRef("rudder:issue-detail-main");
+  const setIssueDetailRootRef = useCallback((element: HTMLDivElement | null) => {
+    issueFindRootRef.current = element;
+    issueDetailScrollRef(element);
+  }, [issueDetailScrollRef]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
 
@@ -1908,7 +1916,17 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     }
   };
 
-  const isImageAttachment = (attachment: IssueAttachment) => attachment.contentType.startsWith("image/");
+  const isImageAttachment = (attachment: IssueAttachment) => isImageContentType(attachment.contentType);
+  const openIssueAttachmentImage = (attachment: IssueAttachment) => {
+    const name = attachment.originalFilename ?? attachment.id;
+    openImagePreview({
+      alt: name,
+      name,
+      src: attachment.contentPath,
+      testId: "issue-attachment-image-preview-dialog",
+      titleFallback: "Issue attachment preview",
+    });
+  };
   const attachmentList = attachments ?? [];
   const hasAttachments = attachmentList.length > 0;
   const subIssueCountLabel = `${orderedChildIssues.length}`;
@@ -2052,16 +2070,16 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
 
   return (
     <div
-      ref={issueFindRootRef}
-      data-testid={embedded ? "embedded-issue-detail" : undefined}
-      className="mx-auto flex h-full min-h-0 max-w-6xl flex-col xl:grid xl:grid-cols-[minmax(0,1fr)_280px] xl:items-stretch xl:gap-6"
+      ref={setIssueDetailRootRef}
+      data-testid={embedded ? "embedded-issue-detail" : "issue-detail-main-scroll"}
+      className={cn(
+        "h-full min-h-0 w-full",
+        embedded ? "overflow-visible" : "scrollbar-auto-hide overflow-y-auto overscroll-contain",
+      )}
     >
       <IssueDetailFind rootRef={issueFindRootRef} refreshKey={issueFindRefreshKey} />
-      <div
-        ref={issueDetailScrollRef}
-        className="scrollbar-auto-hide min-w-0 space-y-6 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:pr-1"
-        data-testid="issue-detail-main-scroll"
-      >
+      <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col xl:grid xl:grid-cols-[minmax(0,1fr)_280px] xl:gap-6">
+      <div className="min-w-0 space-y-6">
         <div
           className="min-w-0 space-y-6"
           data-testid="issue-detail-primary-content"
@@ -2483,18 +2501,32 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           )}
 
           <div className="space-y-2">
-            {attachmentList.map((attachment) => (
-              <div key={attachment.id} className="border border-border rounded-md p-2">
+            {attachmentList.map((attachment) => {
+              const attachmentName = attachment.originalFilename ?? attachment.id;
+              const imageAttachment = isImageAttachment(attachment);
+              return (
+                <div key={attachment.id} className="rounded-md border border-border p-2">
                 <div className="flex items-center justify-between gap-2">
-                  <a
-                    href={attachment.contentPath}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-xs hover:underline truncate"
-                    title={attachment.originalFilename ?? attachment.id}
-                  >
-                    {attachment.originalFilename ?? attachment.id}
-                  </a>
+                  {imageAttachment ? (
+                    <button
+                      type="button"
+                      className="truncate text-left text-xs hover:underline"
+                      title={attachmentName}
+                      onClick={() => openIssueAttachmentImage(attachment)}
+                    >
+                      {attachmentName}
+                    </button>
+                  ) : (
+                    <a
+                      href={attachment.contentPath}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="truncate text-xs hover:underline"
+                      title={attachmentName}
+                    >
+                      {attachmentName}
+                    </a>
+                  )}
                   <button
                     type="button"
                     className="text-muted-foreground hover:text-destructive"
@@ -2508,18 +2540,22 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
                 <p className="text-[11px] text-muted-foreground">
                   {attachment.contentType} · {(attachment.byteSize / 1024).toFixed(1)} KB
                 </p>
-                {isImageAttachment(attachment) && (
-                  <a href={attachment.contentPath} target="_blank" rel="noreferrer">
-                    <img
-                      src={attachment.contentPath}
-                      alt={attachment.originalFilename ?? "attachment"}
-                      className="mt-2 max-h-56 rounded border border-border object-contain bg-accent/10"
-                      loading="lazy"
-                    />
-                  </a>
+                {imageAttachment && (
+                  <InspectableImage
+                    src={attachment.contentPath}
+                    alt={attachmentName}
+                    name={attachmentName}
+                    className="max-h-56 object-contain bg-accent/10"
+                    loading="lazy"
+                    previewTestId="issue-attachment-image-preview-dialog"
+                    previewTitleFallback="Issue attachment preview"
+                    triggerClassName="max-h-56 overflow-hidden rounded border border-border"
+                    wrapperClassName="mt-2"
+                  />
                 )}
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         </div>
       ) : null}
@@ -2612,7 +2648,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
       </Sheet>
       <ScrollToBottom />
       </div>
-      <aside className="mt-6 xl:mt-0 xl:min-h-0 xl:overflow-y-auto">
+      <aside className="mt-6 xl:mt-0 xl:min-h-0">
         <div className="space-y-3">
           <div className="hidden xl:flex justify-end">
             {renderDesktopIssueActions({
@@ -2645,6 +2681,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
         attaching={attachWorkspaceFile.isPending}
         error={attachmentError}
       />
+      </div>
     </div>
   );
 }

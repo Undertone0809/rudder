@@ -105,7 +105,9 @@ links in a Browser tab in the global Side Panel by default, and stores one
 persistent website profile per operating-system user and canonical Rudder
 instance. Organizations intentionally share that website identity, while Agent
 Browser tabs and control leases remain isolated by organization, agent, run,
-and tab.
+and tab. Explicit operator address-bar input may also bootstrap a narrowly
+defined canonical local absolute `file:///` target; renderer links, page-driven
+navigation, and Agent Browser control remain HTTP(S)-only.
 
 V1 is a Desktop `local_trusted` capability. It includes local macOS Chromium
 cookie import, a conditional read-only `Browser` skill, and eight high-level
@@ -158,7 +160,8 @@ auditing remain inside existing boundaries.
 - `Settings > Desktop app > Browser` for enablement, link destination, import,
   and clear actions.
 - Ordinary external `http:` and `https:` links opened from Rudder Desktop.
-- Side Panel Browser address/search input and explicit `Open externally`.
+- Side Panel Browser address/search input, including explicit canonical local
+  absolute `file:///` URLs, and explicit `Open externally`.
 - `rudder_browser_tabs`, `rudder_browser_open`, `rudder_browser_navigate`,
   `rudder_browser_read`, `rudder_browser_click`, `rudder_browser_type`,
   `rudder_browser_screenshot`, and `rudder_browser_close`.
@@ -185,6 +188,16 @@ auditing remain inside existing boundaries.
    Main-window same-origin navigation and redirects are revalidated before
    commit, so a cross-origin 30x is routed to Browser or denied rather than
    loading into the privileged Rudder renderer.
+   An explicit operator submission in the Browser address bar may bootstrap a
+   canonical local absolute `file:///` URL in that Browser tab. The allowlist
+   requires an empty authority and an absolute decoded path, and rejects remote
+   authorities (including `localhost`), UNC or UNC-equivalent paths (including
+   encoded leading slash or backslash separators), and relative `file:` forms;
+   rejected address input follows normal search-query handling. This bootstrap
+   exception does not apply to renderer links or Browser-page popups, redirects,
+   in-page navigation, or frame navigation, which remain HTTP(S)-only. A missing
+   local file renders the normal Browser main-frame failure state in the same
+   tab while preserving its attempted address and the current Rudder route.
 4. Side Panel and Agent Browser tabs use the same website profile. Switching
    organizations or restarting Desktop preserves cookies and site data, but a
    different Rudder instance uses a different profile.
@@ -202,8 +215,10 @@ auditing remain inside existing boundaries.
    live Browser setting and permits access only to tabs leased to that exact
    run.
 7. The Desktop Broker executes only the eight bounded actions against approved
-   `http:` or `https:` pages. Each run may own at most eight Agent Browser tabs,
-   and one Desktop process may own at most 32 Agent Browser tabs in total; an
+   `http:` or `https:` pages. Agent Browser open and navigate calls reject every
+   `file:` target, including canonical local absolute forms accepted from the
+   operator address bar. Each run may own at most eight Agent Browser tabs, and
+   one Desktop process may own at most 32 Agent Browser tabs in total; an
    additional open fails with `browser_tab_limit`. Tool activity records action
    and sanitized origin, never credentials, query tokens, form values, cookies,
    or page content.
@@ -240,6 +255,9 @@ auditing remain inside existing boundaries.
 | --- | --- | --- | --- | --- |
 | Fresh Desktop instance | No saved Browser fields | Browser is enabled and Rudder web links use the Side Panel Browser | Legacy absence must not disable the capability or default links externally | Settings service/UI tests |
 | Built-in link | `openLinksIn=built_in`, external HTTP(S) URL, regardless of Agent Browser enablement | Open or focus a Side Panel Browser tab and preserve the current Rudder route | Do not replace the Rudder route or open the system browser because Agent Browser access is off | Side Panel E2E and Desktop smoke |
+| Operator local-file address | Operator explicitly submits a canonical local absolute `file:///` URL with empty authority and a non-UNC decoded path | Bootstrap that target in the current Browser tab; preserve the Rudder route; show the normal in-tab failure state if the file is missing | Do not grant the file target Rudder renderer/API privileges or replace the Browser guest on failure | URL-policy tests, Browser E2E, and real Desktop smoke |
+| Noncanonical file address | Explicit address input is remote-authority, `localhost`, UNC/UNC-equivalent, encoded-separator, or relative `file:` input | Treat the input as a search query instead of a local file navigation | Do not resolve or fetch a remote share or reinterpret a relative path as local authority | Side Panel URL normalization and profile-policy tests |
+| Non-address or Agent file request | `file:` comes from a renderer link, page popup, redirect, in-page/frame navigation, or Agent Browser tool | Ignore or reject the request under the HTTP(S)-only boundary and keep the current page/tab ownership intact | The operator bootstrap exception must not become a page or Agent privilege escalation | Link-router, webview-policy, Broker smoke, and Desktop smoke tests |
 | External preference or explicit escape | `openLinksIn=default_browser`, or operator selects `Open externally` | Open through the operating-system browser | Do not silently reopen the URL inside Rudder | Settings and link-router evidence |
 | Supported Agent call | Browser enabled, supported local runtime, run-scoped Agent JWT, active run, owned tab | Execute the bounded action through the authenticated Broker | Model arguments or unsigned headers must not override identity, credential, or lease ownership | Auth, route, Broker, MCP, and adapter tests |
 | Unsupported deployment or runtime | Deployment is not `local_trusted`, or adapter is not Claude/Codex/OpenCode/Pi local | Do not project a usable Browser capability; reject a stale unsupported-runtime API call with `browser_runtime_unsupported` | Skill, flag, and tools must not disagree or survive an ineligible fallback | Capability, organization skill, run-context, route, and fallback tests |
@@ -273,6 +291,8 @@ organization, agent, run, API, or Broker credentials.
 
 - Browser Side Panel tabs keep the current Rudder route visible and expose
   address/search, navigation, reload, close, and explicit external-open actions.
+  Canonical local files use the same tab shell; missing files show the attempted
+  address and actionable main-frame failure state without replacing the route.
 - Settings show saved state and visible confirmation/results for disable,
   import, and shared-profile clear operations.
 - Stable Agent errors distinguish disabled, unavailable, unsupported runtime,
@@ -299,7 +319,26 @@ organization, agent, run, API, or Broker credentials.
    - Visible output: current Rudder route remains visible beside the page.
    - Evidence: default settings, Side Panel E2E, and Desktop smoke.
 
-2. Cross-organization session reuse:
+2. Explicit local-file inspection:
+   - Trigger: operator enters a canonical local absolute `file:///` URL in the
+     Browser address bar, then enters a missing local-file URL.
+   - Expected state/action: the existing Browser tab loads the first file and
+     keeps the second attempted address while showing `ERR_FILE_NOT_FOUND`.
+   - Visible output: local content and title are inspectable beside the unchanged
+     Rudder route; the missing-file case remains recoverable in the same tab.
+   - Evidence: Browser URL-policy tests, Browser E2E, and real Desktop smoke.
+
+3. File-navigation boundary:
+   - Trigger: a page, renderer link, or Agent Browser call requests a `file:` URL,
+     or the operator enters a remote-authority, UNC-equivalent, or relative form.
+   - Expected state/action: page/renderer/Agent requests are rejected; invalid
+     address forms become searches instead of file navigation.
+   - Visible output: the current page and Rudder route remain intact, with no
+     unauthorized Side Panel or native-window target.
+   - Evidence: profile, webview-policy, link-router, Broker, and Desktop smoke
+     tests.
+
+4. Cross-organization session reuse:
    - Trigger: operator signs in to a website, switches organizations, and opens
      that site again.
    - Expected state/action: website identity remains signed in while panel tab
@@ -307,13 +346,13 @@ organization, agent, run, API, or Broker credentials.
    - Visible output: the destination site sees the same local Browser session.
    - Evidence: shared partition and organization-switch acceptance test.
 
-3. Isolated Agent control:
+5. Isolated Agent control:
    - Trigger: one active run attempts to read a tab opened by another run.
    - Expected state/action: Rudder rejects the unowned tab request.
    - Visible output: stable safe error; no tab content or credential disclosure.
    - Evidence: Browser route and Broker isolation tests.
 
-4. Disable and re-enable:
+6. Disable and re-enable:
    - Trigger: operator disables Agent Browser access, opens a Rudder web link,
      then later enables Agent access again.
    - Expected state/action: Agent tabs and leases close immediately; later runs
@@ -343,6 +382,12 @@ organization, agent, run, API, or Broker credentials.
 - Browser guests do not share the Rudder UI/API session partition and run
   sandboxed without Node integration, untrusted preload, unrestricted popups,
   permissions, downloads, or non-web protocol navigation by default.
+- Canonical local absolute `file:///` navigation is an operator-address-bar
+  bootstrap exception only. Remote authorities, `localhost`, UNC and encoded-
+  separator equivalents, and relative `file:` forms are not local-file targets.
+- Renderer links, Browser-page popups, redirects, in-page/frame navigation, and
+  Agent Browser tools remain HTTP(S)-only and must never inherit the operator
+  local-file bootstrap exception.
 - The privileged Rudder renderer revalidates both navigation and redirect
   targets. External 30x destinations must never inherit the Rudder preload or
   privileged IPC sender identity.

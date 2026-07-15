@@ -28,6 +28,7 @@ import { runIntelligenceRoutes } from "../routes/run-intelligence.js";
 import { secretRoutes } from "../routes/secrets.js";
 import { sidebarBadgeRoutes } from "../routes/sidebar-badges.js";
 import { websiteMetadataRoutes } from "../routes/website-metadata.js";
+import type { WorkspaceWebPreviewRuntime } from "../services/workspace-web-preview.js";
 import type { PluginHostRuntime } from "./plugin-host-runtime.js";
 import type { RudderAppOptions } from "./types.js";
 
@@ -35,6 +36,7 @@ export function registerApiRoutes(
   db: Db,
   opts: RudderAppOptions,
   pluginRuntime: PluginHostRuntime,
+  workspacePreview?: WorkspaceWebPreviewRuntime,
 ) {
   const api = Router();
 
@@ -51,7 +53,7 @@ export function registerApiRoutes(
       runtimeOwnerKind: opts.runtimeOwnerKind,
     }),
   );
-  api.use("/orgs", organizationRoutes(db, opts.storageService));
+  api.use("/orgs", organizationRoutes(db, opts.storageService, workspacePreview));
   api.use(organizationSkillRoutes(db));
   api.use(agentRoutes(db, opts.storageService));
   api.use(assetRoutes(db, opts.storageService));

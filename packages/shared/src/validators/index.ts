@@ -59,9 +59,8 @@ export {
   type OrganizationSkillFileUpdate, type OrganizationSkillImport, type OrganizationSkillLocalScan, type OrganizationSkillProjectScan
 } from "./organization-skill.js";
 export {
-  copyOrganizationWorkspaceEntrySchema, createOrganizationSchema, createOrganizationWorkspaceDirectorySchema,
-  createOrganizationWorkspaceFileSchema, moveOrganizationWorkspaceEntrySchema, organizationIssueKeySchema, renameOrganizationWorkspaceEntrySchema, updateOrganizationBrandingSchema, updateOrganizationSchema, updateOrganizationWorkspaceFileSchema, type CopyOrganizationWorkspaceEntry, type CreateOrganization, type CreateOrganizationWorkspaceDirectory,
-  type CreateOrganizationWorkspaceFile, type MoveOrganizationWorkspaceEntry, type RenameOrganizationWorkspaceEntry, type UpdateOrganization,
+  copyOrganizationWorkspaceEntrySchema, createOrganizationSchema, createOrganizationWorkspaceDirectorySchema, createOrganizationWorkspaceFileSchema, createOrganizationWorkspaceWebPreviewSessionSchema, moveOrganizationWorkspaceEntrySchema, organizationIssueKeySchema, renameOrganizationWorkspaceEntrySchema, updateOrganizationBrandingSchema, updateOrganizationSchema, updateOrganizationWorkspaceFileSchema, workspaceWebPreviewNetworkModeSchema, type CopyOrganizationWorkspaceEntry, type CreateOrganization, type CreateOrganizationWorkspaceDirectory,
+  type CreateOrganizationWorkspaceFile, type CreateOrganizationWorkspaceWebPreviewSession, type MoveOrganizationWorkspaceEntry, type RenameOrganizationWorkspaceEntry, type UpdateOrganization,
   type UpdateOrganizationBranding, type UpdateOrganizationWorkspaceFile
 } from "./organization.js";
 export {

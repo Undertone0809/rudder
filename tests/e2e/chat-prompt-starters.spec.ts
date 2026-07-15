@@ -91,6 +91,7 @@ test("new-chat prompt starters fill complete prompts and keep composer context",
   });
   await expect(composer).toContainText("Automate");
   await expect(composer).not.toContainText("Start by asking me");
+  await expect(composer).toHaveCSS("font-weight", "600");
   await expect(composer.locator("[data-skill-token='true']")).toHaveCount(1);
   await expect(composer).toContainText(skill.slug);
   await expect(composer).toBeFocused();
@@ -98,6 +99,12 @@ test("new-chat prompt starters fill complete prompts and keep composer context",
   await expect.poll(() => promptFlow.locator("[data-page-id='1']").evaluate((element) => getComputedStyle(element).opacity)).toBe("0");
   await expect(suggestions).toBeVisible();
   await expect(suggestions.getByRole("option")).toHaveCount(4);
+  await expect(suggestions.getByRole("option").locator("strong")).toHaveText([
+    "Automate",
+    "Automate",
+    "Automate",
+    "Automate",
+  ]);
   await expect(promptFlow).toHaveAttribute("data-state", "suggestions");
   await expect(promptFlow.locator(".t-page-slide")).toHaveAttribute("data-page", "2");
   await expect(suggestions).toHaveAttribute("data-interactive", "true");

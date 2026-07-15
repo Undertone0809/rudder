@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ImagePreviewProvider } from "../context/ImagePreviewContext";
 import { applyMentionChipDecoration } from "../lib/mention-chips";
 import {
   getMentionMenuPositionForViewport,
@@ -36,6 +37,7 @@ vi.mock("@/context/I18nContext", () => ({
 }));
 
 vi.mock("@/lib/router", () => ({
+  useLocation: () => ({ pathname: "/test", search: "", hash: "" }),
   useNavigate: () => mdxEditorMocks.navigate,
 }));
 
@@ -441,10 +443,12 @@ describe("MarkdownEditor", () => {
 
     act(() => {
       root.render(
-        <MarkdownEditor
-          value="![Architecture diagram](/api/attachments/test/content)"
-          onChange={() => undefined}
-        />,
+        <ImagePreviewProvider>
+          <MarkdownEditor
+            value="![Architecture diagram](/api/attachments/test/content)"
+            onChange={() => undefined}
+          />
+        </ImagePreviewProvider>,
       );
     });
 

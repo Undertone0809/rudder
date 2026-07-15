@@ -33,6 +33,7 @@ import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useChatGenerations } from "@/context/ChatGenerationContext";
 import { useDialog } from "@/context/DialogContext";
 import { useI18n } from "@/context/I18nContext";
+import { useImagePreview } from "@/context/ImagePreviewContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { useSidePanel } from "@/context/SidePanelContext";
@@ -67,6 +68,7 @@ import {
 } from "@/lib/chat-stream-state";
 import { displayChatTitle } from "@/lib/chat-title";
 import { readDesktopShell } from "@/lib/desktop-shell";
+import { isPreviewableImage } from "@/lib/image-actions";
 import type { AtomicInlineTokenElement } from "@/lib/inline-token-dom";
 import { resolveLocalFileTarget } from "@/lib/local-file-targets";
 import { buildMarkdownMentionOptions } from "@/lib/markdown-mention-options";
@@ -128,9 +130,9 @@ import {
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { ChatAttachmentPreviewDialog, PendingAttachmentPreview } from "./Chat.attachments";
+import { PendingAttachmentPreview } from "./Chat.attachments";
 import { AskUserPanel, AssistantDraftItem, ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, OptimisticUserDraftItem, StreamTranscriptItem, chatIssueApprovalPayloadWithProposalOverride, type ChatTurnBranchControls } from "./Chat.messages";
-import { ASK_USER_ANSWER_PREFIX, ApprovalAction, AttachmentPreviewState, ChatBranchPreview, ChatEmptyStatePromptOptions, ChatEmptyStatePromptStarters, ChatEmptyStateRecentConversations, EmptyStatePromptGroup, EmptyStatePromptSuggestion, INTERRUPTED_CHAT_CONTINUATION_PROMPT, NO_CHAT_AGENT_LABEL, NO_PROJECT_ID, PLAN_MODE_HELP_TEXT, applyChatPromptToDraft, approvalNeedsAction, askUserAnswerFromMessage, askUserRequestFromMessage, buildChatProposalRejectFeedbackPrompt, buildChatProposalRevisionPrompt, buildDraftChatContextLinks, buildMessengerChatThreadSummary, canRefreshAssistantChatMessage, canRefreshDisplayedAssistantChatMessage, chatEmptyStateHeading, chatPromptQueryKey, chatPromptSuggestionsForDraft, chatSidePanelTargetFromHref, composerMenuPositionForAnchor, computeDisplayedChatMessages, conversationDisplayTitle, draftIssueContextLabel, findLatestUnansweredAskUserMessage, findRetrySourceUserMessage, formatChatPrimaryIssueBreadcrumb, isAskUserMessageAnswered, isChatAgentSelectionLocked, isChatProjectSelectionLocked, isUserVisibleIncomingChatMessage, issueProposalFromMessage, materializePendingAttachment, mergeChatConversationsForStatus, mergeChatMessages, operationProposalFromMessage, operationProposalStatusFromMessage, parseAskUserAnswerMessage, pendingAttachmentKey, projectContextId, projectDisplayName, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, resolveDraftIssueContext, scrollChatMessagesToBottom, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, shouldHandlePlainChatLinkClick, withOptimisticOutgoingMessage, withOptimisticPlanMode } from "./Chat.parts";
+import { ASK_USER_ANSWER_PREFIX, ApprovalAction, ChatBranchPreview, ChatEmptyStatePromptOptions, ChatEmptyStatePromptStarters, ChatEmptyStateRecentConversations, EmptyStatePromptGroup, EmptyStatePromptSuggestion, INTERRUPTED_CHAT_CONTINUATION_PROMPT, NO_CHAT_AGENT_LABEL, NO_PROJECT_ID, PLAN_MODE_HELP_TEXT, applyChatPromptToDraft, approvalNeedsAction, askUserAnswerFromMessage, askUserRequestFromMessage, buildChatProposalRejectFeedbackPrompt, buildChatProposalRevisionPrompt, buildDraftChatContextLinks, buildMessengerChatThreadSummary, canRefreshAssistantChatMessage, canRefreshDisplayedAssistantChatMessage, chatEmptyStateHeading, chatPromptGroupForExactTrigger, chatPromptQueryKey, chatPromptSuggestionsForDraft, chatSidePanelTargetFromHref, composerMenuPositionForAnchor, computeDisplayedChatMessages, conversationDisplayTitle, draftIssueContextLabel, findLatestUnansweredAskUserMessage, findRetrySourceUserMessage, formatChatPrimaryIssueBreadcrumb, isAskUserMessageAnswered, isChatAgentSelectionLocked, isChatProjectSelectionLocked, isUserVisibleIncomingChatMessage, issueProposalFromMessage, materializePendingAttachment, mergeChatConversationsForStatus, mergeChatMessages, operationProposalFromMessage, operationProposalStatusFromMessage, parseAskUserAnswerMessage, pendingAttachmentKey, projectContextId, projectDisplayName, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, resolveDraftIssueContext, scrollChatMessagesToBottom, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, shouldHandlePlainChatLinkClick, withOptimisticOutgoingMessage, withOptimisticPlanMode } from "./Chat.parts";
 import {
   ChatWorkManifest,
   ChatWorkManifestToggle,
@@ -452,14 +454,14 @@ function ChatScrollMap({
       {showPreview ? createPortal(
         <div
           data-testid="chat-scroll-map-preview"
-          className="pointer-events-none fixed z-50 w-[40rem] max-w-[calc(100vw-2rem)] -translate-y-1/2 rounded-[18px] border border-white/10 bg-[rgba(42,42,42,0.94)] px-4 py-3.5 text-left shadow-[0_24px_70px_-34px_rgb(0_0_0/0.88)] backdrop-blur-xl"
+          className="chat-scroll-map-preview pointer-events-none fixed z-50 w-[40rem] max-w-[calc(100vw-2rem)] -translate-y-1/2 rounded-[18px] border border-white/10 bg-[rgba(42,42,42,0.94)] px-4 py-3.5 text-left shadow-[0_24px_70px_-34px_rgb(0_0_0/0.88)] backdrop-blur-xl"
           style={{ left: previewPosition!.left, top: previewPosition!.top }}
         >
-          <MarkdownBody className="line-clamp-1 text-[15px] font-semibold leading-6 text-white [&_*]:text-current [&_a]:pointer-events-none [&_a]:align-baseline [&_code]:bg-white/10 [&_code]:text-white/92 [&_p]:inline">
+          <MarkdownBody className="chat-scroll-map-preview-title line-clamp-1 text-[15px] font-semibold leading-6 [&_*]:text-current [&_a]:pointer-events-none [&_a]:align-baseline [&_code]:bg-white/10 [&_p]:inline">
             {hoveredPreview?.title ?? ""}
           </MarkdownBody>
           {hoveredPreview?.summary ? (
-            <MarkdownBody className="mt-1.5 line-clamp-3 text-[15px] leading-6 text-white/48 [&_*]:text-current [&_a]:pointer-events-none [&_a]:align-baseline [&_code]:bg-white/10 [&_code]:text-white/70 [&_p]:inline">
+            <MarkdownBody className="chat-scroll-map-preview-summary mt-1.5 line-clamp-3 text-[15px] leading-6 [&_*]:text-current [&_a]:pointer-events-none [&_a]:align-baseline [&_code]:bg-white/10 [&_p]:inline">
               {hoveredPreview.summary}
             </MarkdownBody>
           ) : null}
@@ -470,6 +472,7 @@ function ChatScrollMap({
   );
 }
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm } = useDialog();
+  const { openImagePreview } = useImagePreview();
   const {
     abortChatStream,
     sendInFlightByChatId,
@@ -481,7 +484,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     scopeKey: draftStorageScopeKey,
     value: readChatDraft(draftStorageOrgId, draftStorageConversationId), })); const draft = draftState.scopeKey === draftStorageScopeKey ? draftState.value : ""; const setDraft = useCallback((nextDraft: string) => { setDraftState((current) => ({ ...current, value: nextDraft })); }, []); const [, refreshPendingFiles] = useState(0); const pendingFiles = readChatPendingAttachmentsForScope(draftStorageScopeKey);
   const setPendingFilesForCurrentScope = useCallback((updater: (current: File[]) => File[]) => { updateChatPendingAttachmentsForScope(draftStorageScopeKey, updater); refreshPendingFiles((version) => version + 1); }, [draftStorageScopeKey]); const clearPendingFilesForCurrentScope = useCallback(() => { setPendingFilesForCurrentScope(() => []); }, [setPendingFilesForCurrentScope]); const [newConversationSendInFlight, setNewConversationSendInFlight] = useState(false); const [openProcessMessageIds, setOpenProcessMessageIds] = useState<Record<string, true>>({}); const [loadingTranscriptMessageIds, setLoadingTranscriptMessageIds] = useState<Record<string, true>>({}); const [loadedTranscriptsByMessageId, setLoadedTranscriptsByMessageId] = useState<Record<string, TranscriptEntry[]>>({}); const [draftPreferredAgentId, setDraftPreferredAgentId] = useState<string>(NO_CHAT_AGENT_ID); const [draftProjectId, setDraftProjectId] = useState<string>(NO_PROJECT_ID);
-  const [pendingProjectContextOverride, setPendingProjectContextOverride] = useState<{ chatId: string; projectId: string | null; } | null>(null); const [draftPlanMode, setDraftPlanMode] = useState(false); const [pendingPlanModeOverride, setPendingPlanModeOverride] = useState<boolean | null>(null); const [decisionNotesByMessageId, setDecisionNotesByMessageId] = useState<Record<string, string>>({}); const [issueProposalOverridesByMessageId, setIssueProposalOverridesByMessageId] = useState<Record<string, Record<string, unknown>>>({}); const [plusMenuOpen, setPlusMenuOpen] = useState(false); const [agentMenuOpen, setAgentMenuOpen] = useState(false); const [projectMenuOpen, setProjectMenuOpen] = useState(false); const [skillMenuOpen, setSkillMenuOpen] = useState(false); const [skillSearchQuery, setSkillSearchQuery] = useState(""); const [libraryFileMentionQuery, setLibraryFileMentionQuery] = useState<string | null>(null); const [composerMenuPosition, setComposerMenuPosition] = useState<CSSProperties | null>(null); const [inlineEditUserMessageId, setInlineEditUserMessageId] = useState<string | null>(null); const [inlineEditDraft, setInlineEditDraft] = useState(""); const [editingQueuedItem, setEditingQueuedItem] = useState<{ itemId: string; value: string; version: number } | null>(null); const [branchPreview, setBranchPreview] = useState<ChatBranchPreview | null>(null); const [emptyStateActiveTab, setEmptyStateActiveTab] = useState<"recent" | "use-cases">("use-cases"); const [emptyStateActiveSuggestionIndex, setEmptyStateActiveSuggestionIndex] = useState(0); const [dismissedEmptyStatePromptQuery, setDismissedEmptyStatePromptQuery] = useState<string | null>(null); const [retainedEmptyStatePromptSuggestions, setRetainedEmptyStatePromptSuggestions] = useState<readonly EmptyStatePromptSuggestion[]>([]); const [recentProjectConversationLimit, setRecentProjectConversationLimit] = useState(RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT); const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewState | null>(null); const [recentAskUserAnswerMessageId, setRecentAskUserAnswerMessageId] = useState<string | null>(null); const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null); const [renameDraft, setRenameDraft] = useState(""); const [generatingChatTitleIds, setGeneratingChatTitleIds] = useState<Set<string>>(() => new Set()); const [workManifestWideOpen, setWorkManifestWideOpen] = useState(true); const fileInputRef = useRef<HTMLInputElement>(null); const composerSurfaceRef = useRef<HTMLDivElement>(null); const composerEditorRef = useRef<MarkdownEditorRef>(null); const inlineEditSurfaceRef = useRef<HTMLDivElement>(null); const inlineEditEditorRef = useRef<MarkdownEditorRef>(null); const composerContextMenuRef = useRef<HTMLDivElement>(null); const composerEditorScrollRef = useScrollbarActivityRef(); const skillSearchInputRef = useRef<HTMLInputElement>(null); const stopRequestedChatIdsRef = useRef<Set<string>>(new Set()); const autoDequeuingChatIdsRef = useRef<Set<string>>(new Set()); const manuallyMarkedUnreadKeyRef = useRef<string | null>(null); const newConversationSendLockRef = useRef(false); const chatSendLocksRef = useRef<Record<string, true>>({}); const lastAppliedPrefillRef = useRef<string | null>(null); const lastAppliedAgentPrefillRef = useRef<string | null>(null); const lastAppliedProjectPrefillRef = useRef<string | null>(null); const draftProjectScopeKeyRef = useRef<string | null>(null); const draftProjectDefaultKeyRef = useRef<string | null>(null); const draftProjectManuallySelectedRef = useRef(false); const chatMessagesScrollElementRef = useRef<HTMLDivElement | null>(null); const initialScrolledConversationRef = useRef<string | null>(null); const { isMobile, setSidebarOpen, sidebarOpen } = useSidebar(); const { open: sidePanelOpen, openTarget: openSidePanelTarget, openTargetForContext: openSidePanelTargetForContext, showPanelForContext: showSidePanelForContext } = useSidePanel(); const chatMessagesActivityRef = useScrollbarActivityRef(); const chatMessagesScrollRef = useCallback((element: HTMLDivElement | null) => { chatMessagesScrollElementRef.current = element; chatMessagesActivityRef(element); }, [chatMessagesActivityRef]); const pendingPrefill = searchParams.get("prefill") ?? ""; const pendingAgentPrefill = searchParams.get("agentId")?.trim() ?? ""; const pendingProjectPrefill = searchParams.get("projectId")?.trim() ?? ""; const pendingIssueId = searchParams.get("issueId")?.trim() ?? ""; const pendingTargetMessageId = (searchParams.get("messageId") ?? searchParams.get("targetMessageId") ?? "").trim(); const isMessengerChatRoute = /^\/(?:[^/]+\/)?messenger\/chat(?:\/|$)/.test(location.pathname); const relativePath = toOrganizationRelativePath(location.pathname); const chatRouteBase = relativePath.startsWith("/messenger/chat") ? "/messenger/chat" : "/chat"; const chatRootPath = chatRouteBase; const chatConversationPath = useCallback((id: string) => `${chatRouteBase}/${id}`, [chatRouteBase]); const resolveCurrentSidePanelChatContextKey = useCallback(() => { const activePath = typeof window === "undefined" ? relativePath : toOrganizationRelativePath(window.location.pathname); const match = activePath.match(/^\/(?:messenger\/)?chat\/([^/?#]+)/); const chatId = match?.[1] ?? conversationId ?? null; return chatId ? `chat:${chatId}` : null; }, [conversationId, relativePath]); const openLocalFile = useCallback((targetPath: string) => { const desktopShell = readDesktopShell();
+  const [pendingProjectContextOverride, setPendingProjectContextOverride] = useState<{ chatId: string; projectId: string | null; } | null>(null); const [draftPlanMode, setDraftPlanMode] = useState(false); const [pendingPlanModeOverride, setPendingPlanModeOverride] = useState<boolean | null>(null); const [decisionNotesByMessageId, setDecisionNotesByMessageId] = useState<Record<string, string>>({}); const [issueProposalOverridesByMessageId, setIssueProposalOverridesByMessageId] = useState<Record<string, Record<string, unknown>>>({}); const [plusMenuOpen, setPlusMenuOpen] = useState(false); const [agentMenuOpen, setAgentMenuOpen] = useState(false); const [projectMenuOpen, setProjectMenuOpen] = useState(false); const [skillMenuOpen, setSkillMenuOpen] = useState(false); const [skillSearchQuery, setSkillSearchQuery] = useState(""); const [libraryFileMentionQuery, setLibraryFileMentionQuery] = useState<string | null>(null); const [composerMenuPosition, setComposerMenuPosition] = useState<CSSProperties | null>(null); const [inlineEditUserMessageId, setInlineEditUserMessageId] = useState<string | null>(null); const [inlineEditDraft, setInlineEditDraft] = useState(""); const [editingQueuedItem, setEditingQueuedItem] = useState<{ itemId: string; value: string; version: number } | null>(null); const [branchPreview, setBranchPreview] = useState<ChatBranchPreview | null>(null); const [emptyStateActiveTab, setEmptyStateActiveTab] = useState<"recent" | "use-cases">("use-cases"); const [emptyStateActiveSuggestionIndex, setEmptyStateActiveSuggestionIndex] = useState(0); const [dismissedEmptyStatePromptQuery, setDismissedEmptyStatePromptQuery] = useState<string | null>(null); const [retainedEmptyStatePromptSuggestions, setRetainedEmptyStatePromptSuggestions] = useState<readonly EmptyStatePromptSuggestion[]>([]); const [recentProjectConversationLimit, setRecentProjectConversationLimit] = useState(RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT); const [recentAskUserAnswerMessageId, setRecentAskUserAnswerMessageId] = useState<string | null>(null); const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null); const [renameDraft, setRenameDraft] = useState(""); const [generatingChatTitleIds, setGeneratingChatTitleIds] = useState<Set<string>>(() => new Set()); const [workManifestWideOpen, setWorkManifestWideOpen] = useState(true); const fileInputRef = useRef<HTMLInputElement>(null); const composerSurfaceRef = useRef<HTMLDivElement>(null); const composerEditorRef = useRef<MarkdownEditorRef>(null); const inlineEditSurfaceRef = useRef<HTMLDivElement>(null); const inlineEditEditorRef = useRef<MarkdownEditorRef>(null); const composerContextMenuRef = useRef<HTMLDivElement>(null); const composerEditorScrollRef = useScrollbarActivityRef(); const skillSearchInputRef = useRef<HTMLInputElement>(null); const stopRequestedChatIdsRef = useRef<Set<string>>(new Set()); const autoDequeuingChatIdsRef = useRef<Set<string>>(new Set()); const manuallyMarkedUnreadKeyRef = useRef<string | null>(null); const newConversationSendLockRef = useRef(false); const chatSendLocksRef = useRef<Record<string, true>>({}); const lastAppliedPrefillRef = useRef<string | null>(null); const lastAppliedAgentPrefillRef = useRef<string | null>(null); const lastAppliedProjectPrefillRef = useRef<string | null>(null); const draftProjectScopeKeyRef = useRef<string | null>(null); const draftProjectDefaultKeyRef = useRef<string | null>(null); const draftProjectManuallySelectedRef = useRef(false); const chatMessagesScrollElementRef = useRef<HTMLDivElement | null>(null); const initialScrolledConversationRef = useRef<string | null>(null); const { isMobile, setSidebarOpen, sidebarOpen } = useSidebar(); const { open: sidePanelOpen, openTarget: openSidePanelTarget, openTargetForContext: openSidePanelTargetForContext, showPanelForContext: showSidePanelForContext } = useSidePanel(); const chatMessagesActivityRef = useScrollbarActivityRef(); const chatMessagesScrollRef = useCallback((element: HTMLDivElement | null) => { chatMessagesScrollElementRef.current = element; chatMessagesActivityRef(element); }, [chatMessagesActivityRef]); const pendingPrefill = searchParams.get("prefill") ?? ""; const pendingAgentPrefill = searchParams.get("agentId")?.trim() ?? ""; const pendingProjectPrefill = searchParams.get("projectId")?.trim() ?? ""; const pendingIssueId = searchParams.get("issueId")?.trim() ?? ""; const pendingTargetMessageId = (searchParams.get("messageId") ?? searchParams.get("targetMessageId") ?? "").trim(); const isMessengerChatRoute = /^\/(?:[^/]+\/)?messenger\/chat(?:\/|$)/.test(location.pathname); const relativePath = toOrganizationRelativePath(location.pathname); const chatRouteBase = relativePath.startsWith("/messenger/chat") ? "/messenger/chat" : "/chat"; const chatRootPath = chatRouteBase; const chatConversationPath = useCallback((id: string) => `${chatRouteBase}/${id}`, [chatRouteBase]); const resolveCurrentSidePanelChatContextKey = useCallback(() => { const activePath = typeof window === "undefined" ? relativePath : toOrganizationRelativePath(window.location.pathname); const match = activePath.match(/^\/(?:messenger\/)?chat\/([^/?#]+)/); const chatId = match?.[1] ?? conversationId ?? null; return chatId ? `chat:${chatId}` : null; }, [conversationId, relativePath]); const openLocalFile = useCallback((targetPath: string) => { const desktopShell = readDesktopShell();
     if (!desktopShell) {
       pushToast({
         title: "Open from Desktop",
@@ -642,7 +645,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   } = useQuery({
     queryKey: queryKeys.agents.skills(activeSkillAgentId ?? "__none__"),
     queryFn: () => agentsApi.skills(activeSkillAgentId!, selectedOrganizationId!), enabled: Boolean(selectedOrganizationId) && Boolean(activeSkillAgentId), });
-  useEffect(() => { setInlineEditUserMessageId(null); setInlineEditDraft(""); setBranchPreview(null); setAttachmentPreview(null); setRecentAskUserAnswerMessageId(null); setIssueProposalOverridesByMessageId({}); }, [conversationId]);
+  useEffect(() => { setInlineEditUserMessageId(null); setInlineEditDraft(""); setBranchPreview(null); setRecentAskUserAnswerMessageId(null); setIssueProposalOverridesByMessageId({}); }, [conversationId]);
   useEffect(() => { setSkillMenuOpen(false); setSkillSearchQuery(""); }, [activeSkillAgentId]);
   useEffect(() => {
     if (!composerContextMenuOpen) { setComposerMenuPosition(null);
@@ -1252,6 +1255,39 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     revealChatMessageElement(target);
   }, []); const openWorkManifestItem = useCallback((item: ChatWorkManifestItem) => {
     const metadata = item.metadata ?? {};
+    if (item.targetType === "issue" || item.targetType === "issue_comment") {
+      const issueId = typeof metadata.issueId === "string" ? metadata.issueId : null;
+      if (!issueId) return;
+      openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), {
+        kind: "issue",
+        issueId,
+        ref: typeof metadata.ref === "string" ? metadata.ref : null,
+        commentId: typeof metadata.commentId === "string" ? metadata.commentId : null,
+        label: item.title,
+      });
+      return;
+    }
+    if (item.targetType === "automation") {
+      const automationId = typeof metadata.automationId === "string" ? metadata.automationId : null;
+      if (!automationId) return;
+      openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), {
+        kind: "automation",
+        automationId,
+        label: item.title,
+      });
+      return;
+    }
+    if (item.targetType === "chat_conversation") {
+      const targetConversationId = typeof metadata.conversationId === "string" ? metadata.conversationId : null;
+      if (!targetConversationId) return;
+      openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), {
+        kind: "chat",
+        conversationId: targetConversationId,
+        messageId: typeof metadata.messageId === "string" ? metadata.messageId : null,
+        label: item.title,
+      });
+      return;
+    }
     if (item.targetType === "library_entry") {
       const entryId = typeof metadata.entryId === "string" ? metadata.entryId : null;
       if (!entryId) return;
@@ -1278,10 +1314,21 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       : null;
     const href = item.url ?? (assetId ? `/api/assets/${encodeURIComponent(assetId)}/content` : null);
     if (!href) return;
+    const contentType = typeof metadata.contentType === "string" ? metadata.contentType : null;
+    if (item.targetType === "attachment" && isPreviewableImage(contentType, item.title)) {
+      openImagePreview({
+        alt: item.title,
+        name: item.title,
+        src: href,
+        testId: "chat-work-manifest-image-preview-dialog",
+        titleFallback: "Attachment preview",
+      });
+      return;
+    }
     const opened = window.open(href, "_blank", "noopener,noreferrer");
     if (opened) opened.opener = null;
-  }, [openSidePanelTargetForContext, resolveCurrentSidePanelChatContextKey]); const pendingAskUserMessage = useMemo(
-    () => findLatestUnansweredAskUserMessage(visibleMessages), [visibleMessages], ); const pendingAskUserRequest = pendingAskUserMessage ? askUserRequestFromMessage(pendingAskUserMessage) : null; const lastMarkedReadKeyRef = useRef<string | null>(null); const optimisticReadBadgeMarkerRef = useRef<string | null>(null);
+  }, [openImagePreview, openSidePanelTargetForContext, resolveCurrentSidePanelChatContextKey]); const latestUnansweredAskUserMessage = useMemo(
+    () => findLatestUnansweredAskUserMessage(visibleMessages), [visibleMessages], ); const activeStreamUserTurnVisible = Boolean(activeStream && !activeStreamPreviewHidden); const activeStreamAskUserRequest = activeStreamUserTurnVisible && latestUnansweredAskUserMessage ? askUserRequestFromMessage(latestUnansweredAskUserMessage) : null; const pendingAskUserMessage = activeStreamUserTurnVisible ? null : latestUnansweredAskUserMessage; const pendingAskUserRequest = pendingAskUserMessage ? askUserRequestFromMessage(pendingAskUserMessage) : null; const lastMarkedReadKeyRef = useRef<string | null>(null); const optimisticReadBadgeMarkerRef = useRef<string | null>(null);
   useEffect(() => { if (!pendingAskUserRequest) return; closeComposerContextMenus(); }, [closeComposerContextMenus, pendingAskUserRequest]);
   useEffect(() => { const chatId = selectedConversation?.id ?? null; if (!chatId || showMessagesLoading) return; if (initialScrolledConversationRef.current === chatId) return; initialScrolledConversationRef.current = chatId; const frame = requestAnimationFrame(() => { const scrollElement = chatMessagesScrollElementRef.current; if (!scrollElement) return; scrollChatMessagesToBottom(scrollElement); }); return () => cancelAnimationFrame(frame); }, [selectedConversation?.id, showMessagesLoading, visibleMessages.length]);
   useEffect(() => { if (!conversationId || !pendingTargetMessageId || showMessagesLoading) return; const frame = requestAnimationFrame(() => { const scrollElement = chatMessagesScrollElementRef.current; if (!scrollElement) return; const target = findChatMessageElement(scrollElement, pendingTargetMessageId); if (!target) return; revealChatMessageElement(target); const nextSearch = new URLSearchParams(searchParams); nextSearch.delete("messageId"); nextSearch.delete("targetMessageId"); navigate({
@@ -1626,6 +1673,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       setRetainedEmptyStatePromptSuggestions(emptyStatePromptSuggestions);
     }
   }, [emptyStatePromptSuggestions]);
+  const selectedEmptyStatePromptGroup = useMemo(() => chatPromptGroupForExactTrigger(draft), [draft]);
   const showEmptyStateSupplementalContent = emptyStatePromptQuery.length === 0 && pendingFiles.length === 0;
   const emptyStatePromptFlowState = showEmptyStateSupplementalContent ? "starters" : showEmptyStatePromptSuggestions ? "suggestions" : "hidden";
   const hasRecentProjectConversations = allRecentProjectConversations.length > 0;
@@ -1934,7 +1982,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           submitShortcut="enter"
           onInlineTokenClick={handleComposerInlineTokenClick}
           plainText className="rounded-[var(--radius-md)] bg-transparent"
-          contentClassName="min-h-[88px] bg-transparent text-[15px] leading-7 text-foreground"
+          contentClassName={cn(
+            "min-h-[88px] bg-transparent text-[15px] leading-7 text-foreground",
+            selectedEmptyStatePromptGroup && "font-semibold",
+          )}
           bordered={false} placeholder={composerPlaceholder} onSubmit={() => {
             if (composerUnavailable || newConversationSendInFlight) return;
             if (selectedConversationHasActiveReply && selectedConversation) {
@@ -2060,7 +2111,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           {pendingFiles.map((file) => { const fileKey = pendingAttachmentKey(file);
             return (
               <div key={fileKey} data-testid="chat-pending-attachment" className="max-w-full" >
-                <PendingAttachmentPreview file={file} onOpenImage={setAttachmentPreview} onRemove={() => removePendingFile(fileKey)} /> </div> );
+                <PendingAttachmentPreview file={file} onRemove={() => removePendingFile(fileKey)} /> </div> );
           })} </div> ) : null} {renderComposerContextMenu()} </div> );
   };
   const renderEmptyStatePromptFlow = () => {
@@ -2112,9 +2163,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           <PanelLeft className="h-4 w-4" aria-hidden />
         </button>
       ) : null}
-      <ChatAttachmentPreviewDialog
-        preview={attachmentPreview} onOpenChange={(open) => { if (!open) setAttachmentPreview(null);
-        }} />
       <input ref={fileInputRef} type="file" className="hidden"
         multiple onChange={(event) => { const files = Array.from(event.target.files ?? []); void appendPendingFiles(files); event.currentTarget.value = "";
         }} />
@@ -2123,6 +2171,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           {loadErrorMessage} </div> ) : null}
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row md:gap-1.5">
         <main className="workspace-main-card relative flex min-h-0 flex-1 flex-col overflow-hidden md:rounded-[var(--desktop-workspace-radius)]">
+          {conversationId ? (
+            <div
+              aria-hidden="true"
+              data-testid="chat-desktop-toolbar-clearance"
+              className="workspace-main-header hidden h-11 shrink-0 md:block"
+            />
+          ) : null}
           {!selectedOrganizationId ? (
             <div className="flex flex-1 items-center justify-center px-6 py-12 text-sm text-muted-foreground">
               Select a organization first. </div> ) : showConversationLoading ? (
@@ -2439,7 +2494,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                   })} onRefreshAssistantMessage={selectedConversationExternalBound ? undefined : refreshAssistantMessage} onForkMessage={(messageToFork) => forkConversationMutation.mutate({
                                     chatId: selectedConversation.id,
                                     sourceMessageId: messageToFork.id,
-                                  })} onOpenImage={setAttachmentPreview} onOpenFile={openLocalFile} onMarkdownLinkClick={handleChatMarkdownLinkClick}
+                                  })} onOpenFile={openLocalFile} onMarkdownLinkClick={handleChatMarkdownLinkClick}
                                   turnBranchControls={messageTurnBranchControls}
                                   skillReferences={chatSkillReferences}
                                   issueCreatedMessage={issueCreatedMessage}
@@ -2455,7 +2510,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     onMentionQueryChange: setLibraryFileMentionQuery,
                                     onInlineTokenClick: handleComposerInlineTokenClick,
                                   } : null}
-                                  answered={isAskUserMessageAnswered(message, visibleMessages)}
+                                  answered={activeStreamUserTurnVisible || isAskUserMessageAnswered(message, visibleMessages)}
                                   askUserAnswer={askUserAnswerFromMessage(message, visibleMessages)}
                                   animateAskUserAnswer={message.id === recentAskUserAnswerMessageId} /> </Fragment> ); })}
                           {showActiveStreamDraft && activeStream ? ( <>
@@ -2465,7 +2520,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                   createdAt={activeStream.userCreatedAt} onCopyMessageText={copyChatMessageText} onEditDraftOnly={editDraftOnly}
                                   skillReferences={chatSkillReferences} onMarkdownLinkClick={handleChatMarkdownLinkClick}
                                   askUserAnswer={
-                                    pendingAskUserRequest ? parseAskUserAnswerMessage(pendingAskUserRequest, activeStream.userBody) : null
+                                    activeStreamAskUserRequest ? parseAskUserAnswerMessage(activeStreamAskUserRequest, activeStream.userBody) : null
                                   }
                                   animateAskUserAnswer={activeStream.userBody.startsWith(ASK_USER_ANSWER_PREFIX)}
                                   turnBranchControls={turnBranchControlsForTurn(activeStream.chatTurnId, activeStream.turnVariant)} /> ) : null}
@@ -2501,7 +2556,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                         pendingFiles={pendingFiles}
                         onAddAttachment={() => fileInputRef.current?.click()}
                         onRemovePendingFile={removePendingFile}
-                        onOpenAttachmentPreview={setAttachmentPreview}
                         onPasteAttachment={handlePendingAttachmentPasteCapture}
                         onSubmit={(body) => { if (!selectedConversation) return;
                           void sendMessage({
@@ -2521,14 +2575,21 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 {showEmptyStateSupplementalContent ? (
                   hasRecentProjectConversations ? (
                     <Tabs value={emptyStateActiveTab} onValueChange={(value) => setEmptyStateActiveTab(value as "recent" | "use-cases")} className="mb-4 w-full max-w-3xl gap-2" data-testid="chat-empty-state-tabs">
-                      <TabsList variant="line" aria-label="New chat empty state" className="mb-2 h-auto gap-1 border-transparent bg-transparent px-0">
-                        <TabsTrigger value="use-cases" id="chat-empty-state-tab-use-cases" data-testid="chat-empty-state-tab-use-cases" className="h-8 flex-none rounded-[var(--radius-md)] border border-transparent px-3 text-sm data-[state=active]:!border-[color:var(--border-soft)] data-[state=active]:!bg-[color:var(--surface-active)] data-[state=active]:shadow-none after:hidden">
-                          <span>Use cases</span>
-                        </TabsTrigger>
-                        <TabsTrigger value="recent" id="chat-empty-state-tab-recent" data-testid="chat-empty-state-tab-recent" className="h-8 flex-none rounded-[var(--radius-md)] border border-transparent px-3 text-sm data-[state=active]:!border-[color:var(--border-soft)] data-[state=active]:!bg-[color:var(--surface-active)] data-[state=active]:shadow-none after:hidden">
-                          <span>Chats</span>
-                        </TabsTrigger>
-                      </TabsList>
+                      <div className="mb-2 flex min-h-8 items-center justify-between gap-4 px-1">
+                        <TabsList variant="line" aria-label="New chat empty state" className="h-8 gap-1 border-transparent bg-transparent p-0">
+                          <TabsTrigger value="use-cases" id="chat-empty-state-tab-use-cases" data-testid="chat-empty-state-tab-use-cases" className="h-8 flex-none rounded-[var(--radius-md)] border border-transparent px-3 text-sm data-[state=active]:!border-[color:var(--border-soft)] data-[state=active]:!bg-[color:var(--surface-active)] data-[state=active]:shadow-none after:hidden">
+                            <span>Use cases</span>
+                          </TabsTrigger>
+                          <TabsTrigger value="recent" id="chat-empty-state-tab-recent" data-testid="chat-empty-state-tab-recent" className="h-8 flex-none rounded-[var(--radius-md)] border border-transparent px-3 text-sm data-[state=active]:!border-[color:var(--border-soft)] data-[state=active]:!bg-[color:var(--surface-active)] data-[state=active]:shadow-none after:hidden">
+                            <span>Chats</span>
+                          </TabsTrigger>
+                        </TabsList>
+                        {activeProject ? (
+                          <span data-testid="chat-empty-state-project-label" className="hidden max-w-[50%] truncate text-xs text-muted-foreground sm:block">
+                            {projectDisplayName(activeProject)}
+                          </span>
+                        ) : null}
+                      </div>
                       <TabsContent value="use-cases" id="chat-empty-state-use-cases-panel" aria-labelledby="chat-empty-state-tab-use-cases" className="mt-0 flex flex-col items-center">
                         {renderEmptyStatePromptFlow()}
                       </TabsContent>
@@ -2537,7 +2598,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                           key={activeProject ? `project:${activeProject.id}` : "no-project"}
                           className="!mt-0"
                           conversations={recentProjectConversations}
-                          projectName={activeProject ? projectDisplayName(activeProject) : null}
                           visible={emptyStateActiveTab === "recent"}
                           conversationPath={chatConversationPath}
                           onPrefetchConversation={(conversationId) => void prefetchChatConversation(queryClient, selectedOrganizationId, conversationId)}

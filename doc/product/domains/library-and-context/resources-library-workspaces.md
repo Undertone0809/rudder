@@ -25,6 +25,9 @@ related_code:
   - server/src/routes/orgs.ts
   - server/src/services/agent-run-context.ts
   - ui/src/pages/OrganizationResources.tsx
+  - ui/src/components/ImagePreviewDialog.tsx
+  - ui/src/components/InspectableImage.tsx
+  - ui/src/context/ImagePreviewContext.tsx
   - ui/src/components/WorkspaceFilePreview.tsx
   - ui/src/components/WorkspacePdfPreview.tsx
   - ui/src/pages/OrganizationWorkspaces.tsx
@@ -42,6 +45,8 @@ related_tests:
   - server/src/__tests__/workspace-backups.test.ts
   - server/src/__tests__/workspace-backups-routes.test.ts
   - ui/src/pages/OrganizationWorkspaceFilesSidebar.test.tsx
+  - ui/src/components/ImagePreviewDialog.test.tsx
+  - ui/src/context/ImagePreviewContext.test.tsx
   - ui/src/components/WorkspaceFilePreview.test.tsx
   - ui/src/components/WorkspacePdfPreview.test.tsx
   - ui/src/pages/Chat.attachment-preview.test.tsx
@@ -125,7 +130,8 @@ Product model:
   previews additionally let operators reveal the current file in the platform
   file browser or open its containing directory in a detected terminal.
 - Individual Library file rows expose file targets through an `Open In` action;
-  Messenger document previews expose the same targets through an `Open` menu.
+  full Library HTML previews and Messenger document previews expose file targets
+  through an `Open` menu.
   `Default app` is a file-safe target that delegates to the operating system's
   configured default app for that file type; detected IDEs such as Cursor or VS
   Code remain explicit file targets. In Messenger document previews, folder and
@@ -140,6 +146,15 @@ Product model:
   the Side Panel. Autosave uses the last confirmed server content as a write
   precondition so changes already visible at the server's final guarded read
   produce a conflict instead of being silently overwritten by a stale draft.
+- HTML files in the full Library work surface and Messenger Side Panel follow
+  `LIBRARY.WEB.PREVIEW.001` for multi-file rendering, the Connected default,
+  the unified preview toolbar, isolated runtime boundaries, and static Offline
+  fallback behavior.
+- Image files shown in either the full Library work surface or a Messenger
+  Library preview open through the shared application image overlay. The
+  overlay provides explicit close, copy, and download actions, keeps the
+  underlying Library route and selected file intact, and adds the Desktop-only
+  reveal action when that capability exists.
 - Protected roots such as agent instruction, skills, and managed directories
   are excluded from normal mentionable Library surfaces unless an explicit
   management flow owns them.
@@ -166,6 +181,11 @@ Flow:
    operator either retry the draft against the latest version (`Keep mine`) or
    replace it with the latest server content (`Use latest`). If a save response
    is ambiguous, Rudder rereads the file before deciding whether the save failed.
+10. From either Library surface, selecting an image opens the shared image
+   overlay without replacing the current Library route or Side Panel target.
+11. Opening a supported HTML file delegates website rendering and inspection
+    controls to `LIBRARY.WEB.PREVIEW.001` while Open continues to target the
+    original validated Library file.
 
 Invariants:
 
@@ -187,6 +207,12 @@ Invariants:
 - `Open in Library` resolves only the current organization-scoped
   Library-relative file path; it must not expose or navigate to an absolute
   filesystem root.
+- HTML preview Open actions must use the original validated Library path and
+  must never pass a short-lived preview capability URL to Desktop or Library
+  navigation targets.
+- Inspectable Library images must not be routed into a Browser target or a new
+  window. Loading, broken, and very small images must retain a non-overlapping
+  close control alongside every available image action.
 - Desktop bridge handlers must require the renderer-provided root to resolve
   inside the configured organization workspace home, then resolve both the root
   and file through filesystem real paths before opening either the file or its
@@ -228,6 +254,12 @@ Evidence:
   autosave failure recovery, stale-write conflict detection, draft preservation,
   both conflict decisions, ambiguous-response confirmation, and in-flight save
   race handling.
+- Shared image preview component tests cover Web and Desktop control-safe
+  sizing, and Organization Workspaces E2E proves Library image inspection opens
+  and exits through the application overlay.
+- Website preview unit, server, and E2E coverage is owned by
+  `LIBRARY.WEB.PREVIEW.001` and proves the shared toolbar and Open action in both
+  the full Library work surface and Messenger Side Panel.
 
 ## WORKSPACE.PROJECT.001
 

@@ -28,6 +28,28 @@ test.describe("Chat Work Manifest", () => {
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
     const agent = await createE2EChatAgent(page.request, organization.id, { name: "Manifest Agent" });
 
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Manifest reference issue",
+        description: "Referenced from a user message in the Work manifest.",
+        status: "todo",
+        priority: "medium",
+      },
+    });
+    expect(issueRes.ok(), await issueRes.text()).toBe(true);
+    const issue = await issueRes.json() as { id: string; identifier: string };
+
+    const automationRes = await page.request.post(`/api/orgs/${organization.id}/automations`, {
+      data: {
+        title: "Manifest reference automation",
+        description: "Referenced from a user message in the Work manifest.",
+        assigneeAgentId: agent.id,
+        priority: "medium",
+      },
+    });
+    expect(automationRes.ok(), await automationRes.text()).toBe(true);
+    const automation = await automationRes.json() as { id: string; title: string };
+
     const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
       data: { name: "Manifest Project", status: "in_progress" },
     });
@@ -40,6 +62,12 @@ test.describe("Chat Work Manifest", () => {
     });
     expect(outputFileRes.ok(), await outputFileRes.text()).toBe(true);
     const outputFile = await outputFileRes.json() as { markdownLink: string };
+    const websiteOutputPath = `artifacts/chat-manifest-${Date.now()}/index.html`;
+    const websiteOutputFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: { filePath: websiteOutputPath, content: "<!doctype html><title>Manifest site</title>" },
+    });
+    expect(websiteOutputFileRes.ok(), await websiteOutputFileRes.text()).toBe(true);
+    const websiteOutputFile = await websiteOutputFileRes.json() as { markdownLink: string };
     const sourcePath = `docs/chat-manifest-${Date.now()}-brief.md`;
     const sourceFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
       data: { filePath: sourcePath, content: "# Source brief" },
@@ -112,14 +140,19 @@ test.describe("Chat Work Manifest", () => {
         orgId: organization.id,
         conversationId: chat.id,
         role: "user",
-        body: `Use https://source.example/research and ${sourceFile.markdownLink}.`,
+        body: [
+          `Use https://source.example/research and ${sourceFile.markdownLink}.`,
+          `[${issue.identifier}](issue://${issue.id}?r=${encodeURIComponent(issue.identifier)})`,
+          `[${automation.title}](automation://${automation.id}?t=${encodeURIComponent(automation.title)})`,
+          `[Other project chat](chat://${otherChat.id})`,
+        ].join(" "),
         status: "completed",
       },
       {
         orgId: organization.id,
         conversationId: chat.id,
         role: "assistant",
-        body: `Produced ${outputFile.markdownLink}. Source duplicate: https://source.example/research#section. Reference: https://reference.example/docs.`,
+        body: `Produced ${outputFile.markdownLink} and ${websiteOutputFile.markdownLink}. Source duplicate: https://source.example/research#section. Reference: https://reference.example/docs.`,
         status: "completed",
         runId,
         replyingAgentId: agent.id,
@@ -155,9 +188,18 @@ test.describe("Chat Work Manifest", () => {
     await expect(shelf).toContainText("Sources");
     await expect(shelf).toContainText("References");
     await expect(shelf).toContainText("report.md");
+    await expect(shelf).toContainText("index.html");
+    await expect(shelf.getByRole("button", { name: /index\.html/ }).locator("[data-file-icon='website']"))
+      .toBeVisible();
     await expect(shelf).not.toContainText("From Agent");
     await expect(shelf).toContainText("https://reference.example/docs");
     await expect(shelf.getByRole("button", { name: /reference\.example/ }).locator("[data-website-icon]"))
+      .toBeVisible();
+    await expect(shelf.getByRole("button", { name: new RegExp(issue.identifier) }).locator("[data-file-icon='issue']"))
+      .toBeVisible();
+    await expect(shelf.getByRole("button", { name: new RegExp(automation.title) }).locator("[data-file-icon='automation']"))
+      .toBeVisible();
+    await expect(shelf.getByRole("button", { name: /Other project chat/ }).locator("[data-file-icon='chat']"))
       .toBeVisible();
     await expect(shelf).not.toContainText("Project work");
     await expect(shelf).not.toContainText("Project research source");
@@ -165,6 +207,15 @@ test.describe("Chat Work Manifest", () => {
     await expect(shelf).not.toContainText("Browser");
     await expect(shelf.getByRole("button", { name: /source\.example https:\/\/source\.example\/research/ }))
       .toHaveCount(1);
+
+    await shelf.getByRole("button", { name: new RegExp(issue.identifier) }).click();
+    const issueSidePanel = page.getByTestId("chat-side-panel");
+    await expect(issueSidePanel).toBeVisible();
+    await expect(issueSidePanel).toContainText("Manifest reference issue");
+    await issueSidePanel.getByTestId("chat-side-panel-tab").hover();
+    await issueSidePanel.getByTestId("chat-side-panel-tab-close").click();
+    await expect(issueSidePanel).toHaveCount(0);
+    await expect(shelf).toBeVisible();
 
     const [scrollBox, workspaceBox] = await Promise.all([
       page.getByTestId("chat-messages-scroll-region").boundingBox(),

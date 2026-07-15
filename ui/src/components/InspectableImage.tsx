@@ -1,11 +1,12 @@
-import { useToast } from "@/context/ToastContext";
+import { useImagePreview } from "@/context/ImagePreviewContext";
+import { useOptionalToast } from "@/context/ToastContext";
 import {
   canShowImageInFolder,
   copyImage,
   downloadImage,
-  openImage,
   showImageInFolder,
 } from "@/lib/image-actions";
+import { getImagePreviewElementDetails } from "@/lib/image-preview";
 import { Copy, Download, ExternalLink, Eye, Folder } from "lucide-react";
 import { useEffect, useRef, useState, type ImgHTMLAttributes, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
@@ -30,29 +31,30 @@ function actionErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function useMaybeToast() {
-  try {
-    return useToast();
-  } catch {
-    return null;
-  }
-}
-
 export interface InspectableImageProps extends Omit<ImgHTMLAttributes<HTMLImageElement>, "onClick" | "onDoubleClick" | "onContextMenu"> {
   name: string;
+  previewTestId?: string;
+  previewTitleFallback?: string;
+  showInspectOverlay?: boolean;
   src: string;
-  onInspect?: (image: HTMLImageElement) => void;
+  triggerClassName?: string;
+  wrapperClassName?: string;
 }
 
 export function InspectableImage({
   alt,
   className,
   name,
-  onInspect,
+  previewTestId,
+  previewTitleFallback,
+  showInspectOverlay = true,
   src,
+  triggerClassName,
+  wrapperClassName,
   ...imgProps
 }: InspectableImageProps) {
-  const toast = useMaybeToast();
+  const toast = useOptionalToast();
+  const { openImagePreview } = useImagePreview();
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const [contextMenuPosition, setContextMenuPosition] = useState<ImageContextMenuPosition | null>(null);
@@ -81,8 +83,19 @@ export function InspectableImage({
 
   const inspectImage = () => {
     const image = imageRef.current;
-    if (!image || !onInspect) return;
-    onInspect(image);
+    if (!image) return;
+    openImagePreview({
+      ...getImagePreviewElementDetails(image),
+      name,
+      testId: previewTestId,
+      titleFallback: previewTitleFallback,
+    });
+  };
+
+  const openImagePreviewFromTrigger = (event: MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    inspectImage();
   };
 
   const openImageContextMenu = (event: MouseEvent) => {
@@ -112,14 +125,14 @@ export function InspectableImage({
   };
 
   return (
-    <span className="rudder-inspectable-image">
+    <span className={`rudder-inspectable-image${wrapperClassName ? ` ${wrapperClassName}` : ""}`}>
       <button
         type="button"
-        className="rudder-inspectable-image-trigger"
+        className={`rudder-inspectable-image-trigger${triggerClassName ? ` ${triggerClassName}` : ""}`}
         aria-label={`Open image preview: ${name}`}
         title="Open image preview"
-        onClick={inspectImage}
-        onDoubleClick={inspectImage}
+        onClick={openImagePreviewFromTrigger}
+        onDoubleClick={openImagePreviewFromTrigger}
         onContextMenu={openImageContextMenu}
       >
         <img
@@ -130,9 +143,11 @@ export function InspectableImage({
           className={className}
           onContextMenu={openImageContextMenu}
         />
-        <span className="rudder-inspectable-image-overlay" aria-hidden="true">
-          <Eye className="size-3.5" />
-        </span>
+        {showInspectOverlay ? (
+          <span className="rudder-inspectable-image-overlay" aria-hidden="true">
+            <Eye className="size-3.5" />
+          </span>
+        ) : null}
       </button>
       {contextMenuPosition && typeof document !== "undefined" ? createPortal(
         <div
@@ -146,7 +161,10 @@ export function InspectableImage({
             type="button"
             role="menuitem"
             className="chat-composer-menu-row w-full"
-            onClick={() => runImageAction("Open Image failed", () => openImage(src))}
+            onClick={() => {
+              setContextMenuPosition(null);
+              inspectImage();
+            }}
           >
             <ExternalLink className="h-3.5 w-3.5 shrink-0" />
             <span className="min-w-0 flex-1 truncate">Open Image</span>

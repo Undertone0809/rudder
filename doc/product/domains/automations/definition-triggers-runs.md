@@ -20,6 +20,7 @@ related_tests:
   - server/src/__tests__/automations-service.test.ts
   - server/src/__tests__/automations-routes.test.ts
   - server/src/__tests__/automations-e2e.test.ts
+  - ui/src/pages/Automations.test.tsx
   - tests/e2e/automations-index-layout.spec.ts
   - tests/e2e/automation-detail-layout.spec.ts
 edit_policy: user_confirmed_only
@@ -43,6 +44,14 @@ Product model:
 - Output mode is either tracked issue or chat output.
 - The create composer defaults custom automations to chat output and lets the
   operator explicitly switch between chat output and tracked issue output.
+- The first-use gallery and the open composer's `Use template` picker expose
+  the same localized built-in presets. Applying a preset to an open draft
+  replaces its title, instructions, schedule, output mode, and chat
+  destination while preserving the selected assignee and project.
+- `Daily review` is a built-in preset for a concise evidence-based review of
+  completed, in-progress, unfinished, and blocked work, important decisions,
+  and the highest-priority next action. It defaults to daily at 18:00 and
+  sends each run to a new chat.
 - Agent actors can manage only automations they are allowed to own.
 - `/automations` and `/automations/:automationId` are one route-driven
   master-detail workspace. On wide screens the primary rail, Automation list,
@@ -51,8 +60,11 @@ Product model:
 
 Flow:
 
-1. Operator or agent creates automation with prompt, owner, context, trigger,
-   and an explicitly visible output mode; custom drafts start with chat output.
+1. Operator opens a custom draft or applies a built-in preset, reviews the
+   editable prompt, owner, context, trigger, and explicitly visible output
+   mode, then creates the Automation. Applying a preset alone does not create
+   or persist an Automation; agent API clients submit the equivalent definition
+   fields directly.
 2. Server validates organization boundary, assignee, project/goal/parent issue,
    status, and permissions.
 3. Selecting a row updates the route, marks that row as current, and opens or
@@ -76,6 +88,11 @@ Invariants:
 
 - Automation context must remain traceable to the org/project/goal/issue that
   justified the repeated work.
+- Built-in presets are editable composer defaults, not separate persisted
+  Automation definitions. Template selection must preserve explicit assignee
+  and project choices while replacing the fields owned by the selected preset.
+- The template picker must remain usable in English and Chinese and must stay
+  within the visible viewport on narrow screens.
 - Archived automations are historical records, not active dispatch sources.
 - On wide screens, collapsing detail must remove the detail pane, its border,
   and its reserved gap from the visible layout. The restore control remains in
@@ -99,7 +116,9 @@ Evidence:
   status filtering and keyboard activation, filtered empty states, selected
   detail reconciliation after filter or status changes, in-place swapping,
   direct-link recovery, responsive one-pane fallback, definition editing, and
-  run-history affordances.
+  run-history affordances. The Automations index E2E also proves that applying
+  `Daily review` preserves the assignee, uses chat output, persists the daily
+  18:00 schedule, and keeps the localized picker bounded at a narrow viewport.
 - Known gap: this contract records product behavior; it does not replace
   automation output proof, which belongs to `AUTOMATION.OUTPUT.001`.
 
@@ -115,13 +134,18 @@ Product model:
 
 - Supported trigger sources include schedule, manual/API, and webhook.
 - Schedule triggers carry cron/timezone/next-run semantics.
+- Built-in presets may prefill an editable schedule before creation. `Daily
+  review` starts with `0 18 * * *`; creating the Automation from that draft
+  persists the expression as its schedule trigger unless the operator changes
+  it first.
 - Webhooks carry public id, secret/signature/replay-window semantics when
   enabled.
 - Dispatch source and idempotency key remain attached to the automation run.
 
 Flow:
 
-1. Trigger is created or edited on automation definition.
+1. Trigger is entered manually or prefilled by a built-in preset, then created
+   or edited on the Automation definition.
 2. Scheduler/API/webhook evaluates source-specific eligibility.
 3. Next run timestamp or webhook validation is computed.
 4. Eligible trigger creates an automation run or records a skip/coalesce result.
@@ -137,6 +161,9 @@ Evidence:
   next-run behavior.
 - `server/src/__tests__/automations-service.test.ts` covers trigger and
   dispatch behavior at service level.
+- `ui/src/pages/Automations.test.tsx` and
+  `tests/e2e/automations-index-layout.spec.ts` prove the `Daily review` schedule
+  prefill and its persisted `0 18 * * *` trigger.
 - Known gap: webhook security details should be expanded when webhook
   providers beyond the current implementation become first-class surfaces.
 

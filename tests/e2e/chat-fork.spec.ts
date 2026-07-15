@@ -276,12 +276,14 @@ test("forks a chat from a selected message and groups the fork family in Messeng
   expect(forkResponse.ok()).toBe(true);
   const forkedConversation = await forkResponse.json() as {
     id: string;
+    title: string;
     lastMessageAt: string | null;
     forkedFromConversationId: string | null;
     forkedFromMessageId: string | null;
     forkRootConversationId: string | null;
   };
 
+  expect(forkedConversation.title).toBe("Forkable strategy chat (2)");
   expect(forkedConversation.forkedFromConversationId).toBe(sourceConversationId);
   expect(forkedConversation.forkedFromMessageId).toBe(sourceMessageIds[1]);
   expect(forkedConversation.forkRootConversationId).toBe(sourceConversationId);
@@ -448,12 +450,12 @@ test("forks from an earlier assistant message while a later reply is streaming",
   expect(forkMessages.some((message) => message.body.includes("Streaming reply for chat."))).toBe(false);
 });
 
-test("retitles a forked chat from the first new user message when Fast Intelligence is unavailable", async ({ page }) => {
+test("keeps a numbered fork title after the first new user message when Fast Intelligence is unavailable", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem("rudder.theme", "dark");
   });
 
-  const organization = await createOrganization(page, `Chat-Fork-Title-Fallback-${Date.now()}`);
+  const organization = await createOrganization(page, `Fallback-Fork-Title-${Date.now()}`);
   const source = await seedForkableChatSource(page, {
     orgId: organization.id,
     title: "Inherited fallback source title",
@@ -465,20 +467,22 @@ test("retitles a forked chat from the first new user message when Fast Intellige
   await openOrganizationChat(page, organization, source.sourceConversationId);
   await expect(page.getByTestId("chat-messages-content")).toContainText("Use this fallback branch point", { timeout: 15_000 });
   const forkedConversation = await forkFromAssistantMessage(page, source.sourceConversationId, source.sourceMessageIds[1]!);
-  await expect(page.getByTestId(threadTestId(`chat:${forkedConversation.id}`))).toContainText("Inherited fallback source title", { timeout: 15_000 });
+  const forkTitle = "Inherited fallback source title (2)";
+  await expect(page.getByTestId(threadTestId(`chat:${forkedConversation.id}`))).toContainText(forkTitle, { timeout: 15_000 });
 
   const firstForkMessage = "Draft a branch-specific launch checklist";
   await sendFirstForkMessage(page, firstForkMessage);
 
-  await expectChatTitle(page, forkedConversation.id, firstForkMessage);
+  await expect(page.getByTestId("chat-messages-content")).toContainText("Streaming reply for chat.", { timeout: 20_000 });
+  await expectChatTitle(page, forkedConversation.id, forkTitle);
 });
 
-test("uses Fast Intelligence to retitle a forked chat from the first new user message", async ({ page }) => {
+test("keeps a numbered fork title after the first new user message when Fast Intelligence is configured", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem("rudder.theme", "dark");
   });
 
-  const organization = await createOrganization(page, `Chat-Fork-Title-AI-${Date.now()}`);
+  const organization = await createOrganization(page, `Intelligence-Fork-Title-${Date.now()}`);
   await configureFastTitleProfile(page, organization.id, "AI fork pricing title");
   const source = await seedForkableChatSource(page, {
     orgId: organization.id,
@@ -491,9 +495,11 @@ test("uses Fast Intelligence to retitle a forked chat from the first new user me
   await openOrganizationChat(page, organization, source.sourceConversationId);
   await expect(page.getByTestId("chat-messages-content")).toContainText("Use this AI branch point", { timeout: 15_000 });
   const forkedConversation = await forkFromAssistantMessage(page, source.sourceConversationId, source.sourceMessageIds[1]!);
-  await expect(page.getByTestId(threadTestId(`chat:${forkedConversation.id}`))).toContainText("Inherited AI source title", { timeout: 15_000 });
+  const forkTitle = "Inherited AI source title (2)";
+  await expect(page.getByTestId(threadTestId(`chat:${forkedConversation.id}`))).toContainText(forkTitle, { timeout: 15_000 });
 
   await sendFirstForkMessage(page, "Explore a pricing branch for agency teams");
 
-  await expectChatTitle(page, forkedConversation.id, "AI fork pricing title");
+  await expect(page.getByTestId("chat-messages-content")).toContainText("Streaming reply for chat.", { timeout: 20_000 });
+  await expectChatTitle(page, forkedConversation.id, forkTitle);
 });

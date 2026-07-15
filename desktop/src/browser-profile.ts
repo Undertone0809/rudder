@@ -112,9 +112,28 @@ export function isAllowedBrowserNavigationUrl(target: string, controlPlaneOrigin
   }
 }
 
+export function isLocalAbsoluteFileUrl(target: string): boolean {
+  if (!/^file:\/\/\//i.test(target)) return false;
+  try {
+    const parsed = new URL(target);
+    const decodedPathname = decodeURIComponent(parsed.pathname);
+    return parsed.protocol === "file:"
+      && parsed.hostname === ""
+      && decodedPathname.startsWith("/")
+      && !/^\/[\\/]/.test(decodedPathname);
+  } catch {
+    return false;
+  }
+}
+
+export function isAllowedOperatorBrowserNavigationUrl(target: string, controlPlaneOrigins: string[]): boolean {
+  if (isLocalAbsoluteFileUrl(target)) return true;
+  return isAllowedBrowserNavigationUrl(target, controlPlaneOrigins);
+}
+
 export function isAllowedBrowserBootstrapUrl(target: string, controlPlaneOrigins: string[]): boolean {
   if (target === "about:blank") return true;
-  return isAllowedBrowserNavigationUrl(target, controlPlaneOrigins);
+  return isAllowedOperatorBrowserNavigationUrl(target, controlPlaneOrigins);
 }
 
 export function createBrowserProfileController(options: {
