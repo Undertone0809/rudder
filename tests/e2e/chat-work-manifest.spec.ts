@@ -10,6 +10,7 @@ import {
 } from "../../packages/db/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_DATABASE_URL } from "./support/e2e-env";
+import { expectRightAnchoredSidePanelMotion, sampleSidePanelMotion } from "./support/side-panel-motion";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
 const screenshotDir = "/tmp/rudder-chat-work-manifest";
@@ -18,11 +19,36 @@ test.describe("Chat Work Manifest", () => {
   test("shows thread work without project work across desktop and compact layouts", async ({ page }) => {
     fs.mkdirSync(screenshotDir, { recursive: true });
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Chat-Work-Manifest-${Date.now()}` },
+      data: {
+        name: `Chat-Work-Manifest-${Date.now()}`,
+        issuePrefix: `CWM${randomUUID().replaceAll("-", "").slice(0, 7).toUpperCase()}`,
+      },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
     const agent = await createE2EChatAgent(page.request, organization.id, { name: "Manifest Agent" });
+
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Manifest reference issue",
+        description: "Referenced from a user message in the Work manifest.",
+        status: "todo",
+        priority: "medium",
+      },
+    });
+    expect(issueRes.ok(), await issueRes.text()).toBe(true);
+    const issue = await issueRes.json() as { id: string; identifier: string };
+
+    const automationRes = await page.request.post(`/api/orgs/${organization.id}/automations`, {
+      data: {
+        title: "Manifest reference automation",
+        description: "Referenced from a user message in the Work manifest.",
+        assigneeAgentId: agent.id,
+        priority: "medium",
+      },
+    });
+    expect(automationRes.ok(), await automationRes.text()).toBe(true);
+    const automation = await automationRes.json() as { id: string; title: string };
 
     const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
       data: { name: "Manifest Project", status: "in_progress" },
@@ -114,7 +140,12 @@ test.describe("Chat Work Manifest", () => {
         orgId: organization.id,
         conversationId: chat.id,
         role: "user",
-        body: `Use https://source.example/research and ${sourceFile.markdownLink}.`,
+        body: [
+          `Use https://source.example/research and ${sourceFile.markdownLink}.`,
+          `[${issue.identifier}](issue://${issue.id}?r=${encodeURIComponent(issue.identifier)})`,
+          `[${automation.title}](automation://${automation.id}?t=${encodeURIComponent(automation.title)})`,
+          `[Other project chat](chat://${otherChat.id})`,
+        ].join(" "),
         status: "completed",
       },
       {
@@ -164,12 +195,27 @@ test.describe("Chat Work Manifest", () => {
     await expect(shelf).toContainText("https://reference.example/docs");
     await expect(shelf.getByRole("button", { name: /reference\.example/ }).locator("[data-website-icon]"))
       .toBeVisible();
+    await expect(shelf.getByRole("button", { name: new RegExp(issue.identifier) }).locator("[data-file-icon='issue']"))
+      .toBeVisible();
+    await expect(shelf.getByRole("button", { name: new RegExp(automation.title) }).locator("[data-file-icon='automation']"))
+      .toBeVisible();
+    await expect(shelf.getByRole("button", { name: /Other project chat/ }).locator("[data-file-icon='chat']"))
+      .toBeVisible();
     await expect(shelf).not.toContainText("Project work");
     await expect(shelf).not.toContainText("Project research source");
     await expect(shelf).not.toContainText("stale.example");
     await expect(shelf).not.toContainText("Browser");
     await expect(shelf.getByRole("button", { name: /source\.example https:\/\/source\.example\/research/ }))
       .toHaveCount(1);
+
+    await shelf.getByRole("button", { name: new RegExp(issue.identifier) }).click();
+    const issueSidePanel = page.getByTestId("chat-side-panel");
+    await expect(issueSidePanel).toBeVisible();
+    await expect(issueSidePanel).toContainText("Manifest reference issue");
+    await issueSidePanel.getByTestId("chat-side-panel-tab").hover();
+    await issueSidePanel.getByTestId("chat-side-panel-tab-close").click();
+    await expect(issueSidePanel).toHaveCount(0);
+    await expect(shelf).toBeVisible();
 
     const [scrollBox, workspaceBox] = await Promise.all([
       page.getByTestId("chat-messages-scroll-region").boundingBox(),
@@ -195,16 +241,68 @@ test.describe("Chat Work Manifest", () => {
     await expect(widePanel).toHaveAttribute("data-state", "open");
     await expect(shelf).toBeVisible();
     await page.screenshot({ path: `${screenshotDir}/desktop.png`, fullPage: true });
+    await page.evaluate(() => {
+      const state = window as typeof window & {
+        __rudderChatMotionIdentity?: {
+          composer: Element | null;
+          messages: Element | null;
+          scrollRegion: Element | null;
+        };
+      };
+      state.__rudderChatMotionIdentity = {
+        composer: document.querySelector("[data-testid='chat-composer-content']"),
+        messages: document.querySelector("[data-testid='chat-messages-content']"),
+        scrollRegion: document.querySelector("[data-testid='chat-messages-scroll-region']"),
+      };
+    });
 
-    await shelf.getByText("report.md", { exact: true }).click();
+    const openingSamples = await sampleSidePanelMotion(
+      page,
+      () => shelf.getByText("report.md", { exact: true }).click(),
+    );
+    expectRightAnchoredSidePanelMotion(openingSamples, "opening", {
+      checkMessageWidth: true,
+      endPanelWidth: { min: 390 },
+    });
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
     await expect(sidePanel.getByRole("heading", { name: "Manifest report", exact: true })).toBeVisible();
     await expect(page.getByTestId("chat-work-manifest")).toHaveCount(0);
+    expect(await page.evaluate(() => {
+      const state = (window as typeof window & {
+        __rudderChatMotionIdentity?: { composer: Element | null; messages: Element | null; scrollRegion: Element | null };
+      }).__rudderChatMotionIdentity;
+      return Boolean(
+        state
+          && state.composer === document.querySelector("[data-testid='chat-composer-content']")
+          && state.messages === document.querySelector("[data-testid='chat-messages-content']")
+          && state.scrollRegion === document.querySelector("[data-testid='chat-messages-scroll-region']"),
+      );
+    })).toBe(true);
     await page.screenshot({ path: `${screenshotDir}/side-panel.png`, fullPage: true });
 
-    await sidePanel.getByTestId("chat-side-panel-tab-close").click();
+    await sidePanel.getByTestId("chat-side-panel-tab").hover();
+    const closingSamples = await sampleSidePanelMotion(
+      page,
+      () => sidePanel.getByTestId("chat-side-panel-tab-close").click(),
+    );
+    expectRightAnchoredSidePanelMotion(closingSamples, "closing", {
+      checkClosingContent: true,
+      checkMessageWidth: true,
+      endPanelWidth: { max: 2 },
+    });
     await expect(sidePanel).toHaveCount(0);
+    expect(await page.evaluate(() => {
+      const state = (window as typeof window & {
+        __rudderChatMotionIdentity?: { composer: Element | null; messages: Element | null; scrollRegion: Element | null };
+      }).__rudderChatMotionIdentity;
+      return Boolean(
+        state
+          && state.composer === document.querySelector("[data-testid='chat-composer-content']")
+          && state.messages === document.querySelector("[data-testid='chat-messages-content']")
+          && state.scrollRegion === document.querySelector("[data-testid='chat-messages-scroll-region']"),
+      );
+    })).toBe(true);
     await page.setViewportSize({ width: 1024, height: 768 });
     const trigger = page.getByTestId("chat-work-manifest-trigger");
     await expect(trigger).toBeVisible();

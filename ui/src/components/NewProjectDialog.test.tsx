@@ -207,6 +207,8 @@ describe("NewProjectDialog", () => {
     const container = renderDialog();
     const scrollRegion = container.querySelector('[data-testid="new-project-add-resources-popover-scroll"]');
     const popoverContent = scrollRegion?.parentElement;
+    const createExternalResourceButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("Create external resource"));
 
     expect(popoverContent?.getAttribute("data-disable-portal")).toBe("true");
     expect(popoverContent?.className).toContain("overflow-hidden");
@@ -217,6 +219,8 @@ describe("NewProjectDialog", () => {
     expect(scrollRegion?.className).toContain("flex-1");
     expect(scrollRegion?.className).toContain("overflow-y-auto");
     expect(scrollRegion?.className).toContain("overscroll-contain");
+    expect(popoverContent?.firstElementChild).toBe(createExternalResourceButton);
+    expect(scrollRegion?.contains(createExternalResourceButton ?? null)).toBe(false);
   });
 
   it("keeps the new project footer visible while resource drafts scroll inside the dialog", () => {

@@ -2,11 +2,12 @@ import { useI18n } from "@/context/I18nContext";
 import { useImagePreview } from "@/context/ImagePreviewContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { getImagePreviewElementDetails, getImagePreviewName } from "@/lib/image-preview";
-import { defaultValueCtx, Editor, editorViewCtx, rootCtx } from "@milkdown/kit/core";
-import { history } from "@milkdown/kit/plugin/history";
+import { commandsCtx, defaultValueCtx, Editor, editorViewCtx, rootCtx } from "@milkdown/kit/core";
+import { history, redoCommand, undoCommand } from "@milkdown/kit/plugin/history";
 import { listener, listenerCtx } from "@milkdown/kit/plugin/listener";
 import { commonmark } from "@milkdown/kit/preset/commonmark";
 import { gfm } from "@milkdown/kit/preset/gfm";
+import { redoDepth, undoDepth } from "@milkdown/kit/prose/history";
 import { Plugin as ProsePlugin, TextSelection } from "@milkdown/kit/prose/state";
 import { Decoration, DecorationSet } from "@milkdown/kit/prose/view";
 import { $prose, getMarkdown, insert, replaceAll } from "@milkdown/kit/utils";
@@ -1176,6 +1177,30 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
     return markdown;
   }, [get, getInstance, loading]);
 
+  const runHistoryCommand = useCallback((direction: "undo" | "redo") => {
+    let handled = false;
+    const editor = loading ? get() : getInstance();
+    editor?.action((ctx) => {
+      const view = getMilkdownProseMirrorView(ctx);
+      if (!view) return;
+      handled = ctx.get(commandsCtx).call(direction === "undo" ? undoCommand.key : redoCommand.key);
+      if (handled) view.focus?.();
+    });
+    return handled;
+  }, [get, getInstance, loading]);
+
+  const getHistoryAvailability = useCallback((direction: "undo" | "redo") => {
+    let available = false;
+    const editor = loading ? get() : getInstance();
+    editor?.action((ctx) => {
+      const view = getMilkdownProseMirrorView(ctx);
+      if (!view) return;
+      const historyState = view.state as unknown as Parameters<typeof undoDepth>[0];
+      available = (direction === "undo" ? undoDepth(historyState) : redoDepth(historyState)) > 0;
+    });
+    return available;
+  }, [get, getInstance, loading]);
+
   const repairUnexpectedBlankDom = useCallback(() => {
     const editable = containerRef.current?.querySelector('[contenteditable="true"]');
     if (!(editable instanceof HTMLElement)) return;
@@ -1189,7 +1214,11 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   useImperativeHandle(forwardedRef, () => ({
     focus,
     getMarkdown: getCurrentMarkdown,
-  }), [focus, getCurrentMarkdown]);
+    undo: () => runHistoryCommand("undo"),
+    redo: () => runHistoryCommand("redo"),
+    canUndo: () => getHistoryAvailability("undo"),
+    canRedo: () => getHistoryAvailability("redo"),
+  }), [focus, getCurrentMarkdown, getHistoryAvailability, runHistoryCommand]);
 
   useEffect(() => {
     if (editorValue === latestValueRef.current) return;

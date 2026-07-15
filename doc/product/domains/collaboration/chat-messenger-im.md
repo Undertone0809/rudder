@@ -1115,6 +1115,20 @@ Product model:
   choices, width/resizer behavior, and close/focus behavior. It does not become
   the owning domain for issue workflow, automation dispatch, Library path safety,
   Messenger attention, or chat lifecycle.
+- On desktop, the docked and expanded states use one stable, right-anchored
+  panel host. Opening the panel moves its left boundary toward the workspace
+  center while the current work surface narrows; expanding continues that same
+  boundary toward the workspace left edge. Restore and close reverse the same
+  geometry instead of replacing or reparenting the panel content.
+- When Chat gives up space reserved for its Work manifest, that release stays on
+  the same shared duration and easing token as the Side Panel width change,
+  beginning in the same rendered frame. The transcript and composer widths must
+  change monotonically; they must not first become narrower and then expand
+  while the outer Chat surface is shrinking.
+- These right-anchored geometry rules apply to the desktop adjacent-work layout.
+  The compact mobile Side Panel remains a nonmodal overlay: the underlying Chat
+  stays mounted and is not made inert, while the overlay receives its own
+  enter/exit treatment and explicit close control.
 - On desktop pointer surfaces, operators can drag a Side Panel tab label before
   or after another tab to reorder the current context's tab strip without
   changing the active target. The close affordance stays visually quiet until
@@ -1149,6 +1163,12 @@ Product model:
   Ordinary external HTTP(S) links use that target by default without replacing
   the current Rudder route. Unsupported shells or unavailable Browser
   capability must not perform an unsafe remote fetch by themselves.
+- When a Browser tab's main-frame navigation fails, the panel replaces the
+  failed page with an actionable browser-style failure state while preserving
+  the address bar, tab, and embedded Browser guest. The state identifies the
+  attempted host and Chromium error code, offers relevant connection/address
+  checks, can reveal the exact failed URL, and exposes Reload as the primary
+  recovery action.
 - Library file targets render supported inline previews inside the Side Panel,
   including PDFs. Truncated Library breadcrumbs reveal the complete
   Library-relative path on hover, and the file `Open` menu offers `Open in
@@ -1165,10 +1185,14 @@ Flow:
 4. The target view loads through the existing organization-scoped API for that
    domain.
 5. The panel renders the object in a compact workbench view at the default
-   docked width and keeps the current board route stable.
+   docked width and keeps the current board route stable. On desktop, its right
+   edge stays attached to the workspace while the divider and panel left edge
+   move left and the current work surface narrows continuously.
 6. If an issue target is expanded to the wide Side Panel state, Rudder swaps the
    compact issue workbench for the embedded Issue Detail body so the operator
    can use the same issue content sections without leaving the current route.
+   The same panel host continues expanding from right to left; it does not jump
+   to the workspace left edge and then grow toward the right.
 7. When the operator clicks the add-tab affordance while a target is already
    open, Rudder keeps existing tabs available but sets the active panel content
    to the empty `Open a panel` picker instead of showing a dropdown menu.
@@ -1194,15 +1218,21 @@ Flow:
    not require server persistence, cross-device sync, or localStorage recovery
    for tabs.
 15. Browser tabs normalize address-bar input into either a URL or search-query
-   navigation, keep back/forward/reload state scoped to the embedded browser,
-   can open the current page externally as a secondary action, and route popup
-   requests into another Browser tab instead of an unrestricted guest window
-   while the Browser tab and popup limits permit it.
-16. Desktop routes ordinary external HTTP(S) links to a Browser Side Panel tab
+    navigation, keep back/forward/reload state scoped to the embedded browser,
+    can open the current page externally as a secondary action, and route popup
+    requests into another Browser tab instead of an unrestricted guest window
+    while the Browser tab and popup limits permit it.
+16. When a main-frame Browser navigation fails for a reason other than an
+    intentional abort, Rudder keeps the attempted URL visible and renders the
+    Browser failure state over the existing guest. `Details` reveals the failed
+    URL. `Reload` retries that same guest and keeps the failure state visible
+    until a new load actually starts; subframe failures do not replace the
+    main-frame view.
+17. Desktop routes ordinary external HTTP(S) links to a Browser Side Panel tab
     when its instance preference is `built_in`, independently of Agent Browser
     access. The `default_browser` preference and explicit `Open externally`
     action use the operating-system browser instead.
-17. From a Library file tab, `Open in Library` navigates to the full Library
+18. From a Library file tab, `Open in Library` navigates to the full Library
     work surface with the same organization-scoped file selected.
 
 Invariants:
@@ -1248,6 +1278,14 @@ Invariants:
   application privileges beyond the embedded browser shell. Local non-control-
   plane web apps may be navigated, but Rudder board/API origins stay in the
   Rudder renderer and are rejected by the Browser profile.
+- A Browser main-frame failure must remain distinguishable from an intentional
+  aborted navigation or a subframe failure. The error copy must describe the
+  reported failure rather than always claiming connection refusal, and recovery
+  must reuse the current Browser guest instead of creating a replacement tab.
+- Browser guest clicks, redirects, and in-page navigation update the visible
+  address and tab label without rewriting the guest's explicit source
+  attribute. Rudder must not replay navigation, duplicate history, or resubmit
+  a request merely to synchronize Side Panel state.
 - Application-owned asset image URLs must not be promoted to Browser tabs merely
   because they are opened from Work. The shared image preview owns those URLs
   and closing it must preserve the existing Side Panel tabs and Browser guest.
@@ -1267,6 +1305,23 @@ Invariants:
   workspace with only a narrow resize affordance between them. It must not leave
   a broad blank gutter that visually separates the panel from the current work
   surface.
+- Desktop Side Panel geometry must preserve a fixed right edge while opening,
+  expanding, restoring, or closing. Its left edge, the divider, and the current
+  work-surface width must move monotonically in the requested direction. The
+  main work surface must remain visually present until the expanded panel has
+  covered or displaced it; reduced-motion mode may move directly to the same
+  final geometry.
+- While a desktop Side Panel is closing, its mounted content remains clipped by
+  the shrinking host instead of disappearing before the host reaches zero. The
+  host becomes inert as soon as closing begins, and keyboard focus returns to
+  the current surface's Side Panel trigger.
+- Opening a desktop Side Panel transfers keyboard focus from the removed opener
+  into the panel controls. Context or route changes that merely make the panel
+  unavailable must not steal focus from the newly active surface.
+- Side Panel visibility and width changes must preserve the current route, Chat
+  transcript and composer identity, scroll context, tab state, and Browser
+  webview identity. A docked/expanded transition must not reload or recreate an
+  active Browser guest.
 - The panel should not show a generic full-page footer as the primary action for
   every target. Full-page navigation may remain a secondary object toolbar
   action, but the panel's job is adjacent work.
@@ -1290,6 +1345,9 @@ Evidence:
   routes, and Side Panel E2E covers hiding/reopening tabs in one Messenger item,
   switching to an item with no panel history without inheriting tabs, and
   restoring the original item's active tab when returning.
+- Side Panel E2E samples desktop transition frames to verify the fixed right
+  edge, monotonic panel growth and Chat contraction, coordinated Work manifest
+  spacing, and Browser webview identity across expand and restore.
 - Side Panel E2E covers opening issue, automation, Library, and chat references
   without replacing the Chat route; editing an issue title, description,
   status, and assignee inside the panel; browsing a Library directory tree;
@@ -1302,6 +1360,10 @@ Evidence:
   secure guest policy, Side Panel navigation, external-open escape, and address
   input normalization. Side Panel E2E owns the route-preserving global link
   workflow.
+- Chat attachment/side-panel tests and Side Panel E2E cover main-frame Browser
+  failure rendering, host-specific diagnostics, Details URL disclosure, Reload
+  on the existing guest, delayed error dismissal until loading starts, and
+  address/tab synchronization without rewriting the guest source.
 
 ## MESSENGER.ATTENTION.001
 

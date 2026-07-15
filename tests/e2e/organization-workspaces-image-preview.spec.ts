@@ -58,6 +58,7 @@ test.describe("Organization workspaces image preview", () => {
     const organizationRes = await request.post("/api/orgs", {
       data: {
         name: `Organization-Workspaces-Chrome-Alignment-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix("WCA"),
       },
     });
     expect(organizationRes.ok()).toBe(true);
@@ -107,6 +108,7 @@ test.describe("Organization workspaces image preview", () => {
     const organizationRes = await request.post("/api/orgs", {
       data: {
         name: `Organization-Workspaces-Image-Preview-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix("WIP"),
       },
     });
     expect(organizationRes.ok()).toBe(true);
@@ -161,6 +163,7 @@ test.describe("Organization workspaces image preview", () => {
     const organizationRes = await request.post("/api/orgs", {
       data: {
         name: `Organization-Workspaces-PDF-Preview-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix("WPP"),
       },
     });
     expect(organizationRes.ok()).toBe(true);

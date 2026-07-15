@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("scrolls through a long resource list in the new project dialog", async ({ page }) => {
+test("keeps external resource creation at the top while the resource list scrolls", async ({ page }) => {
   await page.setViewportSize({ width: 1_988, height: 1_247 });
   const uniqueSuffix = Date.now().toString(36).slice(-6).toUpperCase();
   const orgRes = await page.request.post("/api/orgs", {
@@ -39,9 +39,22 @@ test("scrolls through a long resource list in the new project dialog", async ({ 
   await dialog.getByRole("button", { name: "Add resources" }).click();
 
   const scroller = page.getByTestId("new-project-add-resources-popover-scroll");
+  const createExternalResource = page.getByRole("button", { name: /Create external resource/ });
+  const librarySearch = page.getByPlaceholder("Search Library or paste relative path");
   await expect(scroller).toBeVisible();
+  await expect(createExternalResource).toBeVisible();
+  await expect(librarySearch).toBeVisible();
   await expect.poll(() => scroller.evaluate((element) => (
     element.scrollHeight > element.clientHeight
+  ))).toBe(true);
+
+  const createExternalBeforeBox = await createExternalResource.boundingBox();
+  const librarySearchBox = await librarySearch.boundingBox();
+  expect(createExternalBeforeBox).not.toBeNull();
+  expect(librarySearchBox).not.toBeNull();
+  expect(createExternalBeforeBox!.y + createExternalBeforeBox!.height).toBeLessThanOrEqual(librarySearchBox!.y);
+  expect(await createExternalResource.evaluate((button) => (
+    button.closest('[data-testid="new-project-add-resources-popover-scroll"]') === null
   ))).toBe(true);
 
   const dimensions = await scroller.evaluate((element) => ({
@@ -59,16 +72,10 @@ test("scrolls through a long resource list in the new project dialog", async ({ 
     element.scrollHeight - element.scrollTop - element.clientHeight,
   ))).toBeLessThanOrEqual(1);
 
-  const createExternalResource = page.getByRole("button", { name: /Create external resource/ });
   await expect(createExternalResource).toBeInViewport();
-  const createExternalBox = await createExternalResource.boundingBox();
-  const scrolledBox = await scroller.boundingBox();
-  expect(createExternalBox).not.toBeNull();
-  expect(scrolledBox).not.toBeNull();
-  expect(createExternalBox!.y).toBeGreaterThanOrEqual(scrolledBox!.y - 1);
-  expect(createExternalBox!.y + createExternalBox!.height).toBeLessThanOrEqual(
-    scrolledBox!.y + scrolledBox!.height + 1,
-  );
+  const createExternalAfterBox = await createExternalResource.boundingBox();
+  expect(createExternalAfterBox).not.toBeNull();
+  expect(createExternalAfterBox!.y).toBeCloseTo(createExternalBeforeBox!.y, 0);
   expect(await createExternalResource.evaluate((button) => {
     const rect = button.getBoundingClientRect();
     const hitTarget = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);

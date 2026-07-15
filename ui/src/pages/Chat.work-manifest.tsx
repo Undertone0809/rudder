@@ -6,6 +6,7 @@ import type { ChatWorkManifestItem, ChatWorkManifestResponse } from "@rudderhq/s
 import {
   BriefcaseBusiness,
   ChevronDown,
+  ClipboardList,
   FileImage,
   FileOutput,
   FileText,
@@ -13,8 +14,10 @@ import {
   Link2,
   ListFilter,
   MessageSquare,
+  MessagesSquare,
   Paperclip,
   Plus,
+  Repeat2,
   X,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -76,6 +79,15 @@ function ManifestItemIcon({ item }: { item: ChatWorkManifestItem }) {
     "aria-hidden": true,
   } as const;
 
+  if (item.targetType === "issue" || item.targetType === "issue_comment") {
+    return <ClipboardList {...iconProps} data-file-icon="issue" />;
+  }
+  if (item.targetType === "automation") {
+    return <Repeat2 {...iconProps} data-file-icon="automation" />;
+  }
+  if (item.targetType === "chat_conversation") {
+    return <MessagesSquare {...iconProps} data-file-icon="chat" />;
+  }
   if (isWorkspaceHtmlFilePath(filePath) || contentType === "text/html") {
     return <Globe2 {...iconProps} data-file-icon="website" />;
   }

@@ -545,6 +545,18 @@ export function NewProjectDialog() {
                     disablePortal
                     sideOffset={8}
                   >
+                  <button
+                    type="button"
+                    className="flex w-full shrink-0 items-start gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
+                    onClick={addExternalResourceDraft}
+                  >
+                    <Link2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span>
+                      <span className="block text-xs font-medium">Create external resource</span>
+                      <span className="block text-[11px] text-muted-foreground">Add a URL, local path, repo path, or connector reference.</span>
+                    </span>
+                  </button>
+                  <div className="mx-2 my-1 h-px shrink-0 bg-border" />
                   <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                     {libraryCopy("addFromLibrary", locale)}
                   </div>
@@ -637,18 +649,6 @@ export function NewProjectDialog() {
                       </button>
                     ))}
 
-                    <div className="my-1 h-px bg-border" />
-                    <button
-                      type="button"
-                      className="flex w-full items-start gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
-                      onClick={addExternalResourceDraft}
-                    >
-                      <Link2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span>
-                        <span className="block text-xs font-medium">Create external resource</span>
-                        <span className="block text-[11px] text-muted-foreground">Add a URL, local path, repo path, or connector reference.</span>
-                      </span>
-                    </button>
                   </div>
                   </PopoverContent>
                 </Popover>
