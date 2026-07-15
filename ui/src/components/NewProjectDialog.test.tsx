@@ -208,12 +208,13 @@ describe("NewProjectDialog", () => {
     const scrollRegion = container.querySelector('[data-testid="new-project-add-resources-popover-scroll"]');
     const popoverContent = scrollRegion?.parentElement;
 
-    expect(popoverContent?.getAttribute("data-disable-portal")).toBeNull();
+    expect(popoverContent?.getAttribute("data-disable-portal")).toBe("true");
     expect(popoverContent?.className).toContain("overflow-hidden");
     expect(popoverContent?.className).toContain("z-[60]");
     expect(popoverContent?.className).toContain("max-h-[min(420px,calc(100dvh-2rem),var(--radix-popover-content-available-height))]");
     expect(popoverContent?.className).toContain("w-[min(20rem,calc(100vw-2rem))]");
     expect(scrollRegion?.className).toContain("scrollbar-auto-hide");
+    expect(scrollRegion?.className).toContain("flex-1");
     expect(scrollRegion?.className).toContain("overflow-y-auto");
     expect(scrollRegion?.className).toContain("overscroll-contain");
   });
@@ -227,7 +228,7 @@ describe("NewProjectDialog", () => {
 
     expect(dialogContent?.className).toContain("max-h-[min(860px,calc(100vh-2rem))]");
     expect(dialogContent?.className).toContain("flex-col");
-    expect(dialogContent?.className).toContain("overflow-hidden");
+    expect(dialogContent?.className).toContain("overflow-visible");
     expect(dialogScroll?.className).toContain("flex-1");
     expect(dialogScroll?.className).toContain("overflow-y-auto");
     expect(dialogScroll?.className).toContain("overscroll-contain");

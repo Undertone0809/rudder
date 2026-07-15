@@ -407,7 +407,7 @@ export function NewProjectDialog() {
       <DialogContent
         showCloseButton={false}
         className={cn(
-          "flex max-h-[min(860px,calc(100vh-2rem))] flex-col gap-0 overflow-hidden p-0",
+          "flex max-h-[min(860px,calc(100vh-2rem))] flex-col gap-0 overflow-visible p-0",
           expanded ? "sm:max-w-3xl" : "sm:max-w-xl",
         )}
         onKeyDown={handleKeyDown}
@@ -542,6 +542,7 @@ export function NewProjectDialog() {
                     className="z-[60] flex max-h-[min(420px,calc(100dvh-2rem),var(--radix-popover-content-available-height))] w-[min(20rem,calc(100vw-2rem))] flex-col overflow-hidden p-1"
                     align="end"
                     collisionPadding={16}
+                    disablePortal
                     sideOffset={8}
                   >
                   <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
@@ -564,7 +565,7 @@ export function NewProjectDialog() {
                   <div
                     ref={addResourcesScrollRef}
                     data-testid="new-project-add-resources-popover-scroll"
-                    className="scrollbar-auto-hide min-h-0 overflow-y-auto overscroll-contain pr-1"
+                    className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1"
                   >
                     {availableLibraryFiles.length === 0 ? (
                       <div className="px-2 py-2 text-xs text-muted-foreground">
