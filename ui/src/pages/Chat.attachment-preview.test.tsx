@@ -2525,9 +2525,121 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
 
-    expect(webview?.getAttribute("src")).toBe("https://example.org/redirected");
+    expect(webview?.getAttribute("src")).toBe("https://www.google.com/search?q=google");
+    expect(sidePanel?.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]')?.value).toBe(
+      "https://example.org/redirected",
+    );
+    expect(container.querySelector("[data-testid='chat-side-panel-tab']")?.textContent).toContain("example.org");
     expect(container.querySelector("[data-testid='chat-side-panel-browser-webview']")).toBe(webview);
     expect(container.querySelector("[data-testid='chat-side-panel-browser-view']")).not.toBeNull();
+  });
+
+  it("renders a full Browser connection error state and reloads the current webview", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "browser-error-message", body: "Open the browser panel." })],
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const sidePanelButton = container.querySelector<HTMLButtonElement>('button[aria-label="Open Side Panel"]');
+    await act(async () => {
+      sidePanelButton?.click();
+      await Promise.resolve();
+    });
+
+    let sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    const browserOption = Array.from(sidePanel!.querySelectorAll<HTMLButtonElement>("button")).find(
+      (candidate) => candidate.textContent?.includes("Browser"),
+    );
+    await act(async () => {
+      browserOption?.click();
+      await Promise.resolve();
+    });
+
+    sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    const urlInput = sidePanel!.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]');
+    await act(async () => {
+      urlInput!.value = "127.0.0.1:3201";
+      urlInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      urlInput!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    const webview = container.querySelector<HTMLElement & {
+      canGoBack?: () => boolean;
+      canGoForward?: () => boolean;
+      getURL?: () => string;
+      reload?: () => void;
+    }>("[data-testid='chat-side-panel-browser-webview']");
+    expect(webview).not.toBeNull();
+    const reload = vi.fn();
+    Object.assign(webview!, {
+      canGoBack: () => false,
+      canGoForward: () => false,
+      getURL: () => "http://127.0.0.1:3201/",
+      reload,
+    });
+
+    await act(async () => {
+      webview!.dispatchEvent(new Event("dom-ready"));
+      webview!.dispatchEvent(Object.assign(new Event("did-start-navigation"), {
+        isMainFrame: true,
+        url: "http://127.0.0.1:3201/",
+      }));
+      webview!.dispatchEvent(Object.assign(new Event("did-fail-load"), {
+        errorDescription: "ERR_CONNECTION_REFUSED",
+        isMainFrame: true,
+        validatedURL: "http://127.0.0.1:3201/",
+      }));
+      await Promise.resolve();
+    });
+
+    const errorState = container.querySelector<HTMLElement>("[data-testid='chat-side-panel-browser-error']");
+    expect(errorState).not.toBeNull();
+    expect(errorState?.textContent).toContain("This site can't be reached");
+    expect(errorState?.textContent).toContain("127.0.0.1 refused to connect.");
+    expect(errorState?.textContent).toContain("ERR_CONNECTION_REFUSED");
+    expect(webview?.getAttribute("src")).toBe("http://127.0.0.1:3201");
+    expect(webview?.className).toContain("invisible");
+
+    const detailsButton = Array.from(errorState!.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.includes("Details"),
+    );
+    await act(async () => {
+      detailsButton?.click();
+      await Promise.resolve();
+    });
+    expect(errorState?.textContent).toContain("http://127.0.0.1:3201/");
+
+    const reloadButton = Array.from(errorState!.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.includes("Reload"),
+    );
+    await act(async () => {
+      reloadButton?.click();
+      await Promise.resolve();
+    });
+    expect(reload).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      webview!.dispatchEvent(new Event("did-start-loading"));
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='chat-side-panel-browser-error']")).toBeNull();
+
+    await act(async () => {
+      webview!.dispatchEvent(Object.assign(new Event("did-fail-load"), {
+        errorDescription: "ERR_NAME_NOT_RESOLVED",
+        isMainFrame: true,
+        validatedURL: "http://missing.test/",
+      }));
+      await Promise.resolve();
+    });
+    const dnsErrorState = container.querySelector<HTMLElement>("[data-testid='chat-side-panel-browser-error']");
+    expect(dnsErrorState?.textContent).toContain("missing.test's server IP address could not be found.");
+    expect(dnsErrorState?.textContent).not.toContain("refused to connect");
   });
 
   it("hides Browser entry points outside the Desktop Browser capability", async () => {

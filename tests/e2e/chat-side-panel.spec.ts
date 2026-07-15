@@ -1654,6 +1654,90 @@ test.describe("Chat Side Panel", () => {
     ).__rudderKeepaliveMarker)).toBe("browser-guest-1");
   });
 
+  test("renders Browser connection failure details and reloads the current URL", async ({ page }) => {
+    await installBrowserDesktopStub(page);
+    const browserSettings = await page.request.patch("/api/instance/settings/browser", {
+      data: { enabled: true, openLinksIn: "built_in" },
+    });
+    expect(browserSettings.ok(), await browserSettings.text()).toBe(true);
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Side-Panel-Browser-Error-${Date.now()}`,
+        issuePrefix: `SBE${randomUUID().replaceAll("-", "").slice(0, 7).toUpperCase()}`,
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Browser error UI host chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    await page.getByTestId("chat-side-panel-trigger").click();
+
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await sidePanel.getByRole("button", { name: /Browser/ }).click();
+    await sidePanel.getByLabel("Browser URL").fill("localhost:4173/browser-fixture");
+    await sidePanel.getByLabel("Browser URL").press("Enter");
+
+    const webview = sidePanel.getByTestId("chat-side-panel-browser-webview");
+    await expect(webview).toHaveAttribute("src", "http://localhost:4173/browser-fixture");
+    await webview.evaluate((element) => {
+      const browserElement = element as HTMLElement & { reload?: () => void };
+      browserElement.dispatchEvent(new Event("dom-ready"));
+      browserElement.reload = () => {
+        browserElement.dataset.errorReloadCount = String(
+          Number(browserElement.dataset.errorReloadCount ?? "0") + 1,
+        );
+      };
+      browserElement.dispatchEvent(Object.assign(new Event("did-start-navigation"), {
+        isMainFrame: true,
+        url: "http://127.0.0.1:3201/",
+      }));
+      browserElement.dispatchEvent(Object.assign(new Event("did-fail-load"), {
+        errorDescription: "ERR_CONNECTION_REFUSED",
+        isMainFrame: true,
+        validatedURL: "http://127.0.0.1:3201/",
+      }));
+    });
+
+    const browserError = sidePanel.getByTestId("chat-side-panel-browser-error");
+    await expect(browserError).toBeVisible();
+    await expect(browserError).toContainText("This site can't be reached");
+    await expect(browserError).toContainText("127.0.0.1 refused to connect.");
+    await expect(browserError).toContainText("ERR_CONNECTION_REFUSED");
+    await expect(sidePanel.getByLabel("Browser URL")).toHaveValue("http://127.0.0.1:3201/");
+    await expect(webview).toHaveAttribute("src", "http://localhost:4173/browser-fixture");
+    await expect(webview).toHaveClass(/invisible/);
+
+    await browserError.getByRole("button", { name: "Details" }).click();
+    await expect(browserError).toContainText("http://127.0.0.1:3201/");
+    await page.screenshot({ path: "/tmp/rudder-side-panel-browser-error.png", fullPage: true });
+
+    await browserError.getByRole("button", { name: "Reload" }).click();
+    await expect(webview).toHaveAttribute("data-error-reload-count", "1");
+    await expect(browserError).toBeVisible();
+    await webview.evaluate((element) => {
+      element.dispatchEvent(new Event("did-start-loading"));
+    });
+    await expect(browserError).toHaveCount(0);
+    await expect(webview).not.toHaveClass(/invisible/);
+  });
+
   test("keeps the default Side Panel and main content at a 1:1 split while the app width changes", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Global-Side-Panel-Proportional-${Date.now()}` },
