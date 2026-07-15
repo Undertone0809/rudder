@@ -47,6 +47,8 @@ related_code:
   - ui/src/components/MarkdownBody.tsx
   - ui/src/api/websiteMetadata.ts
   - ui/src/lib/source-badge.ts
+  - ui/src/lib/browser-side-panel.ts
+  - ui/src/lib/desktop-browser-link-router.ts
   - ui/src/lib/side-panel-targets.ts
   - ui/src/context/SidePanelContext.tsx
   - ui/src/context/ChatGenerationContext.tsx
@@ -70,6 +72,8 @@ related_tests:
   - desktop/src/browser-ipc.test.ts
   - desktop/src/browser-profile.test.ts
   - desktop/src/browser-webview-policy.test.ts
+  - ui/src/lib/browser-side-panel.test.ts
+  - ui/src/lib/desktop-browser-link-router.test.ts
   - server/src/__tests__/chat-routes.test.ts
   - server/src/__tests__/chat-work-manifest.test.ts
   - server/src/__tests__/chat-assistant.test.ts
@@ -110,9 +114,11 @@ related_tests:
   - tests/e2e/chat-fork.spec.ts
   - tests/e2e/chat-rich-references.spec.ts
   - tests/e2e/chat-side-panel.spec.ts
+  - tests/e2e/built-in-browser.spec.ts
   - tests/e2e/chat-work-manifest.spec.ts
   - tests/e2e/agent-detail-feishu-integration.spec.ts
   - tests/e2e/feishu-source-badges.spec.ts
+  - desktop/scripts/smoke.mjs
 edit_policy: user_confirmed_only
 ---
 
@@ -1160,6 +1166,11 @@ Product model:
 - In Rudder Desktop, the operator Built-in Browser loads typed URLs and search
   queries inside Side Panel Browser tabs on the dedicated instance profile,
   independently of Agent Browser access.
+  Explicit address-bar input may bootstrap a canonical local absolute
+  `file:///` URL with an empty authority and non-UNC decoded path. Remote
+  authorities (including `localhost`), UNC or UNC-equivalent paths (including
+  encoded leading slash or backslash separators), and relative `file:` forms
+  are treated as search input instead of file navigation.
   Ordinary external HTTP(S) links use that target by default without replacing
   the current Rudder route. Unsupported shells or unavailable Browser
   capability must not perform an unsafe remote fetch by themselves.
@@ -1217,17 +1228,21 @@ Flow:
 14. App restart may clear all Side Panel tab/session state; this contract does
    not require server persistence, cross-device sync, or localStorage recovery
    for tabs.
-15. Browser tabs normalize address-bar input into either a URL or search-query
-    navigation, keep back/forward/reload state scoped to the embedded browser,
-    can open the current page externally as a secondary action, and route popup
-    requests into another Browser tab instead of an unrestricted guest window
-    while the Browser tab and popup limits permit it.
+15. Browser tabs normalize address-bar input into a web URL, an explicit
+    canonical local absolute `file:///` bootstrap, or search-query navigation;
+    keep back/forward/reload state scoped to the embedded browser; and can open
+    the current page externally as a secondary action. Only the address-bar
+    path receives the local-file bootstrap exception. Renderer links and page
+    popup, redirect, in-page, and frame navigation remain HTTP(S)-only. Allowed
+    HTTP(S) popup requests route into another Browser tab instead of an
+    unrestricted guest window while the Browser tab and popup limits permit it.
 16. When a main-frame Browser navigation fails for a reason other than an
     intentional abort, Rudder keeps the attempted URL visible and renders the
     Browser failure state over the existing guest. `Details` reveals the failed
     URL. `Reload` retries that same guest and keeps the failure state visible
     until a new load actually starts; subframe failures do not replace the
-    main-frame view.
+    main-frame view. Missing local files follow this same path, expose the
+    Chromium file error, and preserve the current Rudder route.
 17. Desktop routes ordinary external HTTP(S) links to a Browser Side Panel tab
     when its instance preference is `built_in`, independently of Agent Browser
     access. The `default_browser` preference and explicit `Open externally`
@@ -1278,6 +1293,14 @@ Invariants:
   application privileges beyond the embedded browser shell. Local non-control-
   plane web apps may be navigated, but Rudder board/API origins stay in the
   Rudder renderer and are rejected by the Browser profile.
+- Canonical local absolute `file:///` navigation is allowed only when the
+  operator explicitly submits it through the Browser address bar. The target
+  must have an empty authority and an absolute decoded non-UNC path; remote
+  authority, `localhost`, UNC and encoded-separator equivalents, and relative
+  forms must become searches rather than file navigations.
+- Renderer links, Browser-page popups, redirects, in-page/frame navigation, and
+  Agent Browser open/navigate calls remain HTTP(S)-only. None may inherit or
+  replay the operator address-bar local-file bootstrap exception.
 - A Browser main-frame failure must remain distinguishable from an intentional
   aborted navigation or a subframe failure. The error copy must describe the
   reported failure rather than always claiming connection refusal, and recovery
@@ -1357,9 +1380,12 @@ Evidence:
   Issue Detail body, including issue content sections such as attachments,
   activity, and properties, without navigating away from Chat.
 - Desktop Browser policy/profile tests and smoke cover the dedicated partition,
-  secure guest policy, Side Panel navigation, external-open escape, and address
-  input normalization. Side Panel E2E owns the route-preserving global link
-  workflow.
+  secure guest policy, canonical local-file allowlisting, remote authority/UNC/
+  encoded-separator/relative rejection, HTTP(S)-only page and Agent boundaries,
+  Side Panel navigation, external-open escape, and address input normalization.
+  Built-in Browser E2E and real Desktop smoke cover local HTML/title rendering,
+  unchanged Rudder routing, and missing-file error recovery; Side Panel E2E owns
+  the route-preserving global HTTP(S) link workflow.
 - Chat attachment/side-panel tests and Side Panel E2E cover main-frame Browser
   failure rendering, host-specific diagnostics, Details URL disclosure, Reload
   on the existing guest, delayed error dismissal until loading starts, and
