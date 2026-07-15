@@ -1030,6 +1030,14 @@ Product model:
   including PDFs. Truncated Library breadcrumbs reveal the complete
   Library-relative path on hover, and the file `Open` menu offers `Open in
   Library` alongside any Desktop app, IDE, file-browser, or terminal targets.
+- Supported, non-truncated Markdown Library files open directly in the same
+  structured document editor used by the full Library work surface. Markdown
+  editing is the default Side Panel state; the operator does not enter a
+  separate edit mode or switch between preview and edit views.
+- The Markdown workbench keeps save state and document history close to the
+  content. It exposes quiet `Saving`, `Saved`, and `Save failed` status, an
+  explicit retry action after failure, and undo/redo controls at the lower-right
+  edge of the editor without displacing the document.
 
 Flow:
 
@@ -1081,6 +1089,16 @@ Flow:
     action use the operating-system browser instead.
 17. From a Library file tab, `Open in Library` navigates to the full Library
     work surface with the same organization-scoped file selected.
+18. When the selected Library file is supported Markdown and the server returned
+    the complete content, the panel opens the document editor immediately and
+    autosaves changes through the organization-scoped Library file mutation.
+19. Undo and redo operate on the document editor's real history. A history
+    action participates in the same autosave flow as typing, including when a
+    prior save request is still in flight.
+20. If autosave fails, the panel keeps the unsaved draft visible and recoverable,
+    reports the failure, and lets the operator retry. Reopening the same file in
+    the same app session may recover that draft only while its recorded server
+    base still matches the current file.
 
 Invariants:
 
@@ -1115,6 +1133,22 @@ Invariants:
   output, run-history, and dispatch semantics from `AUTOMATION.*`.
 - Side Panel Library views must preserve `LIBRARY.FILES.001` path safety,
   protected paths, previews, and stable reference behavior.
+- A truncated Markdown response is preview-only. The Side Panel must not attach
+  an editor or autosave to partial content because saving it could overwrite the
+  complete file with the preview fragment.
+- Markdown autosave status must describe the latest visible draft, not merely
+  the last request that completed. Edits, undo, or redo performed while a save
+  is in flight must be reconciled and saved after that request rather than being
+  lost or incorrectly reported as `Saved`.
+- Session draft recovery is scoped by organization and Library-relative path.
+  Rudder must reject and clear a recovery draft when the server content no
+  longer matches the draft's recorded base instead of silently overwriting
+  external changes.
+- YAML frontmatter remains part of the saved Markdown file. The Side Panel may
+  expose it separately from the document body, but editing or saving either
+  region must preserve and recombine the complete file content.
+- Undo/redo and save controls must remain inside the visible Side Panel on
+  desktop and mobile layouts and must not overlap or resize the document body.
 - Side Panel PDF previews must use the organization-scoped inline workspace
   content endpoint. Full-path hover text and full-Library navigation must use
   the Library-relative path rather than exposing an absolute filesystem root.
@@ -1160,6 +1194,13 @@ Evidence:
 - Chat attachment/side-panel tests and Side Panel E2E cover inline PDF rendering,
   complete Library path hover text, and full-Library navigation from the file
   `Open` menu.
+- Chat attachment/side-panel tests cover direct Markdown editing, frontmatter
+  preservation, serialized autosave, truthful save status, retry after failure,
+  session draft recovery, stale-base rejection, in-flight edit/undo
+  reconciliation, and truncated-file read-only protection.
+- Side Panel E2E covers the real Markdown editor, undo/redo, autosave failure and
+  retry, server readback, and desktop/mobile placement of the save and history
+  controls.
 - Layout tests cover Side Panel context keys for Messenger chat and issue
   routes, and Side Panel E2E covers hiding/reopening tabs in one Messenger item,
   switching to an item with no panel history without inheriting tabs, and

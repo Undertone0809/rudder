@@ -25,6 +25,8 @@ related_code:
   - server/src/routes/orgs.ts
   - server/src/services/agent-run-context.ts
   - ui/src/pages/OrganizationResources.tsx
+  - ui/src/components/MarkdownEditor.tsx
+  - ui/src/components/MilkdownMarkdownEditor.tsx
   - ui/src/components/WorkspaceFilePreview.tsx
   - ui/src/components/WorkspacePdfPreview.tsx
   - ui/src/pages/OrganizationWorkspaces.tsx
@@ -136,6 +138,16 @@ Product model:
   breadcrumb exposes the complete Library-relative path on hover, and the
   `Open` menu includes `Open in Library` so the operator can move from adjacent
   inspection to the same file in the full Library work surface.
+- Supported, non-truncated Markdown files are directly editable in Messenger's
+  Side Panel with the same structured document editing behavior as the full
+  Library work surface. Editing is the default state rather than an optional
+  preview/edit mode.
+- Side Panel Markdown edits autosave serially and expose current save state,
+  failure, and retry. YAML frontmatter remains editable and is preserved as part
+  of the complete file, while undo/redo uses the editor's document history.
+- The app may keep a session-scoped unsaved recovery draft for a Library
+  Markdown file. Recovery is valid only when organization, Library-relative
+  path, and recorded server base still match the current file.
 - Protected roots such as agent instruction, skills, and managed directories
   are excluded from normal mentionable Library surfaces unless an explicit
   management flow owns them.
@@ -157,6 +169,16 @@ Flow:
    than through the server file API.
 8. From a Messenger Library preview, the operator can open the same validated
    file path in the full Library route without changing its organization scope.
+9. For a complete supported Markdown response, Messenger opens the shared
+   document editor immediately. Typing, frontmatter edits, undo, and redo update
+   one complete draft and enter the same serialized autosave queue.
+10. A successful save updates the organization-scoped Library file view. A
+    failed save leaves the draft in place, reports the error, and provides retry;
+    a newer draft is saved after any older in-flight request finishes.
+11. When reopening a Markdown file in the same app session, Rudder restores an
+    unsaved draft only if the current server content still equals its recorded
+    base. Otherwise Rudder discards the stale recovery draft and shows the
+    current server file.
 
 Invariants:
 
@@ -178,6 +200,17 @@ Invariants:
 - `Open in Library` resolves only the current organization-scoped
   Library-relative file path; it must not expose or navigate to an absolute
   filesystem root.
+- Markdown writes always contain the complete file, including YAML frontmatter.
+  A truncated or otherwise partial preview must remain read-only and must never
+  be submitted as replacement file content.
+- Autosave completion is ordered against the latest visible draft. A response
+  for an older draft must not overwrite a newer edit or cause the UI to claim
+  the file is saved while newer content remains pending.
+- Recovery drafts must not cross organizations or file paths, and must not be
+  restored over a server file whose content changed after the draft was based.
+- Save failures preserve the operator's draft and remain visible until a retry
+  succeeds or the draft is otherwise reconciled; they must not silently drop
+  changes.
 - Desktop bridge handlers must require the renderer-provided root to resolve
   inside the configured organization workspace home, then resolve both the root
   and file through filesystem real paths before opening either the file or its
@@ -205,6 +238,12 @@ Evidence:
 - Messenger Side Panel component and E2E coverage prove PDF files render inline,
   long breadcrumbs reveal the complete Library path on hover, and `Open in
   Library` opens the selected file in the full Library work surface.
+- Messenger Side Panel component coverage proves complete Markdown files open
+  directly in the shared editor; frontmatter, autosave ordering, failure/retry,
+  recovery, stale-base rejection, and truncated-file protection preserve the
+  Library file contract.
+- Messenger Side Panel E2E covers real Markdown editing, undo/redo, autosave
+  failure and retry, server readback, and responsive control placement.
 
 ## WORKSPACE.PROJECT.001
 

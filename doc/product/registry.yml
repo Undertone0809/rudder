@@ -715,6 +715,8 @@ contracts:
       - server/src/routes/orgs.ts
       - server/src/services/library-entries.ts
       - server/src/services/organization-workspace-browser.ts
+      - ui/src/components/MarkdownEditor.tsx
+      - ui/src/components/MilkdownMarkdownEditor.tsx
       - ui/src/components/WorkspaceFilePreview.tsx
       - ui/src/components/WorkspacePdfPreview.tsx
       - ui/src/pages/OrganizationResources.tsx
@@ -1026,6 +1028,8 @@ contracts:
       - ui/src/components/InlineEditor.tsx
       - ui/src/components/IssueProperties.tsx
       - ui/src/components/Layout.tsx
+      - ui/src/components/MarkdownEditor.tsx
+      - ui/src/components/MilkdownMarkdownEditor.tsx
       - ui/src/components/WorkspaceFilePreview.tsx
       - ui/src/components/WorkspacePdfPreview.tsx
       - ui/src/pages/Chat.side-panel.tsx
