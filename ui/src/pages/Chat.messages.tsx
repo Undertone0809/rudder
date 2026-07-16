@@ -74,7 +74,7 @@ import {
   Sparkles
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
-import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, AttachmentPreviewState, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, statusChipClassName } from "./Chat.parts";
+import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, statusChipClassName } from "./Chat.parts";
 import { ChatInlineVisualContent } from "./ChatInlineVisual";
 
 export function ChatAssistantAttributionRow({
@@ -2295,7 +2295,6 @@ export function ChatMessageItem({
           <ChatRichReferences message={message} />
           <ChatAttachmentList
             attachments={visibleMessageAttachments}
-            onOpenImage={onOpenImage}
             onOpenFile={onOpenFile}
           />
           {!isEmptyStreamingAssistant ? (
