@@ -98,14 +98,25 @@ export function buildExplicitResumeSessionOverride(input: {
   sessionCodec: AgentRuntimeSessionCodec;
 }) {
   if (input.resumeRunSessionCleared) return null;
-  const sourceRunSessionParams =
-    normalizeSessionParams(input.sessionCodec.deserialize(input.resumeRunSessionParamsAfter ?? null)) ??
-    normalizeSessionParams(input.sessionCodec.deserialize(input.resumeRunSessionParamsBefore ?? null)) ??
-    normalizeSessionParams(input.sessionCodec.deserialize(input.resumeContextSessionParams ?? null));
+  const afterSessionParams = normalizeSessionParams(
+    input.sessionCodec.deserialize(input.resumeRunSessionParamsAfter ?? null),
+  );
+  const beforeSessionParams = normalizeSessionParams(
+    input.sessionCodec.deserialize(input.resumeRunSessionParamsBefore ?? null),
+  );
+  const contextSessionParams = normalizeSessionParams(
+    input.sessionCodec.deserialize(input.resumeContextSessionParams ?? null),
+  );
+  const sourceRunSessionParams = afterSessionParams ?? beforeSessionParams ?? contextSessionParams;
+  const persistedDisplayId = afterSessionParams
+    ? input.resumeRunSessionIdAfter
+    : beforeSessionParams
+      ? input.resumeRunSessionIdBefore
+      : contextSessionParams
+        ? input.resumeContextSessionDisplayId
+        : input.resumeRunSessionIdAfter ?? input.resumeRunSessionIdBefore ?? input.resumeContextSessionDisplayId;
   const desiredDisplayId = truncateDisplayId(
-    input.resumeRunSessionIdAfter ??
-      input.resumeRunSessionIdBefore ??
-      input.resumeContextSessionDisplayId ??
+    persistedDisplayId ??
       (input.sessionCodec.getDisplayId ? input.sessionCodec.getDisplayId(sourceRunSessionParams) : null) ??
       readNonEmptyString(sourceRunSessionParams?.sessionId),
   );

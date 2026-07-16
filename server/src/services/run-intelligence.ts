@@ -214,6 +214,7 @@ type SummaryRunRow = {
   invocationSource: string;
   triggerDetail: string | null;
   status: string;
+  sessionReuseScope: HeartbeatRun["sessionReuseScope"];
   startedAt: Date | null;
   finishedAt: Date | null;
   errorText: string | null;
@@ -505,6 +506,7 @@ async function loadSummaryRunRows(db: Db, input: ListRunSummariesInput): Promise
       invocationSource: heartbeatRuns.invocationSource,
       triggerDetail: heartbeatRuns.triggerDetail,
       status: heartbeatRuns.status,
+      sessionReuseScope: heartbeatRuns.sessionReuseScope,
       startedAt: heartbeatRuns.startedAt,
       finishedAt: heartbeatRuns.finishedAt,
       errorText: sql<string | null>`left(coalesce(
@@ -740,6 +742,7 @@ export async function listRunSummaries(db: Db, input: ListRunSummariesInput): Pr
       invocationSource: row.invocationSource as RunSummary["invocationSource"],
       triggerDetail: row.triggerDetail as RunSummary["triggerDetail"],
       status: row.status as RunSummary["status"],
+      sessionReuseScope: row.sessionReuseScope,
       issue: row.issueId ? issueMap.get(row.issueId) ?? null : null,
       target: row.targetType && row.targetId ? { type: row.targetType, id: row.targetId } : null,
       chatConversationId: row.chatConversationId,
