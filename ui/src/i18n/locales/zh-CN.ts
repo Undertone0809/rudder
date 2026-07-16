@@ -196,8 +196,6 @@ export const zhCN: Messages = {
   "organizationSettings.view.accessData": "访问与数据",
   "organizationSettings.general.name.label": "组织名称",
   "organizationSettings.general.name.hint": "你的组织的显示名称。",
-  "organizationSettings.general.issueKey.label": "Issue Key",
-  "organizationSettings.general.issueKey.hint": "用于 Issue 编号。修改后会更新当前编号，同时保留旧链接。",
   "organizationSettings.general.description.label": "描述",
   "organizationSettings.general.description.hint": "显示在组织资料中的可选描述。",
   "organizationSettings.general.description.placeholder": "可选的组织描述",
