@@ -24,6 +24,7 @@ import {
   ensureCommandResolvable,
   ensurePathInEnv,
   ensureRudderCliInPath,
+  filterRudderDesiredSkillsForBrowserCapability,
   joinPromptSections,
   loadAgentInstructionsPrefix,
   parseObject,
@@ -359,15 +360,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   });
   const codexSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredCodexSkillNames = resolveRudderDesiredSkillNames(config, codexSkillEntries);
-  const selectedCodexSkillEntries = codexSkillEntries
-    .filter((entry) => desiredCodexSkillNames.includes(entry.key));
-  const loadedSkills = selectedCodexSkillEntries.map((entry) => ({
-    key: entry.key,
-    runtimeName: entry.runtimeName,
-    name: entry.name ?? null,
-    description: entry.description ?? null,
-  }));
-  const skillBoundaryPrompt = renderCodexRudderSkillBoundaryPrompt(loadedSkills);
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
   env.CODEX_HOME = effectiveCodexHome;
   env.HOME = operatorHome;
@@ -508,6 +500,20 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     runtimeEnv.RUDDER_BROWSER_ENABLED = "false";
     await onLog("stderr", `[rudder] ${rudderMcpPreflight?.diagnostic}\n`);
   }
+  const effectiveDesiredCodexSkillNames = filterRudderDesiredSkillsForBrowserCapability(
+    codexSkillEntries,
+    desiredCodexSkillNames,
+    browserEnabled,
+  );
+  const selectedCodexSkillEntries = codexSkillEntries
+    .filter((entry) => effectiveDesiredCodexSkillNames.includes(entry.key));
+  const loadedSkills = selectedCodexSkillEntries.map((entry) => ({
+    key: entry.key,
+    runtimeName: entry.runtimeName,
+    name: entry.name ?? null,
+    description: entry.description ?? null,
+  }));
+  const skillBoundaryPrompt = renderCodexRudderSkillBoundaryPrompt(loadedSkills);
   await realizeManagedCodexSkillEntries(
     {
       ...codexTargetEnv,

@@ -24,6 +24,7 @@ import {
   ensurePathInEnv,
   ensureRudderCliInPath,
   ensureRudderSkillSymlink,
+  filterRudderDesiredSkillsForBrowserCapability,
   joinPromptSections,
   loadAgentInstructionsPrefix,
   parseJson,
@@ -666,15 +667,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   // Inject skills
   const piSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredPiSkillNames = resolveRudderDesiredSkillNames(config, piSkillEntries);
-  const selectedPiSkillEntries = piSkillEntries.filter((entry) => desiredPiSkillNames.includes(entry.key));
-  const loadedSkills = selectedPiSkillEntries.map((entry) => ({
-    key: entry.key,
-    runtimeName: entry.runtimeName,
-    name: entry.name ?? null,
-    description: entry.description ?? null,
-  }));
-  const skillBoundaryPrompt = renderPiRudderSkillBoundaryPrompt(loadedSkills);
-  await ensurePiSkillsInjected(onLog, piSkillEntries, skillsDir, desiredPiSkillNames);
 
   // Build environment
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
@@ -770,6 +762,21 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   browserEnabled = rudderPiExtensionPath.browserEnabled;
   env.RUDDER_BROWSER_ENABLED = browserEnabled ? "true" : "false";
   runtimeEnv.RUDDER_BROWSER_ENABLED = browserEnabled ? "true" : "false";
+  const effectiveDesiredPiSkillNames = filterRudderDesiredSkillsForBrowserCapability(
+    piSkillEntries,
+    desiredPiSkillNames,
+    browserEnabled,
+  );
+  const selectedPiSkillEntries = piSkillEntries
+    .filter((entry) => effectiveDesiredPiSkillNames.includes(entry.key));
+  const loadedSkills = selectedPiSkillEntries.map((entry) => ({
+    key: entry.key,
+    runtimeName: entry.runtimeName,
+    name: entry.name ?? null,
+    description: entry.description ?? null,
+  }));
+  const skillBoundaryPrompt = renderPiRudderSkillBoundaryPrompt(loadedSkills);
+  await ensurePiSkillsInjected(onLog, piSkillEntries, skillsDir, effectiveDesiredPiSkillNames);
   await ensureCommandResolvable(command, cwd, runtimeEnv);
 
   // Validate model is available before execution

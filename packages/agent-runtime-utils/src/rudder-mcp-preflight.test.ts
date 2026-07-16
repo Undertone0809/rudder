@@ -9,10 +9,12 @@ import {
 import {
   RUDDER_BROWSER_MCP_CONTRACT_HASH,
   RUDDER_BROWSER_MCP_TOOL_NAMES,
+  RUDDER_CORE_MCP_TOOL_NAMES,
   RUDDER_MCP_CONTRACT_VERSION,
 } from "./rudder-mcp.js";
 
 const roots: string[] = [];
+const CORE_TOOL_NAMES = RUDDER_CORE_MCP_TOOL_NAMES;
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
@@ -26,8 +28,48 @@ async function fixtureCommand(mode: string, expectedVersion = "0.4.6") {
 import readline from "node:readline";
 const mode = process.env.RUDDER_PREFLIGHT_FIXTURE_MODE;
 const browserTools = ${JSON.stringify([...RUDDER_BROWSER_MCP_TOOL_NAMES])};
-const coreTools = ["rudder_agent_me"];
+const coreTools = ${JSON.stringify(CORE_TOOL_NAMES)};
 const desktopCliEntryLeaked = Boolean(process.env.RUDDER_DESKTOP_CLI_ENTRY);
+const canonicalSchema = () => ({ type: "object", additionalProperties: false, properties: {} });
+function advertisedName(name) {
+  if (mode === "whitespace-core-name" && name === coreTools[0]) return " " + name + " ";
+  if (mode === "whitespace-browser-name" && name === browserTools[0]) return " " + name + " ";
+  return name;
+}
+function inputSchema(name) {
+  if (mode === "forged-core-malformed-schema") return { type: "string" };
+  if (mode === "malformed-core-keyword" && name === coreTools[0]) {
+    return { ...canonicalSchema(), oneOf: "not-an-array" };
+  }
+  if (mode === "malformed-browser-keyword" && name === browserTools[0]) {
+    return { ...canonicalSchema(), enum: "not-an-array" };
+  }
+  if (mode === "unsupported-core-schema-draft" && name === coreTools[0]) {
+    return { ...canonicalSchema(), $schema: "https://json-schema.org/draft/2020-12/schema" };
+  }
+  if (mode === "unsupported-browser-schema-draft" && name === browserTools[0]) {
+    return { ...canonicalSchema(), $schema: "https://example.invalid/unknown-schema" };
+  }
+  if (mode === "malformed-nested-keyword" && name === coreTools[0]) {
+    return { ...canonicalSchema(), properties: { value: { type: "string", oneOf: [] } } };
+  }
+  if (mode === "canonical-nested-schema" && name === coreTools[0]) {
+    return { ...canonicalSchema(), properties: {
+      payload: {
+        type: ["object", "string"],
+        additionalProperties: false,
+        properties: { id: { type: "string", description: "Identifier." } },
+        required: ["id"],
+      },
+      tags: { type: "array", items: { type: "string" } },
+    } };
+  }
+  if (mode === "malformed-core-schema" && name === coreTools[0]) return { type: "string" };
+  if (mode === "malformed-browser-schema" && name === browserTools[0]) {
+    return { type: "object", additionalProperties: false, properties: [] };
+  }
+  return canonicalSchema();
+}
 const lines = readline.createInterface({ input: process.stdin });
 for await (const line of lines) {
   const request = JSON.parse(line);
@@ -50,12 +92,28 @@ for await (const line of lines) {
       console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {} }));
       continue;
     }
-    const tools = mode === "core" ? browserTools : [
-      ...coreTools,
-      ...(mode === "tools" ? browserTools.slice(0, -1) : browserTools),
-    ];
+    const selectedCoreTools = mode === "forged-core" || mode === "forged-core-malformed-schema"
+      ? ["rudder_forged_core"]
+      : mode === "partial-core"
+        ? coreTools.slice(0, -1)
+        : mode === "duplicate-core"
+          ? [...coreTools, coreTools[0]]
+          : mode === "reordered-core"
+            ? [coreTools[1], coreTools[0], ...coreTools.slice(2)]
+            : mode === "unknown-core"
+              ? [...coreTools, "rudder_unknown_core"]
+              : mode === "no-core"
+                ? []
+                : coreTools;
+    const selectedBrowserTools = process.env.RUDDER_BROWSER_ENABLED === "true"
+      ? (mode === "tools" ? browserTools.slice(0, -1) : browserTools)
+      : [];
+    const tools = [...selectedCoreTools, ...selectedBrowserTools];
     console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {
-      tools: tools.map((name) => ({ name, inputSchema: { type: "object", properties: {} } })),
+      tools: tools.map((name) => ({
+        name: advertisedName(name),
+        inputSchema: inputSchema(name),
+      })),
     } }));
   }
 }
@@ -88,6 +146,16 @@ describe("preflightRudderMcpServer", () => {
     });
     expect(result.tools.map((tool) => tool.name).filter((name) => name.startsWith("rudder_browser_")))
       .toEqual([...RUDDER_BROWSER_MCP_TOOL_NAMES]);
+  });
+
+  it("accepts the recursive schema dialect emitted by the canonical registry", async () => {
+    const result = await preflightRudderMcpServer({
+      command: await fixtureCommand("canonical-nested-schema"),
+      runtimeEnv: {},
+      browserEnabled: true,
+    });
+
+    expect(result).toMatchObject({ available: true, browserAvailable: true, diagnosticCode: null });
   });
 
   it.each([
@@ -128,7 +196,20 @@ describe("preflightRudderMcpServer", () => {
     expect(() => assertRudderMcpCoreAvailable(result)).toThrow(/Rudder MCP/u);
   });
 
-  it.each(["malformed", "core"])("fails core MCP fast for %s tools/list", async (mode) => {
+  it.each([
+    "malformed",
+    "no-core",
+    "forged-core",
+    "partial-core",
+    "duplicate-core",
+    "reordered-core",
+    "unknown-core",
+    "whitespace-core-name",
+    "malformed-core-schema",
+    "malformed-core-keyword",
+    "unsupported-core-schema-draft",
+    "malformed-nested-keyword",
+  ])("fails core MCP fast for %s tools/list", async (mode) => {
     const result = await preflightRudderMcpServer({
       command: await fixtureCommand(mode),
       runtimeEnv: { RUDDER_DESKTOP_CLI_ENTRY: "/private/Desktop.app/desktop-cli.js" },
@@ -141,5 +222,60 @@ describe("preflightRudderMcpServer", () => {
       diagnosticCode: "browser_bundle_handshake_failed",
     });
     expect(() => assertRudderMcpCoreAvailable(result)).toThrow(/Rudder MCP/u);
+  });
+
+  it("keeps canonical core MCP while degrading Browser for a malformed Browser schema", async () => {
+    const result = await preflightRudderMcpServer({
+      command: await fixtureCommand("malformed-browser-schema"),
+      runtimeEnv: {},
+      browserEnabled: true,
+    });
+
+    expect(result).toMatchObject({
+      available: true,
+      browserAvailable: false,
+      diagnosticCode: "browser_bundle_tools_mismatch",
+    });
+    expect(() => assertRudderMcpCoreAvailable(result)).not.toThrow();
+  });
+
+  it.each([
+    "whitespace-browser-name",
+    "malformed-browser-keyword",
+    "unsupported-browser-schema-draft",
+  ])(
+    "keeps canonical core MCP while degrading Browser for %s",
+    async (mode) => {
+      const result = await preflightRudderMcpServer({
+        command: await fixtureCommand(mode),
+        runtimeEnv: {},
+        browserEnabled: true,
+      });
+
+      expect(result).toMatchObject({
+        available: true,
+        browserAvailable: false,
+        diagnosticCode: "browser_bundle_tools_mismatch",
+      });
+      expect(() => assertRudderMcpCoreAvailable(result)).not.toThrow();
+    },
+  );
+
+  it("rejects a forged core name even alongside all eight Browser names and malformed schemas", async () => {
+    const result = await preflightRudderMcpServer({
+      command: await fixtureCommand("forged-core-malformed-schema"),
+      runtimeEnv: {},
+      browserEnabled: true,
+    });
+
+    expect(result).toMatchObject({
+      available: false,
+      browserAvailable: false,
+      diagnosticCode: "browser_bundle_handshake_failed",
+    });
+    expect(result.tools.map((tool) => tool.name)).toEqual([
+      "rudder_forged_core",
+      ...RUDDER_BROWSER_MCP_TOOL_NAMES,
+    ]);
   });
 });

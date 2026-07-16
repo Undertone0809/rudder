@@ -7,6 +7,7 @@ import {
   createOperatorInterruptAbortReason,
   ensureLocalCliCredentialShimsInPath,
   ensureRudderCliInPath,
+  filterRudderDesiredSkillsForBrowserCapability,
   loadAgentInstructionsPrefix,
   prepareAgentInstructionRuntimeContext,
   renderTemplate,
@@ -49,6 +50,22 @@ function readPathValue(env: NodeJS.ProcessEnv): string {
 function shimName(): string {
   return process.platform === "win32" ? "rudder.cmd" : "rudder";
 }
+
+describe("filterRudderDesiredSkillsForBrowserCapability", () => {
+  const available = [
+    { key: "bundled:rudder/browser", runtimeName: "browser" },
+    { key: "org:keep-skill", runtimeName: "keep-skill" },
+  ];
+  const desired = available.map((entry) => entry.key);
+
+  it("removes only Browser from the effective desired set after preflight disables it", () => {
+    expect(filterRudderDesiredSkillsForBrowserCapability(available, desired, false)).toEqual(["org:keep-skill"]);
+  });
+
+  it("preserves the desired set when Browser remains available", () => {
+    expect(filterRudderDesiredSkillsForBrowserCapability(available, desired, true)).toEqual(desired);
+  });
+});
 
 describe("ensureRudderCliInPath", () => {
   it("prefers the current source CLI shim over an existing rudder binary on PATH", async () => {

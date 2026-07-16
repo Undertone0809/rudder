@@ -1,3 +1,4 @@
+import { RUDDER_CORE_MCP_TOOL_NAMES } from "@rudderhq/agent-runtime-utils";
 import { RUDDER_AGENT_V1_MCP_SERVER_NAME, RUDDER_AGENT_V1_MCP_TOOL_NAMES } from "@rudderhq/shared";
 import fs from "node:fs";
 import path from "node:path";
@@ -164,6 +165,12 @@ describe("agent-v1 registry", () => {
       mutating: false,
       attachesRunIdWhenAvailable: false,
     });
+  });
+
+  it("keeps the lightweight runtime core manifest aligned with the canonical registry", () => {
+    expect(RUDDER_CORE_MCP_TOOL_NAMES).toEqual(
+      RUDDER_AGENT_V1_MCP_TOOL_NAMES.filter((name) => !name.startsWith("rudder_browser_")),
+    );
   });
 
   it("can remove Browser tools from a runtime manifest without changing the CLI contract", () => {

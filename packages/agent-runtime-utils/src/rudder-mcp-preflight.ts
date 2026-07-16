@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import {
   RUDDER_BROWSER_MCP_CONTRACT_HASH,
   RUDDER_BROWSER_MCP_TOOL_NAMES,
+  RUDDER_CORE_MCP_TOOL_NAMES,
   RUDDER_MCP_CONTRACT_VERSION,
   RUDDER_MCP_SERVER_NAME,
   type RudderMcpCliCommand,
@@ -9,7 +10,24 @@ import {
   type RudderMcpPreflightResult,
 } from "./rudder-mcp.js";
 
-const PREFLIGHT_TIMEOUT_MS = 5_000;
+const PREFLIGHT_TIMEOUT_MS = 10_000;
+const RUDDER_SCHEMA_KEYS = new Set([
+  "type",
+  "description",
+  "properties",
+  "items",
+  "additionalProperties",
+  "required",
+]);
+const JSON_SCHEMA_TYPES = new Set([
+  "array",
+  "boolean",
+  "integer",
+  "null",
+  "number",
+  "object",
+  "string",
+]);
 
 type JsonRpcResponse = {
   id?: string | number | null;
@@ -25,6 +43,90 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function asString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function asExactString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function schemaTypes(value: unknown): string[] | null {
+  if (typeof value === "string") {
+    return JSON_SCHEMA_TYPES.has(value) ? [value] : null;
+  }
+  if (
+    !Array.isArray(value)
+    || value.length === 0
+    || value.some((entry) => typeof entry !== "string" || !JSON_SCHEMA_TYPES.has(entry))
+  ) {
+    return null;
+  }
+  const types = value as string[];
+  return new Set(types).size === types.length ? types : null;
+}
+
+function isValidRudderSchemaNode(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const schema = value as Record<string, unknown>;
+  if (Object.keys(schema).some((key) => !RUDDER_SCHEMA_KEYS.has(key))) return false;
+
+  const types = schemaTypes(schema.type);
+  if (!types) return false;
+  if (schema.description !== undefined && typeof schema.description !== "string") return false;
+
+  const supportsObject = types.includes("object");
+  const supportsArray = types.includes("array");
+  if (schema.additionalProperties !== undefined) {
+    if (!supportsObject || typeof schema.additionalProperties !== "boolean") return false;
+  }
+  if (schema.properties !== undefined) {
+    if (!supportsObject || typeof schema.properties !== "object" || schema.properties === null || Array.isArray(schema.properties)) {
+      return false;
+    }
+    if (!Object.values(schema.properties).every(isValidRudderSchemaNode)) return false;
+  }
+  if (schema.items !== undefined && (!supportsArray || !isValidRudderSchemaNode(schema.items))) return false;
+  if (schema.required !== undefined) {
+    if (!supportsObject || !Array.isArray(schema.required)) return false;
+    const required = schema.required;
+    if (required.some((key) => typeof key !== "string") || new Set(required).size !== required.length) return false;
+    if (
+      typeof schema.properties !== "object"
+      || schema.properties === null
+      || Array.isArray(schema.properties)
+      || required.some((key) => !Object.hasOwn(schema.properties as Record<string, unknown>, key))
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function hasCanonicalInputSchema(value: unknown): value is Record<string, unknown> {
+  if (
+    typeof value !== "object"
+    || value === null
+    || Array.isArray(value)
+  ) {
+    return false;
+  }
+  const schema = value as Record<string, unknown>;
+  if (!isValidRudderSchemaNode(schema)) return false;
+  const properties = schema.properties;
+  return schema.type === "object"
+    && schema.additionalProperties === false
+    && typeof properties === "object"
+    && properties !== null
+    && !Array.isArray(properties)
+    && Object.values(properties).every(isValidRudderSchemaNode);
+}
+
+function hasExactNames(actual: readonly string[], expected: readonly string[]): boolean {
+  return actual.length === expected.length
+    && actual.every((name, index) => name === expected[index]);
+}
+
+function isBrowserToolCandidate(name: string): boolean {
+  return name.trim().startsWith("rudder_browser_");
 }
 
 function failed(
@@ -166,9 +268,9 @@ export async function preflightRudderMcpServer(input: {
   const serverInfo = asRecord(initializeResult.serverInfo);
   const capabilities = asRecord(initializeResult.capabilities);
   const rudder = asRecord(asRecord(capabilities.experimental).rudder);
-  const version = asString(serverInfo.version);
-  const contractVersion = asString(rudder.contractVersion);
-  const contractHash = asString(rudder.browserContractHash);
+  const version = asExactString(serverInfo.version);
+  const contractVersion = asExactString(rudder.contractVersion);
+  const contractHash = asExactString(rudder.browserContractHash);
   const listed = asRecord(toolsList?.result).tools;
   if (!Array.isArray(listed)) {
     return failed(
@@ -178,23 +280,25 @@ export async function preflightRudderMcpServer(input: {
       { version, contractVersion, contractHash },
     );
   }
-  const tools = Array.isArray(listed)
-    ? listed.map((entry) => {
-        const tool = asRecord(entry);
-        const name = asString(tool.name);
-        if (!name) return null;
-        const description = asString(tool.description);
-        const inputSchema = asRecord(tool.inputSchema);
-        return {
-          name,
-          ...(description ? { description } : {}),
-          ...(Object.keys(inputSchema).length > 0 ? { inputSchema } : {}),
-        };
-      }).filter((entry): entry is NonNullable<typeof entry> => entry !== null)
-    : [];
+  const parsedTools = listed.map((entry) => {
+    const tool = asRecord(entry);
+    const name = asExactString(tool.name);
+    if (!name) return null;
+    const description = asString(tool.description);
+    const inputSchema = asRecord(tool.inputSchema);
+    return {
+      name,
+      hasCanonicalInputSchema: hasCanonicalInputSchema(tool.inputSchema),
+      ...(description ? { description } : {}),
+      ...(Object.keys(inputSchema).length > 0 ? { inputSchema } : {}),
+    };
+  });
+  const tools = parsedTools
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+    .map(({ hasCanonicalInputSchema: _hasCanonicalInputSchema, ...tool }) => tool);
   const partial = { version, contractVersion, contractHash, tools };
 
-  if (asString(serverInfo.name) !== RUDDER_MCP_SERVER_NAME) {
+  if (asExactString(serverInfo.name) !== RUDDER_MCP_SERVER_NAME) {
     return failed(
       input.command,
       "browser_bundle_server_mismatch",
@@ -202,11 +306,17 @@ export async function preflightRudderMcpServer(input: {
       partial,
     );
   }
-  if (!tools.some((tool) => tool.name.startsWith("rudder_") && !tool.name.startsWith("rudder_browser_"))) {
+  const coreTools = parsedTools.filter((tool) => tool && !isBrowserToolCandidate(tool.name));
+  const coreToolNames = coreTools.map((tool) => tool!.name);
+  if (
+    parsedTools.some((tool) => tool === null)
+    || !hasExactNames(coreToolNames, RUDDER_CORE_MCP_TOOL_NAMES)
+    || coreTools.some((tool) => !tool!.hasCanonicalInputSchema)
+  ) {
     return failed(
       input.command,
       "browser_bundle_handshake_failed",
-      "Rudder MCP tools/list exposed no core control-plane tools; core MCP is unavailable.",
+      "Rudder MCP tools/list did not match the canonical core control-plane manifest; core MCP is unavailable.",
       partial,
     );
   }
@@ -227,11 +337,12 @@ export async function preflightRudderMcpServer(input: {
     );
   }
 
-  const browserTools = tools.map((tool) => tool.name).filter((name) => name.startsWith("rudder_browser_"));
+  const browserTools = parsedTools.filter((tool) => tool && isBrowserToolCandidate(tool.name));
+  const browserToolNames = browserTools.map((tool) => tool!.name);
   const expectedBrowserTools = input.browserEnabled ? [...RUDDER_BROWSER_MCP_TOOL_NAMES] : [];
   if (
-    browserTools.length !== expectedBrowserTools.length
-    || browserTools.some((name, index) => name !== expectedBrowserTools[index])
+    !hasExactNames(browserToolNames, expectedBrowserTools)
+    || browserTools.some((tool) => !tool!.hasCanonicalInputSchema)
   ) {
     return failed(
       input.command,

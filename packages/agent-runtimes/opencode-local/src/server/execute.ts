@@ -26,6 +26,7 @@ import {
   ensurePathInEnv,
   ensureRudderCliInPath,
   ensureRudderSkillSymlink,
+  filterRudderDesiredSkillsForBrowserCapability,
   joinPromptSections,
   loadAgentInstructionsPrefix,
   parseObject,
@@ -497,29 +498,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const openCodeSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredOpenCodeSkillNames = resolveRudderDesiredSkillNames(config, openCodeSkillEntries);
   const isChatResultRepair = context.rudderChatResultRepair === true;
-  const selectedOpenCodeSkillEntries = isChatResultRepair
-    ? []
-    : openCodeSkillEntries.filter((entry) => desiredOpenCodeSkillNames.includes(entry.key));
-  const loadedSkills = openCodeSkillEntries
-    .filter((entry) => desiredOpenCodeSkillNames.includes(entry.key))
-    .map((entry) => ({
-      key: entry.key,
-      runtimeName: entry.runtimeName,
-      name: entry.name ?? null,
-      description: entry.description ?? null,
-    }));
   const managedOpenCodeSkillsDir = resolveManagedOpenCodeSkillsDir(managedHome);
-  await ensureOpenCodeSkillsInjected(
-    onLog,
-    managedOpenCodeSkillsDir,
-    openCodeSkillEntries,
-    desiredOpenCodeSkillNames,
-  );
-  const selectedSkillPrompt = await renderSelectedOpenCodeSkillPrompt(
-    onLog,
-    managedOpenCodeSkillsDir,
-    selectedOpenCodeSkillEntries,
-  );
   const runtimeEnv = Object.fromEntries(
     Object.entries(ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, { ...process.env, ...env })))
       .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
@@ -547,6 +526,33 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     runtimeEnv.RUDDER_BROWSER_ENABLED = "false";
     await onLog("stderr", `[rudder] ${rudderMcpPreflight?.diagnostic}\n`);
   }
+  const effectiveDesiredOpenCodeSkillNames = filterRudderDesiredSkillsForBrowserCapability(
+    openCodeSkillEntries,
+    desiredOpenCodeSkillNames,
+    browserEnabled,
+  );
+  const selectedOpenCodeSkillEntries = isChatResultRepair
+    ? []
+    : openCodeSkillEntries.filter((entry) => effectiveDesiredOpenCodeSkillNames.includes(entry.key));
+  const loadedSkills = openCodeSkillEntries
+    .filter((entry) => effectiveDesiredOpenCodeSkillNames.includes(entry.key))
+    .map((entry) => ({
+      key: entry.key,
+      runtimeName: entry.runtimeName,
+      name: entry.name ?? null,
+      description: entry.description ?? null,
+    }));
+  await ensureOpenCodeSkillsInjected(
+    onLog,
+    managedOpenCodeSkillsDir,
+    openCodeSkillEntries,
+    effectiveDesiredOpenCodeSkillNames,
+  );
+  const selectedSkillPrompt = await renderSelectedOpenCodeSkillPrompt(
+    onLog,
+    managedOpenCodeSkillsDir,
+    selectedOpenCodeSkillEntries,
+  );
   await ensureManagedOpenCodeConfig({
     sourceHome: operatorHome,
     targetHome: managedHome,
