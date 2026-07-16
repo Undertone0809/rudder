@@ -6,8 +6,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { executeCodexAppServerChat } from "./app-server-chat.js";
 import { parseCodexStdoutLine } from "../ui/parse-stdout.js";
+import { executeCodexAppServerChat } from "./app-server-chat.js";
 
 let root = "";
 let fakeCodex = "";

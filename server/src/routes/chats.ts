@@ -11,8 +11,8 @@ import {
   updateChatConversationSchema,
   updateChatQueuedMessageSchema,
   type ChatAttachment,
-  type ChatControlDisposition,
   type ChatContextLink,
+  type ChatControlDisposition,
   type ChatConversation,
   type ChatMessage,
   type ChatQueueRequestActor,
@@ -41,8 +41,7 @@ import {
   getActiveChatGeneration,
   hasActiveChatGeneration,
   interruptActiveChatGeneration,
-  setActiveChatGenerationId,
-  steerActiveChatGeneration,
+  steerActiveChatGeneration
 } from "../services/chat-generation-locks.js";
 import {
   buildChatTitlePromptFromMessages,

@@ -35,6 +35,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isCodexClosedStdinToolSessionError } from "../shared/tool-errors.js";
+import { executeCodexAppServerChat } from "./app-server-chat.js";
 import {
   discoverExternalCodexSkillDisablePaths,
   prepareManagedCodexHome,
@@ -43,7 +44,6 @@ import {
   resolveTrustedOperatorHome,
 } from "./codex-home.js";
 import { estimateCodexCostUsd } from "./cost.js";
-import { executeCodexAppServerChat } from "./app-server-chat.js";
 import { isCodexUnknownSessionError, parseCodexJsonl } from "./parse.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
