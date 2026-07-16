@@ -61,6 +61,7 @@ describe("workspace context column sizing", () => {
 
     expect(resolveProportionalSidePanelWidth(ratio, 1000)).toBe(340);
     expect(resolveProportionalSidePanelWidth(720 / 1440, 1440)).toBe(604);
+    expect(resolveProportionalSidePanelWidth(1, 2400)).toBe(720);
   });
 
   it("lets docked side panels use the actual workspace width", () => {
