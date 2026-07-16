@@ -1,4 +1,4 @@
-import { index, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
 import { goals } from "./goals.js";
 import { heartbeatRuns } from "./heartbeat_runs.js";
@@ -16,6 +16,8 @@ export const costEvents = pgTable(
     projectId: uuid("project_id").references(() => projects.id),
     goalId: uuid("goal_id").references(() => goals.id),
     heartbeatRunId: uuid("heartbeat_run_id").references(() => heartbeatRuns.id),
+    idempotencyKey: text("idempotency_key"),
+    budgetEvaluatedAt: timestamp("budget_evaluated_at", { withTimezone: true }),
     billingCode: text("billing_code"),
     provider: text("provider").notNull(),
     biller: text("biller").notNull().default("unknown"),
@@ -49,5 +51,7 @@ export const costEvents = pgTable(
       table.orgId,
       table.heartbeatRunId,
     ),
+    companyIdempotencyKeyUniqueIdx: uniqueIndex("cost_events_company_idempotency_key_uq")
+      .on(table.orgId, table.idempotencyKey),
   }),
 );

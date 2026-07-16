@@ -1,4 +1,5 @@
-import { index, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
 import { heartbeatRuns } from "./heartbeat_runs.js";
 import { organizations } from "./organizations.js";
@@ -16,6 +17,7 @@ export const activityLog = pgTable(
     agentId: uuid("agent_id").references(() => agents.id),
     runId: uuid("run_id").references(() => heartbeatRuns.id),
     details: jsonb("details").$type<Record<string, unknown>>(),
+    idempotencyKey: text("idempotency_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
@@ -28,5 +30,8 @@ export const activityLog = pgTable(
       table.entityId,
       table.createdAt,
     ),
+    orgIdempotencyKeyUniqueIdx: uniqueIndex("activity_log_org_idempotency_key_uq")
+      .on(table.orgId, table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} is not null`),
   }),
 );

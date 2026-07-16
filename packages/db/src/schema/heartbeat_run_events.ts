@@ -1,4 +1,5 @@
-import { bigserial, index, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { bigserial, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
 import { heartbeatRuns } from "./heartbeat_runs.js";
 import { organizations } from "./organizations.js";
@@ -17,12 +18,15 @@ export const heartbeatRunEvents = pgTable(
     color: text("color"),
     message: text("message"),
     payload: jsonb("payload").$type<Record<string, unknown>>(),
+    idempotencyKey: text("idempotency_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
     runSeqIdx: index("heartbeat_run_events_run_seq_idx").on(table.runId, table.seq),
     companyRunIdx: index("heartbeat_run_events_company_run_idx").on(table.orgId, table.runId),
     companyCreatedIdx: index("heartbeat_run_events_company_created_idx").on(table.orgId, table.createdAt),
+    runIdempotencyKeyUniqueIdx: uniqueIndex("heartbeat_run_events_run_idempotency_key_uq")
+      .on(table.runId, table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} is not null`),
   }),
 );
-

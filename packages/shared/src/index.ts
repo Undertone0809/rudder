@@ -32,7 +32,7 @@ export {
   type PluginStateScopeKind, type PluginStatus, type PluginUiSlotEntityType, type PluginUiSlotType, type PluginWebhookDeliveryStatus, type PrincipalType, type ProjectIconName, type ProjectResourceAttachmentRole, type ProjectStatus, type RudderAgentV1McpToolName, type SecretProvider, type StorageProvider, type WakeupRequestStatus, type WakeupTriggerDetail
 } from "./constants.js";
 
-export { resolveAgentRunScene, toAgentRun, toAgentRuns } from "./agent-run.js";
+export { resolveAgentRunScene, toAgentRun, toAgentRuns, toHeartbeatRun, toHeartbeatRuns } from "./agent-run.js";
 export {
   WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS, WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS, WORKSPACE_BACKUP_OFFLINE_INTERVAL_HOURS,
   WORKSPACE_BACKUP_RUNNING_INTERVAL_HOURS

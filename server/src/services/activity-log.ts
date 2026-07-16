@@ -35,6 +35,7 @@ export interface LogActivityInput {
   agentId?: string | null;
   runId?: string | null;
   details?: Record<string, unknown> | null;
+  idempotencyKey?: string | null;
 }
 
 function normalizeHeartbeatRunId(runId: string | null | undefined): string | null {
@@ -57,7 +58,7 @@ export async function logActivity(db: Db, input: LogActivityInput) {
     : null;
   let persistedRunId = normalizeHeartbeatRunId(input.runId);
   const insertActivity = async () => {
-    await db.insert(activityLog).values({
+    return db.insert(activityLog).values({
       orgId: input.orgId,
       actorType: input.actorType,
       actorId: input.actorId,
@@ -67,11 +68,16 @@ export async function logActivity(db: Db, input: LogActivityInput) {
       agentId: input.agentId ?? null,
       runId: persistedRunId,
       details: redactedDetails,
-    });
+      idempotencyKey: input.idempotencyKey ?? null,
+    })
+      .onConflictDoNothing()
+      .returning({ id: activityLog.id })
+      .then((rows) => rows[0] ?? null);
   };
 
+  let inserted: { id: string } | null = null;
   try {
-    await insertActivity();
+    inserted = await insertActivity();
   } catch (error) {
     if (!persistedRunId || !isActivityRunIdPersistenceError(error)) {
       throw error;
@@ -81,8 +87,10 @@ export async function logActivity(db: Db, input: LogActivityInput) {
       "Activity run id did not match a heartbeat run; logging activity without run linkage",
     );
     persistedRunId = null;
-    await insertActivity();
+    inserted = await insertActivity();
   }
+
+  if (!inserted) return null;
 
   publishLiveEvent({
     orgId: input.orgId,
@@ -121,4 +129,5 @@ export async function logActivity(db: Db, input: LogActivityInput) {
       }
     }).catch(() => {});
   }
+  return inserted;
 }

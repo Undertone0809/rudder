@@ -18,6 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { chatAgentRunService } from "../services/chat-agent-runs.ts";
+import { heartbeatService } from "../services/heartbeat.ts";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -189,11 +190,34 @@ describe("chatAgentRunService", () => {
       olderThanMs: 0,
       error: "test stale chat run",
       errorCode: "test_chat_run_stale",
-    })).resolves.toBe(1);
+    })).resolves.toBe(0);
+
+    const recoveryNow = new Date(Date.now() + 10 * 60_000);
+    await db
+      .update(heartbeatRuns)
+      .set({ executionLeaseExpiresAt: new Date(recoveryNow.getTime() - 1) })
+      .where(eq(heartbeatRuns.id, firstRun.id));
+    const recoveryResults = await Promise.all([
+      heartbeatService(db).reapOrphanedRuns({ now: recoveryNow, recoveryCutoff: recoveryNow }),
+      heartbeatService(db).reapOrphanedRuns({ now: recoveryNow, recoveryCutoff: recoveryNow }),
+    ]);
+    expect(recoveryResults.reduce((total, result) => total + result.reaped, 0)).toBe(1);
 
     const [timedOutRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, firstRun.id));
-    expect(timedOutRun?.status).toBe("timed_out");
-    expect(timedOutRun?.errorCode).toBe("test_chat_run_stale");
+    expect(timedOutRun?.status).toBe("failed");
+    expect(timedOutRun?.errorCode).toBe("process_lost");
+
+    await svc.finalizeRun(firstRun.id, {
+      status: "succeeded",
+      resultJson: { summary: "late chat completion" },
+      usageJson: { inputTokens: 10, outputTokens: 2 },
+    });
+    const [lateFinalizedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, firstRun.id));
+    expect(lateFinalizedRun).toMatchObject({
+      status: "failed",
+      errorCode: "process_lost",
+      resultJson: { summary: "late chat completion" },
+    });
 
     const secondRun = await svc.createRun({
       conversation,

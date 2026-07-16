@@ -9,7 +9,6 @@
  */
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import {
-  agents,
   heartbeatRuns,
   issues,
   projects
@@ -31,7 +30,6 @@ import {
 } from "../../home-paths.js";
 import { redactCurrentUserText } from "../../log-redaction.js";
 import { logger } from "../../middleware/logger.js";
-import { publishAutomationRunOutputToChat } from "../automation-chat-output.js";
 import {
   buildExecutionWorkspaceAdapterConfig,
   issueExecutionWorkspaceModeForPersistedWorkspace,
@@ -79,13 +77,46 @@ function resolveRuntimeSceneForRun(run: typeof heartbeatRuns.$inferSelect) {
 }
 
 export function createHeartbeatExecuteHandlers(context: any) {
-  const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = context;
+  const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, acknowledgeRunProcessExit, renewRunExecutionLease, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = context;
 
-  async function executeRun(runId: string) {
-    let run = await getRun(runId);
-    if (!run) return;
-    if (run.status !== "queued" && run.status !== "running") return;
+  async function executeRun(runId: string, opts?: { executionReserved?: boolean }) {
+    const executionReserved = opts?.executionReserved === true;
+    if (executionReserved && !activeRunExecutions.has(runId)) return;
+    let run: Awaited<ReturnType<typeof getRun>>;
+    let executionLeaseTimer: ReturnType<typeof setInterval> | null = null;
+    let executionOwnerToken: string | null = null;
+    try {
+      run = await getRun(runId);
+    } catch (error) {
+      if (executionReserved) {
+        runAbortControllers.delete(runId);
+        activeRunExecutions.delete(runId);
+      }
+      throw error;
+    }
+    if (!run || (run.status !== "queued" && run.status !== "running")) {
+      if (executionReserved) {
+        runAbortControllers.delete(runId);
+        activeRunExecutions.delete(runId);
+        if (run?.terminalEffectsPending) {
+          await acknowledgeRunProcessExit(run.id);
+          await completeTerminalControlEffects(run);
+        }
+        if (run) await startNextQueuedRunForAgent(run.agentId);
+      }
+      return;
+    }
 
+    if (executionReserved) {
+      if (!activeRunExecutions.has(run.id)) return;
+    } else {
+      if (activeRunExecutions.has(run.id)) return;
+      activeRunExecutions.add(run.id);
+    }
+    const executionAbortController = runAbortControllers.get(run.id) ?? new AbortController();
+    runAbortControllers.set(run.id, executionAbortController);
+
+    try {
     if (run.status === "queued") {
       const claimed = await claimQueuedRun(run);
       if (!claimed) {
@@ -95,22 +126,32 @@ export function createHeartbeatExecuteHandlers(context: any) {
       run = claimed;
     }
 
-    activeRunExecutions.add(run.id);
+    executionOwnerToken = run.executionOwnerToken;
+    if (executionOwnerToken) {
+      await renewRunExecutionLease(run.id, executionOwnerToken);
+      executionLeaseTimer = setInterval(() => {
+        void renewRunExecutionLease(run.id, executionOwnerToken).catch(() => undefined);
+      }, 60_000);
+      executionLeaseTimer.unref?.();
+    }
 
-    try {
     const agent = await getAgent(run.agentId);
     if (!agent) {
-      await setRunStatus(runId, "failed", {
+      const failed = await transitionRunToTerminal(runId, "failed", {
         error: "Agent not found",
         errorCode: "agent_not_found",
         finishedAt: new Date(),
+      }, {
+        processExitedAt: new Date(),
+        expectedExecutionOwnerToken: executionOwnerToken,
       });
-      await setWakeupStatus(run.wakeupRequestId, "failed", {
-        finishedAt: new Date(),
-        error: "Agent not found",
-      });
-      const failedRun = await getRun(runId);
-      if (failedRun) await releaseIssueExecutionAndPromote(failedRun);
+      if (failed) {
+        await setWakeupStatus(run.wakeupRequestId, "failed", {
+          finishedAt: new Date(),
+          error: "Agent not found",
+        });
+        await completeTerminalControlEffects(failed);
+      }
       return;
     }
 
@@ -131,7 +172,25 @@ export function createHeartbeatExecuteHandlers(context: any) {
     let latestAdapterMeta: AgentRuntimeInvocationMeta | null = null;
     let adapterForbiddenMarkerObserved = false;
     let finalRunOutput: string | null = null;
-    let finalRunStatus: string | null = run.status;
+    let ownsTerminalState = false;
+    let shouldCompleteTerminalEffects = false;
+    const finalizeExecutionTranscript = () => {
+      stdoutTranscriptBuffer = appendTranscriptEntriesFromChunk({
+        buffer: stdoutTranscriptBuffer,
+        chunk: "",
+        transcript: executionTranscript,
+        parser: stdoutTranscriptParser,
+        finalize: true,
+        kind: "stdout",
+      });
+      stderrTranscriptBuffer = appendTranscriptEntriesFromChunk({
+        buffer: stderrTranscriptBuffer,
+        chunk: "",
+        transcript: executionTranscript,
+        finalize: true,
+        kind: "stderr",
+      });
+    };
     const runtime = await ensureRuntimeState(agent);
     const context = parseObject(run.contextSnapshot);
     delete context.rudderGitIdentity;
@@ -546,29 +605,10 @@ export function createHeartbeatExecuteHandlers(context: any) {
           contextSnapshot: buildPersistableHeartbeatContext(context),
           updatedAt: new Date(),
         })
-        .where(eq(heartbeatRuns.id, run.id))
+        .where(and(eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.status, "running")))
         .returning()
         .then((rows) => rows[0] ?? null);
       if (runningWithSession) run = runningWithSession;
-
-      const runningAgent = await db
-        .update(agents)
-        .set({ status: "running", updatedAt: new Date() })
-        .where(eq(agents.id, agent.id))
-        .returning()
-        .then((rows) => rows[0] ?? null);
-
-      if (runningAgent) {
-        publishLiveEvent({
-          orgId: runningAgent.orgId,
-          type: "agent.status",
-          payload: {
-            agentId: runningAgent.id,
-            status: runningAgent.status,
-            outcome: "running",
-          },
-        });
-      }
 
       const currentRun = run;
       await appendRunEvent(currentRun, {
@@ -615,7 +655,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
           await db
             .update(heartbeatRuns)
             .set({ updatedAt: new Date(nowMs) })
-            .where(eq(heartbeatRuns.id, run.id));
+            .where(and(eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.status, "running")));
         }
 
         const payloadChunk =
@@ -741,6 +781,10 @@ export function createHeartbeatExecuteHandlers(context: any) {
           "local agent jwt secret missing or invalid; running without injected RUDDER_API_KEY",
         );
       }
+      const runBeforeAdapter = await getRun(run.id);
+      if (runBeforeAdapter?.status !== "running") {
+        throw new Error("Run was finalized before adapter invocation");
+      }
       const adapterResult = await executeAdapterWithModelFallbacks(adapter, {
         runId: run.id,
         agent,
@@ -752,6 +796,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
         onSpawn: async (meta) => {
           await persistRunProcessMetadata(run.id, meta);
         },
+        abortSignal: executionAbortController.signal,
         authToken: authToken ?? undefined,
       }, {
         resolveAdapter: findServerAdapter,
@@ -857,8 +902,6 @@ export function createHeartbeatExecuteHandlers(context: any) {
             : outcome === "timed_out"
             ? "timed_out"
               : "failed";
-      finalRunStatus = status;
-
       const adapterResultSummary = summarizeHeartbeatRunResultJson(adapterResult.resultJson);
       const persistedResultSummary = summarizeHeartbeatRunResultJson({
         ...(adapterResult.resultJson ?? {}),
@@ -906,7 +949,8 @@ export function createHeartbeatExecuteHandlers(context: any) {
             } as Record<string, unknown>)
           : null;
 
-      await setRunStatus(run.id, status, {
+      finalizeExecutionTranscript();
+      const terminalEvidence = {
         finishedAt: new Date(),
         error:
           outcome === "succeeded"
@@ -938,17 +982,76 @@ export function createHeartbeatExecuteHandlers(context: any) {
         logBytes: logSummary?.bytes,
         logSha256: logSummary?.sha256,
         logCompressed: logSummary?.compressed ?? false,
+      };
+      const terminalEffectsIntent = {
+        version: 1 as const,
+        automation: {
+          output: transcriptFallbackResult?.output ?? terminalEvidence.error,
+          transcript: executionTranscript,
+        },
+        runtime: {
+          adapterResult: adapterResult as unknown as Record<string, unknown>,
+          legacySessionId: nextSessionState.legacySessionId,
+          normalizedUsage: normalizedUsage as unknown as Record<string, number> | null,
+          ownsTerminal: true,
+        },
+        ...(taskKey
+          ? {
+              taskSession: adapterResult.clearSession || (!nextSessionState.params && !nextSessionState.displayId)
+                ? {
+                    operation: "clear" as const,
+                    orgId: agent.orgId,
+                    agentId: agent.id,
+                    agentRuntimeType: agent.agentRuntimeType,
+                    taskKey,
+                    lastRunId: run.id,
+                  }
+                : {
+                    operation: "upsert" as const,
+                    orgId: agent.orgId,
+                    agentId: agent.id,
+                    agentRuntimeType: agent.agentRuntimeType,
+                    taskKey,
+                    sessionParamsJson: nextSessionState.params,
+                    sessionDisplayId: nextSessionState.displayId,
+                    lastRunId: run.id,
+                    lastError: outcome === "succeeded" ? null : (adapterResult.errorMessage ?? "run_failed"),
+                  },
+            }
+          : {}),
+      };
+      const claimedTerminalRun = await transitionRunToTerminal(run.id, status, terminalEvidence, {
+        terminalEffectsIntent,
+        processExitedAt: new Date(),
+        expectedExecutionOwnerToken: executionOwnerToken,
       });
+      ownsTerminalState = Boolean(claimedTerminalRun);
+      if (!claimedTerminalRun) {
+        await reconcileRunEvidence(run.id, terminalEvidence);
+        await reconcileTerminalEffectsIntent(run.id, {
+          version: 1,
+          automation: terminalEffectsIntent.automation,
+          runtime: {
+            adapterResult: adapterResult as unknown as Record<string, unknown>,
+            legacySessionId: null,
+            normalizedUsage: normalizedUsage as unknown as Record<string, number> | null,
+            ownsTerminal: false,
+          },
+        });
+      }
 
-      await setWakeupStatus(run.wakeupRequestId, outcome === "succeeded" ? "completed" : status, {
-        finishedAt: new Date(),
-        error: failureCausedByForbiddenMarker
-          ? "Forbidden runtime skill marker observed"
-          : adapterResult.errorMessage ?? null,
-      });
-
-      const finalizedRun = await getRun(run.id);
+      const finalizedRun = claimedTerminalRun ?? await getRun(run.id);
       if (finalizedRun) {
+        transcriptFallbackResult.subtype = finalizedRun.status;
+        transcriptFallbackResult.isError = finalizedRun.status !== "succeeded";
+        if (ownsTerminalState) {
+          await setWakeupStatus(run.wakeupRequestId, outcome === "succeeded" ? "completed" : status, {
+            finishedAt: new Date(),
+            error: failureCausedByForbiddenMarker
+              ? "Forbidden runtime skill marker observed"
+              : adapterResult.errorMessage ?? null,
+          });
+        }
         await appendForbiddenMarkerEvent(finalizedRun, forbiddenMarkerScan);
         const transcriptUsedSkills = inferUsedSkillsFromTranscript(executionTranscript);
         if (transcriptUsedSkills.length > 0) {
@@ -969,44 +1072,25 @@ export function createHeartbeatExecuteHandlers(context: any) {
             },
           });
         }
-        await appendRunEvent(finalizedRun, {
-          eventType: "lifecycle",
-          stream: "system",
-          level: outcome === "succeeded" ? "info" : "error",
-          message: `run ${outcome}`,
-          payload: {
-            status,
-            exitCode: adapterResult.exitCode,
-          },
-        });
-        await releaseIssueExecutionAndPromote(finalizedRun);
+        if (ownsTerminalState) {
+          await appendRunEvent(finalizedRun, {
+            eventType: "lifecycle",
+            stream: "system",
+            level: outcome === "succeeded" ? "info" : "error",
+            message: `run ${outcome}`,
+            payload: {
+              status,
+              exitCode: adapterResult.exitCode,
+            },
+          });
+        }
       }
 
       if (finalizedRun) {
-        await updateRuntimeState(agent, finalizedRun, adapterResult, {
-          legacySessionId: nextSessionState.legacySessionId,
-        }, normalizedUsage);
-        if (taskKey) {
-          if (adapterResult.clearSession || (!nextSessionState.params && !nextSessionState.displayId)) {
-            await clearTaskSessions(agent.orgId, agent.id, {
-              taskKey,
-              agentRuntimeType: agent.agentRuntimeType,
-            });
-          } else {
-            await upsertTaskSession({
-              orgId: agent.orgId,
-              agentId: agent.id,
-              agentRuntimeType: agent.agentRuntimeType,
-              taskKey,
-              sessionParamsJson: nextSessionState.params,
-              sessionDisplayId: nextSessionState.displayId,
-              lastRunId: finalizedRun.id,
-              lastError: outcome === "succeeded" ? null : (adapterResult.errorMessage ?? "run_failed"),
-            });
-          }
+        if (ownsTerminalState || finalizedRun.terminalEffectsPending) {
+          shouldCompleteTerminalEffects = true;
         }
       }
-      await finalizeAgentStatus(agent.id, outcome);
     } catch (err) {
       const isWorkspacePreflightFailure =
         isWorkspacePermissionPreflightError(err) ||
@@ -1015,7 +1099,6 @@ export function createHeartbeatExecuteHandlers(context: any) {
         err instanceof Error ? err.message : "Unknown adapter failure",
         await getCurrentUserRedactionOptions(),
       );
-      finalRunStatus = "failed";
       transcriptFallbackResult = {
         ts: new Date().toISOString(),
         output: message,
@@ -1026,17 +1109,34 @@ export function createHeartbeatExecuteHandlers(context: any) {
       logger.error({ err, runId }, "heartbeat execution failed");
 
       const latestRun = await getRun(run.id);
-      if (latestRun?.status === "cancelled" || latestRun?.status === "timed_out") {
-        const terminalStatus = latestRun.status as "cancelled" | "timed_out";
-        finalRunStatus = terminalStatus;
+      if (
+        latestRun?.status === "succeeded"
+        || latestRun?.status === "failed"
+        || latestRun?.status === "cancelled"
+        || latestRun?.status === "timed_out"
+      ) {
+        const terminalStatus = latestRun.status as "succeeded" | "failed" | "cancelled" | "timed_out";
         transcriptFallbackResult = {
           ts: new Date().toISOString(),
           output: latestRun.error ?? message,
           subtype: terminalStatus,
-          isError: terminalStatus === "timed_out",
+          isError: terminalStatus !== "succeeded",
           errors: latestRun.error ? [latestRun.error] : [],
         };
-        await finalizeAgentStatus(agent.id, terminalStatus);
+        let lateLogSummary: { bytes: number; sha256?: string; compressed: boolean } | null = null;
+        if (handle) {
+          lateLogSummary = await runLogStore.finalize(handle).catch(() => null);
+        }
+        await reconcileRunEvidence(run.id, {
+          stdoutExcerpt,
+          stderrExcerpt,
+          logBytes: lateLogSummary?.bytes,
+          logSha256: lateLogSummary?.sha256,
+          logCompressed: lateLogSummary?.compressed,
+        });
+        if (latestRun.terminalEffectsPending) {
+          shouldCompleteTerminalEffects = true;
+        }
         return;
       }
 
@@ -1049,7 +1149,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
         }
       }
 
-      const failedRun = await setRunStatus(run.id, "failed", {
+      const failureEvidence = {
         error: message,
         errorCode: isWorkspacePreflightFailure ? err.errorCode : "adapter_failed",
         finishedAt: new Date(),
@@ -1058,120 +1158,134 @@ export function createHeartbeatExecuteHandlers(context: any) {
         logBytes: logSummary?.bytes,
         logSha256: logSummary?.sha256,
         logCompressed: logSummary?.compressed ?? false,
+      };
+      finalizeExecutionTranscript();
+      const failureIntent = {
+        version: 1 as const,
+        automation: { output: message, transcript: executionTranscript },
+        ...(!isWorkspacePreflightFailure
+          ? {
+              runtime: {
+                adapterResult: {
+                  exitCode: null,
+                  signal: null,
+                  timedOut: false,
+                  errorMessage: message,
+                },
+                legacySessionId: runtimeForAdapter.sessionId,
+              },
+            }
+          : {}),
+        ...(taskKey && !isWorkspacePreflightFailure && (previousSessionParams || previousSessionDisplayId || taskSession)
+          ? {
+              taskSession: {
+                operation: "upsert" as const,
+                orgId: agent.orgId,
+                agentId: agent.id,
+                agentRuntimeType: agent.agentRuntimeType,
+                taskKey,
+                sessionParamsJson: previousSessionParams,
+                sessionDisplayId: previousSessionDisplayId,
+                lastRunId: run.id,
+                lastError: message,
+              },
+            }
+          : {}),
+      };
+      const claimedFailedRun = await transitionRunToTerminal(run.id, "failed", failureEvidence, {
+        terminalEffectsIntent: failureIntent,
+        processExitedAt: new Date(),
+        expectedExecutionOwnerToken: executionOwnerToken,
       });
-      await setWakeupStatus(run.wakeupRequestId, "failed", {
-        finishedAt: new Date(),
-        error: message,
-      });
+      ownsTerminalState = Boolean(claimedFailedRun);
+      if (!claimedFailedRun) await reconcileRunEvidence(run.id, failureEvidence);
+      const failedRun = claimedFailedRun ?? await getRun(run.id);
+      if (ownsTerminalState) {
+        await setWakeupStatus(run.wakeupRequestId, "failed", {
+          finishedAt: new Date(),
+          error: message,
+        });
+      }
 
       if (failedRun) {
-        await appendForbiddenMarkerEvent(failedRun, buildForbiddenMarkerScan(null));
-        await appendRunEvent(failedRun, {
-          eventType: isWorkspacePreflightFailure ? "runtime.workspace_preflight_failed" : "error",
-          stream: "system",
-          level: "error",
-          message,
-          ...(isWorkspacePreflightFailure
-            ? {
-                payload: {
-                  errorCode: err.errorCode,
-                  failure: err.failure,
-                },
-              }
-            : {}),
-        });
-        await releaseIssueExecutionAndPromote(failedRun);
-
-        if (!isWorkspacePreflightFailure) {
-          await updateRuntimeState(agent, failedRun, {
-            exitCode: null,
-            signal: null,
-            timedOut: false,
-            errorMessage: message,
-          }, {
-            legacySessionId: runtimeForAdapter.sessionId,
+        if (ownsTerminalState) {
+          await appendForbiddenMarkerEvent(failedRun, buildForbiddenMarkerScan(null));
+          await appendRunEvent(failedRun, {
+            eventType: isWorkspacePreflightFailure ? "runtime.workspace_preflight_failed" : "error",
+            stream: "system",
+            level: "error",
+            message,
+            ...(isWorkspacePreflightFailure
+              ? {
+                  payload: {
+                    errorCode: err.errorCode,
+                    failure: err.failure,
+                  },
+                }
+              : {}),
           });
+        }
 
-          if (taskKey && (previousSessionParams || previousSessionDisplayId || taskSession)) {
-            await upsertTaskSession({
-              orgId: agent.orgId,
-              agentId: agent.id,
-              agentRuntimeType: agent.agentRuntimeType,
-              taskKey,
-              sessionParamsJson: previousSessionParams,
-              sessionDisplayId: previousSessionDisplayId,
-              lastRunId: failedRun.id,
-              lastError: message,
-            });
-          }
+        if (ownsTerminalState || failedRun.terminalEffectsPending) {
+          shouldCompleteTerminalEffects = true;
         }
       }
 
-      await finalizeAgentStatus(agent.id, "failed");
     } finally {
-      stdoutTranscriptBuffer = appendTranscriptEntriesFromChunk({
-        buffer: stdoutTranscriptBuffer,
-        chunk: "",
-        transcript: executionTranscript,
-        parser: stdoutTranscriptParser,
-        finalize: true,
-        kind: "stdout",
-      });
-      stderrTranscriptBuffer = appendTranscriptEntriesFromChunk({
-        buffer: stderrTranscriptBuffer,
-        chunk: "",
-        transcript: executionTranscript,
-        finalize: true,
-        kind: "stderr",
-      });
+      finalizeExecutionTranscript();
       finalRunOutput = transcriptFallbackResult?.output ?? null;
-      await publishAutomationRunOutputToChat(db, {
-        issueId,
-        output: finalRunOutput,
-        status: finalRunStatus,
-        transcript: executionTranscript,
-      }).catch((error) => {
-        logger.warn(
-          {
-            runId: run.id,
-            issueId,
-            err: error instanceof Error ? error.message : String(error),
-          },
-          "Failed to publish automation run output to chat",
-        );
-      });
+      if (ownsTerminalState || shouldCompleteTerminalEffects) {
+        const terminalRun = await getRun(run.id).catch(() => null);
+        if (terminalRun?.terminalEffectsPending) {
+          await acknowledgeRunProcessExit(terminalRun.id);
+          await completeTerminalControlEffects(terminalRun, ownsTerminalState
+            ? {
+                automationOutput: finalRunOutput,
+                automationTranscript: executionTranscript,
+              }
+            : undefined);
+        }
+      }
     }
     } catch (outerErr) {
           // Setup code before adapter.execute threw (e.g. ensureRuntimeState, resolveWorkspaceForRun).
           // The inner catch did not fire, so we must record the failure here.
           const message = outerErr instanceof Error ? outerErr.message : "Unknown setup failure";
           logger.error({ err: outerErr, runId }, "heartbeat execution setup failed");
-          await setRunStatus(runId, "failed", {
-            error: message,
-            errorCode: "adapter_failed",
-            finishedAt: new Date(),
-          }).catch(() => undefined);
-          await setWakeupStatus(run.wakeupRequestId, "failed", {
-            finishedAt: new Date(),
-            error: message,
-          }).catch(() => undefined);
-          const failedRun = await getRun(runId).catch(() => null);
-          if (failedRun) {
+          const latestRun = await getRun(runId).catch(() => null);
+          const claimedFailedRun = latestRun?.status === "running"
+            ? await transitionRunToTerminal(runId, "failed", {
+                error: message,
+                errorCode: "adapter_failed",
+                finishedAt: new Date(),
+              }, {
+                processExitedAt: new Date(),
+                expectedExecutionOwnerToken: executionOwnerToken,
+              }).catch(() => undefined)
+            : null;
+          const terminalRun = claimedFailedRun ?? await getRun(runId).catch(() => latestRun);
+          if (claimedFailedRun) {
+            await setWakeupStatus(run.wakeupRequestId, "failed", {
+              finishedAt: new Date(),
+              error: message,
+            }).catch(() => undefined);
             // Emit a run-log event so the failure is visible in the run timeline,
             // consistent with what the inner catch block does for adapter failures.
-            await appendRunEvent(failedRun, {
+            await appendRunEvent(claimedFailedRun, {
               eventType: "error",
               stream: "system",
               level: "error",
               message,
             }).catch(() => undefined);
-            await releaseIssueExecutionAndPromote(failedRun).catch(() => undefined);
           }
-          // Ensure the agent is not left stuck in "running" if the inner catch handler's
-          // DB calls threw (e.g. a transient DB error in finalizeAgentStatus).
-          await finalizeAgentStatus(run.agentId, "failed").catch(() => undefined);
+          if (terminalRun?.terminalEffectsPending) {
+            await acknowledgeRunProcessExit(terminalRun.id).catch(() => undefined);
+            await completeTerminalControlEffects(terminalRun).catch(() => undefined);
+          }
         } finally {
+          if (executionLeaseTimer) clearInterval(executionLeaseTimer);
           await releaseRuntimeServicesForRun(run.id).catch(() => undefined);
+          runAbortControllers.delete(run.id);
           activeRunExecutions.delete(run.id);
           await startNextQueuedRunForAgent(run.agentId);
         }

@@ -5,12 +5,12 @@ import {
   agentWakeupRequests,
   automationRuns,
   automations,
+  heartbeatRunEvents,
   heartbeatRuns,
   issues
 } from "@rudderhq/db";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { parseObject } from "../../agent-runtimes/utils.js";
-import { logger } from "../../middleware/logger.js";
 import { logActivity } from "../activity-log.js";
 import {
   buildIssueConvergenceReviewWakeupOptions,
@@ -22,6 +22,7 @@ export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRu
 
 import * as heartbeatCore from "./heartbeat.core.js";
 import * as heartbeatSessions from "./heartbeat.sessions.js";
+import { writeTerminalIssueSemanticAudit } from "./heartbeat.terminal.js";
 const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, resolveHeartbeatObservabilitySurface, buildHeartbeatObservationName, compactTraceText, buildIssueRunTraceName, buildHeartbeatRuntimeTraceMetadata, buildHeartbeatAdapterInvokePayload, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, readSkillEvidenceFromPayload, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
 const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
 
@@ -115,7 +116,55 @@ export function createHeartbeatReleaseHandlers(context: any) {
     };
   }
 
-  async function releaseIssueExecutionAndPromote(run: typeof heartbeatRuns.$inferSelect) {
+  async function releaseIssueExecutionAndPromote(
+    run: typeof heartbeatRuns.$inferSelect,
+    opts?: { startNext?: boolean },
+  ) {
+    const writeDurableReleaseAudit = async (
+      tx: any,
+      action: "issue.execution_released" | "issue.execution_promoted",
+      issue: { id: string; orgId: string },
+      details: Record<string, unknown>,
+    ) => {
+      const idempotencyKey = `${action}:${run.id}`;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${run.id}))`);
+      const [currentSeq] = await tx
+        .select({ maxSeq: sql<number | null>`max(${heartbeatRunEvents.seq})` })
+        .from(heartbeatRunEvents)
+        .where(eq(heartbeatRunEvents.runId, run.id));
+      await tx
+        .insert(heartbeatRunEvents)
+        .values({
+          orgId: run.orgId,
+          runId: run.id,
+          agentId: run.agentId,
+          seq: Number(currentSeq?.maxSeq ?? 0) + 1,
+          eventType: action,
+          stream: "system",
+          level: "info",
+          message: action === "issue.execution_promoted"
+            ? "Issue execution promoted after terminal run"
+            : "Issue execution released after terminal run",
+          payload: details,
+          idempotencyKey,
+        })
+        .onConflictDoNothing();
+      await tx
+        .insert(activityLog)
+        .values({
+          orgId: issue.orgId,
+          actorType: "system",
+          actorId: "terminal_effects",
+          action,
+          entityType: "issue",
+          entityId: issue.id,
+          agentId: run.agentId,
+          runId: run.id,
+          details,
+          idempotencyKey: `${run.id}:${idempotencyKey}`,
+        })
+        .onConflictDoNothing();
+    };
     const outcome = await db.transaction(async (tx) => {
       await tx.execute(
         sql`select id from issues where org_id = ${run.orgId} and execution_run_id = ${run.id} for update`,
@@ -156,7 +205,70 @@ export function createHeartbeatReleaseHandlers(context: any) {
           });
 
       if (passiveClosure.kind === "queued") {
+        const passiveFollowupDetails = {
+          issueId: passiveClosure.issue.id,
+          issueTitle: passiveClosure.issue.title,
+          followupRunId: passiveClosure.run.id,
+          originRunId: passiveClosure.originRunId,
+          previousRunId: passiveClosure.previousRunId,
+          attempt: passiveClosure.attempt,
+          maxAttempts: ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS,
+          reason: ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON,
+          requestedAt: passiveClosure.requestedAt.toISOString(),
+        };
+        await writeTerminalIssueSemanticAudit(tx, {
+          sourceRun: run,
+          issue: passiveClosure.issue,
+          eventType: "issue.passive_followup_queued",
+          action: "issue.passive_followup_queued",
+          actorId: "issue_closure_governance",
+          level: "warn",
+          message: `Queued passive issue follow-up ${passiveClosure.run.id}`,
+          details: passiveFollowupDetails,
+          mirrorRun: {
+            run: passiveClosure.run,
+            message: `Passive follow-up queued because run ${run.id} ended without issue close-out`,
+            details: {
+              issueId: passiveClosure.issue.id,
+              originRunId: passiveClosure.originRunId,
+              previousRunId: passiveClosure.previousRunId,
+              attempt: passiveClosure.attempt,
+              maxAttempts: ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS,
+              reason: ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON,
+              requestedAt: passiveClosure.requestedAt.toISOString(),
+            },
+          },
+        });
+        await writeDurableReleaseAudit(tx, "issue.execution_promoted", issue, {
+          issueId: issue.id,
+          sourceRunId: run.id,
+          promotedRunId: passiveClosure.run.id,
+          reason: "passive_followup",
+        });
         return { promotedRun: passiveClosure.run, passiveClosure, chatOutputCompletion };
+      }
+      if (
+        passiveClosure.kind === "operator_review"
+        || passiveClosure.kind === "reviewer_closeout_operator_review"
+        || (passiveClosure.kind === "reviewer_convergence" && !passiveClosure.issue.reviewerAgentId)
+      ) {
+        // Retain source ownership until the durable attention event/activity is
+        // written. A crash can then replay the outcome from this terminal run.
+        return {
+          promotedRun: null,
+          passiveClosure,
+          chatOutputCompletion,
+          releaseSourceAfterEffects: true,
+        };
+      }
+      if (
+        (passiveClosure.kind === "reviewer_convergence" || passiveClosure.kind === "reviewer_closeout")
+        && passiveClosure.issue.reviewerAgentId
+      ) {
+        // Keep the source run as issue owner until the durable reviewer wake is
+        // inserted. A failed enqueue can then be replayed from terminal effects
+        // without losing the follow-up intent.
+        return { promotedRun: null, passiveClosure, chatOutputCompletion };
       }
 
       await tx
@@ -184,7 +296,13 @@ export function createHeartbeatReleaseHandlers(context: any) {
           .limit(1)
           .then((rows) => rows[0] ?? null);
 
-        if (!deferred) return { promotedRun: null, passiveClosure, chatOutputCompletion };
+        if (!deferred) {
+          await writeDurableReleaseAudit(tx, "issue.execution_released", issue, {
+            issueId: issue.id,
+            sourceRunId: run.id,
+          });
+          return { promotedRun: null, passiveClosure, chatOutputCompletion };
+        }
 
         const deferredAgent = await tx
           .select()
@@ -275,14 +393,49 @@ export function createHeartbeatReleaseHandlers(context: any) {
           })
           .where(eq(issues.id, issue.id));
 
+        await writeDurableReleaseAudit(tx, "issue.execution_promoted", issue, {
+          issueId: issue.id,
+          sourceRunId: run.id,
+          promotedRunId: newRun.id,
+          wakeupRequestId: deferred.id,
+        });
         return { promotedRun: newRun, passiveClosure };
       }
     });
+    if (outcome.promotedRun) {
+      await context.afterIssuePromotionCommitted?.(outcome);
+    }
 
     const passiveClosure = outcome.passiveClosure;
+    const assertDurableReviewerWake = async (input: {
+      agentId: string;
+      idempotencyKey: string;
+      run: unknown;
+    }) => {
+      if (input.run) return;
+      const durableWake = await db
+        .select({ status: agentWakeupRequests.status })
+        .from(agentWakeupRequests)
+        .where(and(
+          eq(agentWakeupRequests.agentId, input.agentId),
+          eq(agentWakeupRequests.idempotencyKey, input.idempotencyKey),
+          inArray(agentWakeupRequests.status, [
+            "queued",
+            "claimed",
+            "deferred_agent_paused",
+            "deferred_issue_execution",
+          ]),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (!durableWake) {
+        throw new Error("Reviewer follow-up could not be persisted as actionable work");
+      }
+    };
     if (passiveClosure?.kind === "queued") {
       await appendRunEvent(run, {
         eventType: "issue.passive_followup_queued",
+        idempotencyKey: `terminal-issue-effect:${run.id}:issue.passive_followup_queued`,
         stream: "system",
         level: "warn",
         message: `Queued passive issue follow-up ${passiveClosure.run.id}`,
@@ -299,6 +452,7 @@ export function createHeartbeatReleaseHandlers(context: any) {
       });
       await appendRunEvent(passiveClosure.run, {
         eventType: "issue.passive_followup_queued",
+        idempotencyKey: `terminal-issue-effect:${run.id}:issue.passive_followup_queued`,
         stream: "system",
         level: "warn",
         message: `Passive follow-up queued because run ${run.id} ended without issue close-out`,
@@ -321,6 +475,7 @@ export function createHeartbeatReleaseHandlers(context: any) {
         entityId: passiveClosure.issue.id,
         agentId: run.agentId,
         runId: run.id,
+        idempotencyKey: `${run.id}:issue.passive_followup_queued`,
         details: {
           issueId: passiveClosure.issue.id,
           issueTitle: passiveClosure.issue.title,
@@ -336,6 +491,7 @@ export function createHeartbeatReleaseHandlers(context: any) {
     } else if (passiveClosure?.kind === "operator_review") {
       await appendRunEvent(run, {
         eventType: "issue.closure_needs_operator_review",
+        idempotencyKey: `terminal-issue-effect:${run.id}:issue.closure_needs_operator_review`,
         stream: "system",
         level: "warn",
         message: "Passive issue follow-up stopped and needs operator review",
@@ -357,6 +513,7 @@ export function createHeartbeatReleaseHandlers(context: any) {
         entityId: passiveClosure.issue.id,
         agentId: run.agentId,
         runId: run.id,
+        idempotencyKey: `${run.id}:issue.closure_needs_operator_review`,
         details: {
           issueId: passiveClosure.issue.id,
           issueTitle: passiveClosure.issue.title,
@@ -368,8 +525,52 @@ export function createHeartbeatReleaseHandlers(context: any) {
         },
       });
     } else if (passiveClosure?.kind === "reviewer_convergence") {
+      if (passiveClosure.issue.reviewerAgentId) {
+        const idempotencyKey = `issue_convergence_review_requested:${passiveClosure.originRunId}`;
+        const reviewerRun = await enqueueWakeup(passiveClosure.issue.reviewerAgentId, {
+          ...buildIssueConvergenceReviewWakeupOptions({
+            issue: passiveClosure.issue,
+            contextSource: "issue.passive_followup_exhausted",
+            originRunId: passiveClosure.originRunId,
+            previousRunId: passiveClosure.previousRunId,
+            attempts: passiveClosure.attempts,
+            maxAttempts: ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS,
+            requestedByActorType: "system",
+            requestedByActorId: "issue_closure_governance",
+          }),
+          idempotencyKey,
+          originTerminalRunId: run.id,
+          terminalIssueAudit: {
+            sourceRun: run,
+            issue: passiveClosure.issue,
+            eventType: "issue.convergence_review_requested",
+            action: "issue.convergence_review_requested",
+            actorId: "issue_closure_governance",
+            level: "warn",
+            message: "Passive issue follow-up stopped and needs reviewer convergence",
+            details: {
+              issueId: passiveClosure.issue.id,
+              issueTitle: passiveClosure.issue.title,
+              reviewerAgentId: passiveClosure.issue.reviewerAgentId,
+              reviewerUserId: passiveClosure.issue.reviewerUserId,
+              originRunId: passiveClosure.originRunId,
+              previousRunId: passiveClosure.previousRunId,
+              attempts: passiveClosure.attempts,
+              maxAttempts: ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS,
+              reason: passiveClosure.reason,
+            },
+          },
+          startImmediately: false,
+        });
+        await assertDurableReviewerWake({
+          agentId: passiveClosure.issue.reviewerAgentId,
+          idempotencyKey,
+          run: reviewerRun,
+        });
+      }
       await appendRunEvent(run, {
         eventType: "issue.convergence_review_requested",
+        idempotencyKey: `terminal-issue-effect:${run.id}:issue.convergence_review_requested`,
         stream: "system",
         level: "warn",
         message: "Passive issue follow-up stopped and needs reviewer convergence",
@@ -393,6 +594,7 @@ export function createHeartbeatReleaseHandlers(context: any) {
         entityId: passiveClosure.issue.id,
         agentId: run.agentId,
         runId: run.id,
+        idempotencyKey: `${run.id}:issue.convergence_review_requested`,
         details: {
           issueId: passiveClosure.issue.id,
           issueTitle: passiveClosure.issue.title,
@@ -405,27 +607,52 @@ export function createHeartbeatReleaseHandlers(context: any) {
           reason: passiveClosure.reason,
         },
       });
+    } else if (passiveClosure?.kind === "reviewer_closeout") {
       if (passiveClosure.issue.reviewerAgentId) {
-        await enqueueWakeup(passiveClosure.issue.reviewerAgentId, {
-          ...buildIssueConvergenceReviewWakeupOptions({
+        const idempotencyKey = `${ISSUE_REVIEW_CLOSEOUT_REASON}:${run.id}`;
+        const reviewerRun = await enqueueWakeup(passiveClosure.issue.reviewerAgentId, {
+          ...buildIssueReviewCloseoutWakeupOptions({
             issue: passiveClosure.issue,
-            contextSource: "issue.passive_followup_exhausted",
+            contextSource: "issue.review_closeout_missing",
             originRunId: passiveClosure.originRunId,
             previousRunId: passiveClosure.previousRunId,
             attempts: passiveClosure.attempts,
-            maxAttempts: ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS,
+            maxAttempts: passiveClosure.maxAttempts,
             requestedByActorType: "system",
-            requestedByActorId: "issue_closure_governance",
+            requestedByActorId: "issue_review_followup",
           }),
-          idempotencyKey: `issue_convergence_review_requested:${passiveClosure.originRunId}`,
-        }).catch((err) => {
-          logger.warn({ err, issueId: passiveClosure.issue.id }, "failed to wake reviewer after passive issue close-out exhaustion");
-          return null;
+          idempotencyKey,
+          originTerminalRunId: run.id,
+          terminalIssueAudit: {
+            sourceRun: run,
+            issue: passiveClosure.issue,
+            eventType: "issue.review_closeout_missing",
+            action: "issue.review_closeout_missing",
+            actorId: "issue_review_followup",
+            level: "warn",
+            message: "Reviewer run finished without a structured review decision",
+            details: {
+              issueId: passiveClosure.issue.id,
+              issueTitle: passiveClosure.issue.title,
+              reviewerAgentId: passiveClosure.issue.reviewerAgentId,
+              originRunId: passiveClosure.originRunId,
+              previousRunId: passiveClosure.previousRunId,
+              attempts: passiveClosure.attempts,
+              maxAttempts: passiveClosure.maxAttempts,
+              reason: passiveClosure.reason,
+            },
+          },
+          startImmediately: false,
+        });
+        await assertDurableReviewerWake({
+          agentId: passiveClosure.issue.reviewerAgentId,
+          idempotencyKey,
+          run: reviewerRun,
         });
       }
-    } else if (passiveClosure?.kind === "reviewer_closeout") {
       await appendRunEvent(run, {
         eventType: "issue.review_closeout_missing",
+        idempotencyKey: `terminal-issue-effect:${run.id}:issue.review_closeout_missing`,
         stream: "system",
         level: "warn",
         message: "Reviewer run finished without a structured review decision",
@@ -447,6 +674,7 @@ export function createHeartbeatReleaseHandlers(context: any) {
         entityId: passiveClosure.issue.id,
         agentId: run.agentId,
         runId: run.id,
+        idempotencyKey: `${run.id}:issue.review_closeout_missing`,
         details: {
           issueId: passiveClosure.issue.id,
           issueTitle: passiveClosure.issue.title,
@@ -458,27 +686,10 @@ export function createHeartbeatReleaseHandlers(context: any) {
           reason: passiveClosure.reason,
         },
       });
-      if (passiveClosure.issue.reviewerAgentId) {
-        await enqueueWakeup(passiveClosure.issue.reviewerAgentId, {
-          ...buildIssueReviewCloseoutWakeupOptions({
-            issue: passiveClosure.issue,
-            contextSource: "issue.review_closeout_missing",
-            originRunId: passiveClosure.originRunId,
-            previousRunId: passiveClosure.previousRunId,
-            attempts: passiveClosure.attempts,
-            maxAttempts: passiveClosure.maxAttempts,
-            requestedByActorType: "system",
-            requestedByActorId: "issue_review_followup",
-          }),
-          idempotencyKey: `${ISSUE_REVIEW_CLOSEOUT_REASON}:${run.id}`,
-        }).catch((err) => {
-          logger.warn({ err, issueId: passiveClosure.issue.id }, "failed to wake reviewer after missing review close-out");
-          return null;
-        });
-      }
     } else if (passiveClosure?.kind === "reviewer_closeout_operator_review") {
       await appendRunEvent(run, {
         eventType: "issue.review_closure_needs_operator_review",
+        idempotencyKey: `terminal-issue-effect:${run.id}:issue.review_closure_needs_operator_review`,
         stream: "system",
         level: "warn",
         message: "Reviewer close-out attempts stopped and need operator review",
@@ -500,6 +711,7 @@ export function createHeartbeatReleaseHandlers(context: any) {
         entityId: passiveClosure.issue.id,
         agentId: run.agentId,
         runId: run.id,
+        idempotencyKey: `${run.id}:issue.review_closure_needs_operator_review`,
         details: {
           issueId: passiveClosure.issue.id,
           issueTitle: passiveClosure.issue.title,
@@ -510,6 +722,32 @@ export function createHeartbeatReleaseHandlers(context: any) {
           maxAttempts: passiveClosure.maxAttempts,
           reason: passiveClosure.reason,
         },
+      });
+    }
+
+    if (outcome.releaseSourceAfterEffects && passiveClosure?.issue) {
+      await db.transaction(async (tx) => {
+        const released = await tx
+          .update(issues)
+          .set({
+            executionRunId: null,
+            executionAgentNameKey: null,
+            executionLockedAt: null,
+            updatedAt: new Date(),
+          })
+          .where(and(
+            eq(issues.id, passiveClosure.issue.id),
+            eq(issues.executionRunId, run.id),
+          ))
+          .returning({ id: issues.id })
+          .then((rows: Array<{ id: string }>) => rows[0] ?? null);
+        if (released) {
+          await writeDurableReleaseAudit(tx, "issue.execution_released", passiveClosure.issue, {
+            issueId: passiveClosure.issue.id,
+            sourceRunId: run.id,
+            reason: passiveClosure.kind,
+          });
+        }
       });
     }
 
@@ -528,7 +766,7 @@ export function createHeartbeatReleaseHandlers(context: any) {
       },
     });
 
-    await startNextQueuedRunForAgent(promotedRun.agentId);
+    if (opts?.startNext !== false) await startNextQueuedRunForAgent(promotedRun.agentId);
   }
 
   return { releaseIssueExecutionAndPromote };

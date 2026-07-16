@@ -9,6 +9,8 @@ export interface CostEvent {
   projectId: string | null;
   goalId: string | null;
   heartbeatRunId: string | null;
+  idempotencyKey?: string | null;
+  budgetEvaluatedAt?: Date | null;
   billingCode: string | null;
   provider: string;
   biller: string;

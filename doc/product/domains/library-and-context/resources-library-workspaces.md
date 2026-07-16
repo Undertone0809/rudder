@@ -34,6 +34,7 @@ related_code:
   - ui/src/pages/Chat.side-panel.tsx
   - desktop/src/ide-opener.ts
   - ui/src/pages/OrganizationWorkspaceBackups.tsx
+  - ui/src/components/NewProjectDialog.tsx
   - ui/src/components/ProjectResourcesPanel.tsx
 related_tests:
   - server/src/__tests__/home-paths.test.ts
@@ -50,8 +51,10 @@ related_tests:
   - ui/src/components/WorkspaceFilePreview.test.tsx
   - ui/src/components/WorkspacePdfPreview.test.tsx
   - ui/src/pages/Chat.attachment-preview.test.tsx
+  - ui/src/components/NewProjectDialog.test.tsx
   - tests/e2e/organization-workspaces-image-preview.spec.ts
   - tests/e2e/organization-workspaces-launcher.spec.ts
+  - tests/e2e/new-project-resource-popover-scroll.spec.ts
   - tests/e2e/workspace-shell.spec.ts
   - tests/e2e/chat-side-panel.spec.ts
   - tests/e2e/workspace-backups.spec.ts
@@ -80,12 +83,15 @@ Product model:
 
 Flow:
 
-1. Operator creates or selects a Library/external resource.
-2. Project attaches the resource with role and note.
-3. Agent run context resolves the project.
-4. Instruction context includes a Project Context Resources section with
+1. Operator opens the project resource picker. `Create external resource` is
+   the fixed first action above independently scrolling Library and existing
+   resource choices.
+2. Operator creates or selects a Library/external resource.
+3. Project attaches the resource with role and note.
+4. Agent run context resolves the project.
+5. Instruction context includes a Project Context Resources section with
    bounded resource facts and references.
-5. The runtime can inspect the referenced Library file through agent-facing
+6. The runtime can inspect the referenced Library file through agent-facing
    APIs/CLI when needed.
 
 Invariants:
@@ -94,6 +100,9 @@ Invariants:
   boundary.
 - Organization resources must not be injected into unrelated runs just because
   they exist.
+- The project resource picker must keep its external-resource creation action
+  outside the scrolling choice list so long catalogs do not hide or move the
+  primary action.
 - A Chat Work manifest Reference is not a Project Context Resource. It becomes
   eligible run context only after an operator explicitly creates/selects the
   resource and attaches it to the Project through this contract's flow.
@@ -101,6 +110,9 @@ Invariants:
 Evidence:
 
 - ProjectResourcesPanel shows attachment role/order/note.
+- NewProjectDialog tests verify the external-resource action is the popover's
+  first child, remains outside the scroll region, and stays usable after the
+  resource list scrolls to the end.
 - Agent run context tests assert resource prompt content.
 
 ## LIBRARY.FILES.001

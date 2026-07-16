@@ -5,8 +5,7 @@ import { logger } from "../middleware/logger.js";
 export {
   appendWithCap, asBoolean, asNumber, asString, asStringArray, buildRudderEnv,
   defaultPathForPlatform, ensureAbsoluteDirectory,
-  ensureCommandResolvable, ensurePathInEnv, MAX_CAPTURE_BYTES,
-  MAX_EXCERPT_BYTES, parseJson, parseObject, redactEnvForLogs, renderTemplate, resolvePathValue, runningProcesses, type RunProcessResult
+  ensureCommandResolvable, ensurePathInEnv, killChildProcessTree, MAX_CAPTURE_BYTES, MAX_EXCERPT_BYTES, parseJson, parseObject, redactEnvForLogs, renderTemplate, resolvePathValue, runningProcesses, type RunProcessResult
 } from "@rudderhq/agent-runtime-utils/server-utils";
 
 // Re-export runChildProcess with the server's pino logger wired in.
@@ -23,6 +22,8 @@ export async function runChildProcess(
     timeoutSec: number;
     graceSec: number;
     onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
+    onSpawn?: (meta: { pid: number; startedAt: string }) => Promise<void>;
+    abortSignal?: AbortSignal;
   },
 ): Promise<RunProcessResult> {
   return _runChildProcess(runId, command, args, {

@@ -19,12 +19,16 @@ import {
 } from "@rudderhq/db";
 import { buildAgentMentionHref, deriveOrganizationUrlKey, shortRefFor } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
+import express from "express";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { errorHandler } from "../middleware/index.ts";
+import { issueRoutes } from "../routes/issues.ts";
 import { issueService } from "../services/issues.ts";
 
 type EmbeddedPostgresInstance = {
@@ -70,6 +74,16 @@ async function getAvailablePort(): Promise<number> {
 }
 
 async function startTempDatabase() {
+  const externalConnectionString = process.env.RUDDER_ISSUES_TEST_DATABASE_URL?.trim();
+  if (externalConnectionString) {
+    const parsed = new URL(externalConnectionString);
+    const databaseName = parsed.pathname.replace(/^\//, "");
+    parsed.pathname = "/postgres";
+    await ensurePostgresDatabase(parsed.toString(), databaseName);
+    await applyPendingMigrations(externalConnectionString);
+    return { connectionString: externalConnectionString, dataDir: "", instance: null };
+  }
+
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-issues-service-"));
   const port = await getAvailablePort();
   const EmbeddedPostgres = await getEmbeddedPostgresCtor();
@@ -126,6 +140,86 @@ describe("issueService.list participantAgentId", () => {
     if (dataDir) {
       fs.rmSync(dataDir, { recursive: true, force: true });
     }
+  });
+
+  it("keeps pending terminal runs visible without leaking terminal state from the issue list route", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const issueId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Issue List Projection",
+      urlKey: deriveOrganizationUrlKey("Issue List Projection"),
+      issuePrefix: `P${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "ProjectionOwner",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "assignment",
+      status: "failed",
+      terminalEffectsPending: true,
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Project active run safely",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      executionRunId: runId,
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      (req as any).actor = {
+        type: "board",
+        userId: "local-board",
+        orgIds: [orgId],
+        source: "local_implicit",
+        isInstanceAdmin: false,
+      };
+      next();
+    });
+    app.use("/api", issueRoutes(db, {} as any));
+    app.use(errorHandler);
+
+    const pendingResponse = await request(app).get(`/api/orgs/${orgId}/issues`);
+    expect(pendingResponse.status, JSON.stringify(pendingResponse.body)).toBe(200);
+    const pendingIssue = pendingResponse.body.find((row: { id: string }) => row.id === issueId);
+    expect(pendingIssue?.activeRun).toMatchObject({ id: runId, status: "failed" });
+    expect(Object.keys(pendingIssue.activeRun).sort()).toEqual([
+      "agentId",
+      "createdAt",
+      "finishedAt",
+      "id",
+      "invocationSource",
+      "startedAt",
+      "status",
+      "triggerDetail",
+    ]);
+    expect(pendingIssue.activeRun).not.toHaveProperty("terminalEffectsPending");
+
+    await db.update(heartbeatRuns).set({ terminalEffectsPending: false }).where(eq(heartbeatRuns.id, runId));
+    const completedResponse = await request(app).get(`/api/orgs/${orgId}/issues`);
+    expect(completedResponse.status, JSON.stringify(completedResponse.body)).toBe(200);
+    const completedIssue = completedResponse.body.find((row: { id: string }) => row.id === issueId);
+    expect(completedIssue?.activeRun).toBeNull();
   });
 
   it("returns issues an agent participated in across the supported signals", async () => {
@@ -1939,6 +2033,7 @@ describe("issueService.list participantAgentId", () => {
         agentId,
         invocationSource: "automation",
         status: "failed",
+        terminalEffectsPending: true,
       },
       {
         id: resumedRunId,
@@ -1963,6 +2058,14 @@ describe("issueService.list participantAgentId", () => {
       executionLockedAt: new Date(),
       startedAt: new Date(),
     });
+
+    await expect(svc.assertCheckoutOwner(issueId, agentId, resumedRunId)).rejects.toThrow(
+      /Issue run ownership conflict/i,
+    );
+    await db
+      .update(heartbeatRuns)
+      .set({ terminalEffectsPending: false })
+      .where(eq(heartbeatRuns.id, staleRunId));
 
     const ownership = await svc.assertCheckoutOwner(issueId, agentId, resumedRunId);
     expect(ownership).toMatchObject({

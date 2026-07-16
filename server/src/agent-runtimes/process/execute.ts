@@ -10,7 +10,7 @@ import {
 } from "../utils.js";
 
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
-  const { runId, agent, config, onLog, onMeta } = ctx;
+  const { runId, agent, config, onLog, onMeta, onSpawn, abortSignal } = ctx;
   const command = asString(config.command, "");
   if (!command) throw new Error("Process adapter missing command");
 
@@ -41,6 +41,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     timeoutSec,
     graceSec,
     onLog,
+    onSpawn,
+    abortSignal,
   });
 
   if (proc.timedOut) {

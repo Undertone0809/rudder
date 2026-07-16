@@ -62,7 +62,6 @@ import { logger } from "./middleware/logger.js";
 import { resolveRudderConfigPath, resolveRudderEnvPath } from "./paths.js";
 import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
 import { RuntimeSupervisor, supervisedStart } from "./runtime/runtime-supervisor.js";
-import { chatAgentRunService } from "./services/chat-agent-runs.js";
 import {
   automationService,
   heartbeatService,
@@ -1067,35 +1066,34 @@ async function startServerRuntime(
     configureFeishuIntegrationRuntime({ runtime: null, enabled: false });
   });
 
-  if (config.heartbeatSchedulerEnabled) {
-    const heartbeat = heartbeatService(db as any);
-    const automations = automationService(db as any);
-    const chatRuns = chatAgentRunService(db as any);
-  
-    // Reap orphaned running runs at startup while in-memory execution state is empty,
-    // then resume any persisted queued runs that were waiting on the previous process.
+  const heartbeat = heartbeatService(db as any);
+  // Terminal ownership recovery is a startup invariant, independent of
+  // whether interval-based heartbeat scheduling is enabled.
+  const startupRecoveryCutoff = new Date();
+  void heartbeat
+    .reapTimedOutRuns({ maxRuntimeMs: config.heartbeatRunTimeoutMs, recoveryCutoff: startupRecoveryCutoff })
+    .then(() => heartbeat.reapInactiveRuns({
+      maxInactivityMs: config.heartbeatRunInactivityTimeoutMs,
+      recoveryCutoff: startupRecoveryCutoff,
+    }))
+    .then(() => heartbeat.reapOrphanedRuns({ recoveryCutoff: startupRecoveryCutoff }))
+    .then(() => heartbeat.resumeQueuedRuns())
+    .catch((err) => {
+      logger.error({ err }, "startup heartbeat recovery failed");
+    });
+  ownInterval("heartbeat-recovery-interval", setInterval(() => {
     void heartbeat
       .reapTimedOutRuns({ maxRuntimeMs: config.heartbeatRunTimeoutMs })
       .then(() => heartbeat.reapInactiveRuns({ maxInactivityMs: config.heartbeatRunInactivityTimeoutMs }))
-      .then(() => heartbeat.reapOrphanedRuns())
+      .then(() => heartbeat.reapOrphanedRuns({ staleThresholdMs: 5 * 60 * 1000 }))
       .then(() => heartbeat.resumeQueuedRuns())
       .catch((err) => {
-        logger.error({ err }, "startup heartbeat recovery failed");
+        logger.error({ err }, "periodic heartbeat recovery failed");
       });
-    void chatRuns
-      .finalizeStaleRuns({
-        olderThanMs: 0,
-        error: "Chat run was left active across server startup",
-        errorCode: "chat_run_startup_recovery",
-      })
-      .then((finalized) => {
-        if (finalized > 0) {
-          logger.warn({ finalized }, "startup chat run recovery finalized active chat runs");
-        }
-      })
-      .catch((err) => {
-        logger.error({ err }, "startup chat run recovery failed");
-      });
+  }, config.heartbeatSchedulerIntervalMs));
+
+  if (config.heartbeatSchedulerEnabled) {
+    const automations = automationService(db as any);
     ownInterval("heartbeat-scheduler-interval", setInterval(() => {
       void heartbeat
         .tickTimers(new Date())
@@ -1117,27 +1115,6 @@ async function startServerRuntime(
         })
         .catch((err) => {
           logger.error({ err }, "automation scheduler tick failed");
-        });
-  
-      // Periodically reap orphaned runs (5-min staleness threshold) and make sure
-      // persisted queued work is still being driven forward.
-      void heartbeat
-        .reapTimedOutRuns({ maxRuntimeMs: config.heartbeatRunTimeoutMs })
-        .then(() => heartbeat.reapInactiveRuns({ maxInactivityMs: config.heartbeatRunInactivityTimeoutMs }))
-        .then(() => heartbeat.reapOrphanedRuns({ staleThresholdMs: 5 * 60 * 1000 }))
-        .then(() => heartbeat.resumeQueuedRuns())
-        .catch((err) => {
-          logger.error({ err }, "periodic heartbeat recovery failed");
-        });
-      void chatRuns
-        .finalizeStaleRuns()
-        .then((finalized) => {
-          if (finalized > 0) {
-            logger.warn({ finalized }, "periodic chat run recovery finalized stale chat runs");
-          }
-        })
-        .catch((err) => {
-          logger.error({ err }, "periodic chat run recovery failed");
         });
     }, config.heartbeatSchedulerIntervalMs));
   }

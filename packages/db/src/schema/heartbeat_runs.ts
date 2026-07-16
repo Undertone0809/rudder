@@ -47,6 +47,20 @@ export const heartbeatRuns = pgTable(
     }),
     processPid: integer("process_pid"),
     processStartedAt: timestamp("process_started_at", { withTimezone: true }),
+    processExitedAt: timestamp("process_exited_at", { withTimezone: true }),
+    executionOwnerToken: text("execution_owner_token"),
+    executionLeaseExpiresAt: timestamp("execution_lease_expires_at", { withTimezone: true }),
+    terminalEffectsPending: boolean("terminal_effects_pending").notNull().default(false),
+    terminalEffectsJson: jsonb("terminal_effects_json").$type<Record<string, unknown>>(),
+    terminalEffectsCompletedJson: jsonb("terminal_effects_completed_json").$type<string[]>(),
+    terminalEffectsDeadLetteredJson: jsonb("terminal_effects_dead_lettered_json").$type<string[]>(),
+    terminalEffectsAttemptsJson: jsonb("terminal_effects_attempts_json").$type<Record<string, number>>(),
+    terminalEffectsNextAttemptAt: timestamp("terminal_effects_next_attempt_at", { withTimezone: true }),
+    terminalEffectsDeadLetteredAt: timestamp("terminal_effects_dead_lettered_at", { withTimezone: true }),
+    terminalEffectsClaimToken: text("terminal_effects_claim_token"),
+    terminalEffectsClaimedAt: timestamp("terminal_effects_claimed_at", { withTimezone: true }),
+    terminalEffectsAttemptCount: integer("terminal_effects_attempt_count").notNull().default(0),
+    terminalEffectsLastError: text("terminal_effects_last_error"),
     retryOfRunId: uuid("retry_of_run_id").references((): AnyPgColumn => heartbeatRuns.id, {
       onDelete: "set null",
     }),
@@ -71,6 +85,11 @@ export const heartbeatRuns = pgTable(
       table.status,
       table.updatedAt,
     ),
+    statusExecutionLeaseCreatedIdx: index("heartbeat_runs_status_execution_lease_created_idx").on(
+      table.status,
+      table.executionLeaseExpiresAt,
+      table.createdAt,
+    ),
     companyChatConversationStatusUpdatedIdx: index("heartbeat_runs_company_chat_conversation_status_updated_idx").on(
       table.orgId,
       table.chatConversationId,
@@ -79,6 +98,6 @@ export const heartbeatRuns = pgTable(
     ),
     activeChatConversationUniqueIdx: uniqueIndex("heartbeat_runs_active_chat_conversation_uq")
       .on(table.orgId, table.chatConversationId)
-      .where(sql`${table.chatConversationId} is not null and ${table.status} in ('queued', 'running')`),
+      .where(sql`${table.chatConversationId} is not null and (${table.status} in ('queued', 'running') or ${table.terminalEffectsPending} = true)`),
   }),
 );

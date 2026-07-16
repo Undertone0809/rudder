@@ -7,6 +7,8 @@ import {
   createAgentSchema,
   toAgentRun,
   toAgentRuns,
+  toHeartbeatRun,
+  toHeartbeatRuns,
   updateAgentInstructionsBundleSchema,
   updateAgentInstructionsPathSchema,
   updateAgentPermissionsSchema,
@@ -14,7 +16,7 @@ import {
   upsertAgentInstructionsFileSchema,
   wakeAgentSchema
 } from "@rudderhq/shared";
-import { and, asc, desc, eq, inArray, not, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, not, or, sql } from "drizzle-orm";
 import { Router, type Request } from "express";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
@@ -1097,7 +1099,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       details: { agentId: id },
     });
 
-    res.status(202).json(run);
+    res.status(202).json(toHeartbeatRun(run));
   });
 
   router.post("/agents/:id/heartbeat/invoke", async (req, res) => {
@@ -1146,7 +1148,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       details: { agentId: id },
     });
 
-    res.status(202).json(run);
+    res.status(202).json(toHeartbeatRun(run));
   });
 
   router.post("/agents/:id/claude-login", async (req, res) => {
@@ -1184,7 +1186,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const runs = await listRunsForRequest(req, orgId);
-    res.json(runs);
+    res.json(toHeartbeatRuns(runs));
   });
 
   router.get("/orgs/:orgId/agent-runs", async (req, res) => {
@@ -1244,7 +1246,10 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       .where(
         and(
           eq(heartbeatRuns.orgId, orgId),
-          inArray(heartbeatRuns.status, ["queued", "running"]),
+          or(
+            inArray(heartbeatRuns.status, ["queued", "running"]),
+            eq(heartbeatRuns.terminalEffectsPending, true),
+          ),
         ),
       )
       .orderBy(desc(heartbeatRuns.createdAt));
@@ -1259,6 +1264,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
           and(
             eq(heartbeatRuns.orgId, orgId),
             not(inArray(heartbeatRuns.status, ["queued", "running"])),
+            eq(heartbeatRuns.terminalEffectsPending, false),
             ...(activeIds.length > 0 ? [not(inArray(heartbeatRuns.id, activeIds))] : []),
           ),
         )
@@ -1275,7 +1281,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   router.get("/heartbeat-runs/:runId", async (req, res) => {
     const run = await getAuthorizedRun(req, res, "Heartbeat run not found");
     if (!run) return;
-    res.json(redactCurrentUserValue(run, await getCurrentUserRedactionOptions()));
+    res.json(redactCurrentUserValue(toHeartbeatRun(run), await getCurrentUserRedactionOptions()));
   });
 
   router.get("/agent-runs/:runId", async (req, res) => {
@@ -1300,7 +1306,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
 
   router.post("/heartbeat-runs/:runId/cancel", async (req, res) => {
     const run = await cancelRunForRequest(req, "Heartbeat run not found");
-    res.json(run);
+    res.json(run ? toHeartbeatRun(run) : run);
   });
 
   router.post("/agent-runs/:runId/cancel", async (req, res) => {
@@ -1340,7 +1346,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   router.post("/heartbeat-runs/:runId/retry", async (req, res) => {
     const run = await retryRunForRequest(req, res, "Heartbeat run not found");
     if (!run) return;
-    res.json(redactCurrentUserValue(run, await getCurrentUserRedactionOptions()));
+    res.json(redactCurrentUserValue(toHeartbeatRun(run), await getCurrentUserRedactionOptions()));
   });
 
   router.post("/agent-runs/:runId/retry", async (req, res) => {
@@ -1538,7 +1544,10 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       .where(
         and(
           eq(heartbeatRuns.orgId, issue.orgId),
-          inArray(heartbeatRuns.status, ["queued", "running"]),
+          or(
+            inArray(heartbeatRuns.status, ["queued", "running"]),
+            eq(heartbeatRuns.terminalEffectsPending, true),
+          ),
           sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issue.id}`,
         ),
       )
@@ -1559,7 +1568,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     assertCompanyAccess(req, issue.orgId);
 
     let run = issue.executionRunId ? await heartbeat.getRun(issue.executionRunId) : null;
-    if (run && run.status !== "queued" && run.status !== "running") {
+    if (run && run.status !== "queued" && run.status !== "running" && !run.terminalEffectsPending) {
       run = null;
     }
 
@@ -1583,7 +1592,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     }
 
     res.json({
-      ...redactCurrentUserValue(run, await getCurrentUserRedactionOptions()),
+      ...redactCurrentUserValue(toHeartbeatRun(run), await getCurrentUserRedactionOptions()),
       agentId: agent.id,
       agentName: agent.name,
       agentRuntimeType: agent.agentRuntimeType,

@@ -10,7 +10,7 @@ import {
   organizations,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -348,6 +348,8 @@ describe("heartbeat run concurrency", () => {
     orgId: string;
     agentId: string;
     issueId: string;
+    status?: "running" | "timed_out";
+    terminalEffectsPending?: boolean;
   }) {
     const runId = randomUUID();
     await db.insert(heartbeatRuns).values({
@@ -356,7 +358,8 @@ describe("heartbeat run concurrency", () => {
       agentId: input.agentId,
       invocationSource: "assignment",
       triggerDetail: "system",
-      status: "running",
+      status: input.status ?? "running",
+      terminalEffectsPending: input.terminalEffectsPending ?? false,
       contextSnapshot: {
         issueId: input.issueId,
         taskKey: `issue:${input.issueId}`,
@@ -436,6 +439,49 @@ describe("heartbeat run concurrency", () => {
     expect(statuses.filter((run) => run.status === "running")).toHaveLength(2);
     expect(statuses.filter((run) => run.status === "queued")).toHaveLength(1);
     expect(new Set(mockRuntimeAdapter.calls.map((call) => call.taskKey))).toEqual(new Set(["issue:a", "issue:b"]));
+  });
+
+  it("registers execution ownership before a queued run becomes visible to recovery", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const runId = await seedQueuedRun({
+      orgId,
+      agentId,
+      taskKey: "claim-before-reaper",
+      createdAt: new Date("2026-04-27T00:15:00.000Z"),
+    });
+    const wakeupRequestId = await db
+      .select({ id: heartbeatRuns.wakeupRequestId })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0]?.id ?? null);
+    expect(wakeupRequestId).toBeTruthy();
+
+    let releaseWakeupLock!: () => void;
+    let wakeupLocked!: () => void;
+    const lockReleased = new Promise<void>((resolve) => { releaseWakeupLock = resolve; });
+    const lockAcquired = new Promise<void>((resolve) => { wakeupLocked = resolve; });
+    const lockTransaction = db.transaction(async (tx) => {
+      await tx.execute(sql`select id from agent_wakeup_requests where id = ${wakeupRequestId} for update`);
+      wakeupLocked();
+      await lockReleased;
+    });
+    await lockAcquired;
+
+    const heartbeat = heartbeatService(db);
+    const resume = heartbeat.resumeQueuedRuns();
+    await waitForCondition(async () => {
+      const statuses = await listRunStatuses(agentId);
+      return statuses[0]?.status === "running";
+    });
+
+    const recovery = await heartbeatService(db).reapOrphanedRuns();
+    expect(recovery).toEqual({ reaped: 0, runIds: [] });
+    expect(await listRunStatuses(agentId)).toContainEqual({ id: runId, status: "running" });
+
+    releaseWakeupLock();
+    await lockTransaction;
+    await resume;
+    await waitForCondition(() => Promise.resolve(mockRuntimeAdapter.calls.some((call) => call.runId === runId)));
   });
 
   it("keeps configured one-run agents serial", async () => {
@@ -580,6 +626,96 @@ describe("heartbeat run concurrency", () => {
     expect((liveRuns[0]?.contextSnapshot as Record<string, unknown>)?.issueId).toBe(issueId);
   });
 
+  it("defers same-agent issue wakeups while terminal effects are pending", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "in_progress" });
+    const terminalRunId = await seedLiveIssueExecution({
+      orgId,
+      agentId,
+      issueId,
+      status: "timed_out",
+      terminalEffectsPending: true,
+    });
+    const heartbeat = heartbeatService(db);
+
+    const run = await heartbeat.wakeup(agentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      reason: "issue_assigned",
+      payload: { issueId },
+      contextSnapshot: { issueId, wakeReason: "issue_assigned" },
+    });
+
+    expect(run).toBeNull();
+    const currentTerminalRun = await heartbeat.getRun(terminalRunId);
+    expect(currentTerminalRun).toMatchObject({
+      status: "timed_out",
+      terminalEffectsPending: true,
+    });
+    const wakeups = await listWakeupRequestsForAgent(agentId);
+    expect(wakeups).toContainEqual(expect.objectContaining({
+      status: "deferred_issue_execution",
+      reason: "issue_execution_deferred",
+      runId: null,
+    }));
+    const issueRuns = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    expect(issueRuns).toHaveLength(1);
+  });
+
+  it("rejects retry while the source run still owns terminal effects", async () => {
+    const { orgId, agentId } = await seedAgentFixture(3);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "in_progress" });
+    const terminalRunId = await seedLiveIssueExecution({
+      orgId,
+      agentId,
+      issueId,
+      status: "timed_out",
+      terminalEffectsPending: true,
+    });
+    const heartbeat = heartbeatService(db);
+
+    await expect(heartbeat.retryRun(terminalRunId)).rejects.toThrow(
+      "terminal effects must complete",
+    );
+    const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
+  });
+
+  it("deduplicates concurrent retries for a terminal run without an issue", async () => {
+    const { orgId, agentId } = await seedAgentFixture(3);
+    const sourceRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: sourceRunId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      status: "failed",
+      terminalEffectsPending: false,
+      contextSnapshot: { taskKey: "retry-without-issue" },
+      finishedAt: new Date(),
+      error: "source failed",
+    });
+    const first = heartbeatService(db);
+    const second = heartbeatService(db);
+
+    const [firstRetry, secondRetry] = await Promise.all([
+      first.retryRun(sourceRunId),
+      second.retryRun(sourceRunId),
+    ]);
+
+    expect(secondRetry.id).toBe(firstRetry.id);
+    const retries = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.retryOfRunId, sourceRunId));
+    expect(retries).toHaveLength(1);
+    await waitForCondition(() => Promise.resolve(mockRuntimeAdapter.calls.length === 1));
+  });
+
   it("claims one persisted comment-mention wake request across concurrent consumers", async () => {
     const { orgId, agentId } = await seedAgentFixture(3);
     const issueId = await seedIssueFixture({ orgId });
@@ -595,6 +731,7 @@ describe("heartbeat run concurrency", () => {
       wakeCommentId,
     });
     const heartbeat = heartbeatService(db);
+    const competingHeartbeat = heartbeatService(db);
     const wakeupOptions = {
       source: "automation" as const,
       triggerDetail: "system" as const,
@@ -612,7 +749,7 @@ describe("heartbeat run concurrency", () => {
 
     const [firstRun, secondRun] = await Promise.all([
       heartbeat.wakeup(agentId, wakeupOptions),
-      heartbeat.wakeup(agentId, wakeupOptions),
+      competingHeartbeat.wakeup(agentId, wakeupOptions),
     ]);
 
     expect(firstRun?.id).toBeTruthy();

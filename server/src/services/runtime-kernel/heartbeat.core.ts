@@ -29,6 +29,7 @@ import type {
 } from "../../agent-runtimes/index.js";
 import { appendWithCap, asNumber, MAX_EXCERPT_BYTES, parseObject } from "../../agent-runtimes/utils.js";
 import { summarizeRuntimeSkillsForTrace } from "../runtime-trace-metadata.js";
+import type { TerminalIssueSemanticAudit } from "./heartbeat.terminal.js";
 
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
 
@@ -203,6 +204,9 @@ export interface WakeupOptions {
   requestedByActorId?: string | null;
   contextSnapshot?: Record<string, unknown>;
   existingWakeupRequestId?: string | null;
+  originTerminalRunId?: string | null;
+  terminalIssueAudit?: TerminalIssueSemanticAudit;
+  startImmediately?: boolean;
 }
 
 export type UsageTotals = {

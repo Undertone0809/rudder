@@ -13,7 +13,7 @@ import type {
   AgentSkillTelemetryEvidenceCounts
 } from "@rudderhq/shared";
 import { and, asc, eq, gte, inArray, lte, sql } from "drizzle-orm";
-import { getServerAdapter, runningProcesses } from "../../agent-runtimes/index.js";
+import { getServerAdapter } from "../../agent-runtimes/index.js";
 import { parseObject } from "../../agent-runtimes/utils.js";
 import { conflict, notFound } from "../../errors.js";
 import { type BudgetEnforcementScope } from "../budgets.js";
@@ -26,7 +26,7 @@ const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBE
 const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
 
 export function createHeartbeatMiscHandlers(context: any) {
-  const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, executeRun, releaseIssueExecutionAndPromote, enqueueWakeup } = context;
+  const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, transitionRunToTerminal, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, terminateRunProcessAndWait, acknowledgeRunProcessExit, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, executeRun, releaseIssueExecutionAndPromote, enqueueWakeup } = context;
 
   async function resumeDeferredWakeupsForAgent(agentId: string) {
     const agent = await getAgent(agentId);
@@ -204,22 +204,15 @@ export function createHeartbeatMiscHandlers(context: any) {
     if (!run) throw notFound("Heartbeat run not found");
     if (run.status !== "running" && run.status !== "queued") return run;
 
-    const running = runningProcesses.get(run.id);
-    if (running) {
-      running.child.kill("SIGTERM");
-      const graceMs = Math.max(1, running.graceSec) * 1000;
-      setTimeout(() => {
-        if (!running.child.killed) {
-          running.child.kill("SIGKILL");
-        }
-      }, graceMs);
-    }
-
-    const cancelled = await setRunStatus(run.id, "cancelled", {
+    const cancelled = await transitionRunToTerminal(run.id, "cancelled", {
       finishedAt: new Date(),
       error: reason,
       errorCode: "cancelled",
+    }, {
+      expectedStatuses: [run.status],
+      processExitedAt: run.status === "queued" ? new Date() : null,
     });
+    if (!cancelled) return await getRun(run.id);
 
     await setWakeupStatus(run.wakeupRequestId, "cancelled", {
       finishedAt: new Date(),
@@ -233,12 +226,15 @@ export function createHeartbeatMiscHandlers(context: any) {
         level: "warn",
         message: "run cancelled",
       });
-      await releaseIssueExecutionAndPromote(cancelled);
+      const agent = await getAgent(run.agentId);
+      const exited = run.status === "queued"
+        || await terminateRunProcessAndWait(cancelled, agent?.agentRuntimeType ?? "");
+      if (exited && !activeRunExecutions.has(cancelled.id)) {
+        await acknowledgeRunProcessExit(cancelled.id);
+        await completeTerminalControlEffects(cancelled);
+      }
     }
 
-    runningProcesses.delete(run.id);
-    await finalizeAgentStatus(run.agentId, "cancelled");
-    await startNextQueuedRunForAgent(run.agentId);
     return cancelled;
   }
 
@@ -249,23 +245,28 @@ export function createHeartbeatMiscHandlers(context: any) {
       .where(and(eq(heartbeatRuns.agentId, agentId), inArray(heartbeatRuns.status, ["queued", "running"])));
 
     for (const run of runs) {
-      await setRunStatus(run.id, "cancelled", {
+      const cancelled = await transitionRunToTerminal(run.id, "cancelled", {
         finishedAt: new Date(),
         error: reason,
         errorCode: "cancelled",
+      }, {
+        expectedStatuses: [run.status],
+        processExitedAt: run.status === "queued" ? new Date() : null,
       });
+      if (!cancelled) continue;
 
       await setWakeupStatus(run.wakeupRequestId, "cancelled", {
         finishedAt: new Date(),
         error: reason,
       });
 
-      const running = runningProcesses.get(run.id);
-      if (running) {
-        running.child.kill("SIGTERM");
-        runningProcesses.delete(run.id);
+      const agent = await getAgent(run.agentId);
+      const exited = run.status === "queued"
+        || await terminateRunProcessAndWait(cancelled, agent?.agentRuntimeType ?? "");
+      if (exited && !activeRunExecutions.has(cancelled.id)) {
+        await acknowledgeRunProcessExit(cancelled.id);
+        await completeTerminalControlEffects(cancelled);
       }
-      await releaseIssueExecutionAndPromote(run);
     }
 
     return runs.length;
@@ -312,6 +313,12 @@ export function createHeartbeatMiscHandlers(context: any) {
     if (run.status !== "failed" && run.status !== "timed_out" && run.status !== "cancelled") {
       throw conflict("Only failed, timed out, or cancelled runs can be retried", {
         status: run.status,
+      });
+    }
+    if (run.terminalEffectsPending) {
+      throw conflict("Run terminal effects must complete before it can be retried", {
+        status: run.status,
+        terminalEffectsPending: true,
       });
     }
 

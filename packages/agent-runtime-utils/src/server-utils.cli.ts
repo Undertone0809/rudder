@@ -58,7 +58,7 @@ export function prependPathEntry(env: NodeJS.ProcessEnv, entry: string): NodeJS.
   };
 }
 
-function killChildProcessTree(child: ChildProcessWithEvents, force: boolean): void {
+export function killChildProcessTree(child: ChildProcessWithEvents, force: boolean): void {
   if (process.platform === "win32" && typeof child.pid === "number" && child.pid > 0) {
     const args = ["/pid", String(child.pid), "/t"];
     if (force) args.push("/f");

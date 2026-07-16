@@ -10,7 +10,7 @@ import type {
   HeartbeatRecoveryTrigger,
   HeartbeatRunRecoveryContext
 } from "@rudderhq/shared";
-import { and, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, lte, or, sql } from "drizzle-orm";
 import { asBoolean, asNumber, parseObject } from "../../agent-runtimes/utils.js";
 import { conflict } from "../../errors.js";
 import { issueMaterialUpdateActivitySql } from "../issue-activity-filters.js";
@@ -82,6 +82,23 @@ export function createHeartbeatRecoveryHandlers(context: any) {
     };
 
     const outcome = await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`heartbeat-run-retry:${run.id}`}))`);
+      const existingRetry = await tx
+        .select()
+        .from(heartbeatRuns)
+        .where(and(
+          eq(heartbeatRuns.agentId, run.agentId),
+          eq(heartbeatRuns.retryOfRunId, run.id),
+          or(
+            inArray(heartbeatRuns.status, ["queued", "running"]),
+            eq(heartbeatRuns.terminalEffectsPending, true),
+          ),
+        ))
+        .orderBy(asc(heartbeatRuns.createdAt))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (existingRetry) return { kind: "existing" as const, run: existingRetry };
+
       let issueRow:
         | {
           id: string;
@@ -113,9 +130,19 @@ export function createHeartbeatRecoveryHandlers(context: any) {
           .from(heartbeatRuns)
           .where(eq(heartbeatRuns.id, issueRow.executionRunId))
           .then((rows) => rows[0] ?? null);
+        const isSourceTerminalOwner =
+          activeExecutionRun?.id === run.id
+          && activeExecutionRun.terminalEffectsPending
+          && activeExecutionRun.status !== "queued"
+          && activeExecutionRun.status !== "running";
         const isActiveExecutionRun =
           activeExecutionRun &&
-          (activeExecutionRun.status === "queued" || activeExecutionRun.status === "running");
+          !isSourceTerminalOwner &&
+          (
+            activeExecutionRun.status === "queued"
+            || activeExecutionRun.status === "running"
+            || activeExecutionRun.terminalEffectsPending
+          );
 
         if (!isActiveExecutionRun) {
           await tx
@@ -443,7 +470,15 @@ export function createHeartbeatRecoveryHandlers(context: any) {
     const existingWake = await tx
       .select({ id: agentWakeupRequests.id })
       .from(agentWakeupRequests)
-      .where(eq(agentWakeupRequests.idempotencyKey, `${ISSUE_REVIEW_CLOSEOUT_REASON}:${runId}`))
+      .where(and(
+        eq(agentWakeupRequests.idempotencyKey, `${ISSUE_REVIEW_CLOSEOUT_REASON}:${runId}`),
+        inArray(agentWakeupRequests.status, [
+          "queued",
+          "claimed",
+          "deferred_agent_paused",
+          "deferred_issue_execution",
+        ]),
+      ))
       .limit(1)
       .then((rows: Array<{ id: string }>) => rows[0] ?? null);
     if (existingWake) return true;

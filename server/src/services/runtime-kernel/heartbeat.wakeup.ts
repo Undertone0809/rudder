@@ -5,7 +5,7 @@ import {
   heartbeatRuns,
   issues
 } from "@rudderhq/db";
-import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lte, or, sql } from "drizzle-orm";
 import { conflict, notFound } from "../../errors.js";
 import { publishLiveEvent } from "../live-events.js";
 
@@ -13,6 +13,7 @@ export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRu
 
 import * as heartbeatCore from "./heartbeat.core.js";
 import * as heartbeatSessions from "./heartbeat.sessions.js";
+import { writeTerminalIssueSemanticAudit } from "./heartbeat.terminal.js";
 const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, isIssueCommentMentionWake, resolveHeartbeatObservabilitySurface, buildHeartbeatObservationName, compactTraceText, buildIssueRunTraceName, buildHeartbeatRuntimeTraceMetadata, buildHeartbeatAdapterInvokePayload, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, readSkillEvidenceFromPayload, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
 const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
 
@@ -26,6 +27,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
     const reason = opts.reason ?? null;
     const payload = opts.payload ?? null;
     const existingWakeupRequestId = readNonEmptyString(opts.existingWakeupRequestId);
+    const originTerminalRunId = readNonEmptyString(opts.originTerminalRunId);
     const {
       contextSnapshot: enrichedContextSnapshot,
       issueIdFromPayload,
@@ -95,7 +97,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
         requestedByActorId: opts.requestedByActorId ?? null,
         idempotencyKey: opts.idempotencyKey ?? null,
         finishedAt: new Date(),
-      });
+      }).onConflictDoNothing();
     };
 
     if (agent.status === "terminated" || agent.status === "pending_approval") {
@@ -277,7 +279,21 @@ export function createHeartbeatWakeupHandlers(context: any) {
             .then((rows) => rows[0] ?? null)
           : null;
 
-        if (activeExecutionRun && activeExecutionRun.status !== "queued" && activeExecutionRun.status !== "running") {
+        if (
+          activeExecutionRun
+          && activeExecutionRun.status !== "queued"
+          && activeExecutionRun.status !== "running"
+          && !activeExecutionRun.terminalEffectsPending
+        ) {
+          activeExecutionRun = null;
+        }
+
+        if (
+          activeExecutionRun?.id === originTerminalRunId
+          && activeExecutionRun.terminalEffectsPending
+          && activeExecutionRun.status !== "queued"
+          && activeExecutionRun.status !== "running"
+        ) {
           activeExecutionRun = null;
         }
 
@@ -300,8 +316,12 @@ export function createHeartbeatWakeupHandlers(context: any) {
             .where(
               and(
                 eq(heartbeatRuns.orgId, issue.orgId),
-                inArray(heartbeatRuns.status, ["queued", "running"]),
+                or(
+                  inArray(heartbeatRuns.status, ["queued", "running"]),
+                  eq(heartbeatRuns.terminalEffectsPending, true),
+                ),
                 sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issue.id}`,
+                ...(originTerminalRunId ? [sql`${heartbeatRuns.id} <> ${originTerminalRunId}`] : []),
               ),
             )
             .orderBy(
@@ -346,7 +366,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
             activeExecutionRun.status === "running" &&
             isSameExecutionAgent;
 
-          if (isSameExecutionAgent && !shouldQueueFollowupForCommentWake) {
+          if (isSameExecutionAgent && !shouldQueueFollowupForCommentWake && !activeExecutionRun.terminalEffectsPending) {
             const mergedContextSnapshot = mergeCoalescedContextSnapshot(
               activeExecutionRun.contextSnapshot,
               enrichedContextSnapshot,
@@ -533,6 +553,10 @@ export function createHeartbeatWakeupHandlers(context: any) {
           })
           .where(eq(issues.id, issue.id));
 
+        if (opts.terminalIssueAudit) {
+          await writeTerminalIssueSemanticAudit(tx, opts.terminalIssueAudit);
+        }
+
         return { kind: "queued" as const, run: newRun };
       });
 
@@ -540,6 +564,9 @@ export function createHeartbeatWakeupHandlers(context: any) {
       if (outcome.kind === "coalesced") return outcome.run;
 
       const newRun = outcome.run;
+      if (opts.terminalIssueAudit) {
+        await context.afterIssuePromotionCommitted?.({ promotedRun: newRun });
+      }
       publishLiveEvent({
         orgId: newRun.orgId,
         type: "heartbeat.run.queued",
@@ -552,7 +579,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
         },
       });
 
-      await startNextQueuedRunForAgent(agent.id);
+      if (opts.startImmediately !== false) await startNextQueuedRunForAgent(agent.id);
       return newRun;
     }
 
@@ -612,7 +639,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
           idempotencyKey: opts.idempotencyKey ?? null,
           runId: mergedRun.id,
           finishedAt: new Date(),
-        });
+        }).onConflictDoNothing();
       }
       return mergedRun;
     }
@@ -717,7 +744,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
       });
     }
 
-    await startNextQueuedRunForAgent(agent.id);
+    if (opts.startImmediately !== false) await startNextQueuedRunForAgent(agent.id);
 
     return newRun;
   }
@@ -800,7 +827,10 @@ export function createHeartbeatWakeupHandlers(context: any) {
               .where(
                 and(
                   eq(heartbeatRuns.id, issue.executionRunId),
-                  inArray(heartbeatRuns.status, ["queued", "running"]),
+                  or(
+                    inArray(heartbeatRuns.status, ["queued", "running"]),
+                    eq(heartbeatRuns.terminalEffectsPending, true),
+                  ),
                 ),
               )
               .then((rows) => rows[0] ?? null)
