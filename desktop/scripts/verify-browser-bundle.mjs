@@ -1,24 +1,8 @@
-import { createHash } from "node:crypto";
 import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-
-const EXPECTED_CONTRACT_VERSION = "rudder.agent-mcp-tools/v1";
-const EXPECTED_BROWSER_TOOLS = [
-  "rudder_browser_tabs",
-  "rudder_browser_open",
-  "rudder_browser_navigate",
-  "rudder_browser_read",
-  "rudder_browser_click",
-  "rudder_browser_type",
-  "rudder_browser_screenshot",
-  "rudder_browser_close",
-];
-const EXPECTED_CONTRACT_HASH = createHash("sha256")
-  .update(JSON.stringify({ contract: EXPECTED_CONTRACT_VERSION, tools: EXPECTED_BROWSER_TOOLS }))
-  .digest("hex");
 
 async function exists(filePath) {
   return await access(filePath).then(() => true).catch(() => false);
@@ -109,6 +93,7 @@ export async function verifyBrowserBundle(options) {
     try {
       const resolver = await import(pathToFileURL(path.join(runtimeUtilsDir, "dist", "rudder-mcp-server.js")).href);
       const preflightModule = await import(pathToFileURL(path.join(runtimeUtilsDir, "dist", "rudder-mcp-preflight.js")).href);
+      const contractModule = await import(pathToFileURL(path.join(runtimeUtilsDir, "dist", "rudder-mcp-contract.js")).href);
       const command = await resolver.resolveRudderMcpCliCommand(runtimeModuleDir);
       assertEqual(command.provenance, "desktop_bundle", "resolver provenance");
       assertEqual(command.expectedVersion, expectedVersion, "resolver expected version");
@@ -135,10 +120,11 @@ export async function verifyBrowserBundle(options) {
         throw new Error(`packaged Browser MCP preflight failed: ${result.diagnosticCode ?? "unknown"}`);
       }
       assertEqual(result.version, expectedVersion, "handshake CLI version");
-      assertEqual(result.contractVersion, EXPECTED_CONTRACT_VERSION, "handshake contract version");
-      assertEqual(result.contractHash, EXPECTED_CONTRACT_HASH, "handshake contract hash");
+      assertEqual(result.contractVersion, contractModule.RUDDER_MCP_CONTRACT_VERSION, "handshake contract version");
+      assertEqual(result.coreContractHash, contractModule.RUDDER_CORE_MCP_CONTRACT_HASH, "handshake core contract hash");
+      assertEqual(result.contractHash, contractModule.RUDDER_BROWSER_MCP_CONTRACT_HASH, "handshake Browser contract hash");
       const browserTools = result.tools.map((tool) => tool.name).filter((name) => name.startsWith("rudder_browser_"));
-      assertEqual(JSON.stringify(browserTools), JSON.stringify(EXPECTED_BROWSER_TOOLS), "Browser tool set");
+      assertEqual(JSON.stringify(browserTools), JSON.stringify(contractModule.RUDDER_BROWSER_MCP_TOOL_NAMES), "Browser tool set");
       if (await exists(staleMarker)) throw new Error("packaged Browser bundle resolved the stale PATH rudder command");
       return {
         version: result.version,

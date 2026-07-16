@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
+import { fingerprintRudderMcpToolManifest } from "./rudder-mcp-fingerprint.js";
 import {
   RUDDER_BROWSER_MCP_CONTRACT_HASH,
   RUDDER_BROWSER_MCP_TOOL_NAMES,
+  RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_CORE_MCP_TOOL_NAMES,
   RUDDER_MCP_CONTRACT_VERSION,
   RUDDER_MCP_SERVER_NAME,
@@ -39,10 +41,6 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
-}
-
-function asString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
 function asExactString(value: unknown): string | null {
@@ -125,6 +123,21 @@ function hasExactNames(actual: readonly string[], expected: readonly string[]): 
     && actual.every((name, index) => name === expected[index]);
 }
 
+function semanticManifestHash(
+  tools: ReadonlyArray<{
+    name: string;
+    description?: string;
+    inputSchema?: Record<string, unknown>;
+  }>,
+): string | null {
+  if (tools.some((tool) => tool.description === undefined || tool.inputSchema === undefined)) return null;
+  return fingerprintRudderMcpToolManifest(tools as Array<{
+    name: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+  }>);
+}
+
 function isBrowserToolCandidate(name: string): boolean {
   return name.trim().startsWith("rudder_browser_");
 }
@@ -143,6 +156,7 @@ function failed(
     provenance: command.provenance,
     version: partial.version ?? null,
     contractVersion: partial.contractVersion ?? null,
+    coreContractHash: partial.coreContractHash ?? null,
     contractHash: partial.contractHash ?? null,
     diagnosticCode: code,
     diagnostic: message,
@@ -270,6 +284,7 @@ export async function preflightRudderMcpServer(input: {
   const rudder = asRecord(asRecord(capabilities.experimental).rudder);
   const version = asExactString(serverInfo.version);
   const contractVersion = asExactString(rudder.contractVersion);
+  const coreContractHash = asExactString(rudder.coreContractHash);
   const contractHash = asExactString(rudder.browserContractHash);
   const listed = asRecord(toolsList?.result).tools;
   if (!Array.isArray(listed)) {
@@ -277,14 +292,14 @@ export async function preflightRudderMcpServer(input: {
       input.command,
       "browser_bundle_handshake_failed",
       "Rudder MCP tools/list returned an invalid manifest; core control-plane tools are unavailable.",
-      { version, contractVersion, contractHash },
+      { version, contractVersion, coreContractHash, contractHash },
     );
   }
   const parsedTools = listed.map((entry) => {
     const tool = asRecord(entry);
     const name = asExactString(tool.name);
     if (!name) return null;
-    const description = asString(tool.description);
+    const description = asExactString(tool.description);
     const inputSchema = asRecord(tool.inputSchema);
     return {
       name,
@@ -296,7 +311,7 @@ export async function preflightRudderMcpServer(input: {
   const tools = parsedTools
     .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
     .map(({ hasCanonicalInputSchema: _hasCanonicalInputSchema, ...tool }) => tool);
-  const partial = { version, contractVersion, contractHash, tools };
+  const partial = { version, contractVersion, coreContractHash, contractHash, tools };
 
   if (asExactString(serverInfo.name) !== RUDDER_MCP_SERVER_NAME) {
     return failed(
@@ -308,10 +323,13 @@ export async function preflightRudderMcpServer(input: {
   }
   const coreTools = parsedTools.filter((tool) => tool && !isBrowserToolCandidate(tool.name));
   const coreToolNames = coreTools.map((tool) => tool!.name);
+  const observedCoreContractHash = semanticManifestHash(coreTools.filter((tool) => tool !== null));
   if (
     parsedTools.some((tool) => tool === null)
     || !hasExactNames(coreToolNames, RUDDER_CORE_MCP_TOOL_NAMES)
     || coreTools.some((tool) => !tool!.hasCanonicalInputSchema)
+    || coreContractHash !== RUDDER_CORE_MCP_CONTRACT_HASH
+    || observedCoreContractHash !== RUDDER_CORE_MCP_CONTRACT_HASH
   ) {
     return failed(
       input.command,
@@ -340,9 +358,11 @@ export async function preflightRudderMcpServer(input: {
   const browserTools = parsedTools.filter((tool) => tool && isBrowserToolCandidate(tool.name));
   const browserToolNames = browserTools.map((tool) => tool!.name);
   const expectedBrowserTools = input.browserEnabled ? [...RUDDER_BROWSER_MCP_TOOL_NAMES] : [];
+  const observedBrowserContractHash = semanticManifestHash(browserTools.filter((tool) => tool !== null));
   if (
     !hasExactNames(browserToolNames, expectedBrowserTools)
     || browserTools.some((tool) => !tool!.hasCanonicalInputSchema)
+    || (input.browserEnabled && observedBrowserContractHash !== RUDDER_BROWSER_MCP_CONTRACT_HASH)
   ) {
     return failed(
       input.command,
@@ -358,6 +378,7 @@ export async function preflightRudderMcpServer(input: {
     provenance: input.command.provenance,
     version,
     contractVersion,
+    coreContractHash,
     contractHash,
     diagnosticCode: null,
     diagnostic: null,

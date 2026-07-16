@@ -1,4 +1,12 @@
-import { RUDDER_CORE_MCP_TOOL_NAMES } from "@rudderhq/agent-runtime-utils";
+import {
+  RUDDER_BROWSER_MCP_CONTRACT_HASH,
+  RUDDER_CORE_MCP_CONTRACT_HASH,
+  RUDDER_CORE_MCP_TOOL_NAMES,
+  RUDDER_MCP_CANONICAL_TOOL_CONTRACTS,
+  RUDDER_MCP_CANONICAL_TOOL_DEFINITIONS,
+  rudderMcpSemanticToolContract,
+} from "@rudderhq/agent-runtime-utils";
+import { fingerprintRudderMcpToolManifest } from "@rudderhq/agent-runtime-utils/rudder-mcp-fingerprint";
 import { RUDDER_AGENT_V1_MCP_SERVER_NAME, RUDDER_AGENT_V1_MCP_TOOL_NAMES } from "@rudderhq/shared";
 import fs from "node:fs";
 import path from "node:path";
@@ -171,6 +179,37 @@ describe("agent-v1 registry", () => {
     expect(RUDDER_CORE_MCP_TOOL_NAMES).toEqual(
       RUDDER_AGENT_V1_MCP_TOOL_NAMES.filter((name) => !name.startsWith("rudder_browser_")),
     );
+  });
+
+  it("derives core and Browser semantic hashes from the canonical tool manifest", () => {
+    const tools = buildAgentV1McpToolsManifest("agent-v1").tools
+      .map(rudderMcpSemanticToolContract);
+    expect(tools).toEqual(RUDDER_MCP_CANONICAL_TOOL_CONTRACTS);
+    expect(fingerprintRudderMcpToolManifest(
+      tools.filter((tool) => !tool.name.startsWith("rudder_browser_")),
+    )).toBe(RUDDER_CORE_MCP_CONTRACT_HASH);
+    expect(fingerprintRudderMcpToolManifest(
+      tools.filter((tool) => tool.name.startsWith("rudder_browser_")),
+    )).toBe(RUDDER_BROWSER_MCP_CONTRACT_HASH);
+  });
+
+  it("keeps generated semantic descriptors aligned with the CLI capability registry", () => {
+    const capabilities = buildAgentCliCapabilitiesManifest("agent-v1").capabilities;
+    expect(RUDDER_MCP_CANONICAL_TOOL_DEFINITIONS.map((tool) => ({
+      id: tool.capabilityId,
+      description: tool.description,
+      mutating: tool.mutating,
+      requiresOrgId: tool.requiresOrgId,
+      requiresAgentId: tool.requiresAgentId,
+      attachesRunIdWhenAvailable: tool.attachesRunIdWhenAvailable,
+    }))).toEqual(capabilities.map((capability) => ({
+      id: capability.id,
+      description: capability.description,
+      mutating: capability.mutating,
+      requiresOrgId: capability.requiresOrgId,
+      requiresAgentId: capability.requiresAgentId,
+      attachesRunIdWhenAvailable: capability.attachesRunIdWhenAvailable,
+    })));
   });
 
   it("can remove Browser tools from a runtime manifest without changing the CLI contract", () => {

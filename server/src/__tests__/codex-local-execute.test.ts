@@ -1,6 +1,7 @@
 import { execute } from "@rudderhq/agent-runtime-codex-local/server";
 import {
   RUDDER_BROWSER_MCP_CONTRACT_HASH,
+  RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_MCP_CONTRACT_VERSION,
 } from "@rudderhq/agent-runtime-utils";
 import { execFile } from "node:child_process";
@@ -1660,6 +1661,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
         available: true,
         browserAvailable: true,
         contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
+        coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
         contractVersion: RUDDER_MCP_CONTRACT_VERSION,
         diagnosticCode: null,
         provenance: "repo",

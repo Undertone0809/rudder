@@ -1,5 +1,6 @@
 import {
   RUDDER_BROWSER_MCP_CONTRACT_HASH,
+  RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_MCP_CONTRACT_VERSION,
 } from "@rudderhq/agent-runtime-utils";
 import fs from "node:fs/promises";
@@ -436,6 +437,7 @@ describe("agent-v1 MCP server", () => {
           experimental: {
             rudder: {
               contractVersion: RUDDER_MCP_CONTRACT_VERSION,
+              coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
               browserContractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
             },
           },

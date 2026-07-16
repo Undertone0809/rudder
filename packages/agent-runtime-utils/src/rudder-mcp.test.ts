@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   RUDDER_BROWSER_MCP_CONTRACT_HASH,
+  RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_MCP_CONTRACT_VERSION,
   RUDDER_MCP_MANAGED_ENV_KEYS,
   RUDDER_MCP_TOOL_COUNT,
@@ -26,6 +27,7 @@ describe("Rudder MCP Browser capability", () => {
         provenance: "repo",
         version: "0.4.6",
         contractVersion: RUDDER_MCP_CONTRACT_VERSION,
+        coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
         contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
         diagnosticCode: null,
         diagnostic: null,
@@ -33,6 +35,7 @@ describe("Rudder MCP Browser capability", () => {
       },
     })).toMatchObject({
       browserAvailable: true,
+      coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
       contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
       provenance: "repo",
       toolCount: RUDDER_MCP_TOOL_COUNT + 8,

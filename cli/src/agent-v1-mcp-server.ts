@@ -1,8 +1,9 @@
 import {
-  RUDDER_BROWSER_MCP_CONTRACT_HASH,
   RUDDER_MCP_CONTRACT_VERSION,
   RUDDER_MCP_SERVER_NAME,
+  rudderMcpSemanticToolContract,
 } from "@rudderhq/agent-runtime-utils";
+import { fingerprintRudderMcpToolManifest } from "@rudderhq/agent-runtime-utils/rudder-mcp-fingerprint";
 import { addIssueCommentSchema, checkoutIssueSchema } from "@rudderhq/shared";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -143,6 +144,14 @@ export async function runAgentV1McpJsonRpcMessage(
       case "notifications/initialized":
         return isNotification ? null : rpcResult(id, {});
       case "initialize":
+        const contractManifest = buildAgentV1McpToolsManifest("agent-v1").tools
+          .map(rudderMcpSemanticToolContract);
+        const coreContractHash = fingerprintRudderMcpToolManifest(
+          contractManifest.filter((tool) => !tool.name.startsWith("rudder_browser_")),
+        );
+        const browserContractHash = fingerprintRudderMcpToolManifest(
+          contractManifest.filter((tool) => tool.name.startsWith("rudder_browser_")),
+        );
         return rpcResult(id, {
           protocolVersion: requestedProtocolVersion(message.params) ?? "2024-11-05",
           capabilities: {
@@ -150,7 +159,8 @@ export async function runAgentV1McpJsonRpcMessage(
             experimental: {
               rudder: {
                 contractVersion: RUDDER_MCP_CONTRACT_VERSION,
-                browserContractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
+                coreContractHash,
+                browserContractHash,
               },
             },
           },
@@ -931,12 +941,10 @@ function cliArgsForCapability(
   }
 }
 
-function toMcpToolListEntry(tool: AgentV1McpToolManifestEntry): Record<string, unknown> {
-  return {
-    name: tool.name,
-    description: `${tool.description} Mutating: ${tool.mutating ? "yes" : "no"}. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: ${tool.requiresOrgId ? "required from runtime env" : "not required by this tool"}. Agent context: ${tool.requiresAgentId ? "required from runtime env" : "runtime env when available"}. Run attribution: ${tool.attachesRunIdWhenAvailable ? "attached from runtime env when available" : "not attached"}.`,
-    inputSchema: tool.inputSchema,
-  };
+function toMcpToolListEntry(
+  tool: AgentV1McpToolManifestEntry,
+): ReturnType<typeof rudderMcpSemanticToolContract> {
+  return rudderMcpSemanticToolContract(tool);
 }
 
 function requestedProtocolVersion(params: unknown): string | null {
