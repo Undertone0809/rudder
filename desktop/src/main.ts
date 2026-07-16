@@ -107,7 +107,7 @@ import {
   toWorkspaceLaunchTargetPayload,
   type DesktopWorkspaceLaunchTargetPayload,
 } from "./desktop-workspace-launch-payload.js";
-import { isSidePanelCloseShortcutInput } from "./side-panel-close-shortcut.js";
+import { resolveProtectedDesktopShortcutRoute } from "./side-panel-close-shortcut.js";
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 type BootState = {
   stage: string;
@@ -409,6 +409,7 @@ let currentMainRenderer: WebContents | null = null;
 let currentMainWindowKind: "app" | "boot" = "boot";
 let residentTray: Tray | null = null;
 let sidePanelCloseShortcutActive = false;
+let browserSurfaceShortcutActive = false;
 let residentControlsAvailable = false;
 let desktopWindowIcon: Electron.NativeImage | null = null;
 let latestPostUpdateReloadMarker: PostUpdateReloadMarker | null = null;
@@ -418,6 +419,7 @@ let currentAppearance: DesktopAppearance = resolveAppearanceForThemePreference(
   nativeTheme.shouldUseDarkColors,
 );
 const sidePanelCloseShortcutWebContents = new WeakSet<WebContents>();
+const operatorBrowserShortcutWebContents = new WeakSet<WebContents>();
 const browserGuestRegistry = createBrowserGuestRegistry();
 const acceptBrowserPopup = createBrowserPopupRateLimiter();
 let browserProfileController: BrowserProfileController | null = null;
@@ -1044,13 +1046,24 @@ function installRendererRecoveryHandlers(window: BrowserWindow, initialUrl: stri
 }
 
 function handleSidePanelCloseShortcutInput(webContents: WebContents, event: Electron.Event, input: Electron.Input): void {
-  if (!sidePanelCloseShortcutActive || !isSidePanelCloseShortcutInput(input)) return;
+  const route = resolveProtectedDesktopShortcutRoute(input, {
+    sidePanelCloseActive: sidePanelCloseShortcutActive,
+    browserSurfaceActive: browserSurfaceShortcutActive,
+    operatorBrowserGuest: operatorBrowserShortcutWebContents.has(webContents),
+  });
+  if (!route) return;
   event.preventDefault();
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("desktop:close-side-panel-active-tab");
+  if (route.kind === "close_side_panel_tab") {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("desktop:close-side-panel-active-tab");
+      return;
+    }
+    webContents.send("desktop:close-side-panel-active-tab");
     return;
   }
-  webContents.send("desktop:close-side-panel-active-tab");
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("desktop:browser-shortcut", route.action);
+  }
 }
 
 function installSidePanelCloseShortcutHandler(webContents: WebContents): void {
@@ -1066,6 +1079,7 @@ function installMainWindowSidePanelCloseShortcutHandler(window: BrowserWindow): 
   window.webContents.on("did-start-navigation", (_event, _targetUrl, isInPlace, isMainFrame) => {
     if (!isMainFrame || isInPlace) return;
     sidePanelCloseShortcutActive = false;
+    browserSurfaceShortcutActive = false;
   });
 }
 
@@ -1101,7 +1115,10 @@ async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Pr
       partition: browserProfile.getPartition(),
       getControlPlaneOrigins: () => collectBrowserControlPlaneOrigins(initialUrl),
       isBrowserAvailable: () => browserProfile.isOperatorAvailable(),
-      registerGuest: browserGuestRegistry.register,
+      registerGuest: (guest) => {
+        browserGuestRegistry.register(guest);
+        operatorBrowserShortcutWebContents.add(guest as WebContents);
+      },
       openBrowserPopup: (url) => routeDesktopWebLink(url, "browser_popup"),
     });
   }
@@ -1835,6 +1852,10 @@ function registerIpc(): void {
   ipcMain.handle("desktop:set-side-panel-close-shortcut-active", async (event, active: boolean) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return;
     sidePanelCloseShortcutActive = Boolean(active);
+  });
+  ipcMain.handle("desktop:set-browser-surface-shortcut-active", async (event, active: boolean) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return;
+    browserSurfaceShortcutActive = Boolean(active);
   });
   ipcMain.handle("desktop:respond-deferred-update-prompt", async (event, payload: {
     promptId?: string;

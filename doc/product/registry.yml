@@ -502,6 +502,8 @@ contracts:
       - desktop/src/browser-profile.ts
       - desktop/src/browser-ipc.ts
       - desktop/src/browser-webview-policy.ts
+      - desktop/src/browser-shortcuts.ts
+      - desktop/src/side-panel-close-shortcut.ts
       - desktop/src/browser-import-snapshot.ts
       - desktop/src/browser-import-sources.ts
       - desktop/src/browser-cookie-import-worker.ts
@@ -533,6 +535,7 @@ contracts:
       - server/resources/bundled-skills/browser/SKILL.md
       - cli/src/agent-v1-mcp-server.ts
       - cli/src/commands/client/browser.ts
+      - packages/shared/src/browser-shortcuts.ts
       - ui/src/context/SidePanelContext.tsx
       - ui/src/components/DesktopBrowserLinkBridge.tsx
       - ui/src/lib/browser-side-panel.ts
@@ -544,6 +547,8 @@ contracts:
       - desktop/src/browser-profile.test.ts
       - desktop/src/browser-ipc.test.ts
       - desktop/src/browser-webview-policy.test.ts
+      - desktop/src/browser-shortcuts.test.ts
+      - desktop/src/side-panel-close-shortcut.test.ts
       - desktop/src/browser-import-snapshot.test.ts
       - desktop/src/browser-import-sources.test.ts
       - desktop/src/browser-cookie-import-worker.test.ts
@@ -572,6 +577,7 @@ contracts:
       - server/src/__tests__/organization-skills-reference.test.ts
       - cli/src/__tests__/agent-v1-mcp-server.test.ts
       - cli/src/__tests__/browser-command.test.ts
+      - packages/shared/src/browser-shortcuts.test.ts
       - ui/src/pages/InstanceBrowserSettings.test.tsx
       - ui/src/components/BrowserDataImportDialog.test.tsx
       - ui/src/components/DesktopBrowserLinkBridge.test.tsx
@@ -1017,6 +1023,10 @@ contracts:
       - desktop/src/browser-webview-policy.ts
       - desktop/src/browser-popup-rate-limit.ts
       - desktop/src/navigation-guard.ts
+      - desktop/src/browser-shortcuts.ts
+      - desktop/src/side-panel-close-shortcut.ts
+      - desktop/src/preload.ts
+      - packages/shared/src/browser-shortcuts.ts
       - ui/src/components/DesktopBrowserLinkBridge.tsx
       - ui/src/lib/browser-side-panel.ts
       - ui/src/lib/desktop-browser-link-router.ts
@@ -1038,6 +1048,9 @@ contracts:
       - desktop/src/browser-webview-policy.test.ts
       - desktop/src/browser-popup-rate-limit.test.ts
       - desktop/src/navigation-guard.test.ts
+      - desktop/src/browser-shortcuts.test.ts
+      - desktop/src/side-panel-close-shortcut.test.ts
+      - packages/shared/src/browser-shortcuts.test.ts
       - ui/src/components/DesktopBrowserLinkBridge.test.tsx
       - ui/src/lib/browser-side-panel.test.ts
       - ui/src/lib/desktop-browser-link-router.test.ts

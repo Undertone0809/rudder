@@ -1,3 +1,8 @@
+import {
+  resolveDesktopBrowserShortcutInput,
+  type DesktopBrowserShortcutAction,
+} from "./browser-shortcuts.js";
+
 export type DesktopCloseShortcutInput = {
   type?: string;
   key?: string;
@@ -18,4 +23,25 @@ export function isSidePanelCloseShortcutInput(
   if (!isCloseKey || input.alt || input.shift) return false;
   if (platform === "darwin") return Boolean(input.meta) && !input.control;
   return Boolean(input.control) && !input.meta;
+}
+
+export type ProtectedDesktopShortcutRoute =
+  | { kind: "close_side_panel_tab" }
+  | { kind: "browser"; action: DesktopBrowserShortcutAction };
+
+export function resolveProtectedDesktopShortcutRoute(
+  input: DesktopCloseShortcutInput,
+  context: {
+    sidePanelCloseActive: boolean;
+    browserSurfaceActive: boolean;
+    operatorBrowserGuest: boolean;
+  },
+  platform: NodeJS.Platform = process.platform,
+): ProtectedDesktopShortcutRoute | null {
+  if (context.sidePanelCloseActive && isSidePanelCloseShortcutInput(input, platform)) {
+    return { kind: "close_side_panel_tab" };
+  }
+  const action = resolveDesktopBrowserShortcutInput(input, platform);
+  if (!action || (!context.browserSurfaceActive && !context.operatorBrowserGuest)) return null;
+  return { kind: "browser", action };
 }

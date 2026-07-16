@@ -5,16 +5,31 @@ type DesktopWebLinkRequest = {
   source: "link" | "browser_popup";
 };
 
+type BrowserShortcutAction =
+  | "reload"
+  | "reload_ignoring_cache"
+  | "new_tab"
+  | "focus_location"
+  | "go_back"
+  | "go_forward"
+  | "zoom_in"
+  | "zoom_out"
+  | "zoom_reset";
+
 async function installBrowserDesktopStub(page: Page) {
   await page.addInitScript(() => {
     let webLinkListener: ((request: DesktopWebLinkRequest) => void) | null = null;
+    let browserShortcutListener: ((action: BrowserShortcutAction) => void) | null = null;
     let browserResetListener: ((event: { reason: "clear" | "disabled"; enabled: boolean; available: boolean }) => void) | null = null;
     const externalUrls: string[] = [];
     const enabledCalls: boolean[] = [];
+    const shortcutActiveCalls: boolean[] = [];
     let clearCalls = 0;
     Object.assign(window, {
       __rudderBrowserExternalUrls: externalUrls,
       __rudderBrowserEnabledCalls: enabledCalls,
+      __rudderBrowserShortcutActiveCalls: shortcutActiveCalls,
+      __emitDesktopBrowserShortcut: (action: BrowserShortcutAction) => browserShortcutListener?.(action),
       __emitDesktopWebLink: (request: DesktopWebLinkRequest) => webLinkListener?.(request),
       __rudderBrowserClearCalls: () => clearCalls,
     });
@@ -22,6 +37,13 @@ async function installBrowserDesktopStub(page: Page) {
       configurable: true,
       value: {
         setSidePanelCloseShortcutActive: async () => {},
+        setBrowserSurfaceShortcutActive: async (active: boolean) => {
+          shortcutActiveCalls.push(active);
+        },
+        onBrowserShortcut: (listener: (action: BrowserShortcutAction) => void) => {
+          browserShortcutListener = listener;
+          return () => { browserShortcutListener = null; };
+        },
         onCloseSidePanelActiveTab: () => () => {},
         onOpenWebLink: (listener: (request: DesktopWebLinkRequest) => void) => {
           webLinkListener = listener;
@@ -152,6 +174,91 @@ test.describe("Built-in Browser", () => {
     await expect.poll(() => page.evaluate(() => (
       window as typeof window & { __rudderBrowserExternalUrls: string[] }
     ).__rudderBrowserExternalUrls)).not.toContain("https://example.net/disabled");
+  });
+
+  test("routes Desktop browser shortcuts only while the Browser surface has focus", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Built-in Browser Shortcuts ${Date.now()}`,
+        issuePrefix: `BRK${Date.now().toString().slice(-6)}`,
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { issuePrefix: string };
+
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await page.evaluate(() => (
+      window as typeof window & { __emitDesktopWebLink(request: DesktopWebLinkRequest): void }
+    ).__emitDesktopWebLink({ url: "https://example.com/shortcut-target", source: "link" }));
+
+    const sidePanel = page.getByTestId("chat-side-panel");
+    const webview = sidePanel.getByTestId("chat-side-panel-browser-webview");
+    await expect(webview).toBeVisible();
+    await webview.evaluate((element) => {
+      const state = {
+        back: 0,
+        forward: 0,
+        reload: 0,
+        hardReload: 0,
+        zoom: [] as number[],
+      };
+      Object.assign(window, { __rudderBrowserShortcutState: state });
+      Object.assign(element, {
+        canGoBack: () => true,
+        canGoForward: () => true,
+        getURL: () => "https://example.com/shortcut-target",
+        goBack: () => { state.back += 1; },
+        goForward: () => { state.forward += 1; },
+        reload: () => { state.reload += 1; },
+        reloadIgnoringCache: () => { state.hardReload += 1; },
+        setZoomFactor: (factor: number) => { state.zoom.push(factor); },
+      });
+      element.dispatchEvent(new Event("dom-ready"));
+    });
+
+    const address = sidePanel.getByRole("textbox", { name: "Browser URL" });
+    await address.focus();
+    await expect.poll(() => page.evaluate(() => (
+      window as typeof window & { __rudderBrowserShortcutActiveCalls: boolean[] }
+    ).__rudderBrowserShortcutActiveCalls.at(-1))).toBe(true);
+
+    for (const action of ["reload", "reload_ignoring_cache", "go_back", "go_forward", "zoom_in"] as const) {
+      await page.evaluate((nextAction) => (
+        window as typeof window & { __emitDesktopBrowserShortcut(action: BrowserShortcutAction): void }
+      ).__emitDesktopBrowserShortcut(nextAction), action);
+    }
+    await expect.poll(() => page.evaluate(() => (
+      window as typeof window & {
+        __rudderBrowserShortcutState: { back: number; forward: number; reload: number; hardReload: number; zoom: number[] };
+      }
+    ).__rudderBrowserShortcutState)).toEqual({
+      back: 1,
+      forward: 1,
+      reload: 1,
+      hardReload: 1,
+      zoom: [1.1],
+    });
+    await expect(sidePanel.getByTestId("chat-side-panel-browser-zoom")).toHaveText("110%");
+
+    await page.getByRole("button", { name: "System settings" }).focus();
+    await page.evaluate(() => (
+      window as typeof window & { __emitDesktopBrowserShortcut(action: BrowserShortcutAction): void }
+    ).__emitDesktopBrowserShortcut("reload"));
+    await expect.poll(() => page.evaluate(() => (
+      window as typeof window & { __rudderBrowserShortcutState: { reload: number } }
+    ).__rudderBrowserShortcutState.reload)).toBe(1);
+
+    await address.focus();
+    await page.evaluate(() => (
+      window as typeof window & { __emitDesktopBrowserShortcut(action: BrowserShortcutAction): void }
+    ).__emitDesktopBrowserShortcut("new_tab"));
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
+    const activeAddress = sidePanel.getByRole("textbox", { name: "Browser URL" });
+    await sidePanel.getByRole("button", { name: "Open new browser tab" }).focus();
+    await page.evaluate(() => (
+      window as typeof window & { __emitDesktopBrowserShortcut(action: BrowserShortcutAction): void }
+    ).__emitDesktopBrowserShortcut("focus_location"));
+    await expect(activeAddress).toBeFocused();
   });
 
   test("configures, imports, and clears the shared Browser profile", async ({ page }, testInfo) => {

@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type { BrowserDataImportResult } from "./browser-cookie-import.js";
 import type { BrowserImportSource } from "./browser-import-sources.js";
 import type { DesktopBrowserResetEvent } from "./browser-profile.js";
+import { isDesktopBrowserShortcutAction, type DesktopBrowserShortcutAction } from "./browser-shortcuts.js";
 import { readDesktopCapabilities, type DesktopCapabilities } from "./desktop-capabilities.js";
 import type { DesktopLocalFilePreview } from "./local-file-preview.js";
 import type { DesktopSystemPermissions } from "./system-permissions.js";
@@ -239,6 +240,17 @@ contextBridge.exposeInMainWorld("desktopShell", {
     ipcRenderer.invoke("desktop:set-deferred-update-prompt-ready", Boolean(ready)) as Promise<void>,
   setSidePanelCloseShortcutActive: (active: boolean) =>
     ipcRenderer.invoke("desktop:set-side-panel-close-shortcut-active", Boolean(active)) as Promise<void>,
+  setBrowserSurfaceShortcutActive: (active: boolean) =>
+    ipcRenderer.invoke("desktop:set-browser-surface-shortcut-active", Boolean(active)) as Promise<void>,
+  onBrowserShortcut: (listener: (action: DesktopBrowserShortcutAction) => void) => {
+    const wrapped = (_event: IpcRendererEvent, action: unknown) => {
+      if (isDesktopBrowserShortcutAction(action)) listener(action);
+    };
+    ipcRenderer.on("desktop:browser-shortcut", wrapped);
+    return () => {
+      ipcRenderer.removeListener("desktop:browser-shortcut", wrapped);
+    };
+  },
   onCloseSidePanelActiveTab: (listener: () => void) => {
     const wrapped = () => {
       listener();
@@ -331,6 +343,8 @@ declare global {
       onUpdateProgress(listener: (event: DesktopUpdateProgressEvent) => void): () => void;
       setDeferredUpdatePromptReady(ready: boolean): Promise<void>;
       setSidePanelCloseShortcutActive(active: boolean): Promise<void>;
+      setBrowserSurfaceShortcutActive(active: boolean): Promise<void>;
+      onBrowserShortcut(listener: (action: DesktopBrowserShortcutAction) => void): () => void;
       onCloseSidePanelActiveTab(listener: () => void): () => void;
       onDeferredUpdatePrompt(listener: (prompt: DesktopDeferredUpdatePrompt) => void): () => void;
       respondDeferredUpdatePrompt(promptId: string, decision: DesktopDeferredUpdatePromptDecision): Promise<void>;

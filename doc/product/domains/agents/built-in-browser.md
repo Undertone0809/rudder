@@ -10,6 +10,8 @@ related_code:
   - desktop/src/browser-profile.ts
   - desktop/src/browser-ipc.ts
   - desktop/src/browser-webview-policy.ts
+  - desktop/src/browser-shortcuts.ts
+  - desktop/src/side-panel-close-shortcut.ts
   - desktop/src/browser-import-snapshot.ts
   - desktop/src/browser-import-sources.ts
   - desktop/src/browser-cookie-import-worker.ts
@@ -41,6 +43,7 @@ related_code:
   - server/resources/bundled-skills/browser/SKILL.md
   - cli/src/agent-v1-mcp-server.ts
   - cli/src/commands/client/browser.ts
+  - packages/shared/src/browser-shortcuts.ts
   - ui/src/context/SidePanelContext.tsx
   - ui/src/components/DesktopBrowserLinkBridge.tsx
   - ui/src/lib/browser-side-panel.ts
@@ -52,6 +55,8 @@ related_tests:
   - desktop/src/browser-profile.test.ts
   - desktop/src/browser-ipc.test.ts
   - desktop/src/browser-webview-policy.test.ts
+  - desktop/src/browser-shortcuts.test.ts
+  - desktop/src/side-panel-close-shortcut.test.ts
   - desktop/src/browser-import-snapshot.test.ts
   - desktop/src/browser-import-sources.test.ts
   - desktop/src/browser-cookie-import-worker.test.ts
@@ -79,6 +84,7 @@ related_tests:
   - server/src/__tests__/organization-skills-reference.test.ts
   - cli/src/__tests__/agent-v1-mcp-server.test.ts
   - cli/src/__tests__/browser-command.test.ts
+  - packages/shared/src/browser-shortcuts.test.ts
   - ui/src/pages/InstanceBrowserSettings.test.tsx
   - ui/src/components/BrowserDataImportDialog.test.tsx
   - ui/src/components/DesktopBrowserLinkBridge.test.tsx
@@ -269,10 +275,21 @@ tools only when Rudder resolves the capability for the run. Tool arguments
 contain action inputs such as URL, tab id, element reference, or text, but not
 organization, agent, run, API, or Broker credentials.
 
+When an operator Browser surface owns keyboard focus, Desktop reserves the
+platform browser mappings for reload, reload ignoring cache, new tab, location,
+back, forward, zoom in, zoom out, and zoom reset. Browser visibility alone does
+not establish this scope: focus in Chat, Library, a dialog, or another Rudder
+surface leaves the command with Rudder or the native shell. The existing Side
+Panel close command remains separately available for any active Side Panel tab.
+
 ### Operator-Visible Output
 
 - Browser Side Panel tabs keep the current Rudder route visible and expose
   address/search, navigation, reload, close, and explicit external-open actions.
+- Focused Browser tabs accept `Command` on macOS or `Ctrl` elsewhere with `R`,
+  `Shift+R`, `T`, `L`, `[`, `]`, `+`, `-`, and `0`. Location focus selects the
+  current address. Zoom is per operator tab, spans 25% through 500%, and shows
+  a percentage in the Browser title row whenever it is not 100%.
 - Settings show saved state and visible confirmation/results for disable,
   import, and shared-profile clear operations.
 - Stable Agent errors distinguish disabled, unavailable, unsupported runtime,
@@ -322,6 +339,17 @@ organization, agent, run, API, or Broker credentials.
      preference while Agent access is disabled.
    - Evidence: settings, skill reconciliation, runtime, and Desktop tests.
 
+5. Focused operator keyboard control:
+   - Trigger: operator focuses a Browser tab, toolbar, address field, or page and
+     invokes a reserved browser shortcut.
+   - Expected state/action: Desktop suppresses its native accelerator and routes
+     the action only to the active operator Browser tab; hidden tabs and Agent
+     Browser guests do not receive it.
+   - Visible output: page navigation, tab creation, address selection, or zoom
+     occurs without reloading, closing, or zooming the Rudder shell.
+   - Evidence: shared and Desktop resolver tests, Side Panel component tests,
+     Side Panel E2E, and packaged Desktop smoke.
+
 ### Invariants / Non-Goals
 
 - Profile identity is OS user plus canonical Rudder instance, never
@@ -336,8 +364,13 @@ organization, agent, run, API, or Broker credentials.
   sharing never weakens run ownership.
 - Operator Browser capacity is eight tabs per Side Panel context. At capacity,
   ordinary Rudder links reuse an existing tab, while popup and explicit new-tab
-  requests are discarded. Operator popups are limited to eight per rolling ten
-  seconds per Desktop process.
+  requests are discarded. A focused new-tab shortcut is still consumed at the
+  limit so it cannot create a native shell tab. Operator popups are limited to
+  eight per rolling ten seconds per Desktop process.
+- Operator page zoom is in-memory and per Browser tab. It does not scale the
+  Rudder shell, cross tab boundaries, persist across restart, or add an Agent
+  Browser zoom tool. Blank or not-yet-ready tabs safely consume unsupported
+  page actions without invoking Electron webview methods.
 - Agent Browser capacity is eight tabs per run and 32 tabs per Desktop process.
   Capacity never weakens run ownership or creates an implicit cross-run reuse.
 - Browser guests do not share the Rudder UI/API session partition and run

@@ -43,7 +43,15 @@ import { useLocation, useNavigate } from "@/lib/router";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
 import { isWorkspaceHtmlFilePath } from "@/lib/workspace-html-preview";
-import type { Agent, Issue, IssueComment, OrganizationWorkspaceFileDetail, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
+import {
+  resolveBrowserShortcutInput,
+  type Agent,
+  type BrowserShortcutAction,
+  type Issue,
+  type IssueComment,
+  type OrganizationWorkspaceFileDetail,
+  type OrganizationWorkspaceFileEntry,
+} from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -87,6 +95,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactElement,
 } from "react";
 import { createPortal } from "react-dom";
@@ -116,6 +125,9 @@ const CHAT_SIDE_PANEL_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([
 const CHAT_SIDE_PANEL_TAB_DND_MIME = "application/x-rudder-side-panel-tab";
 const CHAT_SIDE_PANEL_MARKDOWN_DRAFT_STORAGE_PREFIX = "rudder.chat-side-panel.markdown-draft.v1";
 const CHAT_SIDE_PANEL_MARKDOWN_CONFLICT_MESSAGE = "This file changed while you were editing it.";
+const CHAT_SIDE_PANEL_BROWSER_ZOOM_FACTORS = [
+  0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5,
+] as const;
 
 type ChatSidePanelMarkdownDraft = {
   baseContent: string;
@@ -244,6 +256,8 @@ type BrowserWebviewElement = HTMLElement & {
   goBack?: () => void;
   goForward?: () => void;
   reload?: () => void;
+  reloadIgnoringCache?: () => void;
+  setZoomFactor?: (factor: number) => void;
 };
 
 type BrowserWebviewInputEvent = Event & {
@@ -1456,6 +1470,7 @@ function ChatSidePanelBrowserView({
   onOpenTarget,
   onReplaceTarget,
   onCloseTarget,
+  onRegisterShortcutController,
 }: {
   active: boolean;
   canOpenNewTab: boolean;
@@ -1464,15 +1479,20 @@ function ChatSidePanelBrowserView({
   onOpenTarget: (target: SidePanelTarget) => void;
   onReplaceTarget: (key: string, target: SidePanelTarget) => void;
   onCloseTarget: (target: SidePanelTarget) => void;
+  onRegisterShortcutController: (key: string, controller: ((action: BrowserShortcutAction) => void) | null) => void;
 }) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const addressInputRef = useRef<HTMLInputElement | null>(null);
   const webviewRef = useRef<BrowserWebviewElement | null>(null);
   const webviewReadyRef = useRef(false);
+  const zoomFactorRef = useRef(1);
   const [addressValue, setAddressValue] = useState(target.url === CHAT_SIDE_PANEL_BROWSER_BLANK_URL ? "" : target.url);
   const [currentUrl, setCurrentUrl] = useState(target.url);
   const [title, setTitle] = useState(target.label);
   const [loading, setLoading] = useState(false);
   const [navigationState, setNavigationState] = useState({ canGoBack: false, canGoForward: false });
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [zoomFactor, setZoomFactor] = useState(1);
   const isBlank = currentUrl === CHAT_SIDE_PANEL_BROWSER_BLANK_URL;
 
   const safeWebviewCall = useCallback(<T,>(callback: (webview: BrowserWebviewElement) => T, fallback: T): T => {
@@ -1495,6 +1515,77 @@ function ChatSidePanelBrowserView({
       canGoForward: safeWebviewCall((webview) => Boolean(webview.canGoForward?.()), false),
     });
   }, [safeWebviewCall]);
+
+  const applyZoomFactor = useCallback((factor: number) => {
+    const applied = safeWebviewCall((webview) => {
+      if (!webview.setZoomFactor) return false;
+      webview.setZoomFactor(factor);
+      return true;
+    }, false);
+    if (!applied) return;
+    zoomFactorRef.current = factor;
+    setZoomFactor(factor);
+  }, [safeWebviewCall]);
+
+  const stepZoomFactor = useCallback((direction: -1 | 1) => {
+    const current = zoomFactorRef.current;
+    let currentIndex = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    CHAT_SIDE_PANEL_BROWSER_ZOOM_FACTORS.forEach((factor, index) => {
+      const distance = Math.abs(factor - current);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        currentIndex = index;
+      }
+    });
+    const nextIndex = Math.max(
+      0,
+      Math.min(CHAT_SIDE_PANEL_BROWSER_ZOOM_FACTORS.length - 1, currentIndex + direction),
+    );
+    applyZoomFactor(CHAT_SIDE_PANEL_BROWSER_ZOOM_FACTORS[nextIndex] ?? 1);
+  }, [applyZoomFactor]);
+
+  const executeBrowserShortcut = useCallback((action: BrowserShortcutAction) => {
+    if (!active) return;
+    switch (action) {
+      case "new_tab":
+        if (canOpenNewTab) onOpenTarget(createChatSidePanelBrowserTarget());
+        return;
+      case "focus_location":
+        addressInputRef.current?.focus();
+        addressInputRef.current?.select();
+        return;
+      case "reload":
+        if (!isBlank) safeWebviewCall((webview) => webview.reload?.(), undefined);
+        return;
+      case "reload_ignoring_cache":
+        if (!isBlank) safeWebviewCall((webview) => webview.reloadIgnoringCache?.(), undefined);
+        return;
+      case "go_back":
+        if (!isBlank) safeWebviewCall((webview) => {
+          if (webview.canGoBack?.()) webview.goBack?.();
+        }, undefined);
+        return;
+      case "go_forward":
+        if (!isBlank) safeWebviewCall((webview) => {
+          if (webview.canGoForward?.()) webview.goForward?.();
+        }, undefined);
+        return;
+      case "zoom_in":
+        if (!isBlank) stepZoomFactor(1);
+        return;
+      case "zoom_out":
+        if (!isBlank) stepZoomFactor(-1);
+        return;
+      case "zoom_reset":
+        if (!isBlank) applyZoomFactor(1);
+    }
+  }, [active, applyZoomFactor, canOpenNewTab, isBlank, onOpenTarget, safeWebviewCall, stepZoomFactor]);
+
+  useEffect(() => {
+    onRegisterShortcutController(targetKey, executeBrowserShortcut);
+    return () => onRegisterShortcutController(targetKey, null);
+  }, [executeBrowserShortcut, onRegisterShortcutController, targetKey]);
 
   const replaceBrowserTarget = useCallback((nextUrl: string, nextTitle = chatSidePanelBrowserLabel(nextUrl)) => {
     const nextTarget: Extract<SidePanelTarget, { kind: "browser" }> = {
@@ -1558,13 +1649,25 @@ function ChatSidePanelBrowserView({
     };
     const handleDomReady = () => {
       webviewReadyRef.current = true;
+      if (zoomFactorRef.current !== 1) {
+        safeWebviewCall((readyWebview) => readyWebview.setZoomFactor?.(zoomFactorRef.current), undefined);
+      }
       updateNavigationState();
     };
     const handleBeforeInput = (event: Event) => {
       const inputEvent = event as BrowserWebviewInputEvent;
-      if (!isChatSidePanelCloseShortcutInput(inputEvent.input)) return;
+      if (isChatSidePanelCloseShortcutInput(inputEvent.input)) {
+        event.preventDefault();
+        onCloseTarget(target);
+        return;
+      }
+      if (readDesktopShell()?.onBrowserShortcut || !inputEvent.input || !active) return;
+      const action = resolveBrowserShortcutInput(inputEvent.input, {
+        isMac: navigator.platform.toLowerCase().includes("mac"),
+      });
+      if (!action) return;
       event.preventDefault();
-      onCloseTarget(target);
+      executeBrowserShortcut(action);
     };
 
     webview.addEventListener("dom-ready", handleDomReady);
@@ -1587,7 +1690,7 @@ function ChatSidePanelBrowserView({
       webview.removeEventListener("page-title-updated", handleTitle);
       webview.removeEventListener("did-fail-load", handleFail);
     };
-  }, [currentUrl, onCloseTarget, onReplaceTarget, replaceBrowserTarget, safeCurrentWebviewUrl, target, targetKey, updateNavigationState]);
+  }, [active, currentUrl, executeBrowserShortcut, onCloseTarget, onReplaceTarget, replaceBrowserTarget, safeCurrentWebviewUrl, safeWebviewCall, target, targetKey, updateNavigationState]);
 
   const handleWebviewRef = useCallback((node: BrowserWebviewElement | null) => {
     webviewRef.current = node;
@@ -1620,6 +1723,7 @@ function ChatSidePanelBrowserView({
 
   return (
     <div
+      ref={rootRef}
       className="flex min-h-full flex-col"
       data-testid={active ? "chat-side-panel-browser-view" : "chat-side-panel-browser-view-hidden"}
       data-browser-tab-id={target.tabId}
@@ -1664,6 +1768,7 @@ function ChatSidePanelBrowserView({
         </Button>
         <form className="min-w-0 flex-1" onSubmit={handleSubmit}>
           <Input
+            ref={addressInputRef}
             aria-label="Browser URL"
             name="browser-url"
             value={addressValue}
@@ -1697,7 +1802,12 @@ function ChatSidePanelBrowserView({
       <div className="flex min-h-0 flex-1 flex-col bg-[color:var(--surface-inset)]">
         <div className="flex h-8 shrink-0 items-center gap-2 border-b border-[color:var(--border-soft)] px-3 text-xs text-muted-foreground">
           {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Globe2 className="h-3.5 w-3.5" />}
-          <span className="min-w-0 truncate">{isBlank ? "New tab" : title}</span>
+          <span className="min-w-0 flex-1 truncate">{isBlank ? "New tab" : title}</span>
+          {zoomFactor !== 1 ? (
+            <span className="shrink-0 tabular-nums" data-testid="chat-side-panel-browser-zoom">
+              {Math.round(zoomFactor * 100)}%
+            </span>
+          ) : null}
         </div>
         {loadError ? (
           <div role="alert" className="border-b border-destructive/25 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -1750,11 +1860,20 @@ export function ChatSidePanel({
   const [tabDropTarget, setTabDropTarget] = useState<{ key: string; position: "before" | "after" } | null>(null);
   const [desktopExitComplete, setDesktopExitComplete] = useState(!sidePanel.open);
   const panelRef = useRef<HTMLElement>(null);
+  const browserShortcutControllersRef = useRef(new Map<string, (action: BrowserShortcutAction) => void>());
+  const browserShortcutScopeActiveRef = useRef(false);
   const lastOpenDesktopPanelRef = useRef<ReactElement | null>(null);
   const queryClient = useQueryClient();
   const operatorDisplayName = useOperatorDisplayName();
   const isMobile = useChatSidePanelMobileLayout();
   const { openTarget } = sidePanel;
+  const registerBrowserShortcutController = useCallback((
+    key: string,
+    controller: ((action: BrowserShortcutAction) => void) | null,
+  ) => {
+    if (controller) browserShortcutControllersRef.current.set(key, controller);
+    else browserShortcutControllersRef.current.delete(key);
+  }, []);
 
   const visibleTabs = sidePanel.tabs;
   const browserTargets = useMemo(
@@ -1816,8 +1935,74 @@ export function ChatSidePanel({
   const libraryDirectoryTarget = activeTarget?.kind === "library_directory" ? activeTarget : null;
   const libraryEntryTarget = activeTarget?.kind === "library_entry" ? activeTarget : null;
   const browserTarget = activeTarget?.kind === "browser" ? activeTarget : null;
+  const activeBrowserTargetKey = browserTarget ? sidePanelTargetKey(browserTarget) : null;
   const placeholderTarget = activeTarget?.kind === "placeholder" ? activeTarget : null;
   const targetQueriesEnabled = sidePanel.open || exiting;
+
+  useEffect(() => {
+    const desktopShell = readDesktopShell();
+    const setBrowserSurfaceShortcutActive = desktopShell?.setBrowserSurfaceShortcutActive;
+    if (!setBrowserSurfaceShortcutActive) return undefined;
+    let disposed = false;
+    const syncScope = () => {
+      if (disposed) return;
+      const activeElement = document.activeElement;
+      const nextActive = Boolean(
+        sidePanel.open
+        && activeBrowserTargetKey
+        && activeElement
+        && panelRef.current?.contains(activeElement),
+      );
+      if (browserShortcutScopeActiveRef.current === nextActive) return;
+      browserShortcutScopeActiveRef.current = nextActive;
+      void setBrowserSurfaceShortcutActive(nextActive).catch(() => undefined);
+    };
+    const queueScopeSync = () => queueMicrotask(syncScope);
+    document.addEventListener("focusin", queueScopeSync, true);
+    document.addEventListener("focusout", queueScopeSync, true);
+    syncScope();
+    return () => {
+      disposed = true;
+      document.removeEventListener("focusin", queueScopeSync, true);
+      document.removeEventListener("focusout", queueScopeSync, true);
+      if (!browserShortcutScopeActiveRef.current) return;
+      browserShortcutScopeActiveRef.current = false;
+      void setBrowserSurfaceShortcutActive(false).catch(() => undefined);
+    };
+  }, [activeBrowserTargetKey, sidePanel.open]);
+
+  useEffect(() => {
+    const desktopShell = readDesktopShell();
+    if (!desktopShell?.onBrowserShortcut) return undefined;
+    return desktopShell.onBrowserShortcut((action) => {
+      const activeElement = document.activeElement;
+      if (
+        !sidePanel.open
+        || !activeBrowserTargetKey
+        || !activeElement
+        || !panelRef.current?.contains(activeElement)
+      ) return;
+      browserShortcutControllersRef.current.get(activeBrowserTargetKey)?.(action);
+    });
+  }, [activeBrowserTargetKey, sidePanel.open]);
+
+  const handleSidePanelKeyDown = useCallback((event: ReactKeyboardEvent<HTMLElement>) => {
+    if (readDesktopShell()?.onBrowserShortcut || !activeBrowserTargetKey) return;
+    const action = resolveBrowserShortcutInput({
+      type: event.type,
+      key: event.key,
+      code: event.code,
+      meta: event.metaKey,
+      control: event.ctrlKey,
+      alt: event.altKey,
+      shift: event.shiftKey,
+    }, {
+      isMac: navigator.platform.toLowerCase().includes("mac"),
+    });
+    if (!action) return;
+    event.preventDefault();
+    browserShortcutControllersRef.current.get(activeBrowserTargetKey)?.(action);
+  }, [activeBrowserTargetKey]);
 
   const libraryFilePreviewPath = libraryFileTarget?.filePath ?? libraryEntryTarget?.path ?? null;
   const issueQuery = useQuery({
@@ -1914,6 +2099,7 @@ export function ChatSidePanel({
   const panel = (
     <aside
       ref={panelRef}
+      onKeyDownCapture={handleSidePanelKeyDown}
       data-testid="chat-side-panel"
       className={cn(
         "flex min-h-0 shrink-0 flex-col gap-1.5 bg-transparent",
@@ -1980,6 +2166,7 @@ export function ChatSidePanel({
                   }}
                   className={cn(
                     "group relative flex h-7 max-w-[12.5rem] shrink-0 items-center rounded-full border pr-1 transition-[color,background-color,border-color,box-shadow,opacity]",
+                    tab.kind === "browser" && "w-[12.5rem]",
                     selected
                       ? "border-[color:var(--border-strong)] bg-[color:var(--surface-active)] text-foreground"
                       : "border-transparent text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground",
@@ -2073,6 +2260,7 @@ export function ChatSidePanel({
                   onOpenTarget={openSidePanelTarget}
                   onReplaceTarget={replaceSidePanelTarget}
                   onCloseTarget={closeSidePanelTab}
+                  onRegisterShortcutController={registerBrowserShortcutController}
                 />
               </div>
             );

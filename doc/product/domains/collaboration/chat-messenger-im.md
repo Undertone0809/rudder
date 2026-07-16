@@ -19,6 +19,9 @@ related_code:
   - desktop/src/browser-ipc.ts
   - desktop/src/browser-profile.ts
   - desktop/src/browser-webview-policy.ts
+  - desktop/src/browser-shortcuts.ts
+  - desktop/src/side-panel-close-shortcut.ts
+  - desktop/src/preload.ts
   - packages/db/src/schema/chat_conversations.ts
   - packages/db/src/schema/chat_messages.ts
   - packages/db/src/schema/chat_generations.ts
@@ -28,6 +31,7 @@ related_code:
   - packages/shared/src/types/chat.ts
   - packages/shared/src/project-mentions.ts
   - packages/shared/src/chat-work-manifest.ts
+  - packages/shared/src/browser-shortcuts.ts
   - packages/shared/src/website-icons.ts
   - server/src/routes/chats.ts
   - server/src/routes/chats.stream-routes.ts
@@ -68,6 +72,8 @@ related_tests:
   - desktop/src/browser-ipc.test.ts
   - desktop/src/browser-profile.test.ts
   - desktop/src/browser-webview-policy.test.ts
+  - desktop/src/browser-shortcuts.test.ts
+  - desktop/src/side-panel-close-shortcut.test.ts
   - server/src/__tests__/chat-routes.test.ts
   - server/src/__tests__/chat-work-manifest.test.ts
   - server/src/__tests__/chat-assistant.test.ts
@@ -81,6 +87,7 @@ related_tests:
   - server/src/__tests__/agent-integration-feishu-inbound-normalizer.test.ts
   - ui/src/lib/index-css.test.ts
   - ui/src/lib/source-badge.test.ts
+  - packages/shared/src/browser-shortcuts.test.ts
   - ui/src/components/MilkdownMarkdownEditor.test.ts
   - ui/src/components/MarkdownBody.test.tsx
   - ui/src/lib/side-panel-targets.test.ts
@@ -1028,6 +1035,16 @@ Product model:
   before the shell or browser can treat the shortcut as a window/tab close. The
   shortcut must not close the whole Desktop window, replace the main route, or
   merely hide the panel while leaving the active tab intact.
+- When the active target is Browser and keyboard focus is inside the Side Panel
+  Browser surface, Desktop routes the fixed browser mappings for reload, hard
+  reload, new tab, location, back/forward, and page zoom to that active Browser
+  tab. Browser visibility without focus is insufficient; focusing Chat,
+  Library, a dialog, or another Rudder surface releases these mappings. This
+  narrower rule does not change the cross-target close-tab shortcut above.
+- Browser Side Panel tabs reserve a stable `12.5rem` tab width and truncate the
+  title inside it, including during reload title changes. The close affordance,
+  add button, and right-side panel controls must not jump horizontally when a
+  page reports a different title.
 - Switching Messenger to another item with no Side Panel history must not carry
   over the prior item's tabs. If the panel is open and the next item has no
   saved session panel state, Rudder closes the panel by default instead of
@@ -1098,7 +1115,11 @@ Flow:
    navigation, keep back/forward/reload state scoped to the embedded browser,
    can open the current page externally as a secondary action, and route popup
    requests into another Browser tab instead of an unrestricted guest window
-   while the Browser tab and popup limits permit it.
+   while the Browser tab and popup limits permit it. While the Browser surface
+   owns focus, standard Desktop browser shortcuts operate on only the active
+   tab. Each tab keeps independent in-memory page zoom from 25% through 500%,
+   reports non-default zoom in its title row, and resets to 100% without scaling
+   the Rudder shell.
 16. Desktop routes ordinary external HTTP(S) links to a Browser Side Panel tab
     when its instance preference is `built_in`, independently of Agent Browser
     access. The `default_browser` preference and explicit `Open externally`
