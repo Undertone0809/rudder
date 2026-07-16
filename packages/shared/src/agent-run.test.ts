@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toAgentRun, toHeartbeatRun, type HeartbeatRun } from "./index.js";
+import { toAgentRun, toHeartbeatRun, toPublicHeartbeatRunContextSnapshot, type HeartbeatRun } from "./index.js";
 
 function heartbeatRun(overrides: Partial<HeartbeatRun>): HeartbeatRun {
   return {
@@ -19,6 +19,7 @@ function heartbeatRun(overrides: Partial<HeartbeatRun>): HeartbeatRun {
     resultJson: null,
     sessionIdBefore: null,
     sessionIdAfter: null,
+    sessionReuseScope: "none",
     logStore: null,
     logRef: null,
     logBytes: null,
@@ -41,9 +42,53 @@ function heartbeatRun(overrides: Partial<HeartbeatRun>): HeartbeatRun {
 }
 
 describe("toAgentRun", () => {
+  it("projects recovery context through the shared public allowlist", () => {
+    const projected = toPublicHeartbeatRunContextSnapshot({
+      issueId: "issue-1",
+      resumeFromRunId: "source-run-id",
+      resumeSessionDisplayId: "private-display-id",
+      resumeSessionParams: {
+        sessionId: "nested-private-session",
+        cwd: "/nested/private/cwd",
+        workspaceId: "private-workspace",
+        repoUrl: "https://private.example/repo.git",
+        repoRef: "private-ref",
+      },
+      forceFreshSession: true,
+      sessionResumeSuppressed: true,
+    });
+
+    expect(projected).toEqual({
+      issueId: "issue-1",
+      resumeFromRunId: "source-run-id",
+    });
+    expect(JSON.stringify(projected)).not.toMatch(
+      /private-display-id|nested-private-session|nested\/private\/cwd|private-workspace|private\.example|private-ref/,
+    );
+  });
+
   it("strips internal recovery and terminal-effect fields from public run shapes", () => {
     const internalRun = {
-      ...heartbeatRun({ id: "internal-run" }),
+      ...heartbeatRun({
+        id: "internal-run",
+        contextSnapshot: {
+          resumeFromRunId: "source-run-id",
+          resumeSessionDisplayId: "public-display-id",
+          resumeSessionParams: {
+            sessionId: "nested-private-session",
+            cwd: "/nested/private/cwd",
+            workspaceId: "private-workspace",
+            repoUrl: "https://private.example/repo.git",
+            repoRef: "private-ref",
+          },
+          forceFreshSession: true,
+          sessionResumeSuppressed: true,
+          sessionReuseSuppression: {
+            kind: "source_session_cleared",
+            sourceRunId: "source-run-id",
+          },
+        },
+      }),
       executionOwnerToken: "owner-secret",
       executionLeaseExpiresAt: new Date(),
       processExitedAt: new Date(),
@@ -51,6 +96,8 @@ describe("toAgentRun", () => {
       terminalEffectsJson: { transcript: "large-secret" },
       terminalEffectsClaimToken: "claim-secret",
       terminalEffectsLastError: "internal-error",
+      sessionParamsBeforeJson: { sessionId: "private-before" },
+      sessionParamsAfterJson: { sessionId: "private-after" },
     } as HeartbeatRun;
 
     for (const publicRun of [toHeartbeatRun(internalRun), toAgentRun(internalRun)]) {
@@ -61,6 +108,15 @@ describe("toAgentRun", () => {
       expect(publicRun).not.toHaveProperty("terminalEffectsJson");
       expect(publicRun).not.toHaveProperty("terminalEffectsClaimToken");
       expect(publicRun).not.toHaveProperty("terminalEffectsLastError");
+      expect(publicRun).not.toHaveProperty("sessionParamsBeforeJson");
+      expect(publicRun).not.toHaveProperty("sessionParamsAfterJson");
+      expect(publicRun.contextSnapshot).toEqual({
+        resumeFromRunId: "source-run-id",
+        sessionReuseSuppression: {
+          kind: "source_session_cleared",
+          sourceRunId: "source-run-id",
+        },
+      });
     }
   });
 

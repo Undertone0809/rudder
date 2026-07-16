@@ -60,7 +60,7 @@ export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRu
 import * as heartbeatCore from "./heartbeat.core.js";
 import * as heartbeatSessions from "./heartbeat.sessions.js";
 const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, buildHeartbeatAdapterInvokePayload, sanitizeStartupContextContextForPersistence, sanitizeStartupContextPromptForPersistence, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, readSkillEvidenceFromPayload, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, resolveForbiddenRuntimeSkillMarkers, detectForbiddenRuntimeSkillMarker, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
-const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
+const { buildExplicitResumeSessionOverride, selectRunSessionLineage, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
 
 function buildPersistableHeartbeatContext(context: Record<string, unknown>) {
   return sanitizeStartupContextContextForPersistence(context) ?? {};
@@ -191,7 +191,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
         kind: "stderr",
       });
     };
-    const runtime = await ensureRuntimeState(agent);
+    await ensureRuntimeState(agent);
     const context = parseObject(run.contextSnapshot);
     delete context.rudderGitIdentity;
     const taskKey = deriveTaskKey(context, null);
@@ -246,10 +246,34 @@ export function createHeartbeatExecuteHandlers(context: any) {
         (sessionCodec.getDisplayId ? sessionCodec.getDisplayId(explicitResumeSessionParams) : null) ??
         readNonEmptyString(explicitResumeSessionParams?.sessionId),
     );
-    const previousSessionParams =
-      explicitResumeSessionParams ??
-      (explicitResumeSessionDisplayId ? { sessionId: explicitResumeSessionDisplayId } : null) ??
-      normalizeSessionParams(sessionCodec.deserialize(taskSessionForRun?.sessionParamsJson ?? null));
+    const taskSessionParams = normalizeSessionParams(
+      sessionCodec.deserialize(taskSessionForRun?.sessionParamsJson ?? null),
+    );
+    const taskSessionDisplayId = truncateDisplayId(
+      taskSessionForRun?.sessionDisplayId ??
+        (sessionCodec.getDisplayId ? sessionCodec.getDisplayId(taskSessionParams) : null) ??
+        readNonEmptyString(taskSessionParams?.sessionId),
+    );
+    const sessionSelection = selectRunSessionLineage({
+      forceFresh: Boolean(heartbeatSessions.readSessionReuseSuppression(context)),
+      explicitSessionParams: explicitResumeSessionParams,
+      explicitSessionDisplayId: explicitResumeSessionDisplayId,
+      taskSessionParams,
+      taskSessionDisplayId,
+    });
+    const previousSessionParams = sessionSelection.sessionParams;
+    const selectedRunningRun = await db
+      .update(heartbeatRuns)
+      .set({
+        sessionIdBefore: sessionSelection.sessionDisplayId ?? readNonEmptyString(sessionSelection.sessionParams?.sessionId),
+        sessionParamsBeforeJson: sessionSelection.sessionParams,
+        sessionReuseScope: sessionSelection.reuseScope,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.status, "running")))
+      .returning()
+      .then((rows) => rows[0] ?? null);
+    if (selectedRunningRun) run = selectedRunningRun;
     const config = await runContextSvc.materializeManagedInstructionsForRun({
       ...agent,
       agentRuntimeConfig: parseObject(agent.agentRuntimeConfig),
@@ -515,16 +539,13 @@ export function createHeartbeatExecuteHandlers(context: any) {
     if (executionWorkspace.projectId && !readNonEmptyString(context.projectId)) {
       context.projectId = executionWorkspace.projectId;
     }
-    const runtimeSessionFallback = taskKey || resetTaskSession ? null : runtime.sessionId;
     let previousSessionDisplayId = truncateDisplayId(
-      explicitResumeSessionDisplayId ??
-        taskSessionForRun?.sessionDisplayId ??
+      sessionSelection.sessionDisplayId ??
         (sessionCodec.getDisplayId ? sessionCodec.getDisplayId(runtimeSessionParams) : null) ??
-        readNonEmptyString(runtimeSessionParams?.sessionId) ??
-        runtimeSessionFallback,
+        readNonEmptyString(runtimeSessionParams?.sessionId),
     );
     let runtimeSessionIdForAdapter =
-      readNonEmptyString(runtimeSessionParams?.sessionId) ?? runtimeSessionFallback;
+      readNonEmptyString(runtimeSessionParams?.sessionId);
     let runtimeSessionParamsForAdapter = runtimeSessionParams;
 
     const sessionCompaction = await evaluateSessionCompaction({
@@ -549,6 +570,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
       delete context.rudderSessionRotationReason;
       delete context.rudderPreviousSessionId;
     }
+    const sessionReuseScope = sessionCompaction.rotate ? "none" : sessionSelection.reuseScope;
 
     const runtimeForAdapter = {
       sessionId: runtimeSessionIdForAdapter,
@@ -602,6 +624,8 @@ export function createHeartbeatExecuteHandlers(context: any) {
         .set({
           startedAt,
           sessionIdBefore: runtimeForAdapter.sessionDisplayId ?? runtimeForAdapter.sessionId,
+          sessionParamsBeforeJson: runtimeForAdapter.sessionParams,
+          sessionReuseScope,
           contextSnapshot: buildPersistableHeartbeatContext(context),
           updatedAt: new Date(),
         })
@@ -936,9 +960,10 @@ export function createHeartbeatExecuteHandlers(context: any) {
               ...((nextSessionState.displayId ?? nextSessionState.legacySessionId)
                 ? { persistedSessionId: nextSessionState.displayId ?? nextSessionState.legacySessionId }
                 : {}),
-              sessionReused: runtimeForAdapter.sessionId != null || runtimeForAdapter.sessionDisplayId != null,
-              taskSessionReused: taskSessionForRun != null,
-              freshSession: runtimeForAdapter.sessionId == null && runtimeForAdapter.sessionDisplayId == null,
+              sessionReused: sessionReuseScope !== "none",
+              taskSessionReused: sessionReuseScope === "task",
+              freshSession: sessionReuseScope === "none",
+              sessionReuseScope,
               sessionRotated: sessionCompaction.rotate,
               sessionRotationReason: sessionCompaction.reason,
               provider: readNonEmptyString(adapterResult.provider) ?? "unknown",
@@ -977,6 +1002,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
         resultJson: adapterResult.resultJson ?? null,
         resultSummaryJson: persistedResultSummary,
         sessionIdAfter: nextSessionState.displayId ?? nextSessionState.legacySessionId,
+        sessionParamsAfterJson: adapterResult.clearSession ? {} : nextSessionState.params,
         stdoutExcerpt,
         stderrExcerpt,
         logBytes: logSummary?.bytes,

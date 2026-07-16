@@ -21,6 +21,7 @@ function makeRun(overrides: Partial<HeartbeatRun> = {}): HeartbeatRun {
     resultJson: null,
     sessionIdBefore: null,
     sessionIdAfter: null,
+    sessionReuseScope: "none",
     logStore: "local_file",
     logRef: "run-1.ndjson",
     logBytes: 100,

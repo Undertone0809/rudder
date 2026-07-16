@@ -75,6 +75,7 @@ export function loadFilesystemRunDetail(input: {
     resultJson: null,
     sessionIdBefore: null,
     sessionIdAfter: null,
+    sessionReuseScope: "none",
     logStore: "local_file",
     logRef: input.match.logRef,
     logBytes: Buffer.byteLength(logContent, "utf8"),

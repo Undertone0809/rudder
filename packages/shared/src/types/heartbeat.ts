@@ -11,6 +11,10 @@ import type {
 
 export type HeartbeatRecoveryTrigger = "manual" | "automatic";
 export type HeartbeatRecoveryMode = "continue_preferred";
+export type HeartbeatSessionReuseScope = "explicit" | "task" | "none" | "unknown";
+export type HeartbeatSessionReuseSuppression =
+  | { kind: "force_fresh" }
+  | { kind: "source_session_cleared"; sourceRunId: string };
 
 export interface HeartbeatRunRecoveryContext {
   originalRunId: string;
@@ -42,6 +46,8 @@ export interface HeartbeatRunContextSnapshot extends Record<string, unknown> {
   automationId?: string | null;
   wakeupRequestId?: string | null;
   issueId?: string | null;
+  resumeFromRunId?: string | null;
+  sessionReuseSuppression?: HeartbeatSessionReuseSuppression;
   recovery?: HeartbeatRunRecoveryContext;
   passiveFollowup?: HeartbeatRunPassiveFollowupContext;
 }
@@ -63,6 +69,7 @@ export interface HeartbeatRun {
   resultJson: Record<string, unknown> | null;
   sessionIdBefore: string | null;
   sessionIdAfter: string | null;
+  sessionReuseScope: HeartbeatSessionReuseScope;
   logStore: string | null;
   logRef: string | null;
   logBytes: number | null;

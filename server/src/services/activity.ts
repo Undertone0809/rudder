@@ -14,6 +14,7 @@ import {
 } from "@rudderhq/db";
 import {
   isLowSignalIssueContentOnlyUpdate,
+  toPublicHeartbeatRunContextSnapshot,
   type UserActivityLedgerInclude,
   type UserActivityLedgerItem,
   type UserActivityLedgerKind,
@@ -935,8 +936,8 @@ export function activityService(db: Db) {
       );
     },
 
-    runsForIssue: (orgId: string, issueId: string) =>
-      db
+    runsForIssue: async (orgId: string, issueId: string) => {
+      const runs = await db
         .select({
           runId: heartbeatRuns.id,
           status: heartbeatRuns.status,
@@ -967,7 +968,12 @@ export function activityService(db: Db) {
             ),
           ),
         )
-        .orderBy(desc(heartbeatRuns.createdAt)),
+        .orderBy(desc(heartbeatRuns.createdAt));
+      return runs.map((run) => ({
+        ...run,
+        contextSnapshot: toPublicHeartbeatRunContextSnapshot(run.contextSnapshot),
+      }));
+    },
 
     issuesForRun: async (runId: string) => {
       const run = await db

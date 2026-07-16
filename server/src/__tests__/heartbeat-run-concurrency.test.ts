@@ -1,5 +1,7 @@
 import {
   activityLog,
+  agentRuntimeState,
+  agentTaskSessions,
   agentWakeupRequests,
   agents,
   applyPendingMigrations,
@@ -23,7 +25,13 @@ const mockBudgetService = vi.hoisted(() => ({
 }));
 
 const mockRuntimeAdapter = vi.hoisted(() => {
-  const calls: Array<{ runId: string; taskKey: string | null }> = [];
+  const calls: Array<{
+    runId: string;
+    taskKey: string | null;
+    sessionId: string | null;
+    sessionDisplayId: string | null;
+    sessionParams: Record<string, unknown> | null;
+  }> = [];
 
   return {
     calls,
@@ -48,10 +56,21 @@ const mockRuntimeAdapter = vi.hoisted(() => {
         checks: [],
         testedAt: new Date("2026-04-27T00:00:00.000Z").toISOString(),
       }),
-      execute: async (ctx: { runId: string; runtime: { taskKey: string | null } }) => {
+      execute: async (ctx: {
+        runId: string;
+        runtime: {
+          taskKey: string | null;
+          sessionId: string | null;
+          sessionDisplayId: string | null;
+          sessionParams: Record<string, unknown> | null;
+        };
+      }) => {
         mockRuntimeAdapter.calls.push({
           runId: ctx.runId,
           taskKey: ctx.runtime.taskKey,
+          sessionId: ctx.runtime.sessionId,
+          sessionDisplayId: ctx.runtime.sessionDisplayId,
+          sessionParams: ctx.runtime.sessionParams,
         });
         return await new Promise(() => {});
       },
@@ -417,6 +436,221 @@ describe("heartbeat run concurrency", () => {
     return wakeupId;
   }
 
+  it("starts an ordinary taskless run fresh despite newer legacy runtime state", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    await db.insert(agentRuntimeState).values({
+      orgId,
+      agentId,
+      agentRuntimeType: "codex_local",
+      sessionId: "mutable-global-session",
+      stateJson: {},
+    });
+
+    const heartbeat = heartbeatService(db);
+    const run = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "taskless_fresh_test",
+      contextSnapshot: {},
+    });
+    expect(run).toBeTruthy();
+
+    await waitForCondition(async () => mockRuntimeAdapter.calls.some((call) => call.runId === run!.id));
+    const call = mockRuntimeAdapter.calls.find((candidate) => candidate.runId === run!.id);
+    expect(call).toMatchObject({
+      taskKey: null,
+      sessionId: null,
+      sessionDisplayId: null,
+      sessionParams: null,
+    });
+    const persisted = await db
+      .select({ sessionReuseScope: heartbeatRuns.sessionReuseScope })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, run!.id))
+      .then((rows) => rows[0]);
+    expect(persisted?.sessionReuseScope).toBe("none");
+  });
+
+  it("reuses the saved session for the same task scope", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    await db.insert(agentTaskSessions).values({
+      orgId,
+      agentId,
+      agentRuntimeType: "codex_local",
+      taskKey: "issue:session-lineage",
+      sessionParamsJson: {
+        sessionId: "task-session",
+        cwd: "/tmp/task-session",
+      },
+      sessionDisplayId: "task-session",
+    });
+
+    const heartbeat = heartbeatService(db);
+    const run = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "issue_comment_mentioned",
+      payload: { taskKey: "issue:session-lineage" },
+      contextSnapshot: {
+        taskKey: "issue:session-lineage",
+        wakeReason: "issue_comment_mentioned",
+      },
+    });
+    expect(run).toBeTruthy();
+
+    await waitForCondition(async () => mockRuntimeAdapter.calls.some((call) => call.runId === run!.id));
+    const call = mockRuntimeAdapter.calls.find((candidate) => candidate.runId === run!.id);
+    expect(call).toMatchObject({
+      taskKey: "issue:session-lineage",
+      sessionId: "task-session",
+      sessionDisplayId: "task-session",
+      sessionParams: {
+        sessionId: "task-session",
+        cwd: expect.any(String),
+      },
+    });
+    const persisted = await db
+      .select({ sessionReuseScope: heartbeatRuns.sessionReuseScope })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, run!.id))
+      .then((rows) => rows[0]);
+    expect(persisted?.sessionReuseScope).toBe("task");
+  });
+
+  it("keeps force-fresh sticky when an ordinary wake coalesces into a queued run", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const taskKey = "issue:sticky-force-fresh";
+    await db.insert(agentTaskSessions).values({
+      orgId,
+      agentId,
+      agentRuntimeType: "codex_local",
+      taskKey,
+      sessionDisplayId: "stale-task-session",
+      sessionParamsJson: { sessionId: "stale-task-session" },
+    });
+    const heartbeat = heartbeatService(db);
+
+    const queuedFreshRun = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "queued_force_fresh",
+      payload: { taskKey },
+      contextSnapshot: { taskKey, forceFreshSession: true },
+      startImmediately: false,
+    });
+    expect(queuedFreshRun?.status).toBe("queued");
+
+    const coalescedRun = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "ordinary_followup",
+      payload: { taskKey },
+      contextSnapshot: { taskKey, forceFreshSession: false },
+      startImmediately: false,
+    });
+    expect(coalescedRun?.id).toBe(queuedFreshRun?.id);
+
+    const queued = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, queuedFreshRun!.id))
+      .then((rows) => rows[0]!);
+    expect(queued).toMatchObject({
+      sessionIdBefore: null,
+      sessionParamsBeforeJson: null,
+      sessionReuseScope: "none",
+      contextSnapshot: expect.objectContaining({
+        sessionReuseSuppression: { kind: "force_fresh" },
+      }),
+    });
+
+    await heartbeat.resumeQueuedRuns();
+    await waitForCondition(async () =>
+      mockRuntimeAdapter.calls.some((call) => call.runId === queuedFreshRun!.id),
+    );
+    expect(mockRuntimeAdapter.calls.find((call) => call.runId === queuedFreshRun!.id)).toMatchObject({
+      sessionId: null,
+      sessionDisplayId: null,
+      sessionParams: null,
+    });
+  });
+
+  it("retries the selected taskless run instead of the latest global session", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    await db.insert(agentRuntimeState).values({
+      orgId,
+      agentId,
+      agentRuntimeType: "codex_local",
+      sessionId: "newer-global-session",
+      stateJson: {},
+    });
+    const sourceRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: sourceRunId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      status: "failed",
+      finishedAt: new Date(),
+      error: "retry me",
+      sessionIdBefore: "selected-session-before",
+      sessionIdAfter: "selected-session-after",
+      sessionParamsBeforeJson: {
+        sessionId: "selected-session-before",
+        cwd: "/tmp/selected-before",
+      },
+      sessionParamsAfterJson: {
+        sessionId: "selected-session-after",
+        cwd: "/tmp/selected-run",
+      },
+      contextSnapshot: {},
+    });
+
+    const retryRun = await heartbeatService(db).retryRun(sourceRunId, {
+      requestedByActorType: "user",
+      requestedByActorId: "local-board",
+    });
+    await waitForCondition(async () => mockRuntimeAdapter.calls.some((call) => call.runId === retryRun.id));
+
+    const call = mockRuntimeAdapter.calls.find((candidate) => candidate.runId === retryRun.id);
+    expect(call).toMatchObject({
+      taskKey: null,
+      sessionId: "selected-session-after",
+      sessionDisplayId: "selected-session-after",
+      sessionParams: {
+        sessionId: "selected-session-after",
+        cwd: expect.any(String),
+      },
+    });
+    expect(call?.sessionId).not.toBe("newer-global-session");
+    const persisted = await db
+      .select({
+        sessionReuseScope: heartbeatRuns.sessionReuseScope,
+        contextSnapshot: heartbeatRuns.contextSnapshot,
+      })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, retryRun.id))
+      .then((rows) => rows[0]);
+    expect(persisted?.sessionReuseScope).toBe("explicit");
+    expect(persisted?.contextSnapshot).toMatchObject({
+      resumeFromRunId: sourceRunId,
+      resumeSessionDisplayId: "selected-session-after",
+      resumeSessionParams: {
+        sessionId: "selected-session-after",
+        cwd: "/tmp/selected-run",
+      },
+    });
+    const publicRetry = (await heartbeatService(db).list(orgId, agentId)).find(
+      (candidate) => candidate.id === retryRun.id,
+    );
+    expect(publicRetry?.contextSnapshot).toMatchObject({
+      resumeFromRunId: sourceRunId,
+    });
+    expect(publicRetry?.contextSnapshot).not.toHaveProperty("resumeSessionParams");
+    expect(publicRetry?.contextSnapshot).not.toHaveProperty("resumeSessionDisplayId");
+  });
+
   it("promotes queued runs up to the configured concurrency limit", async () => {
     const { orgId, agentId } = await seedAgentFixture(2);
     const createdAt = new Date("2026-04-27T00:00:00.000Z");
@@ -663,6 +897,145 @@ describe("heartbeat run concurrency", () => {
       .from(heartbeatRuns)
       .where(eq(heartbeatRuns.agentId, agentId));
     expect(issueRuns).toHaveLength(1);
+  });
+
+  it("keeps a deferred force-fresh wake fresh when issue execution is promoted", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "in_progress" });
+    await db.insert(agentTaskSessions).values({
+      orgId,
+      agentId,
+      agentRuntimeType: "codex_local",
+      taskKey: `issue:${issueId}`,
+      sessionDisplayId: "stale-task-session",
+      sessionParamsJson: { sessionId: "stale-task-session" },
+    });
+    const terminalRunId = await seedLiveIssueExecution({
+      orgId,
+      agentId,
+      issueId,
+      status: "timed_out",
+      terminalEffectsPending: true,
+    });
+    const heartbeat = heartbeatService(db);
+
+    const deferredRun = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "force_fresh_deferred",
+      payload: { issueId },
+      contextSnapshot: {
+        issueId,
+        taskKey: `issue:${issueId}`,
+        forceFreshSession: true,
+      },
+    });
+    expect(deferredRun).toBeNull();
+    const deferredWakeup = (await listWakeupRequestsForAgent(agentId)).find(
+      (wakeup) => wakeup.status === "deferred_issue_execution",
+    );
+    expect(deferredWakeup?.id).toBeTruthy();
+
+    await db
+      .update(heartbeatRuns)
+      .set({ processExitedAt: new Date() })
+      .where(eq(heartbeatRuns.id, terminalRunId));
+    await heartbeat.reapOrphanedRuns();
+    await waitForCondition(async () => {
+      const promoted = await db
+        .select()
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.wakeupRequestId, deferredWakeup!.id))
+        .then((rows) => rows[0] ?? null);
+      return promoted?.status === "running" && mockRuntimeAdapter.calls.some((call) => call.runId === promoted.id);
+    });
+
+    const promoted = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.wakeupRequestId, deferredWakeup!.id))
+      .then((rows) => rows[0]!);
+    const invoke = mockRuntimeAdapter.calls.find((call) => call.runId === promoted.id);
+    expect(promoted).toMatchObject({
+      sessionIdBefore: null,
+      sessionParamsBeforeJson: null,
+      sessionReuseScope: "none",
+    });
+    expect(invoke).toMatchObject({
+      sessionId: null,
+      sessionDisplayId: null,
+      sessionParams: null,
+    });
+  });
+
+  it("persists deferred admission lineage before a promoted run can execute", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const heartbeat = heartbeatService(db);
+    const blocker = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "occupy_concurrency_slot",
+      contextSnapshot: { taskKey: "blocking-task" },
+    });
+    await waitForCondition(async () =>
+      mockRuntimeAdapter.calls.some((call) => call.runId === blocker!.id),
+    );
+
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "in_progress" });
+    const taskKey = `issue:${issueId}`;
+    await db.insert(agentTaskSessions).values({
+      orgId,
+      agentId,
+      agentRuntimeType: "codex_local",
+      taskKey,
+      sessionDisplayId: "stale-task-session",
+      sessionParamsJson: { sessionId: "stale-task-session" },
+    });
+    const terminalRunId = await seedLiveIssueExecution({
+      orgId,
+      agentId,
+      issueId,
+      status: "timed_out",
+      terminalEffectsPending: true,
+    });
+
+    expect(await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "deferred_force_fresh_admission",
+      payload: { issueId },
+      contextSnapshot: { issueId, taskKey, forceFreshSession: true },
+    })).toBeNull();
+    const deferredWakeup = (await listWakeupRequestsForAgent(agentId)).find(
+      (wakeup) => wakeup.status === "deferred_issue_execution",
+    );
+    expect(deferredWakeup?.id).toBeTruthy();
+
+    await db
+      .update(heartbeatRuns)
+      .set({ processExitedAt: new Date() })
+      .where(eq(heartbeatRuns.id, terminalRunId));
+    await heartbeat.reapOrphanedRuns();
+    const promoted = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.wakeupRequestId, deferredWakeup!.id))
+      .then((rows) => rows[0]!);
+    expect(promoted).toMatchObject({
+      status: "queued",
+      sessionIdBefore: null,
+      sessionParamsBeforeJson: null,
+      sessionReuseScope: "none",
+    });
+    expect(mockRuntimeAdapter.calls.some((call) => call.runId === promoted.id)).toBe(false);
+
+    await heartbeat.cancelRun(promoted.id);
+    expect(await heartbeat.getRun(promoted.id)).toMatchObject({
+      status: "cancelled",
+      sessionIdBefore: null,
+      sessionParamsBeforeJson: null,
+      sessionReuseScope: "none",
+    });
   });
 
   it("rejects retry while the source run still owns terminal effects", async () => {

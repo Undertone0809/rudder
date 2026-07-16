@@ -27,6 +27,7 @@ import {
   formatMessengerPreview,
   formatMessengerTitle,
   issueUpdatedChangedKeys,
+  toPublicHeartbeatRunContextSnapshot,
   type Approval,
   type BudgetIncident,
   type HeartbeatRun,
@@ -894,6 +895,8 @@ function approvalCard(
 
 function failedRunCard(run: FailedRunRow, agentName: string | null): MessengerHeartbeatRunThreadItem {
   const summary = failedRunUserSummary(run);
+  const publicContextSnapshot = toPublicHeartbeatRunContextSnapshot(run.contextSnapshot);
+  const publicRun = { ...run, contextSnapshot: publicContextSnapshot } as HeartbeatRun;
   return {
     id: run.id,
     threadKey: "failed-runs",
@@ -912,9 +915,9 @@ function failedRunCard(run: FailedRunRow, agentName: string | null): MessengerHe
       runId: run.id,
       agentId: run.agentId,
       status: run.status,
-      contextSnapshot: run.contextSnapshot,
+      contextSnapshot: publicContextSnapshot,
     },
-    run: run as HeartbeatRun,
+    run: publicRun,
   };
 }
 

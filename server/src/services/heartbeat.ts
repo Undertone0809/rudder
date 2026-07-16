@@ -15,5 +15,6 @@ export {
   formatRuntimeWorkspaceWarningLog,
   parseSessionCompactionPolicy,
   resolveRuntimeSessionParamsForWorkspace,
+  selectRunSessionLineage,
   shouldResetTaskSessionForWake
 } from "./runtime-kernel/heartbeat.sessions.js";

@@ -12,6 +12,18 @@ function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
+export function toPublicHeartbeatRunContextSnapshot(
+  value: HeartbeatRun["contextSnapshot"],
+): HeartbeatRun["contextSnapshot"] {
+  if (!value) return null;
+  const context = { ...value };
+  delete context.resumeSessionParams;
+  delete context.resumeSessionDisplayId;
+  delete context.forceFreshSession;
+  delete context.sessionResumeSuppressed;
+  return context;
+}
+
 function isAgentRunScene(value: unknown): value is AgentRunScene {
   return value === "issue"
     || value === "chat"
@@ -106,6 +118,7 @@ export function toHeartbeatRun(run: HeartbeatRun): HeartbeatRun {
     resultJson: run.resultJson,
     sessionIdBefore: run.sessionIdBefore,
     sessionIdAfter: run.sessionIdAfter,
+    sessionReuseScope: run.sessionReuseScope ?? "unknown",
     logStore: run.logStore,
     logRef: run.logRef,
     logBytes: run.logBytes,
@@ -120,7 +133,7 @@ export function toHeartbeatRun(run: HeartbeatRun): HeartbeatRun {
     processStartedAt: run.processStartedAt,
     retryOfRunId: run.retryOfRunId,
     processLossRetryCount: run.processLossRetryCount,
-    contextSnapshot: run.contextSnapshot,
+    contextSnapshot: toPublicHeartbeatRunContextSnapshot(run.contextSnapshot),
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
   };

@@ -72,12 +72,42 @@ export function createHeartbeatRecoveryHandlers(context: any) {
     });
     const issueId = readNonEmptyString(recoveryContextSnapshot.issueId);
     const taskKey = deriveTaskKey(recoveryContextSnapshot, null);
-    const sessionBefore = await resolveSessionBeforeForWakeup(agent, taskKey);
+    const inheritedSessionSuppression = heartbeatSessions.readSessionReuseSuppression(recoveryContextSnapshot);
+    delete recoveryContextSnapshot.resumeFromRunId;
+    delete recoveryContextSnapshot.resumeSessionDisplayId;
+    delete recoveryContextSnapshot.resumeSessionParams;
+    heartbeatSessions.writeSessionReuseSuppression(recoveryContextSnapshot, null);
+    const explicitResumeSession = await resolveExplicitResumeSessionOverride(
+      agent,
+      { resumeFromRunId: run.id },
+      taskKey,
+    );
+    const sessionReuseSuppression =
+      explicitResumeSession?.sessionReuseSuppression ??
+      (!explicitResumeSession ? inheritedSessionSuppression : null);
+    const suppressSessionReuse = Boolean(sessionReuseSuppression);
+    if (explicitResumeSession && !sessionReuseSuppression) {
+      recoveryContextSnapshot.resumeFromRunId = explicitResumeSession.resumeFromRunId;
+      recoveryContextSnapshot.resumeSessionDisplayId = explicitResumeSession.sessionDisplayId;
+      recoveryContextSnapshot.resumeSessionParams = explicitResumeSession.sessionParams;
+    } else if (sessionReuseSuppression) {
+      recoveryContextSnapshot.resumeFromRunId = run.id;
+      heartbeatSessions.writeSessionReuseSuppression(
+        recoveryContextSnapshot,
+        sessionReuseSuppression,
+      );
+    }
+    const sessionBefore =
+      suppressSessionReuse
+        ? null
+        : explicitResumeSession?.sessionDisplayId ??
+          await resolveSessionBeforeForWakeup(agent, taskKey);
     const recovery = recoveryContextSnapshot.recovery as HeartbeatRunRecoveryContext;
     const requestPayload: Record<string, unknown> = {
       originalRunId: run.id,
       failureKind: recovery.failureKind,
       recoveryTrigger: recovery.recoveryTrigger,
+      resumeFromRunId: run.id,
       ...(issueId ? { issueId } : {}),
     };
 
@@ -206,6 +236,12 @@ export function createHeartbeatRecoveryHandlers(context: any) {
           wakeupRequestId: wakeupRequest.id,
           contextSnapshot: recoveryContextSnapshot,
           sessionIdBefore: sessionBefore,
+          sessionParamsBeforeJson:
+            suppressSessionReuse
+              ? null
+              : explicitResumeSession?.sessionParams ?? (sessionBefore ? { sessionId: sessionBefore } : null),
+          sessionReuseScope:
+            suppressSessionReuse ? "none" : explicitResumeSession ? "explicit" : sessionBefore ? "task" : "none",
           retryOfRunId: run.id,
           processLossRetryCount:
             opts.recoveryTrigger === "automatic"
@@ -698,6 +734,8 @@ export function createHeartbeatRecoveryHandlers(context: any) {
         wakeupRequestId: wakeupRequest.id,
         contextSnapshot,
         sessionIdBefore: sessionBefore,
+        sessionParamsBeforeJson: sessionBefore ? { sessionId: sessionBefore } : null,
+        sessionReuseScope: sessionBefore ? "task" : "none",
         updatedAt: now,
       })
       .returning()

@@ -40,6 +40,10 @@ export function createHeartbeatWakeupHandlers(context: any) {
       triggerDetail,
       payload,
     });
+    heartbeatSessions.writeSessionReuseSuppression(
+      enrichedContextSnapshot,
+      heartbeatSessions.readSessionReuseSuppression(enrichedContextSnapshot),
+    );
     let issueId = readNonEmptyString(enrichedContextSnapshot.issueId) ?? issueIdFromPayload;
 
     const agent = await getAgent(agentId);
@@ -47,8 +51,17 @@ export function createHeartbeatWakeupHandlers(context: any) {
     const explicitResumeSession = await resolveExplicitResumeSessionOverride(agent, payload, taskKey);
     if (explicitResumeSession) {
       enrichedContextSnapshot.resumeFromRunId = explicitResumeSession.resumeFromRunId;
-      enrichedContextSnapshot.resumeSessionDisplayId = explicitResumeSession.sessionDisplayId;
-      enrichedContextSnapshot.resumeSessionParams = explicitResumeSession.sessionParams;
+      if (explicitResumeSession.sessionReuseSuppression) {
+        delete enrichedContextSnapshot.resumeSessionDisplayId;
+        delete enrichedContextSnapshot.resumeSessionParams;
+        heartbeatSessions.writeSessionReuseSuppression(
+          enrichedContextSnapshot,
+          explicitResumeSession.sessionReuseSuppression,
+        );
+      } else {
+        enrichedContextSnapshot.resumeSessionDisplayId = explicitResumeSession.sessionDisplayId;
+        enrichedContextSnapshot.resumeSessionParams = explicitResumeSession.sessionParams;
+      }
       if (!readNonEmptyString(enrichedContextSnapshot.issueId) && explicitResumeSession.issueId) {
         enrichedContextSnapshot.issueId = explicitResumeSession.issueId;
       }
@@ -62,9 +75,19 @@ export function createHeartbeatWakeupHandlers(context: any) {
     }
     await hydrateWakeContextSnapshot(db, agent.orgId, enrichedContextSnapshot);
     const effectiveTaskKey = readNonEmptyString(enrichedContextSnapshot.taskKey) ?? taskKey;
-    const sessionBefore =
-      explicitResumeSession?.sessionDisplayId ??
-      await resolveSessionBeforeForWakeup(agent, effectiveTaskKey);
+    const resetTaskSession = shouldResetTaskSessionForWake(enrichedContextSnapshot);
+    const taskSessionDisplayId = resetTaskSession
+      ? null
+      : await resolveSessionBeforeForWakeup(agent, effectiveTaskKey);
+    const admissionSessionSelection = heartbeatSessions.selectRunSessionLineage({
+      forceFresh: Boolean(heartbeatSessions.readSessionReuseSuppression(enrichedContextSnapshot)),
+      explicitSessionParams: explicitResumeSession?.sessionParams ?? null,
+      explicitSessionDisplayId: explicitResumeSession?.sessionDisplayId ?? null,
+      taskSessionParams: null,
+      taskSessionDisplayId,
+    });
+    const sessionBefore = admissionSessionSelection.sessionDisplayId ??
+      readNonEmptyString(admissionSessionSelection.sessionParams?.sessionId);
 
     const writeSkippedRequest = async (skipReason: string, diagnostics?: Record<string, unknown>) => {
       const skippedPayload = diagnostics
@@ -371,10 +394,20 @@ export function createHeartbeatWakeupHandlers(context: any) {
               activeExecutionRun.contextSnapshot,
               enrichedContextSnapshot,
             );
+            const queuedSessionSuppressed =
+              activeExecutionRun.status === "queued" &&
+              Boolean(heartbeatSessions.readSessionReuseSuppression(mergedContextSnapshot));
             const mergedRun = await tx
               .update(heartbeatRuns)
               .set({
                 contextSnapshot: mergedContextSnapshot,
+                ...(queuedSessionSuppressed
+                  ? {
+                      sessionIdBefore: null,
+                      sessionParamsBeforeJson: null,
+                      sessionReuseScope: "none" as const,
+                    }
+                  : {}),
                 updatedAt: new Date(),
               })
               .where(eq(heartbeatRuns.id, activeExecutionRun.id))
@@ -531,6 +564,8 @@ export function createHeartbeatWakeupHandlers(context: any) {
             wakeupRequestId: wakeupRequest.id,
             contextSnapshot: enrichedContextSnapshot,
             sessionIdBefore: sessionBefore,
+            sessionParamsBeforeJson: admissionSessionSelection.sessionParams,
+            sessionReuseScope: admissionSessionSelection.reuseScope,
           })
           .returning()
           .then((rows) => rows[0]);
@@ -605,12 +640,22 @@ export function createHeartbeatWakeupHandlers(context: any) {
     if (coalescedTargetRun) {
       const mergedContextSnapshot = mergeCoalescedContextSnapshot(
         coalescedTargetRun.contextSnapshot,
-        contextSnapshot,
+        enrichedContextSnapshot,
       );
+      const queuedSessionSuppressed =
+        coalescedTargetRun.status === "queued" &&
+        Boolean(heartbeatSessions.readSessionReuseSuppression(mergedContextSnapshot));
       const mergedRun = await db
         .update(heartbeatRuns)
         .set({
           contextSnapshot: mergedContextSnapshot,
+          ...(queuedSessionSuppressed
+            ? {
+                sessionIdBefore: null,
+                sessionParamsBeforeJson: null,
+                sessionReuseScope: "none" as const,
+              }
+            : {}),
           updatedAt: new Date(),
         })
         .where(eq(heartbeatRuns.id, coalescedTargetRun.id))
@@ -715,6 +760,8 @@ export function createHeartbeatWakeupHandlers(context: any) {
           wakeupRequestId: wakeupRequest.id,
           contextSnapshot: enrichedContextSnapshot,
           sessionIdBefore: sessionBefore,
+          sessionParamsBeforeJson: admissionSessionSelection.sessionParams,
+          sessionReuseScope: admissionSessionSelection.reuseScope,
         })
         .returning()
         .then((rows) => rows[0]);
@@ -882,9 +929,27 @@ export function createHeartbeatWakeupHandlers(context: any) {
         payload: pendingPayload,
       });
       await hydrateWakeContextSnapshot(db, agent.orgId, recoveredContext);
-      const sessionBefore =
-        readNonEmptyString(recoveredContext.resumeSessionDisplayId) ??
-        await resolveSessionBeforeForWakeup(agent, taskKey);
+      const sessionCodec = getAgentRuntimeSessionCodec(agent.agentRuntimeType);
+      const explicitSessionParams = normalizeSessionParams(
+        sessionCodec.deserialize(
+          recoveredContext.resumeSessionParams && typeof recoveredContext.resumeSessionParams === "object"
+            ? recoveredContext.resumeSessionParams as Record<string, unknown>
+            : null,
+        ),
+      );
+      const resetTaskSession = shouldResetTaskSessionForWake(recoveredContext);
+      const taskSessionDisplayId = resetTaskSession
+        ? null
+        : await resolveSessionBeforeForWakeup(agent, taskKey);
+      const recoveredSessionSelection = heartbeatSessions.selectRunSessionLineage({
+        forceFresh: Boolean(heartbeatSessions.readSessionReuseSuppression(recoveredContext)),
+        explicitSessionParams,
+        explicitSessionDisplayId: readNonEmptyString(recoveredContext.resumeSessionDisplayId),
+        taskSessionParams: null,
+        taskSessionDisplayId,
+      });
+      const sessionBefore = recoveredSessionSelection.sessionDisplayId ??
+        readNonEmptyString(recoveredSessionSelection.sessionParams?.sessionId);
       const now = new Date();
       const recoveredRun = await db.transaction(async (tx) => {
         await tx.execute(
@@ -928,6 +993,8 @@ export function createHeartbeatWakeupHandlers(context: any) {
             wakeupRequestId: pendingWakeup.id,
             contextSnapshot: recoveredContext,
             sessionIdBefore: sessionBefore,
+            sessionParamsBeforeJson: recoveredSessionSelection.sessionParams,
+            sessionReuseScope: recoveredSessionSelection.reuseScope,
             createdAt: now,
             updatedAt: now,
           })
