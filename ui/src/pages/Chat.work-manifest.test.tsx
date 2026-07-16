@@ -96,7 +96,7 @@ describe("ChatWorkManifest", () => {
     expect(container.querySelector("[data-website-icon]")).not.toBeNull();
     const shelf = container.querySelector("[data-testid='chat-work-manifest-wide-panel']");
     const scrollRegion = container.querySelector("[data-testid='chat-work-manifest-scroll-region']");
-    expect(shelf?.className).toContain("max-h-[calc(100dvh-5rem)]");
+    expect(shelf?.className).toContain("max-h-[min(32rem,calc(100dvh-8rem))]");
     expect(shelf?.className).toContain("flex-col");
     expect(scrollRegion?.className).toContain("overflow-y-auto");
     expect(scrollRegion?.className).toContain("scrollbar-auto-hide");
@@ -185,6 +185,6 @@ describe("ChatWorkManifest", () => {
     act(() => trigger?.click());
     const compactPanel = container.querySelector("[data-testid='chat-work-manifest-compact-panel']");
     expect(compactPanel?.textContent).toContain("Report.md");
-    expect(compactPanel?.className).toContain("max-h-[calc(100dvh-6rem)]");
+    expect(compactPanel?.className).toContain("max-h-[min(32rem,calc(100dvh-6rem))]");
   });
 });
