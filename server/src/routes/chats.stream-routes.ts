@@ -18,6 +18,7 @@ import { Router, type Request } from "express";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
+import { conflict } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import { createAssistantTextAccumulator } from "../services/chat-assistant.helpers.js";
@@ -47,6 +48,43 @@ type ChatStreamRouteContext = {
   storage: StorageService;
   [key: string]: any;
 };
+
+type StartingChatGenerationGate = {
+  generationReady: Promise<string | null>;
+  stopApplied: Promise<void>;
+  stopRequested: boolean;
+  resolveGeneration: (generationId: string | null) => void;
+  resolveStopApplied: () => void;
+};
+
+const startingChatGenerationGates = new Map<string, StartingChatGenerationGate>();
+
+function createStartingChatGenerationGate(): StartingChatGenerationGate {
+  let resolveGeneration!: (generationId: string | null) => void;
+  let resolveStopApplied!: () => void;
+  return {
+    generationReady: new Promise<string | null>((resolve) => {
+      resolveGeneration = resolve;
+    }),
+    stopApplied: new Promise<void>((resolve) => {
+      resolveStopApplied = resolve;
+    }),
+    stopRequested: false,
+    resolveGeneration,
+    resolveStopApplied,
+  };
+}
+
+function outputAdmissionClosed(error: unknown): boolean {
+  return Boolean(
+    error
+    && typeof error === "object"
+    && "status" in error
+    && Number((error as { status?: unknown }).status) === 409
+    && "message" in error
+    && (error as { message?: unknown }).message === "Chat-visible output admission is closed for this generation",
+  );
+}
 
 export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
   const CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE =
@@ -186,6 +224,8 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       res.end();
       return;
     }
+    const startupGate = createStartingChatGenerationGate();
+    startingChatGenerationGates.set(conversation.id, startupGate);
     if (queuedMessageId) {
       try {
         await svc.assertQueuedMessageClaimedForDelivery({
@@ -194,6 +234,8 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
           body: parsedBody.data.body,
         });
       } catch (error) {
+        startupGate.resolveGeneration(null);
+        startingChatGenerationGates.delete(conversation.id);
         releaseGeneration();
         throw error;
       }
@@ -204,70 +246,45 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       const createdGeneration = await svc.createGeneration(conversation.orgId, conversation.id);
       generation = createdGeneration;
       setActiveChatGenerationId(conversation.id, createdGeneration.id);
+      startupGate.resolveGeneration(createdGeneration.id);
     } catch (error) {
+      startupGate.resolveGeneration(null);
+      startingChatGenerationGates.delete(conversation.id);
       releaseGeneration();
       throw error;
+    }
+    if (abortController.signal.aborted && startupGate.stopRequested) {
+      await startupGate.stopApplied;
     }
 
     let assistantConversationForPartial: ChatConversation | null = null;
     let turnContextForPartial: ReturnType<typeof turnContextFromUserMessage> | null = null;
     const transcript: TranscriptEntry[] = [];
-    let assistantProgressMessage: ChatMessage | null = null;
     let assistantProgressMessageId: string | null = null;
     let activeChatRunId: string | null = null;
     let generationTerminalStatus: "completed" | "failed" | "stopped" | "aborted" = "failed";
-    let assistantDraftBody = "";
     let admittedAssistantBody = "";
-    const admittedTranscript: TranscriptEntry[] = [];
     let stopCutoff: { body: string; transcript: TranscriptEntry[] } | null = null;
+    let outputAdmissionTail: Promise<void> = Promise.resolve();
+    const serializeOutputAdmission = <T>(operation: () => Promise<T>): Promise<T> => {
+      const result = outputAdmissionTail.then(operation, operation);
+      outputAdmissionTail = result.then(() => undefined, () => undefined);
+      return result;
+    };
     const freezeStopCutoff = () => {
       if (stopCutoff) return;
       stopCutoff = {
         body: admittedAssistantBody,
-        transcript: [...admittedTranscript],
+        transcript: [...transcript],
       };
     };
     abortController.signal.addEventListener("abort", freezeStopCutoff, { once: true });
-    const persistStreamProgress = async (
-      progressConversation: ChatConversation,
-      replyingAgentId = chatReplyingAgentId(progressConversation),
-      snapshot = { body: assistantDraftBody, transcript: [...transcript] },
-    ) => {
-      if (!turnContextForPartial) return null;
-      const input = {
-        kind: "message" as const,
-        status: "streaming" as const,
-        body: snapshot.body,
-        transcript: snapshot.transcript,
-        runId: activeChatRunId ?? undefined,
-        replyingAgentId,
-      };
-      if (assistantProgressMessage) {
-        const updated = await svc.updateMessage(progressConversation.id, assistantProgressMessage.id, input);
-        if (updated) {
-          assistantProgressMessage = updated as ChatMessage;
-          assistantProgressMessageId = assistantProgressMessage.id;
-          return assistantProgressMessage;
-        }
-      }
-      assistantProgressMessage = await svc.addMessage(progressConversation.id, {
-        orgId: progressConversation.orgId,
-        role: "assistant",
-        kind: "message",
-        status: "streaming",
-        body: snapshot.body,
-        transcript: snapshot.transcript,
-        runId: activeChatRunId ?? null,
-        replyingAgentId,
-        chatTurnId: turnContextForPartial.chatTurnId,
-        turnVariant: turnContextForPartial.turnVariant,
-      }) as ChatMessage;
-      assistantProgressMessageId = assistantProgressMessage.id;
-      return assistantProgressMessage;
-    };
     const stoppedState = (fallbackBody: string) => {
       if (!stopCutoff) {
-        return { body: fallbackBody, transcript: [...transcript] };
+        return {
+          body: admittedAssistantBody.trim() ? admittedAssistantBody : fallbackBody,
+          transcript: [...transcript],
+        };
       }
       const accumulator = createAssistantTextAccumulator();
       for (const entry of stopCutoff.transcript) {
@@ -289,20 +306,50 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       if (stoppedPersistencePromise) return stoppedPersistencePromise;
       generationTerminalStatus = "stopped";
       stoppedPersistencePromise = (async () => {
-        const frozen = stoppedState(fallbackBody);
+        await outputAdmissionTail;
+        let frozen = stoppedState(fallbackBody);
+        if (generation) {
+          const durableFrozen = await svc.generationProtocol.getFrozenVisibleProjection({
+            orgId: conversation.orgId,
+            conversationId: conversation.id,
+            generationId: generation.id,
+          }).catch(() => null);
+          if (durableFrozen && durableFrozen.generation.acceptedThroughSeq !== null) {
+            frozen = {
+              body: durableFrozen.projection.body,
+              transcript: durableFrozen.projection.transcript,
+            };
+          }
+        }
         const stoppedBody = frozen.body.trim()
           ? frozen.body
           : (assistantProgressMessageId ? CHAT_ASSISTANT_STOPPED_FALLBACK_MESSAGE : "");
-        const stoppedMessage = await persistPartialAssistantMessage(
-          stoppedConversation,
-          stoppedBody,
-          "stopped",
-          turnContextForPartial,
-          frozen.transcript,
-          replyingAgentId,
-          assistantProgressMessageId,
-          activeChatRunId,
-        );
+        let stoppedMessage: ChatMessage | null = null;
+        let lastProjectionError: unknown;
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          try {
+            stoppedMessage = await persistPartialAssistantMessage(
+              stoppedConversation,
+              stoppedBody,
+              "stopped",
+              turnContextForPartial,
+              frozen.transcript,
+              replyingAgentId,
+              assistantProgressMessageId,
+              activeChatRunId,
+            );
+            lastProjectionError = undefined;
+            break;
+          } catch (error) {
+            lastProjectionError = error;
+            logger.warn(
+              { err: error, conversationId: stoppedConversation.id, attempt },
+              "failed to project stopped chat assistant message",
+            );
+            await Promise.resolve();
+          }
+        }
+        if (lastProjectionError) throw lastProjectionError;
         await linkChatRunMessages(stoppedConversation, activeChatRunId, stoppedMessage ? [stoppedMessage] : []);
         if (stoppedMessage) {
           await logChatMessagesAdded(stoppedConversation, [stoppedMessage], {
@@ -381,6 +428,15 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         bodyHash: hashChatGenerationBody(""),
       });
 
+      if (abortController.signal.aborted) {
+        generationTerminalStatus = "stopped";
+        if (!clientClosed) {
+          writeStreamEvent(res, { type: "final", messages: [] });
+          res.end();
+        }
+        return;
+      }
+
       {
           const assistantInput = await loadAssistantInput(conversation as ChatConversation, actor);
           assistantConversationForPartial = assistantInput.conversation;
@@ -431,98 +487,150 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                   },
                 },
               ),
-              onAssistantDelta: async (delta: string) => {
+              onAssistantDelta: (delta: string) => serializeOutputAdmission(async () => {
                 if (abortController.signal.aborted) return;
-                assistantDraftBody = `${assistantDraftBody}${delta}`;
-                await persistStreamProgress(assistantInput.conversation, undefined, {
-                  body: assistantDraftBody,
-                  transcript: [...transcript],
-                });
-                if (abortController.signal.aborted || clientClosed) return;
                 const activeControl = getActiveChatGeneration(conversation.id);
                 const attemptEpoch = Math.max(
                   1,
                   activeControl?.attemptEpoch ?? generation?.attemptEpoch ?? 1,
                 );
                 const projectedBody = `${admittedAssistantBody}${delta}`;
-                const committed = await svc.generationProtocol.appendGenerationEvent({
-                  orgId: conversation.orgId,
-                  conversationId: conversation.id,
-                  generationId: generation!.id,
-                  attemptEpoch,
-                  admission: "visible",
-                  eventKind: "assistant_delta",
-                  payload: { delta },
-                  bodyOffset: admittedAssistantBody.length,
-                  bodyLength: delta.length,
-                  assistantMessageId: assistantProgressMessageId,
-                  runId: activeChatRunId,
-                  bodyHash: hashChatGenerationBody(projectedBody),
-                });
+                let committed;
+                try {
+                  committed = await svc.generationProtocol.appendVisibleEventAndProject({
+                    orgId: conversation.orgId,
+                    conversationId: conversation.id,
+                    generationId: generation!.id,
+                    expectedAttemptEpoch: attemptEpoch,
+                    eventKind: "assistant_delta",
+                    payload: { delta },
+                    bodyOffset: admittedAssistantBody.length,
+                    bodyLength: delta.length,
+                    messageId: assistantProgressMessageId,
+                    runId: activeChatRunId,
+                    bodyHash: hashChatGenerationBody(projectedBody),
+                    body: projectedBody,
+                    transcript: [...transcript],
+                    replyingAgentId: chatReplyingAgentId(assistantInput.conversation),
+                    chatTurnId: turnContextForPartial!.chatTurnId,
+                    turnVariant: turnContextForPartial!.turnVariant,
+                  });
+                } catch (error) {
+                  if (outputAdmissionClosed(error)) return;
+                  throw error;
+                }
+                assistantProgressMessageId = committed.message.id;
+                admittedAssistantBody = projectedBody;
                 if (abortController.signal.aborted || clientClosed) return;
-                if (writeStreamEvent(res, {
+                writeStreamEvent(res, {
                   type: "assistant_delta",
                   delta,
                   generationId: generation!.id,
                   attemptEpoch,
                   generationSeq: committed.event.generationSeq,
                   bodyHash: committed.event.payload.bodyHash,
-                })) {
-                  admittedAssistantBody = projectedBody;
-                }
-              },
-              onAssistantState: async (state: unknown) => {
-                if (abortController.signal.aborted) return;
-                await persistStreamProgress(assistantInput.conversation, undefined, {
-                  body: assistantDraftBody,
-                  transcript: [...transcript],
                 });
-                if (abortController.signal.aborted || clientClosed) return;
+              }),
+              onAssistantState: (state: unknown) => serializeOutputAdmission(async () => {
+                if (abortController.signal.aborted) return;
+                if (clientClosed) return;
                 writeStreamEvent(res, {
                   type: "assistant_state",
                   state,
                 });
-              },
-              onTranscriptEntry: async (entry: TranscriptEntry) => {
+              }),
+              onTranscriptEntry: (entry: TranscriptEntry) => serializeOutputAdmission(async () => {
                 if (abortController.signal.aborted) return;
-                transcript.push(entry);
-                await persistStreamProgress(assistantInput.conversation, undefined, {
-                  body: assistantDraftBody,
-                  transcript: [...transcript],
-                });
-                if (abortController.signal.aborted || clientClosed) return;
                 const activeControl = getActiveChatGeneration(conversation.id);
                 const attemptEpoch = Math.max(
                   1,
                   activeControl?.attemptEpoch ?? generation?.attemptEpoch ?? 1,
                 );
-                const committed = await svc.generationProtocol.appendGenerationEvent({
-                  orgId: conversation.orgId,
-                  conversationId: conversation.id,
-                  generationId: generation!.id,
-                  attemptEpoch,
-                  admission: "visible",
-                  eventKind: "transcript",
-                  payload: { entry },
-                  assistantMessageId: assistantProgressMessageId,
-                  runId: activeChatRunId,
-                  bodyHash: hashChatGenerationBody(admittedAssistantBody),
-                });
+                const projectedTranscript = [...transcript, entry];
+                let committed;
+                try {
+                  committed = await svc.generationProtocol.appendVisibleEventAndProject({
+                    orgId: conversation.orgId,
+                    conversationId: conversation.id,
+                    generationId: generation!.id,
+                    expectedAttemptEpoch: attemptEpoch,
+                    eventKind: "transcript",
+                    payload: { entry },
+                    messageId: assistantProgressMessageId,
+                    runId: activeChatRunId,
+                    bodyHash: hashChatGenerationBody(admittedAssistantBody),
+                    body: admittedAssistantBody,
+                    transcript: projectedTranscript,
+                    replyingAgentId: chatReplyingAgentId(assistantInput.conversation),
+                    chatTurnId: turnContextForPartial!.chatTurnId,
+                    turnVariant: turnContextForPartial!.turnVariant,
+                  });
+                } catch (error) {
+                  if (outputAdmissionClosed(error)) return;
+                  throw error;
+                }
+                assistantProgressMessageId = committed.message.id;
+                transcript.push(entry);
                 if (abortController.signal.aborted || clientClosed) return;
-                if (writeStreamEvent(res, {
+                writeStreamEvent(res, {
                   type: "transcript_entry",
                   entry,
                   generationId: generation!.id,
                   attemptEpoch,
                   generationSeq: committed.event.generationSeq,
                   bodyHash: committed.event.payload.bodyHash,
-                })) {
-                  admittedTranscript.push(entry);
-                }
-              },
+                });
+              }),
             });
 
             if (abortController.signal.aborted || streamed.outcome === "stopped") {
+              await persistStoppedAssistant(
+                assistantInput.conversation,
+                streamed.replyingAgentId,
+                streamed.partialBody,
+              );
+              return;
+            }
+
+            const resultAdmission = await serializeOutputAdmission(async () => {
+              if (abortController.signal.aborted) return null;
+              const activeControl = getActiveChatGeneration(conversation.id);
+              const attemptEpoch = Math.max(
+                1,
+                activeControl?.attemptEpoch ?? generation?.attemptEpoch ?? 1,
+              );
+              try {
+                const committed = await svc.generationProtocol.appendVisibleEventAndProject({
+                  orgId: conversation.orgId,
+                  conversationId: conversation.id,
+                  generationId: generation!.id,
+                  expectedAttemptEpoch: attemptEpoch,
+                  eventKind: "runtime_output",
+                  payload: {
+                    resultKind: streamed.reply.kind,
+                    body: streamed.reply.body,
+                  },
+                  bodyOffset: 0,
+                  bodyLength: streamed.reply.body.length,
+                  messageId: assistantProgressMessageId,
+                  runId: activeChatRunId,
+                  bodyHash: hashChatGenerationBody(streamed.reply.body),
+                  body: streamed.reply.body,
+                  transcript: [...transcript],
+                  replyingAgentId: streamed.replyingAgentId,
+                  chatTurnId: turnContextForPartial!.chatTurnId,
+                  turnVariant: turnContextForPartial!.turnVariant,
+                });
+                assistantProgressMessageId = committed.message.id;
+                admittedAssistantBody = streamed.reply.body;
+                return committed;
+              } catch (error) {
+                if (outputAdmissionClosed(error)) return null;
+                throw error;
+              }
+            });
+            if (!resultAdmission) {
+              freezeStopCutoff();
               await persistStoppedAssistant(
                 assistantInput.conversation,
                 streamed.replyingAgentId,
@@ -654,6 +762,10 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
             terminalReason: (generationTerminalStatus as string) === "stopped"
               ? "operator_stop"
               : generationTerminalStatus,
+            payload: {
+              assistantMessageId: assistantProgressMessageId,
+              runId: activeChatRunId,
+            },
           });
           wakeTerminalProjector();
         })().catch((error: unknown) => {
@@ -668,6 +780,9 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         }).catch((error: unknown) => {
           logger.warn({ err: error, queuedMessageId }, "failed to mark queued chat message terminal");
         });
+      }
+      if (startingChatGenerationGates.get(conversation.id) === startupGate) {
+        startingChatGenerationGates.delete(conversation.id);
       }
       releaseGeneration();
       wakeServerQueue();
@@ -709,31 +824,51 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
 
-    const active = getActiveChatGeneration(conversation.id);
-    const latestActiveGeneration = active?.generationId
-      ? null
-      : await svc.getLatestActiveGeneration(conversation.id);
-    const generationId = parsed.data.expectedGenerationId
-      ?? active?.generationId
-      ?? latestActiveGeneration?.id
-      ?? null;
     const controlActionId = parsed.data.controlActionId ?? randomUUID();
-    if (!generationId) {
-      res.json({
-        stopped: false,
-        controlActionId,
-        generationId: null,
-        disposition: "no_active_generation",
-      });
-      return;
-    }
+    const startupGate = startingChatGenerationGates.get(conversation.id) ?? null;
+    let startupStopRequested = false;
+    let startupInterruptRequested = false;
+    try {
+      let active = getActiveChatGeneration(conversation.id);
+      if (active && !active.generationId && startupGate) {
+        startupStopRequested = true;
+        startupGate.stopRequested = true;
+        startupInterruptRequested = cancelActiveChatGeneration(conversation.id);
+        const startupGenerationId = await startupGate.generationReady;
+        active = startupGenerationId ? getActiveChatGeneration(conversation.id) : null;
+        if (!startupGenerationId) {
+          res.json({
+            stopped: startupInterruptRequested,
+            controlActionId,
+            generationId: null,
+            disposition: startupInterruptRequested ? "startup_cancelled" : "interrupted_unverified",
+          });
+          return;
+        }
+      }
+      const latestActiveGeneration = active?.generationId
+        ? null
+        : await svc.getLatestActiveGeneration(conversation.id);
+      const generationId = parsed.data.expectedGenerationId
+        ?? active?.generationId
+        ?? latestActiveGeneration?.id
+        ?? null;
+      if (!generationId) {
+        res.json({
+          stopped: false,
+          controlActionId,
+          generationId: null,
+          disposition: "no_active_generation",
+        });
+        return;
+      }
 
     let durableCheckpoint = await svc.generationProtocol.getLatestVisibleCheckpoint({
       orgId: conversation.orgId,
       conversationId: conversation.id,
       generationId,
     });
-    if (durableCheckpoint.generation.runtimeTerminalAt) {
+    if (durableCheckpoint.generation.runtimeTerminalAt && !parsed.data.controlActionId) {
       wakeTerminalProjector();
       res.json({
         stopped: false,
@@ -758,7 +893,8 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
           controlActionId,
           expectedGenerationId: generationId,
           expectedAttemptEpoch,
-          expectedControlVersion: durableCheckpoint.generation.controlVersion,
+          expectedControlVersion: parsed.data.expectedControlVersion
+            ?? durableCheckpoint.generation.controlVersion,
           requestedRenderSeq,
           requestedBodyHash,
         });
@@ -772,7 +908,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
           conversationId: conversation.id,
           generationId,
         });
-        if (durableCheckpoint.generation.runtimeTerminalAt) {
+        if (durableCheckpoint.generation.runtimeTerminalAt && !parsed.data.controlActionId) {
           wakeTerminalProjector();
           res.json({
             stopped: false,
@@ -786,10 +922,55 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       }
     }
     if (!stop) throw new Error("Failed to establish the chat Stop cutoff");
+    if (
+      stop.idempotent
+      && parsed.data.expectedControlVersion !== undefined
+      && stop.action.expectedControlVersion !== parsed.data.expectedControlVersion
+    ) {
+      throw conflict("Control action id was already used for a different Stop request");
+    }
 
-    const localInterruptRequested = cancelActiveChatGeneration(conversation.id);
+    if (stop.outcome === "completion_committed") {
+      res.json({
+        stopped: false,
+        controlActionId,
+        generationId,
+        disposition: "completion_committed",
+      });
+      return;
+    }
+
+    if (stop.idempotent && stop.generation.runtimeTerminalAt) {
+      const terminalDisposition = stop.generation.status === "stopped"
+        || stop.action.localDisposition === "stopped"
+        ? "stopped"
+        : "stopping";
+      wakeTerminalProjector();
+      res.json({
+        stopped: true,
+        controlActionId,
+        generationId,
+        disposition: terminalDisposition,
+        acceptedThroughSeq: stop.action.acceptedThroughSeq,
+        frozenBodyHash: stop.action.frozenBodyHash,
+      });
+      return;
+    }
+
+    const localInterruptRequested = startupInterruptRequested || cancelActiveChatGeneration(conversation.id);
     let disposition = "stopping";
-    if (!localInterruptRequested) {
+    if (startupStopRequested) {
+      await svc.generationProtocol.recordRuntimeTerminal({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        generationId,
+        expectedAttemptEpoch: stop.generation.attemptEpoch,
+        finalStatus: "stopped",
+        terminalReason: "operator_stop",
+        controlActionId,
+      });
+      wakeTerminalProjector();
+    } else if (!localInterruptRequested) {
       disposition = "interrupted_unverified";
       await svc.generationProtocol.recordRuntimeTerminal({
         orgId: conversation.orgId,
@@ -810,6 +991,9 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       acceptedThroughSeq: stop.action.acceptedThroughSeq,
       frozenBodyHash: stop.action.frozenBodyHash,
     });
+    } finally {
+      if (startupStopRequested) startupGate?.resolveStopApplied();
+    }
   });
 
   router.post("/orgs/:orgId/chats/:chatId/attachments", async (req, res) => {

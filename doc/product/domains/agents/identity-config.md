@@ -107,6 +107,14 @@ Product model:
   skill listing/sync, local auth token support, session codec, transcript
   parser, quota/cost metadata, and managed MCP/native control-plane tool
   projection.
+- Interactive chat capabilities are attempt-scoped. An active adapter may
+  register a fenced control handle that declares native or fallback Steer and
+  interrupt behavior; the capability disappears when that attempt releases
+  ownership.
+- Codex chat uses Codex App Server for native `turn/steer` and
+  `turn/interrupt`. Adapters without native mid-turn control must report the
+  interrupt-and-continue fallback honestly rather than exposing a false native
+  Steer acknowledgement.
 - Built-in Browser control is a Desktop `local_trusted` capability in V1.
   Codex, Claude, and OpenCode may receive it through Rudder-managed MCP config;
   Pi may receive the equivalent managed native extension. Remote runtimes and
@@ -153,13 +161,21 @@ Flow:
    so agent config cannot force-enable or retain it after disablement.
 6. Runtime config is prepared, secrets are resolved, skills/context are loaded,
    and execution workspace is realized.
-7. Adapter executes and returns provider-specific result/transcript/session
+7. For an interactive chat attempt, the adapter registers its control handle
+   only after the provider turn identity is known. Rudder fences every control
+   call to that attempt and unregisters the handle on terminal release.
+8. Adapter executes and returns provider-specific result/transcript/session
    evidence.
-8. Rudder normalizes and stores the result under `RUN.RESULT.001`.
+9. Rudder normalizes and stores the result under `RUN.RESULT.001`.
 
 Invariants:
 
 - Adapter-specific affordances must not be assumed for all providers.
+- Native Steer success means the provider acknowledged the same active turn; it
+  does not claim that the model obeyed the feedback. Unknown receipt must remain
+  explicit and must not be converted into a duplicate fallback continuation.
+- Stop must freeze Rudder-visible output independently of how quickly or
+  reliably the provider interrupt completes.
 - Provider parity claims require runtime-specific evidence or a documented
   blocked/substituted proof.
 - Runtime availability groups must not silently disable a supported adapter.
@@ -193,3 +209,7 @@ Evidence:
   the curated menu in its declared order.
 - Codex, Claude, OpenCode, and Pi execute tests cover managed Browser capability
   propagation and prove the eight Browser tools are absent when disabled.
+- Codex App Server tests cover bidirectional request handling, native
+  `turn/steer`, native `turn/interrupt`, disconnect ambiguity, and fallback
+  process termination. Chat protocol tests cover attempt ownership and stale
+  handle rejection.

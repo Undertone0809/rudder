@@ -162,6 +162,56 @@ function createLegacyTerminalMigrationsFolder() {
   return { manifest, migrationsFolder };
 }
 
+function createLegacyChatRuntimeControlsMigrationsFolder() {
+  const migrationsFolder = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-legacy-chat-controls-migrations-"));
+  tempPaths.push(migrationsFolder);
+  fs.mkdirSync(path.join(migrationsFolder, "meta"));
+
+  const currentMigrationsUrl = new URL("./migrations/", import.meta.url);
+  const currentJournal = JSON.parse(
+    fs.readFileSync(new URL("meta/_journal.json", currentMigrationsUrl), "utf8"),
+  ) as { version: string; dialect: string; entries: MigrationJournalEntry[] };
+  const baseEntries = currentJournal.entries.filter((entry) => entry.idx < 102);
+  if (baseEntries.at(-1)?.tag !== "0101_bizarre_morlun") {
+    throw new Error("Legacy chat control migration fixture requires the 0101 base schema");
+  }
+  for (const entry of baseEntries) {
+    fs.copyFileSync(
+      new URL(`${entry.tag}.sql`, currentMigrationsUrl),
+      path.join(migrationsFolder, `${entry.tag}.sql`),
+    );
+  }
+
+  const historicalContent = fs.readFileSync(
+    new URL("0104_unusual_mister_fear.sql", currentMigrationsUrl),
+    "utf8",
+  );
+  const historicalHash = createHash("sha256").update(historicalContent).digest("hex");
+  if (historicalHash !== "a1fc0446af5ec1640890bb9cf36208eab8dce6687c233029bd54e179613e1af7") {
+    throw new Error(`Legacy chat runtime controls fixture hash changed: ${historicalHash}`);
+  }
+  const legacyEntry: MigrationJournalEntry = {
+    idx: 102,
+    version: "7",
+    when: 1784159513933,
+    tag: "0102_chat_runtime_controls",
+    breakpoints: true,
+  };
+  fs.writeFileSync(
+    path.join(migrationsFolder, `${legacyEntry.tag}.sql`),
+    historicalContent,
+  );
+  fs.writeFileSync(
+    path.join(migrationsFolder, "meta", "_journal.json"),
+    JSON.stringify({
+      version: currentJournal.version,
+      dialect: currentJournal.dialect,
+      entries: [...baseEntries, legacyEntry],
+    }),
+  );
+  return { historicalHash, migrationsFolder };
+}
+
 function createCurrentMigrationsFolderThrough(maxIdx: number) {
   const migrationsFolder = fs.mkdtempSync(path.join(os.tmpdir(), `rudder-migrations-through-${maxIdx}-`));
   tempPaths.push(migrationsFolder);
@@ -483,6 +533,7 @@ describe("applyPendingMigrations", () => {
           "0102_complex_retro_girl.sql",
           "0103_cute_colonel_america.sql",
           "0104_unusual_mister_fear.sql",
+          "0105_chat_queue_actor_reconciliation.sql",
         ],
         reason: "pending-migrations",
       });
@@ -540,6 +591,112 @@ describe("applyPendingMigrations", () => {
           "heartbeat_runs_active_chat_conversation_uq",
           "heartbeat_runs_status_execution_lease_created_idx",
         ]);
+      } finally {
+        await verifySql.end();
+      }
+    },
+    20_000,
+  );
+
+  it(
+    "upgrades databases that applied the legacy 0102 chat runtime controls migration",
+    async () => {
+      const connectionString = await createTempDatabase();
+      const { historicalHash, migrationsFolder } = createLegacyChatRuntimeControlsMigrationsFolder();
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        await migratePg(drizzlePg(sql), { migrationsFolder });
+        await sql.unsafe(`
+          INSERT INTO "organizations" ("id", "url_key", "name", "issue_prefix")
+          VALUES (
+            '00000000-0000-0000-0000-000000000122',
+            'legacy-chat-controls',
+            'Legacy Chat Controls',
+            'LCC'
+          )
+        `);
+        await sql.unsafe(`
+          INSERT INTO "chat_conversations" ("id", "org_id", "title")
+          VALUES (
+            '00000000-0000-0000-0000-000000000123',
+            '00000000-0000-0000-0000-000000000122',
+            'Legacy chat runtime controls'
+          )
+        `);
+        await sql.unsafe(`
+          INSERT INTO "chat_queued_messages" (
+            "id",
+            "org_id",
+            "conversation_id",
+            "position",
+            "status",
+            "client_mutation_id",
+            "payload",
+            "delivery_intent",
+            "delivery_disposition"
+          )
+          VALUES (
+            '00000000-0000-0000-0000-000000000124',
+            '00000000-0000-0000-0000-000000000122',
+            '00000000-0000-0000-0000-000000000123',
+            1,
+            'continuation_pending',
+            'legacy-wip-steer',
+            '{"body":"legacy WIP steer"}'::jsonb,
+            'steer',
+            'continuation_pending'
+          )
+        `);
+      } finally {
+        await sql.end();
+      }
+
+      const pendingState = await inspectMigrations(connectionString);
+      expect(pendingState).toMatchObject({
+        status: "needsMigrations",
+        pendingMigrations: [
+          "0055_illegal_sheva_callister.sql",
+          "0102_complex_retro_girl.sql",
+          "0103_cute_colonel_america.sql",
+          "0105_chat_queue_actor_reconciliation.sql",
+        ],
+        reason: "pending-migrations",
+      });
+
+      await expect(applyPendingMigrations(connectionString)).resolves.toBeUndefined();
+      expect((await inspectMigrations(connectionString)).status).toBe("upToDate");
+
+      const verifySql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        const legacyHistory = await verifySql.unsafe<{ hash: string }[]>(`
+          SELECT hash
+          FROM "drizzle"."__drizzle_migrations"
+          WHERE hash = '${historicalHash}'
+        `);
+        expect(legacyHistory).toEqual([{ hash: historicalHash }]);
+        const [queueItem] = await verifySql.unsafe<{
+          status: string;
+          delivery_intent: string;
+          delivery_disposition: string | null;
+          request_actor: Record<string, unknown> | null;
+          reconciliation_reason: string | null;
+        }[]>(`
+          SELECT
+            status,
+            delivery_intent,
+            delivery_disposition,
+            request_actor,
+            reconciliation_reason
+          FROM "chat_queued_messages"
+          WHERE "id" = '00000000-0000-0000-0000-000000000124'
+        `);
+        expect(queueItem).toEqual({
+          status: "queued",
+          delivery_intent: "queue",
+          delivery_disposition: null,
+          request_actor: null,
+          reconciliation_reason: "legacy_request_actor_unavailable",
+        });
       } finally {
         await verifySql.end();
       }
@@ -613,6 +770,291 @@ describe("applyPendingMigrations", () => {
           SET "session_reuse_scope" = 'global'
           WHERE "id" = '00000000-0000-0000-0000-000000000105'
         `)).rejects.toMatchObject({ code: "23514" });
+      } finally {
+        await verifySql.end();
+      }
+    },
+    20_000,
+  );
+
+  it(
+    "reconciles legacy chat control states before creating active-generation constraints",
+    async () => {
+      const connectionString = await createTempDatabase();
+      const migrationsThrough0103 = createCurrentMigrationsFolderThrough(103);
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        await migratePg(drizzlePg(sql), { migrationsFolder: migrationsThrough0103 });
+        await sql.unsafe(`
+          INSERT INTO "organizations" ("id", "url_key", "name", "issue_prefix")
+          VALUES (
+            '00000000-0000-0000-0000-000000000110',
+            'chat-control-migration',
+            'Chat Control Migration',
+            'CCM'
+          )
+        `);
+        await sql.unsafe(`
+          INSERT INTO "agents" ("id", "org_id", "name")
+          VALUES (
+            '00000000-0000-0000-0000-000000000119',
+            '00000000-0000-0000-0000-000000000110',
+            'Legacy queue agent'
+          )
+        `);
+        await sql.unsafe(`
+          INSERT INTO "chat_conversations" ("id", "org_id", "title")
+          VALUES (
+            '00000000-0000-0000-0000-000000000111',
+            '00000000-0000-0000-0000-000000000110',
+            'Legacy chat control state'
+          )
+        `);
+        await sql.unsafe(`
+          INSERT INTO "chat_generations" ("id", "org_id", "conversation_id", "status")
+          VALUES
+            (
+              '00000000-0000-0000-0000-000000000112',
+              '00000000-0000-0000-0000-000000000110',
+              '00000000-0000-0000-0000-000000000111',
+              'active'
+            ),
+            (
+              '00000000-0000-0000-0000-000000000113',
+              '00000000-0000-0000-0000-000000000110',
+              '00000000-0000-0000-0000-000000000111',
+              'running'
+            )
+        `);
+        await sql.unsafe(`
+          INSERT INTO "chat_queued_messages" (
+            "id",
+            "org_id",
+            "conversation_id",
+            "position",
+            "status",
+            "client_mutation_id",
+            "payload",
+            "last_delivery_reason"
+          )
+          VALUES
+            (
+              '00000000-0000-0000-0000-000000000114',
+              '00000000-0000-0000-0000-000000000110',
+              '00000000-0000-0000-0000-000000000111',
+              1,
+              'steer_pending',
+              'legacy-steer',
+              '{"body":"steer"}'::jsonb,
+              'unsupported'
+            ),
+            (
+              '00000000-0000-0000-0000-000000000115',
+              '00000000-0000-0000-0000-000000000110',
+              '00000000-0000-0000-0000-000000000111',
+              2,
+              'dequeue_claimed',
+              'legacy-claim',
+              '{"body":"claim"}'::jsonb,
+              NULL
+            ),
+            (
+              '00000000-0000-0000-0000-000000000116',
+              '00000000-0000-0000-0000-000000000110',
+              '00000000-0000-0000-0000-000000000111',
+              3,
+              'running',
+              'legacy-running',
+              '{"body":"running"}'::jsonb,
+              NULL
+            ),
+            (
+              '00000000-0000-0000-0000-000000000117',
+              '00000000-0000-0000-0000-000000000110',
+              '00000000-0000-0000-0000-000000000111',
+              4,
+              'queued',
+              'legacy-actorless-queue',
+              '{"body":"actorless queue"}'::jsonb,
+              NULL
+            ),
+            (
+              '00000000-0000-0000-0000-000000000118',
+              '00000000-0000-0000-0000-000000000110',
+              '00000000-0000-0000-0000-000000000111',
+              5,
+              'steer_pending',
+              'legacy-actorless-steer',
+              '{"body":"actorless steer"}'::jsonb,
+              'unsupported'
+            )
+        `);
+        await sql.unsafe(`
+          INSERT INTO "activity_log" (
+            "id",
+            "org_id",
+            "actor_type",
+            "actor_id",
+            "action",
+            "entity_type",
+            "entity_id",
+            "agent_id",
+            "details"
+          )
+          VALUES
+            (
+              '00000000-0000-0000-0000-000000000120',
+              '00000000-0000-0000-0000-000000000110',
+              'user',
+              'legacy-board-user',
+              'chat.queue.created',
+              'chat',
+              '00000000-0000-0000-0000-000000000111',
+              NULL,
+              '{"queuedMessageId":"00000000-0000-0000-0000-000000000114"}'::jsonb
+            ),
+            (
+              '00000000-0000-0000-0000-000000000121',
+              '00000000-0000-0000-0000-000000000110',
+              'agent',
+              '00000000-0000-0000-0000-000000000119',
+              'chat.queue.created',
+              'chat',
+              '00000000-0000-0000-0000-000000000111',
+              '00000000-0000-0000-0000-000000000119',
+              '{"queuedMessageId":"00000000-0000-0000-0000-000000000115"}'::jsonb
+            )
+        `);
+      } finally {
+        await sql.end();
+      }
+
+      await expect(applyPendingMigrations(connectionString)).resolves.toBeUndefined();
+      expect((await inspectMigrations(connectionString)).status).toBe("upToDate");
+
+      const verifySql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        const generations = await verifySql.unsafe<{
+          status: string;
+          terminal_reason: string | null;
+          control_state: string;
+          runtime_terminal_recorded: boolean;
+          completed_recorded: boolean;
+        }[]>(`
+          SELECT
+            status,
+            terminal_reason,
+            control_state,
+            runtime_terminal_at IS NOT NULL AS runtime_terminal_recorded,
+            completed_at IS NOT NULL AS completed_recorded
+          FROM "chat_generations"
+          WHERE "conversation_id" = '00000000-0000-0000-0000-000000000111'
+          ORDER BY "id"
+        `);
+        expect(generations).toEqual([
+          {
+            status: "aborted",
+            terminal_reason: "ownerless_during_durable_control_migration",
+            control_state: "terminal",
+            runtime_terminal_recorded: true,
+            completed_recorded: true,
+          },
+          {
+            status: "aborted",
+            terminal_reason: "ownerless_during_durable_control_migration",
+            control_state: "terminal",
+            runtime_terminal_recorded: true,
+            completed_recorded: true,
+          },
+        ]);
+
+        const queueItems = await verifySql.unsafe<{
+          position: number;
+          status: string;
+          delivery_intent: string;
+          delivery_disposition: string | null;
+          request_actor: Record<string, unknown> | null;
+          reconciliation_reason: string | null;
+          last_delivery_reason: string | null;
+        }[]>(`
+          SELECT
+            position,
+            status,
+            delivery_intent,
+            delivery_disposition,
+            request_actor,
+            reconciliation_reason,
+            last_delivery_reason
+          FROM "chat_queued_messages"
+          WHERE "conversation_id" = '00000000-0000-0000-0000-000000000111'
+          ORDER BY "position"
+        `);
+        expect(queueItems).toEqual([
+          {
+            position: 1,
+            status: "continuation_pending",
+            delivery_intent: "steer",
+            delivery_disposition: "continuation_pending",
+            request_actor: {
+              type: "board",
+              source: "session",
+              userId: "legacy-board-user",
+              orgIds: ["00000000-0000-0000-0000-000000000110"],
+              isInstanceAdmin: false,
+            },
+            reconciliation_reason: "legacy_steer_recovered_on_upgrade",
+            last_delivery_reason: null,
+          },
+          {
+            position: 2,
+            status: "queued",
+            delivery_intent: "queue",
+            delivery_disposition: null,
+            request_actor: {
+              type: "agent",
+              source: "agent_key",
+              orgId: "00000000-0000-0000-0000-000000000110",
+              agentId: "00000000-0000-0000-0000-000000000119",
+            },
+            reconciliation_reason: "legacy_claim_released_on_upgrade",
+            last_delivery_reason: "legacy_claim_released_on_upgrade",
+          },
+          {
+            position: 3,
+            status: "failed_actionable",
+            delivery_intent: "queue",
+            delivery_disposition: "failed_actionable",
+            request_actor: null,
+            reconciliation_reason: "legacy_running_delivery_unconfirmed_on_upgrade",
+            last_delivery_reason: "legacy_running_delivery_unconfirmed_on_upgrade",
+          },
+          {
+            position: 4,
+            status: "queued",
+            delivery_intent: "queue",
+            delivery_disposition: null,
+            request_actor: null,
+            reconciliation_reason: "legacy_request_actor_unavailable",
+            last_delivery_reason: "legacy_request_actor_unavailable",
+          },
+          {
+            position: 5,
+            status: "queued",
+            delivery_intent: "queue",
+            delivery_disposition: null,
+            request_actor: null,
+            reconciliation_reason: "legacy_request_actor_unavailable",
+            last_delivery_reason: "legacy_request_actor_unavailable",
+          },
+        ]);
+
+        const activeIndex = await verifySql.unsafe<{ indexname: string }[]>(`
+          SELECT indexname
+          FROM pg_indexes
+          WHERE schemaname = 'public'
+            AND indexname = 'chat_generations_active_conversation_uq'
+        `);
+        expect(activeIndex).toEqual([{ indexname: "chat_generations_active_conversation_uq" }]);
       } finally {
         await verifySql.end();
       }

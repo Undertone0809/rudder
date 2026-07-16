@@ -172,12 +172,19 @@ Product model:
   an active assistant generation, Rudder parks the follow-up in a visible
   running queue instead of starting a second concurrent reply in the same chat.
 - Queued follow-ups preserve the queued body and composer context until they are
-  delivered. Operators can edit or delete queued follow-ups while they remain
-  queued, and Rudder can claim the next queued follow-up only after the current
-  reply reaches a completed state.
-- The current runtime does not accept mid-run steering for queued follow-ups.
-  A steering attempt records a fallback reason and leaves the follow-up queued
-  for normal delivery.
+  delivered. Operators can edit or delete ordinary queued follow-ups while they
+  remain queued. The server, rather than the open browser, owns claiming and
+  delivering eligible follow-ups.
+- Steer is a durable operator command, not an optimistic queue label. If the
+  active runtime attempt supports native steering, Rudder submits the feedback
+  to that same provider turn. Otherwise Rudder interrupts the current attempt
+  and automatically starts a feedback continuation after the old owner reaches
+  a safe terminal boundary.
+- Every Steer reaches an inspectable disposition: delivered to the current
+  provider turn, scheduled as the next continuation, provider acceptance
+  unknown, or actionable failure. Provider receipt does not claim that the
+  model complied with the feedback, and an ambiguous receipt must not trigger a
+  blind duplicate continuation.
 - Chat-native work remains inspectable through the conversation, Agent Runs,
   Work manifest, and linked outputs. Creating or linking an issue is optional
   structured coordination, not a prerequisite for real or durable work.
@@ -222,12 +229,15 @@ Flow:
 10. The queue renders beside the composer with stable ordering. The first queued
    item is marked as next, later items show their queue position, and editable
    queued items expose edit/delete controls.
-11. When the current reply completes, Rudder claims the next queued follow-up,
-   sends it as the next chat turn, and hides the queued row after it is linked
-   to the delivered user message.
+11. When the current reply completes, a server-owned worker claims the next
+   eligible queued follow-up, sends it as the next chat turn, and hides the
+   queued row after it is linked to the delivered user message. Delivery does
+   not depend on the originating page remaining open.
 12. If the current reply is stopped, fails, or is otherwise not completed,
-   queued follow-ups stay parked. The operator can edit/delete them, but Rudder
-   does not auto-deliver them as if the interrupted reply had completed.
+   ordinary queued follow-ups stay parked and are not silently flushed. The
+   operator may explicitly Steer retained feedback; Rudder then persists a
+   continuation, waits for the prior owner to terminate, and starts that
+   continuation without requiring the feedback to be resent.
 
 Invariants:
 
@@ -244,6 +254,11 @@ Invariants:
   already streamed user-visible assistant text as a partial reply. It must not
   fill the bubble from provider reasoning/thinking events or incomplete runtime
   summaries.
+- Accepting Stop establishes a durable output cutoff for the active generation.
+  The visible assistant reply is the accepted prefix at that cutoff; provider
+  deltas, final messages, reasoning, and summary data arriving afterward must
+  not mutate the chat body, reorder progress, or replace the prefix after
+  reload.
 - Refreshing an assistant answer is allowed only for completed assistant
   messages in locally mutable chats. External-bound conversations that require a
   fork-to-continue path must not expose direct refresh.
@@ -266,11 +281,17 @@ Invariants:
 - A queued follow-up must not become a visible user message until it is claimed
   and delivered through the normal chat send path. Delivered or running queued
   rows are hidden from the running-queue UI once linked to a user message.
-- Stopped or failed replies leave queued follow-ups parked. Rudder must not
-  silently flush old queued work after an interrupted run.
-- Steering controls are visible only while a matching active generation exists.
-  Stale-generation or unsupported steering attempts keep the follow-up queued
-  and record the fallback reason instead of dropping the user input.
+- Stopped or failed replies leave ordinary queued follow-ups parked. Rudder
+  must not silently flush old queued work after an interrupted run. A retained
+  row changes this rule only when the operator explicitly chooses Steer.
+- Steering is fenced to the expected generation, runtime attempt, and control
+  version. A stale request resolves through its durable action identity; it
+  must not steer a newer attempt, lose feedback, or create a duplicate
+  continuation.
+- Native steering is offered only by the active attempt that registered that
+  capability. Attempts without native support use interrupt-and-continue, and
+  retained feedback after Stop remains steerable as a server-owned
+  continuation.
 - External-bound Feishu conversations are read-only locally. They must reject
   queued follow-up mutations through the same fork-to-continue boundary as
   normal local chat mutation APIs.
@@ -298,8 +319,9 @@ Evidence:
   branches while the replacement branch is still streaming, with the active
   generation still stoppable.
 - Chat concurrent-streaming E2E covers queueing a follow-up during an active
-  stream, editing the queued body, steering fallback, delivery after the active
-  reply completes, and parked queued follow-ups after a stopped reply.
+  stream, editing the queued body, native same-turn Codex Steer, fallback
+  continuation, immediate Stop, server-owned Stop-then-Steer delivery, and
+  retained ordinary follow-ups after a stopped reply.
 - Chat route and UI tests cover queue snapshots, active-generation reporting,
   queued follow-up editing/cancellation/claiming, hidden delivered rows,
   retained parked rows, and Feishu-bound queue mutation rejection.

@@ -186,10 +186,15 @@ export const steerChatQueuedMessageSchema = z.object({
   controlActionId: chatControlActionIdSchema.optional(),
   expectedAttemptEpoch: z.number().int().nonnegative().optional(),
   expectedControlVersion: z.number().int().nonnegative().optional(),
+  lastCommittedRenderSeq: z.number().int().nonnegative().optional(),
+  renderedBodyHash: chatBodyHashSchema.optional(),
 }).superRefine((value, ctx) => {
   const hasGenerationTarget = Boolean(value.expectedActiveGenerationId);
   const hasFenceVersion = value.expectedAttemptEpoch !== undefined
     || value.expectedControlVersion !== undefined;
+  if ((value.lastCommittedRenderSeq === undefined) !== (value.renderedBodyHash === undefined)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["renderedBodyHash"], message: "Steer render sequence and body hash must be supplied together" });
+  }
   if (!hasFenceVersion && (!value.controlActionId || !hasGenerationTarget)) return;
   if (!value.controlActionId) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["controlActionId"], message: "Required for durable Steer control" });

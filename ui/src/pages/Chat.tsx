@@ -3,7 +3,7 @@ import { appendTranscriptEntry } from "@/agent-runtimes/transcript";
 import { agentsApi } from "@/api/agents";
 import { approvalsApi } from "@/api/approvals";
 import { authApi } from "@/api/auth";
-import { chatsApi } from "@/api/chats";
+import { chatsApi, type ChatSteerQueuedMessageRequest } from "@/api/chats";
 import { ApiError } from "@/api/client";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { issuesApi } from "@/api/issues";
@@ -48,6 +48,10 @@ import {
   resolveDefaultChatAgentId,
   selectableChatAgents,
 } from "@/lib/chat-agent-selection";
+import {
+  chatClientCheckpointKey,
+  createChatClientCheckpointDispatcher,
+} from "@/lib/chat-client-checkpoints";
 import { clearChatAskUserDraft, readChatDraft, saveChatDraft } from "@/lib/chat-draft-storage";
 import {
   readChatPendingAttachmentsForScope,
@@ -61,6 +65,15 @@ import {
 } from "@/lib/chat-process-duration";
 import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state";
 import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options";
+import {
+  chatStopRecoveryActionKey,
+  clearPendingChatStopRecovery,
+  createChatStopRecoveryRetrier,
+  createPendingChatStopRecovery,
+  readPendingChatStopRecovery,
+  savePendingChatStopRecovery,
+  type PendingChatStopRecovery,
+} from "@/lib/chat-stop-recovery";
 import {
   readChatScopedFlag,
   readChatScopedState,
@@ -129,7 +142,7 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { PendingAttachmentPreview } from "./Chat.attachments";
 import { AskUserPanel, AssistantDraftItem, ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, OptimisticUserDraftItem, StreamTranscriptItem, chatIssueApprovalPayloadWithProposalOverride, type ChatTurnBranchControls } from "./Chat.messages";
@@ -143,12 +156,24 @@ export * from "./Chat.attachments";
 export * from "./Chat.messages";
 export * from "./Chat.parts";
 type SendButtonMode = "send" | "stop" | "sending" | "stopping" | "queue";
+type PendingChatSteerRetry = {
+  key: string;
+  orgId: string;
+  chatId: string;
+  itemId: string;
+  request: ChatSteerQueuedMessageRequest;
+  retryCount: number;
+  timer: ReturnType<typeof setTimeout> | null;
+  lastFeedbackResult: string | null;
+  transportToastShown: boolean;
+};
 type ChatStreamProgressEvent = Extract<
   ChatStreamEvent,
   { type: "assistant_delta" | "assistant_state" | "transcript_entry" }
 >;
 const EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS = 250;
 const EMPTY_CHAT_BODY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+const CHAT_STEER_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 5_000] as const;
 export function Chat() { const { selectedOrganizationId } = useOrganization();
   if (!selectedOrganizationId) {
     return <div className="text-sm text-muted-foreground">Select a organization first.</div>; }
@@ -523,6 +548,21 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     setStreamAbortController,
     setStreamDraftForChat,
     streamDrafts, } = useChatGenerations(); const draftStorageOrgId = selectedOrganizationId!; const draftStorageConversationId = conversationId ?? null; const draftStorageScopeKey = resolveChatPendingAttachmentScopeKey(draftStorageOrgId, draftStorageConversationId); const activeDraftScopeRef = useRef(draftStorageScopeKey);
+  const stopRecoveryImmediateRetryKeysRef = useRef(new Set<string>());
+  const stopRecoveryStreamKeysRef = useRef<Record<string, string>>({});
+  const streamOwnershipRef = useRef<Record<string, { streamKey: string; controller: AbortController }>>({});
+  const streamDraftsRef = useRef(streamDrafts);
+  streamDraftsRef.current = streamDrafts;
+  const submitStopRecoveryRef = useRef<(recovery: PendingChatStopRecovery) => void>(() => {});
+  const stopRecoveryRetrierRef = useRef<ReturnType<typeof createChatStopRecoveryRetrier> | null>(null);
+  if (!stopRecoveryRetrierRef.current) {
+    stopRecoveryRetrierRef.current = createChatStopRecoveryRetrier((recovery) => {
+      submitStopRecoveryRef.current(recovery);
+    });
+  }
+  const stopRecoveryRetrier = stopRecoveryRetrierRef.current;
+  const steerRetryStatesRef = useRef(new Map<string, PendingChatSteerRetry>());
+  const submitSteerRetryRef = useRef<(pending: PendingChatSteerRetry) => void>(() => {});
   const [draftState, setDraftState] = useState(() => ({
     scopeKey: draftStorageScopeKey,
     value: readChatDraft(draftStorageOrgId, draftStorageConversationId), })); const draft = draftState.scopeKey === draftStorageScopeKey ? draftState.value : ""; const setDraft = useCallback((nextDraft: string) => { setDraftState((current) => ({ ...current, value: nextDraft })); }, []); const [, refreshPendingFiles] = useState(0); const pendingFiles = readChatPendingAttachmentsForScope(draftStorageScopeKey);
@@ -540,6 +580,33 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const organizationRouteMatchesSelection = Boolean(
     viewedOrganizationId && viewedOrganizationId === selectedOrganizationId,
   );
+  const checkpointDispatcherRef = useRef<ReturnType<typeof createChatClientCheckpointDispatcher> | null>(null);
+  if (!checkpointDispatcherRef.current) {
+    checkpointDispatcherRef.current = createChatClientCheckpointDispatcher((checkpoint) => {
+      const { chatId, ...request } = checkpoint;
+      return chatsApi.checkpointMessageStream(chatId, request);
+    });
+  }
+  const checkpointDispatcher = checkpointDispatcherRef.current;
+  useLayoutEffect(() => {
+    const activeCheckpointKeys = new Set<string>();
+    for (const streamDraft of Object.values(streamDrafts)) {
+      if (streamDraft.state !== "streaming" && streamDraft.state !== "finalizing") continue;
+      if (!streamDraft.generationId || !streamDraft.attemptEpoch) continue;
+      if (streamDraft.lastCommittedRenderSeq === undefined || !streamDraft.renderedBodyHash) continue;
+      const checkpoint = {
+        chatId: streamDraft.chatId,
+        generationId: streamDraft.generationId,
+        attemptEpoch: streamDraft.attemptEpoch,
+        generationSeq: streamDraft.lastCommittedRenderSeq,
+        renderedBodyHash: streamDraft.renderedBodyHash,
+      };
+      activeCheckpointKeys.add(chatClientCheckpointKey(checkpoint));
+      checkpointDispatcher.enqueue(checkpoint);
+    }
+    checkpointDispatcher.retain(activeCheckpointKeys);
+  }, [checkpointDispatcher, streamDrafts]);
+  useEffect(() => () => checkpointDispatcher.dispose(), [checkpointDispatcher]);
   const handleChatMarkdownLinkClick = useCallback<MarkdownLinkClickHandler>(({ event, href, label }) => { if (!shouldHandlePlainChatLinkClick(event)) return; const sidePanelTarget = chatSidePanelTargetFromHref(href, label); if (sidePanelTarget) { event.preventDefault(); event.stopPropagation(); openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), sidePanelTarget); return true; } const chatMessageTarget = chatMessageJumpTargetFromHref(href); if (chatMessageTarget) { event.preventDefault(); event.stopPropagation(); navigate({
         pathname: chatConversationPath(chatMessageTarget.conversationId),
         search: `?messageId=${encodeURIComponent(chatMessageTarget.messageId)}`,
@@ -1065,14 +1132,162 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       pushToast({
         title: "Failed to resolve lightweight change",
         body: error instanceof Error ? error.message : "Try again.",
-        tone: "error", }); }, }); const stopStreaming = useCallback((chatId: string) => { if (stoppingChatIdsRef.current.has(chatId)) return; stoppingChatIdsRef.current.add(chatId); const streamDraft = streamDrafts[chatId] ?? null; const streamKey = streamDraft?.streamKey ?? null;
-    const previousStreamState = streamDraft?.state ?? null;
-    setStoppingChatIds((current) => new Set(current).add(chatId));
-    if (streamKey) {
-      setStreamDraftForChat(chatId, (current) => current?.streamKey === streamKey
-        ? { ...current, state: "stopping" }
-        : current);
+        tone: "error", }); }, }); const stopRecoveryMatchesCurrentStream = useCallback((
+    recovery: PendingChatStopRecovery,
+  ) => {
+    const streamKey = recovery.frozenDraft?.streamKey;
+    if (!streamKey) return false;
+    const ownedStream = streamOwnershipRef.current[recovery.chatId];
+    if (ownedStream) return ownedStream.streamKey === streamKey;
+    const currentDraft = streamDraftsRef.current[recovery.chatId];
+    if (currentDraft) return currentDraft.streamKey === streamKey;
+    return stopRecoveryStreamKeysRef.current[recovery.chatId] === streamKey;
+  }, []); const submitStopRecovery = useCallback((
+    recovery: PendingChatStopRecovery,
+  ) => {
+    const { chatId, frozenDraft, orgId, request } = recovery;
+    const actionKey = chatStopRecoveryActionKey(recovery);
+    if (stoppingChatIdsRef.current.has(chatId)) {
+      stopRecoveryImmediateRetryKeysRef.current.add(actionKey);
+      return;
     }
+    const persistedRecovery = readPendingChatStopRecovery(orgId, chatId);
+    if (
+      persistedRecovery
+      && persistedRecovery.request.controlActionId !== request.controlActionId
+    ) {
+      stopRecoveryRetrier.resolve(recovery);
+      return;
+    }
+    stoppingChatIdsRef.current.add(chatId);
+    setStoppingChatIds((current) => new Set(current).add(chatId));
+    const streamKey = frozenDraft?.streamKey ?? null;
+    if (frozenDraft) {
+      const ownedStream = streamOwnershipRef.current[chatId];
+      const currentDraft = streamDraftsRef.current[chatId];
+      if (
+        (!ownedStream || ownedStream.streamKey === streamKey)
+        && (!currentDraft || currentDraft.streamKey === streamKey)
+      ) {
+        stopRecoveryStreamKeysRef.current[chatId] = streamKey!;
+      }
+      setStreamDraftForChat(chatId, (current) => {
+        if (current && current.streamKey !== frozenDraft.streamKey) return current;
+        return { ...frozenDraft, state: "stopping" };
+      });
+    }
+    let stopActionSettled = false;
+    void (async () => {
+      try {
+        const result = await chatsApi.stopMessageStream(chatId, request);
+        const acknowledgedActionId = result.controlActionId ?? request.controlActionId;
+        if (acknowledgedActionId !== request.controlActionId) {
+          stopRecoveryRetrier.schedule(recovery);
+          pushToast({
+            title: "Stop confirmation pending",
+            body: "Rudder returned a different Stop action; the original action will be retried.",
+            tone: "warn",
+          });
+          return;
+        }
+
+        stopRecoveryRetrier.resolve(recovery);
+        stopActionSettled = true;
+        const cutoffAccepted = result.stopped || [
+          "stopping",
+          "stop_requested",
+          "stopped",
+          "interrupted_unverified",
+        ].includes(result.disposition ?? "");
+        const completionCommitted = !result.stopped && result.disposition === "completion_committed";
+        if (cutoffAccepted && stopRecoveryMatchesCurrentStream(recovery)) {
+          abortChatStream(chatId);
+        } else if (streamKey && stopRecoveryStreamKeysRef.current[chatId] === streamKey) {
+          delete stopRecoveryStreamKeysRef.current[chatId];
+        }
+
+        await Promise.allSettled([
+          Promise.resolve().then(() => queryClient.invalidateQueries({
+            queryKey: queryKeys.chats.messages(orgId, chatId),
+          })),
+          Promise.resolve().then(() => queryClient.invalidateQueries({
+            queryKey: queryKeys.chats.queue(orgId, chatId),
+          })),
+        ]);
+
+        if (streamKey && stopRecoveryMatchesCurrentStream(recovery)) {
+          setStreamDraftForChat(chatId, (current) => current?.streamKey === streamKey ? null : current);
+          setChatSendInFlight(chatId, false);
+        }
+        clearPendingChatStopRecovery(orgId, chatId, request.controlActionId);
+
+        pushToast({
+          title: completionCommitted
+            ? "Response completed"
+            : result.stopped
+            ? "Response stopped"
+            : cutoffAccepted
+              ? "Response frozen"
+              : "No active response",
+          body: completionCommitted
+            ? "The final response committed before Stop reached the cutoff."
+            : result.stopped
+            ? "Rudder interrupted the current reply."
+            : cutoffAccepted
+              ? "Visible output is frozen; runtime termination could not be independently confirmed."
+              : "The response had already reached a terminal state.",
+          tone: result.stopped || completionCommitted ? "info" : "warn",
+        });
+      } catch (error) {
+        const definitivelyRejected = error instanceof ApiError
+          && error.status >= 400
+          && error.status < 500;
+        if (definitivelyRejected) {
+          stopRecoveryRetrier.resolve(recovery);
+          stopActionSettled = true;
+          if (streamKey && stopRecoveryMatchesCurrentStream(recovery)) {
+            setStreamDraftForChat(chatId, (current) => current?.streamKey === streamKey
+              ? { ...frozenDraft!, state: recovery.previousStreamState ?? "streaming" }
+              : current);
+          }
+          if (streamKey && stopRecoveryStreamKeysRef.current[chatId] === streamKey) {
+            delete stopRecoveryStreamKeysRef.current[chatId];
+          }
+          clearPendingChatStopRecovery(orgId, chatId, request.controlActionId);
+        } else {
+          stopRecoveryRetrier.schedule(recovery);
+        }
+        pushToast({
+          title: definitivelyRejected ? "Stop was rejected" : "Stop confirmation pending",
+          body: error instanceof Error ? error.message : "Rudder will retry automatically.",
+          tone: definitivelyRejected ? "error" : "warn",
+        });
+      } finally {
+        setStoppingChatIds((current) => {
+          if (!current.has(chatId)) return current;
+          const next = new Set(current);
+          next.delete(chatId);
+          return next;
+        });
+        stoppingChatIdsRef.current.delete(chatId);
+        const retryImmediately = stopRecoveryImmediateRetryKeysRef.current.delete(actionKey)
+          && !stopActionSettled;
+        const pendingRecovery = retryImmediately
+          ? readPendingChatStopRecovery(orgId, chatId) ?? recovery
+          : null;
+        if (pendingRecovery?.request.controlActionId === request.controlActionId) {
+          stopRecoveryRetrier.retryNow(pendingRecovery);
+        }
+      }
+    })();
+  }, [abortChatStream, pushToast, queryClient, setChatSendInFlight, setStreamDraftForChat, stopRecoveryMatchesCurrentStream, stopRecoveryRetrier]); submitStopRecoveryRef.current = submitStopRecovery; const stopStreaming = useCallback((chatId: string) => {
+    if (!selectedOrganizationId || stoppingChatIdsRef.current.has(chatId)) return;
+    const existingRecovery = readPendingChatStopRecovery(selectedOrganizationId, chatId);
+    if (existingRecovery) {
+      stopRecoveryRetrier.retryNow(existingRecovery);
+      return;
+    }
+    const streamDraft = streamDrafts[chatId] ?? null;
     const serverGenerationFence = queueQuery.data?.activeGenerationId
       && queueQuery.data.activeAttemptEpoch !== null
       && queueQuery.data.activeControlVersion !== null
@@ -1082,52 +1297,43 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           controlVersion: queueQuery.data.activeControlVersion,
         }
       : null;
-    void chatsApi.stopMessageStream(chatId, {
-      controlActionId: globalThis.crypto.randomUUID(),
-      ...(serverGenerationFence ? {
-        expectedGenerationId: serverGenerationFence.generationId,
-        expectedAttemptEpoch: serverGenerationFence.attemptEpoch,
-        expectedControlVersion: serverGenerationFence.controlVersion,
-      } : {}),
-      ...(streamDraft ? {
-        lastCommittedRenderSeq: streamDraft.lastCommittedRenderSeq ?? 0,
-        renderedBodyHash: streamDraft.renderedBodyHash ?? EMPTY_CHAT_BODY_SHA256,
-      } : {}),
-    }).then((result) => {
-      if (streamKey) {
-        setStreamDraftForChat(chatId, (current) => current?.streamKey === streamKey
-          ? { ...current, state: "stopped" }
-          : current);
-      }
-      if (selectedOrganizationId) {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, chatId) });
-      }
-      pushToast({
-        title: result.stopped ? "Response stopped" : "Stop could not be verified",
-        body: result.stopped
-          ? "Rudder interrupted the current reply."
-          : result.disposition === "interrupted_unverified"
-            ? "Visible output is frozen, but the runtime owner was no longer available to confirm termination."
-            : "No active reply was found.",
-        tone: result.stopped ? "info" : "warn",
-      });
-    }).catch((error) => {
-      if (streamKey) {
-        setStreamDraftForChat(chatId, (current) => current?.streamKey === streamKey
-          ? { ...current, state: previousStreamState ?? "streaming" }
-          : current);
-      }
-      pushToast({
-        title: "Failed to stop streaming",
-        body: error instanceof Error ? error.message : "Try again.", tone: "error", }); }).finally(() => {
-      setStoppingChatIds((current) => {
-        if (!current.has(chatId)) return current;
-        const next = new Set(current);
-        next.delete(chatId);
-        return next;
-      });
-      stoppingChatIdsRef.current.delete(chatId);
-    }); }, [pushToast, queryClient, queueQuery.data, selectedOrganizationId, setStreamDraftForChat, streamDrafts]); const readComposerDraft = useCallback(
+    const recovery = createPendingChatStopRecovery({
+      orgId: selectedOrganizationId,
+      chatId,
+      request: {
+        controlActionId: globalThis.crypto.randomUUID(),
+        ...(serverGenerationFence ? {
+          expectedGenerationId: serverGenerationFence.generationId,
+          expectedAttemptEpoch: serverGenerationFence.attemptEpoch,
+          expectedControlVersion: serverGenerationFence.controlVersion,
+        } : {}),
+        ...(streamDraft ? {
+          lastCommittedRenderSeq: streamDraft.lastCommittedRenderSeq ?? 0,
+          renderedBodyHash: streamDraft.renderedBodyHash ?? EMPTY_CHAT_BODY_SHA256,
+        } : {}),
+      },
+      frozenDraft: streamDraft,
+    });
+    savePendingChatStopRecovery(recovery);
+    submitStopRecovery(recovery);
+  }, [queueQuery.data, selectedOrganizationId, stopRecoveryRetrier, streamDrafts, submitStopRecovery]);
+  useEffect(() => () => {
+    stopRecoveryRetrierRef.current?.dispose();
+    for (const pending of steerRetryStatesRef.current.values()) {
+      if (pending.timer) clearTimeout(pending.timer);
+    }
+    steerRetryStatesRef.current.clear();
+  }, []);
+  useLayoutEffect(() => {
+    if (!selectedOrganizationId || !conversationId) return;
+    const replayPendingStop = () => {
+      const recovery = readPendingChatStopRecovery(selectedOrganizationId, conversationId);
+      if (recovery) stopRecoveryRetrierRef.current?.retryNow(recovery);
+    };
+    replayPendingStop();
+    window.addEventListener("online", replayPendingStop);
+    return () => window.removeEventListener("online", replayPendingStop);
+  }, [conversationId, selectedOrganizationId]); const readComposerDraft = useCallback(
     () => composerEditorRef.current?.getMarkdown?.() ?? draft,
     [draft],
   );
@@ -1222,7 +1428,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       if (newConversationLockAcquired || newConversationSendLockRef.current) { releaseNewConversationSendLock();
         newConversationLockAcquired = false; }
       if (usesComposerState) { setBranchPreview(null); setDraft("");
-        clearPendingFilesForCurrentScope(); } setChatSendInFlight(chatId, true); const abortController = new AbortController(); setStreamAbortController(chatId, abortController); const startedAt = new Date(); const streamKey = `${chatId}:${startedAt.getTime()}:${Math.random().toString(36).slice(2)}`; activeStreamKey = streamKey; conversation = upsertOptimisticConversation(conversation, body, startedAt);
+        clearPendingFilesForCurrentScope(); } setChatSendInFlight(chatId, true); const abortController = new AbortController(); const startedAt = new Date(); const streamKey = `${chatId}:${startedAt.getTime()}:${Math.random().toString(36).slice(2)}`; activeStreamKey = streamKey; streamOwnershipRef.current[chatId] = { streamKey, controller: abortController }; setStreamAbortController(chatId, abortController); conversation = upsertOptimisticConversation(conversation, body, startedAt);
       setStreamDraftForChat(chatId, {
         chatId,
         streamKey,
@@ -1285,11 +1491,41 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           if (event.type === "assistant_delta" || event.type === "assistant_state" || event.type === "transcript_entry") {
             setStreamDraftForChat(chatId, (current) => applyChatStreamProgressEvent(current, streamKey, event));
             return; }
-          if (event.type === "final") { keepProcessOpenForMessages(event.messages); upsertMessages(chatId, event.messages); setStreamDraftForChat(chatId, (current) => current?.streamKey === streamKey ? null : current); } }, });
+          if (event.type === "final") {
+            const pendingStop = readPendingChatStopRecovery(selectedOrganizationId, chatId);
+            if (stopRecoveryStreamKeysRef.current[chatId] === streamKey) {
+              if (pendingStop?.frozenDraft?.streamKey === streamKey) {
+                stopRecoveryRetrier.retryNow(pendingStop);
+              }
+              return;
+            }
+            keepProcessOpenForMessages(event.messages);
+            upsertMessages(chatId, event.messages);
+            if (!pendingStop) {
+              setStreamDraftForChat(chatId, (current) => current?.streamKey === streamKey ? null : current);
+            }
+          } }, });
       if (options?.clearPendingFilesOnSuccess) { clearPendingFilesForCurrentScope(); }
       await refreshChat(chatId);
-      await queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, chatId) }); setStreamDraftForChat(chatId, (current) => current?.streamKey === streamKey ? null : current);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, chatId) });
+      if (!readPendingChatStopRecovery(selectedOrganizationId, chatId)) {
+        setStreamDraftForChat(chatId, (current) => current?.streamKey === streamKey ? null : current);
+      }
     } catch (error) {
+      const pendingStop = conversation
+        ? readPendingChatStopRecovery(selectedOrganizationId, conversation.id)
+        : null;
+      if (conversation && pendingStop) {
+        setStreamDraftForChat(conversation.id, (current) => {
+          if (current && pendingStop.frozenDraft && current.streamKey !== pendingStop.frozenDraft.streamKey) {
+            return current;
+          }
+          return pendingStop.frozenDraft
+            ? { ...pendingStop.frozenDraft, state: "stopping" }
+            : current;
+        });
+        return;
+      }
       const isAbort = error instanceof DOMException ? error.name === "AbortError" : error instanceof Error && error.name === "AbortError";
       if (options?.queuedMessageId && conversation && !userMessageAcknowledged) {
         await chatsApi.releaseQueuedMessageClaim(conversation.id, options.queuedMessageId).catch(() => null);
@@ -1323,10 +1559,18 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       pushToast({
         title: error instanceof Error ? error.message : "Failed to send message", tone: "error", });
     } finally {
-      if (activeChatId) { setStreamAbortController(activeChatId, null);
+      if (activeChatId) { const ownedStream = streamOwnershipRef.current[activeChatId];
+        if (!ownedStream || ownedStream.streamKey === activeStreamKey) {
+          delete streamOwnershipRef.current[activeChatId];
+          setStreamAbortController(activeChatId, null);
+          setChatSendInFlight(activeChatId, false);
+        }
+        const pendingStop = readPendingChatStopRecovery(selectedOrganizationId, activeChatId);
+        if (!pendingStop && stopRecoveryStreamKeysRef.current[activeChatId] === activeStreamKey) {
+          delete stopRecoveryStreamKeysRef.current[activeChatId];
+        }
         if (chatSendLockAcquired) {
-          releaseChatSendLock(activeChatId); }
-        setChatSendInFlight(activeChatId, false); }
+          releaseChatSendLock(activeChatId); } }
       if (newConversationLockAcquired) { releaseNewConversationSendLock(); } } }; const conversations = useMemo(() => { const items = conversationsQuery.data ?? [];
     return [...items].sort((a, b) => { if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1; return new Date(b.lastMessageAt ?? b.updatedAt).getTime() - new Date(a.lastMessageAt ?? a.updatedAt).getTime(); }); }, [conversationsQuery.data]); const rawMessages = messagesQuery.data ?? []; const latestIncomingMessageId = useMemo(() => { const messages = [...rawMessages] .filter(isUserVisibleIncomingChatMessage) .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); return messages[0]?.id ?? null; }, [rawMessages]); const displayedMessages = useMemo(
     () => computeDisplayedChatMessages(rawMessages, branchPreview), [rawMessages, branchPreview], ); const showMessagesLoading = Boolean(selectedConversation && conversationId && messagesQuery.isPending && messagesQuery.data === undefined); const activeStream = readChatScopedState(streamDrafts, selectedConversation?.id); const activeSendInFlight = readChatScopedFlag(sendInFlightByChatId, selectedConversation?.id); const activeQueueItems = queueQuery.data?.items ?? []; const activeQueueProjectionKey = activeQueueItems.map((item) => `${item.id}:${item.status}:${item.version}`).join("|"); const visibleQueueItems = activeQueueItems.filter((item) => !["delivered", "completed", "cancelled", "steered", "running"].includes(item.status)); const agentSelectionLocked = isChatAgentSelectionLocked({
@@ -1919,50 +2163,61 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       queryKey: queryKeys.chats.messages(selectedOrganizationId, selectedConversation.id),
     });
   }, [activeQueueProjectionKey, queryClient, selectedConversation, selectedOrganizationId]);
-  const steerQueuedMessage = (itemId: string) => {
-    if (!selectedConversation || !selectedOrganizationId || steeringQueuedItemIdsRef.current.has(itemId)) return;
-    const activeGenerationId = queueQuery.data?.activeGenerationId;
-    const expectedAttemptEpoch = queueQuery.data?.activeAttemptEpoch;
-    const expectedControlVersion = queueQuery.data?.activeControlVersion;
-    const chatId = selectedConversation.id;
+  const clearSteerRetry = (pending: PendingChatSteerRetry) => {
+    if (pending.timer) clearTimeout(pending.timer);
+    pending.timer = null;
+    if (steerRetryStatesRef.current.get(pending.key) === pending) {
+      steerRetryStatesRef.current.delete(pending.key);
+    }
+  };
+  const scheduleSteerRetry = (pending: PendingChatSteerRetry) => {
+    if (steerRetryStatesRef.current.get(pending.key) !== pending || pending.timer) return;
+    const delayMs = CHAT_STEER_RETRY_DELAYS_MS[
+      Math.min(pending.retryCount, CHAT_STEER_RETRY_DELAYS_MS.length - 1)
+    ];
+    pending.retryCount += 1;
+    pending.timer = setTimeout(() => {
+      pending.timer = null;
+      if (steerRetryStatesRef.current.get(pending.key) === pending) {
+        submitSteerRetryRef.current(pending);
+      }
+    }, delayMs);
+  };
+  const submitSteerRetry = (pending: PendingChatSteerRetry) => {
+    const { chatId, itemId, orgId, request } = pending;
+    if (steeringQueuedItemIdsRef.current.has(itemId)) return;
     steeringQueuedItemIdsRef.current.add(itemId);
     setSteeringQueuedItemIds((current) => new Set(current).add(itemId));
     queryClient.setQueryData(
-      queryKeys.chats.queue(selectedOrganizationId, chatId),
+      queryKeys.chats.queue(orgId, chatId),
       (current: Awaited<ReturnType<typeof chatsApi.listQueue>> | undefined) => ({
-        activeGenerationId: current?.activeGenerationId ?? activeGenerationId ?? null,
-        activeAttemptEpoch: current?.activeAttemptEpoch ?? expectedAttemptEpoch ?? null,
-        activeControlVersion: current?.activeControlVersion ?? expectedControlVersion ?? null,
-        activeGenerationStatus: current?.activeGenerationStatus ?? queueQuery.data?.activeGenerationStatus ?? null,
-        items: (current?.items ?? []).map((item) => item.id === itemId
+        activeGenerationId: current?.activeGenerationId ?? request.expectedActiveGenerationId ?? null,
+        activeAttemptEpoch: current?.activeAttemptEpoch ?? request.expectedAttemptEpoch ?? null,
+        activeControlVersion: current?.activeControlVersion ?? request.expectedControlVersion ?? null,
+        activeGenerationStatus: current?.activeGenerationStatus ?? null,
+        items: (current?.items ?? []).map((item) => item.id === itemId && item.status === "queued"
           ? {
               ...item,
               status: "steer_pending" as const,
               deliveryIntent: "steer" as const,
               deliveryDisposition: "pending" as const,
+              controlActionId: request.controlActionId,
               lastDeliveryReason: null,
             }
           : item),
       }),
     );
-    void chatsApi.steerQueuedMessage(chatId, itemId, {
-      controlActionId: globalThis.crypto.randomUUID(),
-      ...(activeGenerationId ? { expectedActiveGenerationId: activeGenerationId } : {}),
-      ...(expectedAttemptEpoch !== null && expectedAttemptEpoch !== undefined
-        ? { expectedAttemptEpoch }
-        : {}),
-      ...(expectedControlVersion !== null && expectedControlVersion !== undefined
-        ? { expectedControlVersion }
-        : {}),
-    })
+    let retryScheduled = false;
+    void chatsApi.steerQueuedMessage(chatId, itemId, request)
       .then((result) => {
+        clearSteerRetry(pending);
         queryClient.setQueryData(
-          queryKeys.chats.queue(selectedOrganizationId, chatId),
+          queryKeys.chats.queue(orgId, chatId),
           (current: Awaited<ReturnType<typeof chatsApi.listQueue>> | undefined) => ({
-            activeGenerationId: current?.activeGenerationId ?? activeGenerationId ?? null,
-            activeAttemptEpoch: current?.activeAttemptEpoch ?? expectedAttemptEpoch ?? null,
-            activeControlVersion: current?.activeControlVersion ?? expectedControlVersion ?? null,
-            activeGenerationStatus: current?.activeGenerationStatus ?? queueQuery.data?.activeGenerationStatus ?? null,
+            activeGenerationId: current?.activeGenerationId ?? request.expectedActiveGenerationId ?? null,
+            activeAttemptEpoch: current?.activeAttemptEpoch ?? request.expectedAttemptEpoch ?? null,
+            activeControlVersion: current?.activeControlVersion ?? request.expectedControlVersion ?? null,
+            activeGenerationStatus: current?.activeGenerationStatus ?? null,
             items: (current?.items ?? []).map((item) => item.id === itemId ? result.item : item),
           }),
         );
@@ -1991,21 +2246,41 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                     body: "Rudder could not safely deliver or replay this feedback.",
                     tone: "error" as const,
                   }
-              : {
-                  title: "Applying feedback",
-                  body: "Rudder saved the feedback and is waiting for runtime control.",
-                  tone: "info" as const,
-                };
-        pushToast({
-          ...feedback,
-        });
+                : {
+                    title: "Applying feedback",
+                    body: "Rudder saved the feedback and is waiting for runtime control.",
+                    tone: "info" as const,
+                  };
+        if (pending.lastFeedbackResult !== result.result) {
+          pending.lastFeedbackResult = result.result;
+          pushToast(feedback);
+        }
       })
       .catch((error) => {
         refreshQueue(chatId);
-        pushToast({ title: "Failed to steer queued message", body: error instanceof Error ? error.message : "Try again.", tone: "error" });
+        if (!(error instanceof ApiError)) {
+          retryScheduled = true;
+          scheduleSteerRetry(pending);
+          if (!pending.transportToastShown) {
+            pending.transportToastShown = true;
+            pushToast({
+              title: "Feedback confirmation pending",
+              body: "Rudder will retry the same feedback action automatically.",
+              tone: "warn",
+            });
+          }
+          return;
+        }
+        clearSteerRetry(pending);
+        pushToast({
+          title: "Failed to steer queued message",
+          body: error.message,
+          tone: "error",
+        });
       })
       .finally(() => {
         steeringQueuedItemIdsRef.current.delete(itemId);
+        if (retryScheduled) return;
         setSteeringQueuedItemIds((current) => {
           if (!current.has(itemId)) return current;
           const next = new Set(current);
@@ -2013,6 +2288,42 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           return next;
         });
       });
+  };
+  submitSteerRetryRef.current = submitSteerRetry;
+  const steerQueuedMessage = (itemId: string) => {
+    if (!selectedConversation || !selectedOrganizationId || steeringQueuedItemIdsRef.current.has(itemId)) return;
+    const activeGenerationId = queueQuery.data?.activeGenerationId;
+    const expectedAttemptEpoch = queueQuery.data?.activeAttemptEpoch;
+    const expectedControlVersion = queueQuery.data?.activeControlVersion;
+    const chatId = selectedConversation.id;
+    const item = activeQueueItems.find((candidate) => candidate.id === itemId);
+    const request: ChatSteerQueuedMessageRequest = {
+      controlActionId: item?.controlActionId ?? globalThis.crypto.randomUUID(),
+      ...(activeGenerationId ? { expectedActiveGenerationId: activeGenerationId } : {}),
+      ...(expectedAttemptEpoch !== null && expectedAttemptEpoch !== undefined
+        ? { expectedAttemptEpoch }
+        : {}),
+      ...(expectedControlVersion !== null && expectedControlVersion !== undefined
+        ? { expectedControlVersion }
+        : {}),
+      ...(streamDrafts[chatId] ? {
+        lastCommittedRenderSeq: streamDrafts[chatId].lastCommittedRenderSeq ?? 0,
+        renderedBodyHash: streamDrafts[chatId].renderedBodyHash ?? EMPTY_CHAT_BODY_SHA256,
+      } : {}),
+    };
+    const pending: PendingChatSteerRetry = {
+      key: `${chatId}\u0000${itemId}`,
+      orgId: selectedOrganizationId,
+      chatId,
+      itemId,
+      request,
+      retryCount: 0,
+      timer: null,
+      lastFeedbackResult: null,
+      transportToastShown: false,
+    };
+    steerRetryStatesRef.current.set(pending.key, pending);
+    submitSteerRetry(pending);
   };
   const editQueuedMessage = (itemId: string, body: string) => {
     const item = activeQueueItems.find((candidate) => candidate.id === itemId);
