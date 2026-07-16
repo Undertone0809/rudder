@@ -192,14 +192,16 @@ test.describe("Chat Work Manifest", () => {
     await expect(shelf.getByRole("button", { name: /index\.html/ }).locator("[data-file-icon='website']"))
       .toBeVisible();
     await expect(shelf).not.toContainText("From Agent");
-    await expect(shelf).toContainText("https://reference.example/docs");
-    await expect(shelf.getByRole("button", { name: /reference\.example/ }).locator("[data-website-icon]"))
+    const references = shelf.locator("section[aria-label='References']");
+    await references.getByRole("button", { name: "View all 4" }).click();
+    await expect(references).toContainText("https://reference.example/docs");
+    await expect(references.getByRole("button", { name: /reference\.example/ }).locator("[data-website-icon]"))
       .toBeVisible();
-    await expect(shelf.getByRole("button", { name: new RegExp(issue.identifier) }).locator("[data-file-icon='issue']"))
+    await expect(references.getByRole("button", { name: new RegExp(issue.identifier) }).locator("[data-file-icon='issue']"))
       .toBeVisible();
-    await expect(shelf.getByRole("button", { name: new RegExp(automation.title) }).locator("[data-file-icon='automation']"))
+    await expect(references.getByRole("button", { name: new RegExp(automation.title) }).locator("[data-file-icon='automation']"))
       .toBeVisible();
-    await expect(shelf.getByRole("button", { name: /Other project chat/ }).locator("[data-file-icon='chat']"))
+    await expect(references.getByRole("button", { name: /Other project chat/ }).locator("[data-file-icon='chat']"))
       .toBeVisible();
     await expect(shelf).not.toContainText("Project work");
     await expect(shelf).not.toContainText("Project research source");
@@ -207,11 +209,13 @@ test.describe("Chat Work Manifest", () => {
     await expect(shelf).not.toContainText("Browser");
     await expect(shelf.getByRole("button", { name: /source\.example https:\/\/source\.example\/research/ }))
       .toHaveCount(1);
+    await page.screenshot({ path: `${screenshotDir}/references.png`, fullPage: true });
 
-    await shelf.getByRole("button", { name: new RegExp(issue.identifier) }).click();
+    await references.getByRole("button", { name: issue.identifier, exact: true }).click();
     const issueSidePanel = page.getByTestId("chat-side-panel");
     await expect(issueSidePanel).toBeVisible();
     await expect(issueSidePanel).toContainText("Manifest reference issue");
+    await page.screenshot({ path: `${screenshotDir}/issue-side-panel.png`, fullPage: true });
     await issueSidePanel.getByTestId("chat-side-panel-tab").hover();
     await issueSidePanel.getByTestId("chat-side-panel-tab-close").click();
     await expect(issueSidePanel).toHaveCount(0);
