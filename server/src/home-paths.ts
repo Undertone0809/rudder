@@ -13,6 +13,7 @@ import { type AgentWorkspaceLocator, resolveStoredOrDerivedAgentWorkspaceKey } f
 const DEFAULT_INSTANCE_ID = "default";
 const INSTANCE_ID_RE = /^[a-zA-Z0-9_-]+$/;
 const FRIENDLY_PATH_SEGMENT_RE = /[^a-zA-Z0-9._-]+/g;
+const FILE_COMPARE_CHUNK_BYTES = 64 * 1024;
 const WORKSPACE_PERMISSION_ERROR_CODES = new Set(["EACCES", "EPERM", "EROFS"]);
 const ORGANIZATION_WORKSPACE_MAP_FILE = ".rudder-organizations.json";
 const RESERVED_ORGANIZATION_WORKSPACE_NAMES = new Set([
@@ -866,6 +867,46 @@ async function movePath(sourcePath: string, targetPath: string): Promise<void> {
   await fs.rm(sourcePath, { recursive: true, force: false });
 }
 
+async function regularFilesHaveIdenticalContents(sourcePath: string, targetPath: string): Promise<boolean> {
+  const [sourceStat, targetStat] = await Promise.all([
+    fs.stat(sourcePath),
+    fs.stat(targetPath),
+  ]);
+  if (!sourceStat.isFile() || !targetStat.isFile() || sourceStat.size !== targetStat.size) {
+    return false;
+  }
+
+  const [sourceFile, targetFile] = await Promise.all([
+    fs.open(sourcePath, "r"),
+    fs.open(targetPath, "r"),
+  ]);
+  try {
+    const sourceBuffer = Buffer.allocUnsafe(FILE_COMPARE_CHUNK_BYTES);
+    const targetBuffer = Buffer.allocUnsafe(FILE_COMPARE_CHUNK_BYTES);
+    let position = 0;
+
+    while (position < sourceStat.size) {
+      const bytesToRead = Math.min(FILE_COMPARE_CHUNK_BYTES, sourceStat.size - position);
+      const [sourceRead, targetRead] = await Promise.all([
+        sourceFile.read(sourceBuffer, 0, bytesToRead, position),
+        targetFile.read(targetBuffer, 0, bytesToRead, position),
+      ]);
+      if (
+        sourceRead.bytesRead === 0 ||
+        sourceRead.bytesRead !== targetRead.bytesRead ||
+        !sourceBuffer.subarray(0, sourceRead.bytesRead).equals(targetBuffer.subarray(0, targetRead.bytesRead))
+      ) {
+        return false;
+      }
+      position += sourceRead.bytesRead;
+    }
+
+    return true;
+  } finally {
+    await Promise.all([sourceFile.close(), targetFile.close()]);
+  }
+}
+
 async function mergeDirectoryContents(sourceRoot: string, targetRoot: string): Promise<void> {
   await fs.mkdir(targetRoot, { recursive: true });
   const entries = await fs.readdir(sourceRoot, { withFileTypes: true });
@@ -881,6 +922,10 @@ async function mergeDirectoryContents(sourceRoot: string, targetRoot: string): P
     if (entry.isDirectory() && targetStat.isDirectory()) {
       await mergeDirectoryContents(sourcePath, targetPath);
       await fs.rmdir(sourcePath);
+      continue;
+    }
+    if (entry.isFile() && targetStat.isFile() && await regularFilesHaveIdenticalContents(sourcePath, targetPath)) {
+      await fs.unlink(sourcePath);
       continue;
     }
     throw new Error(
@@ -899,6 +944,9 @@ async function assertCanMergeDirectoryContents(sourceRoot: string, targetRoot: s
     if (!targetStat) continue;
     if (entry.isDirectory() && targetStat.isDirectory()) {
       await assertCanMergeDirectoryContents(sourcePath, targetPath);
+      continue;
+    }
+    if (entry.isFile() && targetStat.isFile() && await regularFilesHaveIdenticalContents(sourcePath, targetPath)) {
       continue;
     }
     throw new Error(

@@ -249,6 +249,49 @@ describe("home paths", () => {
       .resolves.toBe("# Previous\n");
   });
 
+  it("deduplicates identical files while merging a legacy workspace into the friendly folder", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-identical-merge-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-identical-merge-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const layout = await ensureOrganizationWorkspaceLayout({
+      id: orgId,
+      name: "Identical Merge Org",
+      urlKey: "identical-merge-org",
+    });
+    const legacyRoot = resolveLegacyOrganizationWorkspaceRoot(orgId);
+    const relativeSharedPath = path.join("agents", "agent-1", "instructions", "MEMORY.md");
+    const canonicalSharedPath = path.join(layout.root, relativeSharedPath);
+    const legacySharedPath = path.join(legacyRoot, relativeSharedPath);
+    const legacyOnlyPath = path.join(legacyRoot, "projects", "legacy", "README.md");
+    const canonicalOnlyPath = path.join(layout.root, "projects", "canonical", "README.md");
+    await fs.mkdir(path.dirname(canonicalSharedPath), { recursive: true });
+    await fs.mkdir(path.dirname(legacySharedPath), { recursive: true });
+    await fs.mkdir(path.dirname(legacyOnlyPath), { recursive: true });
+    await fs.mkdir(path.dirname(canonicalOnlyPath), { recursive: true });
+    await fs.writeFile(canonicalSharedPath, "# Shared memory\n", "utf8");
+    await fs.writeFile(legacySharedPath, "# Shared memory\n", "utf8");
+    await fs.writeFile(legacyOnlyPath, "# Legacy project\n", "utf8");
+    await fs.writeFile(canonicalOnlyPath, "# Canonical project\n", "utf8");
+
+    await expect(migrateOrganizationWorkspaceRoot(orgId)).resolves.toMatchObject({
+      canonicalRootPath: layout.root,
+      legacyRootPath: legacyRoot,
+      migrated: true,
+      mergedIntoExistingTarget: true,
+      skippedBecauseTargetExists: false,
+    });
+    await expect(fs.stat(legacyRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.readFile(canonicalSharedPath, "utf8")).resolves.toBe("# Shared memory\n");
+    await expect(fs.readFile(path.join(layout.root, "projects", "legacy", "README.md"), "utf8"))
+      .resolves.toBe("# Legacy project\n");
+    await expect(fs.readFile(canonicalOnlyPath, "utf8")).resolves.toBe("# Canonical project\n");
+  });
+
   it("fails instead of recreating an empty folder when a mapped organization folder is missing", async () => {
     const rudderHome = await makeTempDir("rudder-home-paths-missing-friendly-");
     const workspaceHome = await makeTempDir("rudder-user-workspaces-missing-friendly-");
