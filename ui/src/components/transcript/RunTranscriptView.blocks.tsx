@@ -899,39 +899,64 @@ export function TranscriptEventRow({
 
   if (isFileChange) {
     const isWarn = block.tone === "warn" || block.tone === "error";
+    const content = (
+      <>
+        <FileDiff
+          className={cn(
+            "h-3.5 w-3.5 shrink-0",
+            isWarn ? "text-amber-600 dark:text-amber-300" : "text-muted-foreground",
+          )}
+        />
+        <span className={cn("shrink-0 font-medium", isWarn ? undefined : "text-muted-foreground")}>
+          File change
+        </span>
+        <span aria-hidden className="shrink-0 text-border">
+          /
+        </span>
+        <span className="min-w-0 flex-1 truncate">
+          {preview || "Updated files"}
+        </span>
+        {block.detail ? (
+          <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground">
+            <DisclosureChevron open={open} className="h-3.5 w-3.5" />
+          </span>
+        ) : null}
+      </>
+    );
+
     return (
       <div
         data-transcript-file-change="true"
         className={cn("max-w-full", detail ? "py-0.5" : undefined)}
         title={getTranscriptTimestampTitle(block.ts)}
       >
-        <button
-          type="button"
-          className={cn(
-            "inline-flex max-w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors",
-            compact ? "text-xs leading-5" : "text-sm leading-6",
-            isWarn
-              ? "border-amber-500/25 bg-amber-500/[0.06] text-amber-800 hover:bg-amber-500/[0.10] dark:text-amber-200"
-              : "border-border/45 bg-muted/10 text-foreground/72 hover:bg-muted/20",
-          )}
-          onClick={() => setOpen((value) => !value)}
-          aria-expanded={open}
-        >
-          <FileDiff className={cn("h-3.5 w-3.5 shrink-0", isWarn ? "text-amber-600 dark:text-amber-300" : "text-muted-foreground")} />
-          <span className="shrink-0 font-medium text-muted-foreground">
-            File Change
-          </span>
-          <span className="min-w-0 truncate">
-            {preview || "Updated files"}
-          </span>
-          {block.detail ? (
-            <DisclosureChevron open={open} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          ) : null}
-        </button>
+        {block.detail ? (
+          <button
+            type="button"
+            className={cn(
+              "flex min-h-7 w-full max-w-full items-center gap-2 rounded-md px-1.5 text-left transition-colors hover:bg-muted/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+              compact ? "py-0.5 text-xs leading-5" : "py-1 text-sm leading-6",
+              isWarn ? "bg-amber-500/[0.04] text-amber-800 dark:text-amber-200" : "text-foreground/72",
+            )}
+            onClick={() => setOpen((value) => !value)}
+            aria-expanded={open}
+            aria-label={`${open ? "Collapse" : "Expand"} file change details: ${preview || "Updated files"}`}
+          >
+            {content}
+          </button>
+        ) : (
+          <div className={cn(
+            "flex min-h-7 w-full max-w-full items-center gap-2 px-1.5 text-left",
+            compact ? "py-0.5 text-xs leading-5" : "py-1 text-sm leading-6",
+            isWarn ? "text-amber-800 dark:text-amber-200" : "text-foreground/72",
+          )}>
+            {content}
+          </div>
+        )}
         {block.detail && open ? (
           <pre className={cn(
-            "motion-disclosure-enter mt-1.5 max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded-lg border border-border/35 bg-muted/10 p-2 font-mono text-[11px] text-foreground/75",
-            detail ? "ml-0" : "ml-5",
+            "motion-disclosure-enter mt-1 max-w-full overflow-x-auto whitespace-pre-wrap break-words border-l border-border/45 py-1 pl-3 font-mono text-[11px] leading-5 text-foreground/70",
+            detail ? "ml-1.5" : "ml-6",
           )}>
             {block.detail}
           </pre>

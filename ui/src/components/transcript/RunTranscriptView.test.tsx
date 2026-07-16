@@ -1278,13 +1278,73 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain('data-transcript-file-change="true"');
-    expect(html).toContain("File Change");
+    expect(html).toContain("File change");
     expect(html).toContain("Created doc/plans/2026-06-10-unified-agent-run-architecture.md");
-    expect(html).not.toContain("aria-label=");
+    expect(html).toContain('aria-label="Expand file change details: Created doc/plans/2026-06-10-unified-agent-run-architecture.md"');
     expect(html).not.toContain("file changes: add /Users/zeeland/projects/rudder-oss/doc/plans/2026-06-10-unified-agent-run-architecture.md");
     expect(html).not.toContain("/Users/zeeland/projects/rudder-oss");
     expect(html).not.toContain("text-amber-700");
     expect(html).not.toContain("dark:text-amber-300");
+  });
+
+  it("replaces a pending Codex file change activity with the completed event", () => {
+    const startedEntry: TranscriptEntry = {
+      kind: "system",
+      ts: "2026-07-16T12:00:00.000Z",
+      text: "item started: file_change (id=item_file_change_1)",
+    };
+    const pendingBlocks = normalizeTranscript([startedEntry], true);
+    expect(pendingBlocks).toEqual([
+      expect.objectContaining({
+        type: "activity",
+        activityId: "item_file_change_1",
+        name: "File Change",
+        status: "running",
+      }),
+    ]);
+
+    const completedBlocks = normalizeTranscript([
+      startedEntry,
+      {
+        kind: "system",
+        ts: "2026-07-16T12:00:01.000Z",
+        text: "file changes: update /Users/zeeland/project/ui/src/pages/AgentDetail.tsx",
+      },
+    ], false);
+
+    expect(completedBlocks).toEqual([
+      expect.objectContaining({
+        type: "event",
+        label: "file change",
+        text: "Updated src/pages/AgentDetail.tsx",
+      }),
+    ]);
+  });
+
+  it("does not merge a later file change into a stale pending activity", () => {
+    const blocks = normalizeTranscript([
+      {
+        kind: "system",
+        ts: "2026-07-16T12:00:00.000Z",
+        text: "item started: file_change (id=stale_file_change)",
+      },
+      {
+        kind: "assistant",
+        ts: "2026-07-16T12:00:01.000Z",
+        text: "The previous edit did not return a completion event.",
+      },
+      {
+        kind: "system",
+        ts: "2026-07-16T12:00:02.000Z",
+        text: "file changes: update /Users/zeeland/project/ui/src/pages/AgentDetail.tsx",
+      },
+    ], false);
+
+    expect(blocks).toEqual([
+      expect.objectContaining({ type: "activity", activityId: "stale_file_change" }),
+      expect.objectContaining({ type: "message", role: "assistant" }),
+      expect.objectContaining({ type: "event", label: "file change" }),
+    ]);
   });
 
   it("renders memory updates without exposing raw paths until details are expanded", () => {

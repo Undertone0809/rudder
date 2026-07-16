@@ -368,6 +368,24 @@ export function normalizeTranscript(
   const pendingActivityBlocks = new Map<string, Extract<TranscriptBlock, { type: "activity" }>>();
   const pendingTodoListBlocks = new Map<string, Extract<TranscriptBlock, { type: "todo_list" }>>();
 
+  const replacePendingFileChangeActivity = (block: TranscriptBlock) => {
+    const pendingIndex = blocks.length - 1;
+    const pending = blocks[pendingIndex];
+    if (
+      pending?.type !== "activity"
+      || pending.status !== "running"
+      || pending.name.toLowerCase() !== "file change"
+    ) {
+      blocks.push(block);
+      return;
+    }
+
+    if (pending.activityId) {
+      pendingActivityBlocks.delete(pending.activityId);
+    }
+    blocks.splice(pendingIndex, 1, block);
+  };
+
   for (const entry of entries) {
     const previous = blocks[blocks.length - 1];
 
@@ -553,12 +571,12 @@ export function normalizeTranscript(
       }
       const memoryUpdate = parseMemoryUpdateSystemText(entry.text, entry.ts);
       if (memoryUpdate) {
-        blocks.push(memoryUpdate);
+        replacePendingFileChangeActivity(memoryUpdate);
         continue;
       }
       const fileChange = parseFileChangeSystemText(entry.text, entry.ts);
       if (fileChange) {
-        blocks.push(fileChange);
+        replacePendingFileChangeActivity(fileChange);
         continue;
       }
       const activity = parseSystemActivity(entry.text);
