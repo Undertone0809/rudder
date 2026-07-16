@@ -91,20 +91,33 @@ export function createHeartbeatWakeupHandlers(context: any) {
 
     const mergeCoalescedRunAdmission = async (
       database: any,
-      targetRun: typeof heartbeatRuns.$inferSelect,
-      mergedContextSnapshot: Record<string, unknown>,
+      targetRunId: string,
+      incomingContextSnapshot: Record<string, unknown>,
     ) => {
-      const updateContextOnly = async () => database
-        .update(heartbeatRuns)
-        .set({
-          contextSnapshot: mergedContextSnapshot,
-          updatedAt: new Date(),
-        })
-        .where(eq(heartbeatRuns.id, targetRun.id))
-        .returning()
-        .then((rows: Array<typeof heartbeatRuns.$inferSelect>) => rows[0] ?? targetRun);
+      await database.execute(sql`select id from heartbeat_runs where id = ${targetRunId} for update`);
+      const targetRun = await database
+        .select()
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, targetRunId))
+        .then((rows: Array<typeof heartbeatRuns.$inferSelect>) => rows[0] ?? null);
+      if (!targetRun) throw notFound("Heartbeat run not found");
+      if (targetRun.status !== "queued" && targetRun.status !== "running") return targetRun;
 
-      if (targetRun.status !== "queued") return updateContextOnly();
+      const mergedContextSnapshot = mergeCoalescedContextSnapshot(
+        targetRun.contextSnapshot,
+        incomingContextSnapshot,
+      );
+      if (targetRun.status === "running") {
+        return database
+          .update(heartbeatRuns)
+          .set({
+            contextSnapshot: mergedContextSnapshot,
+            updatedAt: new Date(),
+          })
+          .where(and(eq(heartbeatRuns.id, targetRun.id), eq(heartbeatRuns.status, "running")))
+          .returning()
+          .then((rows: Array<typeof heartbeatRuns.$inferSelect>) => rows[0] ?? targetRun);
+      }
 
       const sessionCodec = getAgentRuntimeSessionCodec(agent.agentRuntimeType);
       const explicitSessionParams = normalizeSessionParams(
@@ -132,7 +145,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
         taskSessionParams,
         taskSessionDisplayId,
       });
-      const queuedRun = await database
+      return database
         .update(heartbeatRuns)
         .set({
           contextSnapshot: mergedContextSnapshot,
@@ -144,9 +157,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
         })
         .where(and(eq(heartbeatRuns.id, targetRun.id), eq(heartbeatRuns.status, "queued")))
         .returning()
-        .then((rows: Array<typeof heartbeatRuns.$inferSelect>) => rows[0] ?? null);
-
-      return queuedRun ?? updateContextOnly();
+        .then((rows: Array<typeof heartbeatRuns.$inferSelect>) => rows[0] ?? targetRun);
     };
 
     const writeSkippedRequest = async (skipReason: string, diagnostics?: Record<string, unknown>) => {
@@ -450,14 +461,10 @@ export function createHeartbeatWakeupHandlers(context: any) {
             isSameExecutionAgent;
 
           if (isSameExecutionAgent && !shouldQueueFollowupForCommentWake && !activeExecutionRun.terminalEffectsPending) {
-            const mergedContextSnapshot = mergeCoalescedContextSnapshot(
-              activeExecutionRun.contextSnapshot,
-              enrichedContextSnapshot,
-            );
             const mergedRun = await mergeCoalescedRunAdmission(
               tx,
-              activeExecutionRun,
-              mergedContextSnapshot,
+              activeExecutionRun.id,
+              enrichedContextSnapshot,
             );
 
             if (existingWakeupRequestId) {
@@ -684,40 +691,40 @@ export function createHeartbeatWakeupHandlers(context: any) {
       (shouldQueueFollowupForCommentWake ? null : sameScopeRunningRun ?? null);
 
     if (coalescedTargetRun) {
-      const mergedContextSnapshot = mergeCoalescedContextSnapshot(
-        coalescedTargetRun.contextSnapshot,
-        enrichedContextSnapshot,
-      );
-      const mergedRun = await mergeCoalescedRunAdmission(
-        db,
-        coalescedTargetRun,
-        mergedContextSnapshot,
-      );
+      const mergedRun = await db.transaction(async (tx) => {
+        const lockedRun = await mergeCoalescedRunAdmission(
+          tx,
+          coalescedTargetRun.id,
+          enrichedContextSnapshot,
+        );
 
-      if (existingWakeupRequestId) {
-        await setWakeupStatus(existingWakeupRequestId, "coalesced", {
-          runId: mergedRun.id,
-          claimedAt: null,
-          finishedAt: new Date(),
-          error: null,
-        });
-      } else {
-        await db.insert(agentWakeupRequests).values({
-          orgId: agent.orgId,
-          agentId,
-          source,
-          triggerDetail,
-          reason,
-          payload,
-          status: "coalesced",
-          coalescedCount: 1,
-          requestedByActorType: opts.requestedByActorType ?? null,
-          requestedByActorId: opts.requestedByActorId ?? null,
-          idempotencyKey: opts.idempotencyKey ?? null,
-          runId: mergedRun.id,
-          finishedAt: new Date(),
-        }).onConflictDoNothing();
-      }
+        if (existingWakeupRequestId) {
+          await updateWakeupRequestRecord(tx, existingWakeupRequestId, {
+            status: "coalesced",
+            runId: lockedRun.id,
+            claimedAt: null,
+            finishedAt: new Date(),
+            error: null,
+          });
+        } else {
+          await insertWakeupRequestRecord(tx, {
+            orgId: agent.orgId,
+            agentId,
+            source,
+            triggerDetail,
+            reason,
+            payload,
+            status: "coalesced",
+            coalescedCount: 1,
+            requestedByActorType: opts.requestedByActorType ?? null,
+            requestedByActorId: opts.requestedByActorId ?? null,
+            idempotencyKey: opts.idempotencyKey ?? null,
+            runId: lockedRun.id,
+            finishedAt: new Date(),
+          });
+        }
+        return lockedRun;
+      });
       return mergedRun;
     }
 

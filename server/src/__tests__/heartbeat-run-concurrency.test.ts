@@ -200,6 +200,52 @@ describe("heartbeat run concurrency", () => {
     mockRuntimeAdapter.reset();
   });
 
+  async function countPostgresLockWaiters() {
+    const rows = await db.execute(sql<{ count: number }>`
+      select count(*)::int as count
+      from pg_stat_activity
+      where datname = current_database()
+        and pid <> pg_backend_pid()
+        and wait_event_type = 'Lock'
+    `);
+    return Number(rows[0]?.count ?? 0);
+  }
+
+  async function waitForPostgresLockWaiters(minimum: number) {
+    await waitForCondition(async () => (await countPostgresLockWaiters()) >= minimum);
+  }
+
+  async function holdRowLock(table: "heartbeat_runs" | "agent_wakeup_requests", id: string) {
+    let release!: () => void;
+    let acquired!: () => void;
+    let rejectAcquired!: (error: unknown) => void;
+    let released = false;
+    const releasedPromise = new Promise<void>((resolve) => { release = resolve; });
+    const acquiredPromise = new Promise<void>((resolve, reject) => {
+      acquired = resolve;
+      rejectAcquired = reject;
+    });
+    const transaction = db.transaction(async (tx) => {
+      if (table === "heartbeat_runs") {
+        await tx.execute(sql`select id from heartbeat_runs where id = ${id} for update`);
+      } else {
+        await tx.execute(sql`select id from agent_wakeup_requests where id = ${id} for update`);
+      }
+      acquired();
+      await releasedPromise;
+    });
+    void transaction.catch(rejectAcquired);
+    await acquiredPromise;
+    return {
+      release() {
+        if (released) return;
+        released = true;
+        release();
+      },
+      transaction,
+    };
+  }
+
   afterAll(async () => {
     await instance?.stop();
     if (dataDir) {
@@ -707,6 +753,201 @@ describe("heartbeat run concurrency", () => {
       sourceRunId,
       status: "cancelled",
     });
+  });
+
+  it("does not mutate terminal lineage when cancellation wins queued coalescing", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const taskKey = "task:cancel-before-explicit-coalesce";
+    const sourceRunId = await seedTaskSessionAndExplicitSource({ orgId, agentId, taskKey });
+    const heartbeat = heartbeatService(db);
+    const competingHeartbeat = heartbeatService(db);
+    const queuedRun = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "queued_task_session",
+      payload: { taskKey },
+      contextSnapshot: { taskKey },
+      startImmediately: false,
+    });
+    const before = await heartbeat.getRun(queuedRun!.id);
+    const lock = await holdRowLock("heartbeat_runs", queuedRun!.id);
+    const baselineWaiters = await countPostgresLockWaiters();
+    const pending: Promise<unknown>[] = [lock.transaction];
+
+    try {
+      const cancellation = heartbeat.cancelRun(queuedRun!.id);
+      pending.push(cancellation);
+      await waitForPostgresLockWaiters(baselineWaiters + 1);
+      const coalescing = competingHeartbeat.wakeup(agentId, {
+        source: "on_demand",
+        triggerDetail: "manual",
+        reason: "explicit_resume_after_cancel_selection",
+        payload: { taskKey, resumeFromRunId: sourceRunId },
+        contextSnapshot: { taskKey },
+        startImmediately: false,
+      });
+      pending.push(coalescing);
+      await waitForPostgresLockWaiters(baselineWaiters + 2);
+
+      lock.release();
+      await lock.transaction;
+      const [cancelled, coalesced] = await Promise.all([cancellation, coalescing]);
+      expect(cancelled).toMatchObject({ id: queuedRun!.id, status: "cancelled" });
+      expect(coalesced).toMatchObject({ id: queuedRun!.id, status: "cancelled" });
+
+      const after = await heartbeat.getRun(queuedRun!.id);
+      expect(after).toMatchObject({
+        status: "cancelled",
+        contextSnapshot: before!.contextSnapshot,
+        sessionIdBefore: before!.sessionIdBefore,
+        sessionParamsBeforeJson: before!.sessionParamsBeforeJson,
+        sessionReuseScope: before!.sessionReuseScope,
+      });
+      expect(after?.contextSnapshot).not.toHaveProperty("resumeFromRunId");
+    } finally {
+      lock.release();
+      await Promise.allSettled(pending);
+    }
+  });
+
+  it("keeps claim-frozen task admission when a running wake coalesces explicit lineage", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const taskKey = "task:claim-before-explicit-coalesce";
+    const sourceRunId = await seedTaskSessionAndExplicitSource({ orgId, agentId, taskKey });
+    const heartbeat = heartbeatService(db);
+    const queuedRun = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "queued_task_session",
+      payload: { taskKey },
+      contextSnapshot: { taskKey },
+      startImmediately: false,
+    });
+    const wakeupRequestId = queuedRun!.wakeupRequestId;
+    expect(wakeupRequestId).toBeTruthy();
+    const wakeupLock = await holdRowLock("agent_wakeup_requests", wakeupRequestId!);
+    const resume = heartbeat.resumeQueuedRuns();
+
+    try {
+      await waitForCondition(async () => {
+        const current = await heartbeat.getRun(queuedRun!.id);
+        return current?.status === "running" && mockRuntimeAdapter.calls.length === 0;
+      });
+
+      const coalesced = await heartbeatService(db).wakeup(agentId, {
+        source: "on_demand",
+        triggerDetail: "manual",
+        reason: "explicit_resume_after_claim",
+        payload: { taskKey, resumeFromRunId: sourceRunId },
+        contextSnapshot: { taskKey },
+        startImmediately: false,
+      });
+      expect(coalesced).toMatchObject({
+        id: queuedRun!.id,
+        status: "running",
+        sessionIdBefore: "old-task-session",
+        sessionParamsBeforeJson: {
+          sessionId: "old-task-session",
+          cwd: "/tmp/old-task-session",
+        },
+        sessionReuseScope: "task",
+        contextSnapshot: expect.objectContaining({ resumeFromRunId: sourceRunId }),
+      });
+
+      wakeupLock.release();
+      await wakeupLock.transaction;
+      await resume;
+      await waitForCondition(async () =>
+        mockRuntimeAdapter.calls.some((call) => call.runId === queuedRun!.id),
+      );
+      expect(mockRuntimeAdapter.calls.find((call) => call.runId === queuedRun!.id)).toMatchObject({
+        sessionId: "old-task-session",
+        sessionDisplayId: "old-task-session",
+        sessionParams: {
+          sessionId: "old-task-session",
+          cwd: expect.any(String),
+        },
+      });
+      expect(await heartbeat.getRun(queuedRun!.id)).toMatchObject({
+        status: "running",
+        sessionIdBefore: "old-task-session",
+        sessionReuseScope: "task",
+        contextSnapshot: expect.objectContaining({ resumeFromRunId: sourceRunId }),
+      });
+    } finally {
+      wakeupLock.release();
+      await Promise.allSettled([wakeupLock.transaction, resume]);
+    }
+  });
+
+  it("serializes generic force-fresh and explicit coalescing without losing suppression", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const taskKey = "task:force-fresh-explicit-race";
+    const sourceRunId = await seedTaskSessionAndExplicitSource({ orgId, agentId, taskKey });
+    const heartbeat = heartbeatService(db);
+    const queuedRun = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "queued_task_session",
+      payload: { taskKey },
+      contextSnapshot: { taskKey },
+      startImmediately: false,
+    });
+    const lock = await holdRowLock("heartbeat_runs", queuedRun!.id);
+    const baselineWaiters = await countPostgresLockWaiters();
+    const pending: Promise<unknown>[] = [lock.transaction];
+
+    try {
+      const forceFresh = heartbeatService(db).wakeup(agentId, {
+        source: "on_demand",
+        triggerDetail: "manual",
+        reason: "force_fresh_coalesce",
+        payload: { taskKey },
+        contextSnapshot: { taskKey, forceFreshSession: true },
+        startImmediately: false,
+      });
+      pending.push(forceFresh);
+      await waitForPostgresLockWaiters(baselineWaiters + 1);
+      const explicit = heartbeatService(db).wakeup(agentId, {
+        source: "on_demand",
+        triggerDetail: "manual",
+        reason: "explicit_resume_coalesce",
+        payload: { taskKey, resumeFromRunId: sourceRunId },
+        contextSnapshot: { taskKey },
+        startImmediately: false,
+      });
+      pending.push(explicit);
+      await waitForPostgresLockWaiters(baselineWaiters + 2);
+
+      lock.release();
+      await lock.transaction;
+      const [freshRun, explicitRun] = await Promise.all([forceFresh, explicit]);
+      expect(freshRun?.id).toBe(queuedRun!.id);
+      expect(explicitRun?.id).toBe(queuedRun!.id);
+      expect(await heartbeat.getRun(queuedRun!.id)).toMatchObject({
+        status: "queued",
+        sessionIdBefore: null,
+        sessionParamsBeforeJson: null,
+        sessionReuseScope: "none",
+        contextSnapshot: expect.objectContaining({
+          resumeFromRunId: sourceRunId,
+          sessionReuseSuppression: { kind: "force_fresh" },
+        }),
+      });
+
+      await heartbeat.resumeQueuedRuns();
+      await waitForCondition(async () =>
+        mockRuntimeAdapter.calls.some((call) => call.runId === queuedRun!.id),
+      );
+      expect(mockRuntimeAdapter.calls.find((call) => call.runId === queuedRun!.id)).toMatchObject({
+        sessionId: null,
+        sessionDisplayId: null,
+        sessionParams: null,
+      });
+    } finally {
+      lock.release();
+      await Promise.allSettled(pending);
+    }
   });
 
   it("retries the selected taskless run instead of the latest global session", async () => {

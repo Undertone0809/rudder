@@ -935,11 +935,62 @@ export function heartbeatService(
         .limit(1)
         .then((rows) => rows[0] ?? null);
       if (pendingTerminalEffects) return null;
+      await tx.execute(sql`select id from heartbeat_runs where id = ${run.id} for update`);
+      const currentRun = await tx
+        .select()
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, run.id))
+        .then((rows) => rows[0] ?? null);
+      if (!currentRun || currentRun.status !== "queued") return null;
+
+      const currentContext = parseObject(currentRun.contextSnapshot);
+      const currentTaskKey = deriveTaskKey(currentContext, null);
+      const resetTaskSession = shouldResetTaskSessionForWake(currentContext);
+      const sessionCodec = getAgentRuntimeSessionCodec(agent.agentRuntimeType);
+      const explicitSessionParams = normalizeSessionParams(
+        sessionCodec.deserialize(parseObject(currentContext.resumeSessionParams)),
+      );
+      const explicitSessionDisplayId = truncateDisplayId(
+        readNonEmptyString(currentContext.resumeSessionDisplayId) ??
+          (sessionCodec.getDisplayId ? sessionCodec.getDisplayId(explicitSessionParams) : null) ??
+          readNonEmptyString(explicitSessionParams?.sessionId),
+      );
+      const taskSession = currentTaskKey && !resetTaskSession
+        ? await tx
+            .select()
+            .from(agentTaskSessions)
+            .where(and(
+              eq(agentTaskSessions.orgId, currentRun.orgId),
+              eq(agentTaskSessions.agentId, currentRun.agentId),
+              eq(agentTaskSessions.agentRuntimeType, agent.agentRuntimeType),
+              eq(agentTaskSessions.taskKey, currentTaskKey),
+            ))
+            .then((rows) => rows[0] ?? null)
+        : null;
+      const taskSessionParams = normalizeSessionParams(
+        sessionCodec.deserialize(taskSession?.sessionParamsJson ?? null),
+      );
+      const taskSessionDisplayId = truncateDisplayId(
+        taskSession?.sessionDisplayId ??
+          (sessionCodec.getDisplayId ? sessionCodec.getDisplayId(taskSessionParams) : null) ??
+          readNonEmptyString(taskSessionParams?.sessionId),
+      );
+      const sessionSelection = heartbeatSessions.selectRunSessionLineage({
+        forceFresh: Boolean(heartbeatSessions.readSessionReuseSuppression(currentContext)),
+        explicitSessionParams,
+        explicitSessionDisplayId,
+        taskSessionParams,
+        taskSessionDisplayId,
+      });
       const claimedRun = await tx
         .update(heartbeatRuns)
         .set({
           status: "running",
-          startedAt: run.startedAt ?? claimedAt,
+          startedAt: currentRun.startedAt ?? claimedAt,
+          sessionIdBefore:
+            sessionSelection.sessionDisplayId ?? readNonEmptyString(sessionSelection.sessionParams?.sessionId),
+          sessionParamsBeforeJson: sessionSelection.sessionParams,
+          sessionReuseScope: sessionSelection.reuseScope,
           executionOwnerToken: randomUUID(),
           executionLeaseExpiresAt: new Date(claimedAt.getTime() + RUN_EXECUTION_LEASE_MS),
           updatedAt: claimedAt,
