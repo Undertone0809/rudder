@@ -3476,6 +3476,18 @@ describe("messengerService and issue follows", () => {
         resultJson: {
           userMessage: "The assistant finished without a final Rudder reply. Rudder saved the attempt and transcript; retry when ready.",
         },
+        contextSnapshot: {
+          issueId: randomUUID(),
+          resumeFromRunId: "source-run-id",
+          resumeSessionDisplayId: "private-display-id",
+          resumeSessionParams: {
+            sessionId: "nested-private-session",
+            cwd: "/nested/private/cwd",
+            workspaceId: "private-workspace",
+            repoUrl: "https://private.example/repo.git",
+            repoRef: "private-ref",
+          },
+        },
         createdAt: newerActivityAt,
         updatedAt: newerActivityAt,
       },
@@ -3502,6 +3514,15 @@ describe("messengerService and issue follows", () => {
     );
     expect(failedRunsSummary?.unreadCount).toBe(1);
     expect(failedRunsSummary?.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
+    expect(thread.detail.items[1]?.metadata.contextSnapshot).toEqual(expect.objectContaining({
+      resumeFromRunId: "source-run-id",
+    }));
+    expect(thread.detail.items[1]?.run.contextSnapshot).toEqual(
+      thread.detail.items[1]?.metadata.contextSnapshot,
+    );
+    expect(JSON.stringify(thread.detail.items[1])).not.toMatch(
+      /private-display-id|nested-private-session|nested\/private\/cwd|private-workspace|private\.example|private-ref/,
+    );
   });
 
   it("summarizes pending join requests without loading the detail thread", async () => {
