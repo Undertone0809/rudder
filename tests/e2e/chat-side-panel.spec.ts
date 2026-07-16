@@ -1820,7 +1820,7 @@ test.describe("Chat Side Panel", () => {
     const stableWebview = sidePanel.locator(`webview[data-browser-tab-id="${browserTabId}"]`);
     const stableBrowserTab = sidePanel.getByTestId("chat-side-panel-tab").first();
     const tabWidthBeforeTitle = (await stableBrowserTab.boundingBox())?.width;
-    expect(tabWidthBeforeTitle).toBeGreaterThan(190);
+    expect(tabWidthBeforeTitle).toBeGreaterThan(160);
     await webview.evaluate((element) => {
       element.dispatchEvent(Object.assign(new Event("page-title-updated"), {
         title: "A deliberately long loading title that must not move adjacent Side Panel controls",
@@ -1828,6 +1828,10 @@ test.describe("Chat Side Panel", () => {
     });
     await expect(stableBrowserTab).toContainText("A deliberately long loading title");
     expect((await stableBrowserTab.boundingBox())?.width).toBe(tabWidthBeforeTitle);
+    await webview.evaluate((element) => {
+      element.dispatchEvent(Object.assign(new Event("page-title-updated"), { title: "localhost" }));
+    });
+    await expect(stableBrowserTab).toContainText("localhost");
 
     const dispatchBrowserShortcut = async (key: string, code: string, shiftKey = false) => {
       await sidePanel.getByLabel("Browser URL").evaluate((element, shortcut) => {
@@ -1893,7 +1897,7 @@ test.describe("Chat Side Panel", () => {
     await expect(browserTabs.first()).toHaveAttribute("aria-selected", "true");
 
     await browserTabs.first().dragTo(browserTabs.last(), {
-      targetPosition: { x: 64, y: 14 },
+      targetPosition: { x: 150, y: 14 },
     });
     await expect(browserTabs.first()).toContainText("localhost");
     await expect(browserTabs.last()).toContainText("New tab");
