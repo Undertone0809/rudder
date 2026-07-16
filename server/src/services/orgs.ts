@@ -150,6 +150,11 @@ export function organizationService(db: Db) {
     return `-${attempt}`;
   }
 
+  function suffixForIssueKeyAttempt(attempt: number) {
+    if (attempt <= 1) return "";
+    return String(attempt);
+  }
+
   function isUniqueConstraintConflict(error: unknown, constraintName: string) {
     return isPostgresError(error, "23505", constraintName);
   }
@@ -181,24 +186,32 @@ export function organizationService(db: Db) {
     database: Pick<Db, "transaction">,
     data: typeof organizations.$inferInsert,
   ) {
-    const issuePrefix = data.issuePrefix === undefined
+    const hasExplicitIssuePrefix = data.issuePrefix !== undefined;
+    const issuePrefixBase = data.issuePrefix === undefined
       ? deriveOrganizationIssueKey(data.name)
       : normalizeOrganizationIssueKey(data.issuePrefix);
-    if (!issuePrefix) {
+    if (!issuePrefixBase) {
       throw unprocessable("Issue key must start with a letter and contain only letters and numbers");
     }
     const urlKeyBase = deriveOrganizationUrlKey(data.name);
-    let suffix = 1;
-    while (suffix < 10000) {
-      const candidateUrlKey = `${urlKeyBase}${suffixForUrlKeyAttempt(suffix)}`;
+    let issueKeyAttempt = 1;
+    let urlKeyAttempt = 1;
+    while (issueKeyAttempt < 10000 && urlKeyAttempt < 10000) {
+      const issuePrefix = hasExplicitIssuePrefix
+        ? issuePrefixBase
+        : `${issuePrefixBase}${suffixForIssueKeyAttempt(issueKeyAttempt)}`;
+      const candidateUrlKey = `${urlKeyBase}${suffixForUrlKeyAttempt(urlKeyAttempt)}`;
       try {
         const created = await database.transaction(async (tx) => {
           await tx.execute(sql`select pg_advisory_xact_lock(hashtext('rudder:organization-issue-prefix'))`);
           if (await isRouteKeyOwnedByAnotherOrganization(tx, issuePrefix)) {
-            throw conflict(`Issue key "${issuePrefix}" is already in use. Choose another key.`);
+            if (hasExplicitIssuePrefix) {
+              throw conflict(`Issue key "${issuePrefix}" is already in use. Choose another key.`);
+            }
+            return "issue-key-conflict" as const;
           }
           if (await isRouteKeyOwnedByAnotherOrganization(tx, candidateUrlKey)) {
-            return null;
+            return "url-key-conflict" as const;
           }
           const rows = await tx
             .insert(organizations)
@@ -206,16 +219,28 @@ export function organizationService(db: Db) {
             .returning();
           return rows[0];
         });
-        if (created) return created;
+        if (created === "issue-key-conflict") {
+          issueKeyAttempt += 1;
+          continue;
+        }
+        if (created === "url-key-conflict") {
+          urlKeyAttempt += 1;
+          continue;
+        }
+        return created;
       } catch (error) {
         if (isUniqueConstraintConflict(error, "organizations_issue_prefix_idx")) {
-          throw conflict(`Issue key "${issuePrefix}" is already in use. Choose another key.`);
+          if (hasExplicitIssuePrefix) {
+            throw conflict(`Issue key "${issuePrefix}" is already in use. Choose another key.`);
+          }
+          issueKeyAttempt += 1;
+          continue;
         }
         if (!isUniqueConstraintConflict(error, "organizations_url_key_idx")) throw error;
+        urlKeyAttempt += 1;
       }
-      suffix += 1;
     }
-    throw new Error("Unable to allocate unique organization url key");
+    throw new Error("Unable to allocate unique organization keys");
   }
 
   return {

@@ -602,13 +602,16 @@ describe("organization service", () => {
     expect(createdLabels).toEqual([]);
   });
 
-  it("preserves digits in generated issue keys and rejects explicit conflicts", async () => {
+  it("preserves digits, allocates generated conflicts, and rejects explicit conflicts", async () => {
     const first = await orgSvc.create({ name: "R6" });
     const second = await orgSvc.create({ name: "R7" });
+    const generatedConflict = await orgSvc.create({ name: "R6" });
     const normalized = await orgSvc.create({ name: "Lowercase key", issuePrefix: "  l9  " });
 
     expect(first.issuePrefix).toBe("R6");
     expect(second.issuePrefix).toBe("R7");
+    expect(generatedConflict.issuePrefix).toBe("R62");
+    expect(generatedConflict.urlKey).toBe("r6-2");
     expect(normalized.issuePrefix).toBe("L9");
 
     await expect(orgSvc.create({ name: "Another org", issuePrefix: "R6" }))
@@ -617,6 +620,22 @@ describe("organization service", () => {
       .rejects.toMatchObject({ status: 422 });
     await expect(orgSvc.update(first.id, { issuePrefix: "not-valid" }))
       .rejects.toMatchObject({ status: 422 });
+  });
+
+  it("serializes concurrent generated organization keys without surfacing a conflict", async () => {
+    const competingDb = createDb(connectionString);
+    const competingOrgSvc = organizationService(competingDb);
+
+    const created = await Promise.all([
+      orgSvc.create({ name: "Parallel R6" }),
+      competingOrgSvc.create({ name: "Parallel R6" }),
+    ]);
+
+    expect(created.map((organization) => organization.issuePrefix).sort()).toEqual(["PAR", "PAR2"]);
+    expect(created.map((organization) => organization.urlKey).sort()).toEqual([
+      "parallel-r6",
+      "parallel-r6-2",
+    ]);
   });
 
   it("keeps URL keys, current Issue Keys, and aliases unambiguous across organizations", async () => {
