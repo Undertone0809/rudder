@@ -89,6 +89,19 @@ This starts a new session for the Feishu chat.
 
 This asks Rudder to stop the active answer if one is running.
 
+## Daily sessions
+
+Daily session rollover is enabled by default with a 24-hour window. The Feishu
+chat itself stays the same, but Rudder starts a new bound conversation when the
+next inbound message arrives after that window. The rollover is lazy: quiet
+chats do not create empty future conversations in the background.
+
+If an agent reply is still active or closing, the inbound message stays in the
+current session and rollover waits for a later message. You can choose whether
+Feishu receives a short `New daily session started.` notice. Use `/new` when you
+want to start a new Rudder conversation immediately instead of waiting for the
+daily boundary.
+
 ## What to expect in Rudder
 
 Feishu-bound conversations are read-only from the local Rudder chat surface. Replies should come from Feishu or from the agent's outbound work. If you want to continue the same context inside Rudder as a normal local chat, fork the Feishu conversation. The fork keeps lineage but is no longer bound to the Feishu provider chat.

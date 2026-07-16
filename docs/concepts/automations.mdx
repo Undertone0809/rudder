@@ -48,7 +48,9 @@ Automations can route output into a structured issue or a chat conversation:
 - Use issue output when the result needs assignment, review, status, artifacts, or follow-up work.
 - Use chat output when operators should receive and continue the result through a conversation.
 
-The output path matters because it changes where people review the result. Issue output enters the normal issue workflow. Chat output keeps the audit trail on the automation run and the chat conversation.
+New custom automations default to chat output, with tracked issue output available as an explicit alternative. The output path matters because it changes where people review the result: issue output enters the normal issue workflow, while chat output keeps the work inspectable through the automation run and its chat conversation. Importance, cost, or run length alone does not require issue output, although team policy may require issue structure for governed workflows.
+
+Each real chat-output execution gets its own Messenger conversation; an automation does not reuse one human chat for every future run. A skipped or coalesced run does not create an empty conversation. If a chat-output run fails, Rudder keeps visible partial or fallback evidence instead of leaving a silent empty unread thread.
 
 ## Run history
 
@@ -58,7 +60,7 @@ This is useful for routine work. A weekly report should not be a mystery prompt.
 
 ## When not to use automation
 
-Do not use an automation for work that still needs shaping. Create an issue or use Chat first when the outcome, owner, data source, or review path is unclear.
+Do not use an automation for work that still needs shaping. Continue in Chat or use issue structure first when the outcome, owner, data source, or review path is unclear.
 
 ## Next steps
 

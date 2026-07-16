@@ -51,6 +51,26 @@ Rudder creates a Library folder for each project. Put durable project work there
 
 Use issue comments or review notes to point reviewers to the relevant file.
 
+## Inspect and edit files beside your work
+
+Open a Library reference from Chat, Messenger, or an issue to inspect it in the
+Side Panel. The panel keeps the current work surface visible and supports inline
+previews for files such as PDFs.
+
+For Markdown files:
+
+1. Edit directly in the Side Panel and watch the save state.
+2. If Rudder reports a stale-write conflict, review the preserved local draft.
+3. Choose **Keep mine** to retry your draft against the latest version, or
+   **Use latest** to replace it with the current server version.
+
+Do not close the conflict as if the save succeeded. The draft remains local
+until a guarded save succeeds or you explicitly choose the latest version.
+
+On Desktop, use the file **Open** menu to open it in the system default app or a
+detected IDE, reveal it in the file browser, open its containing directory in a
+terminal, or move to the full Library surface with **Open in Library**.
+
 ## Use backups deliberately
 
 Workspace backups help recover organization workspace state. Treat them as operator tools:

@@ -1,0 +1,87 @@
+---
+title: "Built-in Browser"
+description: "Understand Rudder Desktop's shared website session, Side Panel link behavior, and isolated agent browser control."
+icon: "globe"
+keywords:
+  - "Rudder Built-in Browser"
+  - "agent browser tools"
+  - "Side Panel browser"
+  - "browser cookie import"
+canonical: "https://docs.rudderhq.dev/concepts/built-in-browser"
+"og:url": "https://docs.rudderhq.dev/concepts/built-in-browser"
+
+---
+
+Rudder Desktop includes a Built-in Browser for operators and supported local agents. It keeps web research beside your Rudder work and gives agents a bounded browser surface without exposing passwords or raw browser credentials.
+
+The Built-in Browser is available only in Desktop `local_trusted` deployments. Web, remote, gateway, and unsupported runtimes cannot control a local Desktop browser.
+
+## One website session per local instance
+
+The Built-in Browser keeps one persistent website session for your operating-system user and Rudder instance. Operator tabs and supported agent tabs use that same session.
+
+This means a website sign-in can remain available after you switch Rudder organizations or restart Desktop. It also means organizations in the same local Rudder instance are not separate website identities. Only import or use an account that is appropriate for every organization and agent you trust on that instance.
+
+Website-session sharing does not grant shared tab control. Every agent tab is isolated by organization, agent, run, and tab. One run cannot read or operate a tab owned by another run, even when both tabs use the same signed-in website session.
+
+## Open links without leaving Rudder
+
+On a fresh Desktop instance, ordinary web links from Rudder open in a Browser tab in the global Side Panel. Your current Rudder route stays open beside the page.
+
+You can change the default link destination to your system browser in **Settings > Desktop app > Browser**. You can also choose **Open externally** for an individual page. This link preference is independent of whether agents may use the Built-in Browser.
+
+## Agent browser control
+
+When the Built-in Browser is enabled, supported local Codex, Claude Code, OpenCode, and Pi runs can receive Rudder's read-only Browser skill and high-level browser tools. Agents can open, navigate, read, click, type, capture a screenshot, list tabs, and close their own tabs.
+
+These are bounded actions. Agents do not receive:
+
+- passwords or password import
+- raw cookie access
+- arbitrary JavaScript execution
+- unrestricted control of operator or other runs' tabs
+
+Rudder checks live availability and tab ownership on every action. A stale run cannot keep Browser access after you disable it.
+
+## Import an existing sign-in on macOS
+
+On macOS, you can import supported cookies from a local Google Chrome, Microsoft Edge, or Brave Browser profile. Rudder shows the available profiles and starts the import only after you confirm it.
+
+Cookie import adds supported website sessions without replacing existing Built-in Browser cookies. Results distinguish imported, skipped, and failed items. It does not import passwords, history, bookmarks, extensions, or downloads, and it never gives agents raw cookie values.
+
+Cookie import is not currently available on Windows or Linux.
+
+## Three separate settings
+
+The Browser controls affect different parts of the product:
+
+| Action | What changes | What stays |
+| --- | --- | --- |
+| Disable Built-in Browser for agents | Stops new cookie imports and agent Browser access, closes agent tabs, and removes Browser tools from later supported runs | Operator Browser tabs, saved website data, and the link destination preference |
+| Clear all browsing data | Closes Browser tabs and clears cookies, cache, local storage, and other browsing data for the shared instance profile | Browser enablement and link destination settings |
+| Open links in the system browser | Routes ordinary Rudder web links to your default browser | Agent Browser availability and saved Built-in Browser data |
+
+Because clearing data affects the shared instance profile, it signs out website sessions used across organizations and agents on that instance.
+
+## Rudder-managed control tools
+
+Browser actions are part of Rudder's first-party control-plane tool surface. The same managed surface gives agents typed tools for issues, runs, Chat, automations, Library files, approvals, skills, and agents.
+
+You do not add these tools as a custom integration or configure an MCP server manually. Rudder prepares them for each supported run:
+
+- Codex, Claude Code, and OpenCode local runtimes receive Rudder-managed MCP configuration.
+- Pi local receives the equivalent Rudder-managed native tool bridge.
+- When the managed tool surface is unavailable, the bundled `rudder` CLI skill remains the compatibility fallback.
+
+Other local or remote runtimes may not support this managed tool path. Their availability should be treated as runtime-specific; do not assume that a custom MCP integration or a remote runtime can control the local Built-in Browser.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configure your agent runtime" icon="terminal" href="/how-to/configure-agent-runtime">
+    Choose a supported runtime and test its readiness.
+  </Card>
+  <Card title="Permissions and platforms" icon="shield-check" href="/reference/permissions-and-platforms">
+    Review local credentials, shared sessions, and platform boundaries.
+  </Card>
+</CardGroup>

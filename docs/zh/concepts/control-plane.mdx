@@ -49,6 +49,10 @@ Activity log 显示 issue 更新、review decision、comment、approval 和 run 
 
 Run intelligence 用 summary 帮人快速扫描执行情况，但不隐藏原始 evidence。需要 review 时，transcript、result、logs 和 artifacts 仍然重要。
 
+组织级 run list 默认使用范围受限的 summary。每一行保留扫描需要的 identity、status、timing、agent/runtime、target、outcome 或 error、usage、cost、skill evidence 和 log availability，不会为列表里的每个 run 加载完整诊断 payload。
+
+需要完整 result、context、transcript、events 或 logs 时，再打开单条 run。Events、logs 和 transcript entries 会按范围受限的页面加载，避免一个很大的 run 把整个组织列表变成无边界响应。官方 CLI list command 也默认使用 summary；只有兼容导出确实需要完整列表结构时，才使用 `--full`。
+
 ## Dashboard、Calendar 和 Inbox
 
 Dashboard 看组织当前状态。Calendar 看时间线。Inbox 聚焦人的注意力。

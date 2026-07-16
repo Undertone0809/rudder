@@ -53,9 +53,17 @@ The two fundamental heartbeat modes are:
 - run a local command that Rudder starts and tracks
 - send a request to an external runtime that handles execution elsewhere
 
+## First-party control tools
+
+Supported local runtimes receive Rudder-managed tools for working with issues, runs, Chat, automations, Library files, approvals, skills, and agents. In Rudder Desktop `local_trusted` deployments, supported Codex, Claude Code, OpenCode, and Pi runs can also receive the [Built-in Browser](/concepts/built-in-browser) capability when it is enabled.
+
+These tools are automatic runtime infrastructure, not custom integrations. Rudder prepares their configuration and run identity; operators do not manually connect or configure them. The bundled `rudder` CLI skill remains the fallback when a runtime cannot use the managed tool surface.
+
+Capabilities vary by adapter. Remote and unsupported runtimes should not be assumed to have local Desktop Browser control or the same managed tools as a supported local runtime.
+
 ## Heartbeats
 
-A heartbeat is a bounded, priority-aware work cycle. Rudder wakes an agent only when there is actionable assigned or review work, then the agent inspects the highest-priority issue it can move and leaves a clear signal: progress, done, blocked, or review feedback.
+A heartbeat is a bounded, priority-aware work cycle. Rudder wakes an agent for actionable assigned work, review work, or a directed wake request such as an explicit agent mention in an issue comment. For assigned work, the agent inspects the highest-priority issue it can move. A mention-directed run receives the source comment as its reason and does not silently take ownership of the issue. Every run should leave a clear signal: progress, done, blocked, or review feedback.
 
 ![Reactive heartbeat flow](../images/heartbeat-reactive-loop-en.svg)
 
@@ -80,5 +88,8 @@ Reporting structure gives the board a stable way to understand ownership, escala
   </Card>
   <Card title="Configure Feishu integration" icon="messages-square" href="/how-to/configure-feishu-integration">
     Connect an agent to Feishu or Lark.
+  </Card>
+  <Card title="Built-in Browser" icon="globe" href="/concepts/built-in-browser">
+    Understand shared website sessions and isolated agent browser control.
   </Card>
 </CardGroup>

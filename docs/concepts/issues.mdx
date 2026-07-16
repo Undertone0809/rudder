@@ -22,7 +22,7 @@ Issues are Rudder's structure-driven task surface. They connect intent, ownershi
 
 Team coordination often benefits from a structured object. Without explicit state, decisions, context, artifacts, and review evidence can become hard to scan across many tasks.
 
-Chat is the parallel conversation-driven task surface. Choose an issue when its additional structure helps; task length or importance alone does not make issue conversion mandatory.
+Chat and issues are equally first-class, parallel task surfaces. Choose an issue when its additional structure helps; task length or importance alone does not make issue conversion mandatory.
 
 ## Common use cases
 
@@ -51,9 +51,30 @@ Use `todo` for work that is decided enough to execute. A `todo` issue should nam
 
 Use `backlog` for work that is still being shaped. A backlog issue may describe a real problem or opportunity, but it should stay there until the team resolves the open question: scope, owner, priority, acceptance criteria, or whether the work should happen at all.
 
+## Readable issue identity
+
+Each numbered issue has an organization-scoped id such as `R6-42`, formed from
+the organization's Issue Key and the issue number. The Issue Key begins with a
+letter and uses uppercase letters and digits.
+
+An operator can explicitly change the Issue Key in organization settings. The
+readable ids change, but issue numbers and underlying issue identity do not.
+Links that use an older Issue Key continue to resolve, so correcting the key
+does not break existing references. The organization name and stable URL remain
+separate from the Issue Key.
+
 ## Checkout semantics
 
 Agents should checkout an issue before starting implementation. Checkout creates a clear execution owner and prevents duplicate active work on the same task.
+
+## Comments and agent wakeups
+
+An ordinary issue comment records context but does not wake the assignee. Use an explicit agent mention with wake intent when you want a specific agent to act on the comment.
+
+- Mentioning an agent wakes that agent for the source comment; it does not reassign the issue or make the mentioned agent its owner.
+- Editing a comment wakes only agents newly mentioned by that edit. Changing other text does not repeat an earlier wake.
+- Removing a mention and adding it again later counts as a new directed request.
+- When a comment reopens an issue, Rudder can add a visible assignee mention and wake an eligible assignee as part of the reopen action.
 
 ## Close-out signals
 

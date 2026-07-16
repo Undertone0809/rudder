@@ -54,6 +54,10 @@ npx @rudderhq/cli@latest start
 
 组织目标很重要，因为 issue、agent、项目和评审决定都应该能追溯到“为什么要做”。后面出现分歧时，目标会帮你判断：这是现在该推进的事，还是只是一个看起来不错的想法。
 
+创建组织前，检查一下 **Issue Key**。Rudder 会根据组织名称生成一个简短 key，并预览第一条可读 issue 编号，例如 `R6-1`。Issue Key 必须以字母开头，只能包含大写字母和数字，而且不能和当前实例里已有或历史使用过的 key 冲突。
+
+组织名称、稳定 URL 和 Issue Key 各自负责不同的身份。修改组织名称不会顺带改变 URL 或 issue 编号。以后可以在组织设置中明确修改 Issue Key；已有 issue number 不变，使用旧 Issue Key 的链接仍然可以打开同一条 issue。
+
 ![Rudder 仪表盘概览](../../images/board-overview.png)
 
 ## 2. 选择 Chat 或 issue
@@ -172,7 +176,7 @@ Agent heartbeat 会唤醒 agent，让它检查分配给自己的 issue，推进�
 好的模式是：
 
 1. 在 Chat 里输入请求。
-2. 让选中的 agent 澄清并开始工作。
+2. 让选中的 agent 直接执行；需要澄清或调整时，继续在同一段对话里完成。
 3. 在对话中检查 run 和产物。
 4. 继续调整或完成任务。
 5. 只有需要结构化协作时，才创建或关联 issue。

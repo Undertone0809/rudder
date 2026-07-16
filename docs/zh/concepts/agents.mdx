@@ -52,9 +52,17 @@ Heartbeat 主要有两种执行方式：
 - 运行 Rudder 启动并跟踪的本地命令
 - 向外部运行时发送请求，由外部环境完成执行
 
+## 第一方控制工具
+
+受支持的本地 runtime 会获得由 Rudder 管理的工具，用于操作 issue、run、Chat、automation、Library 文件、approval、skill 和 agent。在 Rudder Desktop `local_trusted` 部署中，受支持的 Codex、Claude Code、OpenCode 和 Pi run 还可以在功能启用时获得[内置浏览器](/zh/concepts/built-in-browser)能力。
+
+这些工具是自动配置的 runtime 基础设施，不是 custom integration。Rudder 会准备工具配置和 run 身份，operator 不需要手动连接或配置。Runtime 无法使用 managed tool surface 时，内置的 `rudder` CLI skill 仍可作为 fallback。
+
+不同 adapter 的能力不同。不要假设远程或不受支持的 runtime 可以控制本地 Desktop 浏览器，或拥有与受支持本地 runtime 相同的 managed tools。
+
 ## Heartbeat
 
-Heartbeat 是一次有边界、按优先级响应的工作周期。Rudder 只会在存在可执行的分配任务或评审任务时唤醒 agent，然后让 agent 检查自己能推进的最高优先级 issue，并留下清晰信号：有进展、已完成、被阻塞，或给出评审意见。
+Heartbeat 是一次有边界、按优先级响应的工作周期。存在可执行的分配任务、评审任务，或 issue comment 中明确提到某个 agent 等 directed wake request 时，Rudder 才会唤醒 agent。对于 assigned work，agent 会检查自己能推进的最高优先级 issue。Mention 触发的 run 会把来源 comment 作为原因，不会静默接管 issue ownership。每次 run 都应该留下清晰信号：有进展、已完成、被阻塞，或给出评审意见。
 
 ![响应式 Heartbeat 流程](../../images/heartbeat-reactive-loop-zh.svg)
 
@@ -79,5 +87,8 @@ Rudder 下一阶段会继续探索更复杂的全天候 agent 自我探索机制
   </Card>
   <Card title="配置飞书集成" icon="messages-square" href="/zh/how-to/configure-feishu-integration">
     把 Agent 接入飞书或 Lark。
+  </Card>
+  <Card title="内置浏览器" icon="globe" href="/zh/concepts/built-in-browser">
+    理解共享网站会话和隔离的 agent 浏览器控制。
   </Card>
 </CardGroup>

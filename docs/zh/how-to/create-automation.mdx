@@ -22,9 +22,9 @@ canonical: "https://docs.rudderhq.dev/zh/how-to/create-automation"
 | 要跑什么 | 自动化需要稳定任务，不是开放讨论 |
 | 谁负责 | owner 决定谁检查失败和结果 |
 | 什么触发它 | 选择 schedule、manual、API 或 webhook |
-| 输出去哪里 | 选择 tracked issue output 或 chat output |
+| 输出去哪里 | 选择 chat output 或 tracked issue output |
 
-如果这些答案还不清楚，先建 issue 把工作整理好。
+如果这些答案还不清楚，先在 Chat 或 issue 中把工作整理好，再做成 automation。两者都是一等任务界面，按场景选择合适结构。
 
 ## 创建自动化
 
@@ -34,7 +34,7 @@ canonical: "https://docs.rudderhq.dev/zh/how-to/create-automation"
 4. 选择 owner 和执行它的 agent 或 runtime。
 5. 写 prompt 或 job definition。
 6. 选择 trigger。
-7. 选择 output mode。
+7. 保留默认的 chat output，或显式切换到 tracked issue output。
 8. 保存 automation。
 
 名称应该描述实际工作，例如 "Prepare weekly agent work report" 或 "Check failed run backlog"。
@@ -45,9 +45,15 @@ canonical: "https://docs.rudderhq.dev/zh/how-to/create-automation"
 
 ## 选择输出模式
 
-需要分配、状态、review、artifacts 或 follow-up 时，用 issue output。
+新建 custom automation 默认使用 chat output。希望 operator 通过对话接收并继续推进每次结果时，保留这个默认值。
 
-结果比较轻，automation run record 和 chat transcript 足够时，用 chat output。
+结果需要明确 assignment、status、review、artifacts 或 follow-up 时，切换到 issue output。任务的重要程度、成本或时长不会强制这个选择，但受治理的团队策略可以要求填写 issue 字段。
+
+## 理解每次 Run 会创建什么
+
+每次真正执行 chat output，都会创建一条与该 automation run 关联的独立 Messenger conversation。Rudder 不会让每次 run 都复用某个已有 Chat。
+
+被跳过或 coalesced 的 run 不会创建空对话。如果 chat output 开始后执行失败，对话会保留可见的部分结果或 fallback 证据，避免失败被藏在空的未读线程后面。Tracked issue output 会创建 execution issue，之后进入正常的 issue assignment、run 和 review lifecycle。
 
 ## 测试自动化
 
@@ -59,6 +65,7 @@ canonical: "https://docs.rudderhq.dev/zh/how-to/create-automation"
 - agent 或 runtime 是否收到正确 context
 - 结果是否出现在预期 issue 或 chat
 - 失败是否能在 run history 里看到
+- 失败的 chat-output run 是否留下可检查证据，而不是空线程
 - owner 是否知道以后在哪里检查结果
 
 ## 下一步

@@ -129,7 +129,19 @@ model token usage and the built-in OpenAI/Codex price table. Known-model
 estimates count toward Rudder spend and budget hard stops. Turn it off only for
 agents whose subscription usage should remain `$0.00`.
 
-Claude Code options include Chrome access, permission behavior, and max turns per run. Keep these tight for routine work; loosen them only when the agent needs that capability.
+Claude Code options include Chrome access, permission behavior, and max turns per run. Keep these tight for routine work; loosen them only when the agent needs that capability. Claude Code's Chrome option is separate from Rudder Desktop's Built-in Browser.
+
+### Rudder-managed control tools
+
+For supported local runtimes, Rudder automatically prepares its first-party control tools for each run. Do not create a custom MCP integration or manually add a Rudder MCP server to the agent:
+
+- Codex, Claude Code, and OpenCode local receive Rudder-managed MCP configuration.
+- Pi local receives the equivalent Rudder-managed native tool bridge.
+- The bundled `rudder` CLI skill remains the fallback when managed tools are unavailable.
+
+These tools cover Rudder control-plane operations such as issues, runs, Chat, automations, Library files, approvals, skills, and agents. In a Desktop `local_trusted` deployment, supported local runs can also receive [Built-in Browser](/concepts/built-in-browser) tools when that instance capability is enabled.
+
+Tool availability is runtime-specific. Remote, gateway, generic process, and unsupported runtimes do not inherit a promise of managed tools or local Desktop Browser control. Use the environment test and a real run as evidence for the runtime you selected.
 
 ## Configure a shell process runtime
 
@@ -257,5 +269,8 @@ Before you rely on the runtime for recurring work, confirm:
   </Card>
   <Card title="Skills" icon="book-open" href="/concepts/skills">
     Package reusable instructions for agents.
+  </Card>
+  <Card title="Built-in Browser" icon="globe" href="/concepts/built-in-browser">
+    Review Browser availability and trust boundaries.
   </Card>
 </CardGroup>

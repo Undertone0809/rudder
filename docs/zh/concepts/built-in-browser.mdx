@@ -1,0 +1,87 @@
+---
+title: "内置浏览器"
+description: "理解 Rudder Desktop 的共享网站会话、Side Panel 链接行为和隔离的 agent 浏览器控制。"
+icon: "globe"
+keywords:
+  - "Rudder 内置浏览器"
+  - "agent 浏览器工具"
+  - "Side Panel 浏览器"
+  - "浏览器 Cookie 导入"
+canonical: "https://docs.rudderhq.dev/zh/concepts/built-in-browser"
+"og:url": "https://docs.rudderhq.dev/zh/concepts/built-in-browser"
+
+---
+
+Rudder Desktop 为 operator 和受支持的本地 agent 提供内置浏览器。你可以在 Rudder 工作旁边查看网页，agent 也能使用有边界的浏览器能力，而不需要接触密码或原始浏览器凭据。
+
+内置浏览器仅适用于 Desktop `local_trusted` 部署。Web、远程、gateway 和不受支持的 runtime 无法控制本地 Desktop 浏览器。
+
+## 每个本地实例共用一个网站会话
+
+内置浏览器会为当前操作系统用户和 Rudder 实例保留一个持久的网站会话。Operator 标签页和受支持的 agent 标签页使用同一个会话。
+
+因此，切换 Rudder 组织或重启 Desktop 后，网站登录状态仍可继续使用。这也意味着，同一个本地 Rudder 实例中的不同组织并不是彼此隔离的网站身份。只有当某个账号适合该实例中所有你信任的组织和 agent 使用时，才应导入或登录这个账号。
+
+共享网站会话不等于共享标签页控制权。每个 agent 标签页都按组织、agent、run 和 tab 隔离。即使两个标签页使用同一个已登录的网站会话，一个 run 也不能读取或操作另一个 run 拥有的标签页。
+
+## 不离开 Rudder 打开链接
+
+在全新的 Desktop 实例中，Rudder 里的普通网页链接默认会在全局 Side Panel 的 Browser 标签页中打开。当前 Rudder 页面会保留在网页旁边。
+
+你可以在 **Settings > Desktop app > Browser** 中把默认链接目标改为系统浏览器，也可以为当前页面单独选择 **Open externally**。链接目标偏好和 agent 是否可以使用内置浏览器是两项独立设置。
+
+## Agent 浏览器控制
+
+启用内置浏览器后，受支持的本地 Codex、Claude Code、OpenCode 和 Pi run 可以获得 Rudder 的只读 Browser skill 和高层浏览器工具。Agent 可以打开、导航、读取、点击、输入、截图、列出标签页，并关闭自己拥有的标签页。
+
+这些操作都有明确边界。Agent 不会获得：
+
+- 密码或密码导入
+- 原始 Cookie 访问
+- 任意 JavaScript 执行
+- 对 operator 或其他 run 标签页的无限制控制
+
+Rudder 会在每次操作时检查实时可用状态和标签页归属。禁用后，旧 run 不能继续保留 Browser 访问权。
+
+## 在 macOS 导入已有登录状态
+
+在 macOS 上，你可以从本地 Google Chrome、Microsoft Edge 或 Brave Browser profile 导入受支持的 Cookie。Rudder 会先列出可用 profile，只有在你确认后才开始导入。
+
+Cookie 导入会添加受支持的网站会话，不会替换内置浏览器里已有的 Cookie。结果会分别显示已导入、已跳过和失败的项目。它不会导入密码、历史记录、书签、扩展或下载内容，也不会向 agent 暴露原始 Cookie 值。
+
+Windows 和 Linux 目前不支持 Cookie 导入。
+
+## 三项彼此独立的设置
+
+Browser 控制项影响产品的不同部分：
+
+| 操作 | 会发生什么变化 | 会保留什么 |
+| --- | --- | --- |
+| 为 agent 禁用内置浏览器 | 停止新的 Cookie 导入和 agent Browser 访问、关闭 agent 标签页，并从之后受支持的 run 中移除 Browser 工具 | Operator Browser 标签页、已保存的网站数据和链接目标偏好 |
+| 清除全部浏览数据 | 关闭 Browser 标签页，并清除共享实例 profile 中的 Cookie、缓存、本地存储和其他浏览数据 | Browser 启用状态和链接目标设置 |
+| 用系统浏览器打开链接 | 把 Rudder 中的普通网页链接交给默认浏览器 | Agent Browser 可用性和已保存的内置浏览器数据 |
+
+清除数据会影响共享实例 profile，因此会退出该实例中不同组织和 agent 共用的网站会话。
+
+## Rudder 管理的控制工具
+
+Browser 操作属于 Rudder 第一方 control-plane 工具的一部分。同一个 managed tool surface 还为 agent 提供 issue、run、Chat、automation、Library 文件、approval、skill 和 agent 等 typed tools。
+
+你不需要把这些工具添加为 custom integration，也不需要手动配置 MCP server。Rudder 会为每次受支持的 run 自动准备它们：
+
+- Codex、Claude Code 和 OpenCode local runtime 会获得 Rudder 管理的 MCP 配置。
+- Pi local 会获得功能等价的 Rudder 管理的原生工具 bridge。
+- 当 managed tool surface 不可用时，内置的 `rudder` CLI skill 仍是兼容 fallback。
+
+其他本地或远程 runtime 可能不支持这条 managed tool path。应按具体 runtime 判断可用性；不要假设 custom MCP integration 或远程 runtime 可以控制本地内置浏览器。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="配置 agent runtime" icon="terminal" href="/zh/how-to/configure-agent-runtime">
+    选择受支持的 runtime 并测试 readiness。
+  </Card>
+  <Card title="Permissions and platforms" icon="shield-check" href="/zh/reference/permissions-and-platforms">
+    查看本地凭据、共享会话和平台边界。
+  </Card>
+</CardGroup>

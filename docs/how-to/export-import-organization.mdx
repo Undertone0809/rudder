@@ -42,6 +42,18 @@ Use the preview to check:
 
 Do not apply an import if the preview does not match the organization you expect.
 
+### Check the imported organization identity
+
+When importing into a new organization, review the new organization name and
+Issue Key separately. Changing the proposed Issue Key does not rename the
+imported organization. The target Rudder instance rejects an Issue Key that
+conflicts with another organization's current URL, current Issue Key, or
+historical Issue Key, so resolve the conflict in the preview before applying.
+
+A new-organization import receives a fresh internal identity and stable URL.
+Historical Issue Key aliases from the source instance are not copied to the new
+organization.
+
 ## After import
 
 Open the imported organization and inspect:
@@ -49,6 +61,7 @@ Open the imported organization and inspect:
 - goals and projects
 - agents and runtime settings
 - issues and review state
+- the new Issue Key and readable issue references
 - Library files and resources
 - automations or integrations that may need credentials
 

@@ -44,13 +44,21 @@ canonical: "https://docs.rudderhq.dev/zh/concepts/automations"
 自动化可以把结果送到 tracked issue，也可以发回 Chat：
 
 - 需要分配、review、状态、产物或 follow-up 时，用 issue output。
-- 结果比较轻，automation run 记录和 chat transcript 足够时，用 chat output。
+- 希望 operator 通过对话接收结果并继续推进时，用 chat output。
 
-输出路径会影响人在哪里检查结果。Issue output 进入正常 issue 工作流。Chat output 把审计记录留在 automation run 和 chat conversation 上。
+新建 custom automation 默认选择 chat output，同时把 tracked issue output 作为可显式切换的选项。输出路径会改变人在哪里检查结果：issue output 进入正常 issue workflow，chat output 则让工作通过 automation run 和对应 Chat 保持可检查。重要程度、成本或运行时长本身不会要求使用 issue output，但团队策略可以要求受治理流程使用 issue 结构。
+
+每次真正执行 chat output，都会创建自己独立的 Messenger conversation；automation 不会把未来每次 run 都塞进同一个人工 Chat。被跳过或 coalesced 的 run 不会创建空对话。Chat-output run 失败时，Rudder 会保留可见的部分结果或 fallback 证据，而不是留下没有内容的未读线程。
+
+## Run 历史
+
+每次 automation run 都应该留下可检查的证据：触发来源、当前状态、时间、结果、失败原因，以及存在时关联的 issue 或 Chat output。
+
+这对周期性工作很重要。周报不应该只是一个来历不明的 prompt；你应该能看到它何时运行、由哪个 agent 处理、产出了什么，以及是否还需要人来 review。
 
 ## 什么时候不该用自动化
 
-如果工作还没想清楚，不要先做自动化。结果、owner、数据源或 review 路径不明确时，先建 issue 或用 Chat 澄清。
+如果工作还没想清楚，不要先做自动化。结果、owner、数据源或 review 路径不明确时，先继续在 Chat 中推进，或使用 issue 结构整理工作。
 
 ## 下一步
 

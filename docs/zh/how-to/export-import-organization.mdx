@@ -42,6 +42,12 @@ Import 应该可预览、范围明确。应用 import 前，先检查它会创�
 
 如果 preview 和预期组织不一致，不要 apply。
 
+### 检查导入后的组织身份
+
+导入为新组织时，分别检查新的组织名称和 Issue Key。修改建议的 Issue Key 不会顺带重命名组织。如果这个 key 和目标 Rudder 实例里另一个组织的当前 URL、当前 Issue Key 或历史 Issue Key 冲突，import preview 会要求你先改成一个明确可用的值。
+
+新组织会获得新的内部身份和稳定 URL。源实例里的历史 Issue Key alias 不会复制到这个新组织。
+
 ## Import 后
 
 打开导入后的组织，检查：
@@ -49,6 +55,7 @@ Import 应该可预览、范围明确。应用 import 前，先检查它会创�
 - goals 和 projects
 - agents 和 runtime settings
 - issues 和 review state
+- 新的 Issue Key 和可读 issue 编号
 - Library files 和 resources
 - 可能需要重新配置 credentials 的 automations 或 integrations
 

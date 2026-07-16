@@ -24,6 +24,21 @@ Rudder coordinates agent work. Runtimes do the work.
 
 The exact runtime options available in your app depend on installed packages, configured providers, and local machine setup.
 
+## Managed Rudder tools
+
+Managed control tools are adapter capabilities, not a feature shared automatically by every runtime shape.
+
+| Runtime | Managed tool path | Built-in Browser in Desktop `local_trusted` |
+| --- | --- | --- |
+| Codex local | Rudder-managed MCP configuration | Supported when enabled |
+| Claude Code local | Rudder-managed MCP configuration | Supported when enabled |
+| OpenCode local | Rudder-managed MCP configuration | Supported when enabled |
+| Pi local | Rudder-managed native tool bridge | Supported when enabled |
+| Other supported local runtime | Runtime-specific; bundled `rudder` CLI skill may be the fallback | Not promised |
+| Shell, webhook, gateway, or remote runtime | No local managed tool path is promised | Not promised |
+
+Rudder prepares the managed path automatically for each eligible run. It is first-party runtime infrastructure, not a custom integration or an MCP server that operators configure manually. See [Built-in Browser](/concepts/built-in-browser) for its shared website-session and isolated tab-control boundaries.
+
 ## What runtime configuration controls
 
 Runtime configuration controls how Rudder invokes the agent:
@@ -47,5 +62,8 @@ Before relying on a runtime, test it from the agent configuration screen. A read
   </Card>
   <Card title="Permissions and platforms" icon="shield-check" href="/reference/permissions-and-platforms">
     Understand local runtime file and credential boundaries.
+  </Card>
+  <Card title="Built-in Browser" icon="globe" href="/concepts/built-in-browser">
+    Review supported runtimes and Browser boundaries.
   </Card>
 </CardGroup>

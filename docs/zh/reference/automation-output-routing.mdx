@@ -13,6 +13,8 @@ canonical: "https://docs.rudderhq.dev/zh/reference/automation-output-routing"
 
 Automation output routing 决定人在哪里检查结果。
 
+新建 custom automation 默认使用 chat output。重复工作需要 issue lifecycle 结构时，可以显式切换到 tracked issue output。
+
 ## 选择 issue output
 
 结果需要这些东西时，用 issue output：
@@ -24,7 +26,7 @@ Automation output routing 决定人在哪里检查结果。
 - follow-up work
 - durable close-out evidence
 
-Issue output 会进入正常 issue lifecycle。影响 decisions、customers、releases 或 team commitments 的工作，通常应该用它。
+Issue output 会创建 execution issue，并进入正常的 assignment、run、review 和 close-out lifecycle。应该因为需要这些结构而选择它，而不是仅仅因为工作重要、昂贵或耗时。受治理的团队策略仍然可以要求填写 issue 字段。
 
 ## 选择 chat output
 
@@ -38,6 +40,10 @@ Issue output 会进入正常 issue lifecycle。影响 decisions、customers、re
 - 适合继续调整的分析
 
 Chat output 把 audit trail 留在 automation run 和 chat transcript 上。
+
+每次真正执行都会创建一条与 automation run 关联的独立 Messenger conversation，不会把未来所有 run 都送进某个已有的人工 Chat。
+
+被跳过或 coalesced 的 run 不会创建空对话。Chat-output execution 失败时，Rudder 会留下可见的部分结果或 fallback 证据，而不是静默创建空的未读线程。
 
 ## 不确定时
 

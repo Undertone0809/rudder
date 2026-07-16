@@ -22,9 +22,9 @@ Decide four things:
 | What should run? | The automation needs a stable task, not an open-ended discussion |
 | Who owns it? | Ownership decides who should inspect failures and results |
 | What starts it? | Choose schedule, manual dispatch, API, or webhook |
-| Where should output go? | Choose tracked issue output or chat output |
+| Where should output go? | Choose chat output or tracked issue output |
 
-If those answers are unclear, create an issue first and shape the work there.
+If those answers are unclear, shape the work in Chat or an issue before automating it. Both are first-class task surfaces; choose the structure that fits the scenario.
 
 ## Create the automation
 
@@ -34,7 +34,7 @@ If those answers are unclear, create an issue first and shape the work there.
 4. Choose the owner and agent or runtime that should execute it.
 5. Write the prompt or job definition.
 6. Choose a trigger.
-7. Choose the output mode.
+7. Keep the default chat output, or explicitly switch to tracked issue output.
 8. Save the automation.
 
 Use a name that describes the actual work, such as "Prepare weekly agent work report" or "Check failed run backlog."
@@ -45,9 +45,15 @@ Use a schedule for routine work. Use manual dispatch when an operator should dec
 
 ## Choose the output mode
 
-Use issue output when the result needs assignment, status, review, artifacts, or follow-up work.
+New custom automations default to chat output. Keep it when operators should receive and continue each result through a conversation.
 
-Use chat output when operators should receive and continue the result through a conversation.
+Switch to issue output when the result needs explicit assignment, status, review, artifacts, or follow-up work. Task importance, cost, or length does not force that choice, although a governed team policy may require issue fields.
+
+## Understand what each run creates
+
+Each real chat-output execution creates a separate Messenger conversation linked from that automation run. Rudder does not reuse an arbitrary existing Chat for every run.
+
+Skipped or coalesced runs do not create empty conversations. If execution fails after chat output begins, the conversation keeps visible partial or fallback evidence so the failure is not hidden behind an empty unread thread. Tracked issue output creates an execution issue and then follows the normal issue assignment, run, and review lifecycle.
 
 ## Test the automation
 
@@ -59,6 +65,7 @@ Check:
 - the selected agent or runtime receives the right context
 - the result appears in the expected issue or chat
 - failures are visible from the automation run history
+- a failed chat-output run leaves inspectable evidence rather than an empty thread
 - the owner knows where to inspect future runs
 
 ## Next steps

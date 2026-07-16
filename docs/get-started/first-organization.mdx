@@ -57,6 +57,16 @@ Weak first goals:
 
 The organization goal matters because issues, agents, projects, and review decisions should all point back to why the work exists. When priorities conflict later, the goal helps decide whether something is the next right move or only a good-looking idea.
 
+Review the **Issue Key** before creating the organization. Rudder derives a
+short key from the organization name and previews the first readable issue id,
+such as `R6-1`. The key must begin with a letter, use only uppercase letters and
+digits, and be unique in the Rudder instance.
+
+The organization name, its stable URL, and its Issue Key have separate jobs.
+Renaming the organization does not silently change its URL or issue ids. You can
+change the Issue Key explicitly in organization settings later; existing issue
+numbers stay the same, and links that use an older Issue Key continue to resolve.
+
 ![Rudder dashboard overview](../images/board-overview.png)
 
 ## 2. Choose Chat or an issue
@@ -177,7 +187,7 @@ Use Chat when you prefer to move the task forward through an ongoing conversatio
 A good pattern is:
 
 1. Start in Chat with the request.
-2. Let the selected agent clarify and begin the work.
+2. Let the selected agent execute the task, clarifying or refining in the same conversation when needed.
 3. Inspect the run and outputs in the conversation.
 4. Refine or complete the task in Chat.
 5. Create or link an issue only when you want structured coordination.

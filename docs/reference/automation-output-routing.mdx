@@ -13,6 +13,8 @@ canonical: "https://docs.rudderhq.dev/reference/automation-output-routing"
 
 Automation output routing decides where people inspect the result.
 
+New custom automations default to chat output. Tracked issue output remains an explicit alternative when the repeated work needs issue lifecycle structure.
+
 ## Choose issue output
 
 Use issue output when the result needs:
@@ -24,7 +26,7 @@ Use issue output when the result needs:
 - follow-up work
 - durable close-out evidence
 
-Issue output enters the normal issue lifecycle. This is the safer choice for work that affects decisions, customers, releases, or team commitments.
+Issue output creates an execution issue and enters the normal assignment, run, review, and close-out lifecycle. Choose it for the structure itself, not merely because the work is important, expensive, or long-running. A governed team policy can still require issue fields.
 
 ## Choose chat output
 
@@ -38,6 +40,10 @@ Good examples:
 - analysis that benefits from conversational refinement
 
 Chat output keeps the audit trail on the automation run and the chat transcript.
+
+Each real execution gets a separate Messenger conversation linked to its automation run. It does not reuse an arbitrary existing human Chat as the destination for all future runs.
+
+Skipped or coalesced runs do not create empty conversations. If a chat-output execution fails, Rudder leaves visible partial or fallback evidence instead of silently creating an empty unread thread.
 
 ## If unsure
 
