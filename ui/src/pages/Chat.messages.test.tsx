@@ -5,10 +5,11 @@ import { __clearWebsiteMetadataIconCacheForTests } from "@/components/MarkdownBo
 import type { MentionOption } from "@/components/MarkdownEditor";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { buildAgentMentionHref, buildAutomationMentionHref, buildIssueMentionHref, type ChatMessage } from "@rudderhq/shared";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, StreamTranscriptItem } from "./Chat.messages";
 
 const markdownMentionsMock = vi.hoisted(() => ({
@@ -16,6 +17,10 @@ const markdownMentionsMock = vi.hoisted(() => ({
 }));
 
 const websiteMetadataApiMock = vi.hoisted(() => ({
+  get: vi.fn(),
+}));
+
+const issuesApiMock = vi.hoisted(() => ({
   get: vi.fn(),
 }));
 
@@ -48,6 +53,10 @@ vi.mock("@/api/websiteMetadata", () => ({
   websiteMetadataApi: websiteMetadataApiMock,
 }));
 
+vi.mock("@/api/issues", () => ({
+  issuesApi: issuesApiMock,
+}));
+
 vi.mock("../api/websiteMetadata", () => ({
   websiteMetadataApi: websiteMetadataApiMock,
 }));
@@ -69,6 +78,13 @@ Object.defineProperty(window, "matchMedia", {
 });
 
 let cleanupFn: (() => void) | null = null;
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { retry: false } },
+});
+
+beforeEach(() => {
+  issuesApiMock.get.mockRejectedValue(new Error("Issue detail is not configured for this test"));
+});
 
 afterEach(() => {
   cleanupFn?.();
@@ -76,6 +92,8 @@ afterEach(() => {
   markdownMentionsMock.mentions = [];
   __clearWebsiteMetadataIconCacheForTests();
   websiteMetadataApiMock.get.mockReset();
+  issuesApiMock.get.mockReset();
+  queryClient.clear();
   document.body.innerHTML = "";
 });
 
@@ -90,7 +108,7 @@ function render(element: ReactNode) {
     container.remove();
   };
   act(() => {
-    root.render(element);
+    root.render(<QueryClientProvider client={queryClient}>{element}</QueryClientProvider>);
   });
   return container;
 }
@@ -117,6 +135,14 @@ function message(overrides: Partial<ChatMessage>): ChatMessage {
     updatedAt: new Date("2026-06-15T10:00:00.000Z"),
     ...overrides,
   };
+}
+
+async function waitForIssueStatus(container: HTMLElement, status: string) {
+  await act(async () => {
+    await vi.waitFor(() => {
+      expect(container.querySelector('[data-mention-kind="issue"]')?.getAttribute("data-mention-status")).toBe(status);
+    });
+  });
 }
 
 function renderChatMessageItem(messageToRender: ChatMessage) {
@@ -340,6 +366,31 @@ describe("user chat message rendering", () => {
     const mention = container.querySelector('[data-mention-kind="issue"]');
 
     expect(mention?.getAttribute("data-mention-status")).toBe("done");
+    expect(mention?.classList.contains("rudder-mention-chip--with-status-icon")).toBe(true);
+  });
+
+  it("resolves issue status for user message references outside the mention catalog", async () => {
+    window.history.pushState({}, "", "/MARAAA/messenger/chat/chat-1");
+    issuesApiMock.get.mockResolvedValue({
+      id: "a6ecf978-b334-43aa-8065-a5ea6abffb9f",
+      identifier: "ZST-776",
+      status: "in_progress",
+    });
+
+    const container = renderChatMessageItem(message({
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: [
+        "总结一下，这个任务都在做些啥？ ",
+        "[ZST-776 深度分析一下你今天这些 agent run 中遇到的各种报错和困难，优化系统]",
+        "(issue://a6ecf978-b334-43aa-8065-a5ea6abffb9f?r=ZST-776)",
+      ].join(""),
+    }));
+
+    await waitForIssueStatus(container, "in_progress");
+    const mention = container.querySelector('[data-mention-kind="issue"]');
+    expect(issuesApiMock.get).toHaveBeenCalledWith("a6ecf978-b334-43aa-8065-a5ea6abffb9f");
     expect(mention?.classList.contains("rudder-mention-chip--with-status-icon")).toBe(true);
   });
 

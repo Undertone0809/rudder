@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { websiteMetadataApi } from "../api/websiteMetadata";
 import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
 import { useTheme } from "../context/ThemeContext";
+import { useResolvedIssueMention } from "../hooks/useResolvedIssueMention";
 import { normalizeRenderedMarkdownSource } from "../lib/markdown-normalize";
 import { mentionChipInlineStyle, mentionChipNavigationPath, parseMentionChipHref, stripMentionChipLabelPrefix, type ParsedMentionChip } from "../lib/mention-chips";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "../lib/organization-routes";
@@ -366,6 +367,44 @@ function matchingIssueMentionFromRouteRef(
       (normalizedRouteRef.length >= 6 && issueId.startsWith(normalizedRouteRef))
     );
   }) ?? null;
+}
+
+function MarkdownIssueMentionLink({
+  mention,
+  label,
+  targetHref,
+  sourceAttributes,
+  onClick,
+}: {
+  mention: Extract<ParsedMentionChip, { kind: "issue" }>;
+  label: string;
+  targetHref: string;
+  sourceAttributes: ReturnType<typeof markdownSourceAttributes>;
+  onClick: (event: MouseEvent<HTMLAnchorElement>) => void;
+}) {
+  const resolvedMention = useResolvedIssueMention(mention);
+  const mentionLink = (
+    <a
+      href={targetHref}
+      className={cn(
+        "rudder-mention-chip rudder-mention-chip--issue",
+        resolvedMention.status && "rudder-mention-chip--with-status-icon",
+      )}
+      data-mention-kind="issue"
+      data-mention-comment={resolvedMention.commentId ? "true" : undefined}
+      data-mention-status={resolvedMention.status ?? undefined}
+      {...sourceAttributes}
+      onClick={onClick}
+    >
+      {label}
+    </a>
+  );
+
+  return (
+    <RudderEntityPreview mention={resolvedMention} label={label}>
+      {mentionLink}
+    </RudderEntityPreview>
+  );
 }
 
 function navigateInternalAppRoute(route: string) {
@@ -996,18 +1035,28 @@ export function MarkdownBody({
         })() || mentionFallbackLabel(mention);
         const displayMentionLabel = mentionDisplayLabel(mentionLabel);
         const targetHref = applyOrganizationPrefix(mentionChipNavigationPath(mention), organizationPrefix);
+        if (mention.kind === "issue") {
+          return (
+            <MarkdownIssueMentionLink
+              mention={mention}
+              label={displayMentionLabel}
+              targetHref={targetHref}
+              sourceAttributes={markdownSourceAttributes(node)}
+              onClick={(event) => {
+                handleMarkdownLinkClick(event, targetHref, displayMentionLabel);
+              }}
+            />
+          );
+        }
         const mentionLink = (
           <a
             href={targetHref}
             className={cn(
               "rudder-mention-chip",
               `rudder-mention-chip--${mention.kind}`,
-              mention.kind === "issue" && mention.status && "rudder-mention-chip--with-status-icon",
               mention.kind === "project" && "rudder-project-mention-chip",
             )}
             data-mention-kind={mention.kind}
-            data-mention-comment={mention.kind === "issue" && mention.commentId ? "true" : undefined}
-            data-mention-status={mention.kind === "issue" && mention.status ? mention.status : undefined}
             style={mentionChipInlineStyle(mention)}
             {...markdownSourceAttributes(node)}
             onClick={(event) => {
@@ -1050,27 +1099,16 @@ export function MarkdownBody({
           status: internalIssueMention.issueStatus ?? null,
         };
         const mentionLabel = mentionDisplayLabel(internalIssueMention.name || linkLabel || mentionFallbackLabel(mention));
-        const mentionLink = (
-          <a
-            href={internalHref}
-            className={cn(
-              "rudder-mention-chip rudder-mention-chip--issue",
-              mention.status && "rudder-mention-chip--with-status-icon",
-            )}
-            data-mention-kind="issue"
-            data-mention-status={mention.status ?? undefined}
-            {...markdownSourceAttributes(node)}
+        return (
+          <MarkdownIssueMentionLink
+            mention={mention}
+            label={mentionLabel}
+            targetHref={internalHref}
+            sourceAttributes={markdownSourceAttributes(node)}
             onClick={(event) => {
               handleMarkdownLinkClick(event, internalHref, mentionLabel);
             }}
-          >
-            {mentionLabel}
-          </a>
-        );
-        return (
-          <RudderEntityPreview mention={mention} label={mentionLabel}>
-            {mentionLink}
-          </RudderEntityPreview>
+          />
         );
       }
       const renderedHref = internalHref && !isAbsoluteMarkdownHref(href) ? internalHref : href;

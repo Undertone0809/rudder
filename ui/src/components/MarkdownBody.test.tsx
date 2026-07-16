@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
 import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, buildLibraryDirectoryMentionHref, buildLibraryDocMentionHref, buildLibraryEntryMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderToStaticMarkup as renderReactToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ThemeProvider } from "../context/ThemeContext";
 import { __clearWebsiteMetadataIconCacheForTests, MarkdownBody, WebsiteLinkIcon } from "./MarkdownBody";
@@ -150,6 +151,17 @@ vi.mock("../api/websiteMetadata", () => ({
 }));
 
 let cleanupFn: (() => void) | null = null;
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { retry: false } },
+});
+
+function withQueryClient(element: ReactNode) {
+  return <QueryClientProvider client={queryClient}>{element}</QueryClientProvider>;
+}
+
+function renderToStaticMarkup(element: ReactNode) {
+  return renderReactToStaticMarkup(withQueryClient(element));
+}
 
 afterEach(() => {
   cleanupFn?.();
@@ -163,9 +175,11 @@ afterEach(() => {
   localStorageMock.values.clear();
   document.body.innerHTML = "";
   window.history.pushState({}, "", "/");
+  queryClient.clear();
 });
 
 beforeEach(() => {
+  entityPreviewApiMocks.getIssue.mockRejectedValue(new Error("Issue detail is not configured for this test"));
   entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValue({
     url: "https://example.com/",
     siteName: null,
@@ -184,7 +198,7 @@ function render(element: ReactNode) {
     container.remove();
   };
   act(() => {
-    root.render(element);
+    root.render(withQueryClient(element));
   });
   return container;
 }
@@ -949,6 +963,43 @@ describe("MarkdownBody", () => {
     expect(html).not.toContain('data-status="done"');
     expect(html).toContain("当前自动化列表里已经完成");
     expect(html).toContain("继续检查后续正文排版");
+  });
+
+  it("resolves live issue status when the reference is outside the mention catalog", async () => {
+    entityPreviewApiMocks.getIssue.mockResolvedValue({
+      id: "a6ecf978-b334-43aa-8065-a5ea6abffb9f",
+      identifier: "ZST-776",
+      status: "in_progress",
+    });
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {[
+            "总结一下，这个任务都在做些啥？ ",
+            "[ZST-776 深度分析一下你今天这些 agent run 中遇到的各种报错和困难，优化系统]",
+            "(issue://a6ecf978-b334-43aa-8065-a5ea6abffb9f?r=ZST-776)",
+            " 再检查一次 ",
+            "[ZST-776](issue://a6ecf978-b334-43aa-8065-a5ea6abffb9f?r=ZST-776)",
+          ].join("")}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const mentions = container.querySelectorAll<HTMLElement>('[data-mention-kind="issue"]');
+    expect(mentions).toHaveLength(2);
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(mentions[0]?.dataset.mentionStatus).toBe("in_progress");
+        expect(mentions[1]?.dataset.mentionStatus).toBe("in_progress");
+      });
+    });
+    expect(entityPreviewApiMocks.getIssue).toHaveBeenCalledTimes(1);
+    expect(entityPreviewApiMocks.getIssue).toHaveBeenCalledWith("a6ecf978-b334-43aa-8065-a5ea6abffb9f");
+    for (const mention of mentions) {
+      expect(mention.dataset.mentionStatus).toBe("in_progress");
+      expect(mention.classList.contains("rudder-mention-chip--with-status-icon")).toBe(true);
+    }
   });
 
   it("renders issue comment mentions with the same status affordance as editor tokens", () => {

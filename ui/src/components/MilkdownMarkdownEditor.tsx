@@ -38,6 +38,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
+import { useResolvedIssueMentions } from "../hooks/useResolvedIssueMention";
 import { normalizeRelaxedMarkdownSyntax } from "../lib/markdown-normalize";
 import {
   applyMentionChipDecoration,
@@ -236,6 +237,23 @@ export function hasRudderMarkdownReference(markdown: string) {
     if (isRudderTokenHref(href, label)) return true;
   }
   return false;
+}
+
+export function issueMentionsFromMarkdown(markdown: string): Array<Extract<ParsedMentionChip, { kind: "issue" }>> {
+  const mentionsById = new Map<string, Extract<ParsedMentionChip, { kind: "issue" }>>();
+  const normalized = markdown.replace(/\r\n/g, "\n");
+  const re = new RegExp(MARKDOWN_LINK_FRAGMENT_RE);
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(normalized)) !== null) {
+    const href = unescapeMarkdownLinkDestination(match[2] ?? "");
+    const mention = parseMentionChipHref(href);
+    if (mention?.kind !== "issue") continue;
+    const current = mentionsById.get(mention.issueId);
+    if (!current || (!current.status && mention.status)) {
+      mentionsById.set(mention.issueId, mention);
+    }
+  }
+  return Array.from(mentionsById.values());
 }
 
 export function rudderTokenNavigationPath(href: string) {
@@ -1060,12 +1078,51 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
 }: MarkdownEditorProps, forwardedRef) {
   const { locale } = useI18n();
   const editorValue = useMemo(() => normalizeRelaxedMarkdownSyntax(value), [value]);
+  const issueMentions = useMemo(() => {
+    const optionByKey = mentionOptionMap(mentions ?? []);
+    return issueMentionsFromMarkdown(editorValue).map((mention) => {
+      const current = optionByKey.get(`issue:${mention.issueId}`);
+      return {
+        ...mention,
+        ref: current?.issueIdentifier ?? mention.ref ?? null,
+        status: current?.issueStatus ?? mention.status ?? null,
+      };
+    });
+  }, [editorValue, mentions]);
+  const resolvedIssueMentions = useResolvedIssueMentions(issueMentions);
+  const decorationMentions = useMemo(() => {
+    const resolvedById = new Map(resolvedIssueMentions.map((mention) => [mention.issueId, mention]));
+    const existingIssueIds = new Set<string>();
+    const next = (mentions ?? []).map((option) => {
+      if (option.kind !== "issue" || !option.issueId) return option;
+      existingIssueIds.add(option.issueId);
+      const resolved = resolvedById.get(option.issueId);
+      if (!resolved) return option;
+      return {
+        ...option,
+        issueIdentifier: resolved.ref ?? option.issueIdentifier,
+        issueStatus: resolved.status ?? option.issueStatus,
+      };
+    });
+    for (const mention of resolvedIssueMentions) {
+      if (existingIssueIds.has(mention.issueId)) continue;
+      next.push({
+        id: `issue:${mention.issueId}`,
+        name: mention.ref ?? mention.issueId,
+        kind: "issue",
+        issueId: mention.issueId,
+        issueIdentifier: mention.ref,
+        issueStatus: mention.status,
+      });
+    }
+    return next;
+  }, [mentions, resolvedIssueMentions]);
   const containerRef = useRef<HTMLDivElement>(null);
   const latestValueRef = useRef(editorValue);
   const onChangeRef = useRef(onChange);
   const onBlurRef = useRef(onBlur);
   const imageUploadHandlerRef = useRef(imageUploadHandler);
-  const mentionsRef = useRef<MentionOption[]>(mentions ?? []);
+  const mentionsRef = useRef<MentionOption[]>(decorationMentions);
   const [mentionState, setMentionState] = useState<MentionState | null>(null);
   const mentionStateRef = useRef<MentionState | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -1083,7 +1140,6 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
     onChangeRef.current = onChange;
     onBlurRef.current = onBlur;
     imageUploadHandlerRef.current = imageUploadHandler;
-    mentionsRef.current = mentions ?? [];
   }, [imageUploadHandler, onBlur, onChange]);
 
   const tokenDecorationsPlugin = useMemo(
@@ -1147,7 +1203,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
       && editable instanceof HTMLElement
       && activeElement === editable,
     );
-    mentionsRef.current = mentions ?? [];
+    mentionsRef.current = decorationMentions;
     // Async mention results only affect the open React menu. Dispatching an
     // editor decoration transaction while the user is still typing can restore
     // a stale ProseMirror selection and move the browser caret.
@@ -1161,7 +1217,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
       });
     }
     requestAnimationFrame(() => refreshMilkdownMentionTokenStyles(containerRef.current, mentionsRef.current));
-  }, [get, getInstance, loading, mentions]);
+  }, [decorationMentions, get, getInstance, loading]);
 
   useEffect(() => {
     requestAnimationFrame(() => refreshMilkdownMentionTokenStyles(containerRef.current, mentionsRef.current));
