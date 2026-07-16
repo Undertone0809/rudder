@@ -244,6 +244,13 @@ test.describe("Chat Work Manifest", () => {
     await expect(shelf).not.toContainText("Browser");
     await expect(shelf.getByRole("button", { name: "Add source" })).toHaveCount(0);
     await expect(shelf.getByText("Work", { exact: true })).toHaveCount(0);
+    const outputsHeader = shelf.getByTestId("chat-work-manifest-section-header-outputs");
+    const referencesHeader = shelf.getByTestId("chat-work-manifest-section-header-references");
+    await expect(outputsHeader).toBeVisible();
+    await expect(referencesHeader).toBeVisible();
+    expect(await outputsHeader.getAttribute("class")).toBe(await referencesHeader.getAttribute("class"));
+    await expect(outputsHeader.locator("svg")).toHaveCount(1);
+    await expect(referencesHeader.locator("svg")).toHaveCount(1);
     await expect(shelf.getByRole("button", { name: /source\.example https:\/\/source\.example\/research/ }))
       .toHaveCount(1);
 
@@ -398,6 +405,19 @@ test.describe("Chat Work Manifest", () => {
     await expect(compactPanel).toContainText("report.md");
     await expect(compactPanel.getByText("Work", { exact: true })).toHaveCount(0);
     await expect(compactPanel.getByRole("button", { name: "Add source" })).toHaveCount(0);
+    const compactOutputsHeader = compactPanel.getByTestId("chat-work-manifest-section-header-outputs");
+    const compactReferencesHeader = compactPanel.getByTestId("chat-work-manifest-section-header-references");
+    expect(await compactOutputsHeader.getAttribute("class")).toBe(await compactReferencesHeader.getAttribute("class"));
+    const [compactOutputsCountBox, compactReferencesCountBox] = await Promise.all([
+      compactOutputsHeader.getByTestId("chat-work-manifest-section-count-outputs").boundingBox(),
+      compactReferencesHeader.getByTestId("chat-work-manifest-section-count-references").boundingBox(),
+    ]);
+    expect(compactOutputsCountBox).not.toBeNull();
+    expect(compactReferencesCountBox).not.toBeNull();
+    expect(Math.abs(
+      (compactOutputsCountBox!.x + compactOutputsCountBox!.width)
+      - (compactReferencesCountBox!.x + compactReferencesCountBox!.width),
+    )).toBeLessThanOrEqual(1);
     await compactPanel.getByRole("button", { name: "View all 28" }).click();
     const compactScrollRegion = compactPanel.getByTestId("chat-work-manifest-scroll-region");
     const [panelBox, composerBox] = await Promise.all([
@@ -414,6 +434,8 @@ test.describe("Chat Work Manifest", () => {
     }));
     expect(compactScrollGeometry.scrollHeight).toBeGreaterThan(compactScrollGeometry.clientHeight);
     await page.screenshot({ path: `${screenshotDir}/compact.png`, fullPage: true });
+    await compactPanel.getByRole("button", { name: "Close conversation files and links" }).click();
+    await expect(compactPanel).toHaveCount(0);
 
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${outputOnlyChat.id}`);

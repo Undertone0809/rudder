@@ -963,14 +963,16 @@ them through `CONTEXT.RESOURCES.001`.
    Project id/count as compatibility metadata, but Chat does not render it or
    include it in the visible category count.
 10. When at least one current-thread item exists, wide Chat renders the compact
-    shelf. Its fixed header consumes the first non-empty category in
-    `Outputs > Sources > References` order, shows that category's count, and
-    does not repeat the same section label above its rows. Later non-empty
-    categories keep their own section headers. The shelf has no add/create
-    action. A header icon animates the shelf between open and collapsed states;
-    narrow Chat exposes the same data from a compact category/count trigger. A
-    project-only or otherwise empty current-thread manifest renders no control
-    or shelf. Opening an internal target reuses Side Panel behavior from
+    shelf. Its fixed top row renders the first non-empty category in
+    `Outputs > Sources > References` order as a normal category header, with
+    the same icon, label, count, height, background, and typography used by
+    every later category header. The fixed placement must not promote that
+    category into a parent or a visually stronger panel title, and the label is
+    not repeated above its rows. The shelf has no add/create action. A header
+    icon animates the shelf between open and collapsed states; narrow Chat
+    exposes the same data from a compact category/count trigger. A project-only
+    or otherwise empty current-thread manifest renders no control or shelf.
+    Opening an internal target reuses Side Panel behavior from
     `CHAT.SIDE.PANEL.001`. Wide and compact panels cap their expanded height at
     `32rem` (512 CSS pixels) on normal viewports, shrink to the available
     viewport allowance when necessary, and keep longer lists internally
@@ -1009,13 +1011,14 @@ generic link icon or redundant `From Agent` origin label.
 
 ## Operator-Visible Output
 
-- Wide desktop: a compact top-right shelf whose fixed title is the first
-  non-empty category, with bounded rows and category counts, plus a header icon
-  that collapses or restores the shelf with a short transition. Expanded height
-  is capped at `32rem` (512 CSS pixels) on normal viewports; short viewports use
-  the smaller available allowance and long lists scroll inside the shelf.
-- Category hierarchy: the promoted first category appears once; later Sources
-  or References retain their own section header and count.
+- Wide desktop: a compact top-right shelf whose first non-empty category header
+  stays fixed above bounded rows, plus a header icon that collapses or restores
+  the shelf with a short transition. Expanded height is capped at `32rem` (512
+  CSS pixels) on normal viewports; short viewports use the smaller available
+  allowance and long lists scroll inside the shelf.
+- Category hierarchy: Outputs, Sources, and References are peer sections. Every
+  visible category uses the same icon/label/count header treatment; fixed
+  placement for the first section must not imply a higher level.
 - Actions: the shelf provides open and source-message navigation, but no add or
   create icon.
 - Empty state: no shelf, count, trigger, or reserved rail is rendered.
