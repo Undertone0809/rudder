@@ -27,6 +27,7 @@ related_code:
   - server/src/routes/instance-settings.ts
   - server/src/routes/onboarding.ts
   - server/src/services/instance-settings.ts
+  - server/src/services/orgs.ts
   - server/src/services/operator-profile.ts
   - server/src/services/organization-intelligence-profiles.ts
   - server/src/services/knowledge-portability/organization-portability.export.ts
@@ -76,6 +77,7 @@ related_tests:
   - server/src/__tests__/instance-settings-service.test.ts
   - server/src/__tests__/instance-settings-routes.test.ts
   - server/src/__tests__/operator-profile-service.test.ts
+  - server/src/__tests__/orgs-service.test.ts
   - server/src/__tests__/organization-intelligence-profiles.test.ts
   - server/src/__tests__/organization-intelligence-profiles-routes.test.ts
   - server/src/__tests__/export-jobs.test.ts
@@ -100,6 +102,7 @@ related_tests:
   - ui/src/components/DesktopUpdateStatusCard.test.tsx
   - tests/e2e/desktop-update-prompt.spec.ts
   - tests/e2e/onboarding.spec.ts
+  - tests/e2e/organization-issue-key.spec.ts
   - tests/e2e/settings-appearance.spec.ts
   - tests/e2e/settings-layout.spec.ts
   - tests/e2e/settings-sidebar.spec.ts
@@ -125,10 +128,10 @@ Product model:
   is allocated at creation, resolves case-insensitively, and does not change
   when the organization name or Issue Key changes.
 - `organization.name` is editable display text.
-- `organization.issuePrefix` is the operator-facing Issue Key used to form
-  readable issue identifiers. New organization creation shows this value,
-  derives a default that preserves letters and digits, and lets the operator
-  edit it before submission.
+- `organization.issuePrefix` is the Issue Key used to form readable issue
+  identifiers. New organization onboarding does not expose this implementation
+  detail: the server derives and allocates it from the organization name. An
+  operator can inspect and explicitly change it later in organization settings.
 - Across different organizations, canonical `urlKey` values, current Issue
   Keys, and historical Issue Keys share one case-insensitive route namespace.
   A value owned by one organization cannot be allocated to another organization
@@ -136,11 +139,13 @@ Product model:
 
 Flow:
 
-1. The operator enters an organization name.
-2. UI derives and displays an editable Issue Key; for example, `R6` derives
-   `R6` and previews `R6-1`.
-3. Server validates the submitted key and rejects a current or historical
-   conflict with an actionable error. It must not silently append characters.
+1. The operator enters an organization name during onboarding.
+2. Server derives an Issue Key that preserves letters and digits. If an
+   automatically derived key conflicts, the server appends a numeric suffix
+   without interrupting onboarding or exposing the key decision to the user.
+3. An Issue Key submitted explicitly through settings is validated and rejects
+   a current or historical conflict with an actionable error. Explicit key
+   changes must not silently append characters.
 4. Server allocates an independent stable `urlKey`; URL-key collisions may use
    a numeric URL suffix without changing the submitted Issue Key.
 5. Organization navigation generates `/{urlKey}/...`. Current Issue Key and
@@ -151,8 +156,9 @@ Flow:
 Invariants:
 
 - Renaming an organization must not change `urlKey` or Issue Key implicitly.
-- Issue Key conflicts must be visible to the operator and require an explicit
-  alternative; repeated automatic `A` suffixes are prohibited.
+- Conflicts for an explicitly submitted Issue Key must be visible to the
+  operator and require an explicit alternative; silent suffixing is prohibited
+  for explicit key changes.
 - URL-key allocation may add a numeric URL suffix when its preferred value is
   already owned as a URL key, current Issue Key, or historical Issue Key.
 - Changing an Issue Key must not change organization UUID, issue UUIDs, or issue
@@ -333,6 +339,10 @@ Product model:
 
 - Onboarding can create or select organization, seed starter context, expose
   invite/onboarding instructions, and guide runtime configuration.
+- New-organization onboarding asks only for the organization display name. It
+  does not ask the user to choose an Issue Key or define a mission/goal; the
+  server allocates internal organization identity, while goals remain available
+  from the normal work surfaces when the user is ready to add them.
 - When onboarding creates a new organization and then creates that new
   organization's first agent with the Codex local runtime in the same onboarding
   flow, Rudder must derive the organization's Fast and Smart intelligence
@@ -362,7 +372,8 @@ Flow:
 
 1. Fresh user or invited actor enters onboarding/invite route.
 2. Server exposes safe onboarding metadata and required setup state.
-3. UI guides organization/agent/runtime setup.
+3. UI collects the organization name, then guides agent/runtime setup without
+   exposing Issue Key or mission/goal fields.
 4. When the selected local runtime requires a runtime environment check,
    onboarding tests that agent runtime before creating the first agent.
 5. If the first agent is Codex local, server derives Fast and Smart
@@ -381,6 +392,8 @@ Invariants:
 
 - Onboarding should end in a real Rudder work surface, not a detached marketing
   page.
+- Onboarding organization creation must submit only the display name and must
+  not require users to understand Issue Keys or define a mission/goal.
 - Codex-created organization intelligence profiles must not be marked
   configured unless their runtime-chain environment test passes.
 - A failed Fast or Smart intelligence-profile test must not block organization
@@ -414,7 +427,9 @@ Invariants:
 Evidence:
 
 - `tests/e2e/onboarding.spec.ts` covers the onboarding UI path, including
-  post-onboarding Messenger landing and root startup redirect to Messenger.
+  the name-only organization payload, absence of Issue Key and mission/goal
+  fields, post-onboarding Messenger landing, and root startup redirect to
+  Messenger.
 - `tests/e2e/onboarding.spec.ts` covers Getting Started project creation,
   tutorial issue grouping/statuses, next-issue links, chat CTA prefill with
   project/agent context, Messenger custom group membership, and cleared unread

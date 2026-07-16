@@ -4,14 +4,13 @@ test.describe("Organization issue key identity", () => {
   test("creates a numeric issue key and preserves old links after migration", async ({ page }) => {
     const suffix = Date.now().toString().slice(-6);
     const organizationName = `R6 E2E ${suffix}`;
-    const initialKey = `I6${suffix}`;
+    const initialKey = "R6E";
     const originalKey = `R6${suffix}`;
     const nextKey = `N6${suffix}`;
 
     await page.goto("/onboarding");
     await page.locator('input[placeholder="Acme Corp"]').fill(organizationName);
-    await expect(page.getByRole("textbox", { name: "Issue key" })).toHaveValue("R6E");
-    await page.getByRole("textbox", { name: "Issue key" }).fill(initialKey);
+    await expect(page.getByRole("textbox", { name: "Issue key" })).toHaveCount(0);
 
     const createOrganizationResponse = page.waitForResponse((response) =>
       response.request().method() === "POST"
@@ -19,19 +18,29 @@ test.describe("Organization issue key identity", () => {
       && response.ok(),
     );
     await page.getByRole("button", { name: "Next" }).click();
-    await createOrganizationResponse;
+    const createdOrganization = await (await createOrganizationResponse).json() as {
+      id: string;
+      issuePrefix: string;
+      urlKey: string;
+    };
+    expect(createdOrganization.issuePrefix).toBe("R6E");
     await expect(page.getByText("Create your first agent", { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Back" }).click();
-    await page.getByRole("textbox", { name: "Issue key" }).fill(originalKey);
-    await expect(page.getByText(`Used in issue IDs, for example ${originalKey}-1. It must be unique.`)).toBeVisible();
-    const updateDraftResponse = page.waitForResponse((response) =>
+    await page.getByRole("button", { name: "Codex" }).click();
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+    await expect(page).toHaveURL(/\/messenger(?:\/chat)?$/, { timeout: 30_000 });
+
+    await page.goto(`/${createdOrganization.urlKey}/organization/settings`);
+    const initialIssueKeyInput = page.getByRole("textbox", { name: "Issue key" });
+    await expect(initialIssueKeyInput).toHaveValue(initialKey);
+    await initialIssueKeyInput.fill(originalKey);
+    const initialUpdateResponse = page.waitForResponse((response) =>
       response.request().method() === "PATCH"
-      && response.url().includes("/api/orgs/")
+      && response.url().includes(`/api/orgs/${createdOrganization.id}`)
       && response.ok(),
     );
-    await page.getByRole("button", { name: "Next" }).click();
-    await updateDraftResponse;
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await initialUpdateResponse;
 
     const organizationsResponse = await page.request.get("/api/orgs");
     const organizations = await organizationsResponse.json() as Array<{
@@ -43,10 +52,6 @@ test.describe("Organization issue key identity", () => {
     const organization = organizations.find((candidate) => candidate.name === organizationName);
     expect(organization).toBeTruthy();
     expect(organization!.issuePrefix).toBe(originalKey);
-
-    await page.getByRole("button", { name: "Codex" }).click();
-    await page.getByRole("button", { name: "Create", exact: true }).click();
-    await expect(page).toHaveURL(/\/messenger(?:\/chat)?$/, { timeout: 30_000 });
 
     const routeNamespaceName = `ACME${suffix}`;
     const routeNamespaceResponse = await page.request.post("/api/orgs", {

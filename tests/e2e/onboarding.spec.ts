@@ -77,6 +77,38 @@ function extractMarkdownHref(markdown: string, label: string) {
 }
 
 test.describe("Onboarding wizard", () => {
+  test("keeps internal identity and mission out of organization setup", async ({ page }) => {
+    const organizationName = `E2E-Name-Only-${Date.now()}`;
+
+    await page.goto("/onboarding");
+    await expectOnboardingStep(page, "Name your organization");
+    await expect(page.getByRole("textbox", { name: "Issue key" })).toHaveCount(0);
+    await expect(page.getByText("Mission / goal (optional)")).toHaveCount(0);
+
+    await page.locator('input[placeholder="Acme Corp"]').fill(organizationName);
+    const createOrganizationRequest = page.waitForRequest((request) =>
+      request.method() === "POST" && request.url().endsWith("/api/orgs"),
+    );
+    const createOrganizationResponse = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && response.url().endsWith("/api/orgs")
+      && response.ok(),
+    );
+    await page.getByRole("button", { name: "Next" }).click();
+
+    expect((await createOrganizationRequest).postDataJSON()).toEqual({
+      name: organizationName,
+    });
+    await expect((await createOrganizationResponse).json()).resolves.toMatchObject({
+      name: organizationName,
+      issuePrefix: "E2E",
+    });
+    await expectOnboardingStep(page, "Create your first agent");
+
+    await page.getByRole("button", { name: "Close" }).first().click();
+    await expect(page.getByRole("button", { name: "Start Onboarding" })).toBeVisible();
+  });
+
   test("fresh onboarding creates a Getting Started project and opens messenger", async ({
     page,
   }) => {
