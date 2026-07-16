@@ -29,6 +29,8 @@ import {
   claimHeartbeatRunTerminalEffects,
   failHeartbeatRunTerminalEffect,
   MAX_TERMINAL_EFFECT_INTENT_BYTES,
+  normalizeTerminalEffectIntent,
+  reconcileHeartbeatRunTerminalEffectsIntent,
   renewHeartbeatRunExecutionLease,
   transitionHeartbeatRunToTerminal,
 } from "../services/runtime-kernel/heartbeat.terminal.ts";
@@ -751,6 +753,70 @@ describe("heartbeat orphaned process recovery", () => {
     const completed = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0]);
     expect(completed?.terminalEffectsPending).toBe(false);
     expect(completed?.terminalEffectsJson).toBeNull();
+  });
+
+  it("reapplies the total intent cap after split terminal intent reconciliation", async () => {
+    const { orgId, agentId, runId } = await seedRunFixture({ processPid: null, includeIssue: false });
+    const existing = normalizeTerminalEffectIntent({
+      version: 2,
+      taskSession: {
+        operation: "upsert",
+        orgId,
+        agentId,
+        agentRuntimeType: "codex_local",
+        taskKey: "split-reconcile",
+        sessionParamsJson: { raw: "s".repeat(65_000) },
+        sessionDisplayId: "session-1",
+        lastRunId: runId,
+      },
+    });
+    const normalizedUsage = Object.fromEntries(
+      Array.from({ length: 200 }, (_, index) => [`metric_${String(index).padStart(3, "0")}`, index]),
+    );
+    const incoming = normalizeTerminalEffectIntent({
+      version: 2,
+      automation: { output: "a".repeat(32_000) },
+      runtime: {
+        provider: "test",
+        model: "model",
+        legacySessionId: null,
+        normalizedUsage,
+      },
+    });
+    const splitMerge = {
+      ...existing,
+      version: 2,
+      automation: incoming.automation,
+      runtime: incoming.runtime,
+    };
+    expect(Buffer.byteLength(JSON.stringify(existing), "utf8"))
+      .toBeLessThanOrEqual(MAX_TERMINAL_EFFECT_INTENT_BYTES);
+    expect(Buffer.byteLength(JSON.stringify(incoming), "utf8"))
+      .toBeLessThanOrEqual(MAX_TERMINAL_EFFECT_INTENT_BYTES);
+    expect(Buffer.byteLength(JSON.stringify(splitMerge), "utf8"))
+      .toBeGreaterThan(MAX_TERMINAL_EFFECT_INTENT_BYTES);
+
+    await transitionHeartbeatRunToTerminal(db, {
+      runId,
+      status: "succeeded",
+      patch: { finishedAt: new Date() },
+      processExitedAt: new Date(),
+      terminalEffectsIntent: existing,
+    });
+    const reconciled = await reconcileHeartbeatRunTerminalEffectsIntent(db, runId, incoming);
+    const persisted = JSON.stringify(reconciled?.terminalEffectsJson);
+
+    expect(Buffer.byteLength(persisted, "utf8")).toBeLessThanOrEqual(MAX_TERMINAL_EFFECT_INTENT_BYTES);
+    expect(reconciled?.terminalEffectsJson).toMatchObject({
+      version: 2,
+      automation: { output: "a".repeat(32_000) },
+      runtime: { provider: "test", model: "model", normalizedUsage },
+      taskSession: {
+        operation: "upsert",
+        taskKey: "split-reconcile",
+        sessionParamsJson: null,
+      },
+    });
   });
 
   it("keeps issue release audit exactly once when replay resumes after a lost checkpoint", async () => {

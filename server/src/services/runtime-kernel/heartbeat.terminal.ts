@@ -786,14 +786,14 @@ export async function reconcileHeartbeatRunTerminalEffectsIntent(
     if (!current?.terminalEffectsPending) return current;
     const existing = normalizeTerminalEffectIntent((current.terminalEffectsJson ?? {}) as TerminalEffectIntent);
     const incoming = normalizeTerminalEffectIntent(intent);
-    const merged: TerminalEffectIntent = {
+    const merged = boundTerminalEffectIntent({
       ...existing,
       version: 2,
       automation: existing.automation ?? incoming.automation,
       runtime: existing.runtime ?? incoming.runtime,
       taskSession: existing.taskSession ?? incoming.taskSession,
       processLossRetry: existing.processLossRetry ?? incoming.processLossRetry,
-    };
+    });
     return tx
       .update(heartbeatRuns)
       .set({ terminalEffectsJson: merged, updatedAt: new Date() })

@@ -1,3 +1,5 @@
+import { drizzle as drizzlePg } from "drizzle-orm/postgres-js";
+import { migrate as migratePg } from "drizzle-orm/postgres-js/migrator";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -92,6 +94,72 @@ async function migrationHash(migrationFile: string): Promise<string> {
     "utf8",
   );
   return createHash("sha256").update(content).digest("hex");
+}
+
+type MigrationJournalEntry = {
+  idx: number;
+  version: string;
+  when: number;
+  tag: string;
+  breakpoints: boolean;
+};
+
+type LegacyTerminalMigrationManifest = {
+  sourceCommit: string;
+  entries: Array<MigrationJournalEntry & { sha256: string }>;
+};
+
+function createLegacyTerminalMigrationsFolder() {
+  const migrationsFolder = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-legacy-terminal-migrations-"));
+  tempPaths.push(migrationsFolder);
+  fs.mkdirSync(path.join(migrationsFolder, "meta"));
+
+  const currentMigrationsUrl = new URL("./migrations/", import.meta.url);
+  const currentJournal = JSON.parse(
+    fs.readFileSync(new URL("meta/_journal.json", currentMigrationsUrl), "utf8"),
+  ) as { version: string; dialect: string; entries: MigrationJournalEntry[] };
+  const baseEntries = currentJournal.entries.filter((entry) => entry.idx < 102);
+  if (baseEntries.at(-1)?.tag !== "0101_bizarre_morlun") {
+    throw new Error("Legacy terminal migration fixture requires the 0101 base schema");
+  }
+  for (const entry of baseEntries) {
+    fs.copyFileSync(
+      new URL(`${entry.tag}.sql`, currentMigrationsUrl),
+      path.join(migrationsFolder, `${entry.tag}.sql`),
+    );
+  }
+
+  const fixtureUrl = new URL("./test-fixtures/legacy-terminal-state-migrations/", import.meta.url);
+  const manifest = JSON.parse(
+    fs.readFileSync(new URL("manifest.json", fixtureUrl), "utf8"),
+  ) as LegacyTerminalMigrationManifest;
+  for (const entry of manifest.entries) {
+    const fixtureContent = fs.readFileSync(new URL(`${entry.tag}.sql`, fixtureUrl), "utf8");
+    const normalizedFixtureContent = fixtureContent.replaceAll("\r\n", "\n");
+    const historicalContent = normalizedFixtureContent.endsWith("\n")
+      ? normalizedFixtureContent.slice(0, -1)
+      : normalizedFixtureContent;
+    const actualHash = createHash("sha256").update(historicalContent).digest("hex");
+    if (actualHash !== entry.sha256) {
+      throw new Error(
+        `Legacy migration fixture hash mismatch for ${entry.tag}: expected ${entry.sha256}, received ${actualHash}`,
+      );
+    }
+    fs.writeFileSync(path.join(migrationsFolder, `${entry.tag}.sql`), historicalContent);
+  }
+
+  fs.writeFileSync(
+    path.join(migrationsFolder, "meta", "_journal.json"),
+    JSON.stringify({
+      version: currentJournal.version,
+      dialect: currentJournal.dialect,
+      entries: [
+        ...baseEntries,
+        ...manifest.entries.map(({ sha256: _sha256, ...entry }) => entry),
+      ],
+    }),
+  );
+  return { manifest, migrationsFolder };
 }
 
 afterEach(async () => {
@@ -329,21 +397,53 @@ describe("applyPendingMigrations", () => {
     "reapplies consolidated migration 0102 over the legacy 0102-0104 feature shape",
     async () => {
       const connectionString = await createTempDatabase();
-      await applyPendingMigrations(connectionString);
+      const { manifest, migrationsFolder } = createLegacyTerminalMigrationsFolder();
+      expect(manifest.sourceCommit).toBe("0491a75db25a24e644e67a502239fd1209840f40");
 
       const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
       try {
-        const consolidatedHash = await migrationHash("0102_complex_retro_girl.sql");
-        await sql.unsafe(
-          `DELETE FROM "drizzle"."__drizzle_migrations" WHERE hash = '${consolidatedHash}'`,
-        );
-        await sql.unsafe(`
-          INSERT INTO "drizzle"."__drizzle_migrations" ("hash", "created_at")
-          VALUES
-            ('legacy-0102-terminal-state', 1784141378047),
-            ('legacy-0103-terminal-outbox', 1784147102754),
-            ('legacy-0104-terminal-recovery', 1784151670100)
+        await migratePg(drizzlePg(sql), { migrationsFolder });
+
+        const legacyHistory = await sql.unsafe<{ hash: string; created_at: string }[]>(`
+          SELECT hash, created_at
+          FROM "drizzle"."__drizzle_migrations"
+          ORDER BY created_at DESC
+          LIMIT 3
         `);
+        expect(legacyHistory.map((row) => ({
+          hash: row.hash,
+          createdAt: Number(row.created_at),
+        }))).toEqual(
+          [...manifest.entries].reverse().map((entry) => ({
+            hash: entry.sha256,
+            createdAt: entry.when,
+          })),
+        );
+
+        const legacyColumns = await sql.unsafe<{ table_name: string; column_name: string }[]>(`
+          SELECT table_name, column_name
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name IN ('heartbeat_runs', 'cost_events')
+            AND column_name IN (
+              'terminal_effects_pending',
+              'process_exited_at',
+              'terminal_effects_json',
+              'terminal_effects_last_error',
+              'budget_evaluated_at',
+              'execution_owner_token',
+              'execution_lease_expires_at',
+              'terminal_effects_completed_json'
+            )
+          ORDER BY table_name, column_name
+        `);
+        expect(legacyColumns).toEqual([
+          { table_name: "cost_events", column_name: "budget_evaluated_at" },
+          { table_name: "heartbeat_runs", column_name: "process_exited_at" },
+          { table_name: "heartbeat_runs", column_name: "terminal_effects_json" },
+          { table_name: "heartbeat_runs", column_name: "terminal_effects_last_error" },
+          { table_name: "heartbeat_runs", column_name: "terminal_effects_pending" },
+        ]);
       } finally {
         await sql.end();
       }
@@ -351,7 +451,10 @@ describe("applyPendingMigrations", () => {
       const pendingState = await inspectMigrations(connectionString);
       expect(pendingState).toMatchObject({
         status: "needsMigrations",
-        pendingMigrations: ["0102_complex_retro_girl.sql"],
+        pendingMigrations: [
+          "0055_illegal_sheva_callister.sql",
+          "0102_complex_retro_girl.sql",
+        ],
         reason: "pending-migrations",
       });
 
@@ -360,6 +463,13 @@ describe("applyPendingMigrations", () => {
 
       const verifySql = postgres(connectionString, { max: 1, onnotice: () => {} });
       try {
+        const consolidatedHash = await migrationHash("0102_complex_retro_girl.sql");
+        const consolidatedHistory = await verifySql.unsafe<{ hash: string }[]>(`
+          SELECT hash
+          FROM "drizzle"."__drizzle_migrations"
+          WHERE hash = '${consolidatedHash}'
+        `);
+        expect(consolidatedHistory).toEqual([{ hash: consolidatedHash }]);
         const columns = await verifySql.unsafe<{ column_name: string }[]>(`
           SELECT column_name
           FROM information_schema.columns

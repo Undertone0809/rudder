@@ -93,7 +93,6 @@ export type IssueActiveRunRow = {
   startedAt: Date | null;
   finishedAt: Date | null;
   createdAt: Date;
-  terminalEffectsPending: boolean;
 };
 export type IssueWithLabels = IssueRow & { labels: IssueLabelRow[]; labelIds: string[] };
 export type IssueWithLabelsAndRun = IssueWithLabels & { activeRun: IssueActiveRunRow | null };
@@ -400,7 +399,6 @@ export async function activeRunMapForIssues(
       startedAt: heartbeatRuns.startedAt,
       finishedAt: heartbeatRuns.finishedAt,
       createdAt: heartbeatRuns.createdAt,
-      terminalEffectsPending: heartbeatRuns.terminalEffectsPending,
     })
     .from(heartbeatRuns)
     .where(

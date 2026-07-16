@@ -1,0 +1,29 @@
+{
+  "sourceCommit": "0491a75db25a24e644e67a502239fd1209840f40",
+  "entries": [
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1784141378047,
+      "tag": "0102_steady_hulk",
+      "breakpoints": true,
+      "sha256": "e21cac193575f50627e67946ef9afa44ddd17af24627c8799c5024ce534f89e3"
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1784147102754,
+      "tag": "0103_harsh_blue_blade",
+      "breakpoints": true,
+      "sha256": "fdf8b69236a60593c52be53ebff89d7f581ddbdbde0227081b11c53b1f6d6578"
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1784151670100,
+      "tag": "0104_rapid_turbo",
+      "breakpoints": true,
+      "sha256": "fba251275287250b3f05a5533e00d3941a3b1c1a526d0073e5d636a2dd868f80"
+    }
+  ]
+}
