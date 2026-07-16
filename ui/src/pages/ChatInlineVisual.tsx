@@ -371,6 +371,7 @@ function InlineVisualFallback({ attachment }: { attachment: ChatAttachment | nul
 
 function InlineVisualFrame({ attachment, theme }: { attachment: ChatAttachment; theme: "light" | "dark" }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const measurementFrameRef = useRef<number | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const [srcDoc, setSrcDoc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -380,6 +381,8 @@ function InlineVisualFrame({ attachment, theme }: { attachment: ChatAttachment; 
     const controller = new AbortController();
     setSrcDoc(null);
     setFailed(false);
+    if (measurementFrameRef.current !== null) cancelAnimationFrame(measurementFrameRef.current);
+    measurementFrameRef.current = null;
     resizeObserverRef.current?.disconnect();
     resizeObserverRef.current = null;
     void fetch(attachment.contentPath, { credentials: "same-origin", signal: controller.signal })
@@ -396,6 +399,8 @@ function InlineVisualFrame({ attachment, theme }: { attachment: ChatAttachment; 
       });
     return () => {
       controller.abort();
+      if (measurementFrameRef.current !== null) cancelAnimationFrame(measurementFrameRef.current);
+      measurementFrameRef.current = null;
       resizeObserverRef.current?.disconnect();
       resizeObserverRef.current = null;
     };
@@ -404,22 +409,42 @@ function InlineVisualFrame({ attachment, theme }: { attachment: ChatAttachment; 
   const measureFrame = () => {
     const frameDocument = iframeRef.current?.contentDocument;
     if (!frameDocument) return;
-    const nextHeight = clampInlineVisualHeight(Math.max(
-      frameDocument.documentElement?.scrollHeight ?? 0,
-      frameDocument.body?.scrollHeight ?? 0,
-    ));
+    const body = frameDocument.body;
+    const widget = frameDocument.getElementById("widget");
+    const bodyStyle = body ? frameDocument.defaultView?.getComputedStyle(body) : null;
+    const bodyPadding = bodyStyle
+      ? (Number.parseFloat(bodyStyle.paddingTop) || 0) + (Number.parseFloat(bodyStyle.paddingBottom) || 0)
+      : 0;
+    const widgetHeight = widget?.getBoundingClientRect().height ?? 0;
+    const contentHeight = widgetHeight > 0
+      ? widgetHeight + bodyPadding
+      : Math.max(
+        frameDocument.documentElement?.scrollHeight ?? 0,
+        body?.scrollHeight ?? 0,
+      );
+    const nextHeight = clampInlineVisualHeight(contentHeight);
     if (nextHeight !== null) setHeight(nextHeight);
+  };
+
+  const scheduleFrameMeasurement = () => {
+    if (measurementFrameRef.current !== null) cancelAnimationFrame(measurementFrameRef.current);
+    measurementFrameRef.current = requestAnimationFrame(() => {
+      measurementFrameRef.current = null;
+      measureFrame();
+    });
   };
 
   const handleFrameLoad = () => {
     resizeObserverRef.current?.disconnect();
     resizeObserverRef.current = null;
-    measureFrame();
+    scheduleFrameMeasurement();
     const frameDocument = iframeRef.current?.contentDocument;
     if (!frameDocument || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measureFrame);
+    const observer = new ResizeObserver(scheduleFrameMeasurement);
     if (frameDocument.documentElement) observer.observe(frameDocument.documentElement);
     if (frameDocument.body) observer.observe(frameDocument.body);
+    const widget = frameDocument.getElementById("widget");
+    if (widget) observer.observe(widget);
     resizeObserverRef.current = observer;
   };
 
