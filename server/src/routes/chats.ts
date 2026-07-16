@@ -11,9 +11,11 @@ import {
   updateChatConversationSchema,
   updateChatQueuedMessageSchema,
   type ChatAttachment,
+  type ChatControlDisposition,
   type ChatContextLink,
   type ChatConversation,
-  type ChatMessage
+  type ChatMessage,
+  type ChatQueueRequestActor,
 } from "@rudderhq/shared";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
@@ -35,8 +37,12 @@ import {
 import {
   cancelAndReleaseActiveChatGeneration,
   claimChatGeneration,
+  createChatRuntimeControlCoordinator,
   getActiveChatGeneration,
-  hasActiveChatGeneration
+  hasActiveChatGeneration,
+  interruptActiveChatGeneration,
+  setActiveChatGenerationId,
+  steerActiveChatGeneration,
 } from "../services/chat-generation-locks.js";
 import {
   buildChatTitlePromptFromMessages,
@@ -297,6 +303,75 @@ export function chatRoutes(db: Db, storage: StorageService) {
   }
 
   type ActorInfo = ReturnType<typeof getActorInfo>;
+
+  function queueRequestActor(req: Request): ChatQueueRequestActor {
+    if (req.actor.type === "agent") {
+      return {
+        type: "agent",
+        source: req.actor.source === "agent_jwt" ? "agent_jwt" : "agent_key",
+        orgId: req.actor.orgId,
+        agentId: req.actor.agentId,
+        runId: req.actor.runId,
+        adapterType: req.actor.adapterType,
+      };
+    }
+    if (req.actor.type !== "board") throw unauthorized();
+    return {
+      type: "board",
+      source: req.actor.source === "local_implicit"
+        ? "local_implicit"
+        : req.actor.source === "board_key"
+          ? "board_key"
+          : "session",
+      userId: req.actor.userId,
+      orgIds: req.actor.orgIds,
+      isInstanceAdmin: req.actor.isInstanceAdmin,
+      runId: req.actor.runId,
+    };
+  }
+
+  function requestForQueuedActor(
+    requestActor: ChatQueueRequestActor | null | undefined,
+    orgId: string,
+  ): Request {
+    if (!requestActor) {
+      throw new Error("Queued chat continuation is missing its authenticated request actor");
+    }
+    if (requestActor.type === "agent") {
+      if (!requestActor.agentId || requestActor.orgId !== orgId) {
+        throw new Error("Queued chat continuation has an invalid agent actor scope");
+      }
+      return {
+        actor: {
+          type: "agent",
+          source: requestActor.source === "agent_jwt" ? "agent_jwt" : "agent_key",
+          orgId,
+          agentId: requestActor.agentId,
+          runId: requestActor.runId,
+          adapterType: requestActor.adapterType,
+        },
+      } as unknown as Request;
+    }
+    const source = requestActor.source === "local_implicit"
+      ? "local_implicit"
+      : requestActor.source === "board_key"
+        ? "board_key"
+        : "session";
+    const orgIds = requestActor.orgIds ?? [];
+    if (source !== "local_implicit" && !requestActor.isInstanceAdmin && !orgIds.includes(orgId)) {
+      throw new Error("Queued chat continuation has an invalid board actor scope");
+    }
+    return {
+      actor: {
+        type: "board",
+        source,
+        userId: requestActor.userId,
+        orgIds,
+        isInstanceAdmin: requestActor.isInstanceAdmin,
+        runId: requestActor.runId,
+      },
+    } as unknown as Request;
+  }
 
   type ChatTurnContext = { chatTurnId: string; turnVariant: number };
 
@@ -1013,6 +1088,439 @@ export function chatRoutes(db: Db, storage: StorageService) {
     }
   }
 
+  const queueWorkerId = `chat-queue:${process.pid}:${randomUUID()}`;
+  const queueLeaseMs = 30_000;
+  const queueWorkerConcurrency = 4;
+  const queueWorkerEnabled = process.env.NODE_ENV !== "test"
+    || process.env.RUDDER_CHAT_QUEUE_WORKER_TEST === "true";
+  let queueDrainPromise: Promise<void> | null = null;
+  let queueWakeScheduled = false;
+  let queueWakeRequested = false;
+  const runningServerQueueTasks = new Set<Promise<void>>();
+  const terminalProjectorId = `chat-terminal:${process.pid}:${randomUUID()}`;
+  let terminalProjectionPromise: Promise<void> | null = null;
+  let terminalProjectionScheduled = false;
+  let terminalProjectionRequested = false;
+  let terminalProjectionRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  let terminalProjectionRetryAt = Number.POSITIVE_INFINITY;
+
+  function scheduleTerminalProjectorAt(wakeAt: Date) {
+    if (!queueWorkerEnabled) return;
+    const wakeAtMs = Math.max(Date.now(), wakeAt.getTime());
+    if (terminalProjectionRetryTimer && terminalProjectionRetryAt <= wakeAtMs) return;
+    if (terminalProjectionRetryTimer) clearTimeout(terminalProjectionRetryTimer);
+    terminalProjectionRetryAt = wakeAtMs;
+    terminalProjectionRetryTimer = setTimeout(() => {
+      terminalProjectionRetryTimer = null;
+      terminalProjectionRetryAt = Number.POSITIVE_INFINITY;
+      wakeTerminalProjector();
+    }, Math.max(0, wakeAtMs - Date.now()));
+    terminalProjectionRetryTimer.unref?.();
+  }
+
+  async function drainTerminalProjections() {
+    while (true) {
+      const claim = await svc.generationProtocol.claimTerminalProjection({
+        workerId: terminalProjectorId,
+        leaseMs: 30_000,
+      });
+      if (!claim) {
+        const nextWakeAt = await svc.generationProtocol.getNextTerminalProjectionWakeAt();
+        if (nextWakeAt) scheduleTerminalProjectorAt(nextWakeAt);
+        return;
+      }
+      try {
+        const finalStatus = typeof claim.payload.finalStatus === "string"
+          ? claim.payload.finalStatus
+          : null;
+        const controlDisposition: ChatControlDisposition | undefined = finalStatus === "stopped"
+          ? "stopped"
+          : finalStatus === "interrupted_unverified"
+            ? "interrupted_unverified"
+            : finalStatus === "control_lost"
+              ? "control_lost"
+              : undefined;
+        const completed = await svc.generationProtocol.completeTerminalProjection({
+          outboxId: claim.id,
+          claimToken: claim.claimToken!,
+          claimEpoch: claim.claimEpoch,
+          controlDisposition,
+        });
+        if (completed) wakeServerQueue();
+      } catch (error) {
+        const retryAt = new Date(Date.now() + 1_000);
+        const retry = await svc.generationProtocol.retryTerminalProjection({
+          outboxId: claim.id,
+          claimToken: claim.claimToken!,
+          claimEpoch: claim.claimEpoch,
+          error: error instanceof Error ? error.message : String(error),
+          retryAt,
+          maxAttempts: 5,
+        }).catch(() => null);
+        if (retry?.status === "retry_wait") {
+          scheduleTerminalProjectorAt(retry.availableAt ?? retryAt);
+        }
+      }
+    }
+  }
+
+  function wakeTerminalProjector() {
+    if (!queueWorkerEnabled) return;
+    if (terminalProjectionRetryTimer) {
+      clearTimeout(terminalProjectionRetryTimer);
+      terminalProjectionRetryTimer = null;
+      terminalProjectionRetryAt = Number.POSITIVE_INFINITY;
+    }
+    if (terminalProjectionPromise || terminalProjectionScheduled) {
+      terminalProjectionRequested = true;
+      return;
+    }
+    terminalProjectionScheduled = true;
+    setTimeout(() => {
+      terminalProjectionScheduled = false;
+      if (terminalProjectionPromise) return;
+      terminalProjectionPromise = drainTerminalProjections()
+        .catch((error) => logger.warn({ err: error }, "chat terminal projection drain failed"))
+        .finally(() => {
+          terminalProjectionPromise = null;
+          if (terminalProjectionRequested) {
+            terminalProjectionRequested = false;
+            wakeTerminalProjector();
+          }
+        });
+    }, 0).unref?.();
+  }
+
+  async function runServerQueuedMessage(
+    claim: NonNullable<Awaited<ReturnType<typeof svc.claimNextServerQueuedMessage>>>,
+  ) {
+    const conversation = await svc.getById(claim.item.conversationId) as ChatConversation | null;
+    if (!conversation) {
+      await svc.releaseServerQueuedMessageClaim({
+        itemId: claim.item.id,
+        generationId: claim.generationId,
+        leaseToken: claim.leaseToken,
+        leaseEpoch: claim.leaseEpoch,
+        reason: "conversation_missing",
+      });
+      return;
+    }
+
+    let request: Request;
+    try {
+      request = requestForQueuedActor(claim.item.requestActor, conversation.orgId);
+    } catch (error) {
+      await svc.completeServerQueuedMessageDelivery({
+        itemId: claim.item.id,
+        generationId: claim.generationId,
+        leaseToken: claim.leaseToken,
+        leaseEpoch: claim.leaseEpoch,
+        status: "failed",
+        reason: error instanceof Error ? error.message : "queued_request_actor_invalid",
+      });
+      return;
+    }
+
+    const actor = getActorInfo(request);
+    const abortController = new AbortController();
+    const releaseGeneration = claimChatGeneration(
+      conversation.id,
+      abortController,
+      claim.generationId,
+    );
+    if (!releaseGeneration) {
+      await svc.releaseServerQueuedMessageClaim({
+        itemId: claim.item.id,
+        generationId: claim.generationId,
+        leaseToken: claim.leaseToken,
+        leaseEpoch: claim.leaseEpoch,
+        reason: "local_generation_owner_busy",
+      });
+      return;
+    }
+
+    let leaseRenewing = false;
+    let leaseLost = false;
+    const renewLease = async () => {
+      if (leaseRenewing || leaseLost) return;
+      leaseRenewing = true;
+      try {
+        const renewed = await svc.renewServerQueuedMessageClaim({
+          itemId: claim.item.id,
+          generationId: claim.generationId,
+          leaseToken: claim.leaseToken,
+          leaseEpoch: claim.leaseEpoch,
+          leaseMs: queueLeaseMs,
+        });
+        if (!renewed) {
+          leaseLost = true;
+          abortController.abort(new Error("Queued chat continuation lost its delivery lease"));
+        }
+      } finally {
+        leaseRenewing = false;
+      }
+    };
+    const leaseTimer = setInterval(() => {
+      void renewLease().catch((error) => {
+        leaseLost = true;
+        abortController.abort(error);
+      });
+    }, Math.floor(queueLeaseMs / 3));
+    leaseTimer.unref?.();
+
+    let terminalStatus: "completed" | "failed" | "stopped" | "aborted" = "failed";
+    let terminalReason: string | null = null;
+    let completionRecorded = false;
+    let assistantConversation = conversation;
+    let activeChatRunId: string | null = null;
+    const transcript: TranscriptEntry[] = [];
+    let partialBody = "";
+    try {
+      const userMessage = await svc.getMessage(conversation.id, claim.userMessageId) as ChatMessage | null;
+      if (!userMessage) throw new Error("Queued chat continuation user message is missing");
+      const turnContext = turnContextFromUserMessage(userMessage);
+      const assistantInput = await loadAssistantInput(conversation, actor);
+      assistantConversation = assistantInput.conversation;
+      const streamed = await assistantSvc.streamChatAssistantReply({
+        ...assistantInput,
+        userMessageId: userMessage.id,
+        chatTurnId: turnContext.chatTurnId,
+        turnVariant: turnContext.turnVariant,
+        stream: false,
+        abortSignal: abortController.signal,
+        controlCoordinator: createChatRuntimeControlCoordinator(
+          conversation.id,
+          claim.generationId,
+          {
+            onAttemptStarted: async ({ generationId, attemptEpoch, ownerToken, attempt }) => {
+              await svc.beginGenerationControlAttempt({
+                orgId: conversation.orgId,
+                conversationId: conversation.id,
+                generationId,
+                attemptEpoch,
+                ownerToken,
+                runtimeType: attempt.runtimeType,
+              });
+            },
+            onHandleRegistered: async ({ generationId, attemptEpoch, ownerToken, handle }) => {
+              await svc.markGenerationControlReady({
+                generationId,
+                attemptEpoch,
+                ownerToken,
+                runtimeType: handle.runtimeType,
+                providerThreadId: handle.providerThreadId ?? null,
+                providerTurnId: handle.providerTurnId ?? null,
+              });
+            },
+            onAttemptLeaseRenewed: async ({ generationId, attemptEpoch, ownerToken }) => {
+              await svc.renewGenerationControlLease({ generationId, attemptEpoch, ownerToken });
+            },
+            onAttemptCompleted: async ({ generationId, attemptEpoch, ownerToken }) => {
+              await svc.markGenerationControlAttemptCompleted({
+                generationId,
+                attemptEpoch,
+                ownerToken,
+              });
+            },
+          },
+        ),
+        onRunCreated: (runId: string) => {
+          activeChatRunId = runId;
+        },
+        onAssistantDelta: async (delta: string) => {
+          if (!abortController.signal.aborted) partialBody = `${partialBody}${delta}`;
+        },
+        onTranscriptEntry: async (entry: TranscriptEntry) => {
+          if (!abortController.signal.aborted) transcript.push(entry);
+        },
+      });
+      partialBody = streamed.partialBody || partialBody;
+      if (abortController.signal.aborted || streamed.outcome === "stopped") {
+        terminalStatus = "stopped";
+        terminalReason = "operator_stop";
+        const stoppedMessage = await persistPartialAssistantMessage(
+          assistantConversation,
+          "",
+          "stopped",
+          turnContext,
+          transcript,
+          streamed.replyingAgentId,
+          null,
+          activeChatRunId,
+        );
+        const stoppedMessages = stoppedMessage ? [stoppedMessage] : [];
+        await linkChatRunMessages(assistantConversation, activeChatRunId, stoppedMessages);
+        if (stoppedMessages.length > 0) {
+          await logChatMessagesAdded(assistantConversation, stoppedMessages, {
+            actorType: "system",
+            actorId: "chat-assistant",
+            agentId: streamed.replyingAgentId,
+          });
+        }
+      } else {
+        const createdMessages = await persistAssistantReply(
+          request,
+          assistantConversation,
+          actor,
+          streamed.reply,
+          turnContext,
+          transcript,
+          streamed.replyingAgentId,
+          null,
+          activeChatRunId,
+        );
+        await linkChatRunMessages(assistantConversation, activeChatRunId, createdMessages);
+        await logChatMessagesAdded(assistantConversation, createdMessages, {
+          actorType: "system",
+          actorId: "chat-assistant",
+          agentId: streamed.replyingAgentId,
+        });
+        terminalStatus = "completed";
+      }
+    } catch (error) {
+      terminalStatus = abortController.signal.aborted ? "aborted" : "failed";
+      terminalReason = leaseLost
+        ? "delivery_lease_lost"
+        : error instanceof Error
+          ? error.message
+          : "queued_continuation_failed";
+      logger.warn(
+        { err: error, conversationId: conversation.id, queuedMessageId: claim.item.id },
+        "server-owned queued chat continuation failed",
+      );
+      if (!leaseLost) {
+        const failurePayload = recoverableFailurePayload(error, activeChatRunId);
+        const failureBody = userVisiblePartialBodyFromError(error)
+          || recoverableFailureBody(failurePayload)
+          || CHAT_ASSISTANT_USER_ERROR_MESSAGE;
+        const failedMessage = await persistPartialAssistantMessage(
+          assistantConversation,
+          failureBody,
+          "failed",
+          null,
+          transcript,
+          chatReplyingAgentId(assistantConversation),
+          null,
+          activeChatRunId,
+          failurePayload,
+        ).catch(() => null);
+        const failedMessages = failedMessage ? [failedMessage] : [];
+        await linkChatRunMessages(assistantConversation, activeChatRunId, failedMessages).catch(() => undefined);
+        if (failedMessages.length > 0) {
+          await logChatMessagesAdded(assistantConversation, failedMessages, {
+            actorType: "system",
+            actorId: "chat-assistant",
+            agentId: chatReplyingAgentId(assistantConversation),
+          }).catch(() => undefined);
+        }
+      }
+    } finally {
+      clearInterval(leaseTimer);
+      if (!leaseLost) {
+        const latestGeneration = await svc.getLatestGeneration(conversation.id).catch(() => null);
+        const terminalEvidence = latestGeneration?.id === claim.generationId
+          ? await svc.generationProtocol.recordRuntimeTerminal({
+              orgId: conversation.orgId,
+              conversationId: conversation.id,
+              generationId: claim.generationId,
+              expectedAttemptEpoch: latestGeneration.attemptEpoch,
+              expectedOwnerToken: latestGeneration.controlOwnerToken,
+              finalStatus: terminalStatus,
+              terminalReason: terminalReason ?? terminalStatus,
+            }).catch((error: unknown) => {
+              logger.warn({ err: error, generationId: claim.generationId }, "failed to record queued chat terminal evidence");
+              return null;
+            })
+          : null;
+        if (terminalEvidence) {
+          wakeTerminalProjector();
+          const completed = await svc.completeServerQueuedMessageDelivery({
+            itemId: claim.item.id,
+            generationId: claim.generationId,
+            leaseToken: claim.leaseToken,
+            leaseEpoch: claim.leaseEpoch,
+            status: terminalStatus,
+            reason: terminalReason,
+          }).catch((error: unknown) => {
+            logger.warn({ err: error, queuedMessageId: claim.item.id }, "failed to complete queued chat continuation");
+            return null;
+          });
+          completionRecorded = Boolean(completed);
+        }
+      }
+      if (!completionRecorded && !leaseLost) {
+        await svc.releaseServerQueuedMessageClaim({
+          itemId: claim.item.id,
+          generationId: claim.generationId,
+          leaseToken: claim.leaseToken,
+          leaseEpoch: claim.leaseEpoch,
+          reason: "queued_continuation_completion_unconfirmed",
+        }).catch(() => null);
+      }
+      releaseGeneration();
+    }
+  }
+
+  async function drainServerQueue() {
+    await svc.recoverExpiredServerQueueClaims();
+    while (runningServerQueueTasks.size < queueWorkerConcurrency) {
+      const claim = await svc.claimNextServerQueuedMessage({
+        workerId: queueWorkerId,
+        leaseMs: queueLeaseMs,
+      });
+      if (!claim) return;
+      let task!: Promise<void>;
+      task = runServerQueuedMessage(claim)
+        .catch((error) => {
+          logger.warn({ err: error, queuedMessageId: claim.item.id }, "server-owned chat continuation crashed");
+        })
+        .finally(() => {
+          runningServerQueueTasks.delete(task);
+          wakeServerQueue();
+        });
+      runningServerQueueTasks.add(task);
+    }
+  }
+
+  function wakeServerQueue() {
+    if (!queueWorkerEnabled) return;
+    if (queueDrainPromise || queueWakeScheduled) {
+      queueWakeRequested = true;
+      return;
+    }
+    queueWakeScheduled = true;
+    setTimeout(() => {
+      queueWakeScheduled = false;
+      if (queueDrainPromise) return;
+      queueDrainPromise = drainServerQueue()
+        .catch((error) => {
+          logger.warn({ err: error }, "server-owned chat queue drain failed");
+        })
+        .finally(() => {
+          queueDrainPromise = null;
+          if (queueWakeRequested) {
+            queueWakeRequested = false;
+            wakeServerQueue();
+          }
+        });
+    }, 0).unref?.();
+  }
+
+  if (queueWorkerEnabled) {
+    const recoverChatControlOwners = () => {
+      void svc.generationProtocol.recoverStaleControlOwners({})
+        .then(() => {
+          wakeTerminalProjector();
+          wakeServerQueue();
+        })
+        .catch((error) => logger.warn({ err: error }, "chat control recovery failed"));
+    };
+    setTimeout(() => {
+      recoverChatControlOwners();
+    }, 0).unref?.();
+    setInterval(recoverChatControlOwners, 10_000).unref?.();
+  }
+
   router.get("/orgs/:orgId/chats", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
@@ -1297,12 +1805,14 @@ export function chatRoutes(db: Db, storage: StorageService) {
       return;
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
+    const requestActor = queueRequestActor(req);
     const item = await svc.createQueuedMessage({
       orgId: conversation.orgId,
       conversationId: conversation.id,
       clientMutationId: req.body.clientMutationId,
       expectedGenerationId: req.body.expectedGenerationId ?? getActiveChatGeneration(conversation.id)?.generationId ?? null,
       payload: req.body.payload,
+      requestActor,
     });
     const actor = getActorInfo(req);
     await logActivity(db, {
@@ -1319,6 +1829,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
         position: item.position,
       },
     });
+    wakeServerQueue();
     res.status(201).json(item);
   });
 
@@ -1416,24 +1927,196 @@ export function chatRoutes(db: Db, storage: StorageService) {
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
     const active = getActiveChatGeneration(conversation.id);
-    if (!active?.generationId) {
-      throw conflict("Cannot steer queued follow-ups because no reply is in progress");
+    const requestActor = queueRequestActor(req);
+    const controlActionId = req.body.controlActionId ?? randomUUID();
+    const expectedGenerationId = req.body.expectedActiveGenerationId
+      ?? active?.generationId
+      ?? null;
+    if (!expectedGenerationId) {
+      const scheduled = await svc.scheduleSteerContinuation({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        itemId: req.params.itemId as string,
+        controlActionId,
+        requestActor,
+      });
+      wakeServerQueue();
+      res.json({
+        item: scheduled.item,
+        result: "scheduled_next" as const,
+        disposition: "continuation_pending" as const,
+        controlActionId,
+        activeGenerationId: scheduled.action.expectedGenerationId ?? null,
+        queueVersion: scheduled.item.version,
+        transcriptEventId: null,
+      });
+      return;
     }
-    const expected = req.body.expectedActiveGenerationId ?? null;
-    const result = expected && expected !== active.generationId
-        ? "stale_generation"
-        : "unsupported";
-    const item = await svc.markQueuedMessageSteerFallback({
+    const queueSnapshot = await svc.getQueueSnapshot(conversation.id, expectedGenerationId);
+    const expectedAttemptEpoch = req.body.expectedAttemptEpoch
+      ?? queueSnapshot.activeAttemptEpoch
+      ?? active?.attemptEpoch
+      ?? 0;
+    const expectedControlVersion = req.body.expectedControlVersion
+      ?? queueSnapshot.activeControlVersion
+      ?? 0;
+    const started = await svc.beginSteerControlAction({
+      orgId: conversation.orgId,
       conversationId: conversation.id,
       itemId: req.params.itemId as string,
-      reason: result,
-      activeGenerationId: active?.generationId ?? null,
+      controlActionId,
+      expectedGenerationId,
+      expectedAttemptEpoch,
+      expectedControlVersion,
+      requestActor,
     });
-    res.json({
+
+    const responseForDurableDisposition = (
+      item: typeof started.item,
+      disposition: typeof started.action.localDisposition,
+    ) => ({
       item,
-      result: result === "unsupported" ? "queued_fallback" : result,
-      activeGenerationId: active?.generationId ?? null,
+      result: disposition === "accepted_current"
+        ? "delivered_current" as const
+        : disposition === "acceptance_unknown"
+          ? "acceptance_unknown" as const
+          : disposition === "continuation_pending"
+            ? "scheduled_next" as const
+            : disposition === "failed_actionable"
+              ? "failed_actionable" as const
+              : "pending" as const,
+      disposition,
+      controlActionId,
+      activeGenerationId: expectedGenerationId,
       queueVersion: item.version,
+      transcriptEventId: null,
+    });
+
+    if (started.idempotent && started.action.localDisposition !== "pending") {
+      if (started.action.localDisposition === "continuation_pending") wakeServerQueue();
+      res.json(responseForDurableDisposition(started.item, started.action.localDisposition));
+      return;
+    }
+    if (started.action.localDisposition === "continuation_pending") {
+      wakeServerQueue();
+      res.json(responseForDurableDisposition(started.item, started.action.localDisposition));
+      return;
+    }
+    const sendClaim = await svc.claimSteerProviderSend({
+      orgId: conversation.orgId,
+      controlActionId,
+    });
+    if (!sendClaim) {
+      res.json(responseForDurableDisposition(started.item, started.action.localDisposition));
+      return;
+    }
+
+    await svc.appendGenerationEvent({
+      orgId: conversation.orgId,
+      generationId: expectedGenerationId,
+      attemptEpoch: expectedAttemptEpoch,
+      eventKind: "steer_requested",
+      payload: { controlActionId, queueItemId: started.item.id },
+      controlActionId,
+      queueItemId: started.item.id,
+    });
+    const runtimeResult = await steerActiveChatGeneration({
+      conversationId: conversation.id,
+      expectedGenerationId,
+      feedback: {
+        text: started.item.payload.body,
+        clientMessageId: sendClaim.providerClientMessageId ?? controlActionId,
+      },
+    });
+
+    let resolution: Awaited<ReturnType<typeof svc.resolveSteerControlAction>>;
+    if (runtimeResult.status === "delivered_current") {
+      resolution = await svc.resolveSteerControlAction({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        itemId: started.item.id,
+        controlActionId,
+        status: "accepted_current",
+        disposition: "accepted_current",
+        providerDisposition: "acknowledged",
+        providerThreadId: runtimeResult.providerThreadId,
+        providerTurnId: runtimeResult.providerTurnId,
+        providerEvidence: {
+          receipt: "same_turn",
+          attemptEpoch: runtimeResult.attemptEpoch,
+          ownerChangedAfterSend: runtimeResult.ownerChangedAfterSend === true,
+        },
+      });
+      await svc.appendGenerationEvent({
+        orgId: conversation.orgId,
+        generationId: expectedGenerationId,
+        attemptEpoch: runtimeResult.attemptEpoch,
+        eventKind: "steer_acknowledged",
+        payload: {
+          controlActionId,
+          providerThreadId: runtimeResult.providerThreadId,
+          providerTurnId: runtimeResult.providerTurnId,
+        },
+        controlActionId,
+        queueItemId: started.item.id,
+      });
+    } else if (runtimeResult.status === "acceptance_unknown") {
+      resolution = await svc.resolveSteerControlAction({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        itemId: started.item.id,
+        controlActionId,
+        status: "acceptance_unknown",
+        disposition: "acceptance_unknown",
+        providerDisposition: "connection_lost",
+        reason: runtimeResult.reason,
+        providerEvidence: {
+          attemptEpoch: runtimeResult.attemptEpoch,
+          ownerChangedAfterSend: runtimeResult.ownerChangedAfterSend === true,
+        },
+      });
+    } else if (runtimeResult.status === "pending_control") {
+      resolution = await svc.resolveSteerControlAction({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        itemId: started.item.id,
+        controlActionId,
+        status: "steer_pending",
+        disposition: "pending",
+        providerDisposition: "not_sent",
+        reason: "runtime_control_starting",
+      });
+    } else {
+      resolution = await svc.resolveSteerControlAction({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        itemId: started.item.id,
+        controlActionId,
+        status: "continuation_pending",
+        disposition: "continuation_pending",
+        providerDisposition: "not_sent",
+        reason: runtimeResult.status === "stale_generation"
+          ? "stale_generation"
+          : runtimeResult.reason,
+      });
+      if (runtimeResult.status === "continuation_required") {
+        void interruptActiveChatGeneration(conversation.id, "steer_fallback");
+      }
+      await svc.appendGenerationEvent({
+        orgId: conversation.orgId,
+        generationId: expectedGenerationId,
+        attemptEpoch: expectedAttemptEpoch,
+        eventKind: "continuation_scheduled",
+        payload: { controlActionId, reason: "runtime_requires_continuation" },
+        controlActionId,
+        queueItemId: started.item.id,
+      });
+      wakeServerQueue();
+    }
+    res.json({
+      ...responseForDurableDisposition(resolution.item, resolution.action.localDisposition),
+      activeGenerationId: expectedGenerationId,
+      queueVersion: resolution.item.version,
       transcriptEventId: null,
     });
   });
@@ -1503,6 +2186,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
         conversationId: conversation.id,
         clientMutationId: `message:${randomUUID()}`,
         expectedGenerationId: getActiveChatGeneration(conversation.id)?.generationId ?? null,
+        requestActor: queueRequestActor(req),
         payload: {
           body: req.body.body,
           attachmentIds: [],
@@ -1516,6 +2200,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
           },
         },
       });
+      wakeServerQueue();
       res.status(202).json({ queued: item });
       return;
     }
@@ -1656,6 +2341,9 @@ export function chatRoutes(db: Db, storage: StorageService) {
     recoverableFailurePayload,
     recoverableFailureBody,
     writeStreamEvent,
+    queueRequestActor,
+    wakeServerQueue,
+    wakeTerminalProjector,
   });
   return router;
 }

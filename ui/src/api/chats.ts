@@ -107,8 +107,13 @@ export const chatsApi = {
   steerQueuedMessage: (
     chatId: string,
     itemId: string,
-    expectedActiveGenerationId?: string | null,
-  ) => api.post<ChatSteerResponse>(`/chats/${chatId}/queue/${itemId}/steer`, { expectedActiveGenerationId }),
+    data: {
+      expectedActiveGenerationId?: string | null;
+      controlActionId: string;
+      expectedAttemptEpoch?: number;
+      expectedControlVersion?: number;
+    },
+  ) => api.post<ChatSteerResponse>(`/chats/${chatId}/queue/${itemId}/steer`, data),
   sendMessageStream: async (
     chatId: string,
     body: string,
@@ -186,8 +191,22 @@ export const chatsApi = {
     }
 
   },
-  stopMessageStream: (chatId: string) =>
-    api.post<{ stopped: boolean }>(`/chats/${chatId}/messages/stream/stop`, {}),
+  stopMessageStream: (
+    chatId: string,
+    data: {
+      controlActionId: string;
+      expectedGenerationId?: string;
+      expectedAttemptEpoch?: number;
+      expectedControlVersion?: number;
+      lastCommittedRenderSeq?: number;
+      renderedBodyHash?: string;
+    } = { controlActionId: globalThis.crypto.randomUUID() },
+  ) => api.post<{
+    stopped: boolean;
+    controlActionId: string;
+    generationId: string | null;
+    disposition?: string;
+  }>(`/chats/${chatId}/messages/stream/stop`, data),
   uploadAttachment: async (orgId: string, chatId: string, messageId: string, file: File) => {
     const buffer = await file.arrayBuffer();
     const safeFile = new File([buffer], file.name || "attachment", {

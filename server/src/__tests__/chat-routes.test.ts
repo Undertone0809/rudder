@@ -6,9 +6,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { unprocessable } from "../errors.js";
 import { errorHandler } from "../middleware/index.js";
 import { chatRoutes } from "../routes/chats.js";
-import { claimChatGeneration, clearActiveChatGenerationsForTest, hasActiveChatGeneration } from "../services/chat-generation-locks.js";
+import { claimChatGeneration, clearActiveChatGenerationsForTest, createChatRuntimeControlCoordinator, hasActiveChatGeneration } from "../services/chat-generation-locks.js";
 
 const mockChatService = vi.hoisted(() => ({
+  generationProtocol: {
+    getLatestVisibleCheckpoint: vi.fn(),
+    appendGenerationEvent: vi.fn(),
+    recordClientCheckpoint: vi.fn(),
+    beginStopAction: vi.fn(),
+    recordRuntimeTerminal: vi.fn(),
+    claimTerminalProjection: vi.fn(),
+    getNextTerminalProjectionWakeAt: vi.fn(),
+    completeTerminalProjection: vi.fn(),
+    retryTerminalProjection: vi.fn(),
+    recoverStaleControlOwners: vi.fn(),
+  },
   list: vi.fn(),
   getById: vi.fn(),
   create: vi.fn(),
@@ -39,7 +51,21 @@ const mockChatService = vi.hoisted(() => ({
   createQueuedMessage: vi.fn(),
   updateQueuedMessage: vi.fn(),
   cancelQueuedMessage: vi.fn(),
+  scheduleSteerContinuation: vi.fn(),
   markQueuedMessageSteerFallback: vi.fn(),
+  beginSteerControlAction: vi.fn(),
+  claimSteerProviderSend: vi.fn(),
+  resolveSteerControlAction: vi.fn(),
+  appendGenerationEvent: vi.fn(),
+  beginGenerationControlAttempt: vi.fn(),
+  markGenerationControlReady: vi.fn(),
+  renewGenerationControlLease: vi.fn(),
+  markGenerationControlAttemptCompleted: vi.fn(),
+  claimNextServerQueuedMessage: vi.fn(),
+  renewServerQueuedMessageClaim: vi.fn(),
+  completeServerQueuedMessageDelivery: vi.fn(),
+  releaseServerQueuedMessageClaim: vi.fn(),
+  recoverExpiredServerQueueClaims: vi.fn(),
   claimNextQueuedMessage: vi.fn(),
   releaseQueuedMessageClaim: vi.fn(),
   createGeneration: vi.fn(),
@@ -422,7 +448,13 @@ describe("chat routes", () => {
       replyingAgentId: typeof input.replyingAgentId === "string" ? input.replyingAgentId : null,
     }));
     mockChatService.markInterruptedStreamingMessages.mockResolvedValue([]);
-    mockChatService.getQueueSnapshot.mockResolvedValue({ activeGenerationId: null, items: [] });
+    mockChatService.getQueueSnapshot.mockResolvedValue({
+      activeGenerationId: null,
+      activeAttemptEpoch: null,
+      activeControlVersion: null,
+      activeGenerationStatus: null,
+      items: [],
+    });
     mockChatService.createQueuedMessage.mockImplementation(async (input: Record<string, unknown>) => ({
       id: "queued-1",
       orgId: input.orgId,
@@ -432,8 +464,23 @@ describe("chat routes", () => {
       version: 1,
       clientMutationId: input.clientMutationId,
       payload: input.payload,
+      deliveryIntent: "queue",
+      deliveryDisposition: null,
+      controlActionId: null,
       expectedGenerationId: input.expectedGenerationId ?? null,
       activeGenerationId: null,
+      attemptEpoch: null,
+      providerClientMessageId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      providerEvidence: null,
+      continuationGenerationId: null,
+      continuationMessageId: null,
+      deliveryLeaseToken: null,
+      deliveryLeaseEpoch: 0,
+      deliveryLeaseOwner: null,
+      deliveryLeaseExpiresAt: null,
+      reconciliationReason: null,
       deliveryAttempts: 0,
       lastAttemptAt: null,
       lastDeliveryReason: null,
@@ -454,8 +501,23 @@ describe("chat routes", () => {
       version: Number(input.version ?? 1) + 1,
       clientMutationId: "client-1",
       payload: input.payload,
+      deliveryIntent: "queue",
+      deliveryDisposition: null,
+      controlActionId: null,
       expectedGenerationId: null,
       activeGenerationId: null,
+      attemptEpoch: null,
+      providerClientMessageId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      providerEvidence: null,
+      continuationGenerationId: null,
+      continuationMessageId: null,
+      deliveryLeaseToken: null,
+      deliveryLeaseEpoch: 0,
+      deliveryLeaseOwner: null,
+      deliveryLeaseExpiresAt: null,
+      reconciliationReason: null,
       deliveryAttempts: 0,
       lastAttemptAt: null,
       lastDeliveryReason: null,
@@ -473,6 +535,17 @@ describe("chat routes", () => {
       status: "queued",
       lastDeliveryReason: "unsupported",
     });
+    mockChatService.claimSteerProviderSend.mockResolvedValue(null);
+    mockChatService.appendGenerationEvent.mockResolvedValue({ id: "event-1" });
+    mockChatService.beginGenerationControlAttempt.mockResolvedValue(undefined);
+    mockChatService.markGenerationControlReady.mockResolvedValue(undefined);
+    mockChatService.renewGenerationControlLease.mockResolvedValue(true);
+    mockChatService.markGenerationControlAttemptCompleted.mockResolvedValue(undefined);
+    mockChatService.claimNextServerQueuedMessage.mockResolvedValue(null);
+    mockChatService.renewServerQueuedMessageClaim.mockResolvedValue(true);
+    mockChatService.completeServerQueuedMessageDelivery.mockResolvedValue(null);
+    mockChatService.releaseServerQueuedMessageClaim.mockResolvedValue(null);
+    mockChatService.recoverExpiredServerQueueClaims.mockResolvedValue({ inspected: 0, requeued: 0, ambiguous: 0 });
     mockChatService.claimNextQueuedMessage.mockResolvedValue(null);
     mockChatService.releaseQueuedMessageClaim.mockResolvedValue(null);
     mockChatService.createGeneration.mockResolvedValue({ id: "generation-1" });
@@ -481,6 +554,37 @@ describe("chat routes", () => {
     mockChatService.assertQueuedMessageClaimedForDelivery.mockResolvedValue(undefined);
     mockChatService.markQueuedMessageRunning.mockResolvedValue(undefined);
     mockChatService.markQueuedMessageDeliveryTerminal.mockResolvedValue(undefined);
+    mockChatService.generationProtocol.appendGenerationEvent.mockImplementation(async (input) => ({
+      event: { id: "generation-event-1", generationSeq: 1, payload: input.payload ?? {} },
+      generation: { id: input.generationId },
+    }));
+    mockChatService.generationProtocol.getLatestVisibleCheckpoint.mockResolvedValue({
+      generation: { id: "generation-1", attemptEpoch: 1, controlVersion: 0 },
+      generationSeq: 0,
+      bodyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    });
+    mockChatService.generationProtocol.beginStopAction.mockImplementation(async (input) => ({
+      action: {
+        id: input.controlActionId,
+        acceptedThroughSeq: input.requestedRenderSeq,
+        frozenBodyHash: input.requestedBodyHash,
+      },
+      generation: {
+        id: input.expectedGenerationId,
+        attemptEpoch: input.expectedAttemptEpoch,
+        controlVersion: input.expectedControlVersion + 1,
+      },
+      stopRequestedEvent: { id: "stop-requested-event" },
+      outputCutoffEvent: { id: "output-cutoff-event" },
+      idempotent: false,
+    }));
+    mockChatService.generationProtocol.recordRuntimeTerminal.mockResolvedValue({
+      outbox: { id: "terminal-outbox-1" },
+    });
+    mockChatService.generationProtocol.claimTerminalProjection.mockResolvedValue(null);
+    mockChatService.generationProtocol.completeTerminalProjection.mockResolvedValue(null);
+    mockChatService.generationProtocol.retryTerminalProjection.mockResolvedValue(null);
+    mockChatService.generationProtocol.recoverStaleControlOwners.mockResolvedValue([]);
   });
 
   it("passes chat search query and status to the chat list service", async () => {
@@ -1057,6 +1161,9 @@ describe("chat routes", () => {
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.getQueueSnapshot.mockResolvedValueOnce({
       activeGenerationId: null,
+      activeAttemptEpoch: null,
+      activeControlVersion: null,
+      activeGenerationStatus: null,
       items: [],
     });
 
@@ -1065,7 +1172,13 @@ describe("chat routes", () => {
 
     expect(res.status).toBe(200);
     expect(mockChatService.getQueueSnapshot).toHaveBeenCalledWith("chat-1", null);
-    expect(res.body).toEqual({ activeGenerationId: null, items: [] });
+    expect(res.body).toEqual({
+      activeGenerationId: null,
+      activeAttemptEpoch: null,
+      activeControlVersion: null,
+      activeGenerationStatus: null,
+      items: [],
+    });
   });
 
   it("passes the in-memory generation to queue snapshots while a reply is active", async () => {
@@ -1073,6 +1186,9 @@ describe("chat routes", () => {
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.getQueueSnapshot.mockResolvedValueOnce({
       activeGenerationId: "10000000-0000-4000-8000-000000000001",
+      activeAttemptEpoch: 1,
+      activeControlVersion: 0,
+      activeGenerationStatus: "running",
       items: [],
     });
     const release = claimChatGeneration(conversation.id, null, "10000000-0000-4000-8000-000000000001");
@@ -1085,6 +1201,9 @@ describe("chat routes", () => {
       expect(mockChatService.getQueueSnapshot).toHaveBeenCalledWith("chat-1", "10000000-0000-4000-8000-000000000001");
       expect(res.body).toEqual({
         activeGenerationId: "10000000-0000-4000-8000-000000000001",
+        activeAttemptEpoch: 1,
+        activeControlVersion: 0,
+        activeGenerationStatus: "running",
         items: [],
       });
     } finally {
@@ -1184,17 +1303,188 @@ describe("chat routes", () => {
     expect(mockChatService.markQueuedMessageSteerFallback).not.toHaveBeenCalled();
   });
 
-  it("rejects steering queued follow-ups when no reply is running in memory", async () => {
+  it("schedules queued feedback after Stop when no in-memory runtime owner remains", async () => {
     const conversation = createConversation();
+    const generationId = "10000000-0000-4000-8000-000000000001";
+    const controlActionId = "20000000-0000-4000-8000-000000000002";
+    const item = {
+      id: "queued-1",
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      position: 1,
+      status: "continuation_pending",
+      version: 2,
+      clientMutationId: "client-1",
+      payload: { body: "Use the public API" },
+      deliveryIntent: "steer",
+      deliveryDisposition: "continuation_pending",
+      controlActionId,
+    };
     mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getQueueSnapshot.mockResolvedValueOnce({
+      activeGenerationId: generationId,
+      activeAttemptEpoch: 1,
+      activeControlVersion: 1,
+      activeGenerationStatus: "stopped",
+      items: [item],
+    });
+    mockChatService.beginSteerControlAction.mockResolvedValueOnce({
+      action: {
+        id: controlActionId,
+        expectedGenerationId: generationId,
+        localDisposition: "continuation_pending",
+      },
+      item,
+      generation: { id: generationId, status: "stopped", attemptEpoch: 1, controlVersion: 1 },
+      idempotent: false,
+    });
 
     const res = await request(createApp())
       .post("/api/chats/chat-1/queue/queued-1/steer")
-      .send({ expectedActiveGenerationId: "10000000-0000-4000-8000-000000000001" });
+      .send({
+        expectedActiveGenerationId: generationId,
+        controlActionId,
+        expectedAttemptEpoch: 1,
+        expectedControlVersion: 1,
+      });
 
-    expect(res.status).toBe(409);
-    expect(res.body).toEqual({ error: "Cannot steer queued follow-ups because no reply is in progress" });
-    expect(mockChatService.markQueuedMessageSteerFallback).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      result: "scheduled_next",
+      disposition: "continuation_pending",
+      activeGenerationId: generationId,
+      controlActionId,
+      item: { id: "queued-1", status: "continuation_pending" },
+    });
+    expect(mockChatService.claimSteerProviderSend).not.toHaveBeenCalled();
+  });
+
+  it("delivers queued feedback through the active runtime control handle", async () => {
+    const conversation = createConversation();
+    const generationId = "10000000-0000-4000-8000-000000000001";
+    const controlActionId = "20000000-0000-4000-8000-000000000002";
+    const item = {
+      id: "queued-1",
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      position: 1,
+      status: "steer_pending",
+      version: 2,
+      clientMutationId: "client-1",
+      payload: { body: "Use the public API" },
+      deliveryIntent: "steer",
+      deliveryDisposition: "pending",
+      controlActionId,
+      expectedGenerationId: generationId,
+      activeGenerationId: generationId,
+      attemptEpoch: 1,
+      providerClientMessageId: controlActionId,
+      providerThreadId: null,
+      providerTurnId: null,
+      providerEvidence: null,
+      continuationGenerationId: null,
+      continuationMessageId: null,
+      deliveryLeaseToken: null,
+      deliveryLeaseEpoch: 0,
+      deliveryLeaseOwner: null,
+      deliveryLeaseExpiresAt: null,
+      reconciliationReason: null,
+      deliveryAttempts: 1,
+      lastAttemptAt: new Date(),
+      lastDeliveryReason: null,
+      sourceMessageId: null,
+      deliveredMessageId: null,
+      cancelledAt: null,
+      steeredAt: null,
+      dequeuedAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const action = {
+      id: controlActionId,
+      localDisposition: "pending",
+      providerClientMessageId: controlActionId,
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getQueueSnapshot.mockResolvedValue({
+      activeGenerationId: generationId,
+      activeAttemptEpoch: 1,
+      activeControlVersion: 0,
+      activeGenerationStatus: "running",
+      items: [item],
+    });
+    mockChatService.beginSteerControlAction.mockResolvedValue({
+      action,
+      item,
+      generation: { id: generationId, attemptEpoch: 1, controlVersion: 1 },
+      idempotent: false,
+    });
+    mockChatService.claimSteerProviderSend.mockResolvedValue(action);
+    mockChatService.resolveSteerControlAction.mockImplementation(async (input) => ({
+      action: { ...action, localDisposition: input.disposition },
+      item: {
+        ...item,
+        status: input.status,
+        deliveryDisposition: input.disposition,
+        providerThreadId: input.providerThreadId ?? null,
+        providerTurnId: input.providerTurnId ?? null,
+        version: 3,
+      },
+    }));
+
+    const release = claimChatGeneration(conversation.id, new AbortController(), generationId);
+    const attempt = await createChatRuntimeControlCoordinator(conversation.id, generationId).beginAttempt({
+      attemptIndex: 0,
+      runtimeType: "codex_local",
+      model: "gpt-primary",
+      isFallback: false,
+    });
+    const steer = vi.fn(async () => ({
+      disposition: "accepted_current" as const,
+      providerThreadId: "thread-1",
+      providerTurnId: "turn-1",
+    }));
+    await attempt.register({
+      runtimeType: "codex_local",
+      providerThreadId: "thread-1",
+      providerTurnId: "turn-1",
+      capabilities: { steer: "native", interrupt: "native" },
+      steer,
+      interrupt: vi.fn(async () => "acknowledged" as const),
+      dispose: vi.fn(async () => undefined),
+    });
+
+    try {
+      const response = await request(createApp())
+        .post("/api/chats/chat-1/queue/queued-1/steer")
+        .send({
+          expectedActiveGenerationId: generationId,
+          controlActionId,
+          expectedAttemptEpoch: 1,
+          expectedControlVersion: 0,
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        result: "delivered_current",
+        disposition: "accepted_current",
+        controlActionId,
+        activeGenerationId: generationId,
+        item: {
+          id: "queued-1",
+          status: "accepted_current",
+          providerThreadId: "thread-1",
+          providerTurnId: "turn-1",
+        },
+      });
+      expect(steer).toHaveBeenCalledWith({
+        text: "Use the public API",
+        clientMessageId: controlActionId,
+      });
+      expect(mockChatService.markQueuedMessageSteerFallback).not.toHaveBeenCalled();
+    } finally {
+      release?.();
+    }
   });
 
   it("returns a single chat message transcript for lazy loading", async () => {
@@ -3591,20 +3881,20 @@ describe("chat routes", () => {
       .send({});
 
     expect(stopRes.status).toBe(200);
-    expect(stopRes.body).toEqual({ stopped: true });
+    expect(stopRes.body).toMatchObject({ stopped: true, disposition: "stopping", generationId: "generation-1" });
     expect(capturedSignal?.aborted).toBe(true);
     expect(capturedSignal?.reason).toEqual({
       kind: "operator_interrupt",
       hardDeadlineMs: 2_000,
     });
-    expect(mockChatService.markGenerationTerminal).toHaveBeenCalledWith("generation-1", "stopped");
+    expect(mockChatService.generationProtocol.beginStopAction).toHaveBeenCalled();
 
     const repeatedStopRes = await request(createApp())
       .post("/api/chats/chat-1/messages/stream/stop")
       .send({});
 
     expect(repeatedStopRes.status).toBe(200);
-    expect(repeatedStopRes.body).toEqual({ stopped: true });
+    expect(repeatedStopRes.body).toMatchObject({ stopped: true, disposition: "stopping" });
 
     releaseAssistant();
     const streamRes = await streamPromise;
@@ -3617,7 +3907,7 @@ describe("chat routes", () => {
       type: "final",
       messages: [expect.objectContaining({ id: "message-progress", status: "stopped" })],
     });
-    expect(events).toContainEqual({ type: "assistant_delta", delta: "Before stop" });
+    expect(events).toContainEqual(expect.objectContaining({ type: "assistant_delta", delta: "Before stop" }));
     expect(JSON.stringify(events)).not.toContain("Late assistant output");
     expect(JSON.stringify(events)).not.toContain("Late reasoning");
     expect(mockChatService.updateMessage).toHaveBeenLastCalledWith(
@@ -3713,7 +4003,7 @@ describe("chat routes", () => {
     const stopRes = await request(createApp())
       .post("/api/chats/chat-1/messages/stream/stop")
       .send({});
-    expect(stopRes.body).toEqual({ stopped: true });
+    expect(stopRes.body).toMatchObject({ stopped: true, disposition: "stopping" });
 
     releaseBlockedPersist();
     const streamRes = await streamPromise;
@@ -3722,8 +4012,8 @@ describe("chat routes", () => {
       .split("\n")
       .map((line) => JSON.parse(line));
 
-    expect(events).toContainEqual({ type: "assistant_delta", delta: "Visible prefix" });
-    expect(events).toContainEqual({ type: "transcript_entry", entry: visibleTranscript });
+    expect(events).toContainEqual(expect.objectContaining({ type: "assistant_delta", delta: "Visible prefix" }));
+    expect(events).toContainEqual(expect.objectContaining({ type: "transcript_entry", entry: visibleTranscript }));
     expect(JSON.stringify(events)).not.toContain("unadmitted tail");
     expect(JSON.stringify(events)).not.toContain("Unadmitted transcript");
     expect(events.at(-1)).toEqual({
@@ -3788,13 +4078,15 @@ describe("chat routes", () => {
     const stopRes = await request(createApp())
       .post("/api/chats/chat-1/messages/stream/stop")
       .send({});
-    expect(stopRes.body).toEqual({ stopped: true });
+    expect(stopRes.body).toMatchObject({ stopped: true, disposition: "stopping" });
 
     releaseAssistant();
     await streamPromise;
     expect(stoppedPersistenceAttempts).toBe(1);
     expect(mockChatAgentRuns.linkAssistantMessage).not.toHaveBeenCalled();
-    expect(mockChatService.markGenerationTerminal).toHaveBeenLastCalledWith("generation-1", "stopped");
+    expect(mockChatService.generationProtocol.recordRuntimeTerminal).toHaveBeenLastCalledWith(
+      expect.objectContaining({ generationId: "generation-1", finalStatus: "stopped" }),
+    );
   });
 
   it("stops a persisted active generation when no local stream owner remains", async () => {
@@ -3807,9 +4099,18 @@ describe("chat routes", () => {
       .send({});
 
     expect(stopRes.status).toBe(200);
-    expect(stopRes.body).toEqual({ stopped: true });
+    expect(stopRes.body).toMatchObject({
+      stopped: false,
+      disposition: "interrupted_unverified",
+      generationId: "generation-stale",
+    });
     expect(mockChatService.getLatestActiveGeneration).toHaveBeenCalledWith("chat-1");
-    expect(mockChatService.markGenerationTerminal).toHaveBeenCalledWith("generation-stale", "stopped");
+    expect(mockChatService.generationProtocol.recordRuntimeTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        generationId: "generation-stale",
+        finalStatus: "interrupted_unverified",
+      }),
+    );
   });
 
   it("returns stopped false when no local stream or persisted generation is active", async () => {
@@ -3822,8 +4123,12 @@ describe("chat routes", () => {
       .send({});
 
     expect(stopRes.status).toBe(200);
-    expect(stopRes.body).toEqual({ stopped: false });
-    expect(mockChatService.markGenerationTerminal).not.toHaveBeenCalled();
+    expect(stopRes.body).toMatchObject({
+      stopped: false,
+      disposition: "no_active_generation",
+      generationId: null,
+    });
+    expect(mockChatService.generationProtocol.beginStopAction).not.toHaveBeenCalled();
   });
 
   it("rejects stopping active streams for Feishu-bound chat conversations", async () => {

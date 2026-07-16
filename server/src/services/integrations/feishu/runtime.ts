@@ -721,9 +721,21 @@ export function feishuIntegrationRuntimeService(
     activeGeneration: {
       abortController: AbortController;
       generationId: string;
+      attemptEpoch?: number;
+      ownerToken?: string | null;
       release: () => void;
     },
   ) {
+    const leaseTimer = activeGeneration.ownerToken
+      ? setInterval(() => {
+          void chats.renewGenerationControlLease({
+            generationId: activeGeneration.generationId,
+            attemptEpoch: activeGeneration.attemptEpoch ?? 1,
+            ownerToken: activeGeneration.ownerToken!,
+          }).catch(() => undefined);
+        }, 10_000)
+      : null;
+    leaseTimer?.unref?.();
     let didEnterReplyCompletion = false;
     try {
       await withWorkingReaction(sender, integration, credential, event, async () => {
@@ -767,6 +779,8 @@ export function feishuIntegrationRuntimeService(
           chatMessageId: result.chatMessageId,
         }, "Feishu accepted reply background task failed");
       }
+    } finally {
+      if (leaseTimer) clearInterval(leaseTimer);
     }
   }
 
@@ -840,6 +854,8 @@ export function feishuIntegrationRuntimeService(
       void runAcceptedReplyInBackground(integration, credential, event, result, {
         abortController,
         generationId: generation.id,
+        attemptEpoch: generation.attemptEpoch,
+        ownerToken: generation.controlOwnerToken,
         release: releaseGeneration,
       });
     }

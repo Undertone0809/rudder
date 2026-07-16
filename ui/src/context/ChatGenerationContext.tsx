@@ -14,6 +14,10 @@ export type ChatStreamDraft = {
   turnVariant: number;
   editedFromCreatedAt: Date | null;
   body: string;
+  generationId?: string | null;
+  attemptEpoch?: number | null;
+  lastCommittedRenderSeq?: number;
+  renderedBodyHash?: string;
   state: ChatStreamDraftState;
   createdAt: Date;
   transcript: TranscriptEntry[];

@@ -300,7 +300,7 @@ function parseCodexItem(
 
   if (itemType === "agent_message") {
     const text = asString(item.text);
-    if (text) return [{ kind: "assistant", ts, text }];
+    if (text) return [{ kind: "assistant", ts, text, ...(item.delta === true ? { delta: true } : {}) }];
     return [];
   }
 

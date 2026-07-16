@@ -57,14 +57,16 @@ export type {
   ChatAskUserOption,
   ChatAskUserQuestion,
   ChatAskUserRequest, ChatAttachment,
-  ChatContextLink, ChatConversation, ChatLinkedEntity, ChatMessage, ChatOperationProposalDecision, ChatOperationProposalDecisionAction,
-  ChatOperationProposalDecisionStatus, ChatPrimaryIssueSummary, ChatQueueClaimResponse, ChatQueueSnapshot, ChatQueuedMessage, ChatQueuedMessagePayload, ChatQueuedMessageStatus, ChatRichReference,
+  ChatContextLink, ChatControlAction, ChatControlActionKind, ChatControlDisposition, ChatConversation,
+  ChatGeneration, ChatGenerationControlState, ChatGenerationEvent, ChatGenerationEventKind, ChatGenerationStatus,
+  ChatGenerationTerminalOutboxEntry, ChatLinkedEntity, ChatMessage, ChatOperationProposalDecision, ChatOperationProposalDecisionAction,
+  ChatOperationProposalDecisionStatus, ChatPrimaryIssueSummary, ChatProviderControlDisposition, ChatQueueClaimResponse, ChatQueueDeliveryIntent, ChatQueueRequestActor, ChatQueueSnapshot, ChatQueuedMessage, ChatQueuedMessagePayload, ChatQueuedMessageStatus, ChatRichReference,
   ChatRichReferenceDisplay,
   ChatRuntimeDescriptor, ChatSteerResponse, ChatSteerResult, ChatStreamAckEvent,
   ChatStreamAssistantDeltaEvent,
   ChatStreamAssistantStateEvent, ChatStreamErrorEvent,
   ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTodoItem,
-  ChatStreamTranscriptTodoItemStatus, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestTargetType
+  ChatStreamTranscriptTodoItemStatus, ChatTerminalOutboxStatus, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestTargetType
 } from "./chat.js";
 export type { CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent, CostSummary, CostTrendPoint, CostWindowSpendRow } from "./cost.js";
 export type {

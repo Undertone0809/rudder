@@ -19,6 +19,102 @@ export const chatMessageRoleSchema = z.enum(CHAT_MESSAGE_ROLES);
 export const chatMessageKindSchema = z.enum(CHAT_MESSAGE_KINDS);
 export const chatMessageStatusSchema = z.enum(CHAT_MESSAGE_STATUSES);
 export const chatContextEntityTypeSchema = z.enum(CHAT_CONTEXT_ENTITY_TYPES);
+export const chatGenerationStatusSchema = z.enum([
+  "starting",
+  "active",
+  "running",
+  "tool_busy",
+  "closing",
+  "stop_requested",
+  "stopping",
+  "completed",
+  "failed",
+  "stopped",
+  "aborted",
+  "interrupted_unverified",
+  "control_lost",
+]);
+export const chatGenerationControlStateSchema = z.enum([
+  "unregistered",
+  "ready",
+  "stopping",
+  "terminal",
+  "control_lost",
+]);
+export const chatQueueDeliveryIntentSchema = z.enum(["queue", "steer"]);
+export const chatControlDispositionSchema = z.enum([
+  "pending",
+  "accepted_current",
+  "acceptance_unknown",
+  "reconciled_current",
+  "continuation_pending",
+  "waiting_safe_boundary",
+  "running_next",
+  "delivered",
+  "stop_requested",
+  "stopping",
+  "stopped",
+  "interrupted_unverified",
+  "cancellation_unverified",
+  "control_lost",
+  "failed_actionable",
+  "cancelled",
+]);
+export const chatProviderControlDispositionSchema = z.enum([
+  "not_sent",
+  "sent",
+  "acknowledged",
+  "rejected",
+  "timed_out",
+  "connection_lost",
+  "waiting_safe_boundary",
+  "unverified",
+]);
+export const chatControlActionKindSchema = z.enum(["stop", "steer"]);
+export const chatGenerationEventKindSchema = z.enum([
+  "generation_started",
+  "runtime_output",
+  "assistant_delta",
+  "transcript",
+  "client_checkpoint",
+  "steer_requested",
+  "steer_provider_sent",
+  "steer_acknowledged",
+  "continuation_scheduled",
+  "stop_requested",
+  "output_cutoff",
+  "runtime_terminal",
+  "late_output_dropped",
+  "terminal_projection_requested",
+  "terminal_projected",
+]);
+export const chatTerminalOutboxStatusSchema = z.enum([
+  "pending",
+  "claimed",
+  "retry_wait",
+  "projected",
+  "failed_actionable",
+]);
+export const chatQueuedMessageStatusSchema = z.enum([
+  "queued",
+  "steer_pending",
+  "accepted_current",
+  "acceptance_unknown",
+  "reconciled_current",
+  "continuation_pending",
+  "running_next",
+  "delivered",
+  "failed_actionable",
+  "steered",
+  "dequeue_claimed",
+  "running",
+  "completed",
+  "cancelled",
+  "failed",
+]);
+
+const chatControlActionIdSchema = z.string().uuid();
+const chatBodyHashSchema = z.string().regex(/^[a-f0-9]{64}$/i, "Expected a SHA-256 body hash");
 
 export const createChatContextLinkSchema = z.object({
   entityType: chatContextEntityTypeSchema,
@@ -87,6 +183,74 @@ export const cancelChatQueuedMessageSchema = z.object({
 
 export const steerChatQueuedMessageSchema = z.object({
   expectedActiveGenerationId: z.string().uuid().optional().nullable(),
+  controlActionId: chatControlActionIdSchema.optional(),
+  expectedAttemptEpoch: z.number().int().nonnegative().optional(),
+  expectedControlVersion: z.number().int().nonnegative().optional(),
+}).superRefine((value, ctx) => {
+  const hasGenerationTarget = Boolean(value.expectedActiveGenerationId);
+  const hasFenceVersion = value.expectedAttemptEpoch !== undefined
+    || value.expectedControlVersion !== undefined;
+  if (!hasFenceVersion && (!value.controlActionId || !hasGenerationTarget)) return;
+  if (!value.controlActionId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["controlActionId"], message: "Required for durable Steer control" });
+  }
+  if (!value.expectedActiveGenerationId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["expectedActiveGenerationId"], message: "Required for durable Steer control" });
+  }
+  if (value.expectedAttemptEpoch === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["expectedAttemptEpoch"], message: "Required for durable Steer control" });
+  }
+  if (value.expectedControlVersion === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["expectedControlVersion"], message: "Required for durable Steer control" });
+  }
+});
+
+export const stopChatGenerationSchema = z.object({
+  controlActionId: chatControlActionIdSchema.optional(),
+  expectedGenerationId: z.string().uuid().optional(),
+  expectedAttemptEpoch: z.number().int().nonnegative().optional(),
+  expectedControlVersion: z.number().int().nonnegative().optional(),
+  lastCommittedRenderSeq: z.number().int().nonnegative().optional(),
+  renderedBodyHash: chatBodyHashSchema.optional(),
+}).superRefine((value, ctx) => {
+  const generationFenceStarted = value.expectedGenerationId !== undefined
+    || value.expectedAttemptEpoch !== undefined
+    || value.expectedControlVersion !== undefined;
+  if (generationFenceStarted) {
+    if (!value.expectedGenerationId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["expectedGenerationId"], message: "Required for fenced Stop control" });
+    }
+    if (value.expectedAttemptEpoch === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["expectedAttemptEpoch"], message: "Required for fenced Stop control" });
+    }
+    if (value.expectedControlVersion === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["expectedControlVersion"], message: "Required for fenced Stop control" });
+    }
+  }
+  if ((value.lastCommittedRenderSeq === undefined) !== (value.renderedBodyHash === undefined)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["renderedBodyHash"], message: "Stop render sequence and body hash must be supplied together" });
+  }
+});
+
+export const chatClientCheckpointSchema = z.object({
+  generationId: z.string().uuid(),
+  attemptEpoch: z.number().int().positive(),
+  generationSeq: z.number().int().nonnegative(),
+  renderedBodyHash: chatBodyHashSchema,
+});
+
+export const appendChatGenerationEventSchema = z.object({
+  generationId: z.string().uuid(),
+  generationSeq: z.number().int().nonnegative(),
+  attemptEpoch: z.number().int().positive(),
+  eventKind: chatGenerationEventKindSchema,
+  payload: z.record(z.unknown()).default({}),
+  bodyOffset: z.number().int().nonnegative().optional().nullable(),
+  bodyLength: z.number().int().nonnegative().optional().nullable(),
+  assistantMessageId: z.string().uuid().optional().nullable(),
+  runId: z.string().uuid().optional().nullable(),
+  controlActionId: chatControlActionIdSchema.optional().nullable(),
+  queueItemId: z.string().uuid().optional().nullable(),
 });
 
 const chatRichReferenceDisplaySchema = z.enum(["card", "inline"]);
@@ -366,6 +530,9 @@ export type CreateChatQueuedMessage = z.infer<typeof createChatQueuedMessageSche
 export type UpdateChatQueuedMessage = z.infer<typeof updateChatQueuedMessageSchema>;
 export type CancelChatQueuedMessage = z.infer<typeof cancelChatQueuedMessageSchema>;
 export type SteerChatQueuedMessage = z.infer<typeof steerChatQueuedMessageSchema>;
+export type StopChatGeneration = z.infer<typeof stopChatGenerationSchema>;
+export type ChatClientCheckpoint = z.infer<typeof chatClientCheckpointSchema>;
+export type AppendChatGenerationEvent = z.infer<typeof appendChatGenerationEventSchema>;
 export type ChatAskUserOption = z.infer<typeof chatAskUserOptionSchema>;
 export type ChatAskUserQuestion = z.infer<typeof chatAskUserQuestionSchema>;
 export type ChatAskUserRequest = z.infer<typeof chatAskUserRequestSchema>;

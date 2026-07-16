@@ -6,9 +6,11 @@ import {
   approvals,
   assets,
   chatAttachments,
+  chatControlActions,
   chatContextLinks,
   chatConversations,
   chatConversationUserStates,
+  chatGenerationEvents,
   chatGenerations,
   chatMessages,
   chatQueuedMessages,
@@ -16,13 +18,14 @@ import {
   messengerCustomGroups,
   organizations
 } from "@rudderhq/db";
-import { MESSENGER_FORK_GROUP_DEFAULT_ICON, sanitizeChatStructuredPayload, type ChatConversationMutability, type ChatQueuedMessagePayload, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
+import { MESSENGER_FORK_GROUP_DEFAULT_ICON, sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatConversationMutability, type ChatProviderControlDisposition, type ChatQueuedMessage, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
 import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
 import { agentService } from "./agents.js";
 import { approvalService } from "./approvals.js";
+import { chatGenerationProtocolService } from "./chat-generation-protocol.js";
 import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
@@ -34,6 +37,14 @@ type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
 type MessageRow = typeof chatMessages.$inferSelect;
 type ChatQueuedMessageRow = typeof chatQueuedMessages.$inferSelect;
 type ChatGenerationRow = typeof chatGenerations.$inferSelect;
+type ChatControlActionRow = typeof chatControlActions.$inferSelect;
+export type ChatServerQueueClaim = {
+  item: ChatQueuedMessage;
+  generationId: string;
+  userMessageId: string;
+  leaseToken: string;
+  leaseEpoch: number;
+};
 type MessageHydrationRow = MessageRow & {
   transcriptSummary?: {
     entryCount: number;
@@ -58,6 +69,18 @@ type ApprovalRow = typeof approvals.$inferSelect;
 
 const CHAT_TITLE_MAX_LENGTH = 200;
 const FORK_TITLE_SUFFIX_PATTERN = / \(([1-9]\d*)\)$/;
+const ACTIVE_CHAT_GENERATION_STATUSES = [
+  "starting",
+  "active",
+  "running",
+  "tool_busy",
+  "closing",
+  "stop_requested",
+  "stopping",
+] as const;
+const NATIVE_STEER_GENERATION_STATUSES = ["starting", "active", "running", "tool_busy"] as const;
+const SERVER_QUEUE_RUNNING_STATUSES = ["dequeue_claimed", "running_next"] as const;
+const CHAT_GENERATION_CONTROL_LEASE_MS = 30_000;
 
 function baseForkTitle(title: string, sourceIsFork: boolean, familyTitles: Set<string>) {
   const trimmed = title.trim() || "Forked conversation";
@@ -131,6 +154,7 @@ import {
 } from "./chats.helpers.js";
 
 export function chatService(db: Db) {
+  const generationProtocol = chatGenerationProtocolService(db);
   const QUEUED_MESSAGE_CLAIM_LEASE_MS = 2 * 60 * 1000;
   const issuesSvc = issueService(db);
   const approvalsSvc = approvalService(db);
@@ -686,7 +710,7 @@ export function chatService(db: Db) {
     };
   }
 
-  function hydrateQueuedMessage(row: ChatQueuedMessageRow) {
+  function hydrateQueuedMessage(row: ChatQueuedMessageRow): ChatQueuedMessage {
     return {
       ...row,
       payload: normalizeQueuedPayload(row.payload),
@@ -694,12 +718,18 @@ export function chatService(db: Db) {
   }
 
   async function createGeneration(orgId: string, conversationId: string): Promise<ChatGenerationRow> {
+    const now = new Date();
     const [row] = await db
       .insert(chatGenerations)
       .values({
         orgId,
         conversationId,
         status: "active",
+        controlOwnerToken: randomUUID(),
+        controlLeaseExpiresAt: new Date(now.getTime() + CHAT_GENERATION_CONTROL_LEASE_MS),
+        startedAt: now,
+        createdAt: now,
+        updatedAt: now,
       })
       .returning();
     if (!row) throw new Error("Failed to create chat generation");
@@ -712,22 +742,107 @@ export function chatService(db: Db) {
   ) {
     if (!generationId) return null;
     const now = new Date();
-    const [row] = await db
-      .update(chatGenerations)
-      .set({
-        status,
-        terminalReason: status,
-        completedAt: now,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(chatGenerations.id, generationId),
-          inArray(chatGenerations.status, ["active", "tool_busy", "closing"]),
-        ),
-      )
-      .returning();
-    return row ?? null;
+    return db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(chatGenerations)
+        .set({
+          status,
+          terminalReason: status,
+          controlState: "terminal",
+          runtimeTerminalAt: now,
+          completedAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(chatGenerations.id, generationId),
+            inArray(chatGenerations.status, ACTIVE_CHAT_GENERATION_STATUSES),
+          ),
+        )
+        .returning();
+      if (!row) return null;
+
+      const deliveredSteers = await tx
+        .update(chatQueuedMessages)
+        .set({
+          status: "delivered",
+          deliveryDisposition: "delivered",
+          reconciliationReason: null,
+          lastDeliveryReason: null,
+          version: sql`${chatQueuedMessages.version} + 1`,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(chatQueuedMessages.status, "accepted_current"),
+            or(
+              eq(chatQueuedMessages.expectedGenerationId, generationId),
+              eq(chatQueuedMessages.activeGenerationId, generationId),
+            ),
+          ),
+        )
+        .returning({ controlActionId: chatQueuedMessages.controlActionId });
+      const controlActionIds = deliveredSteers
+        .map((item) => item.controlActionId)
+        .filter((id): id is string => Boolean(id));
+      if (controlActionIds.length > 0) {
+        await tx
+          .update(chatControlActions)
+          .set({
+            localDisposition: "delivered",
+            resolvedAt: now,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              inArray(chatControlActions.id, controlActionIds),
+              eq(chatControlActions.localDisposition, "accepted_current"),
+            ),
+          );
+      }
+
+      const continuedSteers = await tx
+        .update(chatQueuedMessages)
+        .set({
+          status: "continuation_pending",
+          deliveryDisposition: "continuation_pending",
+          reconciliationReason: `target_generation_${status}`,
+          lastDeliveryReason: null,
+          version: sql`${chatQueuedMessages.version} + 1`,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(chatQueuedMessages.status, "steer_pending"),
+            or(
+              eq(chatQueuedMessages.expectedGenerationId, generationId),
+              eq(chatQueuedMessages.activeGenerationId, generationId),
+            ),
+          ),
+        )
+        .returning({ controlActionId: chatQueuedMessages.controlActionId });
+      const continuedControlActionIds = continuedSteers
+        .map((item) => item.controlActionId)
+        .filter((id): id is string => Boolean(id));
+      if (continuedControlActionIds.length > 0) {
+        await tx
+          .update(chatControlActions)
+          .set({
+            localDisposition: "continuation_pending",
+            providerDisposition: "not_sent",
+            lastError: `target_generation_${status}`,
+            resolvedAt: now,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              inArray(chatControlActions.id, continuedControlActionIds),
+              eq(chatControlActions.localDisposition, "pending"),
+            ),
+          );
+      }
+      return row;
+    });
   }
 
   async function getLatestActiveGeneration(conversationId: string) {
@@ -737,7 +852,7 @@ export function chatService(db: Db) {
       .where(
         and(
           eq(chatGenerations.conversationId, conversationId),
-          inArray(chatGenerations.status, ["active", "tool_busy", "closing"]),
+          inArray(chatGenerations.status, ACTIVE_CHAT_GENERATION_STATUSES),
         ),
       )
       .orderBy(desc(chatGenerations.startedAt), desc(chatGenerations.createdAt))
@@ -763,7 +878,16 @@ export function chatService(db: Db) {
       .where(
         and(
           eq(chatQueuedMessages.conversationId, conversationId),
-          inArray(chatQueuedMessages.status, ["queued", "steer_pending", "dequeue_claimed", "running"]),
+          inArray(chatQueuedMessages.status, [
+            "queued",
+            "steer_pending",
+            "acceptance_unknown",
+            "continuation_pending",
+            "dequeue_claimed",
+            "running",
+            "running_next",
+            "failed_actionable",
+          ]),
         ),
       )
       .orderBy(asc(chatQueuedMessages.position), asc(chatQueuedMessages.createdAt));
@@ -774,12 +898,606 @@ export function chatService(db: Db) {
     const activeGeneration = activeGenerationId === undefined
       ? await getLatestActiveGeneration(conversationId)
       : activeGenerationId
-        ? { id: activeGenerationId }
+        ? await db
+          .select()
+          .from(chatGenerations)
+          .where(
+            and(
+              eq(chatGenerations.id, activeGenerationId),
+              eq(chatGenerations.conversationId, conversationId),
+            ),
+          )
+          .limit(1)
+          .then((rows) => rows[0] ?? null)
         : null;
     return {
       activeGenerationId: activeGeneration?.id ?? null,
+      activeAttemptEpoch: activeGeneration?.attemptEpoch ?? null,
+      activeControlVersion: activeGeneration?.controlVersion ?? null,
+      activeGenerationStatus: activeGeneration?.status ?? null,
       items: await listQueuedMessages(conversationId),
     };
+  }
+
+  async function beginGenerationControlAttempt(input: {
+    orgId: string;
+    conversationId: string;
+    generationId: string;
+    attemptEpoch: number;
+    ownerToken: string;
+    runtimeType: string;
+  }) {
+    const now = new Date();
+    const leaseExpiresAt = new Date(now.getTime() + CHAT_GENERATION_CONTROL_LEASE_MS);
+    const [row] = await db
+      .update(chatGenerations)
+      .set({
+        attemptEpoch: input.attemptEpoch,
+        controlState: "unregistered",
+        controlRuntimeType: input.runtimeType,
+        controlOwnerToken: input.ownerToken,
+        controlLeaseExpiresAt: leaseExpiresAt,
+        providerThreadId: null,
+        providerTurnId: null,
+        status: "starting",
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(chatGenerations.id, input.generationId),
+          eq(chatGenerations.orgId, input.orgId),
+          eq(chatGenerations.conversationId, input.conversationId),
+          isNull(chatGenerations.runtimeTerminalAt),
+          inArray(chatGenerations.status, ["active", "starting", "running", "tool_busy", "closing"]),
+          sql`${chatGenerations.attemptEpoch} <= ${input.attemptEpoch}`,
+        ),
+      )
+      .returning();
+    if (!row) throw conflict("Chat generation control ownership changed before runtime startup");
+    return row;
+  }
+
+  async function markGenerationControlReady(input: {
+    generationId: string;
+    attemptEpoch: number;
+    ownerToken: string;
+    runtimeType: string;
+    providerThreadId?: string | null;
+    providerTurnId?: string | null;
+  }) {
+    const now = new Date();
+    const [row] = await db
+      .update(chatGenerations)
+      .set({
+        controlState: "ready",
+        controlRuntimeType: input.runtimeType,
+        providerThreadId: input.providerThreadId ?? null,
+        providerTurnId: input.providerTurnId ?? null,
+        controlLeaseExpiresAt: new Date(now.getTime() + CHAT_GENERATION_CONTROL_LEASE_MS),
+        status: "running",
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(chatGenerations.id, input.generationId),
+          eq(chatGenerations.attemptEpoch, input.attemptEpoch),
+          eq(chatGenerations.controlOwnerToken, input.ownerToken),
+          isNull(chatGenerations.runtimeTerminalAt),
+          inArray(chatGenerations.status, ["active", "starting", "running", "tool_busy"]),
+        ),
+      )
+      .returning();
+    if (!row) throw conflict("Chat runtime control handle lost its generation lease");
+    return row;
+  }
+
+  async function renewGenerationControlLease(input: {
+    generationId: string;
+    attemptEpoch: number;
+    ownerToken: string;
+    now?: Date;
+  }) {
+    const now = input.now ?? new Date();
+    const [row] = await db
+      .update(chatGenerations)
+      .set({
+        controlLeaseExpiresAt: new Date(now.getTime() + CHAT_GENERATION_CONTROL_LEASE_MS),
+        updatedAt: now,
+      })
+      .where(and(
+        eq(chatGenerations.id, input.generationId),
+        eq(chatGenerations.attemptEpoch, input.attemptEpoch),
+        eq(chatGenerations.controlOwnerToken, input.ownerToken),
+        isNull(chatGenerations.runtimeTerminalAt),
+        inArray(chatGenerations.status, ["active", "starting", "running", "tool_busy", "closing"]),
+      ))
+      .returning({ id: chatGenerations.id });
+    if (!row) throw conflict("Chat generation control lease is no longer current");
+    return true;
+  }
+
+  async function markGenerationControlAttemptCompleted(input: {
+    generationId: string;
+    attemptEpoch: number;
+    ownerToken: string;
+  }) {
+    const now = new Date();
+    return db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(chatGenerations)
+        .set({
+          controlState: "unregistered",
+          status: "closing",
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(chatGenerations.id, input.generationId),
+            eq(chatGenerations.attemptEpoch, input.attemptEpoch),
+            eq(chatGenerations.controlOwnerToken, input.ownerToken),
+            inArray(chatGenerations.status, ["active", "starting", "running", "tool_busy", "closing"]),
+          ),
+        )
+        .returning();
+      if (!row) return null;
+
+      const continuedSteers = await tx
+        .update(chatQueuedMessages)
+        .set({
+          status: "continuation_pending",
+          deliveryDisposition: "continuation_pending",
+          reconciliationReason: "runtime_attempt_completed_without_steer_acceptance",
+          lastDeliveryReason: null,
+          version: sql`${chatQueuedMessages.version} + 1`,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(chatQueuedMessages.status, "steer_pending"),
+            eq(chatQueuedMessages.activeGenerationId, input.generationId),
+            eq(chatQueuedMessages.attemptEpoch, input.attemptEpoch),
+          ),
+        )
+        .returning({ controlActionId: chatQueuedMessages.controlActionId });
+      const controlActionIds = continuedSteers
+        .map((item) => item.controlActionId)
+        .filter((id): id is string => Boolean(id));
+      if (controlActionIds.length > 0) {
+        await tx
+          .update(chatControlActions)
+          .set({
+            localDisposition: "continuation_pending",
+            providerDisposition: "not_sent",
+            lastError: "runtime_attempt_completed_without_steer_acceptance",
+            resolvedAt: now,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              inArray(chatControlActions.id, controlActionIds),
+              eq(chatControlActions.localDisposition, "pending"),
+            ),
+          );
+      }
+      return row;
+    });
+  }
+
+  async function appendGenerationEvent(input: {
+    orgId: string;
+    generationId: string;
+    attemptEpoch: number;
+    eventKind: typeof chatGenerationEvents.$inferInsert.eventKind;
+    payload?: Record<string, unknown>;
+    controlActionId?: string | null;
+    queueItemId?: string | null;
+    emittedAt?: Date | null;
+  }) {
+    return db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select id from ${chatGenerations} where ${chatGenerations.id} = ${input.generationId} and ${chatGenerations.orgId} = ${input.orgId} for update`,
+      );
+      const generation = await tx
+        .select({ id: chatGenerations.id })
+        .from(chatGenerations)
+        .where(and(eq(chatGenerations.id, input.generationId), eq(chatGenerations.orgId, input.orgId)))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (!generation) throw notFound("Chat generation not found");
+      const nextSeq = await tx
+        .select({ value: sql<number>`coalesce(max(${chatGenerationEvents.generationSeq}), 0) + 1` })
+        .from(chatGenerationEvents)
+        .where(eq(chatGenerationEvents.generationId, input.generationId))
+        .then((rows) => Number(rows[0]?.value ?? 1));
+      const [event] = await tx
+        .insert(chatGenerationEvents)
+        .values({
+          orgId: input.orgId,
+          generationId: input.generationId,
+          generationSeq: nextSeq,
+          attemptEpoch: input.attemptEpoch,
+          eventKind: input.eventKind,
+          payload: input.payload ?? {},
+          controlActionId: input.controlActionId ?? null,
+          queueItemId: input.queueItemId ?? null,
+          emittedAt: input.emittedAt ?? null,
+        })
+        .returning();
+      if (!event) throw new Error("Failed to append chat generation event");
+      return event;
+    });
+  }
+
+  async function beginSteerControlAction(input: {
+    orgId: string;
+    conversationId: string;
+    itemId: string;
+    controlActionId: string;
+    expectedGenerationId: string;
+    expectedAttemptEpoch: number;
+    expectedControlVersion: number;
+    requestActor?: ChatQueueRequestActor | null;
+  }): Promise<{
+    action: ChatControlActionRow;
+    item: ReturnType<typeof hydrateQueuedMessage>;
+    generation: ChatGenerationRow | null;
+    idempotent: boolean;
+  }> {
+    return db.transaction(async (tx) => {
+      const existingAction = await tx
+        .select()
+        .from(chatControlActions)
+        .where(
+          and(
+            eq(chatControlActions.id, input.controlActionId),
+            eq(chatControlActions.orgId, input.orgId),
+          ),
+        )
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (existingAction) {
+        const existingItem = await tx
+          .select()
+          .from(chatQueuedMessages)
+          .where(
+            and(
+              eq(chatQueuedMessages.id, input.itemId),
+              eq(chatQueuedMessages.conversationId, input.conversationId),
+              eq(chatQueuedMessages.controlActionId, existingAction.id),
+            ),
+          )
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+        const existingGeneration = existingAction.expectedGenerationId
+          ? await tx
+            .select()
+            .from(chatGenerations)
+            .where(eq(chatGenerations.id, existingAction.expectedGenerationId))
+            .limit(1)
+            .then((rows) => rows[0] ?? null)
+          : null;
+        if (!existingItem || existingAction.actionKind !== "steer") {
+          throw conflict("Control action id was already used for a different operation");
+        }
+        return {
+          action: existingAction,
+          item: hydrateQueuedMessage(existingItem),
+          generation: existingGeneration,
+          idempotent: true,
+        };
+      }
+
+      await tx.execute(
+        sql`select id from ${chatGenerations} where ${chatGenerations.id} = ${input.expectedGenerationId} for update`,
+      );
+      await tx.execute(
+        sql`select id from ${chatQueuedMessages} where ${chatQueuedMessages.id} = ${input.itemId} for update`,
+      );
+      const generation = await tx
+        .select()
+        .from(chatGenerations)
+        .where(
+          and(
+            eq(chatGenerations.id, input.expectedGenerationId),
+            eq(chatGenerations.orgId, input.orgId),
+            eq(chatGenerations.conversationId, input.conversationId),
+          ),
+        )
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      const generationAcceptsNativeSteer = Boolean(
+        generation && NATIVE_STEER_GENERATION_STATUSES.includes(
+          generation.status as (typeof NATIVE_STEER_GENERATION_STATUSES)[number],
+        ),
+      );
+      if (generationAcceptsNativeSteer && generation && (
+        generation.attemptEpoch !== input.expectedAttemptEpoch
+        || generation.controlVersion !== input.expectedControlVersion
+      )) {
+        throw conflict("The targeted chat generation control version changed");
+      }
+      const item = await tx
+        .select()
+        .from(chatQueuedMessages)
+        .where(
+          and(
+            eq(chatQueuedMessages.id, input.itemId),
+            eq(chatQueuedMessages.orgId, input.orgId),
+            eq(chatQueuedMessages.conversationId, input.conversationId),
+            inArray(chatQueuedMessages.status, ["queued", "steer_pending"]),
+          ),
+        )
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (!item) throw conflict("Queued feedback is no longer steerable");
+
+      const now = new Date();
+      if (!generationAcceptsNativeSteer) {
+        const [action] = await tx
+          .insert(chatControlActions)
+          .values({
+            id: input.controlActionId,
+            orgId: input.orgId,
+            expectedGenerationId: generation?.id ?? null,
+            expectedAttemptEpoch: generation?.attemptEpoch ?? null,
+            expectedControlVersion: generation?.controlVersion ?? null,
+            actionKind: "steer",
+            localDisposition: "continuation_pending",
+            providerDisposition: "not_sent",
+            providerClientMessageId: input.controlActionId,
+            resolvedAt: now,
+          })
+          .returning();
+        if (!action) throw new Error("Failed to persist Steer continuation action");
+        const [updatedItem] = await tx
+          .update(chatQueuedMessages)
+          .set({
+            status: "continuation_pending",
+            deliveryIntent: "steer",
+            deliveryDisposition: "continuation_pending",
+            controlActionId: action.id,
+            requestActor: item.requestActor ?? input.requestActor ?? null,
+            activeGenerationId: generation?.id ?? item.activeGenerationId,
+            attemptEpoch: generation?.attemptEpoch ?? item.attemptEpoch,
+            providerClientMessageId: action.providerClientMessageId,
+            reconciliationReason: generation ? "target_generation_terminal" : "target_generation_missing",
+            lastDeliveryReason: null,
+            version: sql`${chatQueuedMessages.version} + 1`,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(chatQueuedMessages.id, item.id),
+              eq(chatQueuedMessages.version, item.version),
+            ),
+          )
+          .returning();
+        if (!updatedItem) throw conflict("Queued feedback changed while continuation was being scheduled");
+        return {
+          action,
+          item: hydrateQueuedMessage(updatedItem),
+          generation,
+          idempotent: false,
+        };
+      }
+
+      if (!generation) throw new Error("Expected a native Steer generation");
+      const appliedControlVersion = generation.controlVersion + 1;
+      const [action] = await tx
+        .insert(chatControlActions)
+        .values({
+          id: input.controlActionId,
+          orgId: input.orgId,
+          expectedGenerationId: generation.id,
+          expectedAttemptEpoch: generation.attemptEpoch,
+          expectedControlVersion: generation.controlVersion,
+          appliedControlVersion,
+          actionKind: "steer",
+          localDisposition: "pending",
+          providerDisposition: "not_sent",
+          controlOwnerToken: generation.controlOwnerToken,
+          providerClientMessageId: input.controlActionId,
+        })
+        .returning();
+      if (!action) throw new Error("Failed to create chat Steer control action");
+      const [updatedGeneration] = await tx
+        .update(chatGenerations)
+        .set({ controlVersion: appliedControlVersion, updatedAt: now })
+        .where(
+          and(
+            eq(chatGenerations.id, generation.id),
+            eq(chatGenerations.controlVersion, generation.controlVersion),
+            eq(chatGenerations.attemptEpoch, generation.attemptEpoch),
+          ),
+        )
+        .returning();
+      if (!updatedGeneration) throw conflict("The targeted chat generation control version changed");
+      const [updatedItem] = await tx
+        .update(chatQueuedMessages)
+        .set({
+          status: "steer_pending",
+          deliveryIntent: "steer",
+          deliveryDisposition: "pending",
+          controlActionId: action.id,
+          requestActor: item.requestActor ?? input.requestActor ?? null,
+          activeGenerationId: generation.id,
+          attemptEpoch: generation.attemptEpoch,
+          providerClientMessageId: action.providerClientMessageId,
+          deliveryAttempts: sql`${chatQueuedMessages.deliveryAttempts} + 1`,
+          lastAttemptAt: now,
+          lastDeliveryReason: null,
+          version: sql`${chatQueuedMessages.version} + 1`,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(chatQueuedMessages.id, item.id),
+            eq(chatQueuedMessages.version, item.version),
+          ),
+        )
+        .returning();
+      if (!updatedItem) throw conflict("Queued feedback changed while Steer was being accepted");
+      return {
+        action,
+        item: hydrateQueuedMessage(updatedItem),
+        generation: updatedGeneration,
+        idempotent: false,
+      };
+    });
+  }
+
+  async function resolveSteerControlAction(input: {
+    orgId: string;
+    conversationId: string;
+    itemId: string;
+    controlActionId: string;
+    status: Extract<ChatQueuedMessageStatus,
+      "steer_pending" | "accepted_current" | "acceptance_unknown" | "continuation_pending" | "failed_actionable">;
+    disposition: Extract<ChatControlDisposition,
+      "pending" | "accepted_current" | "acceptance_unknown" | "continuation_pending" | "failed_actionable">;
+    providerDisposition: ChatProviderControlDisposition;
+    providerThreadId?: string | null;
+    providerTurnId?: string | null;
+    providerEvidence?: Record<string, unknown> | null;
+    reason?: string | null;
+  }) {
+    const now = new Date();
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`
+        select ${chatControlActions.id}
+        from ${chatControlActions}
+        where ${chatControlActions.id} = ${input.controlActionId}
+          and ${chatControlActions.orgId} = ${input.orgId}
+        for update
+      `);
+      await tx.execute(sql`
+        select ${chatQueuedMessages.id}
+        from ${chatQueuedMessages}
+        where ${chatQueuedMessages.id} = ${input.itemId}
+          and ${chatQueuedMessages.orgId} = ${input.orgId}
+          and ${chatQueuedMessages.conversationId} = ${input.conversationId}
+        for update
+      `);
+      const existingAction = await tx
+        .select()
+        .from(chatControlActions)
+        .where(and(
+          eq(chatControlActions.id, input.controlActionId),
+          eq(chatControlActions.orgId, input.orgId),
+          eq(chatControlActions.actionKind, "steer"),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      const existingItem = await tx
+        .select()
+        .from(chatQueuedMessages)
+        .where(and(
+          eq(chatQueuedMessages.id, input.itemId),
+          eq(chatQueuedMessages.orgId, input.orgId),
+          eq(chatQueuedMessages.conversationId, input.conversationId),
+          eq(chatQueuedMessages.controlActionId, input.controlActionId),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (!existingAction) throw notFound("Chat Steer control action not found");
+      if (!existingItem) throw notFound("Queued Steer feedback not found");
+
+      const allowedCurrentStatuses: ChatQueuedMessageStatus[] = input.status === "accepted_current"
+        ? ["steer_pending", "acceptance_unknown", "accepted_current"]
+        : input.status === "acceptance_unknown"
+          ? ["steer_pending", "acceptance_unknown"]
+          : input.status === "continuation_pending"
+            ? ["steer_pending", "acceptance_unknown", "continuation_pending"]
+            : input.status === "steer_pending"
+              ? ["steer_pending"]
+              : ["steer_pending", "acceptance_unknown", "continuation_pending", "failed_actionable"];
+      const transitionAllowed = allowedCurrentStatuses.includes(existingItem.status);
+      const preserveAcknowledgement = existingAction.providerDisposition === "acknowledged"
+        && input.providerDisposition !== "acknowledged";
+      const providerDisposition = preserveAcknowledgement
+        ? existingAction.providerDisposition
+        : input.providerDisposition;
+
+      const [action] = await tx
+        .update(chatControlActions)
+        .set({
+          localDisposition: transitionAllowed ? input.disposition : existingAction.localDisposition,
+          providerDisposition,
+          providerThreadId: input.providerThreadId ?? existingAction.providerThreadId,
+          providerTurnId: input.providerTurnId ?? existingAction.providerTurnId,
+          providerEvidence: input.providerEvidence ?? existingAction.providerEvidence,
+          lastError: transitionAllowed ? input.reason ?? null : existingAction.lastError,
+          providerSentAt: providerDisposition === "not_sent"
+            ? null
+            : existingAction.providerSentAt ?? now,
+          providerAcknowledgedAt: providerDisposition === "acknowledged"
+            ? existingAction.providerAcknowledgedAt ?? now
+            : existingAction.providerAcknowledgedAt,
+          resolvedAt: transitionAllowed
+            ? input.disposition === "pending" ? null : now
+            : existingAction.resolvedAt,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(chatControlActions.id, input.controlActionId),
+            eq(chatControlActions.orgId, input.orgId),
+            eq(chatControlActions.actionKind, "steer"),
+          ),
+        )
+        .returning();
+      if (!action) throw notFound("Chat Steer control action not found");
+      if (!transitionAllowed) {
+        return { action, item: hydrateQueuedMessage(existingItem), applied: false };
+      }
+      const [item] = await tx
+        .update(chatQueuedMessages)
+        .set({
+          status: input.status,
+          deliveryDisposition: input.disposition,
+          providerThreadId: input.providerThreadId ?? existingItem.providerThreadId,
+          providerTurnId: input.providerTurnId ?? existingItem.providerTurnId,
+          providerEvidence: input.providerEvidence ?? existingItem.providerEvidence,
+          reconciliationReason: input.reason ?? null,
+          lastDeliveryReason: input.reason ?? null,
+          steeredAt: input.status === "accepted_current" ? now : existingItem.steeredAt,
+          version: sql`${chatQueuedMessages.version} + 1`,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(chatQueuedMessages.id, existingItem.id),
+          eq(chatQueuedMessages.status, existingItem.status),
+          eq(chatQueuedMessages.version, existingItem.version),
+        ))
+        .returning();
+      if (!item) throw conflict("Queued Steer feedback changed while provider evidence was resolving");
+      return { action, item: hydrateQueuedMessage(item), applied: true };
+    });
+  }
+
+  async function claimSteerProviderSend(input: {
+    orgId: string;
+    controlActionId: string;
+  }) {
+    const now = new Date();
+    const [action] = await db
+      .update(chatControlActions)
+      .set({
+        providerDisposition: "sent",
+        providerSentAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(chatControlActions.id, input.controlActionId),
+          eq(chatControlActions.orgId, input.orgId),
+          eq(chatControlActions.actionKind, "steer"),
+          eq(chatControlActions.localDisposition, "pending"),
+          eq(chatControlActions.providerDisposition, "not_sent"),
+        ),
+      )
+      .returning();
+    return action ?? null;
   }
 
   async function createQueuedMessage(input: {
@@ -788,6 +1506,7 @@ export function chatService(db: Db) {
     clientMutationId: string;
     payload: ChatQueuedMessagePayload;
     expectedGenerationId?: string | null;
+    requestActor?: ChatQueueRequestActor | null;
   }) {
     const payload = {
       ...input.payload,
@@ -835,6 +1554,7 @@ export function chatService(db: Db) {
               clientMutationId: input.clientMutationId,
               position: Number(positionRow?.nextPosition ?? 1),
               payload,
+              requestActor: input.requestActor ?? null,
               expectedGenerationId: input.expectedGenerationId ?? null,
             })
             .returning();
@@ -913,6 +1633,130 @@ export function chatService(db: Db) {
     return hydrateQueuedMessage(row);
   }
 
+  async function scheduleSteerContinuation(input: {
+    orgId: string;
+    conversationId: string;
+    itemId: string;
+    controlActionId: string;
+    requestActor?: ChatQueueRequestActor | null;
+  }) {
+    return db.transaction(async (tx) => {
+      const existingAction = await tx
+        .select()
+        .from(chatControlActions)
+        .where(and(
+          eq(chatControlActions.id, input.controlActionId),
+          eq(chatControlActions.orgId, input.orgId),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (existingAction) {
+        const existingItem = await tx
+          .select()
+          .from(chatQueuedMessages)
+          .where(and(
+            eq(chatQueuedMessages.id, input.itemId),
+            eq(chatQueuedMessages.orgId, input.orgId),
+            eq(chatQueuedMessages.conversationId, input.conversationId),
+            eq(chatQueuedMessages.controlActionId, existingAction.id),
+          ))
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+        if (!existingItem || existingAction.actionKind !== "steer") {
+          throw conflict("Control action id was already used for a different operation");
+        }
+        return {
+          action: existingAction,
+          item: hydrateQueuedMessage(existingItem),
+          idempotent: true,
+        };
+      }
+
+      await tx.execute(
+        sql`select id from ${chatQueuedMessages} where ${chatQueuedMessages.id} = ${input.itemId} for update`,
+      );
+      const item = await tx
+        .select()
+        .from(chatQueuedMessages)
+        .where(and(
+          eq(chatQueuedMessages.id, input.itemId),
+          eq(chatQueuedMessages.orgId, input.orgId),
+          eq(chatQueuedMessages.conversationId, input.conversationId),
+          inArray(chatQueuedMessages.status, ["queued", "steer_pending", "continuation_pending"]),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (!item) throw conflict("Queued feedback is no longer schedulable");
+
+      const targetGenerationId = item.expectedGenerationId ?? item.activeGenerationId;
+      const targetGeneration = targetGenerationId
+        ? await tx
+          .select()
+          .from(chatGenerations)
+          .where(and(
+            eq(chatGenerations.id, targetGenerationId),
+            eq(chatGenerations.orgId, input.orgId),
+            eq(chatGenerations.conversationId, input.conversationId),
+          ))
+          .limit(1)
+          .then((rows) => rows[0] ?? null)
+        : await tx
+          .select()
+          .from(chatGenerations)
+          .where(and(
+            eq(chatGenerations.orgId, input.orgId),
+            eq(chatGenerations.conversationId, input.conversationId),
+          ))
+          .orderBy(desc(chatGenerations.startedAt), desc(chatGenerations.createdAt))
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+      const now = new Date();
+      const [action] = await tx
+        .insert(chatControlActions)
+        .values({
+          id: input.controlActionId,
+          orgId: input.orgId,
+          expectedGenerationId: targetGeneration?.id ?? null,
+          expectedAttemptEpoch: targetGeneration?.attemptEpoch ?? null,
+          expectedControlVersion: targetGeneration?.controlVersion ?? null,
+          actionKind: "steer",
+          localDisposition: "continuation_pending",
+          providerDisposition: "not_sent",
+          providerClientMessageId: input.controlActionId,
+          resolvedAt: now,
+        })
+        .returning();
+      if (!action) throw new Error("Failed to persist Steer continuation action");
+      const [updatedItem] = await tx
+        .update(chatQueuedMessages)
+        .set({
+          status: "continuation_pending",
+          deliveryIntent: "steer",
+          deliveryDisposition: "continuation_pending",
+          controlActionId: action.id,
+          requestActor: item.requestActor ?? input.requestActor ?? null,
+          activeGenerationId: targetGeneration?.id ?? item.activeGenerationId,
+          attemptEpoch: targetGeneration?.attemptEpoch ?? item.attemptEpoch,
+          providerClientMessageId: action.providerClientMessageId,
+          reconciliationReason: targetGeneration ? "target_generation_terminal" : "no_active_generation",
+          lastDeliveryReason: null,
+          version: sql`${chatQueuedMessages.version} + 1`,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(chatQueuedMessages.id, item.id),
+          eq(chatQueuedMessages.version, item.version),
+        ))
+        .returning();
+      if (!updatedItem) throw conflict("Queued feedback changed while continuation was being scheduled");
+      return {
+        action,
+        item: hydrateQueuedMessage(updatedItem),
+        idempotent: false,
+      };
+    });
+  }
+
   async function markQueuedMessageSteerFallback(input: {
     conversationId: string;
     itemId: string;
@@ -941,6 +1785,426 @@ export function chatService(db: Db) {
       .returning();
     if (!row) throw conflict("Queued message was changed or is no longer steerable");
     return hydrateQueuedMessage(row);
+  }
+
+  async function claimNextServerQueuedMessage(input: {
+    workerId: string;
+    leaseMs: number;
+    now?: Date;
+  }): Promise<ChatServerQueueClaim | null> {
+    const now = input.now ?? new Date();
+    const leaseExpiresAt = new Date(now.getTime() + input.leaseMs);
+    return db.transaction(async (tx) => {
+      const batchSize = 25;
+      let scanOffset = 0;
+      while (true) {
+        const candidates = await tx
+        .select()
+        .from(chatQueuedMessages)
+        .where(and(
+          inArray(chatQueuedMessages.status, ["continuation_pending", "steer_pending", "queued"]),
+          or(
+            isNull(chatQueuedMessages.deliveryLeaseExpiresAt),
+            lt(chatQueuedMessages.deliveryLeaseExpiresAt, now),
+          ),
+          sql`${chatQueuedMessages.status} <> 'steer_pending' or coalesce((
+            select steer_action.provider_disposition
+            from ${chatControlActions} as steer_action
+            where steer_action.id = ${chatQueuedMessages.controlActionId}
+            limit 1
+          ), 'not_sent') in ('not_sent', 'rejected')`,
+        ))
+        .orderBy(
+          sql`case
+            when ${chatQueuedMessages.status} = 'continuation_pending' then 0
+            when ${chatQueuedMessages.status} = 'steer_pending' then 1
+            else 2
+          end`,
+          asc(chatQueuedMessages.position),
+          asc(chatQueuedMessages.createdAt),
+        )
+        .limit(batchSize)
+        .offset(scanOffset)
+        .for("update", { skipLocked: true });
+
+      for (const candidate of candidates) {
+        const latestGeneration = await tx
+          .select()
+          .from(chatGenerations)
+          .where(and(
+            eq(chatGenerations.orgId, candidate.orgId),
+            eq(chatGenerations.conversationId, candidate.conversationId),
+          ))
+          .orderBy(desc(chatGenerations.startedAt), desc(chatGenerations.createdAt))
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+        const isSteer = candidate.deliveryIntent === "steer"
+          || candidate.status === "steer_pending"
+          || candidate.status === "continuation_pending";
+        if (
+          latestGeneration
+          && ACTIVE_CHAT_GENERATION_STATUSES.some((status) => status === latestGeneration.status)
+        ) {
+          continue;
+        }
+        if (
+          candidate.status === "queued"
+          && latestGeneration
+          && latestGeneration.status !== "completed"
+        ) {
+          continue;
+        }
+        if (
+          isSteer
+          && latestGeneration
+          && ["failed", "control_lost", "interrupted_unverified"].includes(latestGeneration.status)
+        ) {
+          await tx
+            .update(chatQueuedMessages)
+            .set({
+              status: "failed_actionable",
+              deliveryDisposition: "failed_actionable",
+              reconciliationReason: `prior_generation_${latestGeneration.status}`,
+              lastDeliveryReason: `prior_generation_${latestGeneration.status}`,
+              updatedAt: now,
+              version: sql`${chatQueuedMessages.version} + 1`,
+            })
+            .where(eq(chatQueuedMessages.id, candidate.id));
+          if (candidate.controlActionId) {
+            await tx
+              .update(chatControlActions)
+              .set({
+                localDisposition: "failed_actionable",
+                lastError: `prior_generation_${latestGeneration.status}`,
+                resolvedAt: now,
+                updatedAt: now,
+              })
+              .where(eq(chatControlActions.id, candidate.controlActionId));
+          }
+          continue;
+        }
+
+        const generationId = randomUUID();
+        const leaseToken = randomUUID();
+        const leaseEpoch = candidate.deliveryLeaseEpoch + 1;
+        await tx.insert(chatGenerations).values({
+          id: generationId,
+          orgId: candidate.orgId,
+          conversationId: candidate.conversationId,
+          status: "active",
+          attemptEpoch: 0,
+          controlVersion: 0,
+          controlState: "unregistered",
+          controlOwnerToken: leaseToken,
+          controlLeaseExpiresAt: new Date(now.getTime() + CHAT_GENERATION_CONTROL_LEASE_MS),
+          startedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        let userMessageId = candidate.continuationMessageId;
+        if (userMessageId) {
+          const existingMessage = await tx
+            .select({ id: chatMessages.id })
+            .from(chatMessages)
+            .where(and(
+              eq(chatMessages.id, userMessageId),
+              eq(chatMessages.orgId, candidate.orgId),
+              eq(chatMessages.conversationId, candidate.conversationId),
+              eq(chatMessages.role, "user"),
+            ))
+            .limit(1)
+            .then((rows) => rows[0] ?? null);
+          if (!existingMessage) userMessageId = null;
+        }
+        if (!userMessageId) {
+          userMessageId = randomUUID();
+          await tx.insert(chatMessages).values({
+            id: userMessageId,
+            orgId: candidate.orgId,
+            conversationId: candidate.conversationId,
+            role: "user",
+            kind: "message",
+            status: "completed",
+            body: normalizeQueuedPayload(candidate.payload).body,
+            structuredPayload: null,
+            chatTurnId: randomUUID(),
+            turnVariant: 0,
+            createdAt: now,
+            updatedAt: now,
+          });
+          await tx
+            .update(chatConversations)
+            .set({ lastMessageAt: now, updatedAt: now })
+            .where(and(
+              eq(chatConversations.id, candidate.conversationId),
+              eq(chatConversations.orgId, candidate.orgId),
+            ));
+        }
+
+        const [claimed] = await tx
+          .update(chatQueuedMessages)
+          .set({
+            status: isSteer ? "running_next" : "dequeue_claimed",
+            deliveryDisposition: isSteer ? "running_next" : null,
+            continuationGenerationId: generationId,
+            continuationMessageId: userMessageId,
+            sourceMessageId: userMessageId,
+            deliveredMessageId: userMessageId,
+            deliveryLeaseToken: leaseToken,
+            deliveryLeaseEpoch: leaseEpoch,
+            deliveryLeaseOwner: input.workerId,
+            deliveryLeaseExpiresAt: leaseExpiresAt,
+            dequeuedAt: now,
+            deliveryAttempts: sql`${chatQueuedMessages.deliveryAttempts} + 1`,
+            lastAttemptAt: now,
+            lastDeliveryReason: null,
+            reconciliationReason: "server_claimed",
+            version: sql`${chatQueuedMessages.version} + 1`,
+            updatedAt: now,
+          })
+          .where(and(
+            eq(chatQueuedMessages.id, candidate.id),
+            eq(chatQueuedMessages.version, candidate.version),
+          ))
+          .returning();
+        if (!claimed) throw conflict("Queued continuation changed while being claimed");
+        if (candidate.controlActionId) {
+          await tx
+            .update(chatControlActions)
+            .set({
+              localDisposition: "running_next",
+              resolvedAt: null,
+              updatedAt: now,
+            })
+            .where(and(
+              eq(chatControlActions.id, candidate.controlActionId),
+              eq(chatControlActions.orgId, candidate.orgId),
+            ));
+        }
+        return {
+          item: hydrateQueuedMessage(claimed),
+          generationId,
+          userMessageId,
+          leaseToken,
+          leaseEpoch,
+        };
+      }
+        if (candidates.length < batchSize) return null;
+        scanOffset += candidates.length;
+      }
+    });
+  }
+
+  async function renewServerQueuedMessageClaim(input: {
+    itemId: string;
+    generationId: string;
+    leaseToken: string;
+    leaseEpoch: number;
+    leaseMs: number;
+    now?: Date;
+  }) {
+    const now = input.now ?? new Date();
+    const [row] = await db
+      .update(chatQueuedMessages)
+      .set({
+        deliveryLeaseExpiresAt: new Date(now.getTime() + input.leaseMs),
+        updatedAt: now,
+      })
+      .where(and(
+        eq(chatQueuedMessages.id, input.itemId),
+        eq(chatQueuedMessages.continuationGenerationId, input.generationId),
+        eq(chatQueuedMessages.deliveryLeaseToken, input.leaseToken),
+        eq(chatQueuedMessages.deliveryLeaseEpoch, input.leaseEpoch),
+        inArray(chatQueuedMessages.status, SERVER_QUEUE_RUNNING_STATUSES),
+      ))
+      .returning({ id: chatQueuedMessages.id });
+    return Boolean(row);
+  }
+
+  async function completeServerQueuedMessageDelivery(input: {
+    itemId: string;
+    generationId: string;
+    leaseToken: string;
+    leaseEpoch: number;
+    status: "completed" | "failed" | "stopped" | "aborted";
+    reason?: string | null;
+  }) {
+    const now = new Date();
+    return db.transaction(async (tx) => {
+      const item = await tx
+        .select()
+        .from(chatQueuedMessages)
+        .where(and(
+          eq(chatQueuedMessages.id, input.itemId),
+          eq(chatQueuedMessages.continuationGenerationId, input.generationId),
+          eq(chatQueuedMessages.deliveryLeaseToken, input.leaseToken),
+          eq(chatQueuedMessages.deliveryLeaseEpoch, input.leaseEpoch),
+          inArray(chatQueuedMessages.status, SERVER_QUEUE_RUNNING_STATUSES),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (!item) return null;
+      const isSteer = item.deliveryIntent === "steer" || item.status === "running_next";
+      const succeeded = input.status === "completed";
+      const nextStatus = succeeded
+        ? (isSteer ? "delivered" : "completed")
+        : "failed_actionable";
+      const nextDisposition = succeeded
+        ? (isSteer ? "delivered" : null)
+        : "failed_actionable";
+      const [updated] = await tx
+        .update(chatQueuedMessages)
+        .set({
+          status: nextStatus,
+          deliveryDisposition: nextDisposition,
+          deliveryLeaseToken: null,
+          deliveryLeaseOwner: null,
+          deliveryLeaseExpiresAt: null,
+          lastDeliveryReason: succeeded ? null : (input.reason ?? input.status),
+          reconciliationReason: succeeded ? null : (input.reason ?? input.status),
+          version: sql`${chatQueuedMessages.version} + 1`,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(chatQueuedMessages.id, item.id),
+          eq(chatQueuedMessages.version, item.version),
+        ))
+        .returning();
+      if (item.controlActionId) {
+        await tx
+          .update(chatControlActions)
+          .set({
+            localDisposition: nextDisposition ?? (succeeded ? "delivered" : "failed_actionable"),
+            lastError: succeeded ? null : (input.reason ?? input.status),
+            resolvedAt: now,
+            updatedAt: now,
+          })
+          .where(eq(chatControlActions.id, item.controlActionId));
+      }
+      return updated ? hydrateQueuedMessage(updated) : null;
+    });
+  }
+
+  async function releaseServerQueuedMessageClaim(input: {
+    itemId: string;
+    generationId: string;
+    leaseToken: string;
+    leaseEpoch: number;
+    reason: string;
+  }) {
+    const now = new Date();
+    return db.transaction(async (tx) => {
+      const item = await tx
+        .select()
+        .from(chatQueuedMessages)
+        .where(and(
+          eq(chatQueuedMessages.id, input.itemId),
+          eq(chatQueuedMessages.continuationGenerationId, input.generationId),
+          eq(chatQueuedMessages.deliveryLeaseToken, input.leaseToken),
+          eq(chatQueuedMessages.deliveryLeaseEpoch, input.leaseEpoch),
+          inArray(chatQueuedMessages.status, SERVER_QUEUE_RUNNING_STATUSES),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (!item) return null;
+      const generation = await tx
+        .select()
+        .from(chatGenerations)
+        .where(eq(chatGenerations.id, input.generationId))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      const providerMayHaveStarted = Boolean(generation && (
+        generation.attemptEpoch > 0
+        || generation.status === "starting"
+        || generation.status === "running"
+        || generation.status === "tool_busy"
+        || generation.status === "closing"
+      ));
+      const isSteer = item.deliveryIntent === "steer" || item.status === "running_next";
+      const nextStatus = providerMayHaveStarted
+        ? (isSteer ? "acceptance_unknown" : "failed_actionable")
+        : (isSteer ? "continuation_pending" : "queued");
+      const nextDisposition = providerMayHaveStarted
+        ? (isSteer ? "acceptance_unknown" : "failed_actionable")
+        : (isSteer ? "continuation_pending" : null);
+      const [updated] = await tx
+        .update(chatQueuedMessages)
+        .set({
+          status: nextStatus,
+          deliveryDisposition: nextDisposition,
+          continuationGenerationId: null,
+          deliveryLeaseToken: null,
+          deliveryLeaseOwner: null,
+          deliveryLeaseExpiresAt: null,
+          lastDeliveryReason: input.reason,
+          reconciliationReason: input.reason,
+          version: sql`${chatQueuedMessages.version} + 1`,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(chatQueuedMessages.id, item.id),
+          eq(chatQueuedMessages.version, item.version),
+        ))
+        .returning();
+      if (generation) {
+        await tx
+          .update(chatGenerations)
+          .set({
+            status: "aborted",
+            terminalReason: input.reason,
+            controlState: providerMayHaveStarted ? "control_lost" : "terminal",
+            runtimeTerminalAt: now,
+            completedAt: now,
+            updatedAt: now,
+          })
+          .where(eq(chatGenerations.id, generation.id));
+      }
+      if (item.controlActionId) {
+        await tx
+          .update(chatControlActions)
+          .set({
+            localDisposition: nextDisposition ?? "pending",
+            providerDisposition: providerMayHaveStarted ? "unverified" : "not_sent",
+            lastError: input.reason,
+            resolvedAt: providerMayHaveStarted ? now : null,
+            updatedAt: now,
+          })
+          .where(eq(chatControlActions.id, item.controlActionId));
+      }
+      return updated ? hydrateQueuedMessage(updated) : null;
+    });
+  }
+
+  async function recoverExpiredServerQueueClaims(now = new Date()) {
+    const expired = await db
+      .select({
+        id: chatQueuedMessages.id,
+        generationId: chatQueuedMessages.continuationGenerationId,
+        leaseToken: chatQueuedMessages.deliveryLeaseToken,
+        leaseEpoch: chatQueuedMessages.deliveryLeaseEpoch,
+      })
+      .from(chatQueuedMessages)
+      .where(and(
+        inArray(chatQueuedMessages.status, SERVER_QUEUE_RUNNING_STATUSES),
+        lt(chatQueuedMessages.deliveryLeaseExpiresAt, now),
+      ));
+    let requeued = 0;
+    let ambiguous = 0;
+    for (const row of expired) {
+      if (!row.generationId || !row.leaseToken) continue;
+      const recovered = await releaseServerQueuedMessageClaim({
+        itemId: row.id,
+        generationId: row.generationId,
+        leaseToken: row.leaseToken,
+        leaseEpoch: row.leaseEpoch,
+        reason: "server_continuation_lease_expired",
+      });
+      if (!recovered) continue;
+      if (recovered.status === "continuation_pending" || recovered.status === "queued") requeued += 1;
+      else ambiguous += 1;
+    }
+    return { inspected: expired.length, requeued, ambiguous };
   }
 
   async function claimNextQueuedMessage(conversationId: string) {
@@ -2812,6 +4076,7 @@ export function chatService(db: Db) {
   }
 
   return {
+    generationProtocol,
     list,
     listSummaries,
     listPinnedSummaries,
@@ -2829,6 +4094,11 @@ export function chatService(db: Db) {
     markUnread,
     setPinned,
     createGeneration,
+    beginGenerationControlAttempt,
+    markGenerationControlReady,
+    renewGenerationControlLease,
+    markGenerationControlAttemptCompleted,
+    appendGenerationEvent,
     markGenerationTerminal,
     getLatestActiveGeneration,
     getLatestGeneration,
@@ -2837,7 +4107,16 @@ export function chatService(db: Db) {
     createQueuedMessage,
     updateQueuedMessage,
     cancelQueuedMessage,
+    scheduleSteerContinuation,
     markQueuedMessageSteerFallback,
+    beginSteerControlAction,
+    claimSteerProviderSend,
+    resolveSteerControlAction,
+    claimNextServerQueuedMessage,
+    renewServerQueuedMessageClaim,
+    completeServerQueuedMessageDelivery,
+    releaseServerQueuedMessageClaim,
+    recoverExpiredServerQueueClaims,
     claimNextQueuedMessage,
     releaseQueuedMessageClaim,
     assertQueuedMessageClaimedForDelivery,
