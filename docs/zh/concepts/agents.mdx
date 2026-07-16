@@ -58,6 +58,8 @@ Heartbeat 主要有两种执行方式：
 
 这些工具是自动配置的 runtime 基础设施，不是 custom integration。Rudder 会准备工具配置和 run 身份，operator 不需要手动连接或配置。Runtime 无法使用 managed tool surface 时，内置的 `rudder` CLI skill 仍可作为 fallback。
 
+Tool 可见不代表绕过产品权限。调用仍然限制在当前 organization 和 run，并继续经过正常 permission、ownership check 和 approval gate。Rudder managed run 也不会自动继承任意 user 或 provider MCP server。
+
 不同 adapter 的能力不同。不要假设远程或不受支持的 runtime 可以控制本地 Desktop 浏览器，或拥有与受支持本地 runtime 相同的 managed tools。
 
 ## Heartbeat

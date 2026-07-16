@@ -59,6 +59,11 @@ Supported local runtimes receive Rudder-managed tools for working with issues, r
 
 These tools are automatic runtime infrastructure, not custom integrations. Rudder prepares their configuration and run identity; operators do not manually connect or configure them. The bundled `rudder` CLI skill remains the fallback when a runtime cannot use the managed tool surface.
 
+Tool visibility does not bypass product authority. Calls remain scoped to the
+current organization and run and continue through the normal permissions,
+ownership checks, and approval gates. Rudder-managed runs do not automatically
+inherit arbitrary user or provider MCP servers.
+
 Capabilities vary by adapter. Remote and unsupported runtimes should not be assumed to have local Desktop Browser control or the same managed tools as a supported local runtime.
 
 ## Heartbeats

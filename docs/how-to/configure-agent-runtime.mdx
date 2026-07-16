@@ -74,7 +74,7 @@ Use a local CLI runtime for Codex, Claude Code, Gemini CLI, OpenCode, Pi, or Cur
 4. Add an agent instructions file if this agent needs a role-specific markdown file.
 5. Configure runtime-specific options.
 6. Run the environment test.
-7. Assign the agent a low-risk issue and run one heartbeat.
+7. Run one low-risk Chat turn, or assign a low-risk issue and run one heartbeat.
 
 The instructions file should be an absolute path, for example:
 
@@ -140,6 +140,12 @@ For supported local runtimes, Rudder automatically prepares its first-party cont
 - The bundled `rudder` CLI skill remains the fallback when managed tools are unavailable.
 
 These tools cover Rudder control-plane operations such as issues, runs, Chat, automations, Library files, approvals, skills, and agents. In a Desktop `local_trusted` deployment, supported local runs can also receive [Built-in Browser](/concepts/built-in-browser) tools when that instance capability is enabled.
+
+Seeing a managed tool does not grant new authority. Every call stays scoped to
+the current organization and run and still passes the normal permission,
+ownership, and approval checks for that action. Rudder also does not
+automatically inherit arbitrary user or provider MCP servers into this managed
+run surface.
 
 Tool availability is runtime-specific. Remote, gateway, generic process, and unsupported runtimes do not inherit a promise of managed tools or local Desktop Browser control. Use the environment test and a real run as evidence for the runtime you selected.
 
@@ -236,11 +242,11 @@ Use a fixed session for a long-lived operator identity. Use per-issue or per-run
 
 Use the built-in environment test before assigning real work. It catches missing commands, invalid working directories, malformed URLs, and basic connectivity problems.
 
-A passing environment test is not the final proof. It only means Rudder can plausibly launch or contact the runtime. The real proof is one heartbeat that leaves inspectable evidence:
+A passing environment test is not the final proof. It only means Rudder can plausibly launch or contact the runtime. The real proof is one Chat turn or issue heartbeat that leaves inspectable evidence:
 
 - the run starts under the expected runtime
 - transcript entries or raw output appear on the run
-- the issue receives a progress, blocked, review, or done signal
+- the source Chat or issue receives a visible result, progress, blocked, review, or done signal
 - the agent does not need credentials or permissions that only exist in your interactive shell
 
 ## Operational checklist
@@ -253,7 +259,7 @@ Before you rely on the runtime for recurring work, confirm:
 - model and instruction settings match the work
 - broad permissions are enabled only for trusted agents
 - the environment test passes, or each warning is understood
-- the first real heartbeat leaves transcript or issue evidence
+- the first real Chat turn or issue heartbeat leaves evidence on the source Chat or issue
 
 ## Next steps
 
