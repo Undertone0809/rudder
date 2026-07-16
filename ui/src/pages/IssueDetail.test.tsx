@@ -667,7 +667,7 @@ describe("IssueDetail", () => {
     expect(html).toContain("issue-pa");
   });
 
-  it("keeps the description display-first before focus", () => {
+  it("keeps the description in the Library-style WYSIWYG editor", () => {
     renderToStaticMarkup(<IssueDetail />);
 
     const descriptionEditorProps = capturedInlineEditorProps.find(
@@ -676,9 +676,9 @@ describe("IssueDetail", () => {
     expect(descriptionEditorProps).toMatchObject({
       multiline: true,
       editorEngine: "milkdown",
+      alwaysEdit: true,
       variant: "issue-description",
     });
-    expect(descriptionEditorProps?.alwaysEdit).toBeUndefined();
   });
 
   it("renders linked Library files with a stable icon affordance", () => {

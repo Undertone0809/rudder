@@ -62,12 +62,30 @@ contracts:
       - ui/src/pages/Issues.tsx
     related_tests:
       - ui/src/components/InlineEditor.test.tsx
+      - ui/src/components/MilkdownMarkdownEditor.test.ts
       - ui/src/pages/IssueDetail.test.tsx
       - tests/e2e/codex-model-order.spec.ts
       - tests/e2e/issue-detail-toolbar-actions.spec.ts
       - tests/e2e/issue-board-display-properties.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+  ISSUE.DESCRIPTION.001:
+    owner: product
+    domain: issues
+    spec_depth: compact
+    docs:
+      - doc/product/domains/issues/surfaces.md
+    related_code:
+      - ui/src/components/InlineEditor.tsx
+      - ui/src/components/MarkdownEditor.tsx
+      - ui/src/components/MilkdownMarkdownEditor.tsx
+      - ui/src/pages/IssueDetail.tsx
+      - ui/src/pages/Chat.side-panel.tsx
+    related_tests:
+      - ui/src/components/InlineEditor.test.tsx
+      - ui/src/components/MilkdownMarkdownEditor.test.ts
+      - ui/src/pages/IssueDetail.test.tsx
+      - tests/e2e/issue-description-image-preview.spec.ts
   RUN.WAKEUP.001:
     owner: product
     domain: execution

@@ -32,8 +32,40 @@ import {
   rudderTokenNavigationPath,
   shouldActivateMilkdownInlineTokenClick,
   shouldCopySelectionAsMarkdown,
+  shouldHandleMilkdownDocumentEnter,
+  shouldInsertMilkdownParagraph,
   shouldParsePastedMarkdown,
+  shouldSubmitMilkdownMarkdown,
 } from "./MilkdownMarkdownEditor";
+
+describe("shouldSubmitMilkdownMarkdown", () => {
+  const plainEnter = {
+    altKey: false,
+    ctrlKey: false,
+    key: "Enter",
+    metaKey: false,
+    shiftKey: false,
+  };
+
+  it("keeps plain Enter and Shift+Enter inside document editors", () => {
+    expect(shouldSubmitMilkdownMarkdown("mod-enter", plainEnter)).toBe(false);
+    expect(shouldSubmitMilkdownMarkdown("mod-enter", { ...plainEnter, shiftKey: true })).toBe(false);
+    expect(shouldInsertMilkdownParagraph("mod-enter", plainEnter)).toBe(true);
+    expect(shouldInsertMilkdownParagraph("mod-enter", { ...plainEnter, shiftKey: true })).toBe(false);
+  });
+
+  it("submits mod-enter editors only with the platform modifier", () => {
+    expect(shouldSubmitMilkdownMarkdown("mod-enter", { ...plainEnter, metaKey: true })).toBe(true);
+    expect(shouldSubmitMilkdownMarkdown("mod-enter", { ...plainEnter, ctrlKey: true })).toBe(true);
+    expect(shouldInsertMilkdownParagraph("mod-enter", { ...plainEnter, metaKey: true })).toBe(false);
+    expect(shouldInsertMilkdownParagraph("mod-enter", plainEnter, true)).toBe(false);
+  });
+
+  it("leaves list Enter semantics to Milkdown", () => {
+    expect(shouldHandleMilkdownDocumentEnter(["doc", "paragraph"])).toBe(true);
+    expect(shouldHandleMilkdownDocumentEnter(["doc", "bullet_list", "list_item", "paragraph"])).toBe(false);
+  });
+});
 
 describe("isMilkdownEditableUnexpectedlyBlank", () => {
   it("detects a non-empty markdown document whose editable DOM came back empty", () => {

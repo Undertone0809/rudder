@@ -45,6 +45,8 @@ edit_policy: user_confirmed_only
   integration.
 - `ISSUE.SURFACE.001`: issue surfaces expose state and linked evidence without
   reauthoring cross-domain rules.
+- `ISSUE.DESCRIPTION.001`: issue descriptions remain one continuously editable
+  Library-style Markdown surface with document Enter behavior and image preview.
 
 ## Cross-Domain Integrations
 

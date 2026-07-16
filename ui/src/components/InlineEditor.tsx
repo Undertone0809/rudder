@@ -30,6 +30,10 @@ function eventTargetElement(target: EventTarget | null): HTMLElement | null {
   return null;
 }
 
+function isInteractiveMarkdownTarget(target: EventTarget | null): boolean {
+  return Boolean(eventTargetElement(target)?.closest("a, button, [role='button']"));
+}
+
 export function InlineEditor({
   value,
   onSave,
@@ -186,13 +190,14 @@ export function InlineEditor({
           if (!alwaysEdit) {
             setEditing(false);
           }
-          const trimmed = draft.trim();
+          const currentDraft = markdownRef.current?.getMarkdown?.() ?? draft;
+          const trimmed = currentDraft.trim();
           if (trimmed === value) {
             reset();
-            void commit();
+            void commit(currentDraft);
             return;
           }
-          void runSave(() => commit());
+          void runSave(() => commit(currentDraft));
         }}
         onKeyDown={handleKeyDown}
       >
@@ -208,14 +213,16 @@ export function InlineEditor({
           imageUploadHandler={imageUploadHandler}
           mentions={mentions}
           onMentionQueryChange={onMentionQueryChange}
+          submitShortcut="mod-enter"
           onSubmit={() => {
-            const trimmed = draft.trim();
+            const currentDraft = markdownRef.current?.getMarkdown?.() ?? draft;
+            const trimmed = currentDraft.trim();
             if (trimmed === value) {
               reset();
-              void commit();
+              void commit(currentDraft);
               return;
             }
-            void runSave(() => commit());
+            void runSave(() => commit(currentDraft));
           }}
         />
         <div className="flex min-h-4 items-center justify-end pr-1">
@@ -280,7 +287,7 @@ export function InlineEditor({
         !multiline && !value && "text-muted-foreground italic",
       )}
       onClick={(event) => {
-        if (eventTargetElement(event.target)?.closest("a")) return;
+        if (isInteractiveMarkdownTarget(event.target)) return;
         setEditing(true);
       }}
     >

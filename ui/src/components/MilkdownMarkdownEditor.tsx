@@ -6,9 +6,16 @@ import { history, redoCommand, undoCommand } from "@milkdown/kit/plugin/history"
 import { listener, listenerCtx } from "@milkdown/kit/plugin/listener";
 import { commonmark } from "@milkdown/kit/preset/commonmark";
 import { gfm } from "@milkdown/kit/preset/gfm";
+import {
+  chainCommands,
+  createParagraphNear,
+  liftEmptyBlock,
+  newlineInCode,
+  splitBlock,
+} from "@milkdown/kit/prose/commands";
 import { redoDepth, undoDepth } from "@milkdown/kit/prose/history";
 import { Plugin as ProsePlugin, TextSelection } from "@milkdown/kit/prose/state";
-import { Decoration, DecorationSet } from "@milkdown/kit/prose/view";
+import { Decoration, DecorationSet, type EditorView } from "@milkdown/kit/prose/view";
 import { $prose, getMarkdown, insert, replaceAll } from "@milkdown/kit/utils";
 import { Milkdown, MilkdownProvider, useEditor, useInstance } from "@milkdown/react";
 import {
@@ -76,6 +83,52 @@ export type MentionState = {
   atPos: number;
   endPos: number;
 };
+
+export function shouldSubmitMilkdownMarkdown(
+  submitShortcut: MarkdownEditorProps["submitShortcut"],
+  event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+) {
+  if (event.key !== "Enter") return false;
+  if (submitShortcut === "mod-enter") return event.metaKey || event.ctrlKey;
+  return submitShortcut === "enter"
+    && !event.shiftKey
+    && !event.ctrlKey
+    && !event.metaKey
+    && !event.altKey;
+}
+
+export function shouldInsertMilkdownParagraph(
+  submitShortcut: MarkdownEditorProps["submitShortcut"],
+  event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+  isComposing = false,
+) {
+  return submitShortcut === "mod-enter"
+    && event.key === "Enter"
+    && !event.shiftKey
+    && !event.ctrlKey
+    && !event.metaKey
+    && !event.altKey
+    && !isComposing;
+}
+
+export function runMilkdownDocumentEnter(view: EditorView) {
+  const { $from } = view.state.selection;
+  const ancestorNames = Array.from(
+    { length: $from.depth + 1 },
+    (_, depth) => $from.node(depth).type.name,
+  );
+  if (!shouldHandleMilkdownDocumentEnter(ancestorNames)) return false;
+  return chainCommands(
+    newlineInCode,
+    createParagraphNear,
+    liftEmptyBlock,
+    splitBlock,
+  )(view.state, (transaction) => view.dispatch(transaction), view);
+}
+
+export function shouldHandleMilkdownDocumentEnter(ancestorNames: readonly string[]) {
+  return !ancestorNames.includes("list_item");
+}
 
 type ProseMirrorTextNode = {
   isText?: boolean;
@@ -1123,6 +1176,8 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   const onBlurRef = useRef(onBlur);
   const imageUploadHandlerRef = useRef(imageUploadHandler);
   const mentionsRef = useRef<MentionOption[]>(decorationMentions);
+  const pendingParagraphInputRef = useRef(false);
+  const pendingParagraphInputClearTimerRef = useRef<number | null>(null);
   const [mentionState, setMentionState] = useState<MentionState | null>(null);
   const mentionStateRef = useRef<MentionState | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -1142,6 +1197,12 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
     imageUploadHandlerRef.current = imageUploadHandler;
   }, [imageUploadHandler, onBlur, onChange]);
 
+  useEffect(() => () => {
+    if (pendingParagraphInputClearTimerRef.current !== null) {
+      window.clearTimeout(pendingParagraphInputClearTimerRef.current);
+    }
+  }, []);
+
   const tokenDecorationsPlugin = useMemo(
     () => $prose(() => new ProsePlugin({
       props: {
@@ -1154,6 +1215,19 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
               return false;
             }
             if (inputEvent.inputType !== "insertText" || !inputEvent.data) return false;
+            if (pendingParagraphInputRef.current) {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              view.dispatch(view.state.tr.insertText(inputEvent.data));
+              if (pendingParagraphInputClearTimerRef.current !== null) {
+                window.clearTimeout(pendingParagraphInputClearTimerRef.current);
+              }
+              pendingParagraphInputClearTimerRef.current = window.setTimeout(() => {
+                pendingParagraphInputClearTimerRef.current = null;
+                pendingParagraphInputRef.current = false;
+              }, 250);
+              return true;
+            }
             const repaired = insertTextAfterRudderTokenBoundary(view as unknown as ProseMirrorView, inputEvent.data);
             if (!repaired) return false;
             event.preventDefault();
@@ -1183,6 +1257,11 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
           onChangeRef.current(markdown);
         });
         listenerManager.blur(() => {
+          if (pendingParagraphInputClearTimerRef.current !== null) {
+            window.clearTimeout(pendingParagraphInputClearTimerRef.current);
+            pendingParagraphInputClearTimerRef.current = null;
+          }
+          pendingParagraphInputRef.current = false;
           onBlurRef.current?.();
         });
       })
@@ -1525,17 +1604,48 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         className,
       )}
       onKeyDownCapture={(event) => {
-        const shouldSubmitOnModEnter =
-          submitShortcut === "mod-enter" && event.key === "Enter" && (event.metaKey || event.ctrlKey);
-        const shouldSubmitOnEnter =
-          submitShortcut === "enter"
-          && event.key === "Enter"
-          && !event.shiftKey
-          && !event.ctrlKey
-          && !event.metaKey
-          && !event.altKey;
-
-        if (onSubmit && (shouldSubmitOnModEnter || shouldSubmitOnEnter)) {
+        const editable = containerRef.current?.querySelector('[contenteditable="true"]');
+        const isEditorTarget = editable instanceof HTMLElement
+          && event.target instanceof Node
+          && editable.contains(event.target);
+        if (
+          isEditorTarget
+          && shouldInsertMilkdownParagraph(submitShortcut, event, event.nativeEvent.isComposing)
+        ) {
+          let handled = false;
+          const editor = loading ? get() : getInstance();
+          editor?.action((ctx) => {
+            const proseMirrorView = getMilkdownProseMirrorView(ctx);
+            if (!proseMirrorView) return;
+            const editorView = proseMirrorView as unknown as EditorView;
+            handled = runMilkdownDocumentEnter(editorView);
+          });
+          if (pendingParagraphInputClearTimerRef.current !== null) {
+            window.clearTimeout(pendingParagraphInputClearTimerRef.current);
+          }
+          pendingParagraphInputRef.current = handled;
+          pendingParagraphInputClearTimerRef.current = pendingParagraphInputRef.current
+            ? window.setTimeout(() => {
+                pendingParagraphInputClearTimerRef.current = null;
+                pendingParagraphInputRef.current = false;
+              }, 250)
+            : null;
+          if (handled) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        } else if (
+          pendingParagraphInputRef.current
+          && !isPrintableInputKey(event)
+          && !["Alt", "Control", "Meta", "Shift"].includes(event.key)
+        ) {
+          if (pendingParagraphInputClearTimerRef.current !== null) {
+            window.clearTimeout(pendingParagraphInputClearTimerRef.current);
+            pendingParagraphInputClearTimerRef.current = null;
+          }
+          pendingParagraphInputRef.current = false;
+        }
+        if (onSubmit && shouldSubmitMilkdownMarkdown(submitShortcut, event)) {
           event.preventDefault();
           event.stopPropagation();
           onSubmit();

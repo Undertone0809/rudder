@@ -5,10 +5,13 @@ status: active
 coverage: seed
 contract_ids:
   - ISSUE.SURFACE.001
+  - ISSUE.DESCRIPTION.001
 related_code:
   - packages/db/src/schema/issues.ts
   - packages/shared/src/validators/issue.ts
   - ui/src/components/InlineEditor.tsx
+  - ui/src/components/MarkdownEditor.tsx
+  - ui/src/components/MilkdownMarkdownEditor.tsx
   - ui/src/components/NewIssueDialog.tsx
   - ui/src/lib/new-issue-dialog.ts
   - ui/src/index.css
@@ -16,7 +19,9 @@ related_code:
   - ui/src/pages/Issues.tsx
 related_tests:
   - ui/src/components/InlineEditor.test.tsx
+  - ui/src/components/MilkdownMarkdownEditor.test.ts
   - ui/src/pages/IssueDetail.test.tsx
+  - tests/e2e/issue-description-image-preview.spec.ts
   - tests/e2e/codex-model-order.spec.ts
   - tests/e2e/issue-detail-toolbar-actions.spec.ts
   - tests/e2e/issue-board-display-properties.spec.ts
@@ -87,7 +92,58 @@ Related code:
 Related tests:
 
 - `ui/src/components/InlineEditor.test.tsx`
+- `ui/src/components/MilkdownMarkdownEditor.test.ts`
 - `ui/src/pages/IssueDetail.test.tsx`
 - `tests/e2e/codex-model-order.spec.ts`
 - `tests/e2e/issue-detail-toolbar-actions.spec.ts`
 - `tests/e2e/issue-board-display-properties.spec.ts`
+
+## ISSUE.DESCRIPTION.001
+
+Behavior:
+
+- Issue detail descriptions use the same continuously editable Milkdown
+  WYSIWYG Markdown surface as Library Markdown documents. The full Issue detail
+  and Messenger Issue detail must not swap to a separate read-only renderer
+  when the editor is unfocused.
+- Plain `Enter` inserts a paragraph in prose and keeps focus in the description;
+  inside a list item it creates a sibling list item. Other Markdown blocks
+  retain Milkdown's native document behavior so the Issue surface does not
+  override Library semantics. `Shift+Enter` is not required for ordinary
+  multiline writing; submission behavior must never be bound to plain `Enter`.
+- Inline Markdown images remain part of that stable editor surface. Double-clicking
+  an image opens the image preview without replacing or unmounting the editor.
+- Description changes autosave after editing and flush on blur. Entering a new
+  paragraph does not itself submit, close, or replace the description surface.
+
+Invariant:
+
+- Issue description must not regress to a display-first `MarkdownBody` state
+  that changes DOM, typography, spacing, or image behavior on click or focus.
+- Issue description submit handling must use `mod-enter` semantics when an
+  explicit shortcut is present, preserving plain `Enter` for document editing.
+- Full Issue detail and Messenger Issue detail share this interaction contract;
+  one surface must not carry a separate editor mode or keyboard model.
+
+Rationale:
+
+- An issue description is durable working context, not a compact message
+  composer. Operators should be able to read, continue writing, and inspect
+  visual evidence without first switching modes or relearning keyboard behavior.
+- Keeping one editor DOM removes the renderer handoff that previously caused
+  visible layout jumps and let parent click handling preempt image preview.
+
+Related code:
+
+- `ui/src/components/InlineEditor.tsx`
+- `ui/src/components/MarkdownEditor.tsx`
+- `ui/src/components/MilkdownMarkdownEditor.tsx`
+- `ui/src/pages/IssueDetail.tsx`
+- `ui/src/pages/Chat.side-panel.tsx`
+
+Related tests:
+
+- `ui/src/components/InlineEditor.test.tsx`
+- `ui/src/components/MilkdownMarkdownEditor.test.ts`
+- `ui/src/pages/IssueDetail.test.tsx`
+- `tests/e2e/issue-description-image-preview.spec.ts`
