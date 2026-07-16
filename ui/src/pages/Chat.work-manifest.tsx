@@ -124,14 +124,16 @@ function ManifestSection({
   label,
   icon,
   items,
-  hideHeader = false,
+  fixedHeader = false,
+  reserveActionSpace = false,
   onOpenItem,
   onJumpToMessage,
 }: {
   label: string;
   icon: ReactNode;
   items: ChatWorkManifestItem[];
-  hideHeader?: boolean;
+  fixedHeader?: boolean;
+  reserveActionSpace?: boolean;
   onOpenItem(item: ChatWorkManifestItem): void;
   onJumpToMessage(messageId: string): void;
 }) {
@@ -139,13 +141,14 @@ function ManifestSection({
   if (items.length === 0) return null;
   const visibleItems = expanded ? items : items.slice(0, COLLAPSED_ROWS);
   return (
-    <section aria-label={label}>
-      {hideHeader ? null : (
-        <div className="flex h-9 items-center gap-2 border-t border-border/70 bg-muted/25 px-3 text-[11px] font-semibold text-muted-foreground first:border-t-0">
-          {icon}
-          <span>{label}</span>
-          <span className="ml-auto tabular-nums">{items.length}</span>
-        </div>
+    <section aria-label={label} className={cn(!fixedHeader && "border-t border-border/70 first:border-t-0")}>
+      {fixedHeader ? null : (
+        <ManifestSectionHeader
+          label={label}
+          icon={icon}
+          count={items.length}
+          reserveActionSpace={reserveActionSpace}
+        />
       )}
       <div>
         {visibleItems.map((item) => (
@@ -171,14 +174,62 @@ function ManifestSection({
   );
 }
 
+function ManifestSectionHeader({
+  label,
+  icon,
+  count,
+  action,
+  reserveActionSpace = false,
+}: {
+  label: string;
+  icon: ReactNode;
+  count: number;
+  action?: ReactNode;
+  reserveActionSpace?: boolean;
+}) {
+  return (
+    <div
+      className="flex h-9 shrink-0 items-center gap-2 border-b border-border/55 bg-muted/25 px-3 text-[11px] font-semibold text-muted-foreground"
+      data-testid={`chat-work-manifest-section-header-${label.toLowerCase()}`}
+    >
+      {icon}
+      <span>{label}</span>
+      <span
+        className="ml-auto tabular-nums"
+        data-testid={`chat-work-manifest-section-count-${label.toLowerCase()}`}
+      >
+        {count}
+      </span>
+      {reserveActionSpace ? (
+        <span className="-mr-1 ml-1 flex size-7 shrink-0 items-center justify-center" aria-hidden={action ? undefined : true}>
+          {action}
+        </span>
+      ) : action}
+    </div>
+  );
+}
+
+function ManifestStatusHeader({ action }: { action?: ReactNode }) {
+  return (
+    <div className="flex h-9 shrink-0 items-center border-b border-border/70 px-3">
+      <span className="text-xs font-semibold text-foreground">Conversation items</span>
+      {action ? <span className="ml-auto flex">{action}</span> : null}
+    </div>
+  );
+}
+
 function ManifestContent({
   manifest,
   loading,
   error,
   onOpenItem,
   onJumpToMessage,
-  primaryLabel,
-}: Omit<ChatWorkManifestProps, "sidePanelOpen"> & { primaryLabel: string | null }) {
+  fixedSectionLabel,
+  reserveActionSpace = false,
+}: Omit<ChatWorkManifestProps, "sidePanelOpen"> & {
+  fixedSectionLabel: string | null;
+  reserveActionSpace?: boolean;
+}) {
   const scrollRef = useScrollbarActivityRef();
   if (loading) return null;
   if (error) return <div className="px-3 py-6 text-center text-xs text-destructive">{error}</div>;
@@ -196,7 +247,8 @@ function ManifestContent({
         label="Outputs"
         icon={<FileOutput className="size-3.5" aria-hidden="true" />}
         items={outputs}
-        hideHeader={primaryLabel === "Outputs"}
+        fixedHeader={fixedSectionLabel === "Outputs"}
+        reserveActionSpace={reserveActionSpace}
         onOpenItem={onOpenItem}
         onJumpToMessage={onJumpToMessage}
       />
@@ -204,7 +256,8 @@ function ManifestContent({
         label="Sources"
         icon={<Paperclip className="size-3.5" aria-hidden="true" />}
         items={sources}
-        hideHeader={primaryLabel === "Sources"}
+        fixedHeader={fixedSectionLabel === "Sources"}
+        reserveActionSpace={reserveActionSpace}
         onOpenItem={onOpenItem}
         onJumpToMessage={onJumpToMessage}
       />
@@ -212,7 +265,8 @@ function ManifestContent({
         label="References"
         icon={<Link2 className="size-3.5" aria-hidden="true" />}
         items={references}
-        hideHeader={primaryLabel === "References"}
+        fixedHeader={fixedSectionLabel === "References"}
+        reserveActionSpace={reserveActionSpace}
         onOpenItem={onOpenItem}
         onJumpToMessage={onJumpToMessage}
       />
@@ -226,22 +280,23 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
   const outputs = Array.isArray(props.manifest?.outputs) ? props.manifest.outputs : [];
   const sources = Array.isArray(props.manifest?.sources) ? props.manifest.sources : [];
   const references = Array.isArray(props.manifest?.references) ? props.manifest.references : [];
-  const primarySection = outputs.length > 0
-    ? { label: "Outputs", count: outputs.length }
+  const fixedSection = outputs.length > 0
+    ? { label: "Outputs", count: outputs.length, icon: <FileOutput className="size-3.5" aria-hidden="true" /> }
     : sources.length > 0
-      ? { label: "Sources", count: sources.length }
+      ? { label: "Sources", count: sources.length, icon: <Paperclip className="size-3.5" aria-hidden="true" /> }
       : references.length > 0
-        ? { label: "References", count: references.length }
+        ? { label: "References", count: references.length, icon: <Link2 className="size-3.5" aria-hidden="true" /> }
         : null;
-  const primaryLabel = primarySection?.label ?? null;
-  const panelTitle = primaryLabel ?? "Conversation items";
-  const panelHeader = (
-    <div className="flex h-10 shrink-0 items-center border-b border-border/70 px-3">
-      <span className="text-xs font-semibold text-foreground">{panelTitle}</span>
-      {primarySection ? (
-        <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{primarySection.count}</span>
-      ) : null}
-    </div>
+  const fixedSectionLabel = fixedSection?.label ?? null;
+  const closeCompactPanel = (
+    <button
+      type="button"
+      className="grid size-7 place-items-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+      onClick={() => setCompactOpen(false)}
+      aria-label="Close conversation files and links"
+    >
+      <X className="size-3.5" aria-hidden="true" />
+    </button>
   );
   return (
     <div className="pointer-events-none relative z-20 shrink-0" data-testid="chat-work-manifest">
@@ -259,11 +314,15 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
         data-testid="chat-work-manifest-wide-panel"
         data-state={props.wideOpen ? "open" : "closed"}
       >
-        {panelHeader}
+        {fixedSection ? (
+          <ManifestSectionHeader {...fixedSection} />
+        ) : (
+          <ManifestStatusHeader />
+        )}
         <ManifestContent
           key={`wide:${props.manifest?.conversationId ?? "error"}`}
           {...props}
-          primaryLabel={primaryLabel}
+          fixedSectionLabel={fixedSectionLabel}
         />
       </aside>
 
@@ -276,7 +335,7 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
         aria-controls="chat-work-manifest-compact-panel"
       >
         <ListFilter className="size-3.5" aria-hidden="true" />
-        {primarySection ? `${primarySection.label} ${primarySection.count}` : panelTitle}
+        {fixedSection ? `${fixedSection.label} ${fixedSection.count}` : "Conversation items"}
       </button>
       {compactOpen ? (
         <div
@@ -286,19 +345,16 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
           role="complementary"
           aria-label="Conversation files and links"
         >
-          <div className="flex h-10 shrink-0 items-center border-b border-border/70 px-3">
-            <span className="text-xs font-semibold">{panelTitle}</span>
-            {primarySection ? (
-              <span className="ml-1.5 text-[11px] tabular-nums text-muted-foreground">{primarySection.count}</span>
-            ) : null}
-            <button type="button" className="ml-auto grid size-7 place-items-center rounded-sm text-muted-foreground hover:bg-muted" onClick={() => setCompactOpen(false)} aria-label="Close conversation files and links">
-              <X className="size-3.5" aria-hidden="true" />
-            </button>
-          </div>
+          {fixedSection ? (
+            <ManifestSectionHeader {...fixedSection} action={closeCompactPanel} reserveActionSpace />
+          ) : (
+            <ManifestStatusHeader action={closeCompactPanel} />
+          )}
           <ManifestContent
             key={`compact:${props.manifest?.conversationId ?? "error"}`}
             {...props}
-            primaryLabel={primaryLabel}
+            fixedSectionLabel={fixedSectionLabel}
+            reserveActionSpace
           />
         </div>
       ) : null}

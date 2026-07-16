@@ -97,6 +97,11 @@ describe("ChatWorkManifest", () => {
     expect(container.querySelector("button[aria-label='Add source']")).toBeNull();
     expect(text).not.toContain("Work");
     expect(Array.from(container.querySelectorAll("span")).filter((element) => element.textContent === "Outputs")).toHaveLength(1);
+    const outputsHeader = container.querySelector("[data-testid='chat-work-manifest-section-header-outputs']");
+    const referencesHeader = container.querySelector("[data-testid='chat-work-manifest-section-header-references']");
+    expect(outputsHeader?.className).toBe(referencesHeader?.className);
+    expect(outputsHeader?.querySelector("svg")).not.toBeNull();
+    expect(referencesHeader?.querySelector("svg")).not.toBeNull();
     const shelf = container.querySelector("[data-testid='chat-work-manifest-wide-panel']");
     const scrollRegion = container.querySelector("[data-testid='chat-work-manifest-scroll-region']");
     expect(shelf?.className).toContain("max-h-[calc(100dvh-5rem)]");
@@ -191,9 +196,22 @@ describe("ChatWorkManifest", () => {
     const compactPanel = container.querySelector("[data-testid='chat-work-manifest-compact-panel']");
     expect(compactPanel?.textContent).toContain("Report.md");
     expect(compactPanel?.className).toContain("max-h-[calc(100dvh-6rem)]");
+    const compactOutputsHeader = compactPanel?.querySelector("[data-testid='chat-work-manifest-section-header-outputs']");
+    const compactReferencesHeader = compactPanel?.querySelector("[data-testid='chat-work-manifest-section-header-references']");
+    expect(compactOutputsHeader?.className).toBe(compactReferencesHeader?.className);
+    const compactOutputsActionSlot = compactOutputsHeader
+      ?.querySelector("[data-testid='chat-work-manifest-section-count-outputs']")
+      ?.nextElementSibling;
+    const compactReferencesActionSlot = compactReferencesHeader
+      ?.querySelector("[data-testid='chat-work-manifest-section-count-references']")
+      ?.nextElementSibling;
+    expect(compactOutputsActionSlot?.className).toBe(compactReferencesActionSlot?.className);
+    const closeButton = compactPanel?.querySelector<HTMLButtonElement>("button[aria-label='Close conversation files and links']");
+    act(() => closeButton?.click());
+    expect(container.querySelector("[data-testid='chat-work-manifest-compact-panel']")).toBeNull();
   });
 
-  it("promotes a lone Outputs section without duplicating the label or add action", () => {
+  it("renders a lone Outputs section without duplicating the label or add action", () => {
     const outputOnlyManifest = {
       ...manifest,
       totalCount: 1,
@@ -223,7 +241,7 @@ describe("ChatWorkManifest", () => {
   it.each([
     { label: "Sources", category: "source" as const },
     { label: "References", category: "reference" as const },
-  ])("promotes a lone $label section with its own count", ({ label, category }) => {
+  ])("renders a lone $label section with its own count", ({ label, category }) => {
     const singleCategoryManifest = {
       ...manifest,
       totalCount: 1,
