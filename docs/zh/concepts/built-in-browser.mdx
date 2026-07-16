@@ -73,6 +73,8 @@ Browser 操作属于 Rudder 第一方 control-plane 工具的一部分。同一�
 - Pi local 会获得功能等价的 Rudder 管理的原生工具 bridge。
 - 当 managed tool surface 不可用时，内置的 `rudder` CLI skill 仍是兼容 fallback。
 
+Tool 可见不代表获得额外权限。调用仍然限制在当前 organization 和 run，并继续经过正常 permission、ownership check 和 approval gate。Rudder 不会把任意 user 或 provider MCP server 自动继承到 managed run surface。
+
 其他本地或远程 runtime 可能不支持这条 managed tool path。应按具体 runtime 判断可用性；不要假设 custom MCP integration 或远程 runtime 可以控制本地内置浏览器。
 
 ## 下一步

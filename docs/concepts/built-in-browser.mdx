@@ -73,6 +73,11 @@ You do not add these tools as a custom integration or configure an MCP server ma
 - Pi local receives the equivalent Rudder-managed native tool bridge.
 - When the managed tool surface is unavailable, the bundled `rudder` CLI skill remains the compatibility fallback.
 
+Tool visibility does not grant extra authority. Calls remain scoped to the
+current organization and run and still pass the normal permissions, ownership
+checks, and approval gates. Rudder does not automatically inherit arbitrary
+user or provider MCP servers into the managed run surface.
+
 Other local or remote runtimes may not support this managed tool path. Their availability should be treated as runtime-specific; do not assume that a custom MCP integration or a remote runtime can control the local Built-in Browser.
 
 ## Next steps
