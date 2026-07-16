@@ -1928,8 +1928,8 @@ test.describe("Messenger unified threads contract", () => {
     await expect(sidebarThreads.nth(1)).toContainText("Issues");
     await expect(sidebarThreads.nth(2)).toContainText("Messenger intake");
     await expect(page.getByTestId("approvals-unread-badge")).toHaveText("1");
-    await expect(page.getByTestId("issues-unread-badge")).toHaveText("1");
-    await expect(page.getByTestId("rail-badge-messenger")).toHaveText("2");
+    await expect(page.getByTestId("issues-unread-badge")).toHaveCount(0);
+    await expect(page.getByTestId("rail-badge-messenger")).toHaveText("1");
     await expect(page.getByTestId("rail-badge-messenger")).toHaveClass(/bg-red-500/);
 
     await page.getByTestId("messenger-thread-organization-trigger").click();
@@ -2050,6 +2050,119 @@ test.describe("Messenger unified threads contract", () => {
       path: testInfo.outputPath("messenger-shell.png"),
       fullPage: true,
     });
+  });
+
+  test("does not notify the operator about their own issue activity", async ({ page }, testInfo) => {
+    const sessionRes = await page.request.get("/api/auth/get-session");
+    expect(sessionRes.ok()).toBe(true);
+    const session = await sessionRes.json();
+    const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+    expect(currentUserId).toBeTruthy();
+
+    const organization = await createOrganization(page, `Messenger-Own-Issue-${Date.now()}`);
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Own issue activity should stay quiet",
+        description: "Operator-authored issue changes should not notify the same operator.",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: currentUserId,
+      },
+    });
+    expect(issueRes.ok(), await issueRes.text()).toBe(true);
+    const issue = await issueRes.json() as { id: string; identifier: string | null };
+    const issueRef = issue.identifier ?? issue.id;
+
+    const updateRes = await page.request.patch(`/api/issues/${issue.id}`, {
+      data: { priority: "high" },
+    });
+    expect(updateRes.ok(), await updateRes.text()).toBe(true);
+    const commentRes = await page.request.post(`/api/issues/${issue.id}/comments`, {
+      data: { body: "My own issue note should stay quiet." },
+    });
+    expect(commentRes.ok(), await commentRes.text()).toBe(true);
+    const attachmentRes = await page.request.post(`/api/orgs/${organization.id}/issues/${issue.id}/attachments`, {
+      multipart: {
+        usage: "issue",
+        file: {
+          name: "Sample.xlsx",
+          mimeType: "text/csv",
+          buffer: Buffer.from("workbook-e2e-proof"),
+        },
+      },
+    });
+    expect(attachmentRes.ok(), await attachmentRes.text()).toBe(true);
+
+    await page.addInitScript(({ orgId }) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem(
+        "rudder.messengerSplitIssueNotificationsByOrg",
+        JSON.stringify({ [orgId]: true }),
+      );
+    }, { orgId: organization.id });
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat`, { waitUntil: "commit" });
+
+    const splitIssueRow = page.getByTestId(threadTestId(`issue:${issue.id}`));
+    const issueUnreadBadge = page.getByTestId(threadUnreadBadgeTestId(`issue:${issue.id}`));
+    await expect(splitIssueRow).toContainText("Own issue activity should stay quiet", { timeout: 15_000 });
+    await expect(issueUnreadBadge).toHaveCount(0);
+    await expect(page.getByTestId("rail-badge-messenger")).toHaveCount(0);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/issues/${issueRef}`, { waitUntil: "commit" });
+    const attachmentIcon = page.getByTestId("issue-attachment-file-icon");
+    await expect(attachmentIcon).toHaveAttribute("data-kind", "spreadsheet");
+    await expect(page.getByText("Sample.xlsx", { exact: true })).toBeVisible();
+    const issueScroller = page.getByTestId("issue-detail-main-scroll");
+    const desktopLayout = await issueScroller.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const visibleDescendants = Array.from(element.querySelectorAll<HTMLElement>("*"))
+        .map((node) => node.getBoundingClientRect())
+        .filter((rect) => rect.width > 0 && rect.height > 0);
+      return {
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        overflowX: window.getComputedStyle(element).overflowX,
+        minLeft: Math.min(bounds.left, ...visibleDescendants.map((rect) => rect.left)),
+        maxRight: Math.max(bounds.right, ...visibleDescendants.map((rect) => rect.right)),
+        left: bounds.left,
+        right: bounds.right,
+      };
+    });
+    expect(desktopLayout.overflowX).toBe("hidden");
+    expect(desktopLayout.scrollWidth).toBeLessThanOrEqual(desktopLayout.clientWidth + 1);
+    expect(desktopLayout.minLeft).toBeGreaterThanOrEqual(desktopLayout.left - 1);
+    expect(desktopLayout.maxRight).toBeLessThanOrEqual(desktopLayout.right + 1);
+
+    await page.setViewportSize({ width: 1024, height: 900 });
+    await expect(attachmentIcon).toBeVisible();
+    const narrowPageWidth = await page.evaluate(() => ({
+      clientWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
+    expect(narrowPageWidth.scrollWidth).toBeLessThanOrEqual(narrowPageWidth.clientWidth + 1);
+    await page.screenshot({ path: testInfo.outputPath("own-issue-activity-layout.png"), fullPage: false });
+
+    const externalCommentAt = new Date();
+    await e2eDb.insert(issueComments).values({
+      orgId: organization.id,
+      issueId: issue.id,
+      body: "External review feedback should notify the operator.",
+      createdAt: externalCommentAt,
+      updatedAt: externalCommentAt,
+    });
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat`, { waitUntil: "commit" });
+    await expect(issueUnreadBadge).toHaveText("1", { timeout: 15_000 });
+    await expect(page.getByTestId("rail-badge-messenger")).toHaveText("1");
+
+    const laterOwnUpdateRes = await page.request.patch(`/api/issues/${issue.id}`, {
+      data: { title: "Own issue activity stays quiet after external feedback" },
+    });
+    expect(laterOwnUpdateRes.ok(), await laterOwnUpdateRes.text()).toBe(true);
+    await page.reload();
+    await expect(issueUnreadBadge).toHaveText("1", { timeout: 15_000 });
+    await expect(page.getByTestId("rail-badge-messenger")).toHaveText("1");
   });
 
   test("splits issue notifications into mixed Messenger sidebar rows", async ({ page }, testInfo) => {

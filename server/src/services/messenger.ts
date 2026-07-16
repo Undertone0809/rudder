@@ -54,6 +54,7 @@ import { chatService } from "./chats.js";
 import { issueLowSignalContentOnlyActivitySql } from "./issue-activity-filters.js";
 
 const ISSUE_ACTIVITY_ACTIONS = [
+  "issue.created",
   "issue.updated",
   "issue.followed",
   "automation.issue_created_notification",
@@ -534,6 +535,8 @@ function issueBodyFromSnapshot(
 function summarizeIssueActivity(activity: IssueActivityRow, issue: IssueUniverseRow) {
   const details = activity.details ?? {};
   switch (activity.action) {
+    case "issue.created":
+      return "Issue created";
     case "issue.updated": {
       if (typeof details.status === "string") {
         const status = humanizeIssueStatus(details.status);

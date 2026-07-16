@@ -655,7 +655,7 @@ export function OrganizationSettings() {
                     type="color"
                     value={brandColor || "#6366f1"}
                     onChange={(event) => setBrandColor(event.target.value)}
-                    className="size-8 cursor-pointer rounded-[var(--control-radius)] border border-border bg-transparent p-0"
+                    className="color-input-circle size-8 shrink-0 border border-border bg-transparent"
                     aria-label={t("organizationSettings.appearance.brandColor.label")}
                   />
                   <Input

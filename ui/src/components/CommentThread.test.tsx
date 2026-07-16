@@ -726,6 +726,7 @@ describe("CommentThread", () => {
     expect(html).toContain("sticky bottom-0 z-20");
     expect(html).toContain("pt-1");
     expect(html).not.toContain("-mb-4");
+    expect(html).not.toContain("-mx-4");
     expect(html).not.toContain('data-testid="comment-thread-timeline-scroll"');
     expect(html).not.toContain("flex-1 overflow-y-auto overscroll-contain");
   });

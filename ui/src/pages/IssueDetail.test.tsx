@@ -420,7 +420,13 @@ vi.mock("@/components/ui/tabs", () => ({
 }));
 
 vi.mock("lucide-react", () => {
-  const Icon = () => <span />;
+  const Icon = ({
+    "data-testid": testId,
+    "data-kind": kind,
+  }: {
+    "data-testid"?: string;
+    "data-kind"?: string;
+  }) => <span data-testid={testId} data-kind={kind} />;
   const icons = {
     Activity: Icon,
     Atom: Icon,
@@ -448,8 +454,11 @@ vi.mock("lucide-react", () => {
     Eye: Icon,
     EyeOff: Icon,
     ExternalLink: Icon,
+    File: Icon,
     FileCode2: Icon,
     FileCode: Icon,
+    FileImage: Icon,
+    FileSpreadsheet: Icon,
     FileText: Icon,
     Fingerprint: Icon,
     Flame: Icon,
@@ -590,6 +599,7 @@ describe("IssueDetail", () => {
     queryData.set(JSON.stringify(["issues", "detail", "ORG2-1"]), parentIssue);
     queryData.set(JSON.stringify(["issues", "activity", "ORG2-1"]), []);
     queryData.set(JSON.stringify(["issues", "approvals", "ORG2-1"]), []);
+    queryData.set(JSON.stringify(["issues", "attachments", "ORG2-1"]), []);
     queryData.set(JSON.stringify(["issues", "org-2", "follows"]), []);
     queryData.set(JSON.stringify(["organizations", "org-2", "library-documents"]), []);
     queryData.set(JSON.stringify(["organizations", "org-2", "workspace-mention-files", ""]), { entries: [] });
@@ -694,12 +704,41 @@ describe("IssueDetail", () => {
     expect(html).toContain('href="/library?path=docs%2Fproduct-brief.md"');
   });
 
+  it("renders a spreadsheet icon for workbook attachments", () => {
+    queryData.set(JSON.stringify(["issues", "attachments", "ORG2-1"]), [{
+      id: "attachment-workbook",
+      orgId: "org-2",
+      issueId: "issue-parent",
+      issueCommentId: null,
+      assetId: "asset-workbook",
+      usage: "issue",
+      provider: "local_disk",
+      objectKey: "orgs/org-2/issues/issue-parent/Sample.xlsx",
+      contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      byteSize: 17_920,
+      sha256: "workbook-sha",
+      originalFilename: "Sample.xlsx",
+      createdByAgentId: null,
+      createdByUserId: "user-1",
+      createdAt: new Date("2026-04-20T00:10:00.000Z"),
+      updatedAt: new Date("2026-04-20T00:10:00.000Z"),
+      contentPath: "/api/assets/asset-workbook/content",
+    }]);
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain("Sample.xlsx");
+    expect(html).toContain('data-testid="issue-attachment-file-icon"');
+    expect(html).toContain('data-kind="spreadsheet"');
+  });
+
   it("keeps issue body and activity in one desktop scroll flow", () => {
     const html = renderToStaticMarkup(<IssueDetail />);
 
     expect(html).toContain("mx-auto flex h-full min-h-0 max-w-6xl flex-col xl:grid");
-    expect(html).toContain('class="scrollbar-auto-hide min-w-0 space-y-6 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:pr-1" data-testid="issue-detail-main-scroll"');
+    expect(html).toContain('class="scrollbar-auto-hide min-w-0 space-y-6 overflow-x-hidden xl:h-full xl:min-h-0 xl:overflow-y-auto xl:pr-1" data-testid="issue-detail-main-scroll"');
     expect(html).toContain('class="min-w-0 space-y-6" data-testid="issue-detail-primary-content"');
+    expect(html).toContain('class="space-y-3 px-1"');
     expect(html).toContain('aria-label="Activity" class="flex flex-col space-y-2"');
     expect(capturedCommentThreadProps).toMatchObject({
       fixedComposer: true,

@@ -31,7 +31,10 @@ import {
   ChevronRight,
   Copy,
   ExternalLink,
+  File,
   FileCode2,
+  FileImage,
+  FileSpreadsheet,
   FileText,
   Folder,
   ListTree,
@@ -406,6 +409,39 @@ type LinearIssueLinkData =
 
 function issueStatusLabel(status: string) {
   return status.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+type IssueAttachmentIconKind = "image" | "spreadsheet" | "code" | "text" | "file";
+
+function issueAttachmentIconKind(attachment: Pick<IssueAttachment, "contentType" | "originalFilename">): IssueAttachmentIconKind {
+  const contentType = attachment.contentType.toLowerCase();
+  const filename = (attachment.originalFilename ?? "").toLowerCase();
+  if (contentType.startsWith("image/")) return "image";
+  if (
+    /(?:spreadsheet|excel|csv|officedocument\.spreadsheetml)/.test(contentType)
+    || /\.(?:csv|ods|xls|xlsx)$/.test(filename)
+  ) return "spreadsheet";
+  if (/(?:json|javascript|typescript|html|xml|yaml)/.test(contentType) || /\.(?:json|js|jsx|ts|tsx|html|xml|ya?ml)$/.test(filename)) {
+    return "code";
+  }
+  if (contentType.startsWith("text/") || contentType === "application/pdf" || /\.(?:md|markdown|pdf|txt)$/.test(filename)) {
+    return "text";
+  }
+  return "file";
+}
+
+function IssueAttachmentIcon({ attachment }: { attachment: IssueAttachment }) {
+  const kind = issueAttachmentIconKind(attachment);
+  const Icon = kind === "image"
+    ? FileImage
+    : kind === "spreadsheet"
+      ? FileSpreadsheet
+      : kind === "code"
+        ? FileCode2
+        : kind === "text"
+          ? FileText
+          : File;
+  return <Icon aria-hidden="true" className="h-4 w-4" data-testid="issue-attachment-file-icon" data-kind={kind} />;
 }
 
 function isLinearIssueDetailSlot(slot: LinearIssueActivitySlot) {
@@ -2059,14 +2095,14 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
       <IssueDetailFind rootRef={issueFindRootRef} refreshKey={issueFindRefreshKey} />
       <div
         ref={issueDetailScrollRef}
-        className="scrollbar-auto-hide min-w-0 space-y-6 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:pr-1"
+        className="scrollbar-auto-hide min-w-0 space-y-6 overflow-x-hidden xl:h-full xl:min-h-0 xl:overflow-y-auto xl:pr-1"
         data-testid="issue-detail-main-scroll"
       >
         <div
           className="min-w-0 space-y-6"
           data-testid="issue-detail-primary-content"
         >
-        <div className="space-y-3">
+        <div className="space-y-3 px-1">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-2 min-w-0 flex-wrap">
             {hasLiveRuns && (
@@ -2485,29 +2521,36 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           <div className="space-y-2">
             {attachmentList.map((attachment) => (
               <div key={attachment.id} className="border border-border rounded-md p-2">
-                <div className="flex items-center justify-between gap-2">
-                  <a
-                    href={attachment.contentPath}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-xs hover:underline truncate"
-                    title={attachment.originalFilename ?? attachment.id}
-                  >
-                    {attachment.originalFilename ?? attachment.id}
-                  </a>
-                  <button
-                    type="button"
-                    className="text-muted-foreground hover:text-destructive"
-                    onClick={() => deleteAttachment.mutate(attachment.id)}
-                    disabled={deleteAttachment.isPending}
-                    title="Delete attachment"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                <div className="flex min-w-0 items-start gap-2.5">
+                  <span className="flex size-7 shrink-0 items-center justify-center rounded-[var(--control-radius)] border border-border bg-muted/30 text-muted-foreground">
+                    <IssueAttachmentIcon attachment={attachment} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center justify-between gap-2">
+                      <a
+                        href={attachment.contentPath}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="min-w-0 truncate text-xs hover:underline"
+                        title={attachment.originalFilename ?? attachment.id}
+                      >
+                        {attachment.originalFilename ?? attachment.id}
+                      </a>
+                      <button
+                        type="button"
+                        className="shrink-0 text-muted-foreground hover:text-destructive"
+                        onClick={() => deleteAttachment.mutate(attachment.id)}
+                        disabled={deleteAttachment.isPending}
+                        title="Delete attachment"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <p className="truncate text-[11px] text-muted-foreground">
+                      {attachment.contentType} · {(attachment.byteSize / 1024).toFixed(1)} KB
+                    </p>
+                  </div>
                 </div>
-                <p className="text-[11px] text-muted-foreground">
-                  {attachment.contentType} · {(attachment.byteSize / 1024).toFixed(1)} KB
-                </p>
                 {isImageAttachment(attachment) && (
                   <a href={attachment.contentPath} target="_blank" rel="noreferrer">
                     <img

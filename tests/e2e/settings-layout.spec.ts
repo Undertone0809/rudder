@@ -181,6 +181,19 @@ test.describe("Settings layout", () => {
     await expect(modal.locator('a[href$="/instance/settings/plugins"]')).not.toHaveAttribute("aria-current", "page");
     await expect(modal.getByRole("heading", { name: "Organization Settings", level: 1 })).toBeVisible();
     await expectStableSettingsLayout(modal, reference);
+    const brandColorInput = modal.locator('input[type="color"][aria-label="Brand color"]');
+    await expect(brandColorInput).toBeVisible();
+    const brandColorGeometry = await brandColorInput.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return {
+        width: rect.width,
+        height: rect.height,
+        borderRadius: Number.parseFloat(style.borderRadius),
+      };
+    });
+    expect(Math.abs(brandColorGeometry.width - brandColorGeometry.height)).toBeLessThanOrEqual(1);
+    expect(brandColorGeometry.borderRadius).toBeGreaterThanOrEqual(brandColorGeometry.width / 2);
 
     await page.mouse.move(0, 0);
     await page.screenshot({

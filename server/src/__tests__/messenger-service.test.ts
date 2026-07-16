@@ -1334,6 +1334,109 @@ describe("messengerService and issue follows", () => {
     await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(0);
   });
 
+  it("does not notify a user about their own issue activity or let it hide earlier external attention", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-own-issue-activity";
+    const issueId = randomUUID();
+    const createdAt = new Date("2026-05-03T09:00:00.000Z");
+    const updatedAt = new Date("2026-05-03T09:01:00.000Z");
+    const ownCommentAt = new Date("2026-05-03T09:02:00.000Z");
+    const ownAttachmentAt = new Date("2026-05-03T09:03:00.000Z");
+    const externalCommentAt = new Date("2026-05-03T09:04:00.000Z");
+    const laterOwnUpdateAt = new Date("2026-05-03T09:05:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Own Issue Activity Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Own Issue Activity Org"),
+      issuePrefix: `O${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Own issue activity",
+      status: "todo",
+      priority: "medium",
+      assigneeUserId: userId,
+      createdByUserId: userId,
+      createdAt,
+      updatedAt: createdAt,
+    });
+    await db.insert(activityLog).values({
+      orgId,
+      actorType: "user",
+      actorId: userId,
+      action: "issue.created",
+      entityType: "issue",
+      entityId: issueId,
+      details: { title: "Own issue activity" },
+      createdAt,
+    });
+
+    const afterCreate = await messengerSvc.listThreadSummaries(orgId, userId, { splitIssues: true });
+    expect(afterCreate.find((item) => item.threadKey === `issue:${issueId}`)?.unreadCount).toBe(0);
+
+    await db.update(issues).set({ priority: "high", updatedAt }).where(eq(issues.id, issueId));
+    await db.insert(activityLog).values({
+      orgId,
+      actorType: "user",
+      actorId: userId,
+      action: "issue.updated",
+      entityType: "issue",
+      entityId: issueId,
+      details: { priority: "high", _previous: { priority: "medium" } },
+      createdAt: updatedAt,
+    });
+    await db.insert(issueComments).values({
+      orgId,
+      issueId,
+      authorUserId: userId,
+      body: "My own progress note",
+      createdAt: ownCommentAt,
+      updatedAt: ownCommentAt,
+    });
+    await db.insert(activityLog).values({
+      orgId,
+      actorType: "user",
+      actorId: userId,
+      action: "issue.attachment_added",
+      entityType: "issue",
+      entityId: issueId,
+      details: { filename: "Sample.xlsx" },
+      createdAt: ownAttachmentAt,
+    });
+
+    const afterOwnChanges = await messengerSvc.listThreadSummaries(orgId, userId, { splitIssues: true });
+    expect(afterOwnChanges.find((item) => item.threadKey === `issue:${issueId}`)?.unreadCount).toBe(0);
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(0);
+
+    await db.insert(issueComments).values({
+      orgId,
+      issueId,
+      body: "External review feedback",
+      createdAt: externalCommentAt,
+      updatedAt: externalCommentAt,
+    });
+    await db.update(issues).set({ title: "Own issue activity updated", updatedAt: laterOwnUpdateAt }).where(eq(issues.id, issueId));
+    await db.insert(activityLog).values({
+      orgId,
+      actorType: "user",
+      actorId: userId,
+      action: "issue.updated",
+      entityType: "issue",
+      entityId: issueId,
+      details: { title: "Own issue activity updated", _previous: { title: "Own issue activity" } },
+      createdAt: laterOwnUpdateAt,
+    });
+
+    const afterExternalThenOwn = await messengerSvc.listThreadSummaries(orgId, userId, { splitIssues: true });
+    const issueSummary = afterExternalThenOwn.find((item) => item.threadKey === `issue:${issueId}`);
+    expect(issueSummary?.unreadCount).toBe(1);
+    expect(issueSummary?.needsAttention).toBe(true);
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(1);
+  });
+
   it("advances stale split issue read watermarks to the issue's latest activity", async () => {
     const orgId = randomUUID();
     const userId = "board-user-stale-split-issue-read";
