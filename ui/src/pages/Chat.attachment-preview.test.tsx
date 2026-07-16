@@ -4829,6 +4829,7 @@ describe("Chat project context selector", () => {
     expect(projectSelector?.textContent).toContain("Rudder mkt");
     expect(projectSelector?.disabled).toBe(true);
     expect(container.querySelector("[data-testid='chat-project-selector-chevron']")).toBeNull();
+    expect(container.querySelector("[data-testid='chat-project-clear']")).toBeNull();
 
     act(() => {
       projectSelector?.dispatchEvent(new MouseEvent("click", { bubbles: true }));

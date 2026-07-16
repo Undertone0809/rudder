@@ -109,6 +109,7 @@ related_tests:
   - tests/e2e/messenger-hover-preview.spec.ts
   - tests/e2e/chat-edit-stream-layout.spec.ts
   - tests/e2e/chat-fork.spec.ts
+  - tests/e2e/chat-project-empty-heading.spec.ts
   - tests/e2e/chat-rich-references.spec.ts
   - tests/e2e/chat-side-panel.spec.ts
   - tests/e2e/chat-work-manifest.spec.ts
@@ -135,6 +136,9 @@ Product model:
 
 - A chat conversation belongs to an organization and may link to issues,
   projects, resources, approvals, or automation runs.
+- Project context is an explicit composer context value. In a locally mutable
+  draft chat, the project selector is a quiet, text-led trigger and a selected
+  project remains removable until conversation context becomes locked.
 - Messages have role, status, body, attachments, rich references, structured
   payloads, and optional run attribution.
 - A conversation Work manifest reconciles inspectable Outputs, Sources, and
@@ -173,8 +177,9 @@ Product model:
 Flow:
 
 1. User creates or opens chat.
-2. Composer may include attachments, mentions, rich references, selected agent,
-   selected skills, and structured proposal payloads.
+2. Composer may include attachments, mentions, rich references, selected
+   project, selected agent, selected skills, and structured proposal payloads.
+   Before project context becomes locked, the operator may select or clear it.
 3. Server persists user message and context links.
 4. If a runtime assistant is invoked, Rudder creates a chat Agent Run and
    streams/persists assistant messages.
@@ -207,6 +212,14 @@ Flow:
 Invariants:
 
 - Chat messages must remain tied to their conversation and organization.
+- Composer project, agent, and skill context triggers are rendered without
+  dropdown chevrons. The project trigger remains text-led without a redundant
+  project glyph.
+- A project clear action is available only when a project is selected and the
+  project context remains editable. It must be absent for `No project` and for
+  locked conversation context.
+- Hover and keyboard focus must expose the same project clear action. Clearing
+  removes the selected project directly and must not open the project menu.
 - Chat proposals/structured payloads must not be confused with plain user
   instructions or automation run input.
 - Assistant-created issue proposals must be grounded in an explicit latest
@@ -257,6 +270,9 @@ Evidence:
 
 - Chat E2E covers rich references, skill picker, attachments, draft
   persistence, and attribution navigation.
+- Project-context unit, component, and E2E coverage verify lock semantics,
+  text-led selectors, hover/focus clear affordance, no-project visibility, and
+  clearing without opening the project menu.
 - Chat assistant tests cover runtime-backed turns.
 - Chat assistant tests cover stopped runtime turns that keep reasoning out of
   partial assistant bodies.

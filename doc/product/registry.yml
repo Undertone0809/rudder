@@ -888,6 +888,7 @@ contracts:
       - tests/e2e/chat-error-toast.spec.ts
       - tests/e2e/chat-concurrent-streaming.spec.ts
       - tests/e2e/chat-edit-stream-layout.spec.ts
+      - tests/e2e/chat-project-empty-heading.spec.ts
       - tests/e2e/chat-rich-references.spec.ts
       - tests/e2e/chat-streaming.spec.ts
     related_plans:
