@@ -48,6 +48,7 @@ const REQUIRED_BUNDLED_SKILLS = [
   "rudder-create-agent",
   "rudder-create-plugin",
   "skill-creator",
+  "visualize",
 ];
 console.log(`[desktop-smoke] temp root: ${tmpRoot}`);
 
