@@ -244,6 +244,11 @@ test("deterministic Codex visual is declarative, network-isolated, and durable",
   await expect(reopenedIframe).toHaveAttribute("sandbox", "allow-same-origin");
   const reopenedFrame = reopenedIframe.contentFrame();
   await expect(reopenedFrame.locator("#completed-total")).toHaveText("93", { timeout: 15_000 });
+  await expect.poll(() => reopenedIframe.evaluate((element) => element.getBoundingClientRect().width))
+    .toBeLessThanOrEqual(560);
+  await expect.poll(() => reopenedFrame.locator(".report-grid").evaluate((element) =>
+    getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length
+  )).toBe(1);
   const stackedFrameHeight = await reopenedIframe.evaluate((element) => element.getBoundingClientRect().height);
   const stackedWidgetHeight = await reopenedFrame.locator("#widget").evaluate((element) => element.getBoundingClientRect().height);
   expect(stackedFrameHeight).toBeGreaterThanOrEqual(stackedWidgetHeight);
