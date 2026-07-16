@@ -237,6 +237,9 @@ export async function executeCodexAppServerChat(
     resolveTurn = resolve;
     rejectTurn = reject;
   });
+  // Setup can fail after the client starts but before execution awaits this deferred.
+  // Observe early transport rejection now while preserving the later await semantics.
+  void turnDone.catch(() => undefined);
   let forceKillTimer: NodeJS.Timeout | null = null;
   let timeoutTimer: NodeJS.Timeout | null = null;
   let abortCleanup: (() => void) | null = null;
