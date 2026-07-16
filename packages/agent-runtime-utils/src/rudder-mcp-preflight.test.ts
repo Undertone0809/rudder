@@ -9,13 +9,12 @@ import {
 import {
   RUDDER_BROWSER_MCP_CONTRACT_HASH,
   RUDDER_BROWSER_MCP_TOOL_NAMES,
-  RUDDER_CORE_MCP_TOOL_NAMES,
+  RUDDER_CORE_MCP_CONTRACT_HASH,
+  RUDDER_MCP_CANONICAL_TOOL_CONTRACTS,
   RUDDER_MCP_CONTRACT_VERSION,
 } from "./rudder-mcp.js";
 
 const roots: string[] = [];
-const CORE_TOOL_NAMES = RUDDER_CORE_MCP_TOOL_NAMES;
-
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
@@ -27,8 +26,10 @@ async function fixtureCommand(mode: string, expectedVersion = "0.4.6") {
   await fs.writeFile(script, `
 import readline from "node:readline";
 const mode = process.env.RUDDER_PREFLIGHT_FIXTURE_MODE;
-const browserTools = ${JSON.stringify([...RUDDER_BROWSER_MCP_TOOL_NAMES])};
-const coreTools = ${JSON.stringify(CORE_TOOL_NAMES)};
+const canonicalTools = ${JSON.stringify(RUDDER_MCP_CANONICAL_TOOL_CONTRACTS)};
+const canonicalByName = new Map(canonicalTools.map((tool) => [tool.name, tool]));
+const browserTools = canonicalTools.filter((tool) => tool.name.startsWith("rudder_browser_")).map((tool) => tool.name);
+const coreTools = canonicalTools.filter((tool) => !tool.name.startsWith("rudder_browser_")).map((tool) => tool.name);
 const desktopCliEntryLeaked = Boolean(process.env.RUDDER_DESKTOP_CLI_ENTRY);
 const canonicalSchema = () => ({ type: "object", additionalProperties: false, properties: {} });
 function advertisedName(name) {
@@ -36,7 +37,14 @@ function advertisedName(name) {
   if (mode === "whitespace-browser-name" && name === browserTools[0]) return " " + name + " ";
   return name;
 }
+function advertisedDescription(name) {
+  const description = canonicalByName.get(name)?.description ?? "Forged Rudder MCP tool.";
+  if (mode === "semantic-core-description" && name === coreTools[0]) return description + " changed";
+  if (mode === "semantic-browser-description" && name === "rudder_browser_open") return description + " changed";
+  return description;
+}
 function inputSchema(name) {
+  const canonical = structuredClone(canonicalByName.get(name)?.inputSchema ?? canonicalSchema());
   if (mode === "forged-core-malformed-schema") return { type: "string" };
   if (mode === "malformed-core-keyword" && name === coreTools[0]) {
     return { ...canonicalSchema(), oneOf: "not-an-array" };
@@ -53,22 +61,19 @@ function inputSchema(name) {
   if (mode === "malformed-nested-keyword" && name === coreTools[0]) {
     return { ...canonicalSchema(), properties: { value: { type: "string", oneOf: [] } } };
   }
-  if (mode === "canonical-nested-schema" && name === coreTools[0]) {
-    return { ...canonicalSchema(), properties: {
-      payload: {
-        type: ["object", "string"],
-        additionalProperties: false,
-        properties: { id: { type: "string", description: "Identifier." } },
-        required: ["id"],
-      },
-      tags: { type: "array", items: { type: "string" } },
-    } };
-  }
   if (mode === "malformed-core-schema" && name === coreTools[0]) return { type: "string" };
   if (mode === "malformed-browser-schema" && name === browserTools[0]) {
     return { type: "object", additionalProperties: false, properties: [] };
   }
-  return canonicalSchema();
+  if (mode === "semantic-core-required" && name === coreTools[0]) {
+    canonical.properties = { ...canonical.properties, bogus: { type: "string" } };
+    canonical.required = ["bogus"];
+  }
+  if (mode === "semantic-browser-required" && name === "rudder_browser_open") {
+    canonical.properties = { ...canonical.properties, bogus: { type: "string" } };
+    canonical.required = ["bogus"];
+  }
+  return canonical;
 }
 const lines = readline.createInterface({ input: process.stdin });
 for await (const line of lines) {
@@ -82,6 +87,7 @@ for await (const line of lines) {
       protocolVersion: "2024-11-05",
       capabilities: { tools: {}, experimental: { rudder: {
         contractVersion: ${JSON.stringify(RUDDER_MCP_CONTRACT_VERSION)},
+        coreContractHash: ${JSON.stringify(RUDDER_CORE_MCP_CONTRACT_HASH)},
         browserContractHash: hash,
       } } },
       serverInfo: { name: mode === "server" || desktopCliEntryLeaked ? "not-rudder" : "rudder-control-plane", version },
@@ -112,6 +118,7 @@ for await (const line of lines) {
     console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {
       tools: tools.map((name) => ({
         name: advertisedName(name),
+        description: advertisedDescription(name),
         inputSchema: inputSchema(name),
       })),
     } }));
@@ -141,6 +148,7 @@ describe("preflightRudderMcpServer", () => {
       provenance: "repo",
       version: "0.4.6",
       contractVersion: RUDDER_MCP_CONTRACT_VERSION,
+      coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
       contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
       diagnosticCode: null,
     });
@@ -224,6 +232,25 @@ describe("preflightRudderMcpServer", () => {
     expect(() => assertRudderMcpCoreAvailable(result)).toThrow(/Rudder MCP/u);
   });
 
+  it.each(["semantic-core-required", "semantic-core-description"])(
+    "fails core MCP fast for legal semantic forgery %s despite matching advertised hashes",
+    async (mode) => {
+      const result = await preflightRudderMcpServer({
+        command: await fixtureCommand(mode),
+        runtimeEnv: {},
+        browserEnabled: false,
+      });
+
+      expect(result).toMatchObject({
+        available: false,
+        coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
+        contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
+        diagnosticCode: "browser_bundle_handshake_failed",
+      });
+      expect(() => assertRudderMcpCoreAvailable(result)).toThrow(/Rudder MCP/u);
+    },
+  );
+
   it("keeps canonical core MCP while degrading Browser for a malformed Browser schema", async () => {
     const result = await preflightRudderMcpServer({
       command: await fixtureCommand("malformed-browser-schema"),
@@ -255,6 +282,26 @@ describe("preflightRudderMcpServer", () => {
       expect(result).toMatchObject({
         available: true,
         browserAvailable: false,
+        diagnosticCode: "browser_bundle_tools_mismatch",
+      });
+      expect(() => assertRudderMcpCoreAvailable(result)).not.toThrow();
+    },
+  );
+
+  it.each(["semantic-browser-required", "semantic-browser-description"])(
+    "degrades Browser for legal semantic forgery %s despite matching advertised hashes",
+    async (mode) => {
+      const result = await preflightRudderMcpServer({
+        command: await fixtureCommand(mode),
+        runtimeEnv: {},
+        browserEnabled: true,
+      });
+
+      expect(result).toMatchObject({
+        available: true,
+        browserAvailable: false,
+        coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
+        contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
         diagnosticCode: "browser_bundle_tools_mismatch",
       });
       expect(() => assertRudderMcpCoreAvailable(result)).not.toThrow();

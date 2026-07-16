@@ -4,6 +4,7 @@ import {
 } from "@rudderhq/agent-runtime-pi-local/server";
 import {
   RUDDER_BROWSER_MCP_CONTRACT_HASH,
+  RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_MCP_CONTRACT_VERSION,
 } from "@rudderhq/agent-runtime-utils";
 import fs from "node:fs/promises";
@@ -439,6 +440,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
         available: false,
         browserAvailable: false,
         contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
+        coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
         contractVersion: RUDDER_MCP_CONTRACT_VERSION,
         diagnosticCode: null,
         serverName: "rudder-control-plane",

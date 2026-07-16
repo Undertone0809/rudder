@@ -2,6 +2,7 @@ import { execute, resetOpenCodeModelsCacheForTests } from "@rudderhq/agent-runti
 import { buildOpenCodeLocalConfig } from "@rudderhq/agent-runtime-opencode-local/ui";
 import {
   RUDDER_BROWSER_MCP_CONTRACT_HASH,
+  RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_MCP_CONTRACT_VERSION,
 } from "@rudderhq/agent-runtime-utils";
 import fs from "node:fs/promises";
@@ -1127,6 +1128,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         available: true,
         browserAvailable: false,
         contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
+        coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
         contractVersion: RUDDER_MCP_CONTRACT_VERSION,
         diagnosticCode: null,
         provenance: "repo",

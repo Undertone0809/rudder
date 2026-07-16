@@ -11,6 +11,8 @@
     "lint": "node scripts/lint-imports.mjs",
     "lint:changed": "node scripts/lint-imports.mjs --changed",
     "lint:fix": "node scripts/lint-imports.mjs --fix",
+    "mcp-contract:generate": "node cli/node_modules/tsx/dist/cli.mjs scripts/generate-rudder-mcp-tool-descriptors.ts",
+    "mcp-contract:check": "node cli/node_modules/tsx/dist/cli.mjs scripts/generate-rudder-mcp-tool-descriptors.ts --check",
     "architecture:audit": "node scripts/architecture-audit.mjs",
     "architecture:audit:check": "node scripts/architecture-audit.mjs --baseline scripts/architecture-audit-baseline.json --fail-on-regression",
     "product-logic:check": "node scripts/product-logic-check.mjs",
