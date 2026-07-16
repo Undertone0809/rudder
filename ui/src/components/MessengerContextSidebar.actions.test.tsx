@@ -24,6 +24,7 @@ const mockRemoveCustomGroupEntry = vi.hoisted(() => vi.fn());
 const mockUpdateConversation = vi.hoisted(() => vi.fn());
 const mockForkConversation = vi.hoisted(() => vi.fn());
 const mockRegenerateTitle = vi.hoisted(() => vi.fn());
+const mockRegenerateIssueTitle = vi.hoisted(() => vi.fn());
 const mockRemove = vi.hoisted(() => vi.fn());
 const mockStopMessageStream = vi.hoisted(() => vi.fn());
 const mockAbortChatStream = vi.hoisted(() => vi.fn());
@@ -136,6 +137,12 @@ vi.mock("@/api/chats", () => ({
     remove: mockRemove,
     stopMessageStream: mockStopMessageStream,
     updateUserState: mockUpdateUserState,
+  },
+}));
+
+vi.mock("@/api/issues", () => ({
+  issuesApi: {
+    regenerateTitle: mockRegenerateIssueTitle,
   },
 }));
 
@@ -474,6 +481,12 @@ describe("MessengerContextSidebar chat actions", () => {
       ...baseConversation({ title: "Regenerated title" }),
       id: chatId,
     }));
+    mockRegenerateIssueTitle.mockResolvedValue({
+      id: "issue-1",
+      orgId: "org-1",
+      identifier: "ISS-1",
+      title: "Regenerated issue title",
+    });
     mockForkConversation.mockImplementation(async (chatId: string) => ({
       ...baseConversation({
         id: "chat-fork",
@@ -766,6 +779,7 @@ describe("MessengerContextSidebar chat actions", () => {
     mockReorderCustomGroups.mockClear();
     mockReorderCustomGroupEntries.mockClear();
     mockUpdateConversation.mockClear();
+    mockRegenerateIssueTitle.mockClear();
     mockForkConversation.mockClear();
     cancelQueries.mockClear();
     invalidateQueries.mockClear();
@@ -1076,6 +1090,141 @@ describe("MessengerContextSidebar chat actions", () => {
       .find((button) => button.textContent?.includes("Regenerate title"));
 
     expect(regenerate).toBeUndefined();
+  });
+
+  it("regenerates a split issue title from the thread actions menu", async () => {
+    chatList = [];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "issue:issue-1",
+          kind: "issues",
+          title: "ISS-1 · Old issue title",
+          preview: "Project issue update",
+          subtitle: null,
+          href: "/messenger/issues/ISS-1",
+          latestActivityAt: "2026-04-11T09:41:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+          metadata: {
+            splitIssue: true,
+            issueId: "issue-1",
+            issueIdentifier: "ISS-1",
+            status: "todo",
+          },
+        },
+      ],
+    };
+
+    renderSidebar();
+
+    const regenerate = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Regenerate title")) as HTMLButtonElement | undefined;
+    expect(regenerate).toBeTruthy();
+
+    await act(async () => {
+      regenerate?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockRegenerateIssueTitle).toHaveBeenCalledWith("issue-1");
+    expect(setQueryData).toHaveBeenCalledWith(["issues", "detail", "issue-1"], expect.any(Object));
+    expect(setQueryData).toHaveBeenCalledWith(["issues", "detail", "ISS-1"], expect.any(Object));
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["messenger", "org-1", "threads"] });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["issues", "org-1"] });
+  });
+
+  it("disables split issue title regeneration while the request is pending", async () => {
+    const pendingRegeneration = deferred<any>();
+    mockRegenerateIssueTitle.mockReturnValueOnce(pendingRegeneration.promise);
+    chatList = [];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "issue:issue-1",
+          kind: "issues",
+          title: "ISS-1 · Old issue title",
+          preview: "Project issue update",
+          subtitle: null,
+          href: "/messenger/issues/ISS-1",
+          latestActivityAt: "2026-04-11T09:41:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+          metadata: {
+            splitIssue: true,
+            issueId: "issue-1",
+            issueIdentifier: "ISS-1",
+            status: "todo",
+          },
+        },
+      ],
+    };
+
+    const { root } = renderSidebar();
+    const regenerate = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Regenerate title")) as HTMLButtonElement | undefined;
+
+    await act(async () => {
+      regenerate?.click();
+      await Promise.resolve();
+      root.render(<MessengerContextSidebar />);
+    });
+
+    expect(document.querySelector('[data-testid="messenger-issue-title-spinner-issue-issue-1"]')).toBeTruthy();
+    const pendingButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Regenerate title")) as HTMLButtonElement | undefined;
+    expect(pendingButton?.disabled).toBe(true);
+
+    await act(async () => {
+      pendingRegeneration.resolve({
+        id: "issue-1",
+        orgId: "org-1",
+        identifier: "ISS-1",
+        title: "Regenerated issue title",
+      });
+      await pendingRegeneration.promise;
+      await Promise.resolve();
+    });
+  });
+
+  it("hides split issue title regeneration when fast intelligence is not configured", () => {
+    intelligenceProfiles = [];
+    chatList = [];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "issue:issue-1",
+          kind: "issues",
+          title: "ISS-1 · Old issue title",
+          preview: "Project issue update",
+          subtitle: null,
+          href: "/messenger/issues/ISS-1",
+          latestActivityAt: "2026-04-11T09:41:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+          metadata: {
+            splitIssue: true,
+            issueId: "issue-1",
+            issueIdentifier: "ISS-1",
+            status: "todo",
+          },
+        },
+      ],
+    };
+
+    renderSidebar();
+
+    expect(Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Regenerate title"))).toBeUndefined();
   });
 
   it("optimistically pins a split issue thread before the Messenger user-state request resolves", async () => {

@@ -67,6 +67,7 @@ const mockWorkProductService = vi.hoisted(() => ({
 
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
 const mockPublishLiveEvent = vi.hoisted(() => vi.fn());
+const mockProductIntelligenceExecute = vi.hoisted(() => vi.fn());
 
 const ASSIGNEE_AGENT_ID = "22222222-2222-4222-8222-222222222222";
 const REVIEWER_AGENT_ID = "33333333-3333-4333-8333-333333333333";
@@ -92,6 +93,7 @@ vi.mock("../services/index.js", () => ({
     ensureDefaultsFromRuntime: vi.fn(),
   }),
   organizationIntelligenceRuntimeChainService: () => ({ assertUsable: vi.fn() }),
+  productIntelligenceService: () => ({ execute: mockProductIntelligenceExecute }),
   logActivity: mockLogActivity,
   projectService: () => mockProjectService,
   automationService: () => ({
@@ -225,6 +227,12 @@ describe("issue lifecycle routes", () => {
     mockWorkProductService.remove.mockResolvedValue(null);
     mockWorkProductService.update.mockResolvedValue(null);
     mockLogActivity.mockResolvedValue(undefined);
+    mockProductIntelligenceExecute.mockResolvedValue({
+      output: "Regenerated issue title",
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+    });
     mockIssueService.addComment.mockImplementation(async (_issueId: string, body: string, author: { agentId?: string; userId?: string }) => ({
       id: "comment-1",
       issueId: "11111111-1111-4111-8111-111111111111",
@@ -270,6 +278,110 @@ describe("issue lifecycle routes", () => {
       authorAgentId: null,
       authorUserId: author.userId,
     }));
+  });
+
+  it("regenerates an issue title from bounded issue context and publishes the mutation", async () => {
+    const existing = makeIssue({
+      title: "Old release title",
+      description: "Coordinate release proof and rollback readiness.",
+    });
+    const comments = Array.from({ length: 12 }, (_, index) => ({
+      body: `Recent issue comment ${index + 1}`,
+    }));
+    mockIssueService.getById.mockResolvedValue(existing);
+    mockIssueService.listComments.mockResolvedValue(comments);
+    mockProductIntelligenceExecute.mockResolvedValue({
+      output: '"Release Proof and Rollback Readiness."',
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+    });
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
+      ...existing,
+      ...patch,
+    }));
+
+    const res = await request(createApp())
+      .post(`/api/issues/${existing.id}/title/regenerate`)
+      .expect(200);
+
+    expect(res.body.title).toBe("Release Proof and Rollback Readiness");
+    expect(mockIssueService.listComments).toHaveBeenCalledWith(existing.id, {
+      order: "desc",
+      limit: 12,
+    });
+    expect(mockProductIntelligenceExecute).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: existing.orgId,
+      purpose: "lightweight",
+      feature: "issue_title",
+      prompt: expect.stringContaining("Coordinate release proof and rollback readiness"),
+    }));
+    expect(mockIssueService.update).toHaveBeenCalledWith(existing.id, {
+      title: "Release Proof and Rollback Readiness",
+    });
+    expect(mockLogActivity).not.toHaveBeenCalled();
+    expect(mockPublishLiveEvent).toHaveBeenCalledWith({
+      orgId: existing.orgId,
+      type: "issue.content_updated",
+      payload: expect.objectContaining({
+        entityType: "issue",
+        entityId: existing.id,
+        details: {
+          title: "Release Proof and Rollback Readiness",
+          source: "title_regeneration",
+          _previous: { title: "Old release title" },
+        },
+      }),
+    });
+  });
+
+  it("rejects a board user outside the issue organization", async () => {
+    const existing = makeIssue();
+    mockIssueService.getById.mockResolvedValue(existing);
+
+    const res = await request(createApp({
+      ...createBoardActor(),
+      source: "session",
+      orgIds: ["organization-2"],
+    } as any))
+      .post(`/api/issues/${existing.id}/title/regenerate`)
+      .expect(403);
+
+    expect(res.body.error).toBe("User does not have access to this organization");
+    expect(mockIssueService.listComments).not.toHaveBeenCalled();
+    expect(mockProductIntelligenceExecute).not.toHaveBeenCalled();
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+    expect(mockPublishLiveEvent).not.toHaveBeenCalled();
+  });
+
+  it("requires board access before regenerating an issue title", async () => {
+    const res = await request(createApp(createAgentActor()))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/title/regenerate")
+      .expect(403);
+
+    expect(res.body.error).toBe("Board access required");
+    expect(mockIssueService.getById).not.toHaveBeenCalled();
+    expect(mockProductIntelligenceExecute).not.toHaveBeenCalled();
+  });
+
+  it("does not mutate the issue when Fast Intelligence returns no usable title", async () => {
+    const existing = makeIssue();
+    mockIssueService.getById.mockResolvedValue(existing);
+    mockIssueService.listComments.mockResolvedValue([]);
+    mockProductIntelligenceExecute.mockResolvedValue({
+      output: "",
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+    });
+
+    const res = await request(createApp())
+      .post(`/api/issues/${existing.id}/title/regenerate`)
+      .expect(422);
+
+    expect(res.body.error).toBe("Fast Intelligence did not return a usable issue title");
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
   it("does not synthesize the default goal when reading an explicitly goal-less issue", async () => {

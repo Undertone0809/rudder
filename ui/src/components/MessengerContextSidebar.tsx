@@ -2,6 +2,7 @@ import { agentsApi } from "@/api/agents";
 import { authApi } from "@/api/auth";
 import { chatsApi } from "@/api/chats";
 import { ApiError } from "@/api/client";
+import { issuesApi } from "@/api/issues";
 import { messengerApi } from "@/api/messenger";
 import { organizationsApi } from "@/api/orgs";
 import { AgentIcon } from "@/components/AgentAvatar";
@@ -1850,6 +1851,8 @@ function ThreadRow({
   preserveUnreadEmphasis = false,
   onTogglePin,
   onHideIssue,
+  onRegenerateTitle,
+  titleGenerating = false,
   customGroups,
   customGroupId,
   customGroupPending,
@@ -1866,6 +1869,8 @@ function ThreadRow({
   preserveUnreadEmphasis?: boolean;
   onTogglePin: () => void;
   onHideIssue?: () => void;
+  onRegenerateTitle?: () => void;
+  titleGenerating?: boolean;
   customGroups?: MessengerCustomGroupWithEntries[];
   customGroupId?: string | null;
   customGroupPending?: boolean;
@@ -1887,7 +1892,7 @@ function ThreadRow({
   const secondaryActionClass = compact ? "right-7" : "right-8";
   const canTogglePin = thread.metadata?.splitIssue === true;
   const canHideIssue = thread.metadata?.splitIssue === true && Boolean(onHideIssue);
-  const showActions = canTogglePin || canHideIssue || Boolean(customGroups);
+  const showActions = canTogglePin || canHideIssue || Boolean(onRegenerateTitle) || Boolean(customGroups);
   const issueStatus =
     thread.metadata?.splitIssue === true && typeof thread.metadata.status === "string"
       ? thread.metadata.status
@@ -2057,6 +2062,19 @@ function ThreadRow({
               customGroupHandoffRef.current = false;
             }}
           >
+            {onRegenerateTitle ? (
+              <DropdownMenuItem disabled={titleGenerating} onClick={onRegenerateTitle}>
+                {titleGenerating ? (
+                  <Loader2
+                    data-testid={`messenger-issue-title-spinner-${sanitizeThreadKey(thread.threadKey)}`}
+                    className="h-4 w-4 animate-spin"
+                  />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+                Regenerate title
+              </DropdownMenuItem>
+            ) : null}
             {canTogglePin ? (
               <DropdownMenuItem onClick={onTogglePin}>
                 {thread.isPinned ? (
@@ -2619,6 +2637,7 @@ export function MessengerContextSidebar() {
   const [renameDraft, setRenameDraft] = useState("");
   const [pendingChatRenameTitles, setPendingChatRenameTitles] = useState<Record<string, string>>({});
   const [generatingChatTitleIds, setGeneratingChatTitleIds] = useState<Set<string>>(() => new Set());
+  const [generatingIssueTitleIds, setGeneratingIssueTitleIds] = useState<Set<string>>(() => new Set());
   const [customGroupEditor, setCustomGroupEditor] = useState<CustomGroupEditorState | null>(null);
   const [customGroupRename, setCustomGroupRename] = useState<CustomGroupRenameState | null>(null);
   const [customGroupNameDraft, setCustomGroupNameDraft] = useState("");
@@ -2880,7 +2899,7 @@ export function MessengerContextSidebar() {
     return map;
   }, [agentsQuery.data]);
 
-  const canRegenerateChatTitles = useMemo(() => {
+  const canRegenerateTitles = useMemo(() => {
     const profiles = intelligenceProfilesQuery.data ?? [];
     return profiles.some((profile) => profile?.purpose === "lightweight" && profile.status === "configured");
   }, [intelligenceProfilesQuery.data]);
@@ -3814,7 +3833,7 @@ export function MessengerContextSidebar() {
             setRenamingConversationId(conversation.id);
             setRenameDraft(conversation.title);
           }}
-          onRegenerateTitle={canRegenerateChatTitles ? () => regenerateTitleMutation.mutate(conversation.id) : undefined}
+          onRegenerateTitle={canRegenerateTitles ? () => regenerateTitleMutation.mutate(conversation.id) : undefined}
           titleGenerating={generatingChatTitleIds.has(conversation.id)}
           onFork={() => forkConversationMutation.mutate(conversation.id)}
           onArchive={() => {
@@ -3886,6 +3905,15 @@ export function MessengerContextSidebar() {
           });
         }}
         onHideIssue={() => handleHideIssueThread(thread)}
+        onRegenerateTitle={canRegenerateTitles && typeof thread.metadata?.issueId === "string"
+          ? () => {
+              const issueId = thread.metadata!.issueId as string;
+              if (!generatingIssueTitleIds.has(issueId)) regenerateIssueTitleMutation.mutate(issueId);
+            }
+          : undefined}
+        titleGenerating={typeof thread.metadata?.issueId === "string"
+          ? generatingIssueTitleIds.has(thread.metadata.issueId)
+          : false}
         customGroups={customGroups}
         customGroupId={entry.customGroupId}
         customGroupPending={entry.customGroupId ? !customGroups.some((group) => group.id === entry.customGroupId) : false}
@@ -4452,6 +4480,38 @@ export function MessengerContextSidebar() {
         return next;
       });
       await refreshChatViews(chatId);
+    },
+  });
+
+  const regenerateIssueTitleMutation = useMutation({
+    mutationFn: (issueId: string) => issuesApi.regenerateTitle(issueId),
+    onMutate: (issueId) => {
+      setGeneratingIssueTitleIds((current) => {
+        const next = new Set(current);
+        next.add(issueId);
+        return next;
+      });
+    },
+    onSuccess: (issue) => {
+      queryClient.setQueryData(queryKeys.issues.detail(issue.id), issue);
+      if (issue.identifier) queryClient.setQueryData(queryKeys.issues.detail(issue.identifier), issue);
+    },
+    onSettled: async (issue, _error, issueId) => {
+      setGeneratingIssueTitleIds((current) => {
+        const next = new Set(current);
+        next.delete(issueId);
+        return next;
+      });
+      if (!model.selectedOrganizationId) return;
+      await Promise.all([
+        invalidateMessengerThreadSummaryQueries(queryClient, model.selectedOrganizationId),
+        queryClient.invalidateQueries({ queryKey: queryKeys.messenger.issues(model.selectedOrganizationId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(model.selectedOrganizationId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueId) }),
+        issue?.identifier
+          ? queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issue.identifier) })
+          : Promise.resolve(),
+      ]);
     },
   });
 

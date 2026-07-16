@@ -79,6 +79,7 @@ export const issuesApi = {
   create: (orgId: string, data: Record<string, unknown>) =>
     api.post<Issue>(`/orgs/${orgId}/issues`, data),
   update: (id: string, data: Record<string, unknown>) => api.patch<Issue>(`/issues/${id}`, data),
+  regenerateTitle: (id: string) => api.post<Issue>(`/issues/${id}/title/regenerate`, {}),
   reorder: (orgId: string, data: ReorderIssue) => api.post<Issue>(`/orgs/${orgId}/issues/reorder`, data),
   remove: (id: string) => api.delete<Issue>(`/issues/${id}`),
   checkout: (id: string, agentId: string) =>

@@ -53,6 +53,19 @@ async function createChat(page: Page, orgId: string, title: string, preferredAge
   return chatRes.json() as Promise<{ id: string; title: string }>;
 }
 
+async function createIssue(page: Page, orgId: string, title: string, description: string) {
+  const issueRes = await page.request.post(`/api/orgs/${orgId}/issues`, {
+    data: {
+      title,
+      description,
+      status: "todo",
+      priority: "medium",
+    },
+  });
+  expect(issueRes.ok()).toBe(true);
+  return issueRes.json() as Promise<{ id: string; identifier: string; title: string }>;
+}
+
 async function createDefaultTitleChat(page: Page, orgId: string, preferredAgentId: string) {
   const chatRes = await page.request.post(`/api/orgs/${orgId}/chats`, {
     data: {
@@ -163,6 +176,53 @@ test.describe("Messenger chat title regeneration", () => {
     expect((await regenerateResponse).ok()).toBe(true);
 
     await expect(threadRow).toContainText("Generated sidebar title", { timeout: 15_000 });
+  });
+
+  test("regenerates a split issue title from the Messenger thread actions menu", async ({ page }) => {
+    const organization = await createOrganization(page, `Issue-Title-Regenerate-${Date.now()}`);
+    const issue = await createIssue(
+      page,
+      organization.id,
+      "Old release issue title",
+      "Coordinate migration proof, rollback readiness, and reviewer sign-off.",
+    );
+    const commentRes = await page.request.post(`/api/issues/${issue.id}/comments`, {
+      data: { body: "The final title should emphasize release proof and rollback readiness." },
+    });
+    expect(commentRes.ok()).toBe(true);
+
+    await page.addInitScript(({ orgId }) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem(
+        "rudder.messengerSplitIssueNotificationsByOrg",
+        JSON.stringify({ [orgId]: true }),
+      );
+    }, { orgId: organization.id });
+
+    await page.goto(`/${organization.issuePrefix}/messenger`);
+    const threadRow = page.getByTestId(`messenger-thread-issue-${issue.id}`);
+    await expect(threadRow).toContainText("Old release issue title", { timeout: 15_000 });
+    await threadRow.hover();
+    await threadRow.getByRole("button", { name: "Thread actions" }).click();
+    await expect(page.getByRole("menuitem", { name: "Regenerate title" })).toBeHidden();
+
+    await configureFastTitleProfile(page, organization.id, "Release Proof and Rollback Readiness");
+    await page.reload();
+    await expect(threadRow).toBeVisible({ timeout: 15_000 });
+    await threadRow.hover();
+    await threadRow.getByRole("button", { name: "Thread actions" }).click();
+
+    const regenerateResponse = page.waitForResponse((response) =>
+      response.url().includes(`/api/issues/${issue.id}/title/regenerate`)
+        && response.request().method() === "POST",
+    );
+    await page.getByRole("menuitem", { name: "Regenerate title" }).click();
+    expect((await regenerateResponse).ok()).toBe(true);
+
+    await expect(threadRow).toContainText("Release Proof and Rollback Readiness", { timeout: 15_000 });
+    const issueRes = await page.request.get(`/api/issues/${issue.id}`);
+    expect(issueRes.ok()).toBe(true);
+    expect((await issueRes.json() as { title: string }).title).toBe("Release Proof and Rollback Readiness");
   });
 
   test("supports Feishu-bound chat title actions while keeping destructive local actions hidden", async ({ page }) => {

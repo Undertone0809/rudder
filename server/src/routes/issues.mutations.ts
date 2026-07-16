@@ -11,13 +11,19 @@ import { forbidden, HttpError, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import {
-  logActivity
+  logActivity,
+  productIntelligenceService,
 } from "../services/index.js";
 import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
 import { buildIssueReviewWakeupOptions, queueIssueReviewWakeup } from "../services/issue-review-wakeup.js";
+import {
+  buildIssueTitlePrompt,
+  ISSUE_TITLE_REGENERATION_COMMENT_LIMIT,
+} from "../services/issue-title-generation.js";
 import { publishLiveEvent } from "../services/live-events.js";
+import { runtimeResultText, sanitizeGeneratedTitle } from "../services/title-generation.js";
 import type { StorageService } from "../storage/types.js";
-import { assertCompanyAccess, getActorInfo } from "./authz.js";
+import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
 
 
@@ -258,6 +264,62 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
     });
 
     res.status(201).json(issue);
+  });
+
+  router.post("/issues/:id/title/regenerate", async (req, res) => {
+    assertBoard(req);
+    const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.orgId);
+
+    const comments = await svc.listComments(existing.id, {
+      order: "desc",
+      limit: ISSUE_TITLE_REGENERATION_COMMENT_LIMIT,
+    });
+    const result = await productIntelligenceService(db).execute({
+      orgId: existing.orgId,
+      purpose: "lightweight",
+      feature: "issue_title",
+      prompt: buildIssueTitlePrompt(existing, comments),
+    });
+    const title = sanitizeGeneratedTitle(runtimeResultText(result));
+    if (!title) {
+      throw unprocessable("Fast Intelligence did not return a usable issue title");
+    }
+
+    const updated = await svc.update(existing.id, { title });
+    if (!updated) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+
+    const actor = getActorInfo(req);
+    const issueUpdateActivity = buildIssueUpdateActivityDetails(
+      existing as Record<string, unknown>,
+      updated as Record<string, unknown>,
+      { source: "title_regeneration" },
+    );
+    if (issueUpdateActivity.hasFieldChanges) {
+      publishLiveEvent({
+        orgId: existing.orgId,
+        type: "issue.content_updated",
+        payload: {
+          entityType: "issue",
+          entityId: existing.id,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          agentId: actor.agentId,
+          runId: actor.runId,
+          details: issueUpdateActivity.details,
+        },
+      });
+    }
+
+    res.json(updated);
   });
 
   router.patch("/issues/:id", validate(updateIssueSchema), async (req, res) => {
