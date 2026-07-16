@@ -19,6 +19,7 @@ related_tests:
   - desktop/scripts/smoke.mjs
 related_plans:
   - doc/plans/2026-07-15-desktop-startup-loading-recovery.md
+  - doc/plans/2026-07-16-desktop-update-last-known-good-recovery.md
 edit_policy: user_confirmed_only
 ---
 
@@ -34,9 +35,9 @@ progress, runtime metadata, local paths, or recovery controls. Recovery content
 appears only after managed local server startup reports a failure.
 
 The failure surface keeps the operator in the startup window, prioritizes a
-single retry, and offers an editable support-email draft plus progressively
-disclosed technical details. Rudder never sends mail or uploads local data
-without the operator.
+single retry, and offers an editable support-email draft, a fixed public GitHub
+Issue path, and progressively disclosed technical details. Rudder never sends
+mail, submits an issue, or uploads local data without the operator.
 
 ## Intent / User Job
 
@@ -56,17 +57,18 @@ trust placed in a renderer that is active before the normal application loads.
 
 - Actors: Desktop operator and Desktop main process.
 - Objects: boot window, managed local runtime attempt, startup failure record,
-  support draft, and technical disclosure.
-- States: quiet loading, managed startup failed, retry in flight, and support
-  draft open/fallback available.
+  support draft, fixed public bug-report handoff, technical disclosure, and
+  copy fallback.
+- States: quiet loading, managed startup failed, retry in flight, support draft
+  open/fallback available, and public issue handoff open/fallback available.
 
 ## Entry Points / Inputs
 
 - Desktop managed-local startup.
 - A startup-stage update owned by the main process.
 - A managed startup exception.
-- Operator actions: `Try again`, `Email support`, technical disclosure, copy
-  diagnostics, and open data folder.
+- Operator actions: `Try again`, `Email support`, `Report on GitHub`, technical
+  disclosure, copy diagnostics, and open data folder.
 
 ## Product Logic Flow
 
@@ -76,7 +78,8 @@ trust placed in a renderer that is active before the normal application loads.
    visible status copy or percentage progress.
 3. When managed local startup throws, the main process classifies and owns the
    failure state. The same boot window reveals a plain-language summary, `Try
-   again`, `Email support`, and collapsed `Technical details`.
+   again`, `Email support`, `Report on GitHub`, and collapsed `Technical
+   details`.
 4. `Try again` returns the existing window to its quiet loading state and starts
    one restart attempt. Concurrent retry requests coalesce rather than creating
    multiple runtime or window transitions.
@@ -85,9 +88,13 @@ trust placed in a renderer that is active before the normal application loads.
    diagnostic fields and guidance about useful context and unsafe attachments.
 6. If the mail client cannot open, the surface keeps the support address and
    diagnostic-copy fallback available.
-7. Technical paths and allowlisted failure metadata remain behind explicit
-   disclosure. The original exception stays in the main-process log and never
-   enters the boot renderer, copied diagnostic, or support draft.
+7. `Report on GitHub` opens only the repository's fixed public bug-report form.
+   The surface identifies GitHub Issues as public and keeps the fixed issue URL
+   plus diagnostic-copy fallback available when the opener cannot launch.
+8. The allowlisted plain-language failure summary is visible on the failure
+   surface. Technical fields and paths remain behind explicit disclosure. The
+   original exception stays in the main-process log and never enters the boot
+   renderer, copied diagnostic, support draft, or issue handoff.
 
 ## Decision Table
 
@@ -97,13 +104,14 @@ trust placed in a renderer that is active before the normal application loads.
 | Managed startup throws | Reveal failure summary, retry, support, and collapsed details in the boot window | Replace the failure with a silent exit or expose unallowlisted exception text |
 | Retry clicked repeatedly | Start one restart and return the same window to quiet loading | Start duplicate runtimes or create duplicate windows |
 | Email support clicked | Open one editable, bounded draft or expose copy fallback | Send automatically, upload data, or attach private files |
+| Report on GitHub clicked | Open the fixed public bug-report form and keep a safe diagnostic copy path | Submit automatically, construct an arbitrary URL, or imply that the report is private |
 | Reduced motion requested | Keep a recognizable static/low-motion branded state | Require continuous motion to understand failure or recovery |
 
 ## Actor-Visible Input
 
 - Healthy startup requires no input.
-- Failure presents retry, support email, disclosure, diagnostic-copy, and data
-  folder actions with explicit labels.
+- Failure presents retry, support email, public GitHub Issue, disclosure,
+  diagnostic-copy, and data folder actions with explicit labels.
 - Support guidance asks for what the operator was doing, what changed, and
   whether retry behaved differently; it warns against sensitive attachments.
 
@@ -131,6 +139,9 @@ trust placed in a renderer that is active before the normal application loads.
 3. Support request: Rudder opens an editable draft to the support address. If no
    mail client is available, the operator copies the address and diagnostics
    without losing the failure surface.
+4. Public issue report: Rudder identifies GitHub Issues as public, opens the
+   fixed bug form, and lets the operator review and paste the same bounded
+   diagnostic before choosing whether to submit.
 
 ## Invariants / Non-Goals
 
@@ -142,14 +153,16 @@ trust placed in a renderer that is active before the normal application loads.
   for support diagnostics.
 - Support drafts are bounded and encoded. They exclude config contents, `.env`,
   databases, credentials, API keys, raw logs, and workspace contents.
+- The GitHub handoff uses a fixed repository issue-form URL, is labeled public,
+  and never submits on the operator's behalf.
 - Renderer and copied diagnostics use the same bounded failure-metadata
-  allowlist. The original exception is logged by the main process but is not
-  copied or rendered.
+  allowlist used by feedback guidance. The original exception is logged by the
+  main process but is not copied, rendered, or placed in a URL.
 - Standard cross-client email drafts do not promise automatic attachments.
   Rudder tells the operator what may be useful to add and what must not be
   attached.
-- Retry and email actions are single-flight. Repeated clicks must not create
-  duplicate restarts, windows, or draft-open requests.
+- Retry, email, and issue actions are single-flight. Repeated clicks must not
+  create duplicate restarts, windows, or feedback-open requests.
 - Loading motion respects reduced-motion preferences. Failure disclosure moves
   focus into actionable recovery content and remains usable with keyboard,
   zoom, light/dark appearance, and constrained window height.
@@ -158,6 +171,11 @@ trust placed in a renderer that is active before the normal application loads.
 
 - This contract covers managed local server startup that resolves or throws. It
   does not add a watchdog for startup work that never settles.
+- Automatic fallback to a last-known-good Desktop release is not current
+  behavior. Its proposed transaction, data-safety, and quarantine semantics are
+  documented in
+  `doc/plans/2026-07-16-desktop-update-last-known-good-recovery.md`; when
+  implemented they require a separate Product Logic Contract.
 - Renderer-load recovery keeps its separate reload/restart semantics. This
   contract does not claim an initial renderer-load black-box path that the
   current Electron/macOS harness cannot execute reliably.
@@ -179,6 +197,7 @@ mail/attachment behavior, technical disclosure, or accessibility guarantees.
 - `desktop/src/desktop-support-mail.test.ts` covers recipient, encoding,
   allowlisting, injection resistance, and mail-client fallback behavior.
 - `desktop/scripts/smoke.mjs` covers a real isolated Electron managed-startup
-  failure, narrow preload, email IPC, technical disclosure, and coalesced retry.
+  failure, narrow preload, email and fixed GitHub Issue IPC, technical
+  disclosure, and coalesced recovery actions.
 - Visual QA covers healthy/failure states in light and dark appearance,
   reduced-motion, keyboard focus, constrained height, and 200% zoom.
