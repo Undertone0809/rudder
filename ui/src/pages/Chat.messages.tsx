@@ -24,6 +24,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { type ChatStreamDraftState } from "@/context/ChatGenerationContext";
 import { useMarkdownMentions } from "@/context/MarkdownMentionsContext";
+import { useResolvedIssueMention } from "@/hooks/useResolvedIssueMention";
 import { agentTitleBadgeLabel } from "@/lib/agent-labels";
 import {
   assigneeValueFromSelection,
@@ -1207,6 +1208,42 @@ function resolvedMentionLabel(mention: ParsedMentionChip, fallbackLabel: string,
   return fallbackLabel;
 }
 
+function ChatUserIssueMentionLink({
+  mention,
+  label,
+  targetHref,
+  onClick,
+}: {
+  mention: Extract<ParsedMentionChip, { kind: "issue" }>;
+  label: string;
+  targetHref: string;
+  onClick: (event: ReactMouseEvent<HTMLAnchorElement>) => void;
+}) {
+  const resolvedMention = useResolvedIssueMention(mention);
+  const mentionLink = (
+    <Link
+      to={targetHref}
+      className={cn(
+        "rudder-mention-chip rudder-mention-chip--issue",
+        resolvedMention.status && "rudder-mention-chip--with-status-icon",
+      )}
+      data-mention-kind="issue"
+      data-mention-comment={resolvedMention.commentId ? "true" : undefined}
+      data-mention-status={resolvedMention.status ?? undefined}
+      style={mentionChipInlineStyle(resolvedMention)}
+      onClick={onClick}
+    >
+      {label}
+    </Link>
+  );
+
+  return (
+    <RudderEntityPreview mention={resolvedMention} label={label}>
+      {mentionLink}
+    </RudderEntityPreview>
+  );
+}
+
 export function ChatUserPlainTextBody({
   body,
   skillReferences,
@@ -1294,6 +1331,17 @@ export function ChatUserPlainTextBody({
         const mention = resolvedMentionFromCurrentOptions(part.mention, mentions);
         const mentionLabel = resolvedMentionLabel(mention, part.label, mentions);
         const targetHref = applyOrganizationPrefix(mentionChipNavigationPath(mention), organizationPrefix);
+        if (mention.kind === "issue") {
+          return (
+            <ChatUserIssueMentionLink
+              key={`${part.href}-${index}`}
+              mention={mention}
+              label={mentionLabel}
+              targetHref={targetHref}
+              onClick={(event) => handlePlainTextLinkClick(event, targetHref, mentionLabel)}
+            />
+          );
+        }
         const mentionLink = (
           <Link
             key={`${part.href}-${index}`}
@@ -1302,11 +1350,8 @@ export function ChatUserPlainTextBody({
               "rudder-mention-chip",
               `rudder-mention-chip--${mention.kind}`,
               mention.kind === "project" && "rudder-project-mention-chip",
-              mention.kind === "issue" && mention.status && "rudder-mention-chip--with-status-icon",
             )}
             data-mention-kind={mention.kind}
-            data-mention-comment={mention.kind === "issue" && mention.commentId ? "true" : undefined}
-            data-mention-status={mention.kind === "issue" && mention.status ? mention.status : undefined}
             style={mentionChipInlineStyle(mention)}
             onClick={(event) => handlePlainTextLinkClick(event, targetHref, mentionLabel)}
           >

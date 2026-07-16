@@ -23,6 +23,7 @@ import {
   insertTextAfterRudderTokenBoundary,
   isMilkdownEditableUnexpectedlyBlank,
   isRudderTokenHref,
+  issueMentionsFromMarkdown,
   mentionMarkdown,
   milkdownMentionDecorationAttrs,
   moveSelectionAfterRudderTokenBoundary,
@@ -72,6 +73,21 @@ describe("getMilkdownProseMirrorView", () => {
 });
 
 describe("MilkdownMarkdownEditor mention serialization", () => {
+  it("extracts unique issue mentions that need live editor metadata", () => {
+    const unresolvedHref = buildIssueMentionHref("issue-1", "R-6");
+    const secondHref = buildIssueMentionHref("issue-2", "R-7");
+
+    expect(issueMentionsFromMarkdown([
+      `[R-6](${unresolvedHref})`,
+      `[duplicate](${unresolvedHref})`,
+      `[R-7](${secondHref})`,
+      "[External](https://example.com)",
+    ].join("\n"))).toEqual([
+      expect.objectContaining({ issueId: "issue-1", ref: "R-6", status: null }),
+      expect.objectContaining({ issueId: "issue-2", ref: "R-7", status: null }),
+    ]);
+  });
+
   it("normalizes relaxed markdown before Milkdown parses Library documents", () => {
     expect(normalizeRelaxedMarkdownSyntax([
       "[https://github.com/Undertone0809/rudder/releases?page=5](https://github.com/Undertone0809/rudder/releases?",
