@@ -279,12 +279,24 @@ Desktop has three operator-facing recovery layers across startup and UI runtime:
 
 - If managed local startup rejects after the boot window exists, the quiet boot
   surface expands in place. The operator can retry, open an editable support
-  draft addressed to `zeeland4work@gmail.com`, or disclose technical details.
-  The support draft includes a bounded, main-process-owned diagnostic summary;
-  it does not attach files or send mail automatically. The UI asks the operator
-  to add what they were doing and what changed, and warns against attaching
-  `.env`, `config.json`, databases, credentials, API keys, or private workspace
-  files. Raw details and the instance path stay collapsed until requested.
+  draft addressed to `zeeland4work@gmail.com`, open the fixed public GitHub bug
+  form at
+  `https://github.com/Undertone0809/rudder/issues/new?template=bug_report.yml`,
+  or disclose technical details. Both external actions are fixed main-process
+  intents and have copy fallbacks when the OS handoff fails.
+
+  The support draft includes a bounded, main-process-owned diagnostic summary
+  and editable prompts for summary, reproduction, actual and expected behavior,
+  onset and preceding changes, retry result, impact/workaround, evidence, and
+  environment context. The GitHub path identifies the destination as public and
+  tells the operator to paste `Copy diagnostic` into the form's Environment
+  details when useful. The copied support diagnostic omits the instance folder,
+  even though that path remains available in the local collapsed details for
+  recovery. Rudder does not attach files, send mail, submit issues, or upload
+  evidence automatically. The UI warns against sharing secrets,
+  private paths, prompts, command output, `.env`, `config.json`, databases,
+  credentials, or private workspace files. Raw details and the instance path
+  stay collapsed until requested.
 
 - If the React UI throws during render, the board shows a recovery surface instead
   of unmounting to a blank window. The operator can reload the UI, copy a

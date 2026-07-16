@@ -12,6 +12,8 @@ related_code:
   - server/src/services/run-intelligence.ts
   - server/src/index.ts
   - server/src/runtime/runtime-supervisor.ts
+  - desktop/src/boot-screen.ts
+  - desktop/src/main.ts
 related_tests:
   - server/src/__tests__/activity-service.test.ts
   - server/src/__tests__/approvals-service.test.ts
@@ -19,6 +21,7 @@ related_tests:
   - server/src/__tests__/costs-service.test.ts
   - server/src/__tests__/runtime-supervisor.test.ts
   - scripts/smoke/server-runtime-lifecycle.mjs
+  - desktop/scripts/smoke.mjs
 edit_policy: user_confirmed_only
 ---
 
@@ -31,7 +34,7 @@ edit_policy: user_confirmed_only
 - Activity log taxonomy and audit references.
 - Dashboard and run-intelligence rollups derived from underlying domain facts.
 - Server process availability across startup, shutdown, and restart boundaries.
-- Desktop startup presentation and failure-only operator recovery.
+- Desktop startup presentation, failure recovery, and safe support handoff.
 
 ## Contract Index
 
@@ -48,6 +51,6 @@ edit_policy: user_confirmed_only
 - `CONTROL.SERVER.LIFECYCLE.001`: the server releases resources registered with
   its lifecycle owner consistently across normal stop, repeated stop, startup
   failure, and restart.
-- `CONTROL.DESKTOP.STARTUP.RECOVERY.001`: Desktop keeps healthy startup quiet and
-  reveals retry, support-email guidance, and bounded diagnostics only after a
-  managed local startup failure.
+- `CONTROL.DESKTOP.STARTUP.RECOVERY.001`: Desktop keeps healthy startup quiet
+  and reveals retry plus operator-controlled email or GitHub reporting only
+  after managed startup fails.

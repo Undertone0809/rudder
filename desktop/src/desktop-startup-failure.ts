@@ -70,7 +70,6 @@ export function createDesktopRecoveryDiagnostic(input: {
   arch: string;
   profile?: string | null;
   instance?: string | null;
-  instanceRoot?: string | null;
 }): string {
   const rows = [
     ["Failure ID", input.failure.id],
@@ -83,7 +82,6 @@ export function createDesktopRecoveryDiagnostic(input: {
     ["Summary", input.failure.summary],
     ["Profile", cleanDiagnosticField(input.profile, 80)],
     ["Instance", cleanDiagnosticField(input.instance, 80)],
-    ["Instance folder", cleanDiagnosticField(input.instanceRoot, 360)],
   ].filter((row): row is [string, string] => Boolean(row[1]));
 
   return [

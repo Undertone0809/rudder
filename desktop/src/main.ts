@@ -101,7 +101,7 @@ import {
   createDesktopStartupFailureView,
   type DesktopStartupFailureView,
 } from "./desktop-startup-failure.js";
-import { DESKTOP_FEEDBACK_EMAIL } from "./desktop-support-mail.js";
+import { DESKTOP_BUG_REPORT_URL, DESKTOP_FEEDBACK_EMAIL } from "./desktop-support-mail.js";
 import { createDesktopUpdateFlow, INSTANCE_SETTINGS_GENERAL_PATH } from "./desktop-update-flow.js";
 import {
   toWorkspaceLaunchTargetPayload,
@@ -442,8 +442,10 @@ let currentBootState: BootState = {
 let serverHandle: StartedServer | null = null;
 let startInFlight: Promise<void> | null = null;
 let restartInFlight: Promise<void> | null = null;
-let supportDraftInFlight: Promise<void> | null = null;
+let supportDraftInFlight: { contextId: string; promise: Promise<void> } | null = null;
+let bugReportInFlight: { failureId: string; promise: Promise<void> } | null = null;
 let supportDraftHandoffAttemptCount = 0;
+let bugReportHandoffAttemptCount = 0;
 let startupAttemptCount = 0;
 let pendingDesktopNavigationPath: string | null = null;
 let lastKnownAppUrl: string | null = null;
@@ -877,7 +879,6 @@ function createCurrentRecoveryDiagnostic(): string {
     arch: process.arch,
     profile: currentBootState.runtime?.localEnv,
     instance: currentBootState.runtime?.instanceId,
-    instanceRoot: currentBootState.paths?.instanceRoot,
   });
 }
 
@@ -1688,6 +1689,33 @@ async function openDesktopSupportDraft(): Promise<void> {
   }
 }
 
+async function openDesktopBugReport(): Promise<void> {
+  const smokeRecordPath = process.env.RUDDER_DESKTOP_SMOKE_BUG_REPORT_HANDOFF_PATH?.trim();
+  if (!smokeRecordPath) {
+    await shell.openExternal(DESKTOP_BUG_REPORT_URL);
+    return;
+  }
+
+  bugReportHandoffAttemptCount += 1;
+  const attempt = bugReportHandoffAttemptCount;
+  fs.appendFileSync(
+    path.resolve(smokeRecordPath),
+    `${JSON.stringify({ attempt, url: DESKTOP_BUG_REPORT_URL })}\n`,
+    "utf8",
+  );
+  const delayValues = (process.env.RUDDER_DESKTOP_SMOKE_BUG_REPORT_HANDOFF_DELAY_SEQUENCE ?? "80")
+    .split(",")
+    .map((value) => Number.parseInt(value.trim(), 10));
+  const delayMs = Math.min(5_000, Math.max(0, delayValues[attempt - 1] ?? 80));
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+  const outcomes = (process.env.RUDDER_DESKTOP_SMOKE_BUG_REPORT_HANDOFF_SEQUENCE ?? "resolve")
+    .split(",")
+    .map((value) => value.trim().toLowerCase());
+  if (outcomes[attempt - 1] === "reject") {
+    throw new Error("Simulated bug report handoff rejection.");
+  }
+}
+
 function registerIpc(): void {
   registerBrowserIpcHandlers(ipcMain, {
     getMainRenderer: getCurrentMainRenderer,
@@ -1713,6 +1741,27 @@ function registerIpc(): void {
   ipcMain.handle("desktop:copy-support-email", async (event) => {
     assertStartupRecoveryFrame(event, "Support email copy");
     clipboard.writeText(DESKTOP_FEEDBACK_EMAIL);
+  });
+  ipcMain.handle("desktop:open-bug-report", async (event) => {
+    assertStartupRecoveryFrame(event, "GitHub bug report");
+    if (currentBootState.stage !== "error") {
+      throw new Error("Bug reporting is available only after startup fails.");
+    }
+    const failureId = currentBootState.failure?.id;
+    if (!failureId) throw new Error("No failed startup report context is available.");
+    if (bugReportInFlight?.failureId === failureId) return bugReportInFlight.promise;
+    const promise = openDesktopBugReport().finally(() => {
+      if (bugReportInFlight?.promise === promise) bugReportInFlight = null;
+    });
+    bugReportInFlight = { failureId, promise };
+    return promise;
+  });
+  ipcMain.handle("desktop:copy-bug-report-url", async (event) => {
+    assertStartupRecoveryFrame(event, "GitHub bug report link copy");
+    if (currentBootState.stage !== "error") {
+      throw new Error("Bug reporting is available only after startup fails.");
+    }
+    clipboard.writeText(DESKTOP_BUG_REPORT_URL);
   });
   ipcMain.handle("desktop:copy-recovery-diagnostic", async (event) => {
     assertStartupRecoveryFrame(event, "Recovery diagnostic copy");
@@ -1859,11 +1908,18 @@ function registerIpc(): void {
     if (currentMainWindowKind === "boot" && currentBootState.stage !== "error") {
       throw new Error("Startup support is available only after startup fails.");
     }
-    if (supportDraftInFlight) return supportDraftInFlight;
-    supportDraftInFlight = openDesktopSupportDraft().finally(() => {
-      supportDraftInFlight = null;
+    if (currentMainWindowKind === "boot" && !currentBootState.failure?.id) {
+      throw new Error("No failed startup support context is available.");
+    }
+    const contextId = currentMainWindowKind === "boot"
+      ? `boot:${currentBootState.failure?.id}`
+      : "app";
+    if (supportDraftInFlight?.contextId === contextId) return supportDraftInFlight.promise;
+    const promise = openDesktopSupportDraft().finally(() => {
+      if (supportDraftInFlight?.promise === promise) supportDraftInFlight = null;
     });
-    return supportDraftInFlight;
+    supportDraftInFlight = { contextId, promise };
+    return promise;
   });
   ipcMain.handle("desktop:open-external", async (event, target: string) => {
     if (event.sender !== getCurrentMainRenderer()) {
