@@ -395,6 +395,90 @@ describe("heartbeat run concurrency", () => {
     return runId;
   }
 
+  async function seedTaskSessionAndExplicitSource(input: {
+    orgId: string;
+    agentId: string;
+    taskKey: string;
+  }) {
+    await db.insert(agentTaskSessions).values({
+      orgId: input.orgId,
+      agentId: input.agentId,
+      agentRuntimeType: "codex_local",
+      taskKey: input.taskKey,
+      sessionDisplayId: "old-task-session",
+      sessionParamsJson: {
+        sessionId: "old-task-session",
+        cwd: "/tmp/old-task-session",
+      },
+    });
+    const sourceRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: sourceRunId,
+      orgId: input.orgId,
+      agentId: input.agentId,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      status: "failed",
+      finishedAt: new Date(),
+      error: "retry with explicit session",
+      sessionIdBefore: "old-source-session",
+      sessionIdAfter: "explicit-session",
+      sessionParamsBeforeJson: { sessionId: "old-source-session" },
+      sessionParamsAfterJson: {
+        sessionId: "explicit-session",
+        cwd: "/tmp/explicit-session",
+      },
+      contextSnapshot: { taskKey: input.taskKey },
+    });
+    return sourceRunId;
+  }
+
+  async function expectExplicitCoalescedLineage(input: {
+    heartbeat: ReturnType<typeof heartbeatService>;
+    orgId: string;
+    agentId: string;
+    runId: string;
+    sourceRunId: string;
+    status: "queued" | "cancelled";
+  }) {
+    const persisted = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, input.runId))
+      .then((rows) => rows[0]!);
+    expect(persisted).toMatchObject({
+      status: input.status,
+      sessionIdBefore: "explicit-session",
+      sessionParamsBeforeJson: {
+        sessionId: "explicit-session",
+        cwd: "/tmp/explicit-session",
+      },
+      sessionReuseScope: "explicit",
+      contextSnapshot: expect.objectContaining({
+        resumeFromRunId: input.sourceRunId,
+        resumeSessionDisplayId: "explicit-session",
+        resumeSessionParams: {
+          sessionId: "explicit-session",
+          cwd: "/tmp/explicit-session",
+        },
+      }),
+    });
+
+    const publicRun = (await input.heartbeat.list(input.orgId, input.agentId)).find(
+      (candidate) => candidate.id === input.runId,
+    );
+    expect(publicRun).toMatchObject({
+      status: input.status,
+      sessionIdBefore: "explicit-session",
+      sessionReuseScope: "explicit",
+      contextSnapshot: expect.objectContaining({
+        resumeFromRunId: input.sourceRunId,
+      }),
+    });
+    expect(publicRun?.contextSnapshot).not.toHaveProperty("resumeSessionDisplayId");
+    expect(publicRun?.contextSnapshot).not.toHaveProperty("resumeSessionParams");
+  }
+
   async function seedRunlessWakeup(input: {
     orgId: string;
     agentId: string;
@@ -572,6 +656,56 @@ describe("heartbeat run concurrency", () => {
       sessionId: null,
       sessionDisplayId: null,
       sessionParams: null,
+    });
+  });
+
+  it("atomically replaces generic queued task lineage when an explicit resume coalesces", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const taskKey = "task:generic-explicit-coalesce";
+    const sourceRunId = await seedTaskSessionAndExplicitSource({ orgId, agentId, taskKey });
+    const heartbeat = heartbeatService(db);
+
+    const queuedTaskRun = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "queued_task_session",
+      payload: { taskKey },
+      contextSnapshot: { taskKey },
+      startImmediately: false,
+    });
+    expect(queuedTaskRun).toMatchObject({
+      status: "queued",
+      sessionIdBefore: "old-task-session",
+      sessionReuseScope: "task",
+    });
+
+    const coalescedRun = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "explicit_resume_coalesce",
+      payload: { taskKey, resumeFromRunId: sourceRunId },
+      contextSnapshot: { taskKey },
+      startImmediately: false,
+    });
+    expect(coalescedRun?.id).toBe(queuedTaskRun?.id);
+    expect(mockRuntimeAdapter.calls.some((call) => call.runId === queuedTaskRun!.id)).toBe(false);
+    await expectExplicitCoalescedLineage({
+      heartbeat,
+      orgId,
+      agentId,
+      runId: queuedTaskRun!.id,
+      sourceRunId,
+      status: "queued",
+    });
+
+    await heartbeat.cancelRun(queuedTaskRun!.id);
+    await expectExplicitCoalescedLineage({
+      heartbeat,
+      orgId,
+      agentId,
+      runId: queuedTaskRun!.id,
+      sourceRunId,
+      status: "cancelled",
     });
   });
 
@@ -858,6 +992,57 @@ describe("heartbeat run concurrency", () => {
     expect(liveRuns).toHaveLength(1);
     expect(mockRuntimeAdapter.calls).toHaveLength(1);
     expect((liveRuns[0]?.contextSnapshot as Record<string, unknown>)?.issueId).toBe(issueId);
+  });
+
+  it("atomically replaces issue-lock queued task lineage when an explicit resume coalesces", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "in_progress" });
+    const taskKey = `issue:${issueId}`;
+    const sourceRunId = await seedTaskSessionAndExplicitSource({ orgId, agentId, taskKey });
+    const heartbeat = heartbeatService(db);
+
+    const queuedTaskRun = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "issue_commented",
+      payload: { issueId },
+      contextSnapshot: { issueId, taskKey, wakeReason: "issue_commented" },
+      startImmediately: false,
+    });
+    expect(queuedTaskRun).toMatchObject({
+      status: "queued",
+      sessionIdBefore: "old-task-session",
+      sessionReuseScope: "task",
+    });
+
+    const coalescedRun = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "explicit_issue_resume_coalesce",
+      payload: { issueId, resumeFromRunId: sourceRunId },
+      contextSnapshot: { issueId, taskKey },
+      startImmediately: false,
+    });
+    expect(coalescedRun?.id).toBe(queuedTaskRun?.id);
+    expect(mockRuntimeAdapter.calls.some((call) => call.runId === queuedTaskRun!.id)).toBe(false);
+    await expectExplicitCoalescedLineage({
+      heartbeat,
+      orgId,
+      agentId,
+      runId: queuedTaskRun!.id,
+      sourceRunId,
+      status: "queued",
+    });
+
+    await heartbeat.cancelRun(queuedTaskRun!.id);
+    await expectExplicitCoalescedLineage({
+      heartbeat,
+      orgId,
+      agentId,
+      runId: queuedTaskRun!.id,
+      sourceRunId,
+      status: "cancelled",
+    });
   });
 
   it("defers same-agent issue wakeups while terminal effects are pending", async () => {
