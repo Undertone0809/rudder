@@ -145,7 +145,7 @@ test.describe("Chat Work Manifest", () => {
         conversationId: chat.id,
         role: "user",
         body: [
-          `Use https://source.example/research and ${sourceFile.markdownLink}.`,
+          `Use https://source.example/research, https://source-two.example/data, and ${sourceFile.markdownLink}.`,
           `[${issue.identifier}](issue://${issue.id}?r=${encodeURIComponent(issue.identifier)})`,
           `[${automation.title}](automation://${automation.id}?t=${encodeURIComponent(automation.title)})`,
           `[Other project chat](chat://${otherChat.id})`,
@@ -213,6 +213,16 @@ test.describe("Chat Work Manifest", () => {
     await expect(shelf).not.toContainText("Browser");
     await expect(shelf.getByRole("button", { name: /source\.example https:\/\/source\.example\/research/ }))
       .toHaveCount(1);
+
+    const sources = shelf.getByRole("region", { name: "Sources" });
+    const expandSources = sources.getByRole("button", { name: /View all/ });
+    await expect(expandSources).toHaveAttribute("aria-expanded", "false");
+    await expandSources.click();
+    const collapseSources = sources.getByRole("button", { name: "Show less" });
+    await expect(collapseSources).toHaveAttribute("aria-expanded", "true");
+    await expect(shelf).toContainText("source-two.example");
+    await collapseSources.click();
+    await expect(sources.getByRole("button", { name: /View all/ })).toHaveAttribute("aria-expanded", "false");
     await page.screenshot({ path: `${screenshotDir}/references.png`, fullPage: true });
 
     await references.getByRole("button", { name: issue.identifier, exact: true }).click();
@@ -224,6 +234,9 @@ test.describe("Chat Work Manifest", () => {
     await issueSidePanel.getByTestId("chat-side-panel-tab-close").click();
     await expect(issueSidePanel).toHaveCount(0);
     await expect(shelf).toBeVisible();
+    await shelf.locator("section[aria-label='References']")
+      .getByRole("button", { name: "View all 28" })
+      .click();
 
     const manifestScrollRegion = shelf.getByTestId("chat-work-manifest-scroll-region");
     await expect(manifestScrollRegion).toBeVisible();

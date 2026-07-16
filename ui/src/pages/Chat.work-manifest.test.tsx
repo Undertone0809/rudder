@@ -283,9 +283,38 @@ describe("ChatWorkManifest", () => {
     );
     const trigger = container.querySelector<HTMLButtonElement>("[data-testid='chat-work-manifest-trigger']");
     expect(trigger?.textContent).toContain("Work 6");
+    expect(trigger?.getAttribute("aria-controls")).toBe("chat-work-manifest-compact-panel");
     act(() => trigger?.click());
     const compactPanel = container.querySelector("[data-testid='chat-work-manifest-compact-panel']");
+    expect(compactPanel?.id).toBe("chat-work-manifest-compact-panel");
     expect(compactPanel?.textContent).toContain("Report.md");
     expect(compactPanel?.className).toContain("max-h-[calc(100dvh-6rem)]");
+  });
+
+  it("expands a bounded section with an accessible control", () => {
+    const container = render(
+      <ChatWorkManifest manifest={manifest} loading={false} error={null} sidePanelOpen={false} {...wideProps} {...handlers} />,
+    );
+    const button = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((candidate) => candidate.textContent?.includes("View all 3"));
+    expect(button?.getAttribute("aria-expanded")).toBe("false");
+    expect(button?.getAttribute("aria-controls")).toBe("chat-work-manifest-wide-sources");
+    act(() => button?.click());
+    expect(button?.getAttribute("aria-expanded")).toBe("true");
+    expect(container.textContent).toContain("Notes.txt");
+    expect(button?.textContent).toContain("Show less");
+  });
+
+  it("keeps wide and compact section ids unique", () => {
+    const container = render(
+      <ChatWorkManifest manifest={manifest} loading={false} error={null} sidePanelOpen={false} {...wideProps} {...handlers} />,
+    );
+    const trigger = container.querySelector<HTMLButtonElement>("[data-testid='chat-work-manifest-trigger']");
+    act(() => trigger?.click());
+    const ids = Array.from(container.querySelectorAll<HTMLElement>("[id^='chat-work-manifest-']"))
+      .map((element) => element.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toContain("chat-work-manifest-wide-sources");
+    expect(ids).toContain("chat-work-manifest-compact-sources");
   });
 });
