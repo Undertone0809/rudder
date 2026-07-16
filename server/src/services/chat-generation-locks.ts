@@ -13,6 +13,7 @@ import { createOperatorInterruptAbortReason } from "@rudderhq/agent-runtime-util
 import { randomUUID } from "node:crypto";
 
 const CHAT_OPERATOR_INTERRUPT_HARD_DEADLINE_MS = 2_000;
+const CHAT_CONTROL_REGISTRATION_WAIT_MS = 2_000;
 const CHAT_CONTROL_LEASE_RENEW_INTERVAL_MS = 10_000;
 
 type ActiveChatGeneration = {
@@ -29,6 +30,7 @@ type ActiveChatGeneration = {
   } | null;
   interruptPromise: Promise<AgentRuntimeControlInterruptResult> | null;
   leaseRenewTimer: ReturnType<typeof setInterval> | null;
+  controlWaiters: Set<() => void>;
 };
 
 const activeChatGenerations = new Map<string, ActiveChatGeneration>();
@@ -64,6 +66,12 @@ function clearLeaseRenewal(active: ActiveChatGeneration) {
   active.leaseRenewTimer = null;
 }
 
+function notifyControlStateChanged(active: ActiveChatGeneration) {
+  const waiters = [...active.controlWaiters];
+  active.controlWaiters.clear();
+  for (const resolve of waiters) resolve();
+}
+
 export function claimChatGeneration(
   conversationId: string,
   abortController: AbortController | null = null,
@@ -82,11 +90,13 @@ export function claimChatGeneration(
     control: null,
     interruptPromise: null,
     leaseRenewTimer: null,
+    controlWaiters: new Set(),
   });
 
   return () => {
     const active = activeChatGenerations.get(conversationId);
     if (active?.token === token) {
+      notifyControlStateChanged(active);
       activeChatGenerations.delete(conversationId);
       clearLeaseRenewal(active);
       if (active.control) void active.control.handle.dispose().catch(() => undefined);
@@ -242,6 +252,7 @@ export function createChatRuntimeControlCoordinator(
             await disposeControl(current, { attemptEpoch, ownerToken });
             return null;
           }
+          notifyControlStateChanged(current);
           let released = false;
           return {
             isCurrent() {
@@ -272,6 +283,7 @@ export function createChatRuntimeControlCoordinator(
           clearLeaseRenewal(current);
           await disposeControl(current, { attemptEpoch, ownerToken });
           if (current.lifecycle !== "stopping") current.lifecycle = "closing";
+          notifyControlStateChanged(current);
           await hooks.onAttemptCompleted?.({ generationId, attemptEpoch, ownerToken });
         },
       };
@@ -285,16 +297,65 @@ export type ActiveChatGenerationSteerResult =
       { disposition: "accepted_current" }
     >)
   | { status: "acceptance_unknown"; attemptEpoch: number; reason: string; ownerChangedAfterSend?: true }
-  | { status: "pending_control"; attemptEpoch: number }
-  | { status: "continuation_required"; attemptEpoch: number; reason: "closing" | "unsupported" }
+  | { status: "provider_send_in_flight"; attemptEpoch: number }
+  | {
+      status: "continuation_required";
+      attemptEpoch: number;
+      reason: "closing" | "unsupported" | "registration_timeout" | "owner_changed_before_send" | "generation_fence_changed";
+    }
   | { status: "stale_generation"; activeGenerationId: string | null };
+
+type ChatSteerProviderSendClaim = {
+  clientMessageId: string;
+  release(): Promise<void>;
+};
+
+type ChatSteerProviderSendDecision = ChatSteerProviderSendClaim | {
+  sendDenied: true;
+  reason: "generation_fence_changed";
+};
+
+async function waitForControlStateChange(
+  conversationId: string,
+  expectedActive: ActiveChatGeneration,
+  timeoutMs: number,
+): Promise<"changed" | "timed_out"> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: "changed" | "timed_out") => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      expectedActive.controlWaiters.delete(onChanged);
+      resolve(result);
+    };
+    const onChanged = () => finish("changed");
+    const timeout = setTimeout(() => finish("timed_out"), timeoutMs);
+    timeout.unref?.();
+    expectedActive.controlWaiters.add(onChanged);
+
+    const latest = activeChatGenerations.get(conversationId);
+    if (
+      latest !== expectedActive
+      || latest.control
+      || latest.lifecycle === "closing"
+      || latest.lifecycle === "stopping"
+    ) {
+      finish("changed");
+    }
+  });
+}
 
 export async function steerActiveChatGeneration(input: {
   conversationId: string;
   expectedGenerationId: string;
+  expectedAttemptEpoch?: number;
   feedback: AgentRuntimeControlSteerInput;
+  claimProviderSend?: () => Promise<ChatSteerProviderSendDecision | null>;
+  registrationWaitMs?: number;
 }): Promise<ActiveChatGenerationSteerResult> {
-  const active = activeChatGenerations.get(input.conversationId);
+  const registrationDeadline = Date.now() + (input.registrationWaitMs ?? CHAT_CONTROL_REGISTRATION_WAIT_MS);
+  let active = activeChatGenerations.get(input.conversationId);
   if (!active || active.generationId !== input.expectedGenerationId) {
     return {
       status: "stale_generation",
@@ -308,9 +369,49 @@ export async function steerActiveChatGeneration(input: {
       reason: "closing",
     };
   }
+  while (!active.control) {
+    const remainingMs = registrationDeadline - Date.now();
+    if (remainingMs <= 0) {
+      return {
+        status: "continuation_required",
+        attemptEpoch: active.attemptEpoch,
+        reason: "registration_timeout",
+      };
+    }
+    const waitResult = await waitForControlStateChange(input.conversationId, active, remainingMs);
+    const latest = activeChatGenerations.get(input.conversationId);
+    if (!latest || latest.generationId !== input.expectedGenerationId) {
+      return {
+        status: "stale_generation",
+        activeGenerationId: latest?.generationId ?? null,
+      };
+    }
+    active = latest;
+    if (active.lifecycle === "stopping" || active.lifecycle === "closing") {
+      return {
+        status: "continuation_required",
+        attemptEpoch: active.attemptEpoch,
+        reason: "closing",
+      };
+    }
+    if (waitResult === "timed_out" && !active.control) {
+      return {
+        status: "continuation_required",
+        attemptEpoch: active.attemptEpoch,
+        reason: "registration_timeout",
+      };
+    }
+  }
   const control = active.control;
-  if (!control) {
-    return { status: "pending_control", attemptEpoch: active.attemptEpoch };
+  if (
+    input.expectedAttemptEpoch !== undefined
+    && control.attemptEpoch !== input.expectedAttemptEpoch
+  ) {
+    return {
+      status: "continuation_required",
+      attemptEpoch: control.attemptEpoch,
+      reason: "owner_changed_before_send",
+    };
   }
   if (control.handle.capabilities.steer !== "native") {
     return {
@@ -320,8 +421,54 @@ export async function steerActiveChatGeneration(input: {
     };
   }
 
+  const sendClaim = input.claimProviderSend
+    ? await input.claimProviderSend()
+    : {
+        clientMessageId: input.feedback.clientMessageId,
+        release: async () => undefined,
+      };
+  if (!sendClaim) {
+    return { status: "provider_send_in_flight", attemptEpoch: control.attemptEpoch };
+  }
+  if ("sendDenied" in sendClaim) {
+    return {
+      status: "continuation_required",
+      attemptEpoch: control.attemptEpoch,
+      reason: sendClaim.reason,
+    };
+  }
+  const ownerBeforeSend = activeChatGenerations.get(input.conversationId);
+  if (
+    !activeAttemptMatches(
+      ownerBeforeSend,
+      input.expectedGenerationId,
+      control.attemptEpoch,
+      control.ownerToken,
+    )
+    || ownerBeforeSend.control?.handle !== control.handle
+    || ownerBeforeSend.lifecycle !== "running"
+  ) {
+    try {
+      await sendClaim.release();
+    } catch (error) {
+      return {
+        status: "acceptance_unknown",
+        attemptEpoch: control.attemptEpoch,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+    return {
+      status: "continuation_required",
+      attemptEpoch: control.attemptEpoch,
+      reason: "owner_changed_before_send",
+    };
+  }
+
   try {
-    const result = await control.handle.steer(input.feedback);
+    const result = await control.handle.steer({
+      ...input.feedback,
+      clientMessageId: sendClaim.clientMessageId,
+    });
     const latest = activeChatGenerations.get(input.conversationId);
     const ownerChangedAfterSend = !activeAttemptMatches(
       latest,
@@ -374,6 +521,7 @@ function requestInterrupt(
   if (active.interruptPromise) return active.interruptPromise;
   const handle = active.control?.handle ?? null;
   active.lifecycle = "stopping";
+  notifyControlStateChanged(active);
   if (active.abortController && !active.abortController.signal.aborted) {
     active.abortController.abort(
       createOperatorInterruptAbortReason(CHAT_OPERATOR_INTERRUPT_HARD_DEADLINE_MS),
@@ -405,6 +553,7 @@ export function cancelAndReleaseActiveChatGeneration(conversationId: string): bo
   const active = activeChatGenerations.get(conversationId);
   if (!active) return false;
   void requestInterrupt(active, "operator_stop");
+  notifyControlStateChanged(active);
   activeChatGenerations.delete(conversationId);
   clearLeaseRenewal(active);
   if (active.control) void active.control.handle.dispose().catch(() => undefined);
@@ -414,6 +563,7 @@ export function cancelAndReleaseActiveChatGeneration(conversationId: string): bo
 export function clearActiveChatGenerationsForTest() {
   if (process.env.NODE_ENV !== "test" && process.env.VITEST !== "true") return;
   for (const active of activeChatGenerations.values()) {
+    notifyControlStateChanged(active);
     clearLeaseRenewal(active);
     if (active.control) void active.control.handle.dispose().catch(() => undefined);
   }

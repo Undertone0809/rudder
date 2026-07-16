@@ -179,14 +179,25 @@ Flow:
    model-generation failure: `chat_adapter_failed`,
    `phase: "model_generation"`, `action: "retry"`, and retryable by default.
    Messenger may show a Retry action for that failed assistant response.
-9. If the operator stops an in-flight chat run before completion, Rudder marks
-   the run cancelled and may return only the assistant text that was already
-   streamed as user-visible content. Provider reasoning, scratchpad/thinking
-   events, and incomplete adapter result summaries must not be used as the
-   stopped chat bubble body.
-10. The assistant message stores a reverse link to the run.
-11. Agent Detail Run context and Messenger can navigate between run evidence and
-   chat transcript.
+9. Each runtime-backed turn has one durable generation attempt and one fenced
+   runtime-control owner. Steer and Stop actions target the expected generation,
+   attempt epoch, and control version rather than whichever process is current
+   when the request eventually arrives.
+10. A Steer accepted by a native interactive runtime is submitted to that same
+    provider turn. When native Steer is unavailable, Rudder interrupts the old
+    attempt and starts one server-owned feedback continuation only after the old
+    owner reaches a safe terminal boundary.
+11. If the operator stops an in-flight chat run, Rudder first commits the
+    visible-output cutoff and then interrupts the runtime. The stopped message
+    may contain only the accepted assistant prefix at that cutoff. Provider
+    reasoning, late deltas, final output, and incomplete summaries remain
+    diagnostic evidence and cannot change the visible result.
+12. Runtime terminal evidence is projected through a retryable outbox so the
+    generation, Agent Run, assistant message, queue item, and control action
+    converge. Retry exhaustion must release active ownership and preserve an
+    actionable failure rather than blocking later turns indefinitely.
+13. The assistant message stores a reverse link to the run, and Agent Detail Run
+    context and Messenger can navigate between run evidence and chat transcript.
 
 Invariants:
 
@@ -197,6 +208,15 @@ Invariants:
   not be surfaced as normal assistant chat content.
 - Stopped chat runs must not turn provider reasoning/thinking transcript entries
   or incomplete runtime summaries into user-visible assistant message bodies.
+- Once a Stop cutoff is accepted, no callback, final result, projector retry,
+  reconnect, or page reload may admit later bytes into the chat-visible body or
+  result summary.
+- A control action is idempotent by durable action ID. Retrying the same exact
+  Stop or Steer must resolve the original action; it must not target a newer
+  attempt or create a second continuation.
+- Browser closure and server restart must not strand accepted Steer feedback.
+  Provider-acceptance ambiguity remains explicit and must not trigger blind
+  duplicate delivery.
 - Missing-result-sentinel repair is only for recovering a runtime response that
   otherwise completed successfully. Timeout, nonzero exit, adapter error, or
   malformed result JSON remain failed chat outcomes.
@@ -220,17 +240,25 @@ Evidence:
   classification, retryable model-generation failures, and primary/repair usage
   aggregation.
 - Chat route tests cover persisted non-retryable runtime boot failure payloads.
+- Chat generation protocol and route tests cover fenced Steer, immutable Stop
+  cutoff, startup Stop, terminal replay, output admission, projector recovery,
+  and server-owned continuation delivery.
 - Chat UI tests cover runtime-unavailable failed messages without Retry actions.
 - Chat streaming E2E covers a missing-result-sentinel turn recovering into a
   succeeded assistant message without exposing the internal protocol failure.
 - Chat runtime boot failure E2E covers the real Messenger UI, failed assistant
   payload, runtime-unavailable label, and absent Retry action.
+- Chat concurrent-streaming E2E covers native Steer, fallback continuation,
+  immediate Stop, Stop-then-Steer, and browser-independent queue delivery.
 
 Related code:
 
 - `server/src/services/chat-agent-runs.ts`
 - `server/src/services/chat-assistant.ts`
 - `server/src/services/chat-assistant.helpers.ts`
+- `server/src/services/chat-generation-locks.ts`
+- `server/src/services/chat-generation-protocol.ts`
+- `server/src/services/chats.ts`
 - `server/src/routes/chats.ts`
 - `server/src/routes/chats.stream-routes.ts`
 - `ui/src/pages/AgentDetail.chat-context.tsx`
@@ -242,10 +270,13 @@ Related tests:
 - `server/src/__tests__/chat-agent-runs.test.ts`
 - `server/src/__tests__/chat-assistant.test.ts`
 - `server/src/__tests__/chat-routes.test.ts`
+- `server/src/services/chat-generation-locks.test.ts`
+- `server/src/services/chat-generation-protocol.test.ts`
 - `tests/e2e/agent-detail-chat-run-context.spec.ts`
 - `tests/e2e/chat-error-toast.spec.ts`
 - `tests/e2e/chat-runtime-boot-failure.spec.ts`
 - `tests/e2e/chat-streaming.spec.ts`
+- `tests/e2e/chat-concurrent-streaming.spec.ts`
 
 ## RUN.EXECUTION.001
 

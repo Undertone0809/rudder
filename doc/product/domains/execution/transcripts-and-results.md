@@ -9,9 +9,14 @@ related_code:
   - server/src/services/runtime-kernel/heartbeat.execute.ts
   - server/src/services/heartbeat-run-summary.ts
   - server/src/services/heartbeat-run-reference.ts
+  - server/src/routes/chats.stream-routes.ts
+  - server/src/services/chat-generation-protocol.ts
 related_tests:
   - server/src/__tests__/heartbeat-run-summary.test.ts
+  - server/src/__tests__/chat-routes.test.ts
+  - server/src/services/chat-generation-protocol.test.ts
   - tests/e2e/run-transcript-detail.spec.ts
+  - tests/e2e/chat-concurrent-streaming.spec.ts
 edit_policy: user_confirmed_only
 ---
 
@@ -33,6 +38,11 @@ Behavior:
   transcript evidence, including thinking/reasoning entries, but must not
   promote provider reasoning, scratchpad text, or partial progress events into
   the final result summary.
+- Chat-visible runtime output is admitted through the active generation's
+  append-only ledger. Accepting Stop closes that admission boundary at a
+  sequence and body hash. Later provider bytes, transcripts, or final results
+  may remain diagnostic evidence, but cannot be projected into the assistant
+  body or user-visible result summary.
 - Skill usage can be inferred from transcript evidence and appended as run
   events.
 - Task sessions are updated or cleared after the run based on adapter result
@@ -46,6 +56,9 @@ Invariant:
 - Transcript evidence and chat-visible assistant content are separate surfaces:
   reasoning/thinking evidence may be inspectable as transcript entries, but it
   must not become assistant message body text or a completed result summary.
+- Result projection must be monotonic with the accepted visible-output cutoff.
+  Retries and recovery may fill missing terminal metadata, but cannot replace a
+  stopped prefix with a later provider result.
 
 Rationale:
 
@@ -57,12 +70,17 @@ Related code:
 - `server/src/services/runtime-kernel/heartbeat.execute.ts`
 - `server/src/services/heartbeat-run-summary.ts`
 - `server/src/services/heartbeat-run-reference.ts`
+- `server/src/routes/chats.stream-routes.ts`
+- `server/src/services/chat-generation-protocol.ts`
 - `packages/agent-runtimes/codex-local/src/server/parse.ts`
 - `packages/agent-runtimes/claude-local/src/server/parse.ts`
 
 Related tests:
 
 - `server/src/__tests__/heartbeat-run-summary.test.ts`
+- `server/src/__tests__/chat-routes.test.ts`
+- `server/src/services/chat-generation-protocol.test.ts`
 - `packages/agent-runtimes/codex-local/src/server/parse.test.ts`
 - `packages/agent-runtimes/claude-local/src/server/parse.test.ts`
 - `tests/e2e/run-transcript-detail.spec.ts`
+- `tests/e2e/chat-concurrent-streaming.spec.ts`

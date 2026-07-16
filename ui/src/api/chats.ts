@@ -17,6 +17,31 @@ import type {
 } from "@rudderhq/shared";
 import { ApiError, api } from "./client";
 
+export type ChatStopMessageStreamRequest = {
+  controlActionId: string;
+  expectedGenerationId?: string;
+  expectedAttemptEpoch?: number;
+  expectedControlVersion?: number;
+  lastCommittedRenderSeq?: number;
+  renderedBodyHash?: string;
+};
+
+export type ChatClientCheckpointRequest = {
+  generationId: string;
+  attemptEpoch: number;
+  generationSeq: number;
+  renderedBodyHash: string;
+};
+
+export type ChatSteerQueuedMessageRequest = {
+  expectedActiveGenerationId?: string | null;
+  controlActionId: string;
+  expectedAttemptEpoch?: number;
+  expectedControlVersion?: number;
+  lastCommittedRenderSeq?: number;
+  renderedBodyHash?: string;
+};
+
 export const chatsApi = {
   list: (
     orgId: string,
@@ -107,12 +132,7 @@ export const chatsApi = {
   steerQueuedMessage: (
     chatId: string,
     itemId: string,
-    data: {
-      expectedActiveGenerationId?: string | null;
-      controlActionId: string;
-      expectedAttemptEpoch?: number;
-      expectedControlVersion?: number;
-    },
+    data: ChatSteerQueuedMessageRequest,
   ) => api.post<ChatSteerResponse>(`/chats/${chatId}/queue/${itemId}/steer`, data),
   sendMessageStream: async (
     chatId: string,
@@ -191,16 +211,15 @@ export const chatsApi = {
     }
 
   },
+  checkpointMessageStream: (chatId: string, data: ChatClientCheckpointRequest) =>
+    api.post<{
+      generationId: string;
+      generationSeq: number;
+      advanced: boolean;
+    }>(`/chats/${chatId}/messages/stream/checkpoint`, data),
   stopMessageStream: (
     chatId: string,
-    data: {
-      controlActionId: string;
-      expectedGenerationId?: string;
-      expectedAttemptEpoch?: number;
-      expectedControlVersion?: number;
-      lastCommittedRenderSeq?: number;
-      renderedBodyHash?: string;
-    } = { controlActionId: globalThis.crypto.randomUUID() },
+    data: ChatStopMessageStreamRequest = { controlActionId: globalThis.crypto.randomUUID() },
   ) => api.post<{
     stopped: boolean;
     controlActionId: string;

@@ -127,6 +127,43 @@ CREATE INDEX "chat_generation_terminal_outbox_org_generation_idx" ON "chat_gener
 ALTER TABLE "chat_queued_messages" ADD CONSTRAINT "chat_queued_messages_control_action_id_chat_control_actions_id_fk" FOREIGN KEY ("control_action_id") REFERENCES "public"."chat_control_actions"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "chat_queued_messages" ADD CONSTRAINT "chat_queued_messages_continuation_generation_id_chat_generations_id_fk" FOREIGN KEY ("continuation_generation_id") REFERENCES "public"."chat_generations"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "chat_queued_messages" ADD CONSTRAINT "chat_queued_messages_continuation_message_id_chat_messages_id_fk" FOREIGN KEY ("continuation_message_id") REFERENCES "public"."chat_messages"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+UPDATE "chat_generations" AS "generation"
+SET
+	"status" = 'aborted',
+	"terminal_reason" = coalesce("generation"."terminal_reason", 'ownerless_during_durable_control_migration'),
+	"control_state" = 'terminal',
+	"runtime_terminal_at" = coalesce("generation"."runtime_terminal_at", now()),
+	"completed_at" = coalesce("generation"."completed_at", now()),
+	"updated_at" = now()
+WHERE "generation"."status" IN ('starting', 'active', 'running', 'tool_busy', 'closing', 'stop_requested', 'stopping')
+	AND "generation"."control_owner_token" IS NULL;--> statement-breakpoint
+UPDATE "chat_queued_messages"
+SET
+	"status" = 'continuation_pending',
+	"delivery_intent" = 'steer',
+	"delivery_disposition" = 'continuation_pending',
+	"reconciliation_reason" = 'legacy_steer_recovered_on_upgrade',
+	"last_delivery_reason" = NULL,
+	"updated_at" = now()
+WHERE "status" = 'steer_pending';--> statement-breakpoint
+UPDATE "chat_queued_messages"
+SET
+	"status" = 'queued',
+	"delivery_lease_token" = NULL,
+	"delivery_lease_owner" = NULL,
+	"delivery_lease_expires_at" = NULL,
+	"reconciliation_reason" = 'legacy_claim_released_on_upgrade',
+	"last_delivery_reason" = 'legacy_claim_released_on_upgrade',
+	"updated_at" = now()
+WHERE "status" = 'dequeue_claimed';--> statement-breakpoint
+UPDATE "chat_queued_messages"
+SET
+	"status" = 'failed_actionable',
+	"delivery_disposition" = 'failed_actionable',
+	"reconciliation_reason" = 'legacy_running_delivery_unconfirmed_on_upgrade',
+	"last_delivery_reason" = 'legacy_running_delivery_unconfirmed_on_upgrade',
+	"updated_at" = now()
+WHERE "status" = 'running';--> statement-breakpoint
 CREATE UNIQUE INDEX "chat_generations_active_conversation_uq" ON "chat_generations" USING btree ("org_id","conversation_id") WHERE "chat_generations"."status" in ('starting', 'active', 'running', 'tool_busy', 'closing', 'stop_requested', 'stopping');--> statement-breakpoint
 CREATE INDEX "chat_generations_control_lease_idx" ON "chat_generations" USING btree ("control_state","control_lease_expires_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "chat_queued_messages_control_action_uq" ON "chat_queued_messages" USING btree ("control_action_id");--> statement-breakpoint

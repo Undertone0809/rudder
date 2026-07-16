@@ -167,11 +167,17 @@ contracts:
       - server/src/services/runtime-kernel/heartbeat.execute.ts
       - server/src/services/heartbeat-run-summary.ts
       - server/src/services/heartbeat-run-reference.ts
+      - server/src/routes/chats.stream-routes.ts
+      - server/src/services/chat-generation-protocol.ts
     related_tests:
       - server/src/__tests__/heartbeat-run-summary.test.ts
+      - server/src/__tests__/chat-routes.test.ts
+      - server/src/services/chat-generation-protocol.test.ts
       - tests/e2e/run-transcript-detail.spec.ts
+      - tests/e2e/chat-concurrent-streaming.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-07-15-chat-steer-and-immediate-stop.md
   ROUTING.ASSIGNMENT.001:
     owner: product
     domain: work-routing
@@ -345,6 +351,9 @@ contracts:
       - server/src/services/chat-agent-runs.ts
       - server/src/services/chat-assistant.ts
       - server/src/services/chat-assistant.helpers.ts
+      - server/src/services/chat-generation-locks.ts
+      - server/src/services/chat-generation-protocol.ts
+      - server/src/services/chats.ts
       - server/src/routes/chats.ts
       - server/src/routes/chats.stream-routes.ts
       - ui/src/pages/AgentDetail.chat-context.tsx
@@ -354,12 +363,16 @@ contracts:
       - server/src/__tests__/chat-agent-runs.test.ts
       - server/src/__tests__/chat-assistant.test.ts
       - server/src/__tests__/chat-routes.test.ts
+      - server/src/services/chat-generation-locks.test.ts
+      - server/src/services/chat-generation-protocol.test.ts
       - tests/e2e/agent-detail-chat-run-context.spec.ts
       - tests/e2e/chat-error-toast.spec.ts
       - tests/e2e/chat-runtime-boot-failure.spec.ts
       - tests/e2e/chat-streaming.spec.ts
+      - tests/e2e/chat-concurrent-streaming.spec.ts
     related_plans:
       - doc/plans/2026-06-20-agent-run-unification-completion.md
+      - doc/plans/2026-07-15-chat-steer-and-immediate-stop.md
   AGENT.IDENTITY.CONFIG.001:
     owner: product
     domain: agents
@@ -386,7 +399,10 @@ contracts:
       - packages/agent-runtime-utils/src/rudder-mcp.ts
       - packages/agent-runtimes/claude-local/src/server/execute.ts
       - packages/agent-runtimes/codex-local/src/index.ts
+      - packages/agent-runtimes/codex-local/src/server/app-server-chat.ts
+      - packages/agent-runtimes/codex-local/src/server/app-server-client.ts
       - packages/agent-runtimes/codex-local/src/server/execute.ts
+      - packages/agent-runtime-utils/src/types.ts
       - packages/agent-runtimes/opencode-local/src/server/execute.ts
       - packages/agent-runtimes/pi-local/src/server/execute.ts
       - packages/shared/src/types/agent.ts
@@ -406,6 +422,8 @@ contracts:
     related_tests:
       - server/src/__tests__/claude-local-execute.test.ts
       - server/src/__tests__/codex-local-execute.test.ts
+      - packages/agent-runtimes/codex-local/src/server/app-server-chat.test.ts
+      - packages/agent-runtimes/codex-local/src/server/app-server-client.test.ts
       - server/src/__tests__/opencode-local-execute.test.ts
       - server/src/__tests__/pi-local-execute.test.ts
       - server/src/__tests__/adapter-models.test.ts
@@ -422,6 +440,7 @@ contracts:
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-07-12-built-in-browser.md
+      - doc/plans/2026-07-15-chat-steer-and-immediate-stop.md
   AGENT.RUNTIME.PERMISSIONS.001:
     owner: product
     domain: agents
@@ -903,10 +922,16 @@ contracts:
       - packages/db/src/schema/chat_conversations.ts
       - packages/db/src/schema/chat_messages.ts
       - packages/db/src/schema/chat_queued_messages.ts
+      - packages/db/src/schema/chat_control_actions.ts
+      - packages/db/src/schema/chat_generation_events.ts
+      - packages/db/src/schema/chat_generations.ts
       - packages/shared/src/types/chat.ts
       - packages/shared/src/validators/chat.ts
       - server/src/routes/chats.ts
+      - server/src/routes/chats.stream-routes.ts
       - server/src/services/chats.ts
+      - server/src/services/chat-generation-locks.ts
+      - server/src/services/chat-generation-protocol.ts
       - server/src/services/chat-agent-runs.ts
       - server/src/services/chat-assistant.ts
       - server/src/services/chat-assistant.helpers.ts
@@ -914,15 +939,21 @@ contracts:
       - ui/src/motion.css
       - ui/src/pages/Chat.parts.tsx
       - ui/src/pages/Chat.tsx
+      - ui/src/lib/chat-client-checkpoints.ts
+      - ui/src/lib/chat-stop-recovery.ts
       - ui/src/pages/Chat.messages.tsx
     related_tests:
       - server/src/__tests__/chat-routes.test.ts
+      - server/src/services/chat-generation-locks.test.ts
+      - server/src/services/chat-generation-protocol.test.ts
       - server/src/__tests__/chat-assistant.test.ts
       - ui/src/pages/Chat.empty-state.test.tsx
       - ui/src/pages/Chat.test.tsx
       - ui/src/pages/Chat.attachment-preview.test.tsx
       - ui/src/context/ChatGenerationContext.test.tsx
       - ui/src/lib/chat-stream-state.test.ts
+      - ui/src/lib/chat-client-checkpoints.test.ts
+      - ui/src/lib/chat-stop-recovery.test.ts
       - ui/src/lib/motion-css.test.ts
       - tests/e2e/chat-error-toast.spec.ts
       - tests/e2e/chat-concurrent-streaming.spec.ts
@@ -933,6 +964,7 @@ contracts:
       - tests/e2e/chat-streaming.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-07-15-chat-steer-and-immediate-stop.md
   CHAT.TITLE.GENERATION.001:
     owner: product
     domain: collaboration

@@ -6,14 +6,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { unprocessable } from "../errors.js";
 import { errorHandler } from "../middleware/index.js";
 import { chatRoutes } from "../routes/chats.js";
-import { claimChatGeneration, clearActiveChatGenerationsForTest, createChatRuntimeControlCoordinator, hasActiveChatGeneration } from "../services/chat-generation-locks.js";
+import { claimChatGeneration, clearActiveChatGenerationsForTest, createChatRuntimeControlCoordinator, getActiveChatGeneration, hasActiveChatGeneration } from "../services/chat-generation-locks.js";
 
 const mockChatService = vi.hoisted(() => ({
   generationProtocol: {
     getLatestVisibleCheckpoint: vi.fn(),
     appendGenerationEvent: vi.fn(),
+    appendVisibleEventAndProject: vi.fn(),
+    projectVisibleMessage: vi.fn(),
+    getFrozenVisibleProjection: vi.fn(),
     recordClientCheckpoint: vi.fn(),
     beginStopAction: vi.fn(),
+    beginSteerFallbackCutoff: vi.fn(),
     recordRuntimeTerminal: vi.fn(),
     claimTerminalProjection: vi.fn(),
     getNextTerminalProjectionWakeAt: vi.fn(),
@@ -55,6 +59,7 @@ const mockChatService = vi.hoisted(() => ({
   markQueuedMessageSteerFallback: vi.fn(),
   beginSteerControlAction: vi.fn(),
   claimSteerProviderSend: vi.fn(),
+  releaseSteerProviderSendClaim: vi.fn(),
   resolveSteerControlAction: vi.fn(),
   appendGenerationEvent: vi.fn(),
   beginGenerationControlAttempt: vi.fn(),
@@ -536,6 +541,7 @@ describe("chat routes", () => {
       lastDeliveryReason: "unsupported",
     });
     mockChatService.claimSteerProviderSend.mockResolvedValue(null);
+    mockChatService.releaseSteerProviderSendClaim.mockResolvedValue({ id: "control-action-1" });
     mockChatService.appendGenerationEvent.mockResolvedValue({ id: "event-1" });
     mockChatService.beginGenerationControlAttempt.mockResolvedValue(undefined);
     mockChatService.markGenerationControlReady.mockResolvedValue(undefined);
@@ -558,6 +564,21 @@ describe("chat routes", () => {
       event: { id: "generation-event-1", generationSeq: 1, payload: input.payload ?? {} },
       generation: { id: input.generationId },
     }));
+    mockChatService.generationProtocol.appendVisibleEventAndProject.mockImplementation(async (input) => ({
+      event: {
+        id: "generation-event-1",
+        generationSeq: 1,
+        payload: { ...(input.payload ?? {}), bodyHash: input.bodyHash },
+      },
+      generation: { id: input.generationId },
+      message: { id: input.messageId ?? "message-assistant" },
+    }));
+    mockChatService.generationProtocol.projectVisibleMessage.mockResolvedValue({
+      generation: { id: "generation-1" },
+      message: { id: "message-progress" },
+      projected: true,
+    });
+    mockChatService.generationProtocol.getFrozenVisibleProjection.mockResolvedValue(null);
     mockChatService.generationProtocol.getLatestVisibleCheckpoint.mockResolvedValue({
       generation: { id: "generation-1", attemptEpoch: 1, controlVersion: 0 },
       generationSeq: 0,
@@ -1482,6 +1503,141 @@ describe("chat routes", () => {
         clientMessageId: controlActionId,
       });
       expect(mockChatService.markQueuedMessageSteerFallback).not.toHaveBeenCalled();
+    } finally {
+      release?.();
+    }
+  });
+
+  it("freezes and interrupts before scheduling feedback for a runtime without native Steer", async () => {
+    const conversation = createConversation();
+    const generationId = "10000000-0000-4000-8000-000000000001";
+    const controlActionId = "20000000-0000-4000-8000-000000000002";
+    const renderedBodyHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    const item = {
+      id: "queued-1",
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      position: 1,
+      status: "steer_pending",
+      version: 2,
+      clientMutationId: "client-1",
+      payload: { body: "Use the public API" },
+      deliveryIntent: "steer",
+      deliveryDisposition: "pending",
+      controlActionId,
+      expectedGenerationId: generationId,
+      activeGenerationId: generationId,
+      attemptEpoch: 1,
+      providerClientMessageId: controlActionId,
+      providerEvidence: null,
+    };
+    const action = {
+      id: controlActionId,
+      expectedGenerationId: generationId,
+      expectedAttemptEpoch: 1,
+      appliedControlVersion: 1,
+      localDisposition: "pending",
+      providerDisposition: "sent",
+      providerClientMessageId: controlActionId,
+      providerEvidence: null,
+    };
+    const continuationItem = {
+      ...item,
+      status: "continuation_pending",
+      deliveryDisposition: "continuation_pending",
+      version: 3,
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getQueueSnapshot.mockResolvedValue({
+      activeGenerationId: generationId,
+      activeAttemptEpoch: 1,
+      activeControlVersion: 0,
+      activeGenerationStatus: "running",
+      items: [item],
+    });
+    mockChatService.beginSteerControlAction.mockResolvedValue({
+      action,
+      item,
+      generation: { id: generationId, attemptEpoch: 1, controlVersion: 1 },
+      idempotent: false,
+    });
+    mockChatService.claimSteerProviderSend.mockResolvedValue(action);
+    mockChatService.generationProtocol.beginSteerFallbackCutoff.mockResolvedValue({
+      action: {
+        ...action,
+        localDisposition: "continuation_pending",
+        providerDisposition: "not_sent",
+        acceptedThroughSeq: 0,
+        frozenBodyHash: renderedBodyHash,
+      },
+      generation: { id: generationId, attemptEpoch: 1, status: "stop_requested" },
+      item: continuationItem,
+      outputCutoffEvent: { id: "cutoff-1" },
+      continuationEvent: { id: "continuation-1" },
+      idempotent: false,
+    });
+    mockChatService.resolveSteerControlAction.mockImplementation(async (input) => ({
+      action: { ...action, localDisposition: input.disposition },
+      item: {
+        ...continuationItem,
+        status: input.status,
+        deliveryDisposition: input.disposition,
+        providerEvidence: input.providerEvidence ?? null,
+        version: 4,
+      },
+    }));
+
+    const abortController = new AbortController();
+    const release = claimChatGeneration(conversation.id, abortController, generationId);
+    const attempt = await createChatRuntimeControlCoordinator(conversation.id, generationId).beginAttempt({
+      attemptIndex: 0,
+      runtimeType: "legacy_local",
+      model: "legacy-primary",
+      isFallback: false,
+    });
+    const interrupt = vi.fn(async () => "acknowledged" as const);
+    const steer = vi.fn();
+    await attempt.register({
+      runtimeType: "legacy_local",
+      capabilities: { steer: "interrupt_continue", interrupt: "process" },
+      steer,
+      interrupt,
+      dispose: vi.fn(async () => undefined),
+    });
+
+    try {
+      const response = await request(createApp())
+        .post("/api/chats/chat-1/queue/queued-1/steer")
+        .send({
+          expectedActiveGenerationId: generationId,
+          controlActionId,
+          expectedAttemptEpoch: 1,
+          expectedControlVersion: 0,
+          lastCommittedRenderSeq: 0,
+          renderedBodyHash,
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        result: "scheduled_next",
+        disposition: "continuation_pending",
+        controlActionId,
+        activeGenerationId: generationId,
+        item: { id: "queued-1", status: "continuation_pending" },
+      });
+      expect(mockChatService.generationProtocol.beginSteerFallbackCutoff).toHaveBeenCalledWith({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        generationId,
+        expectedAttemptEpoch: 1,
+        controlActionId,
+        queueItemId: "queued-1",
+        requestedRenderSeq: 0,
+        requestedBodyHash: renderedBodyHash,
+      });
+      expect(steer).not.toHaveBeenCalled();
+      expect(interrupt).toHaveBeenCalledWith("steer_fallback");
+      expect(abortController.signal.aborted).toBe(true);
     } finally {
       release?.();
     }
@@ -3237,13 +3393,10 @@ describe("chat routes", () => {
     expect(events[3]?.entry?.kind).toBe("tool_call");
     expect(events[7]?.messages).toHaveLength(1);
     expect(events[7]?.messages[0]?.id).toBe("message-assistant");
-    expect(mockChatService.addMessage).toHaveBeenNthCalledWith(
-      1,
-      "chat-1",
+    expect(mockChatService.generationProtocol.appendVisibleEventAndProject).toHaveBeenCalledWith(
       expect.objectContaining({
-        role: "assistant",
-        kind: "message",
-        status: "streaming",
+        conversationId: "chat-1",
+        eventKind: "transcript",
         body: "",
         replyingAgentId: "agent-1",
         runId: "chat-run-stream-1",
@@ -3905,14 +4058,14 @@ describe("chat routes", () => {
       .map((line) => JSON.parse(line));
     expect(events.at(-1)).toEqual({
       type: "final",
-      messages: [expect.objectContaining({ id: "message-progress", status: "stopped" })],
+      messages: [expect.objectContaining({ id: "message-assistant", status: "stopped" })],
     });
     expect(events).toContainEqual(expect.objectContaining({ type: "assistant_delta", delta: "Before stop" }));
     expect(JSON.stringify(events)).not.toContain("Late assistant output");
     expect(JSON.stringify(events)).not.toContain("Late reasoning");
     expect(mockChatService.updateMessage).toHaveBeenLastCalledWith(
       "chat-1",
-      "message-progress",
+      "message-assistant",
       expect.objectContaining({
         status: "stopped",
         body: "Before stop",
@@ -3921,7 +4074,7 @@ describe("chat routes", () => {
     );
   });
 
-  it("freezes a stopped reply at the last delta admitted to the stream", async () => {
+  it("never persists output when Stop closes ledger admission first", async () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Need help");
     const progressMessage = {
@@ -3938,15 +4091,14 @@ describe("chat routes", () => {
       ts: "2026-03-26T08:01:02.000Z",
       text: "Unadmitted transcript",
     };
-    let releaseBlockedPersist!: () => void;
-    const blockedPersistRelease = new Promise<void>((resolve) => {
-      releaseBlockedPersist = resolve;
+    let releaseBlockedAdmission!: () => void;
+    const blockedAdmissionRelease = new Promise<void>((resolve) => {
+      releaseBlockedAdmission = resolve;
     });
-    let signalBlockedPersistStarted!: () => void;
-    const blockedPersistStarted = new Promise<void>((resolve) => {
-      signalBlockedPersistStarted = resolve;
+    let signalBlockedAdmissionStarted!: () => void;
+    const blockedAdmissionStarted = new Promise<void>((resolve) => {
+      signalBlockedAdmissionStarted = resolve;
     });
-    let blockedPersistCount = 0;
 
     mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
       await input.onAssistantState?.("streaming");
@@ -3962,22 +4114,21 @@ describe("chat routes", () => {
         replyingAgentId: "agent-1",
       };
     });
-    mockChatService.updateMessage.mockImplementation(async (_conversationId: string, messageId: string, input: Record<string, unknown>) => {
-      if (input.status === "streaming" && input.body === "Visible prefix unadmitted tail") {
-        blockedPersistCount += 1;
-        if (blockedPersistCount === 2) signalBlockedPersistStarted();
-        await blockedPersistRelease;
+    let generationSeq = 0;
+    mockChatService.generationProtocol.appendVisibleEventAndProject.mockImplementation(async (input) => {
+      if (input.eventKind === "assistant_delta" && input.payload?.delta === " unadmitted tail") {
+        signalBlockedAdmissionStarted();
+        await blockedAdmissionRelease;
+        throw Object.assign(new Error("Chat-visible output admission is closed for this generation"), { status: 409 });
       }
       return {
-        ...createMessage(
-          messageId,
-          "assistant",
-          typeof input.kind === "string" ? input.kind : "message",
-          typeof input.body === "string" ? input.body : "",
-        ),
-        status: typeof input.status === "string" ? input.status : "completed",
-        transcript: Array.isArray(input.transcript) ? input.transcript : [],
-        replyingAgentId: typeof input.replyingAgentId === "string" ? input.replyingAgentId : null,
+        event: {
+          id: `generation-event-${generationSeq + 1}`,
+          generationSeq: ++generationSeq,
+          payload: { ...(input.payload ?? {}), bodyHash: input.bodyHash },
+        },
+        generation: { id: input.generationId },
+        message: { id: input.messageId ?? "message-progress" },
       };
     });
     mockChatService.getById.mockResolvedValue(conversation);
@@ -3999,13 +4150,13 @@ describe("chat routes", () => {
       })
       .then((response) => response);
 
-    await blockedPersistStarted;
+    await blockedAdmissionStarted;
     const stopRes = await request(createApp())
       .post("/api/chats/chat-1/messages/stream/stop")
       .send({});
     expect(stopRes.body).toMatchObject({ stopped: true, disposition: "stopping" });
 
-    releaseBlockedPersist();
+    releaseBlockedAdmission();
     const streamRes = await streamPromise;
     const events = String(streamRes.body)
       .trim()
@@ -4016,6 +4167,11 @@ describe("chat routes", () => {
     expect(events).toContainEqual(expect.objectContaining({ type: "transcript_entry", entry: visibleTranscript }));
     expect(JSON.stringify(events)).not.toContain("unadmitted tail");
     expect(JSON.stringify(events)).not.toContain("Unadmitted transcript");
+    expect(mockChatService.updateMessage).not.toHaveBeenCalledWith(
+      "chat-1",
+      "message-progress",
+      expect.objectContaining({ body: "Visible prefix unadmitted tail" }),
+    );
     expect(events.at(-1)).toEqual({
       type: "final",
       messages: [expect.objectContaining({ body: "Visible prefix", status: "stopped" })],
@@ -4031,7 +4187,147 @@ describe("chat routes", () => {
     );
   });
 
-  it("does not re-enter stopped persistence after its first attempt fails", async () => {
+  it("converges Stop after final output admission without interrupting the completed turn", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need help");
+    const completedMessage = createMessage(
+      "message-assistant",
+      "assistant",
+      "message",
+      "Committed final reply",
+    );
+    let capturedSignal: AbortSignal | null = null;
+    let completionAdmitted = false;
+    let signalFinalPersistenceStarted!: () => void;
+    const finalPersistenceStarted = new Promise<void>((resolve) => {
+      signalFinalPersistenceStarted = resolve;
+    });
+    let releaseFinalPersistence!: () => void;
+    const finalPersistenceRelease = new Promise<void>((resolve) => {
+      releaseFinalPersistence = resolve;
+    });
+
+    mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+      capturedSignal = input.abortSignal ?? null;
+      return {
+        outcome: "completed",
+        partialBody: "Committed final reply",
+        replyingAgentId: "agent-1",
+        reply: {
+          kind: "message",
+          body: "Committed final reply",
+          structuredPayload: null,
+          replyingAgentId: "agent-1",
+        },
+      };
+    });
+    mockChatService.generationProtocol.appendVisibleEventAndProject.mockImplementation(async (input) => {
+      if (input.eventKind === "runtime_output") completionAdmitted = true;
+      return {
+        event: {
+          id: "generation-event-final",
+          generationSeq: 1,
+          payload: { ...(input.payload ?? {}), bodyHash: input.bodyHash },
+        },
+        generation: { id: input.generationId },
+        message: { id: input.messageId ?? "message-assistant" },
+      };
+    });
+    mockChatService.generationProtocol.beginStopAction.mockImplementation(async (input) => {
+      if (completionAdmitted) {
+        return {
+          action: {
+            id: input.controlActionId,
+            expectedControlVersion: input.expectedControlVersion,
+            localDisposition: "cancelled",
+            acceptedThroughSeq: null,
+            frozenBodyHash: null,
+            lastError: "generation_result_already_committed",
+          },
+          generation: {
+            id: input.expectedGenerationId,
+            attemptEpoch: input.expectedAttemptEpoch,
+            controlVersion: input.expectedControlVersion,
+            status: "closing",
+          },
+          stopRequestedEvent: null,
+          outputCutoffEvent: null,
+          outcome: "completion_committed" as const,
+          idempotent: false,
+        };
+      }
+      return {
+        action: {
+          id: input.controlActionId,
+          acceptedThroughSeq: input.requestedRenderSeq,
+          frozenBodyHash: input.requestedBodyHash,
+        },
+        generation: {
+          id: input.expectedGenerationId,
+          attemptEpoch: input.expectedAttemptEpoch,
+          controlVersion: input.expectedControlVersion + 1,
+        },
+        stopRequestedEvent: { id: "stop-requested-event" },
+        outputCutoffEvent: { id: "output-cutoff-event" },
+        outcome: "stop_applied" as const,
+        idempotent: false,
+      };
+    });
+    mockChatService.updateMessage.mockImplementationOnce(async () => {
+      signalFinalPersistenceStarted();
+      await finalPersistenceRelease;
+      return completedMessage;
+    });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+
+    const app = createApp();
+    const streamPromise = request(app)
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Need help" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          text += chunk;
+        });
+        response.on("end", () => callback(null, text));
+      })
+      .then((response) => response);
+
+    try {
+      await finalPersistenceStarted;
+      const stopRes = await request(app)
+        .post("/api/chats/chat-1/messages/stream/stop")
+        .send({ controlActionId: "20000000-0000-4000-8000-000000000077" });
+
+      expect(stopRes.status).toBe(200);
+      expect(stopRes.body).toEqual({
+        stopped: false,
+        controlActionId: "20000000-0000-4000-8000-000000000077",
+        generationId: "generation-1",
+        disposition: "completion_committed",
+      });
+      expect(capturedSignal?.aborted).toBe(false);
+      expect(mockChatService.generationProtocol.recordRuntimeTerminal).not.toHaveBeenCalled();
+    } finally {
+      releaseFinalPersistence();
+    }
+
+    const streamRes = await streamPromise;
+    const events = String(streamRes.body)
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events.at(-1)).toEqual({
+      type: "final",
+      messages: [expect.objectContaining({ status: "completed", body: "Committed final reply" })],
+    });
+  });
+
+  it("retries stopped message projection until the frozen cutoff converges", async () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Need help");
     const progressMessage = {
@@ -4042,6 +4338,7 @@ describe("chat routes", () => {
     const assistantStarted = new Promise<void>((resolve) => {
       mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
         await input.onAssistantState?.("streaming");
+        await input.onAssistantDelta?.("Visible prefix");
         resolve();
         await new Promise<void>((release) => {
           releaseAssistant = release;
@@ -4054,9 +4351,17 @@ describe("chat routes", () => {
       });
     });
     let stoppedPersistenceAttempts = 0;
-    mockChatService.updateMessage.mockImplementation(async () => {
+    mockChatService.updateMessage.mockImplementation(async (_conversationId: string, messageId: string, input: Record<string, unknown>) => {
       stoppedPersistenceAttempts += 1;
-      throw new Error("stopped persistence unavailable");
+      if (stoppedPersistenceAttempts === 1) {
+        throw new Error("stopped persistence temporarily unavailable");
+      }
+      return {
+        ...createMessage(messageId, "assistant", "message", String(input.body ?? "")),
+        status: input.status,
+        transcript: input.transcript,
+        replyingAgentId: input.replyingAgentId,
+      };
     });
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.listMessages.mockResolvedValue([userMessage]);
@@ -4082,11 +4387,170 @@ describe("chat routes", () => {
 
     releaseAssistant();
     await streamPromise;
-    expect(stoppedPersistenceAttempts).toBe(1);
+    expect(stoppedPersistenceAttempts).toBe(2);
     expect(mockChatAgentRuns.linkAssistantMessage).not.toHaveBeenCalled();
     expect(mockChatService.generationProtocol.recordRuntimeTerminal).toHaveBeenLastCalledWith(
       expect.objectContaining({ generationId: "generation-1", finalStatus: "stopped" }),
     );
+  });
+
+  it("stops startup before generation creation can launch the provider", async () => {
+    const conversation = createConversation();
+    const controlActionId = "20000000-0000-4000-8000-000000000099";
+    let releaseGenerationCreation!: () => void;
+    const generationCreationRelease = new Promise<void>((resolve) => {
+      releaseGenerationCreation = resolve;
+    });
+    let signalGenerationCreationStarted!: () => void;
+    const generationCreationStarted = new Promise<void>((resolve) => {
+      signalGenerationCreationStarted = resolve;
+    });
+    mockChatService.createGeneration.mockImplementationOnce(async () => {
+      signalGenerationCreationStarted();
+      await generationCreationRelease;
+      return { id: "generation-1", attemptEpoch: 1, controlVersion: 0 };
+    });
+    mockChatService.getById.mockResolvedValue(conversation);
+    const app = createApp();
+    const streamPromise = request(app)
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Need help" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          text += chunk;
+        });
+        response.on("end", () => callback(null, text));
+      })
+      .then((response) => response);
+
+    await generationCreationStarted;
+    const stopPromise = request(app)
+      .post("/api/chats/chat-1/messages/stream/stop")
+      .send({ controlActionId })
+      .then((response) => response);
+    await waitUntil(() => {
+      expect(getActiveChatGeneration("chat-1")?.lifecycle).toBe("stopping");
+    });
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+
+    releaseGenerationCreation();
+    const stopRes = await stopPromise;
+    const streamRes = await streamPromise;
+    const events = String(streamRes.body)
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+
+    expect(stopRes.status).toBe(200);
+    expect(stopRes.body).toMatchObject({
+      stopped: true,
+      controlActionId,
+      generationId: "generation-1",
+      disposition: "stopping",
+      acceptedThroughSeq: 0,
+    });
+    expect(events).toEqual([
+      expect.objectContaining({ type: "ack", generationId: "generation-1" }),
+      { type: "final", messages: [] },
+    ]);
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+    expect(mockChatService.generationProtocol.beginStopAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        controlActionId,
+        expectedGenerationId: "generation-1",
+        requestedRenderSeq: 0,
+      }),
+    );
+    expect(mockChatService.generationProtocol.recordRuntimeTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        generationId: "generation-1",
+        finalStatus: "stopped",
+        terminalReason: "operator_stop",
+      }),
+    );
+  });
+
+  it("replays an exact Stop action after its generation is terminal", async () => {
+    const conversation = createConversation();
+    const controlActionId = "20000000-0000-4000-8000-000000000098";
+    const bodyHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    const terminalGeneration = {
+      id: "10000000-0000-4000-8000-000000000097",
+      attemptEpoch: 1,
+      controlVersion: 1,
+      status: "stopped",
+      runtimeTerminalAt: new Date("2026-03-26T08:02:00.000Z"),
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getLatestActiveGeneration.mockResolvedValue(null);
+    mockChatService.generationProtocol.getLatestVisibleCheckpoint.mockResolvedValue({
+      generation: terminalGeneration,
+      generationSeq: 0,
+      bodyHash,
+    });
+    mockChatService.generationProtocol.beginStopAction.mockResolvedValue({
+      action: {
+        id: controlActionId,
+        expectedControlVersion: 0,
+        localDisposition: "stopped",
+        acceptedThroughSeq: 0,
+        frozenBodyHash: bodyHash,
+      },
+      generation: terminalGeneration,
+      stopRequestedEvent: null,
+      outputCutoffEvent: null,
+      idempotent: true,
+    });
+
+    const stopRes = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream/stop")
+      .send({
+        controlActionId,
+        expectedGenerationId: terminalGeneration.id,
+        expectedAttemptEpoch: 1,
+        expectedControlVersion: 0,
+        lastCommittedRenderSeq: 0,
+        renderedBodyHash: bodyHash,
+      });
+
+    expect(stopRes.status).toBe(200);
+    expect(stopRes.body).toEqual({
+      stopped: true,
+      controlActionId,
+      generationId: terminalGeneration.id,
+      disposition: "stopped",
+      acceptedThroughSeq: 0,
+      frozenBodyHash: bodyHash,
+    });
+    expect(mockChatService.generationProtocol.beginStopAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        controlActionId,
+        expectedGenerationId: terminalGeneration.id,
+        expectedAttemptEpoch: 1,
+        requestedRenderSeq: 0,
+        requestedBodyHash: bodyHash,
+      }),
+    );
+    expect(mockChatService.generationProtocol.recordRuntimeTerminal).not.toHaveBeenCalled();
+
+    const mismatchedReplay = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream/stop")
+      .send({
+        controlActionId,
+        expectedGenerationId: terminalGeneration.id,
+        expectedAttemptEpoch: 1,
+        expectedControlVersion: 2,
+        lastCommittedRenderSeq: 0,
+        renderedBodyHash: bodyHash,
+      });
+    expect(mismatchedReplay.status).toBe(409);
+    expect(mismatchedReplay.body).toEqual({
+      error: "Control action id was already used for a different Stop request",
+    });
   });
 
   it("stops a persisted active generation when no local stream owner remains", async () => {

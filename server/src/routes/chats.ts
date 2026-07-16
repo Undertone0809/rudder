@@ -43,6 +43,7 @@ import {
   interruptActiveChatGeneration,
   steerActiveChatGeneration
 } from "../services/chat-generation-locks.js";
+import { hashChatGenerationBody } from "../services/chat-generation-protocol.js";
 import {
   buildChatTitlePromptFromMessages,
   chatTitleGenerationService,
@@ -71,6 +72,12 @@ import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { wakeIssueAssigneeAfterChatConversion } from "./chat-issue-assignment-wakeup.js";
 import { registerChatStreamRoutes } from "./chats.stream-routes.js";
+
+function chatVisibleOutputAdmissionClosed(error: unknown) {
+  return error instanceof HttpError
+    && error.status === 409
+    && error.message === "Chat-visible output admission is closed for this generation";
+}
 
 export function chatRoutes(db: Db, storage: StorageService) {
   const router = Router();
@@ -1132,9 +1139,14 @@ export function chatRoutes(db: Db, storage: StorageService) {
         const finalStatus = typeof claim.payload.finalStatus === "string"
           ? claim.payload.finalStatus
           : null;
+        const controlActionKind = typeof claim.payload.controlActionKind === "string"
+          ? claim.payload.controlActionKind
+          : null;
         const controlDisposition: ChatControlDisposition | undefined = finalStatus === "stopped"
+          && controlActionKind !== "steer"
           ? "stopped"
           : finalStatus === "interrupted_unverified"
+            && controlActionKind !== "steer"
             ? "interrupted_unverified"
             : finalStatus === "control_lost"
               ? "control_lost"
@@ -1357,6 +1369,58 @@ export function chatRoutes(db: Db, storage: StorageService) {
           });
         }
       } else {
+        let completionMessageId: string | null = null;
+        try {
+          const attemptEpoch = Math.max(
+            1,
+            getActiveChatGeneration(conversation.id)?.attemptEpoch ?? 1,
+          );
+          const completion = await svc.generationProtocol.appendVisibleEventAndProject({
+            orgId: conversation.orgId,
+            conversationId: conversation.id,
+            generationId: claim.generationId,
+            expectedAttemptEpoch: attemptEpoch,
+            eventKind: "runtime_output",
+            payload: {
+              resultKind: streamed.reply.kind,
+              body: streamed.reply.body,
+            },
+            bodyOffset: 0,
+            bodyLength: streamed.reply.body.length,
+            runId: activeChatRunId,
+            bodyHash: hashChatGenerationBody(streamed.reply.body),
+            body: streamed.reply.body,
+            transcript,
+            replyingAgentId: streamed.replyingAgentId,
+            chatTurnId: turnContext.chatTurnId,
+            turnVariant: turnContext.turnVariant,
+          });
+          completionMessageId = completion.message.id;
+        } catch (error) {
+          if (!chatVisibleOutputAdmissionClosed(error)) throw error;
+          terminalStatus = "stopped";
+          terminalReason = "operator_stop";
+          const stoppedMessage = await persistPartialAssistantMessage(
+            assistantConversation,
+            "",
+            "stopped",
+            turnContext,
+            transcript,
+            streamed.replyingAgentId,
+            null,
+            activeChatRunId,
+          );
+          const stoppedMessages = stoppedMessage ? [stoppedMessage] : [];
+          await linkChatRunMessages(assistantConversation, activeChatRunId, stoppedMessages);
+          if (stoppedMessages.length > 0) {
+            await logChatMessagesAdded(assistantConversation, stoppedMessages, {
+              actorType: "system",
+              actorId: "chat-assistant",
+              agentId: streamed.replyingAgentId,
+            });
+          }
+          return;
+        }
         const createdMessages = await persistAssistantReply(
           request,
           assistantConversation,
@@ -1365,7 +1429,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
           turnContext,
           transcript,
           streamed.replyingAgentId,
-          null,
+          completionMessageId,
           activeChatRunId,
         );
         await linkChatRunMessages(assistantConversation, activeChatRunId, createdMessages);
@@ -1969,6 +2033,9 @@ export function chatRoutes(db: Db, storage: StorageService) {
       expectedControlVersion,
       requestActor,
     });
+    const durableControlActionId = started.action.id;
+    const durableGenerationId = started.action.expectedGenerationId ?? expectedGenerationId;
+    const durableAttemptEpoch = started.action.expectedAttemptEpoch ?? expectedAttemptEpoch;
 
     const responseForDurableDisposition = (
       item: typeof started.item,
@@ -1985,8 +2052,8 @@ export function chatRoutes(db: Db, storage: StorageService) {
               ? "failed_actionable" as const
               : "pending" as const,
       disposition,
-      controlActionId,
-      activeGenerationId: expectedGenerationId,
+      controlActionId: durableControlActionId,
+      activeGenerationId: durableGenerationId,
       queueVersion: item.version,
       transcriptEventId: null,
     });
@@ -2001,32 +2068,83 @@ export function chatRoutes(db: Db, storage: StorageService) {
       res.json(responseForDurableDisposition(started.item, started.action.localDisposition));
       return;
     }
-    const sendClaim = await svc.claimSteerProviderSend({
-      orgId: conversation.orgId,
-      controlActionId,
+    type DeniedProviderSend = Extract<
+      NonNullable<Awaited<ReturnType<typeof svc.claimSteerProviderSend>>>,
+      { sendDenied: true }
+    >;
+    const providerSendState: { denied: DeniedProviderSend | null } = { denied: null };
+    const runtimeResult = await steerActiveChatGeneration({
+      conversationId: conversation.id,
+      expectedGenerationId: durableGenerationId,
+      expectedAttemptEpoch: durableAttemptEpoch,
+      feedback: {
+        text: started.item.payload.body,
+        clientMessageId: started.action.providerClientMessageId ?? durableControlActionId,
+      },
+      claimProviderSend: async () => {
+        const sendClaim = await svc.claimSteerProviderSend({
+          orgId: conversation.orgId,
+          controlActionId: durableControlActionId,
+        });
+        if (!sendClaim) return null;
+        if ("sendDenied" in sendClaim) {
+          providerSendState.denied = sendClaim;
+          return {
+            sendDenied: true as const,
+            reason: "generation_fence_changed" as const,
+          };
+        }
+        try {
+          await svc.appendGenerationEvent({
+            orgId: conversation.orgId,
+            generationId: durableGenerationId,
+            attemptEpoch: durableAttemptEpoch,
+            eventKind: "steer_requested",
+            payload: { controlActionId: durableControlActionId, queueItemId: started.item.id },
+            controlActionId: durableControlActionId,
+            queueItemId: started.item.id,
+          });
+        } catch (error) {
+          await svc.releaseSteerProviderSendClaim({
+            orgId: conversation.orgId,
+            controlActionId: durableControlActionId,
+            reason: "steer_requested_event_failed",
+          }).catch(() => null);
+          throw error;
+        }
+        return {
+          clientMessageId: sendClaim.providerClientMessageId ?? durableControlActionId,
+          release: async () => {
+            const released = await svc.releaseSteerProviderSendClaim({
+              orgId: conversation.orgId,
+              controlActionId: durableControlActionId,
+              reason: "runtime_owner_changed_before_provider_send",
+            });
+            if (!released) {
+              throw new Error("Steer provider send claim could not be safely released before send");
+            }
+          },
+        };
+      },
     });
-    if (!sendClaim) {
+
+    if (runtimeResult.status === "provider_send_in_flight") {
       res.json(responseForDurableDisposition(started.item, started.action.localDisposition));
       return;
     }
 
-    await svc.appendGenerationEvent({
-      orgId: conversation.orgId,
-      generationId: expectedGenerationId,
-      attemptEpoch: expectedAttemptEpoch,
-      eventKind: "steer_requested",
-      payload: { controlActionId, queueItemId: started.item.id },
-      controlActionId,
-      queueItemId: started.item.id,
-    });
-    const runtimeResult = await steerActiveChatGeneration({
-      conversationId: conversation.id,
-      expectedGenerationId,
-      feedback: {
-        text: started.item.payload.body,
-        clientMessageId: sendClaim.providerClientMessageId ?? controlActionId,
-      },
-    });
+    const deniedProviderSend = providerSendState.denied;
+    if (deniedProviderSend) {
+      if (deniedProviderSend.reason === "stop_cutoff_won_before_provider_send") {
+        await interruptActiveChatGeneration(conversation.id, "steer_fallback");
+      }
+      wakeServerQueue();
+      res.json(responseForDurableDisposition(
+        deniedProviderSend.item,
+        deniedProviderSend.action.localDisposition,
+      ));
+      return;
+    }
 
     let resolution: Awaited<ReturnType<typeof svc.resolveSteerControlAction>>;
     if (runtimeResult.status === "delivered_current") {
@@ -2034,7 +2152,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
         orgId: conversation.orgId,
         conversationId: conversation.id,
         itemId: started.item.id,
-        controlActionId,
+        controlActionId: durableControlActionId,
         status: "accepted_current",
         disposition: "accepted_current",
         providerDisposition: "acknowledged",
@@ -2048,15 +2166,15 @@ export function chatRoutes(db: Db, storage: StorageService) {
       });
       await svc.appendGenerationEvent({
         orgId: conversation.orgId,
-        generationId: expectedGenerationId,
+        generationId: durableGenerationId,
         attemptEpoch: runtimeResult.attemptEpoch,
         eventKind: "steer_acknowledged",
         payload: {
-          controlActionId,
+          controlActionId: durableControlActionId,
           providerThreadId: runtimeResult.providerThreadId,
           providerTurnId: runtimeResult.providerTurnId,
         },
-        controlActionId,
+        controlActionId: durableControlActionId,
         queueItemId: started.item.id,
       });
     } else if (runtimeResult.status === "acceptance_unknown") {
@@ -2064,7 +2182,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
         orgId: conversation.orgId,
         conversationId: conversation.id,
         itemId: started.item.id,
-        controlActionId,
+        controlActionId: durableControlActionId,
         status: "acceptance_unknown",
         disposition: "acceptance_unknown",
         providerDisposition: "connection_lost",
@@ -2074,47 +2192,85 @@ export function chatRoutes(db: Db, storage: StorageService) {
           ownerChangedAfterSend: runtimeResult.ownerChangedAfterSend === true,
         },
       });
-    } else if (runtimeResult.status === "pending_control") {
+    } else if (runtimeResult.status === "continuation_required") {
+      const cutoff = await svc.generationProtocol.beginSteerFallbackCutoff({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        generationId: durableGenerationId,
+        expectedAttemptEpoch: durableAttemptEpoch,
+        controlActionId: durableControlActionId,
+        queueItemId: started.item.id,
+        requestedRenderSeq: req.body.lastCommittedRenderSeq,
+        requestedBodyHash: req.body.renderedBodyHash,
+      });
+      const completionCommitted = cutoff.outcome === "completion_committed";
+      const interrupt = completionCommitted
+        ? null
+        : interruptActiveChatGeneration(conversation.id, "steer_fallback");
+      const interruptDisposition = interrupt ? await interrupt : "unverified" as const;
       resolution = await svc.resolveSteerControlAction({
         orgId: conversation.orgId,
         conversationId: conversation.id,
         itemId: started.item.id,
-        controlActionId,
-        status: "steer_pending",
-        disposition: "pending",
+        controlActionId: durableControlActionId,
+        status: "continuation_pending",
+        disposition: "continuation_pending",
         providerDisposition: "not_sent",
-        reason: "runtime_control_starting",
+        providerEvidence: {
+          ...(cutoff.action.providerEvidence ?? {}),
+          ...(completionCommitted
+            ? { completionDisposition: "committed" }
+            : {
+              interruptDisposition,
+              acceptedThroughSeq: cutoff.action.acceptedThroughSeq,
+              frozenBodyHash: cutoff.action.frozenBodyHash,
+            }),
+        },
+        reason: completionCommitted
+          ? "target_generation_completion_committed"
+          : interrupt
+            ? "runtime_requires_continuation"
+            : "runtime_owner_missing_during_steer_fallback",
       });
+      if (!completionCommitted && !interrupt) {
+        await svc.generationProtocol.recordRuntimeTerminal({
+          orgId: conversation.orgId,
+          conversationId: conversation.id,
+          generationId: durableGenerationId,
+          expectedAttemptEpoch: durableAttemptEpoch,
+          finalStatus: "interrupted_unverified",
+          terminalReason: "steer_fallback_runtime_owner_missing",
+          controlActionId: durableControlActionId,
+          payload: { interruptDisposition },
+        });
+        wakeTerminalProjector();
+      }
+      wakeServerQueue();
     } else {
       resolution = await svc.resolveSteerControlAction({
         orgId: conversation.orgId,
         conversationId: conversation.id,
         itemId: started.item.id,
-        controlActionId,
+        controlActionId: durableControlActionId,
         status: "continuation_pending",
         disposition: "continuation_pending",
         providerDisposition: "not_sent",
-        reason: runtimeResult.status === "stale_generation"
-          ? "stale_generation"
-          : runtimeResult.reason,
+        reason: "stale_generation",
       });
-      if (runtimeResult.status === "continuation_required") {
-        void interruptActiveChatGeneration(conversation.id, "steer_fallback");
-      }
       await svc.appendGenerationEvent({
         orgId: conversation.orgId,
-        generationId: expectedGenerationId,
-        attemptEpoch: expectedAttemptEpoch,
+        generationId: durableGenerationId,
+        attemptEpoch: durableAttemptEpoch,
         eventKind: "continuation_scheduled",
-        payload: { controlActionId, reason: "runtime_requires_continuation" },
-        controlActionId,
+        payload: { controlActionId: durableControlActionId, reason: "stale_generation" },
+        controlActionId: durableControlActionId,
         queueItemId: started.item.id,
       });
       wakeServerQueue();
     }
     res.json({
       ...responseForDurableDisposition(resolution.item, resolution.action.localDisposition),
-      activeGenerationId: expectedGenerationId,
+      activeGenerationId: durableGenerationId,
       queueVersion: resolution.item.version,
       transcriptEventId: null,
     });

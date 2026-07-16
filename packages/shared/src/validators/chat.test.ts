@@ -48,7 +48,17 @@ describe("durable chat controls", () => {
       controlActionId,
       expectedAttemptEpoch: 2,
       expectedControlVersion: 3,
+      lastCommittedRenderSeq: 8,
+      renderedBodyHash: "b".repeat(64),
     }).success).toBe(true);
+
+    expect(steerChatQueuedMessageSchema.safeParse({
+      expectedActiveGenerationId: generationId,
+      controlActionId,
+      expectedAttemptEpoch: 2,
+      expectedControlVersion: 3,
+      lastCommittedRenderSeq: 8,
+    }).success).toBe(false);
   });
 
   it("validates Stop cutoff proof and normalized generation events", () => {

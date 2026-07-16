@@ -4,16 +4,20 @@ import {
   chatGenerationEvents,
   chatGenerations,
   chatGenerationTerminalOutbox,
+  chatMessages,
   chatQueuedMessages,
 } from "@rudderhq/db";
 import type {
   ChatControlDisposition,
   ChatGenerationEventKind,
   ChatGenerationStatus,
+  ChatStreamTranscriptEntry,
 } from "@rudderhq/shared";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
+import { withPersistedTranscript } from "./chats.helpers.js";
+import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 
 type GenerationRow = typeof chatGenerations.$inferSelect;
 type GenerationEventRow = typeof chatGenerationEvents.$inferSelect;
@@ -29,11 +33,11 @@ const OUTPUT_ADMITTING_GENERATION_STATUSES = [
   "active",
   "running",
   "tool_busy",
+  "closing",
 ] as const;
 
 const CONTROL_ACTIVE_GENERATION_STATUSES = [
   ...OUTPUT_ADMITTING_GENERATION_STATUSES,
-  "closing",
 ] as const;
 
 const RECOVERABLE_CONTROL_GENERATION_STATUSES = [
@@ -187,6 +191,122 @@ async function bodyHashAtSeq(
     : null;
 }
 
+async function runtimeOutputAdmission(
+  tx: ChatGenerationProtocolTransaction,
+  generationId: string,
+): Promise<GenerationEventRow | null> {
+  return tx
+    .select()
+    .from(chatGenerationEvents)
+    .where(and(
+      eq(chatGenerationEvents.generationId, generationId),
+      eq(chatGenerationEvents.eventKind, "runtime_output"),
+    ))
+    .orderBy(asc(chatGenerationEvents.generationSeq))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+}
+
+async function latestVisibleBodyCheckpoint(
+  tx: ChatGenerationProtocolTransaction,
+  generationId: string,
+): Promise<{ generationSeq: number; bodyHash: string }> {
+  const events = await tx
+    .select({
+      generationSeq: chatGenerationEvents.generationSeq,
+      payload: chatGenerationEvents.payload,
+    })
+    .from(chatGenerationEvents)
+    .where(eq(chatGenerationEvents.generationId, generationId))
+    .orderBy(desc(chatGenerationEvents.generationSeq))
+    .limit(100);
+  for (const event of events) {
+    const bodyHash = event.payload?.bodyHash;
+    if (typeof bodyHash === "string" && SHA256_PATTERN.test(bodyHash)) {
+      return { generationSeq: event.generationSeq, bodyHash: bodyHash.toLowerCase() };
+    }
+  }
+  return { generationSeq: 0, bodyHash: EMPTY_BODY_SHA256 };
+}
+
+type VisibleGenerationProjection = {
+  body: string;
+  transcript: ChatStreamTranscriptEntry[];
+  assistantMessageId: string | null;
+  runId: string | null;
+};
+
+async function visibleGenerationProjectionThrough(
+  tx: ChatGenerationProtocolTransaction,
+  generationId: string,
+  generationSeq: number,
+): Promise<VisibleGenerationProjection> {
+  const events = generationSeq <= 0
+    ? []
+    : await tx
+      .select()
+      .from(chatGenerationEvents)
+      .where(and(
+        eq(chatGenerationEvents.generationId, generationId),
+        lte(chatGenerationEvents.generationSeq, generationSeq),
+      ))
+      .orderBy(asc(chatGenerationEvents.generationSeq));
+  let body = "";
+  const transcript: ChatStreamTranscriptEntry[] = [];
+  let assistantMessageId: string | null = null;
+  let runId: string | null = null;
+  for (const event of events) {
+    if (event.assistantMessageId) assistantMessageId = event.assistantMessageId;
+    if (event.runId) runId = event.runId;
+    if (event.eventKind === "assistant_delta" && typeof event.payload.delta === "string") {
+      body += event.payload.delta;
+    } else if (event.eventKind === "runtime_output" && typeof event.payload.body === "string") {
+      body = event.payload.body;
+    } else if (
+      event.eventKind === "transcript"
+      && event.payload.entry
+      && typeof event.payload.entry === "object"
+      && !Array.isArray(event.payload.entry)
+    ) {
+      transcript.push(event.payload.entry as ChatStreamTranscriptEntry);
+    }
+  }
+  return { body, transcript, assistantMessageId, runId };
+}
+
+async function freezeAssistantMessageProjection(
+  tx: ChatGenerationProtocolTransaction,
+  generation: GenerationRow,
+  acceptedThroughSeq: number,
+) {
+  const projection = await visibleGenerationProjectionThrough(tx, generation.id, acceptedThroughSeq);
+  if (!projection.assistantMessageId) return projection;
+  const existing = await tx
+    .select()
+    .from(chatMessages)
+    .where(and(
+      eq(chatMessages.id, projection.assistantMessageId),
+      eq(chatMessages.orgId, generation.orgId),
+      eq(chatMessages.conversationId, generation.conversationId),
+      eq(chatMessages.role, "assistant"),
+    ))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+  if (!existing) return projection;
+  const durableBody = await normalizeLocalLibraryPathMarkdown(projection.body, generation.orgId);
+  await tx
+    .update(chatMessages)
+    .set({
+      status: "stopped",
+      body: durableBody,
+      structuredPayload: withPersistedTranscript(existing.structuredPayload, projection.transcript),
+      ...(projection.runId ? { runId: projection.runId } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(chatMessages.id, existing.id));
+  return projection;
+}
+
 function terminalStatusFromPayload(payload: Record<string, unknown>): ChatGenerationStatus | null {
   const status = payload.finalStatus;
   return typeof status === "string"
@@ -251,11 +371,13 @@ export function chatGenerationProtocolService(db: Db) {
         expectedOwnerToken: input.expectedOwnerToken,
       });
 
-      if (
-        input.admission === "visible"
-        && !(OUTPUT_ADMITTING_GENERATION_STATUSES as readonly string[]).includes(generation.status)
-      ) {
-        throw conflict("Chat-visible output admission is closed for this generation");
+      if (input.admission === "visible") {
+        if (
+          await runtimeOutputAdmission(tx, generation.id)
+          || !(OUTPUT_ADMITTING_GENERATION_STATUSES as readonly string[]).includes(generation.status)
+        ) {
+          throw conflict("Chat-visible output admission is closed for this generation");
+        }
       }
 
       const payload = { ...(input.payload ?? {}) };
@@ -285,6 +407,130 @@ export function chatGenerationProtocolService(db: Db) {
         updatedGeneration = updated ?? generation;
       }
       return { event, generation: updatedGeneration };
+    });
+  }
+
+  async function appendVisibleEventAndProject(input: Omit<
+    AppendEventFields,
+    "attemptEpoch" | "assistantMessageId"
+  > & {
+    orgId: string;
+    conversationId: string;
+    generationId: string;
+    expectedAttemptEpoch: number;
+    expectedOwnerToken?: string | null;
+    bodyHash: string;
+    messageId?: string | null;
+    body: string;
+    transcript: ChatStreamTranscriptEntry[];
+    replyingAgentId?: string | null;
+    chatTurnId: string;
+    turnVariant: number;
+  }) {
+    const durableBody = await normalizeLocalLibraryPathMarkdown(input.body, input.orgId);
+    const bodyHash = normalizeBodyHash(input.bodyHash);
+    return db.transaction(async (tx) => {
+      const generation = await lockGeneration(tx, {
+        orgId: input.orgId,
+        conversationId: input.conversationId,
+        generationId: input.generationId,
+      });
+      assertGenerationFence(generation, {
+        conversationId: input.conversationId,
+        expectedAttemptEpoch: input.expectedAttemptEpoch,
+        expectedOwnerToken: input.expectedOwnerToken,
+      });
+      if (await runtimeOutputAdmission(tx, generation.id)) {
+        throw conflict("Chat-visible output admission is closed for this generation");
+      }
+      if (!(OUTPUT_ADMITTING_GENERATION_STATUSES as readonly string[]).includes(generation.status)) {
+        throw conflict("Chat-visible output admission is closed for this generation");
+      }
+      const payload = { ...(input.payload ?? {}) };
+      if (typeof payload.bodyHash === "string" && payload.bodyHash.toLowerCase() !== bodyHash) {
+        throw conflict("Chat generation event body hash disagrees with its payload");
+      }
+      payload.bodyHash = bodyHash;
+      const existing = input.messageId ? await tx
+        .select()
+        .from(chatMessages)
+        .where(and(
+          eq(chatMessages.id, input.messageId),
+          eq(chatMessages.orgId, input.orgId),
+          eq(chatMessages.conversationId, input.conversationId),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null) : null;
+      if (input.messageId && !existing) {
+        throw conflict("Visible generation message projection no longer exists");
+      }
+      const structuredPayload = withPersistedTranscript(existing?.structuredPayload ?? null, input.transcript);
+      const [message] = existing
+        ? await tx
+          .update(chatMessages)
+          .set({
+            status: "streaming",
+            body: durableBody,
+            structuredPayload,
+            ...(input.runId !== undefined ? { runId: input.runId } : {}),
+            ...(input.replyingAgentId !== undefined ? { replyingAgentId: input.replyingAgentId } : {}),
+            updatedAt: new Date(),
+          })
+          .where(eq(chatMessages.id, existing.id))
+          .returning()
+        : await tx
+          .insert(chatMessages)
+          .values({
+            orgId: input.orgId,
+            conversationId: input.conversationId,
+            role: "assistant",
+            kind: "message",
+            status: "streaming",
+            body: durableBody,
+            structuredPayload,
+            runId: input.runId ?? null,
+            replyingAgentId: input.replyingAgentId ?? null,
+            chatTurnId: input.chatTurnId,
+            turnVariant: input.turnVariant,
+          })
+          .returning();
+      if (!message) throw new Error("Failed to project visible chat generation event");
+      const event = await appendEventLocked(tx, {
+        ...input,
+        attemptEpoch: input.expectedAttemptEpoch,
+        payload,
+        assistantMessageId: message.id,
+      });
+      return { generation, message, event };
+    });
+  }
+
+  async function getFrozenVisibleProjection(input: {
+    orgId: string;
+    conversationId: string;
+    generationId: string;
+  }) {
+    return db.transaction(async (tx) => {
+      const generation = await tx
+        .select()
+        .from(chatGenerations)
+        .where(and(
+          eq(chatGenerations.id, input.generationId),
+          eq(chatGenerations.orgId, input.orgId),
+          eq(chatGenerations.conversationId, input.conversationId),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (!generation) throw notFound("Chat generation not found");
+      const checkpoint = generation.acceptedThroughSeq === null
+        ? await latestVisibleBodyCheckpoint(tx, generation.id)
+        : { generationSeq: generation.acceptedThroughSeq, bodyHash: generation.frozenBodyHash ?? EMPTY_BODY_SHA256 };
+      const projection = await visibleGenerationProjectionThrough(
+        tx,
+        generation.id,
+        checkpoint.generationSeq,
+      );
+      return { generation, checkpoint, projection };
     });
   }
 
@@ -367,6 +613,7 @@ export function chatGenerationProtocolService(db: Db) {
     generation: GenerationRow;
     stopRequestedEvent: GenerationEventRow | null;
     outputCutoffEvent: GenerationEventRow | null;
+    outcome: "stop_applied" | "completion_committed";
     idempotent: boolean;
   }> {
     const requestedBodyHash = normalizeBodyHash(input.requestedBodyHash);
@@ -398,6 +645,9 @@ export function chatGenerationProtocolService(db: Db) {
           generation,
           stopRequestedEvent: null,
           outputCutoffEvent: null,
+          outcome: existingAction.lastError === "generation_result_already_committed"
+            ? "completion_committed"
+            : "stop_applied",
           idempotent: true,
         };
       }
@@ -406,6 +656,44 @@ export function chatGenerationProtocolService(db: Db) {
         conversationId: input.conversationId,
         expectedAttemptEpoch: input.expectedAttemptEpoch,
       });
+      const completionAdmission = await runtimeOutputAdmission(tx, generation.id);
+      if (completionAdmission) {
+        const now = input.now ?? new Date();
+        const [action] = await tx
+          .insert(chatControlActions)
+          .values({
+            id: input.controlActionId,
+            orgId: input.orgId,
+            expectedGenerationId: generation.id,
+            expectedAttemptEpoch: input.expectedAttemptEpoch,
+            expectedControlVersion: input.expectedControlVersion,
+            actionKind: "stop",
+            localDisposition: "cancelled",
+            providerDisposition: "not_sent",
+            controlOwnerToken: generation.controlOwnerToken,
+            providerEvidence: {
+              completionEventId: completionAdmission.id,
+              completionGenerationSeq: completionAdmission.generationSeq,
+            },
+            requestedRenderSeq: input.requestedRenderSeq,
+            requestedBodyHash,
+            lastError: "generation_result_already_committed",
+            requestedAt: now,
+            resolvedAt: now,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning();
+        if (!action) throw new Error("Failed to persist completed-generation Stop outcome");
+        return {
+          action,
+          generation,
+          stopRequestedEvent: null,
+          outputCutoffEvent: null,
+          outcome: "completion_committed",
+          idempotent: false,
+        };
+      }
       if (generation.runtimeTerminalAt) {
         throw conflict("Chat generation runtime is already terminal");
       }
@@ -496,10 +784,12 @@ export function chatGenerationProtocolService(db: Db) {
           frozenBodyHash,
         },
       });
+      await freezeAssistantMessageProjection(tx, generation, acceptedThroughSeq);
       const [updatedGeneration] = await tx
         .update(chatGenerations)
         .set({
           status: "stop_requested",
+          terminalReason: "operator_stop",
           controlState: "stopping",
           controlVersion: appliedControlVersion,
           acceptedThroughSeq,
@@ -519,6 +809,346 @@ export function chatGenerationProtocolService(db: Db) {
         generation: updatedGeneration,
         stopRequestedEvent,
         outputCutoffEvent,
+        outcome: "stop_applied",
+        idempotent: false,
+      };
+    });
+  }
+
+  async function beginSteerFallbackCutoff(input: {
+    orgId: string;
+    conversationId: string;
+    generationId: string;
+    expectedAttemptEpoch: number;
+    controlActionId: string;
+    queueItemId: string;
+    requestedRenderSeq?: number;
+    requestedBodyHash?: string;
+    now?: Date;
+  }): Promise<{
+    action: ControlActionRow;
+    generation: GenerationRow;
+    item: typeof chatQueuedMessages.$inferSelect;
+    outputCutoffEvent: GenerationEventRow | null;
+    continuationEvent: GenerationEventRow | null;
+    outcome: "cutoff_applied" | "completion_committed";
+    idempotent: boolean;
+  }> {
+    const requestedBodyHash = input.requestedBodyHash === undefined
+      ? undefined
+      : normalizeBodyHash(input.requestedBodyHash);
+    if ((input.requestedRenderSeq === undefined) !== (requestedBodyHash === undefined)) {
+      throw unprocessable("Steer fallback render sequence and body hash must be supplied together");
+    }
+
+    return db.transaction(async (tx) => {
+      const generation = await lockGeneration(tx, {
+        orgId: input.orgId,
+        conversationId: input.conversationId,
+        generationId: input.generationId,
+      });
+      assertGenerationFence(generation, {
+        conversationId: input.conversationId,
+        expectedAttemptEpoch: input.expectedAttemptEpoch,
+      });
+      await tx.execute(sql`
+        select ${chatControlActions.id}
+        from ${chatControlActions}
+        where ${chatControlActions.id} = ${input.controlActionId}
+          and ${chatControlActions.orgId} = ${input.orgId}
+        for update
+      `);
+      await tx.execute(sql`
+        select ${chatQueuedMessages.id}
+        from ${chatQueuedMessages}
+        where ${chatQueuedMessages.id} = ${input.queueItemId}
+          and ${chatQueuedMessages.orgId} = ${input.orgId}
+          and ${chatQueuedMessages.conversationId} = ${input.conversationId}
+        for update
+      `);
+      const action = await tx
+        .select()
+        .from(chatControlActions)
+        .where(and(
+          eq(chatControlActions.id, input.controlActionId),
+          eq(chatControlActions.orgId, input.orgId),
+          eq(chatControlActions.actionKind, "steer"),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      const item = await tx
+        .select()
+        .from(chatQueuedMessages)
+        .where(and(
+          eq(chatQueuedMessages.id, input.queueItemId),
+          eq(chatQueuedMessages.orgId, input.orgId),
+          eq(chatQueuedMessages.conversationId, input.conversationId),
+          eq(chatQueuedMessages.controlActionId, input.controlActionId),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (
+        !action
+        || action.expectedGenerationId !== generation.id
+        || action.expectedAttemptEpoch !== generation.attemptEpoch
+      ) {
+        throw conflict("Steer fallback control action no longer targets this generation");
+      }
+      if (!item) throw notFound("Queued Steer feedback not found");
+      if (action.acceptedThroughSeq !== null && action.frozenBodyHash) {
+        return {
+          action,
+          generation,
+          item,
+          outputCutoffEvent: null,
+          continuationEvent: null,
+          outcome: "cutoff_applied",
+          idempotent: true,
+        };
+      }
+      const completionAdmission = await runtimeOutputAdmission(tx, generation.id);
+      if (completionAdmission) {
+        const existingContinuationEvent = await tx
+          .select()
+          .from(chatGenerationEvents)
+          .where(and(
+            eq(chatGenerationEvents.generationId, generation.id),
+            eq(chatGenerationEvents.eventKind, "continuation_scheduled"),
+            eq(chatGenerationEvents.controlActionId, action.id),
+          ))
+          .orderBy(desc(chatGenerationEvents.generationSeq))
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+        if (
+          action.localDisposition === "continuation_pending"
+          && existingContinuationEvent?.payload.reason === "target_generation_completion_committed"
+        ) {
+          return {
+            action,
+            generation,
+            item,
+            outputCutoffEvent: null,
+            continuationEvent: existingContinuationEvent,
+            outcome: "completion_committed",
+            idempotent: true,
+          };
+        }
+
+        const now = input.now ?? new Date();
+        const [updatedAction] = await tx
+          .update(chatControlActions)
+          .set({
+            localDisposition: "continuation_pending",
+            providerDisposition: "not_sent",
+            providerSentAt: null,
+            requestedRenderSeq: input.requestedRenderSeq ?? null,
+            requestedBodyHash: requestedBodyHash ?? null,
+            acceptedThroughSeq: null,
+            frozenBodyHash: null,
+            providerEvidence: {
+              ...(action.providerEvidence ?? {}),
+              completionEventId: completionAdmission.id,
+              completionGenerationSeq: completionAdmission.generationSeq,
+            },
+            lastError: "target_generation_completion_committed",
+            resolvedAt: now,
+            updatedAt: now,
+          })
+          .where(and(
+            eq(chatControlActions.id, action.id),
+            eq(chatControlActions.orgId, input.orgId),
+            eq(chatControlActions.actionKind, "steer"),
+          ))
+          .returning();
+        if (!updatedAction) throw conflict("Steer continuation action changed after generation completion");
+        const [updatedItem] = await tx
+          .update(chatQueuedMessages)
+          .set({
+            status: "continuation_pending",
+            deliveryIntent: "steer",
+            deliveryDisposition: "continuation_pending",
+            reconciliationReason: "target_generation_completion_committed",
+            lastDeliveryReason: null,
+            version: sql`${chatQueuedMessages.version} + 1`,
+            updatedAt: now,
+          })
+          .where(and(
+            eq(chatQueuedMessages.id, item.id),
+            eq(chatQueuedMessages.version, item.version),
+          ))
+          .returning();
+        if (!updatedItem) throw conflict("Queued Steer feedback changed after generation completion");
+        const continuationEvent = await appendEventLocked(tx, {
+          orgId: input.orgId,
+          generationId: generation.id,
+          attemptEpoch: generation.attemptEpoch,
+          eventKind: "continuation_scheduled",
+          controlActionId: action.id,
+          queueItemId: item.id,
+          payload: {
+            controlActionId: action.id,
+            reason: "target_generation_completion_committed",
+            completionEventId: completionAdmission.id,
+            completionGenerationSeq: completionAdmission.generationSeq,
+          },
+        });
+        return {
+          action: updatedAction,
+          generation,
+          item: updatedItem,
+          outputCutoffEvent: null,
+          continuationEvent,
+          outcome: "completion_committed",
+          idempotent: false,
+        };
+      }
+      if (generation.runtimeTerminalAt) {
+        throw conflict("Chat generation runtime is already terminal");
+      }
+
+      const priorCutoffExists = generation.acceptedThroughSeq !== null
+        && Boolean(generation.frozenBodyHash)
+        && generation.stopRequestedAt !== null;
+      if (
+        !priorCutoffExists
+        && action.appliedControlVersion !== generation.controlVersion
+      ) {
+        throw conflict("Chat generation control version changed before Steer fallback cutoff");
+      }
+
+      let acceptedThroughSeq: number;
+      let frozenBodyHash: string;
+      if (priorCutoffExists) {
+        acceptedThroughSeq = generation.acceptedThroughSeq!;
+        frozenBodyHash = generation.frozenBodyHash!;
+      } else {
+        const requestedDurableHash = input.requestedRenderSeq === undefined
+          ? null
+          : await bodyHashAtSeq(tx, generation.id, input.requestedRenderSeq);
+        const clientCheckpointIsNewer = generation.lastClientCheckpointSeq !== null
+          && generation.lastClientCheckpointHash
+          && (input.requestedRenderSeq === undefined
+            || generation.lastClientCheckpointSeq > input.requestedRenderSeq);
+        if (clientCheckpointIsNewer) {
+          acceptedThroughSeq = generation.lastClientCheckpointSeq!;
+          frozenBodyHash = generation.lastClientCheckpointHash!;
+        } else if (requestedDurableHash && requestedBodyHash) {
+          if (requestedDurableHash !== requestedBodyHash) {
+            throw conflict("Steer fallback body hash does not match the durable visible projection");
+          }
+          acceptedThroughSeq = input.requestedRenderSeq!;
+          frozenBodyHash = requestedBodyHash;
+        } else if (generation.lastClientCheckpointSeq !== null && generation.lastClientCheckpointHash) {
+          acceptedThroughSeq = generation.lastClientCheckpointSeq;
+          frozenBodyHash = generation.lastClientCheckpointHash;
+        } else {
+          const checkpoint = await latestVisibleBodyCheckpoint(tx, generation.id);
+          acceptedThroughSeq = checkpoint.generationSeq;
+          frozenBodyHash = checkpoint.bodyHash;
+        }
+      }
+
+      const now = input.now ?? new Date();
+      const [updatedAction] = await tx
+        .update(chatControlActions)
+        .set({
+          localDisposition: "continuation_pending",
+          providerDisposition: "not_sent",
+          providerSentAt: null,
+          requestedRenderSeq: input.requestedRenderSeq ?? acceptedThroughSeq,
+          requestedBodyHash: requestedBodyHash ?? frozenBodyHash,
+          acceptedThroughSeq,
+          frozenBodyHash,
+          lastError: "runtime_requires_continuation",
+          resolvedAt: now,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(chatControlActions.id, action.id),
+          eq(chatControlActions.orgId, input.orgId),
+          eq(chatControlActions.actionKind, "steer"),
+        ))
+        .returning();
+      if (!updatedAction) throw conflict("Steer fallback control action changed");
+      const [updatedItem] = await tx
+        .update(chatQueuedMessages)
+        .set({
+          status: "continuation_pending",
+          deliveryIntent: "steer",
+          deliveryDisposition: "continuation_pending",
+          reconciliationReason: "runtime_requires_continuation",
+          lastDeliveryReason: null,
+          version: sql`${chatQueuedMessages.version} + 1`,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(chatQueuedMessages.id, item.id),
+          eq(chatQueuedMessages.version, item.version),
+        ))
+        .returning();
+      if (!updatedItem) throw conflict("Queued Steer feedback changed before fallback cutoff");
+
+      let outputCutoffEvent: GenerationEventRow | null = null;
+      if (!priorCutoffExists) {
+        outputCutoffEvent = await appendEventLocked(tx, {
+          orgId: input.orgId,
+          generationId: generation.id,
+          attemptEpoch: generation.attemptEpoch,
+          eventKind: "output_cutoff",
+          controlActionId: action.id,
+          queueItemId: item.id,
+          payload: {
+            controlActionId: action.id,
+            reason: "steer_fallback",
+            acceptedThroughSeq,
+            frozenBodyHash,
+          },
+        });
+      }
+      const continuationEvent = await appendEventLocked(tx, {
+        orgId: input.orgId,
+        generationId: generation.id,
+        attemptEpoch: generation.attemptEpoch,
+        eventKind: "continuation_scheduled",
+        controlActionId: action.id,
+        queueItemId: item.id,
+        payload: {
+          controlActionId: action.id,
+          reason: priorCutoffExists ? "existing_output_cutoff" : "runtime_requires_continuation",
+          acceptedThroughSeq,
+          frozenBodyHash,
+        },
+      });
+      await freezeAssistantMessageProjection(tx, generation, acceptedThroughSeq);
+      let updatedGeneration = generation;
+      if (!priorCutoffExists) {
+        const [cutoffGeneration] = await tx
+          .update(chatGenerations)
+          .set({
+            status: "stop_requested",
+            terminalReason: "steer_fallback",
+            controlState: "stopping",
+            acceptedThroughSeq,
+            frozenBodyHash,
+            stopRequestedAt: now,
+            updatedAt: now,
+          })
+          .where(and(
+            eq(chatGenerations.id, generation.id),
+            eq(chatGenerations.controlVersion, generation.controlVersion),
+            eq(chatGenerations.attemptEpoch, generation.attemptEpoch),
+          ))
+          .returning();
+        if (!cutoffGeneration) throw conflict("Chat generation changed while applying Steer fallback cutoff");
+        updatedGeneration = cutoffGeneration;
+      }
+      return {
+        action: updatedAction,
+        generation: updatedGeneration,
+        item: updatedItem,
+        outputCutoffEvent,
+        continuationEvent,
+        outcome: "cutoff_applied",
         idempotent: false,
       };
     });
@@ -540,11 +1170,19 @@ export function chatGenerationProtocolService(db: Db) {
     return db.transaction(async (tx) => {
       const generation = await lockGeneration(tx, input);
       assertGenerationFence(generation, input);
-      const stopWon = generation.status === "stop_requested"
+      const cutoffWon = generation.status === "stop_requested"
         || generation.status === "stopping"
         || generation.stopRequestedAt !== null;
-      const finalStatus = stopWon ? "stopped" : input.finalStatus;
-      const terminalReason = stopWon ? "operator_stop" : input.terminalReason;
+      const runtimeTerminationUnverified = input.finalStatus === "interrupted_unverified";
+      const finalStatus = cutoffWon
+        ? runtimeTerminationUnverified ? "interrupted_unverified" : "stopped"
+        : input.finalStatus;
+      const cutoffReason = generation.terminalReason === "steer_fallback"
+        ? "steer_fallback"
+        : "operator_stop";
+      const terminalReason = cutoffWon
+        ? runtimeTerminationUnverified ? `${cutoffReason}_unverified` : cutoffReason
+        : input.terminalReason;
       const projectionVersion = generation.controlVersion;
 
       const existingOutbox = await tx
@@ -570,27 +1208,39 @@ export function chatGenerationProtocolService(db: Db) {
       }
 
       const now = input.now ?? new Date();
-      const inferredControlActionId = input.controlActionId ?? (
+      const inferredControlAction = input.controlActionId
+        ? await tx
+          .select({ id: chatControlActions.id, actionKind: chatControlActions.actionKind })
+          .from(chatControlActions)
+          .where(and(
+            eq(chatControlActions.id, input.controlActionId),
+            eq(chatControlActions.orgId, input.orgId),
+          ))
+          .limit(1)
+          .then((rows) => rows[0] ?? null)
+        : (
         finalStatus === "stopped" || finalStatus === "interrupted_unverified"
           ? await tx
-            .select({ id: chatControlActions.id })
+            .select({ id: chatControlActions.id, actionKind: chatControlActions.actionKind })
             .from(chatControlActions)
             .where(and(
               eq(chatControlActions.orgId, input.orgId),
               eq(chatControlActions.expectedGenerationId, input.generationId),
-              eq(chatControlActions.actionKind, "stop"),
+              isNotNull(chatControlActions.acceptedThroughSeq),
             ))
             .orderBy(desc(chatControlActions.requestedAt))
             .limit(1)
-            .then((rows) => rows[0]?.id ?? null)
+            .then((rows) => rows[0] ?? null)
           : null
       );
+      const inferredControlActionId = inferredControlAction?.id ?? null;
       const payload = {
         ...(input.payload ?? {}),
         attemptEpoch: generation.attemptEpoch,
         finalStatus,
         terminalReason,
         controlActionId: inferredControlActionId,
+        controlActionKind: inferredControlAction?.actionKind ?? null,
         runtimeTerminationVerified: finalStatus !== "interrupted_unverified",
       };
       const event = await appendEventLocked(tx, {
@@ -1038,38 +1688,222 @@ export function chatGenerationProtocolService(db: Db) {
     now?: Date;
   }) {
     const now = input.now ?? new Date();
-    const claim = await db
-      .select({ attemptCount: chatGenerationTerminalOutbox.attemptCount })
-      .from(chatGenerationTerminalOutbox)
-      .where(and(
-        eq(chatGenerationTerminalOutbox.id, input.outboxId),
-        eq(chatGenerationTerminalOutbox.status, "claimed"),
-        eq(chatGenerationTerminalOutbox.claimToken, input.claimToken),
-        eq(chatGenerationTerminalOutbox.claimEpoch, input.claimEpoch),
-      ))
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-    if (!claim) return null;
-    const failedActionable = claim.attemptCount >= input.maxAttempts;
-    const [updated] = await db
-      .update(chatGenerationTerminalOutbox)
-      .set({
-        status: failedActionable ? "failed_actionable" : "retry_wait",
-        claimToken: null,
-        claimOwner: null,
-        leaseExpiresAt: null,
-        availableAt: failedActionable ? now : input.retryAt,
-        lastError: input.error,
-        updatedAt: now,
-      })
-      .where(and(
-        eq(chatGenerationTerminalOutbox.id, input.outboxId),
-        eq(chatGenerationTerminalOutbox.status, "claimed"),
-        eq(chatGenerationTerminalOutbox.claimToken, input.claimToken),
-        eq(chatGenerationTerminalOutbox.claimEpoch, input.claimEpoch),
-      ))
-      .returning();
-    return updated ?? null;
+    return db.transaction(async (tx) => {
+      const observedClaim = await tx
+        .select({
+          orgId: chatGenerationTerminalOutbox.orgId,
+          generationId: chatGenerationTerminalOutbox.generationId,
+        })
+        .from(chatGenerationTerminalOutbox)
+        .where(eq(chatGenerationTerminalOutbox.id, input.outboxId))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (!observedClaim) return null;
+
+      const generation = await lockGeneration(tx, observedClaim);
+      await tx.execute(sql`
+        select ${chatGenerationTerminalOutbox.id}
+        from ${chatGenerationTerminalOutbox}
+        where ${chatGenerationTerminalOutbox.id} = ${input.outboxId}
+        for update
+      `);
+      const claim = await tx
+        .select()
+        .from(chatGenerationTerminalOutbox)
+        .where(eq(chatGenerationTerminalOutbox.id, input.outboxId))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (
+        !claim
+        || claim.status !== "claimed"
+        || claim.claimToken !== input.claimToken
+        || claim.claimEpoch !== input.claimEpoch
+      ) {
+        return null;
+      }
+
+      const failedActionable = claim.attemptCount >= input.maxAttempts;
+      const [updated] = await tx
+        .update(chatGenerationTerminalOutbox)
+        .set({
+          status: failedActionable ? "failed_actionable" : "retry_wait",
+          claimToken: null,
+          claimOwner: null,
+          leaseExpiresAt: null,
+          availableAt: failedActionable ? now : input.retryAt,
+          lastError: input.error,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(chatGenerationTerminalOutbox.id, input.outboxId),
+          eq(chatGenerationTerminalOutbox.status, "claimed"),
+          eq(chatGenerationTerminalOutbox.claimToken, input.claimToken),
+          eq(chatGenerationTerminalOutbox.claimEpoch, input.claimEpoch),
+        ))
+        .returning();
+      if (!updated || !failedActionable) return updated ?? null;
+
+      await tx
+        .update(chatGenerations)
+        .set({
+          status: "failed",
+          terminalReason: "terminal_projection_failed_actionable",
+          controlState: "terminal",
+          controlOwnerToken: null,
+          controlLeaseExpiresAt: null,
+          completedAt: now,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(chatGenerations.id, generation.id),
+          inArray(chatGenerations.status, ["closing", "stopping"]),
+        ));
+
+      const deliveredSteers = await tx
+        .update(chatQueuedMessages)
+        .set({
+          status: "delivered",
+          deliveryDisposition: "delivered",
+          reconciliationReason: null,
+          lastDeliveryReason: null,
+          version: sql`${chatQueuedMessages.version} + 1`,
+          updatedAt: now,
+        })
+        .where(and(
+          or(
+            eq(chatQueuedMessages.status, "accepted_current"),
+            and(
+              eq(chatQueuedMessages.status, "steer_pending"),
+              inArray(
+                chatQueuedMessages.controlActionId,
+                tx
+                  .select({ id: chatControlActions.id })
+                  .from(chatControlActions)
+                  .where(eq(chatControlActions.providerDisposition, "acknowledged")),
+              ),
+            ),
+          ),
+          or(
+            eq(chatQueuedMessages.expectedGenerationId, claim.generationId),
+            eq(chatQueuedMessages.activeGenerationId, claim.generationId),
+          ),
+        ))
+        .returning({ controlActionId: chatQueuedMessages.controlActionId });
+      const deliveredControlActionIds = deliveredSteers
+        .map((item) => item.controlActionId)
+        .filter((id): id is string => Boolean(id));
+      if (deliveredControlActionIds.length > 0) {
+        await tx
+          .update(chatControlActions)
+          .set({
+            localDisposition: "delivered",
+            lastError: null,
+            resolvedAt: now,
+            updatedAt: now,
+          })
+          .where(inArray(chatControlActions.id, deliveredControlActionIds));
+      }
+
+      const uncertainSteers = await tx
+        .update(chatQueuedMessages)
+        .set({
+          status: "acceptance_unknown",
+          deliveryDisposition: "acceptance_unknown",
+          reconciliationReason: "terminal_projection_failed_provider_receipt_unknown",
+          lastDeliveryReason: "terminal_projection_failed_provider_receipt_unknown",
+          version: sql`${chatQueuedMessages.version} + 1`,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(chatQueuedMessages.status, "steer_pending"),
+          inArray(
+            chatQueuedMessages.controlActionId,
+            tx
+              .select({ id: chatControlActions.id })
+              .from(chatControlActions)
+              .where(inArray(chatControlActions.providerDisposition, [
+                "sent",
+                "timed_out",
+                "connection_lost",
+                "waiting_safe_boundary",
+                "unverified",
+              ])),
+          ),
+          or(
+            eq(chatQueuedMessages.expectedGenerationId, claim.generationId),
+            eq(chatQueuedMessages.activeGenerationId, claim.generationId),
+          ),
+        ))
+        .returning({ controlActionId: chatQueuedMessages.controlActionId });
+      const uncertainControlActionIds = uncertainSteers
+        .map((item) => item.controlActionId)
+        .filter((id): id is string => Boolean(id));
+      if (uncertainControlActionIds.length > 0) {
+        await tx
+          .update(chatControlActions)
+          .set({
+            localDisposition: "acceptance_unknown",
+            lastError: "terminal_projection_failed_provider_receipt_unknown",
+            resolvedAt: now,
+            updatedAt: now,
+          })
+          .where(inArray(chatControlActions.id, uncertainControlActionIds));
+      }
+
+      const failedSteers = await tx
+        .update(chatQueuedMessages)
+        .set({
+          status: "failed_actionable",
+          deliveryDisposition: "failed_actionable",
+          reconciliationReason: "terminal_projection_failed_actionable",
+          lastDeliveryReason: "terminal_projection_failed_actionable",
+          version: sql`${chatQueuedMessages.version} + 1`,
+          updatedAt: now,
+        })
+        .where(and(
+          inArray(chatQueuedMessages.status, ["steer_pending", "continuation_pending"]),
+          or(
+            eq(chatQueuedMessages.expectedGenerationId, claim.generationId),
+            eq(chatQueuedMessages.activeGenerationId, claim.generationId),
+          ),
+        ))
+        .returning({ controlActionId: chatQueuedMessages.controlActionId });
+      const failedControlActionIds = failedSteers
+        .map((item) => item.controlActionId)
+        .filter((id): id is string => Boolean(id));
+      if (failedControlActionIds.length > 0) {
+        await tx
+          .update(chatControlActions)
+          .set({
+            localDisposition: "failed_actionable",
+            lastError: "terminal_projection_failed_actionable",
+            resolvedAt: now,
+            updatedAt: now,
+          })
+          .where(inArray(chatControlActions.id, failedControlActionIds));
+      }
+
+      const controlActionId = typeof claim.payload.controlActionId === "string"
+        ? claim.payload.controlActionId
+        : null;
+      if (controlActionId) {
+        await tx
+          .update(chatControlActions)
+          .set({
+            localDisposition: "failed_actionable",
+            lastError: input.error,
+            resolvedAt: now,
+            updatedAt: now,
+          })
+          .where(and(
+            eq(chatControlActions.id, controlActionId),
+            eq(chatControlActions.orgId, claim.orgId),
+            eq(chatControlActions.actionKind, "stop"),
+          ));
+      }
+
+      return updated;
+    });
   }
 
   async function recoverStaleControlOwners(input: {
@@ -1174,8 +2008,11 @@ export function chatGenerationProtocolService(db: Db) {
   return {
     getLatestVisibleCheckpoint,
     appendGenerationEvent,
+    appendVisibleEventAndProject,
+    getFrozenVisibleProjection,
     recordClientCheckpoint,
     beginStopAction,
+    beginSteerFallbackCutoff,
     recordRuntimeTerminal,
     claimTerminalProjection,
     getNextTerminalProjectionWakeAt,
