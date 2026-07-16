@@ -1007,6 +1007,7 @@ describe("runChildProcess", () => {
       scriptPath,
       [
         "process.on('SIGTERM', () => {});",
+        "console.log('ready');",
         "setInterval(() => {}, 1000);",
       ].join("\n"),
       "utf8",
@@ -1024,12 +1025,13 @@ describe("runChildProcess", () => {
         abortSignal: controller.signal,
         onSpawn: async ({ pid }) => {
           spawnedPid = pid;
-          setTimeout(() => {
+        },
+        onLog: async (_stream, chunk) => {
+          if (chunk.includes("ready") && abortedAt === 0) {
             abortedAt = Date.now();
             controller.abort();
-          }, 50);
+          }
         },
-        onLog: async () => {},
       });
 
       expect(result.signal).toBe("SIGTERM");
