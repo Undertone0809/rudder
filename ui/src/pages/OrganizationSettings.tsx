@@ -186,6 +186,14 @@ export function OrganizationSettings() {
     },
   });
 
+  const deleteAllArchivedChatsMutation = useMutation({
+    mutationFn: (orgId: string) => chatsApi.removeArchived(orgId),
+    onSuccess: async (_result, orgId) => {
+      await queryClient.invalidateQueries({ queryKey: ["chats", orgId] });
+      await invalidateMessengerThreadSummaryQueries(queryClient, orgId);
+    },
+  });
+
   const archivedChatsQuery = useQuery({
     queryKey: queryKeys.chats.list(viewedOrganizationId ?? "__none__", "archived"),
     queryFn: () => chatsApi.list(viewedOrganizationId!, "archived"),
@@ -193,6 +201,10 @@ export function OrganizationSettings() {
     staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
   });
   const archivedChats = archivedChatsQuery.data ?? [];
+  const deletableArchivedChatCount = useMemo(
+    () => archivedChats.filter((conversation) => conversation.mutability !== "external_bound_chat").length,
+    [archivedChats],
+  );
   const filteredArchivedChats = useMemo(() => {
     const query = archivedChatSearch.trim().toLowerCase();
     if (!query) return archivedChats;
@@ -442,6 +454,21 @@ export function OrganizationSettings() {
     });
     if (!confirmed) return;
     deleteArchivedChatMutation.mutate(chatId);
+  }
+
+  async function handleDeleteAllArchivedChats() {
+    if (!viewedOrganizationId || deletableArchivedChatCount === 0) return;
+    const orgId = viewedOrganizationId;
+    const confirmed = await confirm({
+      title: t("organizationSettings.chat.archived.deleteAllConfirmTitle"),
+      description: t("organizationSettings.chat.archived.deleteAllConfirmDescription", {
+        count: deletableArchivedChatCount,
+      }),
+      confirmLabel: t("organizationSettings.chat.archived.deleteAll"),
+      tone: "destructive",
+    });
+    if (!confirmed) return;
+    deleteAllArchivedChatsMutation.mutate(orgId);
   }
 
   async function handleArchiveOrganization() {
@@ -979,11 +1006,26 @@ export function OrganizationSettings() {
           >
             <SettingsGroup>
               <div data-slot="settings-item" className="flex min-w-0 flex-col gap-3 px-4 py-4">
-                <div className="text-xs text-muted-foreground">
-                  {t("organizationSettings.chat.archived.count", {
-                    visible: filteredArchivedChats.length,
-                    total: archivedChats.length,
-                  })}
+                <div className="flex min-w-0 items-center justify-between gap-3">
+                  <div className="text-xs text-muted-foreground">
+                    {t("organizationSettings.chat.archived.count", {
+                      visible: filteredArchivedChats.length,
+                      total: archivedChats.length,
+                    })}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="shrink-0 text-muted-foreground hover:text-destructive"
+                    disabled={deletableArchivedChatCount === 0 || deleteAllArchivedChatsMutation.isPending}
+                    onClick={() => void handleDeleteAllArchivedChats()}
+                  >
+                    <Trash2 data-icon="inline-start" />
+                    {deleteAllArchivedChatsMutation.isPending
+                      && deleteAllArchivedChatsMutation.variables === viewedOrganizationId
+                      ? t("organizationSettings.chat.archived.deletingAll")
+                      : t("organizationSettings.chat.archived.deleteAll")}
+                  </Button>
                 </div>
                 {archivedChatsQuery.isLoading ? (
                   <div className="text-sm text-muted-foreground">
@@ -1034,7 +1076,7 @@ export function OrganizationSettings() {
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  disabled={restoring || deleting}
+                                  disabled={restoring || deleting || deleteAllArchivedChatsMutation.isPending}
                                   onClick={() => restoreArchivedChatMutation.mutate(conversation.id)}
                                 >
                                   <ArchiveRestore data-icon="inline-start" />
@@ -1045,7 +1087,7 @@ export function OrganizationSettings() {
                                     size="sm"
                                     variant="ghost"
                                     className="text-muted-foreground hover:text-destructive"
-                                    disabled={restoring || deleting}
+                                    disabled={restoring || deleting || deleteAllArchivedChatsMutation.isPending}
                                     aria-label={t("organizationSettings.chat.archived.deleteAria", { title: conversation.title })}
                                     onClick={() => void handleDeleteArchivedChat(conversation.id, conversation.title)}
                                   >
@@ -1066,6 +1108,22 @@ export function OrganizationSettings() {
                     {deleteArchivedChatMutation.error instanceof Error
                       ? deleteArchivedChatMutation.error.message
                       : t("organizationSettings.chat.archived.deleteFailed")}
+                  </div>
+                ) : null}
+                {deleteAllArchivedChatsMutation.isSuccess
+                  && deleteAllArchivedChatsMutation.variables === viewedOrganizationId ? (
+                  <div className="text-xs text-muted-foreground" role="status">
+                    {t("organizationSettings.chat.archived.deleteAllSuccess", {
+                      count: deleteAllArchivedChatsMutation.data.deletedCount,
+                    })}
+                  </div>
+                ) : null}
+                {deleteAllArchivedChatsMutation.isError
+                  && deleteAllArchivedChatsMutation.variables === viewedOrganizationId ? (
+                  <div className="text-xs text-destructive" role="alert">
+                    {deleteAllArchivedChatsMutation.error instanceof Error
+                      ? deleteAllArchivedChatsMutation.error.message
+                      : t("organizationSettings.chat.archived.deleteAllFailed")}
                   </div>
                 ) : null}
                 {restoreArchivedChatMutation.isError ? (

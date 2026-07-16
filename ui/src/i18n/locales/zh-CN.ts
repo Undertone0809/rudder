@@ -262,6 +262,13 @@ export const zhCN: Messages = {
   "organizationSettings.chat.archived.deleteFailed": "删除聊天失败",
   "organizationSettings.chat.archived.deleteConfirmTitle": "删除已归档聊天？",
   "organizationSettings.chat.archived.deleteConfirmDescription": "永久删除「{{title}}」？此操作不可撤销。",
+  "organizationSettings.chat.archived.deleteAll": "全部删除",
+  "organizationSettings.chat.archived.deletingAll": "正在删除...",
+  "organizationSettings.chat.archived.deleteAllFailed": "删除已归档聊天失败",
+  "organizationSettings.chat.archived.deleteAllSuccess": "已删除 {{count}} 个已归档聊天。",
+  "organizationSettings.chat.archived.deleteAllConfirmTitle": "删除所有已归档聊天？",
+  "organizationSettings.chat.archived.deleteAllConfirmDescription":
+    "永久删除此组织内全部 {{count}} 个可删除的已归档聊天？外部管理的聊天会保留。此操作不可撤销。",
   "organizationSettings.invites.description": "生成一个 OpenClaw agent 邀请片段。",
   "organizationSettings.invites.hint": "创建一个短期有效的 OpenClaw agent invite，并渲染一个可直接复制的 prompt。",
   "organizationSettings.invites.generating": "生成中...",

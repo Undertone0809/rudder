@@ -12,15 +12,18 @@ import {
   chatGenerations,
   chatMessages,
   chatQueuedMessages,
+  issueAttachments,
   messengerCustomGroupEntries,
   messengerCustomGroups,
+  organizationLogos,
   organizations
 } from "@rudderhq/db";
 import { MESSENGER_FORK_GROUP_DEFAULT_ICON, sanitizeChatStructuredPayload, type ChatConversationMutability, type ChatQueuedMessagePayload, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
 import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
-import { logActivity } from "./activity-log.js";
+import { logger } from "../middleware/logger.js";
+import { logActivity, type LogActivityInput } from "./activity-log.js";
 import { agentService } from "./agents.js";
 import { approvalService } from "./approvals.js";
 import { issueApprovalService } from "./issue-approvals.js";
@@ -1150,6 +1153,37 @@ export function chatService(db: Db) {
       }));
   }
 
+  async function listArchivedDeletionCandidates(orgId: string) {
+    const rows = await db
+      .select()
+      .from(chatConversations)
+      .where(
+        and(
+          eq(chatConversations.orgId, orgId),
+          eq(chatConversations.status, "archived"),
+        ),
+      );
+    const sourceLookupConversationIds = [
+      ...new Set([
+        ...rows.map((row) => row.id),
+        ...rows.flatMap((row) => [row.forkedFromConversationId, row.forkRootConversationId]
+          .filter((id): id is string => Boolean(id))),
+      ]),
+    ];
+    const sourceMetadataByConversationId = await listConversationSourceMetadata(
+      orgId,
+      sourceLookupConversationIds,
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      mutability: conversationMutability(
+        row,
+        sourceMetadataByConversationId.get(row.id) ?? null,
+        sourceMetadataByConversationId,
+      ),
+    }));
+  }
+
   async function listSummaries(
       orgId: string,
       options?: {
@@ -1647,6 +1681,181 @@ export function chatService(db: Db) {
       }
       return deleted;
     });
+  }
+
+  async function removeArchived(
+    orgId: string,
+    conversationIds: string[],
+    activity: Omit<LogActivityInput, "orgId" | "action" | "entityType" | "entityId" | "details">,
+  ) {
+    const ids = [...new Set(conversationIds)];
+
+    const result = await db.transaction(async (tx) => {
+      const lockedConversations = ids.length > 0
+        ? await tx
+          .select({ id: chatConversations.id })
+          .from(chatConversations)
+          .where(
+            and(
+              eq(chatConversations.orgId, orgId),
+              eq(chatConversations.status, "archived"),
+              inArray(chatConversations.id, ids),
+            ),
+          )
+          .for("update")
+        : [];
+      const lockedIds = lockedConversations.map((conversation) => conversation.id);
+      const boundConversationRows = lockedIds.length > 0
+        ? await tx
+          .select({ conversationId: agentIntegrationChatBindings.conversationId })
+          .from(agentIntegrationChatBindings)
+          .where(
+            and(
+              eq(agentIntegrationChatBindings.orgId, orgId),
+              inArray(agentIntegrationChatBindings.conversationId, lockedIds),
+            ),
+          )
+        : [];
+      const boundConversationIds = new Set(boundConversationRows.map((row) => row.conversationId));
+      const unboundIds = lockedIds.filter((id) => !boundConversationIds.has(id));
+      const historicalExternalRows = unboundIds.length > 0
+        ? await tx
+          .select({ conversationId: chatMessages.conversationId })
+          .from(chatMessages)
+          .where(
+            and(
+              eq(chatMessages.orgId, orgId),
+              inArray(chatMessages.conversationId, unboundIds),
+              sql<boolean>`${chatMessages.structuredPayload}->>'source' = 'agent_integration'`,
+              sql<boolean>`${chatMessages.structuredPayload}->>'provider' = 'feishu'`,
+            ),
+          )
+          .groupBy(chatMessages.conversationId)
+        : [];
+      for (const row of historicalExternalRows) {
+        boundConversationIds.add(row.conversationId);
+      }
+      const deletableIds = lockedIds.filter((id) => !boundConversationIds.has(id));
+      const skippedExternalCount = lockedIds.length - deletableIds.length;
+
+      const activeGenerations = deletableIds.length > 0
+        ? await tx
+          .select({ conversationId: chatGenerations.conversationId })
+          .from(chatGenerations)
+          .where(
+            and(
+              eq(chatGenerations.orgId, orgId),
+              inArray(chatGenerations.status, ["active", "tool_busy", "closing"]),
+              inArray(chatGenerations.conversationId, deletableIds),
+            ),
+          )
+          .limit(1)
+        : [];
+      if (activeGenerations.length > 0) {
+        throw conflict("Cannot delete archived chats while a reply is in progress");
+      }
+
+      const attachmentRows = deletableIds.length > 0
+        ? await tx
+        .select({
+          id: chatAttachments.id,
+          orgId: chatAttachments.orgId,
+          assetId: chatAttachments.assetId,
+          objectKey: assets.objectKey,
+          conversationId: chatAttachments.conversationId,
+        })
+        .from(chatAttachments)
+        .innerJoin(assets, eq(chatAttachments.assetId, assets.id))
+        .where(
+          and(
+            eq(chatAttachments.orgId, orgId),
+            inArray(chatAttachments.conversationId, deletableIds),
+          ),
+        )
+        : [];
+
+      const deleted = deletableIds.length > 0
+        ? await tx
+        .delete(chatConversations)
+        .where(
+          and(
+            eq(chatConversations.orgId, orgId),
+            eq(chatConversations.status, "archived"),
+            inArray(chatConversations.id, deletableIds),
+          ),
+        )
+        .returning()
+        : [];
+      const deletedIds = new Set(deleted.map((conversation) => conversation.id));
+      const deletedAttachments = attachmentRows.filter((attachment) =>
+        deletedIds.has(attachment.conversationId),
+      );
+
+      const activityResult = await logActivity(tx as unknown as Db, {
+        ...activity,
+        orgId,
+        action: "chat.archived_bulk_deleted",
+        entityType: "organization",
+        entityId: orgId,
+        details: {
+          deletedCount: deleted.length,
+          skippedExternalCount,
+          attachmentCount: deletedAttachments.length,
+        },
+      }, { deferPublish: true });
+
+      return {
+        conversations: deleted,
+        attachments: deletedAttachments,
+        skippedExternalCount,
+        publishActivity: activityResult?.publish ?? null,
+      };
+    });
+
+    try {
+      result.publishActivity?.();
+    } catch (err) {
+      logger.warn({ err, orgId }, "failed to publish archived chat cleanup activity after commit");
+    }
+    return {
+      conversations: result.conversations,
+      attachments: result.attachments,
+      skippedExternalCount: result.skippedExternalCount,
+    };
+  }
+
+  function orphanedAssetConditions(orgId: string, assetIds: string[]) {
+    return and(
+      eq(assets.orgId, orgId),
+      inArray(assets.id, assetIds),
+      sql<boolean>`not exists (
+        select 1 from ${chatAttachments} where ${chatAttachments.assetId} = ${assets.id}
+      )`,
+      sql<boolean>`not exists (
+        select 1 from ${issueAttachments} where ${issueAttachments.assetId} = ${assets.id}
+      )`,
+      sql<boolean>`not exists (
+        select 1 from ${organizationLogos} where ${organizationLogos.assetId} = ${assets.id}
+      )`,
+    );
+  }
+
+  async function listOrphanedAssets(orgId: string, assetIds: string[]) {
+    const ids = [...new Set(assetIds)];
+    if (ids.length === 0) return [];
+    return db
+      .select({ id: assets.id, orgId: assets.orgId, objectKey: assets.objectKey })
+      .from(assets)
+      .where(orphanedAssetConditions(orgId, ids));
+  }
+
+  async function removeOrphanedAssets(orgId: string, assetIds: string[]) {
+    const ids = [...new Set(assetIds)];
+    if (ids.length === 0) return [];
+    return db
+      .delete(assets)
+      .where(orphanedAssetConditions(orgId, ids))
+      .returning({ id: assets.id });
   }
 
   async function resolve(id: string) {
@@ -2743,6 +2952,7 @@ export function chatService(db: Db) {
 
   return {
     list,
+    listArchivedDeletionCandidates,
     listSummaries,
     listPinnedSummaries,
     listSummariesByIds,
@@ -2753,6 +2963,9 @@ export function chatService(db: Db) {
     replaceSystemGeneratedTitle,
     listAttachmentsForConversation,
     remove,
+    removeArchived,
+    listOrphanedAssets,
+    removeOrphanedAssets,
     forkConversation,
     resolve,
     markRead,

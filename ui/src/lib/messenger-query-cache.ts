@@ -264,6 +264,7 @@ export function invalidateMessengerThreadSummaryQueries(queryClient: QueryClient
   return Promise.all([
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(orgId) }),
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPages(orgId) }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPreview(orgId) }),
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.customGroups(orgId) }),
   ]);
 }

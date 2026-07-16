@@ -278,6 +278,13 @@ export const en = {
   "organizationSettings.chat.archived.deleteFailed": "Failed to delete chat",
   "organizationSettings.chat.archived.deleteConfirmTitle": "Delete archived chat?",
   "organizationSettings.chat.archived.deleteConfirmDescription": "Delete \"{{title}}\" permanently? This cannot be undone.",
+  "organizationSettings.chat.archived.deleteAll": "Delete all",
+  "organizationSettings.chat.archived.deletingAll": "Deleting...",
+  "organizationSettings.chat.archived.deleteAllFailed": "Failed to delete archived chats",
+  "organizationSettings.chat.archived.deleteAllSuccess": "Deleted {{count}} archived chats.",
+  "organizationSettings.chat.archived.deleteAllConfirmTitle": "Delete all archived chats?",
+  "organizationSettings.chat.archived.deleteAllConfirmDescription":
+    "Permanently delete all {{count}} deletable archived chats in this organization? Externally managed chats are kept. This cannot be undone.",
   "organizationSettings.invites.description": "Generate an OpenClaw agent invite snippet.",
   "organizationSettings.invites.hint": "Creates a short-lived OpenClaw agent invite and renders a copy-ready prompt.",
   "organizationSettings.invites.generating": "Generating...",

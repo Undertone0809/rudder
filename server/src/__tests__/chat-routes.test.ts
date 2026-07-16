@@ -10,12 +10,16 @@ import { claimChatGeneration, clearActiveChatGenerationsForTest, hasActiveChatGe
 
 const mockChatService = vi.hoisted(() => ({
   list: vi.fn(),
+  listArchivedDeletionCandidates: vi.fn(),
   getById: vi.fn(),
   create: vi.fn(),
   forkConversation: vi.fn(),
   update: vi.fn(),
   listAttachmentsForConversation: vi.fn(),
   remove: vi.fn(),
+  removeArchived: vi.fn(),
+  listOrphanedAssets: vi.fn(),
+  removeOrphanedAssets: vi.fn(),
   markRead: vi.fn(),
   markUnread: vi.fn(),
   setPinned: vi.fn(),
@@ -576,6 +580,124 @@ describe("chat routes", () => {
       entityId: "chat-1",
       details: { title: "Delete me" },
     }));
+  });
+
+  it("bulk deletes only local archived chats for an organization", async () => {
+    const first = createConversation({ id: "chat-1", status: "archived", title: "First" });
+    const second = createConversation({ id: "chat-2", status: "archived", title: "Second" });
+    const external = createFeishuBackedConversation({ id: "chat-3", status: "archived" });
+    mockChatService.listArchivedDeletionCandidates.mockResolvedValue([first, second, external]);
+    mockChatService.removeArchived.mockResolvedValue({
+      conversations: [first, second],
+      skippedExternalCount: 1,
+      attachments: [{
+        id: "attachment-1",
+        orgId: "organization-1",
+        assetId: "asset-1",
+        objectKey: "orgs/organization-1/chats/chat-1/image.png",
+        conversationId: "chat-1",
+      }],
+    });
+    mockChatService.listOrphanedAssets.mockResolvedValue([{
+      id: "asset-1",
+      orgId: "organization-1",
+      objectKey: "orgs/organization-1/chats/chat-1/image.png",
+    }]);
+    mockChatService.removeOrphanedAssets.mockResolvedValue([{ id: "asset-1" }]);
+
+    const res = await request(createApp())
+      .delete("/api/orgs/organization-1/chats/archived");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ deletedCount: 2, skippedExternalCount: 1 });
+    expect(mockChatService.listArchivedDeletionCandidates).toHaveBeenCalledWith("organization-1");
+    expect(mockChatService.removeArchived).toHaveBeenCalledWith(
+      "organization-1",
+      ["chat-1", "chat-2", "chat-3"],
+      expect.objectContaining({ actorType: "user", actorId: "user-1" }),
+    );
+    expect(mockChatService.listOrphanedAssets).toHaveBeenCalledWith("organization-1", ["asset-1"]);
+    expect(mockStorage.deleteObject).toHaveBeenCalledWith(
+      "organization-1",
+      "orgs/organization-1/chats/chat-1/image.png",
+    );
+    expect(mockChatService.removeOrphanedAssets).toHaveBeenCalledWith("organization-1", ["asset-1"]);
+  });
+
+  it("bulk deleting archived chats is safe when the organization has none", async () => {
+    mockChatService.listArchivedDeletionCandidates.mockResolvedValue([]);
+    mockChatService.removeArchived.mockResolvedValue({ conversations: [], attachments: [], skippedExternalCount: 0 });
+    mockChatService.listOrphanedAssets.mockResolvedValue([]);
+
+    const res = await request(createApp())
+      .delete("/api/orgs/organization-1/chats/archived");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ deletedCount: 0, skippedExternalCount: 0 });
+    expect(mockChatService.removeArchived).toHaveBeenCalledWith(
+      "organization-1",
+      [],
+      expect.objectContaining({ actorType: "user", actorId: "user-1" }),
+    );
+  });
+
+  it("retains orphaned asset metadata when archived chat object cleanup fails", async () => {
+    const conversation = createConversation({ id: "chat-1", status: "archived" });
+    mockChatService.listArchivedDeletionCandidates.mockResolvedValue([conversation]);
+    mockChatService.removeArchived.mockResolvedValue({
+      conversations: [conversation],
+      skippedExternalCount: 0,
+      attachments: [{
+        id: "attachment-1",
+        orgId: "organization-1",
+        assetId: "asset-1",
+        objectKey: "orgs/organization-1/chats/chat-1/image.png",
+        conversationId: "chat-1",
+      }],
+    });
+    mockChatService.listOrphanedAssets.mockResolvedValue([{
+      id: "asset-1",
+      orgId: "organization-1",
+      objectKey: "orgs/organization-1/chats/chat-1/image.png",
+    }]);
+    mockStorage.deleteObject.mockRejectedValue(new Error("storage unavailable"));
+
+    const res = await request(createApp())
+      .delete("/api/orgs/organization-1/chats/archived");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ deletedCount: 1, skippedExternalCount: 0 });
+    expect(mockChatService.removeOrphanedAssets).toHaveBeenCalledWith("organization-1", []);
+  });
+
+  it("requires board access to bulk delete archived chats", async () => {
+    const res = await request(createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-1",
+      runId: null,
+    }))
+      .delete("/api/orgs/organization-1/chats/archived");
+
+    expect(res.status).toBe(403);
+    expect(mockChatService.listArchivedDeletionCandidates).not.toHaveBeenCalled();
+    expect(mockChatService.removeArchived).not.toHaveBeenCalled();
+  });
+
+  it("rejects bulk deleting archived chats outside the board organization scope", async () => {
+    const res = await request(createApp({
+      type: "board",
+      userId: "user-1",
+      orgIds: ["organization-2"],
+      source: "session",
+      isInstanceAdmin: false,
+      runId: null,
+    }))
+      .delete("/api/orgs/organization-1/chats/archived");
+
+    expect(res.status).toBe(403);
+    expect(mockChatService.listArchivedDeletionCandidates).not.toHaveBeenCalled();
+    expect(mockChatService.removeArchived).not.toHaveBeenCalled();
   });
 
   it("requires board access to delete a chat conversation", async () => {

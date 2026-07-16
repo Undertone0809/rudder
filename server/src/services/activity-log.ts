@@ -48,7 +48,11 @@ function isActivityRunIdPersistenceError(error: unknown): boolean {
   return isPostgresError(error, "23503", ACTIVITY_RUN_ID_FK_CONSTRAINT);
 }
 
-export async function logActivity(db: Db, input: LogActivityInput) {
+export async function logActivity(
+  db: Db,
+  input: LogActivityInput,
+  options: { deferPublish?: boolean } = {},
+) {
   const currentUserRedactionOptions = {
     enabled: (await instanceSettingsService(db).getGeneral()).censorUsernameInLogs,
   };
@@ -92,42 +96,46 @@ export async function logActivity(db: Db, input: LogActivityInput) {
 
   if (!inserted) return null;
 
-  publishLiveEvent({
-    orgId: input.orgId,
-    type: "activity.logged",
-    payload: {
-      actorType: input.actorType,
-      actorId: input.actorId,
-      action: input.action,
-      entityType: input.entityType,
-      entityId: input.entityId,
-      agentId: input.agentId ?? null,
-      runId: persistedRunId,
-      details: redactedDetails,
-    },
-  });
-
-  if (_pluginEventBus && PLUGIN_EVENT_SET.has(input.action)) {
-    const event: PluginEvent = {
-      eventId: randomUUID(),
-      eventType: input.action as PluginEventType,
-      occurredAt: new Date().toISOString(),
-      actorId: input.actorId,
-      actorType: input.actorType,
-      entityId: input.entityId,
-      entityType: input.entityType,
+  const publish = () => {
+    publishLiveEvent({
       orgId: input.orgId,
       payload: {
-        ...redactedDetails,
+        actorType: input.actorType,
+        actorId: input.actorId,
+        action: input.action,
+        entityType: input.entityType,
+        entityId: input.entityId,
         agentId: input.agentId ?? null,
         runId: persistedRunId,
+        details: redactedDetails,
       },
-    };
-    void _pluginEventBus.emit(event).then(({ errors }) => {
-      for (const { pluginId, error } of errors) {
-        logger.warn({ pluginId, eventType: event.eventType, err: error }, "plugin event handler failed");
-      }
-    }).catch(() => {});
-  }
-  return inserted;
+      type: "activity.logged",
+    });
+
+    if (_pluginEventBus && PLUGIN_EVENT_SET.has(input.action)) {
+      const event: PluginEvent = {
+        eventId: randomUUID(),
+        eventType: input.action as PluginEventType,
+        occurredAt: new Date().toISOString(),
+        actorId: input.actorId,
+        actorType: input.actorType,
+        entityId: input.entityId,
+        entityType: input.entityType,
+        orgId: input.orgId,
+        payload: {
+          ...redactedDetails,
+          agentId: input.agentId ?? null,
+          runId: persistedRunId,
+        },
+      };
+      void _pluginEventBus.emit(event).then(({ errors }) => {
+        for (const { pluginId, error } of errors) {
+          logger.warn({ pluginId, eventType: event.eventType, err: error }, "plugin event handler failed");
+        }
+      }).catch(() => {});
+    }
+  };
+
+  if (!options.deferPublish) publish();
+  return { ...inserted, publish };
 }

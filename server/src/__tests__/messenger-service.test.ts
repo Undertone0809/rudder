@@ -38,6 +38,7 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { chatService } from "../services/chats.ts";
 import { issueService } from "../services/issues.ts";
+import { subscribeCompanyLiveEvents } from "../services/live-events.ts";
 import { messengerService } from "../services/messenger.ts";
 
 type EmbeddedPostgresInstance = {
@@ -167,6 +168,141 @@ describe("messengerService and issue follows", () => {
     if (dataDir) {
       fs.rmSync(dataDir, { recursive: true, force: true });
     }
+  });
+
+  it("blocks archived bulk deletion for every persisted non-terminal generation status", async () => {
+    const orgId = randomUUID();
+    const conversationIds = [randomUUID(), randomUUID(), randomUUID()];
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Archived Bulk Generation Guard Org",
+      urlKey: deriveOrganizationUrlKey("Archived Bulk Generation Guard Org"),
+      issuePrefix: `B${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values(conversationIds.map((id, index) => ({
+      id,
+      orgId,
+      title: `Archived guarded chat ${index + 1}`,
+      status: "archived",
+      issueCreationMode: "manual_approval" as const,
+      planMode: false,
+    })));
+    await db.insert(chatGenerations).values(
+      conversationIds.map((conversationId, index) => ({
+        orgId,
+        conversationId,
+        status: (["active", "tool_busy", "closing"] as const)[index],
+      })),
+    );
+
+    await expect(chatSvc.removeArchived(orgId, conversationIds, {
+      actorType: "user",
+      actorId: "board-user",
+    })).rejects.toThrow("Cannot delete archived chats while a reply is in progress");
+
+    const remaining = await db
+      .select({ id: chatConversations.id })
+      .from(chatConversations)
+      .where(eq(chatConversations.orgId, orgId));
+    expect(remaining.map((row) => row.id).sort()).toEqual([...conversationIds].sort());
+  });
+
+  it("rechecks external chat bindings inside archived bulk deletion", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const secretId = randomUUID();
+    const integrationId = randomUUID();
+    const localConversationId = randomUUID();
+    const externalConversationId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Archived Bulk External Guard Org",
+      urlKey: deriveOrganizationUrlKey("Archived Bulk External Guard Org"),
+      issuePrefix: `E${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "External chat agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(organizationSecrets).values({
+      id: secretId,
+      orgId,
+      name: "External chat credentials",
+      provider: "local_encrypted",
+    });
+    await db.insert(agentIntegrations).values({
+      id: integrationId,
+      orgId,
+      agentId,
+      provider: "feishu",
+      appCredentialSecretId: secretId,
+      externalAppId: "cli_archived_bulk_guard",
+    });
+    await db.insert(chatConversations).values([
+      {
+        id: localConversationId,
+        orgId,
+        title: "Local archived chat",
+        status: "archived",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+      {
+        id: externalConversationId,
+        orgId,
+        title: "External archived chat",
+        status: "archived",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    ]);
+    await db.insert(agentIntegrationChatBindings).values({
+      orgId,
+      integrationId,
+      conversationId: externalConversationId,
+      externalChatId: "oc_archived_bulk_guard",
+      externalChatType: "group",
+    });
+
+    let unsubscribe = () => {};
+    const remainingAtPublish = new Promise<string[]>((resolve) => {
+      unsubscribe = subscribeCompanyLiveEvents(orgId, (event) => {
+        if (event.type !== "activity.logged" || event.payload.action !== "chat.archived_bulk_deleted") return;
+        void db
+          .select({ id: chatConversations.id })
+          .from(chatConversations)
+          .where(eq(chatConversations.orgId, orgId))
+          .then((rows) => resolve(rows.map((row) => row.id)));
+      });
+    });
+
+    const result = await chatSvc.removeArchived(
+      orgId,
+      [localConversationId, externalConversationId],
+      { actorType: "user", actorId: "board-user" },
+    );
+    const publishedConversationIds = await remainingAtPublish;
+    unsubscribe();
+
+    expect(result.conversations.map((conversation) => conversation.id)).toEqual([localConversationId]);
+    expect(result.skippedExternalCount).toBe(1);
+    expect(publishedConversationIds).toEqual([externalConversationId]);
+    const remaining = await db
+      .select({ id: chatConversations.id })
+      .from(chatConversations)
+      .where(eq(chatConversations.orgId, orgId));
+    expect(remaining).toEqual([{ id: externalConversationId }]);
   });
 
   it("keeps queue snapshots read-only when a DB active generation has no local owner", async () => {

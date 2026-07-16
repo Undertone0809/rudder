@@ -1030,6 +1030,56 @@ export function chatRoutes(db: Db, storage: StorageService) {
     res.json(await assistantSvc.enrichConversations(conversations as ChatConversation[]));
   });
 
+  router.delete("/orgs/:orgId/chats/archived", async (req, res) => {
+    assertBoard(req);
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    const archived = await svc.listArchivedDeletionCandidates(orgId);
+    const deletable = archived.filter((conversation) => conversation.mutability !== "external_bound_chat");
+    const generating = deletable.find((conversation) => hasActiveChatGeneration(conversation.id));
+    if (generating) {
+      throw conflict("Cannot delete archived chats while a reply is in progress");
+    }
+
+    const actor = getActorInfo(req);
+    const result = await svc.removeArchived(
+      orgId,
+      archived.map((conversation) => conversation.id),
+      {
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+      },
+    );
+    const orphanedAssets = await svc.listOrphanedAssets(
+      orgId,
+      result.attachments.map((attachment) => attachment.assetId),
+    );
+    const cleanedAssetIds: string[] = [];
+    for (const asset of orphanedAssets) {
+      try {
+        await storage.deleteObject(asset.orgId, asset.objectKey);
+        cleanedAssetIds.push(asset.id);
+      } catch (err) {
+        logger.warn(
+          { err, assetId: asset.id, objectKey: asset.objectKey },
+          "failed to delete chat attachment object during archived chat cleanup",
+        );
+      }
+    }
+    try {
+      await svc.removeOrphanedAssets(orgId, cleanedAssetIds);
+    } catch (err) {
+      logger.warn({ err, orgId, assetIds: cleanedAssetIds }, "failed to remove cleaned chat attachment metadata");
+    }
+
+    res.json({
+      deletedCount: result.conversations.length,
+      skippedExternalCount: result.skippedExternalCount,
+    });
+  });
+
   router.post("/orgs/:orgId/chats", validate(createChatConversationSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);

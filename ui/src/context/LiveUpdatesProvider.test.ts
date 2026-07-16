@@ -33,6 +33,42 @@ describe("LiveUpdatesProvider issue invalidation", () => {
   });
 });
 
+describe("LiveUpdatesProvider archived chat bulk deletion invalidation", () => {
+  it("refreshes all chat caches and Messenger summaries for other clients", () => {
+    const invalidations: unknown[] = [];
+    const queryClient = {
+      invalidateQueries: (input: unknown) => {
+        invalidations.push(input);
+      },
+      getQueryData: () => undefined,
+    };
+
+    __liveUpdatesTestUtils.invalidateActivityQueries(
+      queryClient as never,
+      "organization-1",
+      {
+        action: "chat.archived_bulk_deleted",
+        entityType: "organization",
+        entityId: "organization-1",
+      },
+    );
+
+    expect(invalidations).toContainEqual({ queryKey: ["chats", "organization-1"] });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.messenger.threads("organization-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.messenger.threadPages("organization-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.messenger.threadPreview("organization-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.messenger.customGroups("organization-1"),
+    });
+  });
+});
+
 describe("LiveUpdatesProvider visible issue toast suppression", () => {
   it("suppresses activity toasts for the issue page currently in view", () => {
     const queryClient = {

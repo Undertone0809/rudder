@@ -639,6 +639,16 @@ function invalidateActivityQueries(
 
   const entityType = readString(payload.entityType);
   const entityId = readString(payload.entityId);
+  const action = readString(payload.action);
+
+  if (action === "chat.archived_bulk_deleted") {
+    queryClient.invalidateQueries({ queryKey: ["chats", orgId] });
+    queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(orgId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPages(orgId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPreview(orgId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.messenger.customGroups(orgId) });
+    return;
+  }
 
   if (entityType === "issue") {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(orgId) });
