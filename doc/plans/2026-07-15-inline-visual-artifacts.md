@@ -2,7 +2,7 @@
 title: Inline visual artifacts for Rudder Chat
 date: 2026-07-15
 kind: implementation
-status: in_progress
+status: complete
 area: chat
 entities:
   - messenger_chat
@@ -23,7 +23,8 @@ related_code:
   - server/src/services/chat-assistant.ts
   - server/src/routes/chats.ts
   - ui/src/pages/Chat.messages.tsx
-commit_refs: []
+commit_refs:
+  - bdcc182bd
 updated_at: 2026-07-16
 ---
 
@@ -149,6 +150,10 @@ script executes, no request to `evil.invalid` occurs, and the frame remains on
   execution. Stable screenshots passed at 1280x720 and 390x844; screenshot
   capture disables finite animations so responsive transition frames are not
   mistaken for final layout.
+- Follow-up visual QA replaced the minimal sanitizer fixture with a realistic
+  four-week Agent operations report. The E2E now proves the inline frame tracks
+  its content height while moving from the open Work rail's stacked layout to
+  the collapsed desktop layout and back to a stacked 390px mobile layout.
 - Final inline visual UI suite: 13/13 passed. The runtime rejects legacy active
   control and Lucide affordances, removes unsupported clipping paths, and uses
   only CSP directives recognized by current Chromium.
@@ -166,8 +171,9 @@ script executes, no request to `evil.invalid` occurs, and the frame remains on
   file regressions reproduced from clean `HEAD`; this change adds no new entry.
 - Independent static spec verifier: `APPROVE`; it mapped every Goal, Scope,
   Security Boundary, and Acceptance item to concrete implementation/tests. Its
-  non-blocking gaps are named branch/regenerate E2E scenarios, browser-level
-  `ResizeObserver`, and unavailable-fallback E2E coverage.
+  non-blocking gaps are named branch/regenerate E2E scenarios and
+  unavailable-fallback E2E coverage. Browser-level responsive height reflow is
+  now exercised by the desktop/side-rail/mobile screenshot path.
 - Independent security gate: the full adversarial review returned `APPROVE`;
   a separate reviewer returned `APPROVE_DELTA` with no P0/P1 findings for the
   two post-review changes (forbidden-subtree removal before DOMPurify and the
