@@ -19,6 +19,7 @@ function heartbeatRun(overrides: Partial<HeartbeatRun>): HeartbeatRun {
     resultJson: null,
     sessionIdBefore: null,
     sessionIdAfter: null,
+    sessionReuseScope: "none",
     logStore: null,
     logRef: null,
     logBytes: null,
@@ -51,6 +52,8 @@ describe("toAgentRun", () => {
       terminalEffectsJson: { transcript: "large-secret" },
       terminalEffectsClaimToken: "claim-secret",
       terminalEffectsLastError: "internal-error",
+      sessionParamsBeforeJson: { sessionId: "private-before" },
+      sessionParamsAfterJson: { sessionId: "private-after" },
     } as HeartbeatRun;
 
     for (const publicRun of [toHeartbeatRun(internalRun), toAgentRun(internalRun)]) {
@@ -61,6 +64,8 @@ describe("toAgentRun", () => {
       expect(publicRun).not.toHaveProperty("terminalEffectsJson");
       expect(publicRun).not.toHaveProperty("terminalEffectsClaimToken");
       expect(publicRun).not.toHaveProperty("terminalEffectsLastError");
+      expect(publicRun).not.toHaveProperty("sessionParamsBeforeJson");
+      expect(publicRun).not.toHaveProperty("sessionParamsAfterJson");
     }
   });
 

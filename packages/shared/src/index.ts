@@ -95,7 +95,7 @@ export type {
   HeartbeatRun,
   HeartbeatRunContextSnapshot,
   HeartbeatRunEvent,
-  HeartbeatRunRecoveryContext, InstanceBrowserSettings, InstanceGeneralSettings, InstanceLocale, InstanceNotificationSettings, InstancePathPickerRequest,
+  HeartbeatRunRecoveryContext, HeartbeatSessionReuseScope, InstanceBrowserSettings, InstanceGeneralSettings, InstanceLocale, InstanceNotificationSettings, InstancePathPickerRequest,
   InstancePathPickerResult,
   InstancePathPickerSelectionType, InstanceSchedulerHeartbeatAgent, InstanceSettings, InstanceUserRoleGrant, Invite, Issue,
   IssueAssigneeAgentRuntimeOverrides, IssueAttachment, IssueComment,

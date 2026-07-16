@@ -72,12 +72,29 @@ export function createHeartbeatRecoveryHandlers(context: any) {
     });
     const issueId = readNonEmptyString(recoveryContextSnapshot.issueId);
     const taskKey = deriveTaskKey(recoveryContextSnapshot, null);
-    const sessionBefore = await resolveSessionBeforeForWakeup(agent, taskKey);
+    delete recoveryContextSnapshot.forceFreshSession;
+    delete recoveryContextSnapshot.resumeFromRunId;
+    delete recoveryContextSnapshot.resumeSessionDisplayId;
+    delete recoveryContextSnapshot.resumeSessionParams;
+    const explicitResumeSession = await resolveExplicitResumeSessionOverride(
+      agent,
+      { resumeFromRunId: run.id },
+      taskKey,
+    );
+    if (explicitResumeSession) {
+      recoveryContextSnapshot.resumeFromRunId = explicitResumeSession.resumeFromRunId;
+      recoveryContextSnapshot.resumeSessionDisplayId = explicitResumeSession.sessionDisplayId;
+      recoveryContextSnapshot.resumeSessionParams = explicitResumeSession.sessionParams;
+    }
+    const sessionBefore =
+      explicitResumeSession?.sessionDisplayId ??
+      await resolveSessionBeforeForWakeup(agent, taskKey);
     const recovery = recoveryContextSnapshot.recovery as HeartbeatRunRecoveryContext;
     const requestPayload: Record<string, unknown> = {
       originalRunId: run.id,
       failureKind: recovery.failureKind,
       recoveryTrigger: recovery.recoveryTrigger,
+      resumeFromRunId: run.id,
       ...(issueId ? { issueId } : {}),
     };
 
@@ -206,6 +223,9 @@ export function createHeartbeatRecoveryHandlers(context: any) {
           wakeupRequestId: wakeupRequest.id,
           contextSnapshot: recoveryContextSnapshot,
           sessionIdBefore: sessionBefore,
+          sessionParamsBeforeJson:
+            explicitResumeSession?.sessionParams ?? (sessionBefore ? { sessionId: sessionBefore } : null),
+          sessionReuseScope: explicitResumeSession ? "explicit" : sessionBefore ? "task" : "none",
           retryOfRunId: run.id,
           processLossRetryCount:
             opts.recoveryTrigger === "automatic"
@@ -698,6 +718,8 @@ export function createHeartbeatRecoveryHandlers(context: any) {
         wakeupRequestId: wakeupRequest.id,
         contextSnapshot,
         sessionIdBefore: sessionBefore,
+        sessionParamsBeforeJson: sessionBefore ? { sessionId: sessionBefore } : null,
+        sessionReuseScope: sessionBefore ? "task" : "none",
         updatedAt: now,
       })
       .returning()

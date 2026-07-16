@@ -39,6 +39,7 @@ function run(overrides: Partial<HeartbeatRun>): HeartbeatRun {
     resultJson: null,
     sessionIdBefore: null,
     sessionIdAfter: null,
+    sessionReuseScope: "none",
     logStore: null,
     logRef: null,
     logBytes: null,

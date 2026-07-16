@@ -41,15 +41,73 @@ export type ResumeSessionRow = {
   lastRunId: string | null;
 };
 
+export type SessionReuseScope = "explicit" | "task" | "none";
+
+export function selectRunSessionLineage(input: {
+  forceFresh: boolean;
+  explicitSessionParams: Record<string, unknown> | null;
+  explicitSessionDisplayId: string | null;
+  taskSessionParams: Record<string, unknown> | null;
+  taskSessionDisplayId: string | null;
+}) {
+  if (input.forceFresh) {
+    return {
+      reuseScope: "none" as const,
+      sessionParams: null,
+      sessionDisplayId: null,
+    };
+  }
+
+  if (input.explicitSessionParams || input.explicitSessionDisplayId) {
+    return {
+      reuseScope: "explicit" as const,
+      sessionParams:
+        input.explicitSessionParams ??
+        (input.explicitSessionDisplayId ? { sessionId: input.explicitSessionDisplayId } : null),
+      sessionDisplayId: input.explicitSessionDisplayId,
+    };
+  }
+
+  if (input.taskSessionParams || input.taskSessionDisplayId) {
+    return {
+      reuseScope: "task" as const,
+      sessionParams:
+        input.taskSessionParams ??
+        (input.taskSessionDisplayId ? { sessionId: input.taskSessionDisplayId } : null),
+      sessionDisplayId: input.taskSessionDisplayId,
+    };
+  }
+
+  return {
+    reuseScope: "none" as const,
+    sessionParams: null,
+    sessionDisplayId: null,
+  };
+}
+
 export function buildExplicitResumeSessionOverride(input: {
   resumeFromRunId: string;
   resumeRunSessionIdBefore: string | null;
   resumeRunSessionIdAfter: string | null;
+  resumeRunSessionParamsBefore?: Record<string, unknown> | null;
+  resumeRunSessionParamsAfter?: Record<string, unknown> | null;
+  resumeRunSessionCleared?: boolean;
+  resumeContextSessionParams?: Record<string, unknown> | null;
+  resumeContextSessionDisplayId?: string | null;
   taskSession: ResumeSessionRow | null;
   sessionCodec: AgentRuntimeSessionCodec;
 }) {
+  if (input.resumeRunSessionCleared) return null;
+  const sourceRunSessionParams =
+    normalizeSessionParams(input.sessionCodec.deserialize(input.resumeRunSessionParamsAfter ?? null)) ??
+    normalizeSessionParams(input.sessionCodec.deserialize(input.resumeRunSessionParamsBefore ?? null)) ??
+    normalizeSessionParams(input.sessionCodec.deserialize(input.resumeContextSessionParams ?? null));
   const desiredDisplayId = truncateDisplayId(
-    input.resumeRunSessionIdAfter ?? input.resumeRunSessionIdBefore,
+    input.resumeRunSessionIdAfter ??
+      input.resumeRunSessionIdBefore ??
+      input.resumeContextSessionDisplayId ??
+      (input.sessionCodec.getDisplayId ? input.sessionCodec.getDisplayId(sourceRunSessionParams) : null) ??
+      readNonEmptyString(sourceRunSessionParams?.sessionId),
   );
   const taskSessionParams = normalizeSessionParams(
     input.sessionCodec.deserialize(input.taskSession?.sessionParamsJson ?? null),
@@ -66,11 +124,12 @@ export function buildExplicitResumeSessionOverride(input: {
       (!!desiredDisplayId && taskSessionDisplayId === desiredDisplayId)
     );
   const sessionParams =
-    canReuseTaskSessionParams
+    sourceRunSessionParams ??
+    (canReuseTaskSessionParams
       ? taskSessionParams
       : desiredDisplayId
         ? { sessionId: desiredDisplayId }
-        : null;
+        : null);
   const sessionDisplayId = desiredDisplayId ?? (canReuseTaskSessionParams ? taskSessionDisplayId : null);
 
   if (!sessionDisplayId && !sessionParams) return null;

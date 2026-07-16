@@ -352,8 +352,7 @@ export function heartbeatService(
       );
     }
 
-    const runtimeForRun = await getRuntimeState(agent.id);
-    return runtimeForRun?.sessionId ?? null;
+    return null;
   }
 
   async function resolveExplicitResumeSessionOverride(
@@ -370,6 +369,8 @@ export function heartbeatService(
         contextSnapshot: heartbeatRuns.contextSnapshot,
         sessionIdBefore: heartbeatRuns.sessionIdBefore,
         sessionIdAfter: heartbeatRuns.sessionIdAfter,
+        sessionParamsBeforeJson: heartbeatRuns.sessionParamsBeforeJson,
+        sessionParamsAfterJson: heartbeatRuns.sessionParamsAfterJson,
       })
       .from(heartbeatRuns)
       .where(
@@ -392,6 +393,14 @@ export function heartbeatService(
       resumeFromRunId,
       resumeRunSessionIdBefore: resumeRun.sessionIdBefore,
       resumeRunSessionIdAfter: resumeRun.sessionIdAfter,
+      resumeRunSessionParamsBefore: resumeRun.sessionParamsBeforeJson,
+      resumeRunSessionParamsAfter: resumeRun.sessionParamsAfterJson,
+      resumeRunSessionCleared:
+        resumeRun.sessionIdAfter == null &&
+        resumeRun.sessionParamsAfterJson != null &&
+        Object.keys(resumeRun.sessionParamsAfterJson).length === 0,
+      resumeContextSessionParams: parseObject(resumeContext.resumeSessionParams),
+      resumeContextSessionDisplayId: readNonEmptyString(resumeContext.resumeSessionDisplayId),
       taskSession: resumeTaskSession,
       sessionCodec,
     });

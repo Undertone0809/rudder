@@ -22,6 +22,7 @@ describe("buildObservedRunTrace", () => {
         resultJson: null,
         sessionIdBefore: null,
         sessionIdAfter: null,
+        sessionReuseScope: "none",
         logStore: "local_file",
         logRef: "trace.ndjson",
         logBytes: 100,
