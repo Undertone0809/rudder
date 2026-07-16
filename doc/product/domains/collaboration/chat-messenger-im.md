@@ -829,7 +829,10 @@ them through `CONTEXT.RESOURCES.001`.
     states; narrow Chat exposes the same data from a compact Work trigger. A
     project-only or otherwise empty current-thread manifest renders no Work
     control or shelf. Opening an internal target reuses Side Panel behavior from
-    `CHAT.SIDE.PANEL.001`.
+    `CHAT.SIDE.PANEL.001`. Wide and compact panels cap their expanded height at
+    `32rem` (512 CSS pixels) on normal viewports, shrink to the available
+    viewport allowance when necessary, and keep longer lists internally
+    scrollable.
 
 ## Decision Table
 
@@ -843,6 +846,7 @@ them through `CONTEXT.RESOURCES.001`.
 | Answer is refreshed or edited | Prior message becomes superseded | Stale derived References disappear; durable Outputs remain inspectable | Refresh must not erase a real artifact | Service tests |
 | Chat is forked | Copied historical assistant rows have no producing Run id | Sources can be re-derived; copied rows do not gain Output ownership | Fork must not claim the source thread's Outputs as newly produced | Fork/service tests |
 | Chat has a linked Project | Other Project conversations contain manifest rows | Current rows stay unchanged; other-conversation rows are omitted from Chat | Project membership must not import other conversations into the current Chat manifest | API and E2E |
+| Long manifest is expanded | Current-thread rows exceed the compact panel allowance | Panel stops growing at `32rem` (512 CSS pixels) on normal viewports, uses the smaller viewport allowance on short screens, and scrolls internally | The panel must not grow to near-full-screen height or overlap the composer | Component and Chat Work Manifest E2E |
 | No current-thread items exist | Reconciliation returns no current-thread candidates, even if compatibility metadata reports Project items | No Work control or empty shelf is rendered | UI must not reserve space or invent Create Site/Browser capability | Component/E2E tests |
 | Manifest request fails | Current manifest state cannot be confirmed | Show the compact Work error state instead of treating the result as empty | Operators must be able to distinguish retrieval failure from confirmed absence | Component/E2E tests |
 
@@ -858,10 +862,14 @@ normalized URL and website icon instead of a generic link icon or redundant
 
 - Wide desktop: a compact top-right shelf with bounded rows and counts, plus a
   header icon that collapses or restores the shelf with a short transition.
+  Expanded height is capped at `32rem` (512 CSS pixels) on normal viewports;
+  short viewports use the smaller available allowance and long lists scroll
+  inside the shelf.
 - Empty state: no Work shelf, count, trigger, or reserved rail is rendered.
 - Error state: a compact Work error remains visible so retrieval failure is not
   mistaken for confirmed absence.
-- Narrow desktop/mobile: a compact Work count trigger that opens the same list.
+- Narrow desktop/mobile: a compact Work count trigger that opens the same list
+  under the same `32rem` maximum and short-viewport fallback.
 - Chat scrolling: the message scrollbar remains attached to the outer right
   edge of the Chat workspace while content spacing keeps messages and the
   composer clear of an open Work shelf.
