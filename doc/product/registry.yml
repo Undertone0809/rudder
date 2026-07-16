@@ -1078,10 +1078,12 @@ contracts:
       - server/src/routes/onboarding.ts
       - server/src/services/messenger.ts
       - server/src/routes/sidebar-badges.ts
+      - ui/src/components/MessengerContextSidebar.tsx
       - ui/src/pages/Messenger.tsx
     related_tests:
       - server/src/__tests__/messenger-service.test.ts
       - server/src/__tests__/sidebar-badges-service.test.ts
+      - ui/src/components/MessengerContextSidebar.test.tsx
       - tests/e2e/messenger-contract.spec.ts
       - tests/e2e/onboarding.spec.ts
     related_plans:

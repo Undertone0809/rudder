@@ -1301,6 +1301,10 @@ Product model:
   threads such as issue, approval, failed run, and automation-created work.
 - Threads support read/unread state, previews, pin/archive/delete where the
   underlying thread type supports it, custom groups, and stable navigation.
+- When the directory is organized by project, each real project section header
+  reuses that project's current icon and color from `ORG.PROJECT.001` alongside
+  the project name. Synthetic fixed sections such as `System` and `No project`
+  remain text-only because they do not represent a project identity.
 - Issue thread entries derive from issue comments/activity and read markers.
 - System-authored onboarding starter issues may be initialized with read
   markers because they are seeded starter content, not fresh operator-directed
@@ -1320,6 +1324,10 @@ Invariants:
 
 - Messenger must cite or route to owning domain contracts; it must not redefine
   issue, approval, run, or automation state.
+- Project-organized section headers must preserve the organization-scoped
+  project identity defined by `ORG.PROJECT.001`. Missing or stale project data
+  may fall back to the available text label, but Messenger must not assign a
+  project icon or color to a synthetic non-project section.
 - Unread/attention counts must be organization-scoped and user-scoped.
 - Seeded onboarding issue threads must remain read for the seeded operator
   until later issue activity occurs after the seed read marker.
@@ -1328,7 +1336,10 @@ Evidence:
 
 - Messenger contract E2E covers ordering, previews, read state, groups,
   redirects, empty state, pin/archive/delete, issue notifications, approvals,
-  and automation-created issue attention.
+  automation-created issue attention, and real project icon/color rendering in
+  project-organized section headers.
+- Messenger context sidebar component tests cover project-list lookup, icon and
+  color reuse, and the text-only fallback for non-project sections.
 
 ## MESSENGER.THREAD.PREVIEW.001
 
