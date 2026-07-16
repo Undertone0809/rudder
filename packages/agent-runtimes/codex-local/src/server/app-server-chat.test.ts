@@ -94,6 +94,62 @@ afterEach(async () => {
 });
 
 describe("executeCodexAppServerChat", () => {
+  it("does not leak dispose rejection when setup logging fails before awaiting the turn", async () => {
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: { ...process.env, PATH: process.env.PATH ?? "" } as Record<string, string>,
+      prompt: "Initial request",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async (_stream, chunk) => {
+        if (chunk.includes('"type":"thread.started"')) {
+          throw new Error("thread started log failed");
+        }
+      }),
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      errorMessage: "thread started log failed",
+    });
+  });
+
+  it("does not leak dispose rejection when control registration fails after turn start", async () => {
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: { ...process.env, PATH: process.env.PATH ?? "" } as Record<string, string>,
+      prompt: "Initial request",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+      controlAttempt: {
+        attemptEpoch: 1,
+        ownerToken: "owner-1",
+        register: vi.fn(async () => {
+          throw new Error("control registration failed");
+        }),
+        complete: vi.fn(async () => undefined),
+      },
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      errorMessage: "control registration failed",
+    });
+  });
+
   it("publishes a native same-turn Steer handle and returns per-turn usage", async () => {
     let handle: AgentRuntimeControlHandle | null = null;
     const stdoutLines: string[] = [];
