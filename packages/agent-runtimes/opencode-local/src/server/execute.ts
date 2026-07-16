@@ -561,7 +561,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const loadedInstructions = await loadAgentInstructionsPrefix({
     instructionsFilePath: resolvedInstructionsFilePath,
     includeHeartbeatInstructions: shouldIncludeRuntimeHeartbeatInstructions(context as Record<string, unknown>),
-    contextSectionsBeforeCurrentTime: instructionRuntimeContext.contextSectionsBeforeCurrentTime,
+    instructionContextSections: instructionRuntimeContext.instructionContextSections,
     onLog,
   });
   const instructionsPrefix = loadedInstructions.prefix;

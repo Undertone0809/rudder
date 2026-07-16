@@ -1885,10 +1885,11 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(capture.prompt.indexOf("# Agent Soul")).toBeLessThan(capture.prompt.indexOf("# Agent Tools"));
       expect(capture.prompt.indexOf("# Agent Tools")).toBeLessThan(capture.prompt.indexOf("# Tacit Memory"));
       expect(capture.prompt.indexOf("# Tacit Memory")).toBeLessThan(capture.prompt.indexOf("## Your Current Automations"));
-      expect(capture.prompt.indexOf("## Your Current Automations")).toBeLessThan(capture.prompt.indexOf("## Current Time"));
-      expect(capture.prompt.indexOf("## Current Time")).toBeLessThan(
+      expect(capture.prompt.indexOf("## Your Current Automations")).toBeLessThan(
         capture.prompt.indexOf("# Rudder Heartbeat Instruction"),
       );
+      expect(capture.prompt).not.toContain("## Current Time");
+      expect(capture.prompt).not.toContain("Instruction load time:");
       expect(agentInstructionStack).toBe(capture.prompt);
       expect(agentInstructionStack).toContain("# Agent Instructions");
       expect(agentInstructionStack).toContain("# Agent Soul");

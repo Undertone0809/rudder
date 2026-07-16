@@ -108,8 +108,8 @@ autonomous heartbeat loop.
   and optional runtime service intents.
 - Agent files: configured entry instructions file plus sibling `SOUL.md`,
   `TOOLS.md`, and `MEMORY.md`.
-- Runtime-owned prompt sections: `RUDDER_AGENT_OPERATING_CONTRACT`,
-  `## Current Time`, and optional `RUDDER_AGENT_HEARTBEAT_INSTRUCTION`.
+- Runtime-owned prompt sections: `RUDDER_AGENT_OPERATING_CONTRACT` and optional
+  `RUDDER_AGENT_HEARTBEAT_INSTRUCTION`.
 - Wake context: `wakeReason`, `wakeSource`, `issue`, `comment`,
   `wakeCommentId`, session handoff fields, and recovery/passive follow-up
   fields when present.
@@ -169,9 +169,9 @@ autonomous heartbeat loop.
    prompt by priority:
    `rudderWorkspace.resourcesPrompt`, then
    `rudderWorkspace.orgResourcesPrompt`, then top-level
-   `rudderResourcesPrompt`. The selected prompt is moved into
-   `contextSectionsBeforeCurrentTime`. The matching aliases are cleared from
-   the template context so default prompt templates do not inject the same
+   `rudderResourcesPrompt`. The selected prompt is moved into the prepared
+   instruction context sections. The matching aliases are cleared from the
+   template context so default prompt templates do not inject the same
    resource/startup block again after the intended position.
 
 6. Each adapter loads the instruction prefix. The prefix order is:
@@ -181,7 +181,6 @@ autonomous heartbeat loop.
    - sibling `TOOLS.md`, when present
    - sibling `MEMORY.md`, when present
    - prepared runtime context sections, including the selected resources prompt
-   - `## Current Time`
    - runtime `RUDDER_AGENT_HEARTBEAT_INSTRUCTION`, only when included
 
 7. Missing optional sibling files are silently omitted. A missing configured
@@ -206,15 +205,15 @@ autonomous heartbeat loop.
 
 | Case | Conditions | Product result | Must not happen | Evidence |
 | --- | --- | --- | --- | --- |
-| Heartbeat Run | `rudderScene = heartbeat`; timer/self-check or operator `Run heartbeat` manual trigger | Runtime operating contract, agent files, resources/startup context, current time, runtime heartbeat instruction, then heartbeat prompt are available to the agent | Heartbeat instruction must not appear before current time or before durable agent files | Prompt order tests, command notes, `runtimePromptMetrics.runtimeHeartbeatChars > 0`, adapter invocation event |
-| Issue Run | `rudderScene = issue`; assignment, checkout, issue follow-up, issue comment mention, or comment reopen wake | Agent gets operating contract, agent files, resources/startup context, current time, and issue/comment wake prompt; runtime heartbeat instruction is excluded | Task assignment or comment work must not be framed as generic heartbeat/self-check work | `shouldIncludeRuntimeHeartbeatInstructions` tests, `runtimeHeartbeatChars = 0`, assignment execute tests, comment wake tests |
-| Review Run | `rudderScene = review`; reviewer routing, changes-requested review work, or review follow-up after missing decision while issue remains `in_review` | Agent gets operating contract, agent files, resources/startup context, current time, and review-scene prompt; runtime heartbeat instruction is excluded | Review follow-up must stay reviewer-scoped and must not become assignee implementation | Scene derivation tests and prompt metrics show no runtime heartbeat section |
+| Heartbeat Run | `rudderScene = heartbeat`; timer/self-check or operator `Run heartbeat` manual trigger | Runtime operating contract, agent files, resources/startup context, runtime heartbeat instruction, then heartbeat prompt are available to the agent | Heartbeat instruction must not appear before durable agent files or prepared runtime context | Prompt order tests, command notes, `runtimePromptMetrics.runtimeHeartbeatChars > 0`, adapter invocation event |
+| Issue Run | `rudderScene = issue`; assignment, checkout, issue follow-up, issue comment mention, or comment reopen wake | Agent gets operating contract, agent files, resources/startup context, and issue/comment wake prompt; runtime heartbeat instruction is excluded | Task assignment or comment work must not be framed as generic heartbeat/self-check work | `shouldIncludeRuntimeHeartbeatInstructions` tests, `runtimeHeartbeatChars = 0`, assignment execute tests, comment wake tests |
+| Review Run | `rudderScene = review`; reviewer routing, changes-requested review work, or review follow-up after missing decision while issue remains `in_review` | Agent gets operating contract, agent files, resources/startup context, and review-scene prompt; runtime heartbeat instruction is excluded | Review follow-up must stay reviewer-scoped and must not become assignee implementation | Scene derivation tests and prompt metrics show no runtime heartbeat section |
 | Chat Run | `rudderScene = chat` | Agent gets the same operating contract and configured agent files plus chat-scene context; runtime heartbeat instruction is excluded | Chat prompts must not be framed as autonomous heartbeat work | Adapter metadata and prompt metrics show no runtime heartbeat section |
-| Automation Run | `rudderScene = automation` | Agent gets operating contract, agent files, resources/startup context, current time, and automation context; runtime heartbeat instruction is excluded | Automation dispatch must not inherit heartbeat/self-check close-out instructions unless it explicitly creates a heartbeat scene run | Scene derivation tests and prompt metrics show no runtime heartbeat section |
-| No configured entry file | `instructionsFilePath` is empty | Prefix still contains runtime operating contract, prepared runtime context, current time, and heartbeat instruction only for heartbeat scene runs | A missing entry path must not drop the runtime operating contract | `commandNotes` include operating contract note; prompt metrics include operating contract chars |
+| Automation Run | `rudderScene = automation` | Agent gets operating contract, agent files, resources/startup context, and automation context; runtime heartbeat instruction is excluded | Automation dispatch must not inherit heartbeat/self-check close-out instructions unless it explicitly creates a heartbeat scene run | Scene derivation tests and prompt metrics show no runtime heartbeat section |
+| No configured entry file | `instructionsFilePath` is empty | Prefix still contains runtime operating contract, prepared runtime context, and heartbeat instruction only for heartbeat scene runs | A missing entry path must not drop the runtime operating contract | `commandNotes` include operating contract note; prompt metrics include operating contract chars |
 | Configured entry file missing | `instructionsFilePath` points to unreadable file | Run continues without that file, logs a warning, and records the missing-file command note | Runtime invocation must not fail solely because an operator removed an optional entry file | Runtime log warning and command note |
 | Legacy `HEARTBEAT.md` configured as entry | Entry file basename is `HEARTBEAT.md` | The file is ignored as legacy agent-owned heartbeat notes; runtime heartbeat behavior remains controlled by `rudderScene` | Legacy file content must not be loaded as durable agent instructions | Command note and stdout log say legacy `HEARTBEAT.md` was ignored |
-| Duplicate resource aliases | More than one of workspace resources, workspace org resources, and top-level resources contains the selected prompt | Selected resource block appears once before current time; duplicate aliases are cleared from template context | Prompt templates must not re-inject the same resources later | `prepareAgentInstructionRuntimeContext` tests and rendered prompt order tests |
+| Duplicate resource aliases | More than one of workspace resources, workspace org resources, and top-level resources contains the selected prompt | Selected resource block appears once in the instruction prefix before runtime heartbeat instructions when present; duplicate aliases are cleared from template context | Prompt templates must not re-inject the same resources later | `prepareAgentInstructionRuntimeContext` tests and rendered prompt order tests |
 | Project workspace unavailable | Issue/project references a workspace path that does not exist | Run falls back to shared organization workspace or agent home and emits workspace warning; instruction context reports actual cwd/source | Agent must not believe it is running in a missing cwd | Workspace warning log, `rudderWorkspace.cwd`, run `contextSnapshot` |
 
 ## Actor-Visible Input
@@ -231,14 +230,17 @@ stack must preserve this semantic order:
 4. Sibling `TOOLS.md`, if present.
 5. Sibling `MEMORY.md`, if present.
 6. The selected resources/startup context section, when non-empty.
-7. `## Current Time`, with the runtime instruction load timestamp.
-8. Runtime heartbeat instruction, only for heartbeat scene runs.
-9. Adapter-specific selected-skill boundary text inside the provider's system
+7. Runtime heartbeat instruction, only for heartbeat scene runs.
+8. Adapter-specific selected-skill boundary text inside the provider's system
    prompt layer when that provider can expose native or built-in skills outside
    Rudder's desired selection.
-10. Adapter-specific bootstrap prompt, session handoff markdown, and wake/chat
+9. Adapter-specific bootstrap prompt, session handoff markdown, and wake/chat
     prompt after the instruction prefix or system prompt when the adapter uses
     stdin-style prompt assembly.
+
+Rudder does not inject an instruction-load timestamp or synthetic current-time
+section. Agents that require fresh time data must obtain it from their runtime
+or an available tool at the point of use.
 
 The agent does not see duplicated resource aliases after the selected resource
 prompt is moved into the instruction prefix. The agent does not see sibling
@@ -308,8 +310,8 @@ The contract is evidenced by:
 1. Issue assignment run with configured agent memory:
    - Trigger: an issue assignment wakes the assignee agent in issue scene.
    - Expected state/action: Rudder resolves config, workspace, runtime skills,
-     scene context, agent files, resources, and current time before the
-     assignment wake prompt. Runtime heartbeat instruction is not loaded.
+     scene context, agent files, and resources before the assignment wake
+     prompt. Runtime heartbeat instruction is not loaded.
    - Visible output: command notes list the operating contract, entry file,
      and sibling files that exist; prompt metrics show
      `runtimeHeartbeatChars = 0`.
@@ -320,8 +322,8 @@ The contract is evidenced by:
    - Trigger: an operator clicks `Run heartbeat`, producing
      `rudderScene=heartbeat` with manual trigger detail.
    - Expected state/action: Rudder resolves config, workspace, runtime skills,
-     scene context, agent files, resources, current time, and runtime heartbeat
-     instruction before the heartbeat prompt.
+     scene context, agent files, resources, and runtime heartbeat instruction
+     before the heartbeat prompt.
    - Visible output: command notes list the heartbeat instruction; prompt
      metrics show non-zero runtime heartbeat chars.
    - Evidence: scene derivation and prompt-order tests.
@@ -340,9 +342,9 @@ The contract is evidenced by:
 4. Resource context with duplicate aliases:
    - Trigger: project resources/startup context are compiled into workspace and
      top-level resource prompt aliases.
-   - Expected state/action: the selected resources prompt is inserted once
-     before `## Current Time`; duplicate aliases are cleared from prompt
-     template context.
+   - Expected state/action: the selected resources prompt is inserted once in
+     the instruction prefix before runtime heartbeat instructions when present;
+     duplicate aliases are cleared from prompt template context.
    - Visible output: rendered prompt has one resource/startup section in the
      instruction prefix position.
    - Evidence: `prepareAgentInstructionRuntimeContext` tests and adapter prompt
@@ -371,7 +373,7 @@ The contract is evidenced by:
   metadata.
 - Project and startup resources are injected once at the instruction-prefix
   position when available.
-- `## Current Time` stays after durable instructions and runtime context.
+- Rudder does not inject an instruction-load timestamp or current-time section.
 - Runtime heartbeat instruction, when present, stays at the end of the
   instruction prefix.
 - Issue, review, chat, and automation runs do not receive runtime heartbeat
@@ -422,8 +424,7 @@ Loaded sections:
 4. Prepared dynamic context sections: workspace facts, project resources,
    organization/Rudder resources, assigned automations, startup context, and
    scene-specific context.
-5. `## Current Time`.
-6. Runtime heartbeat instructions only when the current scene is a heartbeat
+5. Runtime heartbeat instructions only when the current scene is a heartbeat
    scene.
 
 Why this order:
@@ -431,7 +432,6 @@ Why this order:
 - Durable identity and policy must be read before dynamic work context.
 - Dynamic context must be explicit and bounded so Project Context Resources do
   not become an unreviewed global memory dump.
-- Current time is late because it is runtime fact, not durable instruction.
 - Heartbeat instructions are last only for heartbeat scenes so they can guide
   timer/self-check work without overriding issue, review, chat, or automation
   prompts.

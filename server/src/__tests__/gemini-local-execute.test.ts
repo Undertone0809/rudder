@@ -238,6 +238,8 @@ describe("gemini execute", { timeout: 20_000 }, () => {
       const promptArg = promptFlagIndex >= 0 ? capture.argv[promptFlagIndex + 1] : "";
       expect(promptArg).toContain("# Agent Instructions");
       expect(promptArg).toContain("# Tacit Memory");
+      expect(promptArg).not.toContain("## Current Time");
+      expect(promptArg).not.toContain("Instruction load time:");
       expect(promptArg).toContain("Follow the rudder heartbeat.");
       expect(promptArg).toContain("Rudder runtime note:");
       expect(capture.rudderEnvKeys).toEqual(

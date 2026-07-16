@@ -27,7 +27,7 @@ export interface LoadedAgentInstructionsPrefix {
 }
 
 export interface AgentInstructionRuntimeContext {
-  contextSectionsBeforeCurrentTime: string[];
+  instructionContextSections: string[];
   promptContext: Record<string, unknown>;
 }
 
@@ -80,7 +80,7 @@ export function prepareAgentInstructionRuntimeContext(context: Record<string, un
 
   if (!resourcesPrompt) {
     return {
-      contextSectionsBeforeCurrentTime: [],
+      instructionContextSections: [],
       promptContext: context,
     };
   }
@@ -93,7 +93,7 @@ export function prepareAgentInstructionRuntimeContext(context: Record<string, un
     }
     : workspace;
   return {
-    contextSectionsBeforeCurrentTime: [resourcesPrompt],
+    instructionContextSections: [resourcesPrompt],
     promptContext: {
       ...context,
       ...(promptWorkspace ? { rudderWorkspace: promptWorkspace } : {}),
@@ -135,13 +135,11 @@ function instructionFilesFooter(input: {
 export async function loadAgentInstructionsPrefix(input: {
   instructionsFilePath: string;
   includeHeartbeatInstructions?: boolean;
-  contextSectionsBeforeCurrentTime?: Array<string | null | undefined>;
-  currentTime?: Date;
+  instructionContextSections?: Array<string | null | undefined>;
   onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
   warningStream?: "stdout" | "stderr";
 }): Promise<LoadedAgentInstructionsPrefix> {
   const instructionsFilePath = input.instructionsFilePath.trim();
-  const currentTime = input.currentTime ?? new Date();
   const includeHeartbeatInstructions = input.includeHeartbeatInstructions === true;
   const entryIsHeartbeatInstructions = path.basename(instructionsFilePath).toLowerCase() === "heartbeat.md";
   const instructionsDir = instructionsFilePath ? `${path.dirname(instructionsFilePath)}/` : "";
@@ -159,17 +157,12 @@ export async function loadAgentInstructionsPrefix(input: {
     ? `${RUDDER_AGENT_HEARTBEAT_INSTRUCTION}\n\n` +
       "The above Rudder heartbeat instruction was injected by Rudder at runtime."
     : "";
-  const currentTimeSection =
-    "## Current Time\n\n" +
-    `Instruction load time: ${currentTime.toISOString()}.\n\n` +
-    "Treat this as the current time for this run unless later tool output gives a fresher timestamp.";
-  const contextSectionsBeforeCurrentTime = input.contextSectionsBeforeCurrentTime ?? [];
+  const instructionContextSections = input.instructionContextSections ?? [];
   const baseCommandNotes = ["Loaded Rudder agent operating contract from runtime code"];
   const empty = {
     prefix: joinPromptSections([
       operatingContractSection,
-      ...contextSectionsBeforeCurrentTime,
-      currentTimeSection,
+      ...instructionContextSections,
       runtimeHeartbeatSection,
     ]),
     commandNotes: [
@@ -186,8 +179,7 @@ export async function loadAgentInstructionsPrefix(input: {
     metrics: {
       instructionsChars: joinPromptSections([
         operatingContractSection,
-        ...contextSectionsBeforeCurrentTime,
-        currentTimeSection,
+        ...instructionContextSections,
         runtimeHeartbeatSection,
       ]).length,
       operatingContractChars: operatingContractSection.length,
@@ -327,8 +319,7 @@ export async function loadAgentInstructionsPrefix(input: {
     tools.section,
     memorySection,
     instructionFooterSection,
-    ...contextSectionsBeforeCurrentTime,
-    currentTimeSection,
+    ...instructionContextSections,
     runtimeHeartbeatSection,
   ]);
   return {
