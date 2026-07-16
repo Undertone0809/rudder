@@ -860,12 +860,28 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     const openWindows = electronApp.windows().filter((candidate) => !candidate.isClosed());
-    const boardPage = openWindows.find((candidate) => {
+    const boardCandidates = openWindows.filter((candidate) => {
       const currentUrl = candidate.url();
       return currentUrl
         && currentUrl.startsWith("http")
         && (!expectedUrlPattern || expectedUrlPattern.test(currentUrl));
     });
+    let boardPage = null;
+    for (const candidate of boardCandidates) {
+      const bridgeReady = await candidate.evaluate(async () => {
+        if (typeof window.desktopShell?.getBrowserPartition !== "function") return false;
+        try {
+          await window.desktopShell.getBrowserPartition();
+          return true;
+        } catch {
+          return false;
+        }
+      }).catch(() => false);
+      if (bridgeReady) {
+        boardPage = candidate;
+        break;
+      }
+    }
     if (boardPage) {
       page = boardPage;
       break;
@@ -881,9 +897,21 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
     }
 
     try {
-      const bootState = await page.evaluate(() => window.desktopShell.getBootState());
+      const bootState = await page.evaluate(() => {
+        if (typeof window.rudderBoot?.getState === "function") {
+          return window.rudderBoot.getState();
+        }
+        return null;
+      });
+      if (!bootState) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        continue;
+      }
       if (bootState.stage === "error") {
         throw new Error(`desktop boot failed: ${bootState.error || bootState.message}`);
+      }
+      if (bootState.view === "failed") {
+        throw new Error(`desktop boot failed: ${bootState.failure?.message || bootState.message}`);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -918,6 +946,19 @@ async function dismissReleaseNotesDialogIfVisible(page) {
   await dialog.getByRole("button", { name: "Continue" }).click();
   await dialog.waitFor({ state: "detached", timeout: 10_000 });
   console.log("[desktop-smoke] dismissed release notes dialog");
+}
+
+async function dismissOnboardingIfVisible(page) {
+  const onboardingSteps = page.getByTestId("onboarding-step-tabs");
+  try {
+    await onboardingSteps.waitFor({ state: "visible", timeout: 3_000 });
+  } catch {
+    return;
+  }
+
+  await page.getByRole("button", { name: "Close" }).click();
+  await onboardingSteps.waitFor({ state: "detached", timeout: 10_000 });
+  console.log("[desktop-smoke] dismissed route onboarding");
 }
 
 async function verifyNativeApplicationMenu(electronApp, page, companyId, issuePrefix) {
@@ -1178,6 +1219,7 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
     });
     await page.waitForURL(new RegExp(`/${issuePrefix}/messenger/chat/${chat.id}$`), { timeout: 30_000 });
     await page.waitForLoadState("networkidle");
+    await dismissOnboardingIfVisible(page);
     await page.getByTestId("side-panel-hover-edge").hover();
     await page.getByTestId("global-side-panel-trigger").click();
     const sidePanel = page.getByTestId("chat-side-panel");
@@ -1269,6 +1311,82 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
 
     if (exerciseRouting) {
       const rudderUrl = page.url();
+      const shortcutModifier = process.platform === "darwin" ? "Meta" : "Control";
+      const hostShortcutMarker = randomUUID();
+      await page.evaluate((marker) => {
+        window.__rudderBrowserShortcutHostMarker = marker;
+      }, hostShortcutMarker);
+
+      await page.evaluate(async () => {
+        const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
+        if (!webview || typeof webview.executeJavaScript !== "function") throw new Error("Browser webview unavailable");
+        webview.focus();
+        await webview.executeJavaScript("document.querySelector('[aria-label=\"Smoke input\"]')?.focus()");
+      });
+      await page.waitForFunction(() => (
+        document.activeElement?.matches("[data-testid='chat-side-panel-browser-webview'][data-active='true']")
+      ), null, { timeout: 15_000 });
+      await page.keyboard.press(`${shortcutModifier}+L`);
+      await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Browser URL", null, {
+        timeout: 15_000,
+      });
+      assert.deepEqual(await browserUrlInput.evaluate((input) => [
+        input.selectionStart,
+        input.selectionEnd,
+        input.value.length,
+      ]), [0, fixtureUrl.length, fixtureUrl.length]);
+
+      for (const shortcut of [`${shortcutModifier}+R`, `${shortcutModifier}+Shift+R`]) {
+        const guestMarker = randomUUID();
+        await page.evaluate(async (marker) => {
+          const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
+          if (!webview || typeof webview.executeJavaScript !== "function") throw new Error("Browser webview unavailable");
+          await webview.executeJavaScript(`window.__rudderBrowserReloadMarker = ${JSON.stringify(marker)}; document.querySelector('[aria-label="Smoke input"]')?.focus()`);
+        }, guestMarker);
+        await page.keyboard.press(shortcut);
+        await page.waitForFunction(async ({ marker }) => {
+          if (window.__rudderBrowserShortcutHostMarker !== marker) return false;
+          const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
+          if (!webview || typeof webview.executeJavaScript !== "function") return false;
+          try {
+            return await webview.executeJavaScript("typeof window.__rudderBrowserReloadMarker === 'undefined'");
+          } catch {
+            return false;
+          }
+        }, { marker: hostShortcutMarker }, { timeout: 30_000 });
+        assert.equal(page.url(), rudderUrl, `${shortcut} must not reload the Rudder host route`);
+      }
+
+      await browserUrlInput.focus();
+      await page.keyboard.press(`${shortcutModifier}+=`);
+      await sidePanel.getByTestId("chat-side-panel-browser-zoom").waitFor({ state: "visible", timeout: 15_000 });
+      assert.equal(await sidePanel.getByTestId("chat-side-panel-browser-zoom").textContent(), "110%");
+      await page.keyboard.press(`${shortcutModifier}+0`);
+      await sidePanel.getByTestId("chat-side-panel-browser-zoom").waitFor({ state: "detached", timeout: 15_000 });
+
+      const browserTabCountBeforeShortcut = await sidePanel.getByTestId("chat-side-panel-tab").count();
+      const nativeWindowCountBeforeShortcut = electronApp
+        ? await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)
+        : null;
+      await page.keyboard.press(`${shortcutModifier}+T`);
+      await page.waitForFunction((expectedCount) => (
+        document.querySelectorAll("[data-testid='chat-side-panel-tab']").length === expectedCount
+      ), browserTabCountBeforeShortcut + 1, { timeout: 15_000 });
+      if (nativeWindowCountBeforeShortcut !== null) {
+        assert.equal(
+          await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length),
+          nativeWindowCountBeforeShortcut,
+          "Browser new-tab shortcut must not create a native Electron window",
+        );
+      }
+      await sidePanel.getByTestId("chat-side-panel-tab").first().click();
+      await page.waitForFunction(({ expectedUrl, marker }) => {
+        if (window.__rudderBrowserShortcutHostMarker !== marker) return false;
+        const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
+        return Boolean(webview && typeof webview.getURL === "function" && webview.getURL() === expectedUrl);
+      }, { expectedUrl: fixtureUrl, marker: hostShortcutMarker }, { timeout: 15_000 });
+      console.log("[desktop-smoke] Browser physical shortcuts preserved the host and targeted the active guest");
+
       const routedUrl = `${fixture.url}/routed-link`;
       await page.evaluate((url) => {
         document.querySelector("[data-testid='desktop-smoke-web-link']")?.remove();
