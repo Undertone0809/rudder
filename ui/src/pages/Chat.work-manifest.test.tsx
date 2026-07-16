@@ -94,6 +94,12 @@ describe("ChatWorkManifest", () => {
     expect(text).not.toContain("From Agent");
     expect(text).toContain("https://ref-1.example/");
     expect(container.querySelector("[data-website-icon]")).not.toBeNull();
+    const shelf = container.querySelector("[data-testid='chat-work-manifest-wide-panel']");
+    const scrollRegion = container.querySelector("[data-testid='chat-work-manifest-scroll-region']");
+    expect(shelf?.className).toContain("max-h-[calc(100dvh-5rem)]");
+    expect(shelf?.className).toContain("flex-col");
+    expect(scrollRegion?.className).toContain("overflow-y-auto");
+    expect(scrollRegion?.className).toContain("scrollbar-auto-hide");
   });
 
   it("does not render while loading or when thread work is empty", () => {
@@ -177,6 +183,8 @@ describe("ChatWorkManifest", () => {
     const trigger = container.querySelector<HTMLButtonElement>("[data-testid='chat-work-manifest-trigger']");
     expect(trigger?.textContent).toContain("Work 6");
     act(() => trigger?.click());
-    expect(container.querySelector("[data-testid='chat-work-manifest-compact-panel']")?.textContent).toContain("Report.md");
+    const compactPanel = container.querySelector("[data-testid='chat-work-manifest-compact-panel']");
+    expect(compactPanel?.textContent).toContain("Report.md");
+    expect(compactPanel?.className).toContain("max-h-[calc(100dvh-6rem)]");
   });
 });

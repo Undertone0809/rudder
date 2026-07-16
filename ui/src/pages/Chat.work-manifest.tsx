@@ -1,4 +1,5 @@
 import { WebsiteLinkIcon } from "@/components/MarkdownBody";
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { cn } from "@/lib/utils";
 import type { ChatWorkManifestItem, ChatWorkManifestResponse } from "@rudderhq/shared";
 import {
@@ -177,6 +178,7 @@ function ManifestContent({
   onJumpToMessage,
   onAddSource,
 }: Omit<ChatWorkManifestProps, "sidePanelOpen">) {
+  const scrollRef = useScrollbarActivityRef();
   if (loading) return null;
   if (error) return <div className="px-3 py-6 text-center text-xs text-destructive">{error}</div>;
   const outputs = Array.isArray(manifest?.outputs) ? manifest.outputs : [];
@@ -184,7 +186,11 @@ function ManifestContent({
   const references = Array.isArray(manifest?.references) ? manifest.references : [];
   if (!manifest || !hasChatWorkManifestContent(manifest)) return null;
   return (
-    <>
+    <div
+      ref={scrollRef}
+      className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto overscroll-contain"
+      data-testid="chat-work-manifest-scroll-region"
+    >
       <ManifestSection
         label="Outputs"
         icon={<FileOutput className="size-3.5" aria-hidden="true" />}
@@ -206,7 +212,7 @@ function ManifestContent({
         onOpenItem={onOpenItem}
         onJumpToMessage={onJumpToMessage}
       />
-    </>
+    </div>
   );
 }
 
@@ -218,7 +224,7 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
     <div className="pointer-events-none relative z-20 shrink-0" data-testid="chat-work-manifest">
       <aside
         className={cn(
-          "hidden w-72 origin-top-right overflow-hidden rounded-md border border-border/75 bg-background/96 shadow-sm transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none xl:block",
+          "hidden max-h-[calc(100dvh-5rem)] w-72 origin-top-right flex-col overflow-hidden rounded-md border border-border/75 bg-background/96 shadow-sm transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none xl:flex",
           props.wideOpen
             ? "pointer-events-auto translate-y-0 scale-100 opacity-100"
             : "pointer-events-none -translate-y-1 scale-[0.98] opacity-0",
@@ -230,14 +236,14 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
         data-testid="chat-work-manifest-wide-panel"
         data-state={props.wideOpen ? "open" : "closed"}
       >
-        <div className="flex h-10 items-center border-b border-border/70 px-3">
+        <div className="flex h-10 shrink-0 items-center border-b border-border/70 px-3">
           <span className="text-xs font-semibold text-foreground">Work</span>
           <span className="ml-1.5 text-[11px] tabular-nums text-muted-foreground">{count}</span>
           <button type="button" className="ml-auto grid size-7 place-items-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground" onClick={props.onAddSource} aria-label="Add source" title="Add source">
             <Plus className="size-3.5" aria-hidden="true" />
           </button>
         </div>
-        <ManifestContent {...props} />
+        <ManifestContent key={`wide:${props.manifest?.conversationId ?? "error"}`} {...props} />
       </aside>
 
       <button
@@ -252,16 +258,16 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
       </button>
       {compactOpen ? (
         <div
-          className="pointer-events-auto absolute right-0 top-10 w-[min(20rem,calc(100vw-2rem))] overflow-hidden rounded-md border border-border bg-background shadow-lg xl:hidden"
+          className="pointer-events-auto absolute right-0 top-10 flex max-h-[calc(100dvh-6rem)] w-[min(20rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-md border border-border bg-background shadow-lg xl:hidden"
           data-testid="chat-work-manifest-compact-panel"
         >
-          <div className="flex h-10 items-center border-b border-border/70 px-3">
+          <div className="flex h-10 shrink-0 items-center border-b border-border/70 px-3">
             <span className="text-xs font-semibold">Work</span>
             <button type="button" className="ml-auto grid size-7 place-items-center rounded-sm text-muted-foreground hover:bg-muted" onClick={() => setCompactOpen(false)} aria-label="Close work manifest">
               <X className="size-3.5" aria-hidden="true" />
             </button>
           </div>
-          <ManifestContent {...props} />
+          <ManifestContent key={`compact:${props.manifest?.conversationId ?? "error"}`} {...props} />
         </div>
       ) : null}
     </div>
