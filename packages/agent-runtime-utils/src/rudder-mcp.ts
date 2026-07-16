@@ -1,6 +1,18 @@
 export const RUDDER_MCP_SERVER_NAME = "rudder-control-plane";
 export const RUDDER_MCP_TOOL_COUNT = 69;
 export const RUDDER_BROWSER_MCP_TOOL_COUNT = 8;
+export const RUDDER_MCP_CONTRACT_VERSION = "rudder.agent-mcp-tools/v1";
+export const RUDDER_BROWSER_MCP_TOOL_NAMES = [
+  "rudder_browser_tabs",
+  "rudder_browser_open",
+  "rudder_browser_navigate",
+  "rudder_browser_read",
+  "rudder_browser_click",
+  "rudder_browser_type",
+  "rudder_browser_screenshot",
+  "rudder_browser_close",
+] as const;
+export const RUDDER_BROWSER_MCP_CONTRACT_HASH = "1dfd1106f49a0ac6f9a0bafadad40eecd17f2ef18d26b96117b85aab7f25089d";
 export const RUDDER_MCP_MANAGED_ENV_KEYS = [
   "RUDDER_API_URL",
   "RUDDER_API_KEY",
@@ -18,12 +30,45 @@ export interface RudderMcpCliCommand {
   command: string;
   args: string[];
   env?: Record<string, string>;
+  provenance: RudderMcpCliProvenance;
+  expectedVersion?: string | null;
+}
+
+export type RudderMcpCliProvenance = "desktop_bundle" | "external_runtime" | "repo" | "path";
+
+export type RudderMcpPreflightDiagnosticCode =
+  | "browser_bundle_handshake_failed"
+  | "browser_bundle_server_mismatch"
+  | "browser_bundle_version_mismatch"
+  | "browser_bundle_contract_mismatch"
+  | "browser_bundle_tools_mismatch";
+
+export interface RudderMcpPreflightResult {
+  available: boolean;
+  browserAvailable: boolean;
+  provenance: RudderMcpCliProvenance;
+  version: string | null;
+  contractVersion: string | null;
+  contractHash: string | null;
+  diagnosticCode: RudderMcpPreflightDiagnosticCode | null;
+  diagnostic: string | null;
+  tools: Array<{
+    name: string;
+    description?: string;
+    inputSchema?: Record<string, unknown>;
+  }>;
 }
 
 export interface RudderMcpRuntimeMetadata {
   available: boolean;
   serverName: typeof RUDDER_MCP_SERVER_NAME;
   toolCount: number;
+  provenance?: RudderMcpCliProvenance | null;
+  version?: string | null;
+  contractVersion?: string | null;
+  contractHash?: string | null;
+  browserAvailable?: boolean;
+  diagnosticCode?: RudderMcpPreflightDiagnosticCode | null;
   fallbackReason?: string | null;
 }
 
@@ -31,15 +76,26 @@ export function rudderMcpRuntimeMetadata(
   input: {
     available?: boolean;
     browserEnabled?: boolean;
+    preflight?: RudderMcpPreflightResult | null;
     fallbackReason?: string | null;
   } = {},
 ): RudderMcpRuntimeMetadata {
-  return {
-    available: input.available ?? true,
+  const browserAvailable = input.browserEnabled === true && input.preflight?.browserAvailable !== false;
+  const metadata: RudderMcpRuntimeMetadata = {
+    available: input.available ?? input.preflight?.available ?? true,
     serverName: RUDDER_MCP_SERVER_NAME,
-    toolCount: RUDDER_MCP_TOOL_COUNT + (input.browserEnabled === true ? RUDDER_BROWSER_MCP_TOOL_COUNT : 0),
-    fallbackReason: input.fallbackReason ?? null,
+    toolCount: RUDDER_MCP_TOOL_COUNT + (browserAvailable ? RUDDER_BROWSER_MCP_TOOL_COUNT : 0),
+    fallbackReason: input.fallbackReason ?? input.preflight?.diagnostic ?? null,
   };
+  if (input.preflight) {
+    metadata.provenance = input.preflight.provenance;
+    metadata.version = input.preflight.version;
+    metadata.contractVersion = input.preflight.contractVersion;
+    metadata.contractHash = input.preflight.contractHash;
+    metadata.browserAvailable = browserAvailable;
+    metadata.diagnosticCode = input.preflight.diagnosticCode;
+  }
+  return metadata;
 }
 
 export function applyRudderBrowserCapabilityEnv(
@@ -63,6 +119,7 @@ export function rudderMcpCliCommand(): RudderMcpCliCommand {
   return {
     command: "rudder",
     args: ["mcp-server"],
+    provenance: "path",
   };
 }
 

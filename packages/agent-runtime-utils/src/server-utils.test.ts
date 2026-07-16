@@ -11,6 +11,7 @@ import {
   prepareAgentInstructionRuntimeContext,
   renderTemplate,
   resolveLocalOperatorHome,
+  resolveRudderCliShimTarget,
   RUDDER_AGENT_HEARTBEAT_INSTRUCTION,
   RUDDER_AGENT_OPERATING_CONTRACT,
   runChildProcess,
@@ -114,14 +115,21 @@ describe("ensureRudderCliInPath", () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cli-external-runtime-shim-"));
     const runtimeModuleDir = path.join(root, "runtimes", "0.4.6", "node_modules", "@rudderhq", "agent-runtime-utils", "dist");
     const desktopCli = path.join(root, "Desktop.app", "Contents", "Resources", "server-package", "desktop-cli.js");
+    const desktopExecutable = process.platform === "darwin"
+      ? path.join(root, "Desktop.app", "Contents", "MacOS", "Rudder")
+      : path.join(root, "Desktop.app", "Contents", process.platform === "win32" ? "Rudder.exe" : "Rudder");
+    const desktopManifest = path.join(path.dirname(desktopCli), "rudder-cli-package.json");
     const staleBinDir = path.join(root, "stale-bin");
     const staleRudder = path.join(staleBinDir, shimName());
 
     try {
       await fs.mkdir(runtimeModuleDir, { recursive: true });
       await fs.mkdir(path.dirname(desktopCli), { recursive: true });
+      await fs.mkdir(path.dirname(desktopExecutable), { recursive: true });
       await fs.mkdir(staleBinDir, { recursive: true });
       await fs.writeFile(desktopCli, "console.log('fresh desktop cli');\n", "utf8");
+      await fs.writeFile(desktopExecutable, "desktop executable\n", "utf8");
+      await fs.writeFile(desktopManifest, JSON.stringify({ name: "@rudderhq/cli", version: "0.4.6" }), "utf8");
       await fs.writeFile(
         staleRudder,
         process.platform === "win32" ? "@echo off\r\necho stale\r\n" : "#!/bin/sh\necho stale\n",
@@ -130,15 +138,21 @@ describe("ensureRudderCliInPath", () => {
       await fs.chmod(staleRudder, 0o755);
       process.env.RUDDER_DESKTOP_CLI_ENTRY = desktopCli;
 
-      const env = await ensureRudderCliInPath(runtimeModuleDir, {
-        PATH: staleBinDir,
-      });
+      const target = await resolveRudderCliShimTarget(runtimeModuleDir);
+      const env = await ensureRudderCliInPath(runtimeModuleDir, { PATH: staleBinDir });
       const firstPathEntry = readPathValue(env).split(path.delimiter)[0];
-      const shimPath = path.join(firstPathEntry!, shimName());
-      const shim = await fs.readFile(shimPath, "utf8");
+      const shim = await fs.readFile(path.join(firstPathEntry!, shimName()), "utf8");
 
+      expect(target).toMatchObject({
+        command: desktopExecutable,
+        args: ["--desktop-cli"],
+        provenance: "desktop_bundle",
+        version: "0.4.6",
+      });
       expect(firstPathEntry).not.toBe(staleBinDir);
-      expect(shim).toContain(desktopCli);
+      expect(shim).toContain("--desktop-cli");
+      expect(shim).toContain(desktopExecutable);
+      expect(shim).not.toContain(desktopCli);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
@@ -869,6 +883,33 @@ describe("runChildProcess", () => {
       // The group already exited.
     }
   }
+
+  it("does not expose the Desktop CLI entry to provider child processes", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-run-child-process-desktop-cli-env-"));
+    const capturePath = path.join(root, "env.json");
+    const scriptPath = path.join(root, "capture-env.mjs");
+    await fs.writeFile(
+      scriptPath,
+      "import fs from 'node:fs'; fs.writeFileSync(process.argv[2], JSON.stringify(process.env.RUDDER_DESKTOP_CLI_ENTRY ?? null));\n",
+      "utf8",
+    );
+    process.env.RUDDER_DESKTOP_CLI_ENTRY = "/private/Desktop.app/desktop-cli.js";
+
+    try {
+      const result = await runChildProcess("run-child-process-desktop-cli-env", process.execPath, [scriptPath, capturePath], {
+        cwd: root,
+        env: {},
+        timeoutSec: 5,
+        graceSec: 1,
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(await fs.readFile(capturePath, "utf8"))).toBeNull();
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
 
   it("preserves explicit blank Git identity env overrides", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-run-child-process-git-env-"));

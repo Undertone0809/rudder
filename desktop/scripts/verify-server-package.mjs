@@ -2,6 +2,7 @@ import { access, lstat, readFile, readdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyBrowserBundle } from "./verify-browser-bundle.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDir, "..");
@@ -272,6 +273,14 @@ async function verifyServerPackage(serverPackageDir) {
 
   // 6. PostgreSQL runtime payload required by packaged Desktop local startup.
   await verifyPostgresRuntimePayload(serverPackageDir);
+
+  // 7. The packaged CLI and external runtime cache must expose one Browser contract.
+  try {
+    const result = await verifyBrowserBundle({ serverPackageDir });
+    ok(`Browser bundle handshake checked (${result.browserTools.length} tools, ${result.provenance})`);
+  } catch (e) {
+    error(`Browser bundle handshake failed: ${e.message}`);
+  }
 }
 
 async function findPackagedServerPackage() {

@@ -1,4 +1,8 @@
 import { execute } from "@rudderhq/agent-runtime-codex-local/server";
+import {
+  RUDDER_BROWSER_MCP_CONTRACT_HASH,
+  RUDDER_MCP_CONTRACT_VERSION,
+} from "@rudderhq/agent-runtime-utils";
 import type { AgentRuntimeControlHandle } from "@rudderhq/agent-runtime-utils";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
@@ -1872,6 +1876,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
         config: {
           command: commandPath,
           cwd: workspace,
+          rudderBrowserEnabled: true,
           env: {
             RUDDER_TEST_CAPTURE_PATH: capturePath,
           },
@@ -1888,8 +1893,14 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(result.exitCode).toBe(0);
       expect(mcpMetadata).toMatchObject({
         available: true,
+        browserAvailable: true,
+        contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
+        contractVersion: RUDDER_MCP_CONTRACT_VERSION,
+        diagnosticCode: null,
+        provenance: "repo",
         serverName: "rudder-control-plane",
-        toolCount: 69,
+        toolCount: 77,
+        version: "0.4.6",
       });
     } finally {
       if (previousHome === undefined) delete process.env.HOME;

@@ -1,3 +1,7 @@
+import {
+  RUDDER_BROWSER_MCP_CONTRACT_HASH,
+  RUDDER_MCP_CONTRACT_VERSION,
+} from "@rudderhq/agent-runtime-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -428,6 +432,15 @@ describe("agent-v1 MCP server", () => {
       id: 1,
       result: {
         protocolVersion: "2025-06-18",
+        capabilities: {
+          experimental: {
+            rudder: {
+              contractVersion: RUDDER_MCP_CONTRACT_VERSION,
+              browserContractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
+            },
+          },
+        },
+        serverInfo: { name: "rudder-control-plane", version: "0.4.6" },
       },
     });
   });

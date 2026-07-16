@@ -39,6 +39,11 @@ function operatorInterruptHardDeadlineMs(reason: unknown): number | null {
   return Math.max(1, Math.floor(candidate.hardDeadlineMs));
 }
 
+type RudderCliSpawnTarget = SpawnTarget & {
+  provenance: "desktop_bundle" | "external_runtime" | "repo";
+  version: string | null;
+};
+
 export function ensurePathInEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   if (typeof env.PATH === "string" && env.PATH.length > 0) return env;
   if (typeof env.Path === "string" && env.Path.length > 0) return env;
@@ -121,6 +126,21 @@ export function shellQuote(arg: string): string {
   return `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 
+async function readPackageVersion(filePath: string, expectedName?: string): Promise<string | null> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(filePath, "utf8")) as { name?: unknown; version?: unknown };
+    if (expectedName && parsed.name !== expectedName) return null;
+    return typeof parsed.version === "string" && parsed.version.trim().length > 0 ? parsed.version.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function cliVersionBesideEntry(cliEntry: string): Promise<string | null> {
+  const directory = path.dirname(cliEntry);
+  return await readPackageVersion(path.join(directory, "rudder-cli-package.json"), "@rudderhq/cli")
+    ?? await readPackageVersion(path.join(directory, "package.json"), "@rudderhq/cli");
+}
 async function resolveExplicitDesktopCliEntry(env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
   const configured = env[RUDDER_DESKTOP_CLI_ENTRY_ENV]?.trim();
   if (!configured) return null;
@@ -128,20 +148,34 @@ async function resolveExplicitDesktopCliEntry(env: NodeJS.ProcessEnv = process.e
   return await fileExists(cliEntry) ? cliEntry : null;
 }
 
-export async function resolveRudderCliShimTarget(moduleDir: string): Promise<SpawnTarget | null> {
+async function resolveDesktopExecutableBesideCliEntry(cliEntry: string): Promise<string | null> {
+  const resourcesDir = path.dirname(path.dirname(cliEntry));
+  const appRoot = path.dirname(resourcesDir);
+  const executable = process.platform === "darwin"
+    ? path.join(appRoot, "MacOS", "Rudder")
+    : path.join(appRoot, process.platform === "win32" ? "Rudder.exe" : "Rudder");
+  return await fileExists(executable) ? executable : null;
+}
+
+export async function resolveRudderCliShimTarget(moduleDir: string): Promise<RudderCliSpawnTarget | null> {
   const explicitDesktopCli = await resolveExplicitDesktopCliEntry();
   if (explicitDesktopCli) {
     return {
-      command: process.execPath,
-      args: [explicitDesktopCli],
+      command: await resolveDesktopExecutableBesideCliEntry(explicitDesktopCli) ?? process.execPath,
+      args: ["--desktop-cli"],
+      provenance: "desktop_bundle",
+      version: await cliVersionBesideEntry(explicitDesktopCli),
     };
   }
 
   const packagedCli = await findAncestorWithFile(moduleDir, "desktop-cli.js");
   if (packagedCli) {
+    const runtimeMetadata = await findAncestorWithFile(moduleDir, "runtime.json");
     return {
       command: process.execPath,
       args: [packagedCli],
+      provenance: runtimeMetadata ? "external_runtime" : "desktop_bundle",
+      version: await cliVersionBesideEntry(packagedCli),
     };
   }
 
@@ -154,6 +188,8 @@ export async function resolveRudderCliShimTarget(moduleDir: string): Promise<Spa
     return {
       command: process.execPath,
       args: [tsxEntry, cliSource],
+      provenance: "repo",
+      version: await readPackageVersion(path.join(rootDir, "cli", "package.json"), "@rudderhq/cli"),
     };
   }
 
@@ -162,6 +198,8 @@ export async function resolveRudderCliShimTarget(moduleDir: string): Promise<Spa
     return {
       command: process.execPath,
       args: [builtCliEntry],
+      provenance: "repo",
+      version: await readPackageVersion(path.join(rootDir, "cli", "package.json"), "@rudderhq/cli"),
     };
   }
 
@@ -986,6 +1024,7 @@ export async function runChildProcess(
 
   return new Promise<RunProcessResult>((resolve, reject) => {
     const rawMerged: NodeJS.ProcessEnv = { ...process.env, ...opts.env };
+    delete rawMerged.RUDDER_DESKTOP_CLI_ENTRY;
     const requestedHome =
       typeof opts.env.HOME === "string" && opts.env.HOME.trim().length > 0
         ? path.resolve(opts.env.HOME)

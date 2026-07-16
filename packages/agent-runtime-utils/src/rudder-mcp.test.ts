@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  RUDDER_BROWSER_MCP_CONTRACT_HASH,
+  RUDDER_MCP_CONTRACT_VERSION,
   RUDDER_MCP_MANAGED_ENV_KEYS,
   RUDDER_MCP_TOOL_COUNT,
   applyRudderBrowserCapabilityEnv,
@@ -8,6 +10,36 @@ import {
 } from "./rudder-mcp.js";
 
 describe("Rudder MCP Browser capability", () => {
+  it("adds provenance and contract diagnostics only after a real preflight", () => {
+    expect(rudderMcpRuntimeMetadata({ browserEnabled: false })).toEqual({
+      available: true,
+      serverName: "rudder-control-plane",
+      toolCount: RUDDER_MCP_TOOL_COUNT,
+      fallbackReason: null,
+    });
+
+    expect(rudderMcpRuntimeMetadata({
+      browserEnabled: true,
+      preflight: {
+        available: true,
+        browserAvailable: true,
+        provenance: "repo",
+        version: "0.4.6",
+        contractVersion: RUDDER_MCP_CONTRACT_VERSION,
+        contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
+        diagnosticCode: null,
+        diagnostic: null,
+        tools: [],
+      },
+    })).toMatchObject({
+      browserAvailable: true,
+      contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
+      provenance: "repo",
+      toolCount: RUDDER_MCP_TOOL_COUNT + 8,
+      version: "0.4.6",
+    });
+  });
+
   it("derives the enabled capability only from the trusted boolean run config", () => {
     const env = { RUDDER_BROWSER_ENABLED: "false" };
 

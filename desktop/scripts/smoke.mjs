@@ -3,7 +3,7 @@ import electronBinary from "electron";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
-import { access, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { createRequire } from "node:module";
 import net from "node:net";
@@ -40,6 +40,16 @@ const browserImportMalformedCookieName = "rudder_browser_import_malformed";
 const browserImportEncryptedCookieName = "rudder_browser_import_encrypted";
 const browserImportSmokeCookieUrl = "http://127.0.0.1/";
 const browserSmokeScreenshotPath = process.env.RUDDER_DESKTOP_SMOKE_SCREENSHOT?.trim() || null;
+const expectedBrowserToolNames = [
+  "rudder_browser_tabs",
+  "rudder_browser_open",
+  "rudder_browser_navigate",
+  "rudder_browser_read",
+  "rudder_browser_click",
+  "rudder_browser_type",
+  "rudder_browser_screenshot",
+  "rudder_browser_close",
+];
 const windowsToUnixEpochMicroseconds = 11_644_473_600_000_000n;
 const REQUIRED_BUNDLED_SKILLS = [
   "browser",
@@ -210,6 +220,15 @@ async function allocateSmokePorts() {
 }
 
 async function resolvePackagedExecutablePath() {
+  const explicitExecutable = process.env.RUDDER_DESKTOP_SMOKE_EXECUTABLE?.trim();
+  if (explicitExecutable) {
+    const resolved = path.resolve(explicitExecutable);
+    if (!(await pathExists(resolved))) {
+      throw new Error(`RUDDER_DESKTOP_SMOKE_EXECUTABLE does not exist: ${resolved}`);
+    }
+    return resolved;
+  }
+
   const candidates = process.platform === "darwin"
     ? [
         path.resolve(desktopDir, "release/mac-arm64/Rudder.app/Contents/MacOS/Rudder"),
@@ -234,6 +253,85 @@ async function resolvePackagedExecutablePath() {
   throw new Error(
     `Could not find a packaged desktop executable for ${process.platform}. Checked:\n${candidates.join("\n")}`,
   );
+}
+
+async function preparePackagedExternalRuntimeFixture(userDataDir) {
+  const executablePath = await resolvePackagedExecutablePath();
+  const resourcesDir = process.platform === "darwin"
+    ? path.resolve(path.dirname(executablePath), "..", "Resources")
+    : path.resolve(path.dirname(executablePath), "resources");
+  const serverPackageDir = path.join(resourcesDir, "server-package");
+  const cliEntry = path.join(serverPackageDir, "desktop-cli.js");
+  const serverManifest = JSON.parse(await readFile(path.join(serverPackageDir, "package.json"), "utf8"));
+  const serverEntrypoint = path.resolve(serverPackageDir, serverManifest.main ?? "dist/index.js");
+  const runtimeCacheDir = path.join(resolveInstancePaths(userDataDir).rudderHome, "runtimes", serverManifest.version);
+  const runtimeServerDir = path.join(runtimeCacheDir, "node_modules", "@rudderhq", "server");
+  const packagedCodexAdapterDir = path.join(
+    serverPackageDir,
+    "node_modules",
+    "@rudderhq",
+    "agent-runtime-codex-local",
+  );
+  const runtimeCodexAdapterDir = path.join(
+    runtimeCacheDir,
+    "node_modules",
+    "@rudderhq",
+    "agent-runtime-codex-local",
+  );
+  const loadedMarker = path.join(userDataDir, "external-runtime-loaded");
+  const staleBinDir = path.join(userDataDir, "stale-bin");
+  const staleMarker = path.join(userDataDir, "stale-path-invoked");
+  const staleCommand = path.join(staleBinDir, process.platform === "win32" ? "rudder.cmd" : "rudder");
+
+  await mkdir(runtimeServerDir, { recursive: true });
+  await writeFile(path.join(runtimeCacheDir, "package.json"), `${JSON.stringify({
+    private: true,
+    dependencies: { "@rudderhq/server": serverManifest.version },
+  })}\n`, "utf8");
+  await writeFile(path.join(runtimeCacheDir, "runtime.json"), `${JSON.stringify({
+    version: 1,
+    packageName: "@rudderhq/server",
+    packageVersion: serverManifest.version,
+    installedAt: new Date(0).toISOString(),
+  })}\n`, "utf8");
+  await writeFile(path.join(runtimeServerDir, "package.json"), `${JSON.stringify({
+    name: "@rudderhq/server",
+    version: serverManifest.version,
+    type: "module",
+    main: "./index.js",
+    exports: { ".": "./index.js" },
+  })}\n`, "utf8");
+  await writeFile(
+    path.join(runtimeServerDir, "index.js"),
+    `import fs from "node:fs";\nfs.writeFileSync(${JSON.stringify(loadedMarker)}, "loaded");\nexport * from ${JSON.stringify(pathToFileURL(serverEntrypoint).href)};\n`,
+    "utf8",
+  );
+  await symlink(
+    packagedCodexAdapterDir,
+    runtimeCodexAdapterDir,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  await mkdir(staleBinDir, { recursive: true });
+  await writeFile(
+    staleCommand,
+    process.platform === "win32"
+      ? `@echo off\r\necho stale>${staleMarker}\r\nexit /b 2\r\n`
+      : `#!/bin/sh\nprintf stale > '${staleMarker.replaceAll("'", "'\\''")}'\nexit 2\n`,
+    "utf8",
+  );
+  await chmod(staleCommand, 0o755);
+
+  return {
+    cliEntry,
+    codexAdapterEntry: path.join(runtimeCodexAdapterDir, "dist", "server", "index.js"),
+    executablePath,
+    loadedMarker,
+    runtimeCacheDir,
+    serverVersion: serverManifest.version,
+    staleMarker,
+    userDataDir,
+    env: { PATH: `${staleBinDir}${path.delimiter}${process.env.PATH ?? ""}` },
+  };
 }
 
 async function loadPostgres() {
@@ -432,8 +530,12 @@ function createSmokeAgentJwt(agentId, orgId, runId) {
   return `${signingInput}.${signature}`;
 }
 
-function createSmokeMcpClient(env) {
-  const child = spawn(process.execPath, [path.resolve(repoRoot, "cli/dist/index.js"), "mcp-server"], {
+async function createSmokeMcpClient(env) {
+  const executablePath = smokeMode === "packaged" ? await resolvePackagedExecutablePath() : process.execPath;
+  const args = smokeMode === "packaged"
+    ? ["--desktop-cli", "mcp-server"]
+    : [path.resolve(repoRoot, "cli/dist/index.js"), "mcp-server"];
+  const child = spawn(executablePath, args, {
     env: { ...process.env, ...env },
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -517,7 +619,280 @@ function readSmokeMcpToolResult(response, toolName) {
   return text ? JSON.parse(text) : {};
 }
 
-async function verifyAgentBrowserBroker(baseUrl, databaseUrl, company, agent) {
+async function writePackagedCodexMcpProbe(commandPath) {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+const readline = require("node:readline");
+const { spawn } = require("node:child_process");
+
+function parseManagedMcpConfig(configPath) {
+  const lines = fs.readFileSync(configPath, "utf8").split(/\\r?\\n/u);
+  let section = null;
+  const result = { command: null, args: null, env: {} };
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (line === "[mcp_servers.rudder-control-plane]") {
+      section = "server";
+      continue;
+    }
+    if (line === "[mcp_servers.rudder-control-plane.env]") {
+      section = "env";
+      continue;
+    }
+    if (line.startsWith("[")) {
+      section = null;
+      continue;
+    }
+    if (!section || !line.includes("=")) continue;
+    const separator = line.indexOf("=");
+    const key = line.slice(0, separator).trim();
+    const value = JSON.parse(line.slice(separator + 1).trim());
+    if (section === "server" && key === "command") result.command = value;
+    else if (section === "server" && key === "args") result.args = value;
+    else if (section === "env") result.env[key] = value;
+  }
+  if (typeof result.command !== "string" || !Array.isArray(result.args)) {
+    throw new Error("managed Codex config did not contain a runnable Rudder MCP command");
+  }
+  return result;
+}
+
+function createMcpClient(config) {
+  const child = spawn(config.command, config.args, {
+    env: { ...process.env, ...config.env },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const lines = readline.createInterface({ input: child.stdout });
+  const pending = new Map();
+  let nextId = 1;
+  let stderr = "";
+  let exited = false;
+  child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+  lines.on("line", (line) => {
+    if (!line.trim()) return;
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch {
+      return;
+    }
+    const waiter = pending.get(message.id);
+    if (!waiter) return;
+    pending.delete(message.id);
+    clearTimeout(waiter.timer);
+    waiter.resolve(message);
+  });
+  child.on("exit", (code, signal) => {
+    exited = true;
+    for (const waiter of pending.values()) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error("managed MCP exited before responding (code=" + code + ", signal=" + signal + "): " + stderr));
+    }
+    pending.clear();
+  });
+  return {
+    request(method, params) {
+      const id = nextId++;
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pending.delete(id);
+          reject(new Error("managed MCP request timed out: " + method + ": " + stderr));
+        }, 15000);
+        pending.set(id, { resolve, reject, timer });
+        child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, ...(params ? { params } : {}) }) + "\\n");
+      });
+    },
+    notify(method, params) {
+      child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method, params: params || {} }) + "\\n");
+    },
+    async close() {
+      lines.close();
+      if (exited) return;
+      child.stdin.end();
+      await new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          if (!exited) child.kill("SIGTERM");
+          resolve();
+        }, 2000);
+        child.once("exit", () => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+    },
+  };
+}
+
+function readToolResult(response, toolName) {
+  if (response && response.error) throw new Error(toolName + " JSON-RPC failed: " + JSON.stringify(response.error));
+  const result = response && response.result;
+  if (!result || result.isError) throw new Error(toolName + " failed: " + JSON.stringify(result || response));
+  if (result.structuredContent && typeof result.structuredContent === "object") return result.structuredContent;
+  const item = Array.isArray(result.content) ? result.content.find((entry) => entry && entry.type === "text") : null;
+  return item && item.text ? JSON.parse(item.text) : {};
+}
+
+async function main() {
+  const capturePath = process.env.RUDDER_TEST_CAPTURE_PATH;
+  const desktopCliEntryVisible = Boolean(process.env.RUDDER_DESKTOP_CLI_ENTRY);
+  const config = parseManagedMcpConfig(path.join(process.env.CODEX_HOME, "config.toml"));
+  const expectedCommand = process.env.RUDDER_TEST_EXPECTED_MCP_COMMAND;
+  if (config.command !== expectedCommand) {
+    throw new Error("managed Codex MCP command mismatch: " + config.command);
+  }
+  if (JSON.stringify(config.args) !== JSON.stringify(["--desktop-cli", "mcp-server"])) {
+    throw new Error("managed Codex MCP args mismatch: " + JSON.stringify(config.args));
+  }
+  if (desktopCliEntryVisible) throw new Error("provider inherited RUDDER_DESKTOP_CLI_ENTRY");
+
+  const client = createMcpClient(config);
+  try {
+    const initialized = await client.request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "packaged-codex-probe", version: "1" },
+    });
+    client.notify("notifications/initialized", {});
+    const listed = await client.request("tools/list", {});
+    const browserToolNames = listed.result.tools
+      .map((tool) => tool.name)
+      .filter((name) => name.startsWith("rudder_browser_"));
+    const opened = readToolResult(await client.request("tools/call", {
+      name: "rudder_browser_open",
+      arguments: { url: process.env.RUDDER_TEST_BROWSER_URL },
+    }), "rudder_browser_open");
+    const snapshot = readToolResult(await client.request("tools/call", {
+      name: "rudder_browser_read",
+      arguments: { tabId: opened.tabId },
+    }), "rudder_browser_read");
+    readToolResult(await client.request("tools/call", {
+      name: "rudder_browser_close",
+      arguments: { tabId: opened.tabId },
+    }), "rudder_browser_close");
+    fs.writeFileSync(capturePath, JSON.stringify({
+      browserToolNames,
+      command: config.command,
+      contract: initialized.result.capabilities.experimental.rudder,
+      desktopCliEntryVisible,
+      snapshotText: snapshot.text,
+    }), "utf8");
+  } finally {
+    await client.close();
+  }
+  console.log(JSON.stringify({ type: "thread.started", thread_id: "packaged-codex-probe" }));
+  console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "packaged adapter MCP probe passed" } }));
+  console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
+}
+
+process.stdin.resume();
+process.stdin.on("end", () => {
+  void main().catch((error) => {
+    const capturePath = process.env.RUDDER_TEST_CAPTURE_PATH;
+    if (capturePath) {
+      fs.writeFileSync(capturePath, JSON.stringify({
+        desktopCliEntryVisible: Boolean(process.env.RUDDER_DESKTOP_CLI_ENTRY),
+        error: error instanceof Error ? error.message : String(error),
+      }), "utf8");
+    }
+    console.error(error instanceof Error ? error.stack : String(error));
+    process.exitCode = 1;
+  });
+});
+`;
+  await writeFile(commandPath, script, "utf8");
+  await chmod(commandPath, 0o755);
+}
+
+async function verifyPackagedExternalRuntimeAdapterBrowser(input) {
+  const probeRoot = path.join(input.packagedRuntime.userDataDir, "external-adapter-probe");
+  const workspace = path.join(probeRoot, "workspace");
+  const sharedCodexHome = path.join(probeRoot, "shared-codex-home");
+  const commandPath = path.join(probeRoot, "fake-codex.cjs");
+  const capturePath = path.join(probeRoot, "capture.json");
+  await mkdir(workspace, { recursive: true });
+  await mkdir(sharedCodexHome, { recursive: true });
+  await writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"desktop-smoke"}\n', "utf8");
+  await writeFile(path.join(sharedCodexHome, "config.toml"), 'model = "codex-mini-latest"\n', "utf8");
+  await writePackagedCodexMcpProbe(commandPath);
+
+  const envKeys = [
+    "CODEX_HOME",
+    "HOME",
+    "PATH",
+    "RUDDER_API_URL",
+    "RUDDER_DESKTOP_CLI_ENTRY",
+    "RUDDER_HOME",
+    "RUDDER_IN_WORKTREE",
+    "RUDDER_OPERATOR_HOME",
+    "RUDDER_RUNTIME_TMPDIR",
+  ];
+  const previousEnv = new Map(envKeys.map((key) => [key, process.env[key]]));
+  process.env.CODEX_HOME = sharedCodexHome;
+  process.env.HOME = probeRoot;
+  process.env.PATH = input.packagedRuntime.env.PATH;
+  process.env.RUDDER_API_URL = input.baseUrl;
+  process.env.RUDDER_DESKTOP_CLI_ENTRY = input.packagedRuntime.cliEntry;
+  process.env.RUDDER_HOME = path.join(probeRoot, "rudder-home");
+  delete process.env.RUDDER_IN_WORKTREE;
+  process.env.RUDDER_OPERATOR_HOME = probeRoot;
+  process.env.RUDDER_RUNTIME_TMPDIR = path.join(probeRoot, "tmp");
+
+  try {
+    const adapter = await import(pathToFileURL(input.packagedRuntime.codexAdapterEntry).href);
+    let rudderMcpMetadata = null;
+    const result = await adapter.execute({
+      runId: input.runId,
+      agent: {
+        id: input.agent.id,
+        orgId: input.company.id,
+        name: input.agent.name,
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+      },
+      runtime: {
+        sessionId: null,
+        sessionParams: null,
+        sessionDisplayId: null,
+        taskKey: null,
+      },
+      config: {
+        command: commandPath,
+        cwd: workspace,
+        rudderBrowserEnabled: true,
+        env: {
+          RUDDER_TEST_BROWSER_URL: `${input.fixtureUrl}/agent`,
+          RUDDER_TEST_CAPTURE_PATH: capturePath,
+          RUDDER_TEST_EXPECTED_MCP_COMMAND: input.packagedRuntime.executablePath,
+        },
+        promptTemplate: "Verify the packaged Rudder MCP provider wiring.",
+      },
+      context: {},
+      authToken: input.token,
+      onLog: async () => {},
+      onMeta: async (metadata) => {
+        rudderMcpMetadata = metadata.rudderMcp;
+      },
+    });
+    assert.equal(result.exitCode, 0, `packaged external-runtime Codex adapter failed: ${result.errorMessage ?? "unknown"}`);
+    const capture = JSON.parse(await readFile(capturePath, "utf8"));
+    assert.equal(capture.desktopCliEntryVisible, false, "provider must not inherit the private Desktop CLI entry");
+    assert.equal(capture.command, input.packagedRuntime.executablePath, "provider MCP config must use packaged Desktop CLI");
+    assert.deepEqual(capture.browserToolNames, expectedBrowserToolNames, "provider MCP config should expose exact Browser tools");
+    assert.match(capture.snapshotText, /Rudder Browser fixture/, "provider MCP config should read the Browser fixture");
+    assert.equal(capture.contract.browserContractHash, rudderMcpMetadata.contractHash, "provider handshake and adapter metadata must agree");
+    assert.equal(rudderMcpMetadata.browserAvailable, true, "packaged adapter metadata should keep Browser available");
+    assert.equal(rudderMcpMetadata.provenance, "desktop_bundle", "packaged adapter metadata should report Desktop provenance");
+    assert.equal(rudderMcpMetadata.version, input.packagedRuntime.serverVersion, "packaged adapter metadata version should match runtime cache");
+  } finally {
+    for (const [key, value] of previousEnv.entries()) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function verifyAgentBrowserBroker(baseUrl, databaseUrl, company, agent, packagedRuntime = null) {
   console.log("[desktop-smoke] verifying Agent Browser Broker open/read/close");
   const fixture = await startBrowserSmokeFixture();
   const postgres = await loadPostgres();
@@ -529,7 +904,20 @@ async function verifyAgentBrowserBroker(baseUrl, databaseUrl, company, agent) {
       values (${runId}::uuid, ${company.id}::uuid, ${agent.id}::uuid, 'desktop_smoke', 'running', now())
     `;
     const token = createSmokeAgentJwt(agent.id, company.id, runId);
-    const mcp = createSmokeMcpClient({
+    if (packagedRuntime) {
+      await verifyPackagedExternalRuntimeAdapterBrowser({
+        agent,
+        baseUrl,
+        company,
+        fixtureUrl: fixture.url,
+        packagedRuntime,
+        runId,
+        token,
+      });
+      console.log("[desktop-smoke] external-runtime Codex adapter used packaged MCP config for Browser open/read/close");
+      return;
+    }
+    const mcp = await createSmokeMcpClient({
       RUDDER_AGENT_ID: agent.id,
       RUDDER_API_KEY: token,
       RUDDER_API_URL: baseUrl,
@@ -652,6 +1040,7 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}) {
   const electronApp = await electron.launch({
     executablePath,
     args,
+    cwd: smokeHomeDir,
     env: {
       ...process.env,
       HOME: smokeHomeDir,
@@ -673,8 +1062,8 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}) {
   return { electronApp, page };
 }
 
-async function launchDesktop(userDataDir, mode, ports) {
-  const { electronApp, page: firstPage } = await launchDesktopWindow(userDataDir, mode, ports);
+async function launchDesktop(userDataDir, mode, ports, extraEnv = {}) {
+  const { electronApp, page: firstPage } = await launchDesktopWindow(userDataDir, mode, ports, extraEnv);
   const page = await waitForBoardWindow(electronApp, firstPage);
   const baseUrl = new URL(page.url()).origin;
   console.log(`[desktop-smoke] board loaded at ${baseUrl}`);
@@ -885,7 +1274,7 @@ async function clearBrowserProfile(page) {
 async function waitForBoardWindow(electronApp, initialPage, options = {}) {
   const { expectedUrlPattern } = options;
   let page = initialPage;
-  let bridgeConfirmed = false;
+  let boardReady = false;
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     const openWindows = electronApp.windows().filter((candidate) => !candidate.isClosed());
@@ -911,10 +1300,16 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
         break;
       }
     }
+    if (boardPage && openWindows.length === 1) {
+      page = boardPage;
+      boardReady = true;
+      break;
+    }
+
     if (boardPage) {
       page = boardPage;
-      bridgeConfirmed = true;
-      break;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      continue;
     }
 
     if (openWindows.length > 0) {
@@ -927,18 +1322,20 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
     }
 
     try {
-      const bootState = await page.evaluate(() => {
+      const bridgeState = await page.evaluate(async () => {
+        if (typeof window.desktopShell?.getBootState === "function") {
+          return { kind: "app", state: await window.desktopShell.getBootState() };
+        }
         if (typeof window.rudderBoot?.getState === "function") {
-          return window.rudderBoot.getState();
+          return { kind: "boot", state: await window.rudderBoot.getState() };
         }
         return null;
       });
-      if (!bootState) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        continue;
+      if (bridgeState?.kind === "app" && bridgeState.state.stage === "error") {
+        throw new Error(`desktop boot failed: ${bridgeState.state.error || bridgeState.state.message}`);
       }
-      if (bootState.stage === "error" || bootState.view === "failed") {
-        throw new Error(`desktop boot failed: ${bootState.failure?.summary || bootState.stage}`);
+      if (bridgeState?.kind === "boot" && bridgeState.state.view === "failed") {
+        throw new Error(`desktop boot failed: ${bridgeState.state.failure?.summary || bridgeState.state.stage}`);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -948,7 +1345,11 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
     }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  assert.equal(bridgeConfirmed, true, `expected desktop window with active IPC bridge, got ${page?.url() ?? "no window"}`);
+  assert.equal(
+    boardReady,
+    true,
+    `expected exactly one ready Desktop board window with an active IPC bridge, got ${page?.url() ?? "no window"}`,
+  );
   assert.ok(page.url().startsWith("http"), `expected desktop window to reach board UI, got ${page.url()}`);
   if (expectedUrlPattern) {
     assert.match(page.url(), expectedUrlPattern, `expected desktop window URL to match ${expectedUrlPattern}`);
@@ -2058,9 +2459,13 @@ async function runCleanScenario(mode) {
   const ports = await allocateSmokePorts();
   const runtimeUrls = createRuntimeUrls(ports);
   const browserImportFixture = await createSyntheticBrowserImportFixture(scenarioRoot);
-  const firstRun = await launchDesktop(scenarioRoot, mode, ports);
+  const packagedRuntime = mode === "packaged" ? await preparePackagedExternalRuntimeFixture(scenarioRoot) : null;
+  const firstRun = await launchDesktop(scenarioRoot, mode, ports, packagedRuntime?.env);
   const browserFixture = await startBrowserSmokeFixture();
   try {
+    if (packagedRuntime) {
+      assert.equal(await pathExists(packagedRuntime.loadedMarker), true, "packaged Desktop should load the external runtime cache");
+    }
     const company = await createCompany(firstRun.baseUrl);
     const companyRouteKey = company.urlKey ?? company.issuePrefix;
     assert.deepEqual(
@@ -2071,10 +2476,11 @@ async function runCleanScenario(mode) {
     await verifyBundledSkills(firstRun.baseUrl, company.id);
     await verifySyntheticBrowserCookieImport(firstRun.electronApp, firstRun.page, browserImportFixture);
     const ceo = await createCeo(firstRun.baseUrl, company.id);
-    await verifyAgentBrowserBroker(firstRun.baseUrl, runtimeUrls.databaseUrl, company, ceo);
+    await verifyAgentBrowserBroker(firstRun.baseUrl, runtimeUrls.databaseUrl, company, ceo, packagedRuntime);
     const issue = await createIssue(firstRun.baseUrl, company.id, ceo.id);
     if (mode === "packaged") {
       await verifyPackagedDesktopCli(firstRun.baseUrl, ceo, issue);
+      assert.equal(await pathExists(packagedRuntime.staleMarker), false, "packaged runtime must not invoke stale PATH rudder");
     }
     firstRun.page = await verifyReloadRecovery(
       firstRun.electronApp,

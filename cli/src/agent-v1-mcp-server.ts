@@ -1,3 +1,8 @@
+import {
+  RUDDER_BROWSER_MCP_CONTRACT_HASH,
+  RUDDER_MCP_CONTRACT_VERSION,
+  RUDDER_MCP_SERVER_NAME,
+} from "@rudderhq/agent-runtime-utils";
 import { addIssueCommentSchema, checkoutIssueSchema } from "@rudderhq/shared";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -11,8 +16,9 @@ import {
   type AgentV1McpToolManifestEntry
 } from "./agent-v1-registry.js";
 import { RudderApiClient } from "./client/http.js";
+import { resolveCliVersion } from "./version.js";
 
-export const RUDDER_MCP_SERVER_NAME = "rudder-control-plane";
+export { RUDDER_MCP_SERVER_NAME };
 const RUDDER_MCP_MAX_TOOL_RESULT_BYTES = 1_000_000;
 const RUDDER_MCP_MAX_INLINE_TEXT_BYTES = 32_000;
 
@@ -139,8 +145,16 @@ export async function runAgentV1McpJsonRpcMessage(
       case "initialize":
         return rpcResult(id, {
           protocolVersion: requestedProtocolVersion(message.params) ?? "2024-11-05",
-          capabilities: { tools: {} },
-          serverInfo: { name: RUDDER_MCP_SERVER_NAME, version: "1.0.0" },
+          capabilities: {
+            tools: {},
+            experimental: {
+              rudder: {
+                contractVersion: RUDDER_MCP_CONTRACT_VERSION,
+                browserContractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
+              },
+            },
+          },
+          serverInfo: { name: RUDDER_MCP_SERVER_NAME, version: resolveCliVersion() },
         });
       case "tools/list":
         return rpcResult(id, {

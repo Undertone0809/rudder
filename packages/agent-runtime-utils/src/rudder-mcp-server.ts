@@ -12,5 +12,7 @@ export async function resolveRudderMcpCliCommand(moduleDir: string): Promise<Rud
     env: {
       RUDDER_MCP_RUDDER_BIN: cliShim,
     },
+    provenance: target.provenance,
+    expectedVersion: target.version,
   };
 }

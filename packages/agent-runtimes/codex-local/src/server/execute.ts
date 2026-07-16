@@ -10,6 +10,11 @@ import {
 } from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
+  assertRudderMcpCoreAvailable,
+  preflightRudderMcpServer,
+} from "@rudderhq/agent-runtime-utils/rudder-mcp-preflight";
+import { resolveRudderMcpCliCommand } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
+import {
   asBoolean,
   asNumber,
   asString,
@@ -64,6 +69,7 @@ const CODEX_PROTECTED_ENV_KEYS = new Set([
   "CODEX_HOME",
   "HOME",
   ...RUDDER_MCP_MANAGED_ENV_KEYS,
+  "RUDDER_DESKTOP_CLI_ENTRY",
   "RUDDER_AGENT_ROOT",
   "RUDDER_OPERATOR_HOME",
   "USERPROFILE",
@@ -470,7 +476,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   for (const [k, v] of Object.entries(envConfig)) {
     if (typeof v === "string" && !CODEX_PROTECTED_ENV_KEYS.has(k)) env[k] = v;
   }
-  const browserEnabled = applyRudderBrowserCapabilityEnv(env, config);
+  let browserEnabled = applyRudderBrowserCapabilityEnv(env, config);
   env.CODEX_HOME = effectiveCodexHome;
   env.HOME = operatorHome;
   env.USERPROFILE = process.env.USERPROFILE ?? operatorHome;
@@ -479,6 +485,28 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   env.RUDDER_OPERATOR_HOME = operatorHome;
   if (authToken) {
     env.RUDDER_API_KEY = authToken;
+  }
+  applyGitIdentityPreparationEnv(env, preparedGitIdentity);
+  applyGitCredentialHelperPolicyEnv(env);
+  const effectiveEnv = Object.fromEntries(
+    Object.entries({ ...process.env, ...env }).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+  const billingType = resolveCodexBillingType(effectiveEnv);
+  const runtimeEnv = ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, effectiveEnv));
+  const rudderMcpPreflight = await preflightRudderMcpServer({
+    command: await resolveRudderMcpCliCommand(__moduleDir),
+    runtimeEnv,
+    managedEnv: pickRudderMcpManagedEnv(env),
+    browserEnabled,
+  });
+  assertRudderMcpCoreAvailable(rudderMcpPreflight);
+  if (browserEnabled && !rudderMcpPreflight?.browserAvailable) {
+    browserEnabled = false;
+    env.RUDDER_BROWSER_ENABLED = "false";
+    runtimeEnv.RUDDER_BROWSER_ENABLED = "false";
+    await onLog("stderr", `[rudder] ${rudderMcpPreflight?.diagnostic}\n`);
   }
   await realizeManagedCodexSkillEntries(
     {
@@ -492,15 +520,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     __moduleDir,
     pickRudderMcpManagedEnv(env),
   );
-  applyGitIdentityPreparationEnv(env, preparedGitIdentity);
-  applyGitCredentialHelperPolicyEnv(env);
-  const effectiveEnv = Object.fromEntries(
-    Object.entries({ ...process.env, ...env }).filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string",
-    ),
-  );
-  const billingType = resolveCodexBillingType(effectiveEnv);
-  const runtimeEnv = ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, effectiveEnv));
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
   await ensureCommandResolvable(command, cwd, runtimeEnv);
@@ -774,7 +793,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         promptMetrics,
         loadedSkills,
         realizedSkills: loadedSkills,
-        rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled }),
+        rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled, preflight: rudderMcpPreflight }),
         context,
       });
     }
