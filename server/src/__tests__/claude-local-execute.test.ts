@@ -4,6 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  createRuntimeSkillFixture,
+  installVersionMismatchedDesktopMcp,
+} from "./local-runtime-browser-mismatch-helpers";
+import {
   clearInheritedGitIdentityEnv,
   expectPreparedGitConfigCapture,
   gitIdentityCaptureSnippet,
@@ -54,6 +58,7 @@ const payload = {
     DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY ?? null,
     RUDDER_CLAUDE_HOME: process.env.RUDDER_CLAUDE_HOME ?? null,
     RUDDER_API_KEY: process.env.RUDDER_API_KEY ?? null,
+    RUDDER_BROWSER_ENABLED: process.env.RUDDER_BROWSER_ENABLED ?? null,
     RUDDER_OPERATOR_HOME: process.env.RUDDER_OPERATOR_HOME ?? null,
     RUDDER_RUNTIME_TMPDIR: runtimeTmpDir,
     PATH: process.env.PATH ?? null,
@@ -1176,4 +1181,92 @@ describe("claude execute", { timeout: 20_000 }, () => {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.platform === "win32")(
+    "removes Browser skill, prompt, tools, and metadata together after a bundle mismatch",
+    async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-claude-browser-mismatch-"));
+      const workspace = path.join(root, "workspace");
+      const commandPath = path.join(root, "claude");
+      const capturePath = path.join(root, "capture.json");
+      await fs.mkdir(workspace, { recursive: true });
+      await writeFakeClaudeCommand(commandPath);
+      const browserSkill = await createRuntimeSkillFixture(root, "browser", "BROWSER_SKILL_PROMISE");
+      const keepSkill = await createRuntimeSkillFixture(root, "keep-skill", "KEEP_SKILL_AVAILABLE");
+      const restoreDesktopMcp = await installVersionMismatchedDesktopMcp(root);
+      const previousHome = process.env.HOME;
+      const previousRudderHome = process.env.RUDDER_HOME;
+      const previousInstanceId = process.env.RUDDER_INSTANCE_ID;
+      process.env.HOME = root;
+      process.env.RUDDER_HOME = path.join(root, ".rudder");
+      delete process.env.RUDDER_INSTANCE_ID;
+      let meta: Record<string, unknown> = {};
+
+      try {
+        const result = await execute({
+          runId: "run-claude-browser-mismatch",
+          agent: {
+            id: "agent-1",
+            orgId: "organization-1",
+            name: "Claude Agent",
+            agentRuntimeType: "claude_local",
+            agentRuntimeConfig: {},
+          },
+          runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+          config: {
+            command: commandPath,
+            cwd: workspace,
+            rudderBrowserEnabled: true,
+            rudderRuntimeSkills: [
+              { key: "bundled:rudder/browser", runtimeName: "browser", source: browserSkill },
+              { key: "org:keep-skill", runtimeName: "keep-skill", source: keepSkill },
+            ],
+            rudderSkillSync: { desiredSkills: ["bundled:rudder/browser", "org:keep-skill"] },
+            env: { RUDDER_TEST_CAPTURE_PATH: capturePath },
+            promptTemplate: "Follow the heartbeat.",
+          },
+          context: {},
+          authToken: "run-jwt-token",
+          onLog: async () => {},
+          onMeta: async (value) => { meta = value as Record<string, unknown>; },
+        });
+
+        expect(result.exitCode).toBe(0);
+        const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+          env: { RUDDER_BROWSER_ENABLED: string | null };
+          appendedSystemPrompt: string | null;
+          addDirSkillEntries: string[];
+          managedClaudeMcpConfig: string;
+        };
+        expect(capture.env.RUDDER_BROWSER_ENABLED).toBe("false");
+        expect(capture.appendedSystemPrompt).toContain("- keep-skill");
+        expect(capture.appendedSystemPrompt).not.toContain("browser");
+        expect(capture.addDirSkillEntries).toEqual(["keep-skill"]);
+        expect(meta.agentInstructionStack).toContain("- keep-skill");
+        expect(meta.agentInstructionStack).not.toContain("BROWSER_SKILL_PROMISE");
+        expect(meta.loadedSkills).toEqual([expect.objectContaining({ runtimeName: "keep-skill" })]);
+        expect(meta.realizedSkills).toEqual(meta.loadedSkills);
+        expect(meta.rudderMcp).toMatchObject({
+          available: true,
+          browserAvailable: false,
+          diagnosticCode: "browser_bundle_version_mismatch",
+          toolCount: 69,
+        });
+        expect(JSON.parse(capture.managedClaudeMcpConfig)).toMatchObject({
+          mcpServers: {
+            "rudder-control-plane": { env: { RUDDER_BROWSER_ENABLED: "false" } },
+          },
+        });
+      } finally {
+        restoreDesktopMcp();
+        if (previousHome === undefined) delete process.env.HOME;
+        else process.env.HOME = previousHome;
+        if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
+        else process.env.RUDDER_HOME = previousRudderHome;
+        if (previousInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
+        else process.env.RUDDER_INSTANCE_ID = previousInstanceId;
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 });

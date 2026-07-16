@@ -26,6 +26,7 @@ import {
   ensureCommandResolvable,
   ensurePathInEnv,
   ensureRudderCliInPath,
+  filterRudderDesiredSkillsForBrowserCapability,
   joinPromptSections,
   loadAgentInstructionsPrefix,
   parseJson,
@@ -81,17 +82,14 @@ const CLAUDE_SETTINGS_AUTH_ENV_PREFIXES = ["ANTHROPIC_", "DEEPSEEK_"] as const;
  * the repo's `.agents/skills/` directory, so `--add-dir` makes Claude Code discover
  * them as proper registered skills.
  */
-async function buildSkillsDir(config: Record<string, unknown>): Promise<string> {
+async function buildSkillsDir(
+  availableEntries: Array<{ key: string; runtimeName: string; source: string }>,
+  desiredSkillNames: string[],
+): Promise<string> {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-skills-"));
   const target = path.join(tmp, ".claude", "skills");
   await fs.mkdir(target, { recursive: true });
-  const availableEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
-  const desiredNames = new Set(
-    resolveClaudeDesiredSkillNames(
-      config,
-      availableEntries,
-    ),
-  );
+  const desiredNames = new Set(desiredSkillNames);
   for (const entry of availableEntries) {
     if (!desiredNames.has(entry.key)) continue;
     await fs.symlink(
@@ -647,11 +645,16 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ),
   );
   const billingType = resolveClaudeBillingType(effectiveEnv);
-  const skillsDir = await buildSkillsDir(config);
   const claudeSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredClaudeSkillNames = resolveClaudeDesiredSkillNames(config, claudeSkillEntries);
+  const effectiveDesiredClaudeSkillNames = filterRudderDesiredSkillsForBrowserCapability(
+    claudeSkillEntries,
+    desiredClaudeSkillNames,
+    browserEnabled,
+  );
+  const skillsDir = await buildSkillsDir(claudeSkillEntries, effectiveDesiredClaudeSkillNames);
   const loadedSkills = claudeSkillEntries
-    .filter((entry) => desiredClaudeSkillNames.includes(entry.key))
+    .filter((entry) => effectiveDesiredClaudeSkillNames.includes(entry.key))
     .map((entry) => ({
       key: entry.key,
       runtimeName: entry.runtimeName,

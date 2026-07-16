@@ -1,9 +1,17 @@
 import { execute, resetOpenCodeModelsCacheForTests } from "@rudderhq/agent-runtime-opencode-local/server";
 import { buildOpenCodeLocalConfig } from "@rudderhq/agent-runtime-opencode-local/ui";
+import {
+  RUDDER_BROWSER_MCP_CONTRACT_HASH,
+  RUDDER_MCP_CONTRACT_VERSION,
+} from "@rudderhq/agent-runtime-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  createRuntimeSkillFixture,
+  installVersionMismatchedDesktopMcp,
+} from "./local-runtime-browser-mismatch-helpers";
 import {
   clearInheritedGitIdentityEnv,
   expectPreparedGitConfigCapture,
@@ -32,6 +40,7 @@ const payload = {
   opencodeConfigContent: process.env.OPENCODE_CONFIG_CONTENT || null,
   opencodeConfigDir: process.env.OPENCODE_CONFIG_DIR || null,
   rudderOperatorHome: process.env.RUDDER_OPERATOR_HOME || null,
+  rudderBrowserEnabled: process.env.RUDDER_BROWSER_ENABLED || null,
   xdgConfigHome: process.env.XDG_CONFIG_HOME || null,
   xdgDataHome: process.env.XDG_DATA_HOME || null,
   xdgCacheHome: process.env.XDG_CACHE_HOME || null,
@@ -1116,8 +1125,14 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       expect(nativeDiscoverableSkills).toBeUndefined();
       expect(rudderMcp).toEqual({
         available: true,
+        browserAvailable: false,
+        contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
+        contractVersion: RUDDER_MCP_CONTRACT_VERSION,
+        diagnosticCode: null,
+        provenance: "repo",
         serverName: "rudder-control-plane",
         toolCount: 69,
+        version: "0.4.6",
         fallbackReason: null,
       });
     } finally {
@@ -1460,4 +1475,105 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.platform === "win32")(
+    "removes Browser skill, prompt, tools, and metadata together after a bundle mismatch",
+    async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-browser-mismatch-"));
+      const workspace = path.join(root, "workspace");
+      const commandPath = path.join(root, "opencode");
+      const capturePath = path.join(root, "capture.json");
+      const rudderHome = path.join(root, ".rudder");
+      await fs.mkdir(workspace, { recursive: true });
+      await writeFakeOpenCodeCommand(commandPath);
+      const browserSkill = await createRuntimeSkillFixture(root, "browser", "BROWSER_SKILL_PROMISE");
+      const keepSkill = await createRuntimeSkillFixture(root, "keep-skill", "KEEP_SKILL_AVAILABLE");
+      const restoreDesktopMcp = await installVersionMismatchedDesktopMcp(root);
+      const previousHome = process.env.HOME;
+      const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+      const previousRudderHome = process.env.RUDDER_HOME;
+      const previousInstanceId = process.env.RUDDER_INSTANCE_ID;
+      process.env.HOME = root;
+      process.env.RUDDER_OPERATOR_HOME = root;
+      process.env.RUDDER_HOME = rudderHome;
+      delete process.env.RUDDER_INSTANCE_ID;
+      let meta: Record<string, unknown> = {};
+
+      try {
+        const result = await execute({
+          runId: "run-opencode-browser-mismatch",
+          agent: {
+            id: "agent-1",
+            orgId: "organization-1",
+            name: "OpenCode Agent",
+            agentRuntimeType: "opencode_local",
+            agentRuntimeConfig: {},
+          },
+          runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+          config: {
+            command: commandPath,
+            cwd: workspace,
+            model: "openai/gpt-4.1-mini",
+            rudderBrowserEnabled: true,
+            rudderRuntimeSkills: [
+              { key: "bundled:rudder/browser", runtimeName: "browser", source: browserSkill },
+              { key: "org:keep-skill", runtimeName: "keep-skill", source: keepSkill },
+            ],
+            rudderSkillSync: { desiredSkills: ["bundled:rudder/browser", "org:keep-skill"] },
+            env: { RUDDER_TEST_CAPTURE_PATH: capturePath },
+            promptTemplate: "Follow the heartbeat.",
+          },
+          context: {},
+          authToken: "run-jwt-token",
+          onLog: async () => {},
+          onMeta: async (value) => { meta = value as Record<string, unknown>; },
+        });
+
+        expect(result.exitCode).toBe(0);
+        const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+          prompt: string;
+          opencodeConfig: string;
+          rudderBrowserEnabled: string | null;
+        };
+        expect(capture.rudderBrowserEnabled).toBe("false");
+        expect(capture.prompt).toContain("KEEP_SKILL_AVAILABLE");
+        expect(capture.prompt).not.toContain("BROWSER_SKILL_PROMISE");
+        expect(meta.loadedSkills).toEqual([expect.objectContaining({ runtimeName: "keep-skill" })]);
+        expect(meta.realizedSkills).toEqual(meta.loadedSkills);
+        expect(meta.promptInjectedSkills).toEqual(meta.loadedSkills);
+        expect(meta.rudderMcp).toMatchObject({
+          available: true,
+          browserAvailable: false,
+          diagnosticCode: "browser_bundle_version_mismatch",
+          toolCount: 69,
+        });
+        const managedSkills = path.join(
+          rudderHome,
+          "instances",
+          "default",
+          "organizations",
+          "organization-1",
+          "opencode-home",
+          ".claude",
+          "skills",
+        );
+        expect(await fs.readdir(managedSkills)).toEqual(["keep-skill"]);
+        const managedConfig = JSON.parse(await fs.readFile(capture.opencodeConfig, "utf8")) as {
+          mcp?: Record<string, { environment?: Record<string, string> }>;
+        };
+        expect(managedConfig.mcp?.["rudder-control-plane"]?.environment?.RUDDER_BROWSER_ENABLED).toBe("false");
+      } finally {
+        restoreDesktopMcp();
+        if (previousHome === undefined) delete process.env.HOME;
+        else process.env.HOME = previousHome;
+        if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+        else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+        if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
+        else process.env.RUDDER_HOME = previousRudderHome;
+        if (previousInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
+        else process.env.RUDDER_INSTANCE_ID = previousInstanceId;
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 });

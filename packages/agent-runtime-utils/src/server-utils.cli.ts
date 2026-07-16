@@ -502,6 +502,20 @@ export function resolveRudderDesiredSkillNames(
   return Array.from(new Set(desiredSkills));
 }
 
+export function filterRudderDesiredSkillsForBrowserCapability(
+  availableEntries: Array<{ key: string; runtimeName?: string | null }>,
+  desiredSkills: string[],
+  browserEnabled: boolean,
+): string[] {
+  if (browserEnabled) return [...desiredSkills];
+  const browserSkillKeys = new Set(
+    availableEntries
+      .filter((entry) => entry.runtimeName?.trim().toLowerCase() === "browser")
+      .map((entry) => entry.key),
+  );
+  return desiredSkills.filter((skill) => !browserSkillKeys.has(skill));
+}
+
 export function writeRudderSkillSyncPreference(
   config: Record<string, unknown>,
   desiredSkills: string[],
