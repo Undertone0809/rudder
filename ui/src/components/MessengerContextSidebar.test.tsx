@@ -13,6 +13,7 @@ let messengerRoute: any;
 let messengerModelOptions: any[];
 let chatList: any[];
 let agentList: any[];
+let projectList: any[];
 let customGroupList: any[];
 let queryOptions: Array<{ queryKey?: unknown; enabled?: boolean }>;
 let localStorageValues: Record<string, string>;
@@ -26,6 +27,7 @@ vi.mock("@tanstack/react-query", () => ({
     if (options.enabled === false) return { data: undefined };
     const queryKey = Array.isArray(options.queryKey) ? options.queryKey : [];
     if (queryKey[0] === "agents") return { data: agentList };
+    if (queryKey[0] === "projects") return { data: projectList };
     if (queryKey[0] === "messenger" && queryKey[2] === "groups") return { data: { groups: customGroupList } };
     return { data: chatList };
   },
@@ -142,6 +144,7 @@ describe("MessengerContextSidebar", () => {
       },
     ];
     customGroupList = [];
+    projectList = [];
     agentList = [
       {
         id: "agent-1",
@@ -1046,15 +1049,30 @@ describe("MessengerContextSidebar", () => {
         ],
       },
     ];
+    projectList = [
+      {
+        id: "project-1",
+        name: "Website launch",
+        icon: "rocket",
+        color: "#0ea5e9",
+      },
+    ];
 
     const html = renderToStaticMarkup(<MessengerContextSidebar />);
 
     expect(html).toContain("Threads organized by project");
     expect(html).toContain("Website launch");
+    expect(html).toContain('data-testid="messenger-thread-section-project-project-1-project-icon"');
+    expect(html).toContain("lucide-rocket");
+    expect(html).toContain("--project-accent-color:#0ea5e9");
     expect(html).toContain("System");
     expect(html.indexOf("Website launch")).toBeLessThan(html.indexOf("System"));
     expect(queryOptions).toContainEqual(expect.objectContaining({
       queryKey: ["chats", "org-1", "all", "preview", 80],
+      enabled: true,
+    }));
+    expect(queryOptions).toContainEqual(expect.objectContaining({
+      queryKey: ["projects", "org-1"],
       enabled: true,
     }));
   });
