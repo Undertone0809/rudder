@@ -16,7 +16,7 @@ const e2eDb = createDb(E2E_DATABASE_URL);
 const screenshotDir = "/tmp/rudder-chat-work-manifest";
 
 test.describe("Chat Work Manifest", () => {
-  test("shows thread work without project work across desktop and compact layouts", async ({ page }) => {
+  test("shows category-led thread outputs across desktop and compact layouts", async ({ page }) => {
     fs.mkdirSync(screenshotDir, { recursive: true });
     const orgRes = await page.request.post("/api/orgs", {
       data: {
@@ -65,6 +65,14 @@ test.describe("Chat Work Manifest", () => {
     });
     expect(otherChatRes.ok(), await otherChatRes.text()).toBe(true);
     const otherChat = await otherChatRes.json() as { id: string };
+    const outputOnlyChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Output-only manifest chat",
+        preferredAgentId: agent.id,
+      },
+    });
+    expect(outputOnlyChatRes.ok(), await outputOnlyChatRes.text()).toBe(true);
+    const outputOnlyChat = await outputOnlyChatRes.json() as { id: string };
     const emptyChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
         title: "Empty manifest chat",
@@ -111,6 +119,16 @@ test.describe("Chat Work Manifest", () => {
       chatConversationId: chat.id,
       contextSnapshot: { projectId: project.id },
     });
+    const outputOnlyRunId = randomUUID();
+    await e2eDb.insert(heartbeatRuns).values({
+      id: outputOnlyRunId,
+      orgId: organization.id,
+      agentId: agent.id,
+      invocationSource: "chat",
+      status: "completed",
+      chatConversationId: outputOnlyChat.id,
+      contextSnapshot: {},
+    });
     await e2eDb.insert(chatMessages).values([
       {
         orgId: organization.id,
@@ -143,6 +161,15 @@ test.describe("Chat Work Manifest", () => {
         body: "Other project source https://other-source.example/data",
         status: "completed",
       },
+      {
+        orgId: organization.id,
+        conversationId: outputOnlyChat.id,
+        role: "assistant",
+        body: `Produced ${outputFile.markdownLink}.`,
+        status: "completed",
+        runId: outputOnlyRunId,
+        replyingAgentId: agent.id,
+      },
     ]);
 
     const otherManifestRes = await page.request.get(`/api/chats/${otherChat.id}/work-manifest`);
@@ -153,9 +180,9 @@ test.describe("Chat Work Manifest", () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
 
-    const shelf = page.getByRole("complementary", { name: "Work manifest" });
+    const shelf = page.getByRole("complementary", { name: "Conversation files and links" });
     await expect(shelf).toBeVisible({ timeout: 15_000 });
-    await expect(shelf).toContainText("Outputs");
+    await expect(shelf.getByText("Outputs", { exact: true })).toHaveCount(1);
     await expect(shelf).toContainText("Sources");
     await expect(shelf).toContainText("References");
     await expect(shelf).toContainText("report.md");
@@ -167,6 +194,8 @@ test.describe("Chat Work Manifest", () => {
     await expect(shelf).not.toContainText("Project research source");
     await expect(shelf).not.toContainText("stale.example");
     await expect(shelf).not.toContainText("Browser");
+    await expect(shelf.getByRole("button", { name: "Add source" })).toHaveCount(0);
+    await expect(shelf.getByText("Work", { exact: true })).toHaveCount(0);
     await expect(shelf.getByRole("button", { name: /source\.example https:\/\/source\.example\/research/ }))
       .toHaveCount(1);
 
@@ -189,7 +218,7 @@ test.describe("Chat Work Manifest", () => {
     await page.mouse.wheel(0, 600);
     await expect.poll(() => manifestScrollRegion.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${otherChat.id}`);
-    const otherShelf = page.getByRole("complementary", { name: "Work manifest" });
+    const otherShelf = page.getByRole("complementary", { name: "Conversation files and links" });
     await expect(otherShelf).toBeVisible();
     await expect(otherShelf).toContainText("other-source.example");
     await expect.poll(() => (
@@ -288,6 +317,7 @@ test.describe("Chat Work Manifest", () => {
     await page.setViewportSize({ width: 1024, height: 768 });
     const trigger = page.getByTestId("chat-work-manifest-trigger");
     await expect(trigger).toBeVisible();
+    await expect(trigger).toContainText("Outputs 1");
     await trigger.click();
     const compactPanel = page.getByTestId("chat-work-manifest-compact-panel");
     await expect(compactPanel).toBeVisible();
@@ -300,6 +330,16 @@ test.describe("Chat Work Manifest", () => {
     expect(composerBox).not.toBeNull();
     expect(panelBox!.y + panelBox!.height).toBeLessThanOrEqual(composerBox!.y);
     await page.screenshot({ path: `${screenshotDir}/compact.png`, fullPage: true });
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${outputOnlyChat.id}`);
+    const outputOnlyShelf = page.getByRole("complementary", { name: "Conversation files and links" });
+    await expect(outputOnlyShelf).toBeVisible();
+    await expect(outputOnlyShelf.getByText("Outputs", { exact: true })).toHaveCount(1);
+    await expect(outputOnlyShelf).toContainText("report.md");
+    await expect(outputOnlyShelf.getByText("Work", { exact: true })).toHaveCount(0);
+    await expect(outputOnlyShelf.getByRole("button", { name: "Add source" })).toHaveCount(0);
+    await page.screenshot({ path: `${screenshotDir}/output-only.png`, fullPage: true });
 
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${emptyChat.id}`);
     await expect(page.getByTestId("chat-work-manifest")).toHaveCount(0);
@@ -322,7 +362,7 @@ test.describe("Chat Work Manifest", () => {
       });
     });
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${errorChat.id}`);
-    const errorShelf = page.getByRole("complementary", { name: "Work manifest" });
+    const errorShelf = page.getByRole("complementary", { name: "Conversation files and links" });
     await expect(errorShelf).toBeVisible();
     await expect(errorShelf).toContainText("Manifest unavailable");
     await expect(wideToggle).toHaveAttribute("aria-expanded", "true");
