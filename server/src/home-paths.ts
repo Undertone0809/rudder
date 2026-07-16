@@ -4,6 +4,7 @@ import {
   resolveOrganizationLegacyStorageKey,
   resolveOrganizationStorageKey,
 } from "@rudderhq/agent-runtime-utils";
+import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -13,6 +14,9 @@ import { type AgentWorkspaceLocator, resolveStoredOrDerivedAgentWorkspaceKey } f
 const DEFAULT_INSTANCE_ID = "default";
 const INSTANCE_ID_RE = /^[a-zA-Z0-9_-]+$/;
 const FRIENDLY_PATH_SEGMENT_RE = /[^a-zA-Z0-9._-]+/g;
+const FILE_COMPARE_CHUNK_BYTES = 64 * 1024;
+const EXECUTABLE_MODE_BITS = 0o111;
+const MIGRATION_BACKUP_DIR_NAME = ".rudder-migration-backups";
 const WORKSPACE_PERMISSION_ERROR_CODES = new Set(["EACCES", "EPERM", "EROFS"]);
 const ORGANIZATION_WORKSPACE_MAP_FILE = ".rudder-organizations.json";
 const RESERVED_ORGANIZATION_WORKSPACE_NAMES = new Set([
@@ -387,8 +391,9 @@ export async function migrateOrganizationStorageRoot(orgId: string): Promise<{
   const canonicalExists = await directoryExists(canonicalRootPath);
   if (canonicalExists) {
     await assertCanMergeDirectoryContents(legacyRootPath, canonicalRootPath);
-    await mergeDirectoryContents(legacyRootPath, canonicalRootPath);
-    await fs.rmdir(legacyRootPath);
+    const retainedDuplicates = await mergeDirectoryContents(legacyRootPath, canonicalRootPath);
+    if (retainedDuplicates) await archiveRetainedMigrationSource(legacyRootPath);
+    else await fs.rmdir(legacyRootPath);
     return {
       canonicalRootPath,
       legacyRootPath,
@@ -475,8 +480,9 @@ export async function migrateOrganizationWorkspaceRoot(orgId: string, options?: 
     try {
       if (canonicalExists) {
         await assertCanMergeDirectoryContents(candidateLegacyRootPath, canonicalRootPath);
-        await mergeDirectoryContents(candidateLegacyRootPath, canonicalRootPath);
-        await fs.rmdir(candidateLegacyRootPath);
+        const retainedDuplicates = await mergeDirectoryContents(candidateLegacyRootPath, canonicalRootPath);
+        if (retainedDuplicates) await archiveRetainedMigrationSource(candidateLegacyRootPath);
+        else await fs.rmdir(candidateLegacyRootPath);
         migrated = true;
         migratedFromRootPath = candidateLegacyRootPath;
         mergedIntoExistingTarget = true;
@@ -866,9 +872,63 @@ async function movePath(sourcePath: string, targetPath: string): Promise<void> {
   await fs.rm(sourcePath, { recursive: true, force: false });
 }
 
-async function mergeDirectoryContents(sourceRoot: string, targetRoot: string): Promise<void> {
+async function regularFilesHaveIdenticalContents(sourcePath: string, targetPath: string): Promise<boolean> {
+  const sourceFile = await fs.open(sourcePath, "r");
+  try {
+    const targetFile = await fs.open(targetPath, "r");
+    try {
+      const [sourceStat, targetStat] = await Promise.all([sourceFile.stat(), targetFile.stat()]);
+      if (
+        !sourceStat.isFile() ||
+        !targetStat.isFile() ||
+        sourceStat.size !== targetStat.size ||
+        (sourceStat.mode & EXECUTABLE_MODE_BITS) !== (targetStat.mode & EXECUTABLE_MODE_BITS)
+      ) {
+        return false;
+      }
+
+      const sourceBuffer = Buffer.allocUnsafe(FILE_COMPARE_CHUNK_BYTES);
+      const targetBuffer = Buffer.allocUnsafe(FILE_COMPARE_CHUNK_BYTES);
+      let position = 0;
+
+      while (position < sourceStat.size) {
+        const bytesToRead = Math.min(FILE_COMPARE_CHUNK_BYTES, sourceStat.size - position);
+        const [sourceRead, targetRead] = await Promise.all([
+          sourceFile.read(sourceBuffer, 0, bytesToRead, position),
+          targetFile.read(targetBuffer, 0, bytesToRead, position),
+        ]);
+        if (
+          sourceRead.bytesRead === 0 ||
+          sourceRead.bytesRead !== targetRead.bytesRead ||
+          !sourceBuffer.subarray(0, sourceRead.bytesRead).equals(targetBuffer.subarray(0, targetRead.bytesRead))
+        ) {
+          return false;
+        }
+        position += sourceRead.bytesRead;
+      }
+
+      return true;
+    } finally {
+      await targetFile.close();
+    }
+  } finally {
+    await sourceFile.close();
+  }
+}
+
+async function archiveRetainedMigrationSource(sourceRoot: string): Promise<string> {
+  const backupHome = path.join(path.dirname(sourceRoot), MIGRATION_BACKUP_DIR_NAME);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupPath = path.join(backupHome, `${path.basename(sourceRoot)}-${timestamp}-${randomUUID()}`);
+  await fs.mkdir(backupHome, { recursive: true });
+  await fs.rename(sourceRoot, backupPath);
+  return backupPath;
+}
+
+async function mergeDirectoryContents(sourceRoot: string, targetRoot: string): Promise<boolean> {
   await fs.mkdir(targetRoot, { recursive: true });
   const entries = await fs.readdir(sourceRoot, { withFileTypes: true });
+  let retainedDuplicates = false;
 
   for (const entry of entries) {
     const sourcePath = path.join(sourceRoot, entry.name);
@@ -879,14 +939,23 @@ async function mergeDirectoryContents(sourceRoot: string, targetRoot: string): P
       continue;
     }
     if (entry.isDirectory() && targetStat.isDirectory()) {
-      await mergeDirectoryContents(sourcePath, targetPath);
-      await fs.rmdir(sourcePath);
+      const retainedInChild = await mergeDirectoryContents(sourcePath, targetPath);
+      if (retainedInChild) retainedDuplicates = true;
+      else await fs.rmdir(sourcePath);
       continue;
+    }
+    if (entry.isFile() && targetStat.isFile()) {
+      if (await regularFilesHaveIdenticalContents(sourcePath, targetPath)) {
+        // Preserve the duplicate in an atomic sibling backup instead of racing external filesystem writers.
+        retainedDuplicates = true;
+        continue;
+      }
     }
     throw new Error(
       `Cannot migrate organization storage root because '${targetPath}' already exists.`,
     );
   }
+  return retainedDuplicates;
 }
 
 async function assertCanMergeDirectoryContents(sourceRoot: string, targetRoot: string): Promise<void> {
@@ -900,6 +969,9 @@ async function assertCanMergeDirectoryContents(sourceRoot: string, targetRoot: s
     if (entry.isDirectory() && targetStat.isDirectory()) {
       await assertCanMergeDirectoryContents(sourcePath, targetPath);
       continue;
+    }
+    if (entry.isFile() && targetStat.isFile()) {
+      if (await regularFilesHaveIdenticalContents(sourcePath, targetPath)) continue;
     }
     throw new Error(
       `Cannot migrate organization storage root because '${targetPath}' already exists.`,
@@ -928,7 +1000,9 @@ export async function pruneOrphanedOrganizationStorage(
   const legacyProjectDirNames = await listDirectoryNames(legacyProjectsRoot);
   const legacyProjectsRootExists = await directoryExists(legacyProjectsRoot);
 
-  const removedOrganizationDirNames = organizationDirNames.filter((dirName) => !liveOrgIdSet.has(dirName));
+  const removedOrganizationDirNames = organizationDirNames.filter((dirName) =>
+    dirName !== MIGRATION_BACKUP_DIR_NAME && !liveOrgIdSet.has(dirName)
+  );
   const removedLegacyProjectDirNames = legacyProjectDirNames;
 
   await Promise.all([
