@@ -17,7 +17,7 @@ import {
   resolveAgentRunScene,
   type HeartbeatRun,
 } from "@rudderhq/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { createLocalAgentJwt } from "../../agent-auth-jwt.js";
 import type {
   AgentRuntimeInvocationMeta,
@@ -66,6 +66,22 @@ function buildPersistableHeartbeatContext(context: Record<string, unknown>) {
   return sanitizeStartupContextContextForPersistence(context) ?? {};
 }
 
+const EXECUTOR_OWNED_CONTEXT_KEYS = [
+  "executionWorkspaceId",
+  "rudderGitIdentity",
+  "rudderScene",
+  "rudderWorkspace",
+  "rudderWorkspaces",
+  "rudderStartupContext",
+  "rudderStartupContextMetrics",
+  "rudderRuntimeServiceIntents",
+  "rudderSessionHandoffMarkdown",
+  "rudderSessionRotationReason",
+  "rudderPreviousSessionId",
+  "rudderRuntimeServices",
+  "rudderRuntimePrimaryUrl",
+] as const;
+
 function resolveRuntimeSceneForRun(run: typeof heartbeatRuns.$inferSelect) {
   return resolveAgentRunScene({
     ...run,
@@ -78,6 +94,46 @@ function resolveRuntimeSceneForRun(run: typeof heartbeatRuns.$inferSelect) {
 
 export function createHeartbeatExecuteHandlers(context: any) {
   const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, acknowledgeRunProcessExit, renewRunExecutionLease, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = context;
+
+  async function persistRunningExecutionContext(
+    runId: string,
+    desiredContext: Record<string, unknown>,
+    patch: Partial<typeof heartbeatRuns.$inferInsert> = {},
+  ) {
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`select id from heartbeat_runs where id = ${runId} for update`);
+      const currentRun = await tx
+        .select()
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, runId))
+        .then((rows) => rows[0] ?? null);
+      if (!currentRun || currentRun.status !== "running") return null;
+
+      const persistableContext = buildPersistableHeartbeatContext(desiredContext);
+      const mergedContext = mergeCoalescedContextSnapshot(
+        persistableContext,
+        parseObject(currentRun.contextSnapshot),
+      );
+      for (const key of EXECUTOR_OWNED_CONTEXT_KEYS) {
+        if (Object.prototype.hasOwnProperty.call(persistableContext, key)) {
+          mergedContext[key] = persistableContext[key];
+        } else {
+          delete mergedContext[key];
+        }
+      }
+
+      return tx
+        .update(heartbeatRuns)
+        .set({
+          ...patch,
+          contextSnapshot: mergedContext,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(heartbeatRuns.id, runId), eq(heartbeatRuns.status, "running")))
+        .returning()
+        .then((rows) => rows[0] ?? null);
+    });
+  }
 
   async function executeRun(runId: string, opts?: { executionReserved?: boolean }) {
     const executionReserved = opts?.executionReserved === true;
@@ -235,7 +291,9 @@ export function createHeartbeatExecuteHandlers(context: any) {
     const taskSession = taskKey
       ? await getTaskSession(agent.orgId, agent.id, agent.agentRuntimeType, taskKey)
       : null;
-    const resetTaskSession = shouldResetTaskSessionForWake(context);
+    const resetTaskSession = run.sessionReuseScope === "unknown"
+      ? shouldResetTaskSessionForWake(context)
+      : run.sessionReuseScope === "none" && shouldResetTaskSessionForWake(context);
     const sessionResetReason = describeSessionResetReason(context);
     const taskSessionForRun = resetTaskSession ? null : taskSession;
     const explicitResumeSessionParams = normalizeSessionParams(
@@ -254,26 +312,28 @@ export function createHeartbeatExecuteHandlers(context: any) {
         (sessionCodec.getDisplayId ? sessionCodec.getDisplayId(taskSessionParams) : null) ??
         readNonEmptyString(taskSessionParams?.sessionId),
     );
-    const sessionSelection = selectRunSessionLineage({
-      forceFresh: Boolean(heartbeatSessions.readSessionReuseSuppression(context)),
-      explicitSessionParams: explicitResumeSessionParams,
-      explicitSessionDisplayId: explicitResumeSessionDisplayId,
-      taskSessionParams,
-      taskSessionDisplayId,
-    });
+    const frozenSessionParams = normalizeSessionParams(
+      sessionCodec.deserialize(run.sessionParamsBeforeJson ?? null),
+    );
+    const frozenSessionDisplayId = truncateDisplayId(
+      run.sessionIdBefore ??
+        (sessionCodec.getDisplayId ? sessionCodec.getDisplayId(frozenSessionParams) : null) ??
+        readNonEmptyString(frozenSessionParams?.sessionId),
+    );
+    const sessionSelection = run.sessionReuseScope === "unknown"
+      ? selectRunSessionLineage({
+          forceFresh: Boolean(heartbeatSessions.readSessionReuseSuppression(context)),
+          explicitSessionParams: explicitResumeSessionParams,
+          explicitSessionDisplayId: explicitResumeSessionDisplayId,
+          taskSessionParams,
+          taskSessionDisplayId,
+        })
+      : {
+          reuseScope: run.sessionReuseScope,
+          sessionParams: run.sessionReuseScope === "none" ? null : frozenSessionParams,
+          sessionDisplayId: run.sessionReuseScope === "none" ? null : frozenSessionDisplayId,
+        };
     const previousSessionParams = sessionSelection.sessionParams;
-    const selectedRunningRun = await db
-      .update(heartbeatRuns)
-      .set({
-        sessionIdBefore: sessionSelection.sessionDisplayId ?? readNonEmptyString(sessionSelection.sessionParams?.sessionId),
-        sessionParamsBeforeJson: sessionSelection.sessionParams,
-        sessionReuseScope: sessionSelection.reuseScope,
-        updatedAt: new Date(),
-      })
-      .where(and(eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.status, "running")))
-      .returning()
-      .then((rows) => rows[0] ?? null);
-    if (selectedRunningRun) run = selectedRunningRun;
     const config = await runContextSvc.materializeManagedInstructionsForRun({
       ...agent,
       agentRuntimeConfig: parseObject(agent.agentRuntimeConfig),
@@ -475,13 +535,8 @@ export function createHeartbeatExecuteHandlers(context: any) {
     }
     if (persistedExecutionWorkspace) {
       context.executionWorkspaceId = persistedExecutionWorkspace.id;
-      await db
-        .update(heartbeatRuns)
-        .set({
-          contextSnapshot: buildPersistableHeartbeatContext(context),
-          updatedAt: new Date(),
-        })
-        .where(eq(heartbeatRuns.id, run.id));
+      const workspaceContextRun = await persistRunningExecutionContext(run.id, context);
+      if (workspaceContextRun) run = workspaceContextRun;
     }
     const runtimeSessionResolution = resolveRuntimeSessionParamsForWorkspace({
       orgId: agent.orgId,
@@ -619,19 +674,16 @@ export function createHeartbeatExecuteHandlers(context: any) {
       });
 
       const startedAt = run.startedAt ?? new Date();
-      const runningWithSession = await db
-        .update(heartbeatRuns)
-        .set({
+      const runningWithSession = await persistRunningExecutionContext(
+        run.id,
+        context,
+        {
           startedAt,
           sessionIdBefore: runtimeForAdapter.sessionDisplayId ?? runtimeForAdapter.sessionId,
           sessionParamsBeforeJson: runtimeForAdapter.sessionParams,
           sessionReuseScope,
-          contextSnapshot: buildPersistableHeartbeatContext(context),
-          updatedAt: new Date(),
-        })
-        .where(and(eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.status, "running")))
-        .returning()
-        .then((rows) => rows[0] ?? null);
+        },
+      );
       if (runningWithSession) run = runningWithSession;
 
       const currentRun = run;
@@ -746,13 +798,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
         context.rudderRuntimeServices = runtimeServices;
         context.rudderRuntimePrimaryUrl =
           runtimeServices.find((service) => readNonEmptyString(service.url))?.url ?? null;
-        await db
-          .update(heartbeatRuns)
-          .set({
-            contextSnapshot: buildPersistableHeartbeatContext(context),
-            updatedAt: new Date(),
-          })
-          .where(eq(heartbeatRuns.id, run.id));
+        await persistRunningExecutionContext(run.id, context);
       }
       if (issueId && (executionWorkspace.created || runtimeServices.some((service) => !service.reused))) {
         try {
@@ -853,13 +899,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
         context.rudderRuntimeServices = combinedRuntimeServices;
         context.rudderRuntimePrimaryUrl =
           combinedRuntimeServices.find((service) => readNonEmptyString(service.url))?.url ?? null;
-        await db
-          .update(heartbeatRuns)
-          .set({
-            contextSnapshot: buildPersistableHeartbeatContext(context),
-            updatedAt: new Date(),
-          })
-          .where(eq(heartbeatRuns.id, run.id));
+        await persistRunningExecutionContext(run.id, context);
         if (issueId) {
           try {
             await issuesSvc.addComment(
