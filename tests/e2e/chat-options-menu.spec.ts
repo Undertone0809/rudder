@@ -271,7 +271,12 @@ test.describe("Chat options menu", () => {
       },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json();
+    const organization = await orgRes.json() as {
+      id: string;
+      issuePrefix: string;
+      urlKey?: string | null;
+    };
+    const organizationRouteKey = organization.urlKey || organization.issuePrefix;
     const chatAgent = await createE2EChatAgent(page.request, organization.id, {
       name: "Project Recent Agent",
       command: E2E_CODEX_STUB,
@@ -352,7 +357,7 @@ test.describe("Chat options menu", () => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
-    await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${chatAgent.id}&projectId=${project.id}`);
+    await page.goto(`/${organizationRouteKey}/messenger/chat?agentId=${chatAgent.id}&projectId=${project.id}`);
     await expect(page.getByTestId("chat-project-selector")).toContainText(project.name, { timeout: 15_000 });
 
     const tabsList = page.getByRole("tablist", { name: "New chat empty state" });
@@ -417,6 +422,9 @@ test.describe("Chat options menu", () => {
     await expect.poll(
       () => olderProjectChatRow.evaluate((element) => getComputedStyle(element).backgroundColor),
     ).not.toBe("rgba(0, 0, 0, 0)");
+    await expect.poll(
+      () => olderProjectChatRow.evaluate((element) => Number.parseFloat(getComputedStyle(element).borderRadius)),
+    ).toBeGreaterThan(0);
     const hoverGeometry = await olderProjectChatRow.evaluate((element) => {
       const dividerRow = element.parentElement;
       if (!dividerRow) throw new Error("Recent conversation row is missing its divider wrapper");
@@ -441,6 +449,13 @@ test.describe("Chat options menu", () => {
       await notificationDismissButtons.first().click();
     }
     await olderProjectChatRow.scrollIntoViewIfNeeded();
+    await page.mouse.move(0, 0);
+    await expect.poll(
+      () => olderProjectChatRow.evaluate((element) => getComputedStyle(element).backgroundColor),
+    ).toBe("rgba(0, 0, 0, 0)");
+    await expect.poll(
+      () => olderProjectChatRow.evaluate((element) => Number.parseFloat(getComputedStyle(element).borderRadius)),
+    ).toBe(0);
 
     await page.screenshot({
       path: testInfo.outputPath("project-new-chat-recent-conversations.png"),
@@ -448,7 +463,7 @@ test.describe("Chat options menu", () => {
     });
 
     await olderProjectChatRow.click();
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/${olderProjectChat.id}$`));
+    await expect(page).toHaveURL(new RegExp(`/${organizationRouteKey}/messenger/chat/${olderProjectChat.id}$`));
     await expect(page.getByTestId("chat-actions-trigger")).toBeVisible();
   });
 
