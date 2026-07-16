@@ -1721,7 +1721,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const composerUnavailable = selectedConversation ? !selectedConversation.chatRuntime.available && !canPersistSelectedAgentForConversation : !activeSelectedAgentId; const composerUnavailableMessage = activeSelectedAgentId ? selectedConversation?.chatRuntime.error ?? "Selected chat agent is unavailable." : "Create or activate an agent before sending messages."; const hasPendingLightweightProposal = rawMessages.some(
     (message) => !message.supersededAt && message.kind === "operation_proposal" && !message.approval && operationProposalStatusFromMessage(message) === "pending", ); const hasActionableApprovals = rawMessages .filter((m) => !m.supersededAt) .some((message) => approvalNeedsAction(message.approval));
   const agentPillLabel =
-    activeAgentId === NO_CHAT_AGENT_ID ? (agents ? NO_CHAT_AGENT_LABEL : "Loading agents") : (() => { const activeAgent = (agents ?? []).find((agent) => agent.id === activeAgentId); return activeAgent ? formatChatAgentLabel(activeAgent) : "Unknown agent"; })(); const activeProjectContextLink = selectedConversation?.contextLinks.find((link) => link.entityType === "project") ?? null; const activeProject = activeProjectId === NO_PROJECT_ID ? null : visibleProjects.find((project) => project.id === activeProjectId) ?? null; const projectPillLabel = activeProject ? projectDisplayName(activeProject) : activeProjectId === NO_PROJECT_ID ? "No project" : activeProjectContextLink?.entity?.label ?? "Unknown project"; const showProjectSelector = !selectedConversation || activeProjectId !== NO_PROJECT_ID || !projectSelectionLocked; const allRecentProjectConversations = useMemo(() => {
+    activeAgentId === NO_CHAT_AGENT_ID ? (agents ? NO_CHAT_AGENT_LABEL : "Loading agents") : (() => { const activeAgent = (agents ?? []).find((agent) => agent.id === activeAgentId); return activeAgent ? formatChatAgentLabel(activeAgent) : "Unknown agent"; })(); const activeProjectContextLink = selectedConversation?.contextLinks.find((link) => link.entityType === "project") ?? null; const activeProject = activeProjectId === NO_PROJECT_ID ? null : visibleProjects.find((project) => project.id === activeProjectId) ?? null; const hasSelectedProject = activeProjectId !== NO_PROJECT_ID; const projectPillLabel = activeProject ? projectDisplayName(activeProject) : activeProjectId === NO_PROJECT_ID ? "No project" : activeProjectContextLink?.entity?.label ?? "Unknown project"; const showProjectSelector = !selectedConversation || activeProjectId !== NO_PROJECT_ID || !projectSelectionLocked; const allRecentProjectConversations = useMemo(() => {
     if (!activeProject) return [];
     return [...(projectConversationsQuery.data ?? [])]
       .filter((conversation) => projectContextId(conversation) === activeProject.id)
@@ -2534,23 +2534,27 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 <X className="h-3 w-3" strokeWidth={2.6} /> </span>
               <span className="min-w-0 truncate">Plan</span> </button> ) : null}
           {showProjectSelector ? (
-          <button type="button" data-testid="chat-project-selector" aria-label={`Project context: ${projectPillLabel}`} aria-expanded={projectSelectionLocked ? false : projectMenuOpen} disabled={projectSelectionLocked} title={projectSelectionLocked ? "Project context is locked after conversation starts." : undefined} className={cn(
-              "chat-chip inline-flex max-w-[min(100%,15rem)] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium",
-              projectSelectionLocked ? "cursor-default" : "transition-colors hover:bg-[color:var(--surface-active)]",
-              projectMenuOpen && "bg-[color:var(--surface-active)]",
-            )} onClick={() => { if (projectSelectionLocked) return;
-              if (projectMenuOpen) { closeComposerContextMenus();
-                return; } openComposerContextMenu("project");
-            }} >
-            {activeProject ? (
-              <ProjectIcon color={activeProject.color} icon={activeProject.icon} size="xs" />
-            ) : (
-              <Folder className="h-3.5 w-3.5 shrink-0" />
-            )}
-            <span className="min-w-0 truncate">{projectPillLabel}</span>
-            {projectSelectionLocked ? null : (
-              <ChevronDown data-testid="chat-project-selector-chevron" className="h-3 w-3 shrink-0 opacity-70" />
-            )} </button>
+            <div className="group/project relative inline-flex max-w-[min(100%,15rem)] min-w-0">
+              <button type="button" data-testid="chat-project-selector" aria-label={`Project context: ${projectPillLabel}`} aria-expanded={projectSelectionLocked ? false : projectMenuOpen} disabled={projectSelectionLocked} title={projectSelectionLocked ? "Project context is locked after conversation starts." : undefined} className={cn(
+                  "chat-chip inline-flex w-full min-w-0 items-center rounded-[var(--radius-md)] py-1.5 pl-3 text-xs font-medium",
+                  hasSelectedProject && !projectSelectionLocked ? "pr-9" : "pr-3",
+                  projectSelectionLocked ? "cursor-default" : "transition-colors hover:bg-[color:var(--surface-active)]",
+                  projectMenuOpen && "bg-[color:var(--surface-active)]",
+                )} onClick={() => { if (projectSelectionLocked) return;
+                  if (projectMenuOpen) { closeComposerContextMenus();
+                    return; } openComposerContextMenu("project");
+                }} >
+                <span className="min-w-0 truncate">{projectPillLabel}</span>
+              </button>
+              {hasSelectedProject && !projectSelectionLocked ? (
+                <button type="button" data-testid="chat-project-clear" aria-label={`Clear project context: ${projectPillLabel}`} title="Clear project context" className="absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-[var(--radius-sm)] text-muted-foreground opacity-0 pointer-events-none transition-[color,background-color,opacity] hover:bg-[color:var(--surface-inset)] hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40 group-focus-within/project:pointer-events-auto group-focus-within/project:opacity-100 group-hover/project:pointer-events-auto group-hover/project:opacity-100" onClick={(event) => {
+                    event.stopPropagation();
+                    applyProjectContext(NO_PROJECT_ID);
+                  }} >
+                  <X className="h-3 w-3" strokeWidth={2.4} />
+                </button>
+              ) : null}
+            </div>
           ) : null}
           <button type="button" data-testid="chat-agent-selector" aria-expanded={agentMenuOpen} disabled={agentSelectionLocked} className={cn(
               "chat-chip inline-flex max-w-[min(100%,16rem)] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium",
@@ -2563,10 +2567,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             {activeSkillAgent ? (
               <span data-testid="chat-agent-selector-icon" className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted-foreground" aria-hidden="true" >
                 <AgentIcon icon={activeSkillAgent.icon} role={activeSkillAgent.role} className="h-3.5 w-3.5" /> </span> ) : null}
-            <span className="min-w-0 truncate">{agentPillLabel}</span>
-            {agentSelectionLocked ? null : (
-              <ChevronDown data-testid="chat-agent-selector-chevron" className="h-3 w-3 shrink-0 opacity-70" />
-            )} </button>
+            <span className="min-w-0 truncate">{agentPillLabel}</span> </button>
           {showChatSkillsPicker ? (
             <button type="button" className={cn(
                 "chat-chip inline-flex max-w-[min(100%,16rem)] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[color:var(--surface-active)]",
@@ -2575,8 +2576,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 if (skillMenuOpen) { closeComposerContextMenus();
                   return; } openComposerContextMenu("skill");
               }} >
-              <span className="min-w-0 truncate">Skills</span>
-              <ChevronDown className="h-3 w-3 shrink-0 opacity-70" /> </button> ) : null} </div>
+              <span className="min-w-0 truncate">Skills</span> </button> ) : null} </div>
         {canStopSelectedConversationReply && selectedConversation && sendButtonMode !== "stop" && sendButtonMode !== "sending" && sendButtonMode !== "stopping" ? (
           <Button type="button" variant="ghost" size="icon-sm" aria-label="Stop streaming" onClick={() => stopStreaming(selectedConversation.id)} className={cn(
             "shrink-0 rounded-full border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)] text-foreground",

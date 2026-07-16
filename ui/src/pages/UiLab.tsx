@@ -82,12 +82,10 @@ import {
   Bot,
   Boxes,
   CheckCircle2,
-  ChevronDown,
   Component,
   DollarSign,
   FileText,
   FlaskConical,
-  Folder,
   Gauge,
   Inbox,
   LayoutDashboard,
@@ -101,6 +99,7 @@ import {
   Sparkles,
   Square,
   Workflow,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -1601,15 +1600,22 @@ function CommonComponentsSection() {
                     <Sparkles className="h-3.5 w-3.5" />
                     <span>Plan mode</span>
                   </button>
-                  <button
-                    type="button"
-                    className="chat-chip inline-flex max-w-[min(100%,15rem)] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium"
-                    aria-label="Project context: UI Lab"
-                  >
-                    <Folder className="h-3.5 w-3.5 shrink-0" />
-                    <span className="min-w-0 truncate">UI Lab</span>
-                    <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
-                  </button>
+                  <div className="group/project relative inline-flex max-w-[min(100%,15rem)] min-w-0">
+                    <button
+                      type="button"
+                      className="chat-chip inline-flex w-full min-w-0 items-center rounded-[var(--radius-md)] py-1.5 pl-3 pr-9 text-xs font-medium"
+                      aria-label="Project context: UI Lab"
+                    >
+                      <span className="min-w-0 truncate">UI Lab</span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Clear project context: UI Lab"
+                      className="absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-[var(--radius-sm)] text-muted-foreground opacity-0 pointer-events-none group-focus-within/project:pointer-events-auto group-focus-within/project:opacity-100 group-hover/project:pointer-events-auto group-hover/project:opacity-100"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
                   <button
                     type="button"
                     className="chat-chip inline-flex max-w-[min(100%,16rem)] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium"
@@ -1617,7 +1623,6 @@ function CommonComponentsSection() {
                   >
                     <Bot className="h-3.5 w-3.5 shrink-0" />
                     <span className="min-w-0 truncate">Design Lead</span>
-                    <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
                   </button>
                   <button
                     type="button"
@@ -1625,7 +1630,6 @@ function CommonComponentsSection() {
                     aria-label="Skills"
                   >
                     <span className="min-w-0 truncate">$rudder-ui-polish-maintainer</span>
-                    <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
                   </button>
                 </div>
                 <div className="flex items-center gap-2">

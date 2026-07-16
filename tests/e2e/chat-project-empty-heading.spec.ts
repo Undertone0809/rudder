@@ -145,15 +145,35 @@ test.describe("Chat project empty heading", () => {
 
     await expect(heading).toHaveText(`What should we build in ${beta.name}?`, { timeout: 15_000 });
     await expect(page.getByTestId("chat-project-selector")).toContainText(beta.name);
+    await expect(page.getByTestId("chat-project-selector").locator("svg")).toHaveCount(0);
+    await expect(page.getByTestId("chat-agent-selector").locator(".lucide-chevron-down")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Skills", exact: true }).locator("svg")).toHaveCount(0);
     await expect(recentConversations).toContainText("Beta roadmap thread", { timeout: 15_000 });
     await expect(recentConversations).not.toContainText("Alpha kickoff thread");
     await expect(recentConversations).toHaveCSS("animation-name", "rudder-chat-empty-recent-project-enter");
 
-    await page.getByTestId("chat-project-selector").click();
-    await page.getByRole("menuitemradio", { name: "No project" }).click();
+    const clearProject = page.getByTestId("chat-project-clear");
+    await expect(clearProject).toHaveCSS("opacity", "0");
+    await expect(clearProject).toHaveCSS("pointer-events", "none");
+
+    await page.getByTestId("chat-project-selector").focus();
+    await expect(clearProject).toHaveCSS("opacity", "1");
+    await expect(clearProject).toHaveCSS("pointer-events", "auto");
+    await page.keyboard.press("Tab");
+    await expect(clearProject).toBeFocused();
+
+    await heading.click();
+    await expect(clearProject).toHaveCSS("opacity", "0");
+    await expect(clearProject).toHaveCSS("pointer-events", "none");
+    await page.getByTestId("chat-project-selector").hover();
+    await expect(clearProject).toHaveCSS("opacity", "1");
+    await expect(clearProject).toHaveCSS("pointer-events", "auto");
+    await clearProject.click();
 
     await expect(heading).toHaveText(/What can I help with\?/);
     await expect(page.getByTestId("chat-project-selector")).toContainText("No project");
+    await expect(page.getByTestId("chat-project-clear")).toHaveCount(0);
+    await expect(page.getByTestId("chat-project-menu")).toHaveCount(0);
   });
 
   test("hides recent project conversations while the new chat composer has text", async ({ page }) => {
