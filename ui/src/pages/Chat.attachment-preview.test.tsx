@@ -4686,6 +4686,43 @@ describe("Chat ask_user panel", () => {
 });
 
 describe("Chat project context selector", () => {
+  it("uses text-only triggers and clears a selected draft project without opening the menu", () => {
+    mockState.conversationId = null;
+    mockState.conversations = [];
+    mockState.messagesByChatId = {};
+
+    const { container } = renderChat();
+    const projectSelector = container.querySelector<HTMLButtonElement>("[data-testid='chat-project-selector']");
+
+    expect(projectSelector).not.toBeNull();
+    expect(projectSelector?.querySelector("svg")).toBeNull();
+    expect(container.querySelector("[data-testid='chat-agent-selector-chevron']")).toBeNull();
+
+    act(() => {
+      projectSelector?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const projectMenuItem = Array.from(document.body.querySelectorAll<HTMLButtonElement>("[role='menuitemradio']"))
+      .find((button) => button.textContent?.includes("Rudder mkt"));
+    expect(projectMenuItem).not.toBeUndefined();
+
+    act(() => {
+      projectMenuItem?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const clearProject = container.querySelector<HTMLButtonElement>("[data-testid='chat-project-clear']");
+    expect(projectSelector?.textContent).toContain("Rudder mkt");
+    expect(clearProject?.getAttribute("aria-label")).toBe("Clear project context: Rudder mkt");
+
+    act(() => {
+      clearProject?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(projectSelector?.textContent).toContain("No project");
+    expect(container.querySelector("[data-testid='chat-project-clear']")).toBeNull();
+    expect(document.body.querySelector("[data-testid='chat-project-menu']")).toBeNull();
+  });
+
   it("does not render resource counts in the project context menu", () => {
     mockState.conversations = [chat({ id: "chat-1", lastMessageAt: null })];
     mockState.messagesByChatId = { "chat-1": [] };
