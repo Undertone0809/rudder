@@ -54,6 +54,18 @@ Agent 应该把持久项目文件写在这个项目文件夹内，并根据工�
 
 Library 文件树也会在对应的 `projects/<project-slug>/resources/` 下展示这些项目资源。这里是指向资源目录的虚拟引用；外部仓库、URL 和 connector 对象不会被复制进 Library 文件。
 
+## 检查和编辑 Library 文件
+
+Library 引用可以在 Rudder Side Panel 中打开，因此你不需要离开当前 Chat、issue 或 Messenger 页面。PDF 等支持的文件会直接内联预览。需要完整的 Library 工作面时，再选择 **Open in Library**。
+
+Markdown 文件可以直接在 Side Panel 中编辑。Autosave 会以上次确认的版本为条件，不会静默覆盖更新内容。如果另一个写入者先改了文件，本地草稿会继续保留，并让你选择 **Keep mine** 或 **Use latest**。
+
+在 Rudder Desktop 里，文件 **Open** 菜单可以用系统默认应用或检测到的 IDE 打开经过校验的文件。Folder 和 terminal 操作会打开文件所在目录。这些是本地 Desktop 能力；无法访问本机文件的 browser 或 remote deployment 不会提供这些入口。
+
+## 本地 Desktop 文件夹
+
+默认本地 Desktop 布局会把组织文件放在 `~/Documents/Rudder/<org-folder>` 下的可读文件夹里。这个文件夹和组织的稳定身份绑定，修改显示名称不会静默移动或替换它。如果一个已经建立的组织文件夹丢失，应恢复原文件夹或 workspace backup，不要创建一个空目录来代替。
+
 ## 本地开发
 
 Rudder 仓库本身使用 `pnpm dev` 本地开发。Codex 管理的 worktree 会被 dev runner 自动隔离；手动创建的 worktree 在启动第二个本地 server 前，应先初始化隔离的 worktree 实例。

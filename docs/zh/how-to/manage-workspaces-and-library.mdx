@@ -51,6 +51,20 @@ Rudder 会为每个 project 创建 Library folder。持久项目文件放在那�
 
 用 issue comments 或 review notes 指向 reviewer 需要看的文件。
 
+## 在当前工作旁边检查和编辑文件
+
+从 Chat、Messenger 或 issue 打开 Library 引用时，可以先在 Side Panel 中检查，不必离开当前工作面。PDF 等支持的文件会直接内联预览。
+
+编辑 Markdown 文件时：
+
+1. 直接在 Side Panel 中修改，并留意 save state。
+2. 如果 Rudder 提示 stale-write conflict，先检查仍然保留的本地草稿。
+3. 选择 **Keep mine**，用你的草稿基于最新版本重试；或者选择 **Use latest**，换成 server 当前版本。
+
+不要把 conflict 当作已经保存成功。只有 guarded save 成功，或者你明确选择 latest version 后，这个本地草稿才算处理完。
+
+在 Desktop 里，可以通过文件 **Open** 菜单用系统默认应用或检测到的 IDE 打开文件，在文件管理器中定位它，在 terminal 中打开所在目录，或者用 **Open in Library** 进入完整 Library 工作面。
+
 ## 谨慎使用 backups
 
 Workspace backups 是 operator 的恢复和检查工具：

@@ -35,6 +35,7 @@ Rudder 把这些协作习惯做成产品里的基础对象：目标、项目、i
 | 把策略变成 agent 工作 | [目标、项目和任务](/zh/concepts/goals-projects-issues) |
 | 理解 agent 如何执行 | [Agents](/zh/concepts/agents) 和 [任务](/zh/concepts/issues) |
 | 通过对话推进任务并处理注意力 | [Chat 和 Messenger](/zh/concepts/chat-messenger) |
+| 不离开 Rudder 完成网页操作 | [内置 Browser](/zh/concepts/built-in-browser) |
 | 看 agent 一周实际做了什么 | [Calendar](/zh/concepts/calendar) |
 | 运行重复 agent 工作 | [自动化](/zh/concepts/automations) |
 | Review 输出并沉淀经验 | [Review、feedback 和 learning](/zh/concepts/reviews-feedback-learning) |
@@ -44,9 +45,10 @@ Rudder 把这些协作习惯做成产品里的基础对象：目标、项目、i
 
 - 创建一个带有明确目标的组织。
 - 使用默认 agent 跑通第一条流程；需要新角色时，再创建职责清楚的 agent。
-- 把工作拆成 issue，把上下文、评论、文档、活动、产物和评审状态放在同一个地方。
+- 把 Chat 和 issue 作为并列任务工作面；需要明确 owner、状态、依赖或 review 时，再使用 issue 结构。
 - 通过本地或外部运行时触发 agent heartbeat，保留 transcript 和运行证据。
 - 使用 Chat 通过对话执行任务，并用 Messenger 集中处理回复、阻塞、失败运行和决策请求。
+- 使用 Desktop 内置 Browser 在 Rudder 旁边处理网页工作，并让 agent 通过受限工具操作，而不是直接获得浏览器凭据。
 - 用 Calendar 查看 agent 实际运行了多久、做了哪些 issue、人的检查点在哪里。
 - 用 Automations 运行有明确 trigger 和 output path 的重复工作。
 - 用 review 和 feedback 把已接受输出变成未来 run 的改进。
@@ -81,6 +83,9 @@ Rudder 把这些协作习惯做成产品里的基础对象：目标、项目、i
   </Card>
   <Card title="自动化" icon="workflow" href="/zh/concepts/automations">
     用明确 trigger 和 output path 运行重复 agent 工作。
+  </Card>
+  <Card title="内置 Browser" icon="globe" href="/zh/concepts/built-in-browser">
+    在 Rudder 旁边处理网页工作，并理解共享 session 边界。
   </Card>
   <Card title="创建 Agent" icon="bot" href="/zh/how-to/create-agent">
     需要新角色时，添加职责和能力边界清楚的 agent。

@@ -13,7 +13,7 @@ canonical: "https://docs.rudderhq.dev/zh/how-to/issue-lifecycle"
 
 ---
 
-`issue` 是 Rudder 中与对话式 Chat 并列的结构化 agent 工作路径。这篇指南只讲 issue 路径的实际操作：什么时候创建、什么时候分配执行者、什么时候加 reviewer、状态怎么设，以及怎么关闭。
+`issue` 是 Rudder 中与对话式 Chat 同等重要、并列的一等任务界面。这篇指南只讲 issue 路径的实际操作：什么时候创建、什么时候分配执行者、什么时候加 reviewer、状态怎么设，以及怎么关闭。
 
 ![Issue 工作流界面](../../images/issue-flow.png)
 
@@ -67,6 +67,17 @@ canonical: "https://docs.rudderhq.dev/zh/how-to/issue-lifecycle"
 - 权限或凭据缺失
 
 Rudder 有意让一个 issue 只有一个 assignee。如果 Growth、Engineering 和 QA 都要参与，就创建多个 issue 或子 issue。
+
+## 从评论唤醒 Agent
+
+发布普通 issue 评论不会唤醒 assignee。评论需要某个 agent 采取行动时，明确 mention 该 agent 并触发唤醒。
+
+Mention 要精确使用：
+
+- Mention 另一个 agent，是请它检查原评论，不会转移 issue 所有权。
+- 编辑评论时，只有新加入的 agent mention 会触发唤醒；只修改措辞不会重复之前的唤醒。
+- 删除 agent mention 后再重新加入，Rudder 会把它当成一次新请求。
+- 不要把普通评论当成执行触发器。应该 mention 目标 agent，或使用 issue 的分配和生命周期控制。
 
 ## 什么时候加 reviewer
 

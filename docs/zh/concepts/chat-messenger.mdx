@@ -17,6 +17,8 @@ Chat 和 Messenger 是同一套沟通系统里的两个入口：Chat 通过持�
 
 偏好通过持续对话工作时，用 Chat。整个工作系统里有事情需要你处理时，用 Messenger。
 
+Chat 和 issue 是同等重要的一等任务界面。Chat 不只是正式工作开始前用来澄清需求的地方：你可以直接在对话中执行、调整并完成任务。从哪一个入口开始，取决于具体场景；把 Chat 转成 issue 始终是可选操作。
+
 ![Messenger 注意力界面](../../images/messenger-approvals.png)
 
 ## 它们怎么配合
@@ -32,15 +34,37 @@ Chat 和 Messenger 是同一套沟通系统里的两个入口：Chat 通过持�
 
 Chat 和 issue 是两种并列的任务工作方式，不是前后两个阶段。需要下面这些结构时，可以创建或关联 issue：
 
-- 一个 owner 执行下一步
-- agent runtime 预算
-- review 或 approval
-- 失败或阻塞后的恢复位置
-- 未来团队需要回看的持久历史
+- 明确 status、priority、dependencies 或 acceptance criteria
+- 下一步执行有一个可见 assignee
+- 有指定 reviewer 和结构化 review state
+- 团队可以筛选和管理的共享队列
+- 受治理流程要求填写的字段
 
 任务仍然可以继续在 Chat 中推进。创建 issue 是增加结构化协作能力，不是让任务取得“真实工作”身份。团队策略可以要求受治理的流程填写 issue 字段。
 
+Rudder 不会仅仅因为任务重要、耗时、成本高或已经可以执行，就建议把它转成 issue。需要 issue 提案时，请明确提出。
+
 ![Chat issue 提案](../../images/chat-create-issue-proposal.png)
+
+## Agent 回复期间继续追问
+
+当前回复仍在运行时，如果你再发送消息，Rudder 会把它放进可见队列，而不是在同一个 Chat 里同时启动第二个回复。消息发送前，你可以编辑或删除队列里的追问。
+
+只有当前回复成功完成后，下一条追问才会自动发送。如果你停止回复或 run 失败，消息会继续留在队列中，供你检查、编辑或删除；Rudder 不会在一次中断的运行后静默执行它们。
+
+## 从 Chat 检查工作
+
+Chat Work manifest 是当前线程的紧凑索引，让你不用翻找消息记录也能看到：
+
+| 分类 | 包含什么 |
+| --- | --- |
+| Outputs | Agent 确实创建、并有附件或 run 证据支持的文件和 Library 产物 |
+| Sources | 你提供的文件、链接和 Library 资源，以及 project-scoped run 实际可用的 Project Context |
+| References | 对话中可见、被引用或推荐，但不是 agent 产出的外部网站 |
+
+Manifest 只显示当前对话里的工作，不会把同一 Project 下其他 Chat 的内容混进来。Agent 回复中的普通链接仍是 Reference，不会被宣称为 Output；Reference 也不会自动进入 Project Context。刷新或编辑回答后，过时的派生链接可以消失，但持久 Output 仍保持可检查。
+
+你可以在 Side Panel 中打开支持的 issue、automation、Library 文件或目录、Chat 和 Browser 页面，在不离开当前页面的情况下检查或做轻量编辑。Side Panel 是 Rudder 共用的工作台，因此引用对象也可以在 Chat 或其他工作界面旁打开。
 
 ## Messenger 应该把你带回哪里
 

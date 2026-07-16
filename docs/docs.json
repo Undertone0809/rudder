@@ -52,6 +52,7 @@
               "concepts/overview",
               "concepts/goals-projects-issues",
               "concepts/agents",
+              "concepts/built-in-browser",
               "concepts/issues",
               "concepts/chat-messenger",
               "concepts/calendar",
@@ -119,6 +120,7 @@
               "zh/concepts/overview",
               "zh/concepts/goals-projects-issues",
               "zh/concepts/agents",
+              "zh/concepts/built-in-browser",
               "zh/concepts/issues",
               "zh/concepts/chat-messenger",
               "zh/concepts/calendar",
@@ -199,6 +201,10 @@
           {
             "label": "Chat and Messenger",
             "href": "/concepts/chat-messenger"
+          },
+          {
+            "label": "Built-in Browser",
+            "href": "/concepts/built-in-browser"
           },
           {
             "label": "Calendar",

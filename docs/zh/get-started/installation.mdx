@@ -33,6 +33,28 @@ rudder start
 
 如果你只是想打开本地应用、创建组织、跑 agent 工作，就走这条路径。CLI 和便携版 Desktop 会保持在同一个发布版本。
 
+## 从 Desktop 启动失败中恢复
+
+Desktop 正常启动时只显示 Rudder 标识和动态效果，不会显示技术阶段名称或百分比进度。这个安静的页面就是正常等待状态。
+
+如果托管的本地 server 明确报告启动失败，同一个窗口会显示可读错误和恢复操作：
+
+- **Try again** 会在当前窗口中开始一次新的启动尝试。
+- **Technical details** 会展开一组范围受限、可复制的诊断信息。
+- **Email support** 会打开可编辑邮件草稿。Rudder 不会自动发送邮件、上传本地数据或附加 workspace 文件。
+
+分享前先检查 technical details，也不要把 credentials、database、`.env` 文件或私有 workspace 内容加入支持请求。
+
+## 更新时保留活跃工作
+
+打包后的 Rudder Desktop 可以在 Agent Run 仍然活跃时下载并校验更新。存在活跃 run 时，应明确选择：
+
+- **Update when idle**：先下载更新，继续保留当前 run，等它们结束后再应用。
+- **Stop runs and update now**：取消活跃 run、退出 Rudder，并立即应用更新。
+- **Cancel**：继续使用当前版本。
+
+默认的延后更新路径不会取消活跃工作。如果更新失败或 session 过期，Rudder 会保留可见失败状态，并提供 retry 和 releases page 入口。
+
 ## 贡献者设置
 
 如果你正在开发 Rudder 本身，请使用仓库工作流。

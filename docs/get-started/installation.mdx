@@ -36,6 +36,38 @@ Use this path when your goal is to open the local app, create an organization,
 and run agent work. The command keeps the CLI and portable Desktop app aligned
 with the selected release.
 
+## Recover from a Desktop startup failure
+
+A healthy Desktop startup shows the Rudder identity and motion without
+technical stage names or percentage progress. That quiet screen is the normal
+waiting state.
+
+If the managed local server reports a startup failure, the same window reveals
+a plain-language error and recovery actions:
+
+- **Try again** starts one fresh startup attempt in the existing window.
+- **Technical details** reveals bounded diagnostics that you can copy when
+  investigating the failure.
+- **Email support** opens an editable draft. Rudder does not send the message,
+  upload local data, or attach workspace files automatically.
+
+Review technical details before sharing them, and do not add credentials,
+databases, `.env` files, or private workspace contents to a support request.
+
+## Install updates without losing active work
+
+Packaged Rudder Desktop can download a verified update while Agent Runs are
+still active. When active runs exist, choose deliberately:
+
+- **Update when idle** downloads the update and keeps current runs alive until
+  they finish.
+- **Stop runs and update now** cancels active runs, quits Rudder, and applies the
+  update immediately.
+- **Cancel** leaves the current version running.
+
+The deferred path does not cancel active work. If an update fails or expires,
+Rudder keeps the failure visible and offers retry and release-page actions.
+
 ## Contributor setup
 
 Use the repository workflow when you are developing Rudder itself.

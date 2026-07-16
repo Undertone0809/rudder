@@ -50,6 +50,17 @@ Activity logs show product mutations such as issue updates, review decisions, co
 
 Run intelligence summarizes execution without hiding the raw evidence. A summary is useful for scanning, but the transcript, result, logs, and linked artifacts still matter when a run needs review.
 
+Organization run lists use a bounded summary by default. Each row keeps the
+identity, status, timing, agent and runtime, target, outcome or error, usage,
+cost, skill evidence, and log availability needed for scanning without loading
+the complete diagnostic payload for every run.
+
+Open a single run when you need its full result, context, transcript, events, or
+logs. Events, logs, and transcript entries load in bounded pages so a large run
+does not turn the organization list into one unbounded response. Official CLI
+list commands follow the same summary default; use `--full` only when a
+compatibility export needs the complete list shape.
+
 ## Dashboard, Calendar, and Inbox
 
 The dashboard gives an organization-level readout. Calendar shows work over time. Inbox focuses human attention.

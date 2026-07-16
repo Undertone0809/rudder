@@ -24,6 +24,21 @@ Rudder 协调 agent 工作。Runtime 执行实际工作。
 
 你在 app 里看到的具体 runtime options，取决于已安装 packages、provider config 和本机设置。
 
+## Rudder 管理的工具
+
+Managed control tools 是 adapter 能力，不是所有 runtime shape 都会自动拥有的功能。
+
+| Runtime | Managed tool path | Desktop `local_trusted` 中的内置浏览器 |
+| --- | --- | --- |
+| Codex local | Rudder 管理的 MCP 配置 | 启用后支持 |
+| Claude Code local | Rudder 管理的 MCP 配置 | 启用后支持 |
+| OpenCode local | Rudder 管理的 MCP 配置 | 启用后支持 |
+| Pi local | Rudder 管理的原生工具 bridge | 启用后支持 |
+| 其他受支持的本地 runtime | 取决于具体 runtime；内置 `rudder` CLI skill 可作为 fallback | 不承诺支持 |
+| Shell、webhook、gateway 或远程 runtime | 不承诺提供本地 managed tool path | 不承诺支持 |
+
+Rudder 会为每次符合条件的 run 自动准备 managed path。它是第一方 runtime 基础设施，不是 custom integration，也不是需要 operator 手动配置的 MCP server。请参阅[内置浏览器](/zh/concepts/built-in-browser)，了解共享网站会话和隔离标签页控制的边界。
+
 ## Runtime configuration 控制什么
 
 Runtime configuration 控制 Rudder 如何调用 agent：
@@ -47,5 +62,8 @@ Runtime configuration 控制 Rudder 如何调用 agent：
   </Card>
   <Card title="Permissions and platforms" icon="shield-check" href="/zh/reference/permissions-and-platforms">
     理解本地 runtime 的文件和 credential 边界。
+  </Card>
+  <Card title="内置浏览器" icon="globe" href="/zh/concepts/built-in-browser">
+    查看受支持的 runtime 和 Browser 边界。
   </Card>
 </CardGroup>

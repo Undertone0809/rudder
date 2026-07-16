@@ -12,7 +12,7 @@ canonical: "https://docs.rudderhq.dev/how-to/issue-lifecycle"
 
 ---
 
-Issues are Rudder's structured path for inspectable agent work, available alongside conversation-driven Chat. This guide focuses on the issue journey: when to create one, when to assign it, when to add a reviewer, how to set status, and how to close the loop.
+Issues are Rudder's structured path for inspectable agent work, available as an equally first-class task surface alongside conversation-driven Chat. This guide focuses on the issue journey: when to create one, when to assign it, when to add a reviewer, how to set status, and how to close the loop.
 
 ## What is an AI agent issue lifecycle?
 
@@ -70,6 +70,17 @@ Do not assign yet if:
 - access or credentials are missing
 
 Rudder intentionally keeps one assignee per issue. If Growth, Engineering, and QA all need work, create separate issues or sub-issues.
+
+## Wake an agent from a comment
+
+Posting a normal issue comment does not wake the assignee. When the comment needs action from a specific agent, add an explicit agent mention with wake intent.
+
+Use mentions precisely:
+
+- Mentioning another agent asks that agent to inspect the source comment; it does not transfer issue ownership.
+- If you edit the comment, only newly added agent mentions wake. A wording change does not repeat an earlier wake.
+- If you remove an agent mention and add it again later, Rudder treats it as a new request.
+- Do not rely on a plain comment as an execution trigger. Either mention the intended agent or use the issue's assignment and lifecycle controls.
 
 ## When to add a reviewer
 

@@ -27,11 +27,21 @@ Skills are reusable operating instructions. Credentials are sensitive local or r
 
 When a runtime needs credentials, prefer the configured runtime path or local provider setup that already owns those credentials. Avoid copying secrets into docs, prompts, Library files, or issue comments.
 
+## Built-in Browser boundary
+
+Rudder Desktop's [Built-in Browser](/concepts/built-in-browser) uses one persistent website session per operating-system user and local Rudder instance. Cookies and site data are intentionally shared across organizations and between operator and supported agent tabs on that instance. Treat a website sign-in as instance-shared local state, not organization-scoped data.
+
+Agent control remains isolated by organization, agent, run, and tab. Shared cookies do not let one run inspect or operate another run's tab. Agents receive only bounded browser actions; they do not receive raw cookies, passwords, arbitrary JavaScript execution, or unrestricted browser control.
+
+Disabling agent Browser access preserves the operator's tabs and saved website data. Clearing browsing data removes the shared instance session. Choosing the system browser for ordinary links changes link routing only.
+
 ## Platform differences
 
 File behavior differs across macOS, Linux, and Windows. A runtime setup that works through symlinks or Unix permissions on one platform may need a safe copy or another fallback on another platform.
 
 When runtime setup fails, check the visible runtime readiness state and error message first. Then inspect whether the problem is missing CLI, missing permissions, missing credentials, unwritable workspace, or a platform-specific file operation.
+
+Built-in Browser cookie import is currently macOS-only and supports local Google Chrome, Microsoft Edge, and Brave Browser profiles. It imports supported cookies after operator confirmation; it does not import passwords. Windows and Linux Browser cookie import is not supported.
 
 ## Next steps
 
@@ -41,5 +51,8 @@ When runtime setup fails, check the visible runtime readiness state and error me
   </Card>
   <Card title="Runtime types" icon="terminal" href="/reference/runtime-types">
     Compare runtime shapes.
+  </Card>
+  <Card title="Built-in Browser" icon="globe" href="/concepts/built-in-browser">
+    Understand the shared session and isolated control model.
   </Card>
 </CardGroup>

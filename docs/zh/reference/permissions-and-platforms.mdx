@@ -27,11 +27,21 @@ Skills 是可复用操作说明。Credentials 是敏感访问材料。不要混�
 
 当 runtime 需要 credentials 时，优先使用已经拥有这些 credentials 的 runtime config 或本地 provider setup。不要把 secrets 复制到 docs、prompts、Library files 或 issue comments 里。
 
+## 内置浏览器边界
+
+Rudder Desktop 的[内置浏览器](/zh/concepts/built-in-browser)会为每个操作系统用户和本地 Rudder 实例使用一个持久的网站会话。该实例中的不同组织，以及 operator 和受支持的 agent 标签页，会有意共享 Cookie 和网站数据。应把网站登录视为实例共享的本地状态，而不是组织级数据。
+
+Agent 控制权仍按组织、agent、run 和 tab 隔离。共享 Cookie 不会让一个 run 检查或操作另一个 run 的标签页。Agent 只能使用有边界的浏览器操作；它们不会获得原始 Cookie、密码、任意 JavaScript 执行或无限制浏览器控制。
+
+禁用 agent Browser 访问会保留 operator 标签页和已保存的网站数据。清除浏览数据会删除共享实例会话。为普通链接选择系统浏览器只会改变链接路由。
+
 ## 平台差异
 
 macOS、Linux 和 Windows 的文件行为不同。一个依赖 symlinks 或 Unix permissions 的 runtime setup，在另一个平台上可能需要 safe copy 或其他 fallback。
 
 Runtime setup 失败时，先看 visible runtime readiness state 和 error message。再判断问题是 missing CLI、missing permissions、missing credentials、unwritable workspace，还是平台相关的 file operation。
+
+内置浏览器 Cookie 导入目前仅支持 macOS，以及本地 Google Chrome、Microsoft Edge 和 Brave Browser profile。它只会在 operator 确认后导入受支持的 Cookie，不会导入密码。Windows 和 Linux 不支持 Browser Cookie 导入。
 
 ## 下一步
 
@@ -41,5 +51,8 @@ Runtime setup 失败时，先看 visible runtime readiness state 和 error messa
   </Card>
   <Card title="Runtime types" icon="terminal" href="/zh/reference/runtime-types">
     比较 runtime shapes。
+  </Card>
+  <Card title="内置浏览器" icon="globe" href="/zh/concepts/built-in-browser">
+    理解共享会话和隔离控制模型。
   </Card>
 </CardGroup>

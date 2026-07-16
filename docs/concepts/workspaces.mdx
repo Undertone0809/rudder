@@ -55,6 +55,32 @@ The Library tree also shows attached Project Context resources under the matchin
 
 Project Context is the curated starting point, not the full knowledge boundary. Agents can still inspect broader Library files when the attached context is not enough.
 
+## Inspect and edit Library files
+
+Library references can open in Rudder's Side Panel so you can inspect a file
+without replacing the current Chat, issue, or Messenger route. Supported files,
+including PDFs, render inline. Use **Open in Library** when you need the full
+Library work surface.
+
+Markdown files are editable in the Side Panel. Rudder autosaves against the last
+confirmed version instead of silently overwriting a newer change. If another
+writer changed the file first, your draft stays visible and you choose **Keep
+mine** or **Use latest**.
+
+In Rudder Desktop, the file **Open** menu can send the validated file to its
+default application or a detected IDE. Folder and terminal actions use the
+file's containing directory. These are local Desktop conveniences and are not
+available to browser or remote deployments that cannot open files on your
+machine.
+
+## Local Desktop folders
+
+In the default local Desktop layout, organization files live in a readable
+folder under `~/Documents/Rudder/<org-folder>`. Rudder keeps the folder mapped to
+the organization's stable identity, so changing the display name does not
+silently move or replace the folder. If an established folder is missing,
+restore it or a workspace backup instead of creating an empty replacement.
+
 ## Local development
 
 The Rudder repository itself uses `pnpm dev` for local development. Codex-managed worktrees are auto-isolated by the dev runner; manually created worktrees should initialize an isolated worktree instance before running a second local server.

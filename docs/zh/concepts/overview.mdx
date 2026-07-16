@@ -23,6 +23,7 @@ Rudder 把目标、任务、Chat、issue、agent run、review 和 feedback 串�
 | 组织一组相关交付工作 | 项目 |
 | 通过持续对话推进任务 | Chat |
 | 用明确结构协调任务 | Issue |
+| 在当前工作旁边完成网页研究和操作 | 内置 Browser |
 | 运行一次有边界的 agent 工作 | Agent heartbeat |
 | 保存执行证据 | 评论、活动、transcript 和工作产物 |
 | 找回分散在工作中的注意力 | Messenger |
@@ -55,6 +56,10 @@ Chat 和 issue 都能承载任务。Chat 通过持续对话组织执行；`issue
 ## Chat 和 Messenger
 
 Chat 是由对话驱动的任务界面，可以澄清、执行、调整并完成工作；issue 是与它并列的结构化任务界面。Messenger 把 Chat、issue 线程、失败运行、阻塞和决策请求放进同一个注意力入口。
+
+## 内置 Browser
+
+Rudder Desktop 可以把普通网页链接打开在当前工作旁边的 Browser tab。受支持的本地 agent 可以使用范围受限的 Browser tools，不会因此得到 raw cookies、credentials 或任意页面脚本能力。
 
 ## Calendar
 
@@ -96,7 +101,10 @@ Rudder 通过 issue 分配、预算追踪、活动日志、reviewer 交接、fee
     理解角色、运行时、heartbeat 和汇报线。
   </Card>
   <Card title="Chat 和 Messenger" icon="messages-square" href="/zh/concepts/chat-messenger">
-    先澄清请求，再把人的注意力带回对应工作。
+    从请求推进到结果，并把人的注意力带回对应工作。
+  </Card>
+  <Card title="内置 Browser" icon="globe" href="/zh/concepts/built-in-browser">
+    在清楚的本地信任边界内完成 operator 和 agent 网页工作。
   </Card>
   <Card title="Calendar" icon="calendar-days" href="/zh/concepts/calendar">
     按时间查看 agent 运行历史和人的检查点。

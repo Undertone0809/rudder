@@ -17,6 +17,7 @@ Rudder is useful when agent work needs to be assigned, run, reviewed, budgeted, 
 
 - [Core Concepts](https://docs.rudderhq.dev/concepts/overview): Organizations, goals, projects, issues, agents, runs, reviews, workspaces, skills, and feedback.
 - [Agents In Rudder](https://docs.rudderhq.dev/concepts/agents): Durable AI team members with roles, runtime configuration, capabilities, budgets, skills, and reporting boundaries.
+- [Rudder Built-in Browser](https://docs.rudderhq.dev/concepts/built-in-browser): Local Desktop web sessions, bounded agent browser tools, import behavior, and trust boundaries.
 - [Issues For AI Agent Work](https://docs.rudderhq.dev/concepts/issues): Durable execution objects for context, ownership, status, runs, blockers, reviews, and outputs.
 - [Chat And Messenger For Agent Work](https://docs.rudderhq.dev/concepts/chat-messenger): Chat for conversation-driven task execution and Messenger for attention recovery.
 - [Workspaces For Agent Files And Outputs](https://docs.rudderhq.dev/concepts/workspaces): Project resources, agent-private files, organization artifacts, and durable outputs.
@@ -34,4 +35,5 @@ Rudder is useful when agent work needs to be assigned, run, reviewed, budgeted, 
 - [Rudder 中文首页](https://docs.rudderhq.dev/zh): 中文产品介绍和入口。
 - [快速开始](https://docs.rudderhq.dev/zh/get-started/installation): 用 CLI 安装并启动 Rudder Desktop。
 - [创建第一个组织](https://docs.rudderhq.dev/zh/get-started/first-organization): 用真实任务走通第一条人类-agent 协作循环。
+- [内置 Browser](https://docs.rudderhq.dev/zh/concepts/built-in-browser): 理解共享网站 session、agent 控制隔离和本地平台边界。
 - [版本发布](https://docs.rudderhq.dev/zh/releases): Rudder 稳定版本发布记录和升级说明。

@@ -89,6 +89,12 @@ Rudder 目前还不会自动创建飞书 quick command 菜单。如果飞书里�
 
 如果 Agent 正在生成回复，这会请求 Rudder 停止当前回复。
 
+## Daily session
+
+Daily session rollover 默认开启，窗口为 24 小时。外部飞书 chat 不会改变；超过窗口后，下一条 inbound message 到达时，Rudder 才会创建并绑定一条新的对话。这个切换是惰性的，安静的飞书 chat 不会在后台产生空 session。
+
+如果 Agent reply 仍在运行或收尾，这条 inbound message 会继续留在当前 session，rollover 等后续消息再处理。你可以选择是否向飞书发送一条简短的 `New daily session started.` 通知。需要立即开始新的 Rudder 对话时，直接使用 `/new`，不用等待 daily boundary。
+
 ## Rudder 里的行为
 
 飞书绑定的对话在 Rudder 本地 Chat 里是只读的。回复应该从飞书侧进入，或者由 Agent 的 outbound work 发回去。如果你想在 Rudder 里继续作为普通本地对话处理，可以 fork 这条飞书对话。Fork 会保留来源关系，但不会继续绑定飞书 provider chat。

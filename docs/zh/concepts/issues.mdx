@@ -23,7 +23,7 @@ Issue 是 Rudder 由结构驱动的任务界面。它用明确字段和生命周
 
 团队协作经常需要结构化对象。没有明确状态时，跨多个任务扫描决定、上下文、产物和评审证据会变得困难。
 
-Chat 是与它并列、由对话驱动的任务界面。需要 issue 提供的额外结构时再选择 issue；任务时长或重要性本身不会强制把 Chat 转成 issue。
+Chat 和 issue 是同等重要、并列的一等任务界面。需要 issue 提供的额外结构时再选择 issue；任务时长或重要性本身不会强制把 Chat 转成 issue。
 
 ## 常见使用场景
 
@@ -52,9 +52,24 @@ Chat 是与它并列、由对话驱动的任务界面。需要 issue 提供的�
 
 `backlog` 用于仍在塑形的工作。Backlog 任务可以记录真实问题或机会，但要先停在那里，直到团队讲清楚范围、负责人、优先级、验收标准，或者这件事到底要不要做。
 
+## 可读 issue 身份
+
+每条有编号的 issue 都有组织范围内的可读 id，例如 `R6-42`。它由组织的 Issue Key 和 issue number 组成；Issue Key 必须以字母开头，只能使用大写字母和数字。
+
+Operator 可以在组织设置中明确修改 Issue Key。可读 id 会变化，但 issue number 和底层 issue identity 不变。使用旧 Issue Key 的链接仍能解析，因此修正 key 不会破坏已有引用。组织名称和稳定 URL 也不会和 Issue Key 绑定在一起变化。
+
 ## Checkout 语义
 
 Agent 开始实现前应先 checkout 任务。Checkout 会明确当前执行负责人，也能避免同一个任务被重复推进。
+
+## 评论和 Agent 唤醒
+
+普通 issue 评论只记录上下文，不会唤醒 assignee。希望某个 agent 根据评论采取行动时，需要明确 mention 该 agent 并触发唤醒。
+
+- Mention 会针对原评论唤醒指定 agent，但不会重新分配 issue，也不会让被 mention 的 agent 变成 owner。
+- 编辑评论时，只会唤醒这次编辑中新加入的 agent。只改其他文字，不会重复之前的唤醒。
+- 删除 mention 后又重新加入，算一次新的定向请求。
+- 评论重新打开 issue 时，Rudder 可以补上可见的 assignee mention，并在 reopen 流程中唤醒符合条件的 assignee。
 
 ## 关闭信号
 

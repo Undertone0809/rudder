@@ -16,6 +16,8 @@ Chat and Messenger are one communication system with two jobs: Chat is a convers
 
 Use Chat when you prefer to work through an ongoing conversation. Use Messenger when something anywhere in the work system needs your attention.
 
+Chat and issues are equally first-class task surfaces. Chat is not only for clarifying a request before "real work" starts: you can execute, refine, and complete the work in the conversation. Starting in either surface is a scenario choice, and converting a Chat to an issue is optional.
+
 ![Messenger attention surface](../images/messenger-approvals.png)
 
 ## How they fit together
@@ -31,15 +33,37 @@ The boundary is simple: Chat moves work forward. Messenger keeps active work fro
 
 Chat and issues are parallel task workflows, not consecutive stages. Create or link an issue when you want any of the following structure:
 
-- one owner to execute the next step
-- agent runtime budget
-- review or approval
-- a recovery point after failure or blocking
-- a durable history the team can inspect later
+- explicit status, priority, dependencies, or acceptance criteria
+- one visible assignee for the next execution step
+- a named reviewer and structured review state
+- a shared queue that the team can filter and manage
+- policy-required fields for a governed workflow
 
 You may still continue the task in Chat. Creating an issue adds structured coordination; it does not make the task more real. Team policy may require issue fields for governed workflows.
 
+Rudder does not propose issue conversion merely because a task is important, long-running, expensive, or ready to execute. Ask explicitly when you want an issue proposal.
+
 ![Chat issue proposal](../images/chat-create-issue-proposal.png)
+
+## Follow-ups while an agent is replying
+
+If you send another message while the current reply is still running, Rudder places it in a visible queue instead of starting a second reply in the same Chat. You can edit or delete a queued follow-up before it is sent.
+
+The next follow-up is sent automatically only after the current reply completes successfully. If you stop the reply or the run fails, queued messages stay parked for you to review, edit, or delete; Rudder does not silently execute them after an interrupted run.
+
+## Inspect the work from a Chat
+
+The Chat Work manifest gives you a compact, current-thread index without making you search the transcript:
+
+| Section | What belongs there |
+| --- | --- |
+| Outputs | Files and Library artifacts the agent actually created, backed by attachment or run evidence |
+| Sources | Files, links, and Library resources you supplied, plus eligible Project Context used by a project-scoped run |
+| References | External websites visible in the conversation that were cited or recommended but not produced by the agent |
+
+The manifest shows work from the current conversation only, not items from other chats in the same Project. An ordinary assistant link remains a Reference rather than being claimed as an Output, and References do not become Project Context automatically. If an answer is refreshed or edited, stale derived links can disappear while a durable Output remains inspectable.
+
+Open supported issues, automations, Library files or directories, chats, and browser targets in the Side Panel to inspect or lightly edit them without replacing your current route. The Side Panel is a shared Rudder workbench, so the same referenced object can open beside Chat and other work surfaces.
 
 ## What Messenger should bring back
 
