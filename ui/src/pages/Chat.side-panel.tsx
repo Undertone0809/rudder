@@ -1481,7 +1481,6 @@ function ChatSidePanelBrowserView({
   onCloseTarget: (target: SidePanelTarget) => void;
   onRegisterShortcutController: (key: string, controller: ((action: BrowserShortcutAction) => void) | null) => void;
 }) {
-  const rootRef = useRef<HTMLDivElement | null>(null);
   const addressInputRef = useRef<HTMLInputElement | null>(null);
   const webviewRef = useRef<BrowserWebviewElement | null>(null);
   const webviewReadyRef = useRef(false);
@@ -1723,7 +1722,6 @@ function ChatSidePanelBrowserView({
 
   return (
     <div
-      ref={rootRef}
       className="flex min-h-full flex-col"
       data-testid={active ? "chat-side-panel-browser-view" : "chat-side-panel-browser-view-hidden"}
       data-browser-tab-id={target.tabId}

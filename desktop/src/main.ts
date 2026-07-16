@@ -1048,7 +1048,8 @@ function installRendererRecoveryHandlers(window: BrowserWindow, initialUrl: stri
 function handleSidePanelCloseShortcutInput(webContents: WebContents, event: Electron.Event, input: Electron.Input): void {
   const route = resolveProtectedDesktopShortcutRoute(input, {
     sidePanelCloseActive: sidePanelCloseShortcutActive,
-    browserSurfaceActive: browserSurfaceShortcutActive,
+    browserSurfaceActive: browserSurfaceShortcutActive
+      && Boolean(mainWindow && !mainWindow.isDestroyed() && webContents === mainWindow.webContents),
     operatorBrowserGuest: operatorBrowserShortcutWebContents.has(webContents),
   });
   if (!route) return;
