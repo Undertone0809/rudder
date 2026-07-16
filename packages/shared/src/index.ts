@@ -1,4 +1,11 @@
 export {
+  BROWSER_SHORTCUT_ACTIONS,
+  isBrowserShortcutAction,
+  resolveBrowserShortcutInput,
+  type BrowserShortcutAction,
+  type BrowserShortcutInput
+} from "./browser-shortcuts.js";
+export {
   extractVisibleChatWorkTargets,
   normalizeChatWorkExternalUrl,
   preferChatWorkManifestCategory,

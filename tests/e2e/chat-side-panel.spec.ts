@@ -1919,7 +1919,20 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel.getByTestId("chat-side-panel-browser-start")).toHaveCount(0);
     await expect(sidePanel.getByTestId("chat-side-panel-tab").first()).toContainText("localhost");
     await webview.evaluate((element) => {
-      Object.assign(element, { __rudderKeepaliveMarker: "browser-guest-1" });
+      const actions: Array<string | number> = [];
+      Object.assign(element, {
+        __rudderBrowserActions: actions,
+        __rudderKeepaliveMarker: "browser-guest-1",
+        canGoBack: () => true,
+        canGoForward: () => true,
+        getURL: () => "http://localhost:4173/browser-fixture",
+        goBack: () => actions.push("back"),
+        goForward: () => actions.push("forward"),
+        reload: () => actions.push("reload"),
+        reloadIgnoringCache: () => actions.push("hard-reload"),
+        setZoomFactor: (factor: number) => actions.push(factor),
+      });
+      element.dispatchEvent(new Event("dom-ready"));
     });
     const browserTabId = await webview.getAttribute("data-browser-tab-id");
     expect(browserTabId).toBeTruthy();
@@ -1946,6 +1959,41 @@ test.describe("Chat Side Panel", () => {
     });
     await expect(activeBrowserTab).toContainText("localhost");
 
+    const dispatchBrowserShortcut = async (key: string, code: string, shiftKey = false) => {
+      await sidePanel.getByLabel("Browser URL").evaluate((element, shortcut) => {
+        const isMac = navigator.platform.toLowerCase().includes("mac");
+        element.dispatchEvent(new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          code: shortcut.code,
+          ctrlKey: !isMac,
+          key: shortcut.key,
+          metaKey: isMac,
+          shiftKey: shortcut.shiftKey,
+        }));
+      }, { key, code, shiftKey });
+    };
+    await sidePanel.getByLabel("Browser URL").focus();
+    await dispatchBrowserShortcut("r", "KeyR");
+    await dispatchBrowserShortcut("r", "KeyR", true);
+    await dispatchBrowserShortcut("[", "BracketLeft");
+    await dispatchBrowserShortcut("]", "BracketRight");
+    await dispatchBrowserShortcut("=", "Equal");
+    await expect(sidePanel.getByTestId("chat-side-panel-browser-zoom")).toHaveText("110%");
+    await dispatchBrowserShortcut("0", "Digit0");
+    await expect(sidePanel.getByTestId("chat-side-panel-browser-zoom")).toHaveCount(0);
+    await expect.poll(() => webview.evaluate((element) => (
+      element as HTMLElement & { __rudderBrowserActions?: Array<string | number> }
+    ).__rudderBrowserActions)).toEqual(["reload", "hard-reload", "back", "forward", 1.1, 1]);
+
+    await sidePanel.getByLabel("Open new browser tab").focus();
+    await dispatchBrowserShortcut("l", "KeyL");
+    await expect(sidePanel.getByLabel("Browser URL")).toBeFocused();
+    expect(await sidePanel.getByLabel("Browser URL").evaluate((element) => {
+      const input = element as HTMLInputElement;
+      return [input.selectionStart, input.selectionEnd, input.value.length];
+    })).toEqual([0, targetUrl.length, targetUrl.length]);
+
     await sidePanel.getByLabel("Expand Side Panel").click();
     await expect(page.getByTestId("side-panel-expanded-overlay")).toBeVisible();
     await expect.poll(() => stableWebview.evaluate((element) => (
@@ -1957,7 +2005,7 @@ test.describe("Chat Side Panel", () => {
       element as HTMLElement & { __rudderKeepaliveMarker?: string }
     ).__rudderKeepaliveMarker)).toBe("browser-guest-1");
 
-    await sidePanel.getByLabel("Open new browser tab").click();
+    await dispatchBrowserShortcut("t", "KeyT");
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
     await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toContainText("New tab");
 
@@ -1975,7 +2023,7 @@ test.describe("Chat Side Panel", () => {
     await expect(browserTabs.first()).toHaveAttribute("aria-selected", "true");
 
     await browserTabs.first().dragTo(browserTabs.last(), {
-      targetPosition: { x: 64, y: 14 },
+      targetPosition: { x: 150, y: 14 },
     });
     await expect(browserTabs.first()).toContainText("localhost");
     await expect(browserTabs.last()).toContainText("New tab");

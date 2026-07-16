@@ -1,4 +1,4 @@
-import type { AgentRuntimeControlHandle } from "@rudderhq/agent-runtime-utils";
+import type { AgentRuntimeControlHandle, AgentRuntimeControlSteerResult } from "@rudderhq/agent-runtime-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cancelActiveChatGeneration,
@@ -186,7 +186,7 @@ describe("chat generation runtime controls", () => {
       isFallback: false,
     });
     const handle = controlHandle({
-      steer: vi.fn(() => new Promise((resolve) => {
+      steer: vi.fn(() => new Promise<AgentRuntimeControlSteerResult>((resolve) => {
         acknowledge = resolve;
       })),
     });
