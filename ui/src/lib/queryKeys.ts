@@ -81,8 +81,14 @@ export const queryKeys = {
   chats: {
     list: (orgId: string, status: "active" | "resolved" | "archived" | "all" = "active") =>
       ["chats", orgId, status] as const,
-    listPreview: (orgId: string, status: "active" | "resolved" | "archived" | "all", limit: number) =>
-      ["chats", orgId, status, "preview", limit] as const,
+    listPreview: (
+      orgId: string,
+      status: "active" | "resolved" | "archived" | "all",
+      limit: number,
+      projectId?: string,
+    ) => projectId
+      ? ["chats", orgId, status, "preview", limit, "project", projectId] as const
+      : ["chats", orgId, status, "preview", limit] as const,
     search: (orgId: string, q: string, status: "active" | "resolved" | "archived" | "all" = "all") =>
       ["chats", orgId, status, "search", q] as const,
     detail: (orgId: string, chatId: string) => ["chats", orgId, "detail", chatId] as const,

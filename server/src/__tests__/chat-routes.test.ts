@@ -626,6 +626,21 @@ describe("chat routes", () => {
     expect(mockChatAssistantService.enrichConversations).toHaveBeenCalled();
   });
 
+  it("passes a trimmed project filter to the chat list service", async () => {
+    mockChatService.list.mockResolvedValue([createConversation({ title: "Project chat" })]);
+
+    const res = await request(createApp())
+      .get("/api/orgs/organization-1/chats")
+      .query({ projectId: " project-1 ", limit: "40" });
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.list).toHaveBeenCalledWith(
+      "organization-1",
+      { status: "active", q: undefined, limit: 40, projectId: "project-1" },
+      "user-1",
+    );
+  });
+
   it("returns the reconciled work manifest for an accessible chat", async () => {
     mockChatService.getById.mockResolvedValue(createConversation());
     mockChatWorkManifest.getConversationManifest.mockResolvedValue({

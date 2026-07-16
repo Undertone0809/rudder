@@ -1,12 +1,84 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { chatMessages, createDb } from "../../packages/db/src/index.ts";
+import {
+  chatContextLinks,
+  chatConversations,
+  chatMessages,
+  createDb,
+} from "../../packages/db/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_DATABASE_URL } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
 
 test.describe("Chat project empty heading", () => {
+  test("keeps project Chats visible when newer unrelated chats exceed the global preview limit", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Chat-Project-Filter-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: { name: "Long-running launch", description: "Project-specific chat query proof." },
+    });
+    expect(projectRes.ok()).toBe(true);
+    const project = await projectRes.json() as { id: string; name: string };
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Project Historian" });
+    const targetChatId = randomUUID();
+    const oldAt = new Date("2026-01-01T00:00:00.000Z");
+    const newerAt = new Date("2026-07-16T00:00:00.000Z");
+
+    await e2eDb.insert(chatConversations).values([
+      {
+        id: targetChatId,
+        orgId: organization.id,
+        title: "Older launch decision",
+        preferredAgentId: agent.id,
+        status: "active",
+        lastMessageAt: oldAt,
+        createdAt: oldAt,
+        updatedAt: oldAt,
+      },
+      ...Array.from({ length: 41 }, (_, index) => ({
+        id: randomUUID(),
+        orgId: organization.id,
+        title: `New unrelated chat ${index + 1}`,
+        preferredAgentId: agent.id,
+        status: "active",
+        lastMessageAt: new Date(newerAt.getTime() + index * 1_000),
+        createdAt: newerAt,
+        updatedAt: newerAt,
+      })),
+    ]);
+    await e2eDb.insert(chatContextLinks).values({
+      orgId: organization.id,
+      conversationId: targetChatId,
+      entityType: "project",
+      entityId: project.id,
+    });
+
+    await page.addInitScript((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    const projectQueryResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === `/api/orgs/${organization.id}/chats`
+        && url.searchParams.get("projectId") === project.id;
+    });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat?projectId=${project.id}&agentId=${agent.id}`);
+
+    const response = await projectQueryResponse;
+    expect(response.ok()).toBe(true);
+    expect(new URL(response.url()).searchParams.get("limit")).toBe("40");
+    await expect(page.getByTestId("chat-empty-state-tabs")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("chat-empty-state-project-label")).toHaveText(project.name);
+    await page.getByTestId("chat-empty-state-tab-recent").click();
+    await expect(page.getByTestId("chat-empty-state-recent-project-conversations"))
+      .toContainText("Older launch decision");
+    await expect(page.getByTestId("chat-empty-state-recent-project-conversations"))
+      .not.toContainText("New unrelated chat");
+  });
+
   test("updates the draft chat heading when the selected project changes", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {

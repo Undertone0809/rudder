@@ -7,6 +7,7 @@ import {
   approvalComments,
   approvals,
   assets,
+  chatContextLinks,
   chatControlActions,
   chatConversations,
   chatGenerations,
@@ -3081,6 +3082,108 @@ describe("messengerService and issue follows", () => {
     expect(results.find((conversation) => conversation.id === titleChatId)?.searchPreview).toBe("Launch-token planning");
     expect(results.find((conversation) => conversation.id === summaryChatId)?.searchPreview).toBe("Retains the launch-token deployment summary");
     expect(results.find((conversation) => conversation.id === messageChatId)?.searchPreview).toContain("launch-token");
+  });
+
+  it("filters project chats before applying the list limit", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    const projectId = randomUUID();
+    const targetChatId = randomUUID();
+    const archivedTargetChatId = randomUUID();
+    const otherOrgChatId = randomUUID();
+    const oldAt = new Date("2026-01-01T00:00:00.000Z");
+    const newerAt = new Date("2026-07-16T00:00:00.000Z");
+
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Project Chat Filter Org",
+        urlKey: deriveOrganizationUrlKey("Project Chat Filter Org"),
+        issuePrefix: `P${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Project Chat Filter Other Org",
+        urlKey: deriveOrganizationUrlKey("Project Chat Filter Other Org"),
+        issuePrefix: `O${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(projects).values({
+      id: projectId,
+      orgId,
+      name: "Long-running project",
+      status: "planned",
+    });
+
+    const unrelatedChats = Array.from({ length: 41 }, (_, index) => ({
+      id: randomUUID(),
+      orgId,
+      title: `New unrelated chat ${index + 1}`,
+      status: "active",
+      lastMessageAt: new Date(newerAt.getTime() + index * 1_000),
+      createdAt: newerAt,
+      updatedAt: newerAt,
+    }));
+    await db.insert(chatConversations).values([
+      {
+        id: targetChatId,
+        orgId,
+        title: "Older project chat",
+        status: "active",
+        lastMessageAt: oldAt,
+        createdAt: oldAt,
+        updatedAt: oldAt,
+      },
+      {
+        id: archivedTargetChatId,
+        orgId,
+        title: "Archived project chat",
+        status: "archived",
+        lastMessageAt: new Date(newerAt.getTime() + 100_000),
+        createdAt: newerAt,
+        updatedAt: newerAt,
+      },
+      {
+        id: otherOrgChatId,
+        orgId: otherOrgId,
+        title: "Other organization project chat",
+        status: "active",
+        lastMessageAt: new Date(newerAt.getTime() + 200_000),
+        createdAt: newerAt,
+        updatedAt: newerAt,
+      },
+      ...unrelatedChats,
+    ]);
+    await db.insert(chatContextLinks).values([
+      {
+        orgId,
+        conversationId: targetChatId,
+        entityType: "project",
+        entityId: projectId,
+      },
+      {
+        orgId,
+        conversationId: archivedTargetChatId,
+        entityType: "project",
+        entityId: projectId,
+      },
+      {
+        orgId: otherOrgId,
+        conversationId: otherOrgChatId,
+        entityType: "project",
+        entityId: projectId,
+      },
+    ]);
+
+    const results = await chatSvc.list(orgId, {
+      status: "active",
+      projectId,
+      limit: 5,
+    }, "project-filter-user");
+
+    expect(results.map((conversation) => conversation.id)).toEqual([targetChatId]);
   });
 
   it("preserves explicit approved chat issue proposal assignees", async () => {

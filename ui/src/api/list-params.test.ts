@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { queryKeys } from "../lib/queryKeys";
 import { chatsApi } from "./chats";
 import { api } from "./client";
 import { issuesApi } from "./issues";
@@ -21,6 +22,21 @@ describe("list API query parameters", () => {
     await chatsApi.list("org-1", "all", { q: "skill", limit: 20 });
 
     expect(getMock).toHaveBeenCalledWith("/orgs/org-1/chats?status=all&q=skill&limit=20");
+  });
+
+  it("passes server-side chat project filters through to the API", async () => {
+    await chatsApi.list("org-1", "active", { projectId: "project-1", limit: 40 });
+
+    expect(getMock).toHaveBeenCalledWith(
+      "/orgs/org-1/chats?status=active&projectId=project-1&limit=40",
+    );
+  });
+
+  it("keeps project chat previews isolated from the organization preview cache", () => {
+    const organizationPreview = queryKeys.chats.listPreview("org-1", "active", 40);
+    const projectPreview = queryKeys.chats.listPreview("org-1", "active", 40, "__none__");
+
+    expect(projectPreview).not.toEqual(organizationPreview);
   });
 
   it("passes issue search limits through to the API", async () => {

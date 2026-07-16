@@ -2752,7 +2752,12 @@ export function chatService(db: Db) {
 
   async function list(
       orgId: string,
-      options?: { status?: "active" | "resolved" | "archived" | "all"; q?: string; limit?: number },
+      options?: {
+        status?: "active" | "resolved" | "archived" | "all";
+        q?: string;
+        limit?: number;
+        projectId?: string;
+      },
       userId?: string | null,
     ) {
       const status = options?.status ?? "active";
@@ -2762,6 +2767,16 @@ export function chatService(db: Db) {
       const conditions = [eq(chatConversations.orgId, orgId)];
       if (status !== "all") {
         conditions.push(eq(chatConversations.status, status));
+      }
+      if (options?.projectId) {
+        conditions.push(sql<boolean>`EXISTS (
+          SELECT 1
+          FROM ${chatContextLinks}
+          WHERE ${chatContextLinks.conversationId} = ${chatConversations.id}
+            AND ${chatContextLinks.orgId} = ${orgId}
+            AND ${chatContextLinks.entityType} = 'project'
+            AND ${chatContextLinks.entityId} = ${options.projectId}
+        )`);
       }
       if (hasSearch) {
         conditions.push(sql<boolean>`(
