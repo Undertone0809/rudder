@@ -22,6 +22,7 @@ export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRu
 
 import * as heartbeatCore from "./heartbeat.core.js";
 import * as heartbeatSessions from "./heartbeat.sessions.js";
+import { writeTerminalIssueSemanticAudit } from "./heartbeat.terminal.js";
 const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, resolveHeartbeatObservabilitySurface, buildHeartbeatObservationName, compactTraceText, buildIssueRunTraceName, buildHeartbeatRuntimeTraceMetadata, buildHeartbeatAdapterInvokePayload, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, readSkillEvidenceFromPayload, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
 const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
 
@@ -204,6 +205,40 @@ export function createHeartbeatReleaseHandlers(context: any) {
           });
 
       if (passiveClosure.kind === "queued") {
+        const passiveFollowupDetails = {
+          issueId: passiveClosure.issue.id,
+          issueTitle: passiveClosure.issue.title,
+          followupRunId: passiveClosure.run.id,
+          originRunId: passiveClosure.originRunId,
+          previousRunId: passiveClosure.previousRunId,
+          attempt: passiveClosure.attempt,
+          maxAttempts: ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS,
+          reason: ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON,
+          requestedAt: passiveClosure.requestedAt.toISOString(),
+        };
+        await writeTerminalIssueSemanticAudit(tx, {
+          sourceRun: run,
+          issue: passiveClosure.issue,
+          eventType: "issue.passive_followup_queued",
+          action: "issue.passive_followup_queued",
+          actorId: "issue_closure_governance",
+          level: "warn",
+          message: `Queued passive issue follow-up ${passiveClosure.run.id}`,
+          details: passiveFollowupDetails,
+          mirrorRun: {
+            run: passiveClosure.run,
+            message: `Passive follow-up queued because run ${run.id} ended without issue close-out`,
+            details: {
+              issueId: passiveClosure.issue.id,
+              originRunId: passiveClosure.originRunId,
+              previousRunId: passiveClosure.previousRunId,
+              attempt: passiveClosure.attempt,
+              maxAttempts: ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS,
+              reason: ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON,
+              requestedAt: passiveClosure.requestedAt.toISOString(),
+            },
+          },
+        });
         await writeDurableReleaseAudit(tx, "issue.execution_promoted", issue, {
           issueId: issue.id,
           sourceRunId: run.id,
@@ -367,6 +402,9 @@ export function createHeartbeatReleaseHandlers(context: any) {
         return { promotedRun: newRun, passiveClosure };
       }
     });
+    if (outcome.promotedRun) {
+      await context.afterIssuePromotionCommitted?.(outcome);
+    }
 
     const passiveClosure = outcome.passiveClosure;
     const assertDurableReviewerWake = async (input: {
@@ -502,6 +540,26 @@ export function createHeartbeatReleaseHandlers(context: any) {
           }),
           idempotencyKey,
           originTerminalRunId: run.id,
+          terminalIssueAudit: {
+            sourceRun: run,
+            issue: passiveClosure.issue,
+            eventType: "issue.convergence_review_requested",
+            action: "issue.convergence_review_requested",
+            actorId: "issue_closure_governance",
+            level: "warn",
+            message: "Passive issue follow-up stopped and needs reviewer convergence",
+            details: {
+              issueId: passiveClosure.issue.id,
+              issueTitle: passiveClosure.issue.title,
+              reviewerAgentId: passiveClosure.issue.reviewerAgentId,
+              reviewerUserId: passiveClosure.issue.reviewerUserId,
+              originRunId: passiveClosure.originRunId,
+              previousRunId: passiveClosure.previousRunId,
+              attempts: passiveClosure.attempts,
+              maxAttempts: ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS,
+              reason: passiveClosure.reason,
+            },
+          },
           startImmediately: false,
         });
         await assertDurableReviewerWake({
@@ -565,6 +623,25 @@ export function createHeartbeatReleaseHandlers(context: any) {
           }),
           idempotencyKey,
           originTerminalRunId: run.id,
+          terminalIssueAudit: {
+            sourceRun: run,
+            issue: passiveClosure.issue,
+            eventType: "issue.review_closeout_missing",
+            action: "issue.review_closeout_missing",
+            actorId: "issue_review_followup",
+            level: "warn",
+            message: "Reviewer run finished without a structured review decision",
+            details: {
+              issueId: passiveClosure.issue.id,
+              issueTitle: passiveClosure.issue.title,
+              reviewerAgentId: passiveClosure.issue.reviewerAgentId,
+              originRunId: passiveClosure.originRunId,
+              previousRunId: passiveClosure.previousRunId,
+              attempts: passiveClosure.attempts,
+              maxAttempts: passiveClosure.maxAttempts,
+              reason: passiveClosure.reason,
+            },
+          },
           startImmediately: false,
         });
         await assertDurableReviewerWake({

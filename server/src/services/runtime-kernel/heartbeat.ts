@@ -95,7 +95,12 @@ function formatDurationMs(ms: number) {
   return `${seconds}s`;
 }
 
-export function heartbeatService(db: Db) {
+export function heartbeatService(
+  db: Db,
+  testHooks?: {
+    afterIssuePromotionCommitted?: (outcome: unknown) => Promise<void> | void;
+  },
+) {
   const instanceSettings = instanceSettingsService(db);
   const getCurrentUserRedactionOptions = async () => ({
     enabled: (await instanceSettings.getGeneral()).censorUsernameInLogs,
@@ -1628,8 +1633,18 @@ export function heartbeatService(db: Db) {
     getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, terminateRunProcessAndWait, acknowledgeRunProcessExit, renewRunExecutionLease, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, reapInactiveRuns, reapTimedOutRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent,
   } as any;
   const recoveryHandlers = createHeartbeatRecoveryHandlers({ ...baseContext, startNextQueuedRunForAgent });
-  const wakeupHandlers = createHeartbeatWakeupHandlers({ ...baseContext, ...recoveryHandlers, startNextQueuedRunForAgent });
-  const releaseHandlers = createHeartbeatReleaseHandlers({ ...baseContext, ...recoveryHandlers, ...wakeupHandlers });
+  const wakeupHandlers = createHeartbeatWakeupHandlers({
+    ...baseContext,
+    ...recoveryHandlers,
+    startNextQueuedRunForAgent,
+    afterIssuePromotionCommitted: testHooks?.afterIssuePromotionCommitted,
+  });
+  const releaseHandlers = createHeartbeatReleaseHandlers({
+    ...baseContext,
+    ...recoveryHandlers,
+    ...wakeupHandlers,
+    afterIssuePromotionCommitted: testHooks?.afterIssuePromotionCommitted,
+  });
   const executeHandlers = createHeartbeatExecuteHandlers({ ...baseContext, ...recoveryHandlers, ...releaseHandlers, ...wakeupHandlers });
   const miscHandlers = createHeartbeatMiscHandlers({ ...baseContext, ...recoveryHandlers, ...releaseHandlers, ...wakeupHandlers, ...executeHandlers });
   const { enqueueRecoveryRun, enqueueProcessLossRetry, evaluatePassiveIssueClosureForLockedIssue, parseHeartbeatPolicy } = recoveryHandlers;

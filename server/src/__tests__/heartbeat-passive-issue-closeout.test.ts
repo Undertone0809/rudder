@@ -225,8 +225,7 @@ describe("heartbeat passive issue closeout", () => {
     issueId: string;
     reason?: string;
     passiveFollowup?: Record<string, unknown>;
-  }) {
-    const heartbeat = heartbeatService(db);
+  }, heartbeat = heartbeatService(db)) {
     const run = await heartbeat.wakeup(input.agentId, {
       source: "assignment",
       triggerDetail: "system",
@@ -260,8 +259,7 @@ describe("heartbeat passive issue closeout", () => {
     reason?: string;
     issueStatus?: "in_review" | "blocked";
     reviewCloseout?: Record<string, unknown>;
-  }) {
-    const heartbeat = heartbeatService(db);
+  }, heartbeat = heartbeatService(db)) {
     const run = await heartbeat.wakeup(input.agentId, {
       source: "review",
       triggerDetail: "system",
@@ -306,12 +304,59 @@ describe("heartbeat passive issue closeout", () => {
       .then((rows) => rows[0] ?? null);
   }
 
-  it("queues reviewer closeout when a review run exits without a structured decision", async () => {
+  function createPostPromotionCrashHeartbeat() {
+    let injected = false;
+    return heartbeatService(db, {
+      afterIssuePromotionCommitted: () => {
+        if (injected) return;
+        injected = true;
+        throw new Error("injected crash after promotion commit");
+      },
+    });
+  }
+
+  async function recoverAfterInjectedPostPromotionCrash(runId: string) {
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      return run?.terminalEffectsPending && run.terminalEffectsLastError ? run : null;
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({
+        terminalEffectsNextAttemptAt: null,
+        terminalEffectsClaimToken: null,
+        terminalEffectsClaimedAt: null,
+      })
+      .where(eq(heartbeatRuns.id, runId));
+    await Promise.all([
+      heartbeatService(db).reapOrphanedRuns(),
+      heartbeatService(db).reapOrphanedRuns(),
+    ]);
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      return run && !run.terminalEffectsPending ? run : null;
+    });
+  }
+
+  async function expectSingleSemanticAudit(runId: string, action: string) {
+    const events = await db
+      .select()
+      .from(heartbeatRunEvents)
+      .where(eq(heartbeatRunEvents.eventType, action));
+    expect(events.filter((event) => event.runId === runId)).toHaveLength(1);
+    const activities = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, action));
+    expect(activities.filter((activity) => activity.runId === runId)).toHaveLength(1);
+  }
+
+  it("queues reviewer closeout and keeps its audit exactly once after checkpoint-loss replay", async () => {
     const { agentId, issueId } = await seedFixture({
       issueStatus: "in_review",
       reviewerAgent: true,
     });
-    const run = await wakeReviewRun({ agentId, issueId });
+    const run = await wakeReviewRun({ agentId, issueId }, createPostPromotionCrashHeartbeat());
 
     const followup = await waitFor(async () => {
       const runs = await db
@@ -363,6 +408,8 @@ describe("heartbeat passive issue closeout", () => {
       maxAttempts: 3,
       reason: "missing_review_decision",
     });
+    await recoverAfterInjectedPostPromotionCrash(run.id);
+    await expectSingleSemanticAudit(run.id, "issue.review_closeout_missing");
   });
 
   it("dead-letters a permanently skipped reviewer wake without freezing admission", async () => {
@@ -605,9 +652,9 @@ describe("heartbeat passive issue closeout", () => {
     expect(closeoutWakeups.filter((row) => row.id !== run.wakeupRequestId)).toHaveLength(0);
   });
 
-  it("queues a same-agent passive follow-up when a successful issue run exits without close-out", async () => {
+  it("queues a same-agent passive follow-up and keeps its audit exactly once after checkpoint-loss replay", async () => {
     const { agentId, issueId } = await seedFixture();
-    const run = await wakeIssueRun({ agentId, issueId });
+    const run = await wakeIssueRun({ agentId, issueId }, createPostPromotionCrashHeartbeat());
 
     const followup = await waitFor(async () => {
       const runs = await db
@@ -652,6 +699,13 @@ describe("heartbeat passive issue closeout", () => {
     const issue = await getIssue(issueId);
     expect(issue?.executionRunId).toBe(followup?.id);
     expect(issue?.status).toBe("in_progress");
+    await recoverAfterInjectedPostPromotionCrash(run.id);
+    await expectSingleSemanticAudit(run.id, "issue.passive_followup_queued");
+    const mirrorEvents = await db
+      .select()
+      .from(heartbeatRunEvents)
+      .where(eq(heartbeatRunEvents.eventType, "issue.passive_followup_queued"));
+    expect(mirrorEvents.filter((event) => event.runId === followup?.id)).toHaveLength(1);
   });
 
   it("auto-closes successful chat-output automation issues instead of queuing passive follow-up", async () => {
@@ -787,7 +841,7 @@ describe("heartbeat passive issue closeout", () => {
     expect(issue?.executionRunId).toBe(followup.id);
   });
 
-  it("routes reviewed issues to reviewer convergence when passive follow-up attempts are exhausted", async () => {
+  it("routes reviewer convergence and keeps its audit exactly once after checkpoint-loss replay", async () => {
     const { agentId, issueId } = await seedFixture({ reviewerAgent: true });
     const originRunId = randomUUID();
     const run = await wakeIssueRun({
@@ -802,7 +856,7 @@ describe("heartbeat passive issue closeout", () => {
         reason: "missing_closure",
         queuedAt: new Date().toISOString(),
       },
-    });
+    }, createPostPromotionCrashHeartbeat());
 
     const reviewRun = await waitFor(async () => {
       const runs = await db
@@ -852,6 +906,8 @@ describe("heartbeat passive issue closeout", () => {
       maxAttempts: 3,
       reason: "missing_closure",
     });
+    await recoverAfterInjectedPostPromotionCrash(run.id);
+    await expectSingleSemanticAudit(run.id, "issue.convergence_review_requested");
   });
 
   it("records convergence attention for user-reviewed issues without agent reviewer wakeup", async () => {

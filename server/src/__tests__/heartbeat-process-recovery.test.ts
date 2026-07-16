@@ -28,6 +28,8 @@ import { appendHeartbeatRunEvent } from "../services/run-events.ts";
 import {
   claimHeartbeatRunTerminalEffects,
   failHeartbeatRunTerminalEffect,
+  MAX_TERMINAL_EFFECT_INTENT_BYTES,
+  renewHeartbeatRunExecutionLease,
   transitionHeartbeatRunToTerminal,
 } from "../services/runtime-kernel/heartbeat.terminal.ts";
 
@@ -404,6 +406,43 @@ describe("heartbeat orphaned process recovery", () => {
     expect(agent?.status).toBe("error");
   });
 
+  it("times out inactive runs even when their execution lease renews repeatedly", async () => {
+    const startedAt = new Date("2026-03-19T00:00:00.000Z");
+    const ownerToken = randomUUID();
+    const { runId } = await seedRunFixture({
+      processPid: null,
+      includeIssue: false,
+      startedAt,
+      updatedAt: startedAt,
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({
+        executionOwnerToken: ownerToken,
+        executionLeaseExpiresAt: new Date("2026-03-19T00:05:00.000Z"),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+
+    for (const renewedAt of [
+      "2026-03-19T00:10:00.000Z",
+      "2026-03-19T00:20:00.000Z",
+      "2026-03-19T00:29:00.000Z",
+    ]) {
+      await expect(renewHeartbeatRunExecutionLease(db, runId, ownerToken, new Date(renewedAt))).resolves.not.toBeNull();
+    }
+    const beforeTimeout = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0]);
+    expect(beforeTimeout?.updatedAt.toISOString()).toBe(startedAt.toISOString());
+
+    const result = await heartbeatService(db).reapInactiveRuns({
+      maxInactivityMs: 30 * 60 * 1000,
+      now: new Date("2026-03-19T00:31:00.000Z"),
+    });
+
+    expect(result).toEqual({ timedOut: 1, runIds: [runId] });
+    const timedOut = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0]);
+    expect(timedOut).toMatchObject({ status: "timed_out", errorCode: "inactivity_timeout" });
+  });
+
   it("keeps active runs when a recent run event proves progress", async () => {
     const staleAt = new Date("2026-03-19T00:00:00.000Z");
     const recentAt = new Date("2026-03-19T00:25:00.000Z");
@@ -586,7 +625,7 @@ describe("heartbeat orphaned process recovery", () => {
         runId,
         claim!.claimToken,
         "runtime_cost",
-        new Error("transient ledger outage"),
+        new Error("transient ledger outage with customer-secret-123"),
         { now },
       );
       expect(failure?.attempt).toBe(attempt);
@@ -603,6 +642,21 @@ describe("heartbeat orphaned process recovery", () => {
       .from(heartbeatRunEvents)
       .where(eq(heartbeatRunEvents.eventType, "terminal_effect.dead_lettered"));
     expect(events).toHaveLength(1);
+    expect(events[0]?.payload).toMatchObject({
+      effect: "runtime_cost",
+      attempt: 5,
+      errorCode: "terminal_effect_failed",
+      errorSummary: "Terminal effect runtime_cost failed",
+    });
+    expect(JSON.stringify(events[0]?.payload)).not.toContain("customer-secret-123");
+    const attention = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "heartbeat.terminal_effect_dead_lettered"));
+    expect(attention).toHaveLength(1);
+    expect(JSON.stringify(attention[0]?.details)).not.toContain("customer-secret-123");
+    const current = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0]);
+    expect(current?.terminalEffectsLastError).not.toContain("customer-secret-123");
   });
 
   it("never touches a persisted pid after process exit was acknowledged", async () => {
@@ -655,6 +709,8 @@ describe("heartbeat orphaned process recovery", () => {
   it("persists only bounded replay intent and clears it after completion", async () => {
     const { orgId, agentId, runId } = await seedRunFixture({ processPid: null, includeIssue: false });
     const oversizedMarker = `unbounded-marker-${"x".repeat(100_000)}`;
+    const oversizedUtf8Output = "\u{1F600}".repeat(32_000);
+    const individuallyBoundedSessionParams = "y".repeat(60_000);
     const terminal = await transitionHeartbeatRunToTerminal(db, {
       runId,
       status: "succeeded",
@@ -662,7 +718,7 @@ describe("heartbeat orphaned process recovery", () => {
       processExitedAt: new Date(),
       terminalEffectsIntent: {
         version: 1,
-        automation: { output: "done", transcript: [{ text: oversizedMarker }] },
+        automation: { output: oversizedUtf8Output, transcript: [{ text: oversizedMarker }] },
         runtime: {
           adapterResult: { resultJson: { raw: oversizedMarker }, provider: "test", model: "model" },
           legacySessionId: null,
@@ -673,18 +729,20 @@ describe("heartbeat orphaned process recovery", () => {
           agentId,
           agentRuntimeType: "codex_local",
           taskKey: "bounded-intent",
-          sessionParamsJson: { raw: oversizedMarker },
+          sessionParamsJson: { raw: individuallyBoundedSessionParams },
           sessionDisplayId: "session-1",
           lastRunId: runId,
+          privateReplayState: oversizedMarker,
         },
-      },
+      } as any,
     });
     const persisted = JSON.stringify(terminal?.terminalEffectsJson);
-    expect(Buffer.byteLength(persisted, "utf8")).toBeLessThan(80 * 1024);
+    expect(Buffer.byteLength(persisted, "utf8")).toBeLessThanOrEqual(MAX_TERMINAL_EFFECT_INTENT_BYTES);
     expect(persisted).not.toContain("unbounded-marker");
+    expect(persisted).not.toContain("privateReplayState");
     expect(terminal?.terminalEffectsJson).toMatchObject({
       version: 2,
-      automation: { output: "done" },
+      automation: { output: expect.any(String) },
       runtime: { provider: "test", model: "model" },
       taskSession: { sessionParamsJson: null },
     });

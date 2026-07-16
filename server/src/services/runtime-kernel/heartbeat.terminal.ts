@@ -10,6 +10,7 @@ export const TERMINAL_EFFECT_MAX_ATTEMPTS = 5;
 const TERMINAL_EFFECT_BACKOFF_MS = [5_000, 30_000, 2 * 60_000, 10 * 60_000] as const;
 const MAX_TERMINAL_OUTPUT_CHARS = 32_000;
 const MAX_TERMINAL_SESSION_PARAMS_BYTES = 64 * 1024;
+export const MAX_TERMINAL_EFFECT_INTENT_BYTES = 96 * 1024;
 
 export type TerminalEffectName =
   | "automation_chat"
@@ -57,6 +58,72 @@ export type TerminalEffectIntent = {
   processLossRetry?: boolean;
 };
 
+export type TerminalIssueSemanticAudit = {
+  sourceRun: Pick<typeof heartbeatRuns.$inferSelect, "id" | "orgId" | "agentId">;
+  issue: { id: string; orgId: string };
+  eventType: string;
+  action: string;
+  actorId: string;
+  level: "info" | "warn" | "error";
+  message: string;
+  details: Record<string, unknown>;
+  mirrorRun?: {
+    run: Pick<typeof heartbeatRuns.$inferSelect, "id" | "orgId" | "agentId">;
+    message: string;
+    details: Record<string, unknown>;
+  };
+};
+
+export async function writeTerminalIssueSemanticAudit(tx: any, input: TerminalIssueSemanticAudit) {
+  const eventIdempotencyKey = `terminal-issue-effect:${input.sourceRun.id}:${input.eventType}`;
+  const writeRunEvent = async (
+    targetRun: Pick<typeof heartbeatRuns.$inferSelect, "id" | "orgId" | "agentId">,
+    message: string,
+    details: Record<string, unknown>,
+  ) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${targetRun.id}))`);
+    const [currentSeq] = await tx
+      .select({ maxSeq: sql<number | null>`max(${heartbeatRunEvents.seq})` })
+      .from(heartbeatRunEvents)
+      .where(eq(heartbeatRunEvents.runId, targetRun.id));
+    await tx
+      .insert(heartbeatRunEvents)
+      .values({
+        orgId: targetRun.orgId,
+        runId: targetRun.id,
+        agentId: targetRun.agentId,
+        seq: Number(currentSeq?.maxSeq ?? 0) + 1,
+        eventType: input.eventType,
+        stream: "system",
+        level: input.level,
+        message,
+        payload: details,
+        idempotencyKey: eventIdempotencyKey,
+      })
+      .onConflictDoNothing();
+  };
+
+  await writeRunEvent(input.sourceRun, input.message, input.details);
+  if (input.mirrorRun) {
+    await writeRunEvent(input.mirrorRun.run, input.mirrorRun.message, input.mirrorRun.details);
+  }
+  await tx
+    .insert(activityLog)
+    .values({
+      orgId: input.issue.orgId,
+      actorType: "system",
+      actorId: input.actorId,
+      action: input.action,
+      entityType: "issue",
+      entityId: input.issue.id,
+      agentId: input.sourceRun.agentId,
+      runId: input.sourceRun.id,
+      details: input.details,
+      idempotencyKey: `${input.sourceRun.id}:${input.action}`,
+    })
+    .onConflictDoNothing();
+}
+
 function boundedString(value: unknown, maxChars = MAX_TERMINAL_OUTPUT_CHARS) {
   if (typeof value !== "string") return null;
   return value.length <= maxChars ? value : value.slice(0, maxChars);
@@ -73,6 +140,74 @@ function boundedRecord(value: unknown, maxBytes: number): Record<string, unknown
   }
 }
 
+function serializedBytes(value: unknown) {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+
+function normalizeTaskSessionIntent(value: TerminalEffectIntent["taskSession"] | undefined) {
+  if (!value || (value.operation !== "clear" && value.operation !== "upsert")) return undefined;
+  const orgId = boundedString(value.orgId, 200);
+  const agentId = boundedString(value.agentId, 200);
+  const agentRuntimeType = boundedString(value.agentRuntimeType, 200);
+  const taskKey = boundedString(value.taskKey, 4_000);
+  if (!orgId || !agentId || !agentRuntimeType || !taskKey) return undefined;
+  return {
+    operation: value.operation,
+    orgId,
+    agentId,
+    agentRuntimeType,
+    taskKey,
+    sessionParamsJson: boundedRecord(value.sessionParamsJson, MAX_TERMINAL_SESSION_PARAMS_BYTES),
+    sessionDisplayId: boundedString(value.sessionDisplayId, 4_000),
+    lastRunId: boundedString(value.lastRunId, 200),
+    lastError: boundedString(value.lastError, 4_000),
+  } satisfies NonNullable<TerminalEffectIntent["taskSession"]>;
+}
+
+function boundTerminalEffectIntent(intent: TerminalEffectIntent): TerminalEffectIntent {
+  if (serializedBytes(intent) <= MAX_TERMINAL_EFFECT_INTENT_BYTES) return intent;
+  const withoutSessionParams = intent.taskSession
+    ? { ...intent, taskSession: { ...intent.taskSession, sessionParamsJson: null } }
+    : intent;
+  if (serializedBytes(withoutSessionParams) <= MAX_TERMINAL_EFFECT_INTENT_BYTES) return withoutSessionParams;
+  const compact = {
+    ...withoutSessionParams,
+    ...(withoutSessionParams.automation
+      ? { automation: { output: boundedString(withoutSessionParams.automation.output, 8_000) } }
+      : {}),
+  };
+  if (serializedBytes(compact) <= MAX_TERMINAL_EFFECT_INTENT_BYTES) return compact;
+  return {
+    ...compact,
+    ...(compact.automation ? { automation: { output: null } } : {}),
+    ...(compact.runtime
+      ? { runtime: { ...compact.runtime, errorMessage: null, legacySessionId: null, normalizedUsage: null } }
+      : {}),
+    ...(compact.taskSession
+      ? {
+          taskSession: {
+            ...compact.taskSession,
+            taskKey: boundedString(compact.taskSession.taskKey, 1_000)!,
+            sessionDisplayId: null,
+            lastError: null,
+          },
+        }
+      : {}),
+  };
+}
+
+function safeTerminalEffectError(effect: TerminalEffectName, error: unknown) {
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  const permanent = rawMessage.includes("could not be persisted as actionable work");
+  return {
+    permanent,
+    code: permanent ? "terminal_effect_unactionable" : "terminal_effect_failed",
+    summary: permanent
+      ? `Terminal effect ${effect} could not create actionable work`
+      : `Terminal effect ${effect} failed`,
+  };
+}
+
 export function normalizeTerminalEffectIntent(intent: TerminalEffectIntent | null | undefined): TerminalEffectIntent {
   const runtimeInput = intent?.runtime;
   const adapterResult = runtimeInput?.adapterResult
@@ -81,15 +216,8 @@ export function normalizeTerminalEffectIntent(intent: TerminalEffectIntent | nul
     ? runtimeInput.adapterResult
     : {};
   const normalizedUsage = boundedRecord(runtimeInput?.normalizedUsage, 8 * 1024) as Record<string, number> | null;
-  const taskSession = intent?.taskSession
-    ? {
-        ...intent.taskSession,
-        sessionParamsJson: boundedRecord(intent.taskSession.sessionParamsJson, MAX_TERMINAL_SESSION_PARAMS_BYTES),
-        sessionDisplayId: boundedString(intent.taskSession.sessionDisplayId, 4_000),
-        lastError: boundedString(intent.taskSession.lastError, 4_000),
-      }
-    : undefined;
-  return {
+  const taskSession = normalizeTaskSessionIntent(intent?.taskSession);
+  return boundTerminalEffectIntent({
     version: 2,
     ...(intent?.automation
       ? { automation: { output: boundedString(intent.automation.output) } }
@@ -113,7 +241,7 @@ export function normalizeTerminalEffectIntent(intent: TerminalEffectIntent | nul
       : {}),
     ...(taskSession ? { taskSession } : {}),
     ...(intent?.processLossRetry ? { processLossRetry: true } : {}),
-  };
+  });
 }
 
 export function terminalEffectNames(intent: TerminalEffectIntent): TerminalEffectName[] {
@@ -240,7 +368,6 @@ export async function renewHeartbeatRunExecutionLease(
     .update(heartbeatRuns)
     .set({
       executionLeaseExpiresAt: new Date(now.getTime() + RUN_EXECUTION_LEASE_MS),
-      updatedAt: now,
     })
     .where(and(
       eq(heartbeatRuns.id, runId),
@@ -264,7 +391,6 @@ export async function claimExpiredHeartbeatRunExecution(
     .set({
       executionOwnerToken: ownerToken,
       executionLeaseExpiresAt: new Date(now.getTime() + RUN_EXECUTION_LEASE_MS),
-      updatedAt: now,
     })
     .where(and(
       eq(heartbeatRuns.id, runId),
@@ -374,7 +500,7 @@ export async function failHeartbeatRunTerminalEffect(
   opts?: { now?: Date },
 ) {
   const now = opts?.now ?? new Date();
-  const message = (error instanceof Error ? error.message : String(error)).slice(0, 4_000);
+  const safeError = safeTerminalEffectError(effect, error);
   return db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${runId}))`);
     const current = await tx
@@ -391,8 +517,7 @@ export async function failHeartbeatRunTerminalEffect(
     const attempts = { ...(current.terminalEffectsAttemptsJson ?? {}) };
     const attempt = (attempts[effect] ?? 0) + 1;
     attempts[effect] = attempt;
-    const permanentFailure = message.includes("could not be persisted as actionable work");
-    const deadLettered = permanentFailure || attempt >= TERMINAL_EFFECT_MAX_ATTEMPTS;
+    const deadLettered = safeError.permanent || attempt >= TERMINAL_EFFECT_MAX_ATTEMPTS;
     const nextAttemptAt = deadLettered
       ? null
       : new Date(now.getTime() + TERMINAL_EFFECT_BACKOFF_MS[Math.min(attempt - 1, TERMINAL_EFFECT_BACKOFF_MS.length - 1)]);
@@ -407,7 +532,7 @@ export async function failHeartbeatRunTerminalEffect(
         terminalEffectsDeadLetteredJson: deadLetteredEffects,
         terminalEffectsDeadLetteredAt: deadLettered ? now : current.terminalEffectsDeadLetteredAt,
         terminalEffectsNextAttemptAt: nextAttemptAt,
-        terminalEffectsLastError: message,
+        terminalEffectsLastError: `${safeError.code}: ${safeError.summary}`,
         terminalEffectsClaimToken: deadLettered ? claimToken : null,
         terminalEffectsClaimedAt: deadLettered ? now : null,
         updatedAt: now,
@@ -448,7 +573,7 @@ export async function failHeartbeatRunTerminalEffect(
           stream: "system",
           level: "error",
           message: `Terminal effect ${effect} needs operator attention after ${attempt} attempts`,
-          payload: { effect, attempt, error: message },
+          payload: { effect, attempt, errorCode: safeError.code, errorSummary: safeError.summary },
           idempotencyKey,
         })
         .onConflictDoNothing();
@@ -463,7 +588,7 @@ export async function failHeartbeatRunTerminalEffect(
           entityId: runId,
           agentId: current.agentId,
           runId,
-          details: { effect, attempt, error: message },
+          details: { effect, attempt, errorCode: safeError.code, errorSummary: safeError.summary },
           idempotencyKey: `${runId}:${idempotencyKey}`,
         })
         .onConflictDoNothing();
@@ -572,13 +697,13 @@ export async function releaseHeartbeatRunTerminalEffectsClaim(
   claimToken: string,
   error: unknown,
 ) {
-  const message = error instanceof Error ? error.message : String(error);
+  const safeError = safeTerminalEffectError("issue_release", error);
   return db
     .update(heartbeatRuns)
     .set({
       terminalEffectsClaimToken: null,
       terminalEffectsClaimedAt: null,
-      terminalEffectsLastError: message.slice(0, 4_000),
+      terminalEffectsLastError: `${safeError.code}: ${safeError.summary}`,
       updatedAt: new Date(),
     })
     .where(and(

@@ -326,6 +326,83 @@ describe("applyPendingMigrations", () => {
   );
 
   it(
+    "reapplies consolidated migration 0102 over the legacy 0102-0104 feature shape",
+    async () => {
+      const connectionString = await createTempDatabase();
+      await applyPendingMigrations(connectionString);
+
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        const consolidatedHash = await migrationHash("0102_complex_retro_girl.sql");
+        await sql.unsafe(
+          `DELETE FROM "drizzle"."__drizzle_migrations" WHERE hash = '${consolidatedHash}'`,
+        );
+        await sql.unsafe(`
+          INSERT INTO "drizzle"."__drizzle_migrations" ("hash", "created_at")
+          VALUES
+            ('legacy-0102-terminal-state', 1784141378047),
+            ('legacy-0103-terminal-outbox', 1784147102754),
+            ('legacy-0104-terminal-recovery', 1784151670100)
+        `);
+      } finally {
+        await sql.end();
+      }
+
+      const pendingState = await inspectMigrations(connectionString);
+      expect(pendingState).toMatchObject({
+        status: "needsMigrations",
+        pendingMigrations: ["0102_complex_retro_girl.sql"],
+        reason: "pending-migrations",
+      });
+
+      await expect(applyPendingMigrations(connectionString)).resolves.toBeUndefined();
+      expect((await inspectMigrations(connectionString)).status).toBe("upToDate");
+
+      const verifySql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        const columns = await verifySql.unsafe<{ column_name: string }[]>(`
+          SELECT column_name
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'heartbeat_runs'
+            AND column_name IN (
+              'execution_owner_token',
+              'execution_lease_expires_at',
+              'terminal_effects_completed_json',
+              'terminal_effects_last_error'
+            )
+          ORDER BY column_name
+        `);
+        expect(columns.map((row) => row.column_name)).toEqual([
+          "execution_lease_expires_at",
+          "execution_owner_token",
+          "terminal_effects_completed_json",
+          "terminal_effects_last_error",
+        ]);
+        const indexes = await verifySql.unsafe<{ indexname: string }[]>(`
+          SELECT indexname
+          FROM pg_indexes
+          WHERE schemaname = 'public'
+            AND indexname IN (
+              'heartbeat_runs_active_chat_conversation_uq',
+              'heartbeat_runs_status_execution_lease_created_idx',
+              'heartbeat_run_events_run_idempotency_key_uq'
+            )
+          ORDER BY indexname
+        `);
+        expect(indexes.map((row) => row.indexname)).toEqual([
+          "heartbeat_run_events_run_idempotency_key_uq",
+          "heartbeat_runs_active_chat_conversation_uq",
+          "heartbeat_runs_status_execution_lease_created_idx",
+        ]);
+      } finally {
+        await verifySql.end();
+      }
+    },
+    20_000,
+  );
+
+  it(
     "rolls back migration 0100 when a legacy alias conflicts with another organization route",
     async () => {
       const connectionString = await createTempDatabase();

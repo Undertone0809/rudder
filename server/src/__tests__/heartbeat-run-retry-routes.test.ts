@@ -7,15 +7,25 @@ import { registerAgentManagementRoutes } from "../routes/agents.management-route
 
 const mockHeartbeatService = vi.hoisted(() => ({
   cancelRun: vi.fn(),
+  getActiveRunForAgent: vi.fn(),
   getRun: vi.fn(),
   list: vi.fn(),
   retryRun: vi.fn(),
 }));
 
+const mockAgentService = vi.hoisted(() => ({
+  getById: vi.fn(),
+}));
+
+const mockIssueService = vi.hoisted(() => ({
+  getById: vi.fn(),
+  getByIdentifier: vi.fn(),
+}));
+
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
 
 vi.mock("../services/index.js", () => ({
-  agentService: () => ({}),
+  agentService: () => mockAgentService,
   agentInstructionsService: () => ({}),
   accessService: () => ({
     canUser: vi.fn(),
@@ -33,7 +43,7 @@ vi.mock("../services/index.js", () => ({
   budgetService: () => ({}),
   heartbeatService: () => mockHeartbeatService,
   issueApprovalService: () => ({}),
-  issueService: () => ({}),
+  issueService: () => mockIssueService,
   organizationIntelligenceProfileService: () => ({
     list: vi.fn(),
     getByPurpose: vi.fn(),
@@ -92,6 +102,7 @@ function createManagementApp(db: Record<string, unknown>, actor: Record<string, 
   registerAgentManagementRoutes({
     router,
     db,
+    svc: mockAgentService,
     heartbeat: mockHeartbeatService,
     workspaceOperations: {},
     getCurrentUserRedactionOptions: vi.fn(async () => ({ censorUsernameInLogs: false })),
@@ -142,7 +153,7 @@ describe("agent run retry route", () => {
     );
   });
 
-  it("strips internal terminal ownership fields from heartbeat and agent run details", async () => {
+  it("projects every public full-row run route through an explicit allowlist", async () => {
     const runId = "609695f1-f90a-4b17-be61-4f0c6fe37c42";
     mockHeartbeatService.getRun.mockResolvedValue({
       id: runId,
@@ -160,6 +171,19 @@ describe("agent run retry route", () => {
       terminalEffectsClaimToken: "claim-secret",
       terminalEffectsLastError: "internal-error",
     });
+    mockIssueService.getByIdentifier.mockResolvedValue({
+      id: "issue-1",
+      orgId: "organization-1",
+      identifier: "ZST-776",
+      status: "in_progress",
+      executionRunId: runId,
+      assigneeAgentId: "agent-1",
+    });
+    mockAgentService.getById.mockResolvedValue({
+      id: "agent-1",
+      name: "Wesley",
+      agentRuntimeType: "codex_local",
+    });
     const app = createManagementApp({}, {
       type: "board",
       userId: "board-user",
@@ -168,9 +192,13 @@ describe("agent run retry route", () => {
       isInstanceAdmin: false,
     });
 
-    for (const path of [`/api/heartbeat-runs/${runId}`, `/api/agent-runs/${runId}`]) {
+    for (const path of [
+      `/api/heartbeat-runs/${runId}`,
+      `/api/agent-runs/${runId}`,
+      "/api/issues/ZST-776/active-run",
+    ]) {
       const res = await request(app).get(path);
-      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(res.status, `${path}: ${JSON.stringify(res.body)}`).toBe(200);
       expect(res.body.id).toBe(runId);
       expect(res.body).not.toHaveProperty("executionOwnerToken");
       expect(res.body).not.toHaveProperty("executionLeaseExpiresAt");

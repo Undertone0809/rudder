@@ -1592,7 +1592,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     }
 
     res.json({
-      ...redactCurrentUserValue(run, await getCurrentUserRedactionOptions()),
+      ...redactCurrentUserValue(toHeartbeatRun(run), await getCurrentUserRedactionOptions()),
       agentId: agent.id,
       agentName: agent.name,
       agentRuntimeType: agent.agentRuntimeType,
