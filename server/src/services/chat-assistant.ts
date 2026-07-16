@@ -542,6 +542,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             ) ?? undefined
             : undefined,
           abortSignal: input.abortSignal,
+          controlCoordinator: input.controlCoordinator,
           onLog: async (stream, chunk) => {
             if (isStopped()) return;
             if (stream === "stdout") {

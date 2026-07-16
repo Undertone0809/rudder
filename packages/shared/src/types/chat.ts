@@ -63,9 +63,108 @@ export interface ChatRuntimeDescriptor {
   error: string | null;
 }
 
+export type ChatGenerationStatus =
+  | "starting"
+  | "active"
+  | "running"
+  | "tool_busy"
+  | "closing"
+  | "stop_requested"
+  | "stopping"
+  | "completed"
+  | "failed"
+  | "stopped"
+  | "aborted"
+  | "interrupted_unverified"
+  | "control_lost";
+
+export type ChatGenerationControlState =
+  | "unregistered"
+  | "ready"
+  | "stopping"
+  | "terminal"
+  | "control_lost";
+
+export type ChatQueueDeliveryIntent = "queue" | "steer";
+
+export interface ChatQueueRequestActor {
+  type: "board" | "agent";
+  source: "local_implicit" | "session" | "board_key" | "agent_key" | "agent_jwt";
+  userId?: string;
+  orgIds?: string[];
+  orgId?: string;
+  isInstanceAdmin?: boolean;
+  agentId?: string;
+  runId?: string;
+  adapterType?: string;
+}
+
+export type ChatControlDisposition =
+  | "pending"
+  | "accepted_current"
+  | "acceptance_unknown"
+  | "reconciled_current"
+  | "continuation_pending"
+  | "waiting_safe_boundary"
+  | "running_next"
+  | "delivered"
+  | "stop_requested"
+  | "stopping"
+  | "stopped"
+  | "interrupted_unverified"
+  | "cancellation_unverified"
+  | "control_lost"
+  | "failed_actionable"
+  | "cancelled";
+
+export type ChatProviderControlDisposition =
+  | "not_sent"
+  | "sent"
+  | "acknowledged"
+  | "rejected"
+  | "timed_out"
+  | "connection_lost"
+  | "waiting_safe_boundary"
+  | "unverified";
+
+export type ChatControlActionKind = "stop" | "steer";
+
+export type ChatGenerationEventKind =
+  | "generation_started"
+  | "runtime_output"
+  | "assistant_delta"
+  | "transcript"
+  | "client_checkpoint"
+  | "steer_requested"
+  | "steer_provider_sent"
+  | "steer_acknowledged"
+  | "continuation_scheduled"
+  | "stop_requested"
+  | "output_cutoff"
+  | "runtime_terminal"
+  | "late_output_dropped"
+  | "terminal_projection_requested"
+  | "terminal_projected";
+
+export type ChatTerminalOutboxStatus =
+  | "pending"
+  | "claimed"
+  | "retry_wait"
+  | "projected"
+  | "superseded"
+  | "failed_actionable";
+
 export type ChatQueuedMessageStatus =
   | "queued"
   | "steer_pending"
+  | "accepted_current"
+  | "acceptance_unknown"
+  | "reconciled_current"
+  | "continuation_pending"
+  | "running_next"
+  | "delivered"
+  | "failed_actionable"
+  // Legacy delivery states remain readable while existing rows are migrated.
   | "steered"
   | "dequeue_claimed"
   | "running"
@@ -74,6 +173,11 @@ export type ChatQueuedMessageStatus =
   | "failed";
 
 export type ChatSteerResult =
+  | "delivered_current"
+  | "scheduled_next"
+  | "acceptance_unknown"
+  | "failed_actionable"
+  // Legacy route outcomes remain temporarily representable during cutover.
   | "accepted"
   | "pending"
   | "queued_fallback"
@@ -101,8 +205,24 @@ export interface ChatQueuedMessage {
   version: number;
   clientMutationId: string;
   payload: ChatQueuedMessagePayload;
+  requestActor?: ChatQueueRequestActor | null;
+  deliveryIntent: ChatQueueDeliveryIntent;
+  deliveryDisposition: ChatControlDisposition | null;
+  controlActionId: string | null;
   expectedGenerationId: string | null;
   activeGenerationId: string | null;
+  attemptEpoch: number | null;
+  providerClientMessageId: string | null;
+  providerThreadId: string | null;
+  providerTurnId: string | null;
+  providerEvidence: Record<string, unknown> | null;
+  continuationGenerationId: string | null;
+  continuationMessageId: string | null;
+  deliveryLeaseToken: string | null;
+  deliveryLeaseEpoch: number;
+  deliveryLeaseOwner: string | null;
+  deliveryLeaseExpiresAt: Date | null;
+  reconciliationReason: string | null;
   deliveryAttempts: number;
   lastAttemptAt: Date | null;
   lastDeliveryReason: string | null;
@@ -117,6 +237,9 @@ export interface ChatQueuedMessage {
 
 export interface ChatQueueSnapshot {
   activeGenerationId: string | null;
+  activeAttemptEpoch: number | null;
+  activeControlVersion: number | null;
+  activeGenerationStatus: ChatGenerationStatus | null;
   items: ChatQueuedMessage[];
 }
 
@@ -127,9 +250,109 @@ export interface ChatQueueClaimResponse {
 export interface ChatSteerResponse {
   item: ChatQueuedMessage;
   result: ChatSteerResult;
+  disposition?: ChatControlDisposition;
+  controlActionId?: string;
   activeGenerationId: string | null;
   queueVersion: number;
   transcriptEventId: string | null;
+}
+
+export interface ChatGeneration {
+  id: string;
+  orgId: string;
+  conversationId: string;
+  status: ChatGenerationStatus;
+  terminalReason: string | null;
+  attemptEpoch: number;
+  controlVersion: number;
+  controlState: ChatGenerationControlState;
+  controlRuntimeType: string | null;
+  controlOwnerToken: string | null;
+  controlLeaseExpiresAt: Date | null;
+  providerThreadId: string | null;
+  providerTurnId: string | null;
+  acceptedThroughSeq: number | null;
+  lastClientCheckpointSeq: number | null;
+  lastClientCheckpointHash: string | null;
+  frozenBodyHash: string | null;
+  stopRequestedAt: Date | null;
+  runtimeTerminalAt: Date | null;
+  lateEventsDropped: number;
+  lateBytes: number;
+  startedAt: Date;
+  completedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ChatControlAction {
+  id: string;
+  orgId: string;
+  expectedGenerationId: string | null;
+  expectedAttemptEpoch: number | null;
+  expectedControlVersion: number | null;
+  appliedControlVersion: number | null;
+  actionKind: ChatControlActionKind;
+  localDisposition: ChatControlDisposition;
+  providerDisposition: ChatProviderControlDisposition | null;
+  controlOwnerToken: string | null;
+  providerClientMessageId: string | null;
+  providerThreadId: string | null;
+  providerTurnId: string | null;
+  providerEvidence: Record<string, unknown> | null;
+  requestedRenderSeq: number | null;
+  requestedBodyHash: string | null;
+  acceptedThroughSeq: number | null;
+  frozenBodyHash: string | null;
+  lastError: string | null;
+  requestedAt: Date;
+  providerSentAt: Date | null;
+  providerAcknowledgedAt: Date | null;
+  resolvedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ChatGenerationEvent {
+  id: string;
+  orgId: string;
+  generationId: string;
+  generationSeq: number;
+  attemptEpoch: number;
+  eventKind: ChatGenerationEventKind;
+  payload: Record<string, unknown>;
+  bodyOffset: number | null;
+  bodyLength: number | null;
+  assistantMessageId: string | null;
+  runId: string | null;
+  controlActionId: string | null;
+  queueItemId: string | null;
+  recordedAt: Date;
+  emittedAt: Date | null;
+}
+
+export interface ChatGenerationTerminalOutboxEntry {
+  id: string;
+  orgId: string;
+  generationId: string;
+  sourceEventId: string;
+  projectionVersion: number;
+  projectorVersion: number;
+  expectedControlVersion: number;
+  status: ChatTerminalOutboxStatus;
+  payload: Record<string, unknown>;
+  claimToken: string | null;
+  claimEpoch: number;
+  claimOwner: string | null;
+  leaseExpiresAt: Date | null;
+  attemptCount: number;
+  replayCount: number;
+  availableAt: Date;
+  lastAttemptAt: Date | null;
+  lastError: string | null;
+  projectedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface ChatConversation {
@@ -323,11 +546,19 @@ export interface ChatStreamTranscriptTodoItem {
 export interface ChatStreamAckEvent {
   type: "ack";
   userMessage: ChatMessage;
+  generationId?: string;
+  attemptEpoch?: number;
+  generationSeq?: number;
+  bodyHash?: string;
 }
 
 export interface ChatStreamAssistantDeltaEvent {
   type: "assistant_delta";
   delta: string;
+  generationId?: string;
+  attemptEpoch?: number;
+  generationSeq?: number;
+  bodyHash?: string;
 }
 
 export interface ChatStreamAssistantStateEvent {
@@ -338,6 +569,10 @@ export interface ChatStreamAssistantStateEvent {
 export interface ChatStreamTranscriptEntryEvent {
   type: "transcript_entry";
   entry: ChatStreamTranscriptEntry;
+  generationId?: string;
+  attemptEpoch?: number;
+  generationSeq?: number;
+  bodyHash?: string;
 }
 
 export interface ChatStreamFinalEvent {

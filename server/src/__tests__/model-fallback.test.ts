@@ -439,4 +439,60 @@ describe("executeAdapterWithModelFallbacks", () => {
     expect(executed.errorMessage).toBe("failed");
     expect(adapter.execute).toHaveBeenCalledTimes(1);
   });
+
+  it("fences runtime controls to one model attempt at a time", async () => {
+    const events: string[] = [];
+    const adapter: ServerAgentRuntimeModule = {
+      type: "codex_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async (attemptContext) => {
+        events.push(`execute:${attemptContext.controlAttempt?.attemptEpoch}`);
+        return events.filter((event) => event.startsWith("execute:")).length === 1
+          ? result({ exitCode: 1, errorMessage: "primary failed" })
+          : result({ model: String(attemptContext.config.model) });
+      }),
+    };
+    const ctx = baseContext({
+      model: "gpt-primary",
+      modelFallbacks: [{ agentRuntimeType: "codex_local", model: "gpt-backup" }],
+    });
+    ctx.controlCoordinator = {
+      beginAttempt: vi.fn(async (attempt) => {
+        const attemptEpoch = attempt.attemptIndex + 1;
+        events.push(`begin:${attemptEpoch}:${attempt.runtimeType}`);
+        return {
+          attemptEpoch,
+          ownerToken: `owner-${attemptEpoch}`,
+          register: vi.fn(async () => null),
+          complete: vi.fn(async () => {
+            events.push(`complete:${attemptEpoch}`);
+          }),
+        };
+      }),
+    };
+
+    const executed = await executeAdapterWithModelFallbacks(adapter, ctx);
+
+    expect(executed.model).toBe("gpt-backup");
+    expect(events).toEqual([
+      "begin:1:codex_local",
+      "execute:1",
+      "complete:1",
+      "begin:2:codex_local",
+      "execute:2",
+      "complete:2",
+    ]);
+    expect(ctx.controlCoordinator.beginAttempt).toHaveBeenNthCalledWith(1, {
+      attemptIndex: 0,
+      runtimeType: "codex_local",
+      model: "gpt-primary",
+      isFallback: false,
+    });
+    expect(ctx.controlCoordinator.beginAttempt).toHaveBeenNthCalledWith(2, {
+      attemptIndex: 1,
+      runtimeType: "codex_local",
+      model: "gpt-backup",
+      isFallback: true,
+    });
+  });
 });

@@ -2,11 +2,13 @@ import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
 import {
   addChatMessageSchema,
+  chatClientCheckpointSchema,
   convertChatToIssueSchema,
   createChatAttachmentMetadataSchema,
   createChatContextLinkSchema,
   resolveChatOperationProposalSchema,
   setChatProjectContextSchema,
+  stopChatGenerationSchema,
   updateChatConversationUserStateSchema,
   type ChatAttachment,
   type ChatConversation,
@@ -27,9 +29,11 @@ import {
 import {
   cancelActiveChatGeneration,
   claimChatGeneration,
+  createChatRuntimeControlCoordinator,
   getActiveChatGeneration,
   setActiveChatGenerationId,
 } from "../services/chat-generation-locks.js";
+import { hashChatGenerationBody } from "../services/chat-generation-protocol.js";
 import {
   logActivity
 } from "../services/index.js";
@@ -87,6 +91,9 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     recoverableFailurePayload,
     recoverableFailureBody,
     writeStreamEvent,
+    queueRequestActor,
+    wakeServerQueue,
+    wakeTerminalProjector,
   } = ctx;
   router.post("/chats/:id/messages/stream", async (req, res) => {
     if (isMultipartRequest(req)) {
@@ -157,6 +164,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         conversationId: conversation.id,
         clientMutationId: `stream:${randomUUID()}`,
         expectedGenerationId: getActiveChatGeneration(conversation.id)?.generationId ?? null,
+        requestActor: queueRequestActor(req),
         payload: {
           body: parsedBody.data.body,
           attachmentIds: [],
@@ -191,7 +199,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       }
     }
 
-    let generation: { id: string } | null = null;
+    let generation: { id: string; attemptEpoch?: number; controlVersion?: number } | null = null;
     try {
       const createdGeneration = await svc.createGeneration(conversation.orgId, conversation.id);
       generation = createdGeneration;
@@ -367,6 +375,10 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       writeStreamEvent(res, {
         type: "ack",
         userMessage: hydratedUserMessage,
+        generationId: generation!.id,
+        attemptEpoch: generation!.attemptEpoch ?? 1,
+        generationSeq: 0,
+        bodyHash: hashChatGenerationBody(""),
       });
 
       {
@@ -383,6 +395,42 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                 activeChatRunId = runId;
               },
               abortSignal: abortController.signal,
+              controlCoordinator: createChatRuntimeControlCoordinator(
+                conversation.id,
+                generation!.id,
+                {
+                  onAttemptStarted: async ({ generationId, attemptEpoch, ownerToken, attempt }) => {
+                    await svc.beginGenerationControlAttempt({
+                      orgId: conversation.orgId,
+                      conversationId: conversation.id,
+                      generationId,
+                      attemptEpoch,
+                      ownerToken,
+                      runtimeType: attempt.runtimeType,
+                    });
+                  },
+                  onHandleRegistered: async ({ generationId, attemptEpoch, ownerToken, handle }) => {
+                    await svc.markGenerationControlReady({
+                      generationId,
+                      attemptEpoch,
+                      ownerToken,
+                      runtimeType: handle.runtimeType,
+                      providerThreadId: handle.providerThreadId ?? null,
+                      providerTurnId: handle.providerTurnId ?? null,
+                    });
+                  },
+                  onAttemptLeaseRenewed: async ({ generationId, attemptEpoch, ownerToken }) => {
+                    await svc.renewGenerationControlLease({ generationId, attemptEpoch, ownerToken });
+                  },
+                  onAttemptCompleted: async ({ generationId, attemptEpoch, ownerToken }) => {
+                    await svc.markGenerationControlAttemptCompleted({
+                      generationId,
+                      attemptEpoch,
+                      ownerToken,
+                    });
+                  },
+                },
+              ),
               onAssistantDelta: async (delta: string) => {
                 if (abortController.signal.aborted) return;
                 assistantDraftBody = `${assistantDraftBody}${delta}`;
@@ -391,11 +439,36 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                   transcript: [...transcript],
                 });
                 if (abortController.signal.aborted || clientClosed) return;
+                const activeControl = getActiveChatGeneration(conversation.id);
+                const attemptEpoch = Math.max(
+                  1,
+                  activeControl?.attemptEpoch ?? generation?.attemptEpoch ?? 1,
+                );
+                const projectedBody = `${admittedAssistantBody}${delta}`;
+                const committed = await svc.generationProtocol.appendGenerationEvent({
+                  orgId: conversation.orgId,
+                  conversationId: conversation.id,
+                  generationId: generation!.id,
+                  attemptEpoch,
+                  admission: "visible",
+                  eventKind: "assistant_delta",
+                  payload: { delta },
+                  bodyOffset: admittedAssistantBody.length,
+                  bodyLength: delta.length,
+                  assistantMessageId: assistantProgressMessageId,
+                  runId: activeChatRunId,
+                  bodyHash: hashChatGenerationBody(projectedBody),
+                });
+                if (abortController.signal.aborted || clientClosed) return;
                 if (writeStreamEvent(res, {
                   type: "assistant_delta",
                   delta,
+                  generationId: generation!.id,
+                  attemptEpoch,
+                  generationSeq: committed.event.generationSeq,
+                  bodyHash: committed.event.payload.bodyHash,
                 })) {
-                  admittedAssistantBody = `${admittedAssistantBody}${delta}`;
+                  admittedAssistantBody = projectedBody;
                 }
               },
               onAssistantState: async (state: unknown) => {
@@ -418,9 +491,31 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                   transcript: [...transcript],
                 });
                 if (abortController.signal.aborted || clientClosed) return;
+                const activeControl = getActiveChatGeneration(conversation.id);
+                const attemptEpoch = Math.max(
+                  1,
+                  activeControl?.attemptEpoch ?? generation?.attemptEpoch ?? 1,
+                );
+                const committed = await svc.generationProtocol.appendGenerationEvent({
+                  orgId: conversation.orgId,
+                  conversationId: conversation.id,
+                  generationId: generation!.id,
+                  attemptEpoch,
+                  admission: "visible",
+                  eventKind: "transcript",
+                  payload: { entry },
+                  assistantMessageId: assistantProgressMessageId,
+                  runId: activeChatRunId,
+                  bodyHash: hashChatGenerationBody(admittedAssistantBody),
+                });
+                if (abortController.signal.aborted || clientClosed) return;
                 if (writeStreamEvent(res, {
                   type: "transcript_entry",
                   entry,
+                  generationId: generation!.id,
+                  attemptEpoch,
+                  generationSeq: committed.event.generationSeq,
+                  bodyHash: committed.event.payload.bodyHash,
                 })) {
                   admittedTranscript.push(entry);
                 }
@@ -545,8 +640,24 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       req.off("aborted", handleClosed);
       res.off("close", handleClosed);
       if (generation) {
-        await svc.markGenerationTerminal(generation.id, generationTerminalStatus).catch((error: unknown) => {
-          logger.warn({ err: error, generationId: generation?.id }, "failed to mark chat generation terminal");
+        await (async () => {
+          const latestGeneration = await svc.getLatestGeneration(conversation.id);
+          const expectedAttemptEpoch = latestGeneration?.attemptEpoch
+            ?? generation?.attemptEpoch
+            ?? 1;
+          await svc.generationProtocol.recordRuntimeTerminal({
+            orgId: conversation.orgId,
+            conversationId: conversation.id,
+            generationId: generation!.id,
+            expectedAttemptEpoch,
+            finalStatus: generationTerminalStatus,
+            terminalReason: (generationTerminalStatus as string) === "stopped"
+              ? "operator_stop"
+              : generationTerminalStatus,
+          });
+          wakeTerminalProjector();
+        })().catch((error: unknown) => {
+          logger.warn({ err: error, generationId: generation?.id }, "failed to record chat generation terminal evidence");
         });
       }
       if (queuedMessageId) {
@@ -559,10 +670,38 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         });
       }
       releaseGeneration();
+      wakeServerQueue();
     }
   });
 
+  router.post("/chats/:id/messages/stream/checkpoint", validate(chatClientCheckpointSchema), async (req, res) => {
+    const conversation = await assertConversationAccess(req, req.params.id as string);
+    if (!conversation) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    assertChatLocalMutationAllowed(conversation as ChatConversation);
+    const checkpoint = await svc.generationProtocol.recordClientCheckpoint({
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      generationId: req.body.generationId,
+      expectedAttemptEpoch: req.body.attemptEpoch,
+      generationSeq: req.body.generationSeq,
+      renderedBodyHash: req.body.renderedBodyHash,
+    });
+    res.json({
+      generationId: checkpoint.generation.id,
+      generationSeq: checkpoint.generation.lastClientCheckpointSeq,
+      advanced: checkpoint.advanced,
+    });
+  });
+
   router.post("/chats/:id/messages/stream/stop", async (req, res) => {
+    const parsed = stopChatGenerationSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid chat Stop request", details: parsed.error.issues });
+      return;
+    }
     const conversation = await assertConversationAccess(req, req.params.id as string);
     if (!conversation) {
       res.status(404).json({ error: "Chat conversation not found" });
@@ -574,12 +713,103 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     const latestActiveGeneration = active?.generationId
       ? null
       : await svc.getLatestActiveGeneration(conversation.id);
-    const stopped = cancelActiveChatGeneration(conversation.id);
-    const generationId = active?.generationId ?? latestActiveGeneration?.id ?? null;
-    if (stopped || generationId) {
-      await svc.markGenerationTerminal(generationId, "stopped");
+    const generationId = parsed.data.expectedGenerationId
+      ?? active?.generationId
+      ?? latestActiveGeneration?.id
+      ?? null;
+    const controlActionId = parsed.data.controlActionId ?? randomUUID();
+    if (!generationId) {
+      res.json({
+        stopped: false,
+        controlActionId,
+        generationId: null,
+        disposition: "no_active_generation",
+      });
+      return;
     }
-    res.json({ stopped: stopped || Boolean(generationId) });
+
+    let durableCheckpoint = await svc.generationProtocol.getLatestVisibleCheckpoint({
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      generationId,
+    });
+    if (durableCheckpoint.generation.runtimeTerminalAt) {
+      wakeTerminalProjector();
+      res.json({
+        stopped: false,
+        controlActionId,
+        generationId,
+        disposition: "no_active_generation",
+      });
+      return;
+    }
+    const expectedAttemptEpoch = parsed.data.expectedAttemptEpoch
+      ?? durableCheckpoint.generation.attemptEpoch;
+    const requestedRenderSeq = parsed.data.lastCommittedRenderSeq
+      ?? durableCheckpoint.generationSeq;
+    const requestedBodyHash = parsed.data.renderedBodyHash
+      ?? durableCheckpoint.bodyHash;
+    let stop: Awaited<ReturnType<typeof svc.generationProtocol.beginStopAction>> | null = null;
+    for (let attempt = 0; attempt < 2 && !stop; attempt += 1) {
+      try {
+        stop = await svc.generationProtocol.beginStopAction({
+          orgId: conversation.orgId,
+          conversationId: conversation.id,
+          controlActionId,
+          expectedGenerationId: generationId,
+          expectedAttemptEpoch,
+          expectedControlVersion: durableCheckpoint.generation.controlVersion,
+          requestedRenderSeq,
+          requestedBodyHash,
+        });
+      } catch (error) {
+        const status = error && typeof error === "object" && "status" in error
+          ? Number((error as { status?: unknown }).status)
+          : null;
+        if (attempt > 0 || status !== 409) throw error;
+        durableCheckpoint = await svc.generationProtocol.getLatestVisibleCheckpoint({
+          orgId: conversation.orgId,
+          conversationId: conversation.id,
+          generationId,
+        });
+        if (durableCheckpoint.generation.runtimeTerminalAt) {
+          wakeTerminalProjector();
+          res.json({
+            stopped: false,
+            controlActionId,
+            generationId,
+            disposition: "no_active_generation",
+          });
+          return;
+        }
+        if (durableCheckpoint.generation.attemptEpoch !== expectedAttemptEpoch) throw error;
+      }
+    }
+    if (!stop) throw new Error("Failed to establish the chat Stop cutoff");
+
+    const localInterruptRequested = cancelActiveChatGeneration(conversation.id);
+    let disposition = "stopping";
+    if (!localInterruptRequested) {
+      disposition = "interrupted_unverified";
+      await svc.generationProtocol.recordRuntimeTerminal({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        generationId,
+        expectedAttemptEpoch: stop.generation.attemptEpoch,
+        finalStatus: "interrupted_unverified",
+        terminalReason: "stop_without_local_runtime_owner",
+        controlActionId,
+      });
+      wakeTerminalProjector();
+    }
+    res.json({
+      stopped: Boolean(localInterruptRequested),
+      controlActionId,
+      generationId,
+      disposition,
+      acceptedThroughSeq: stop.action.acceptedThroughSeq,
+      frozenBodyHash: stop.action.frozenBodyHash,
+    });
   });
 
   router.post("/orgs/:orgId/chats/:chatId/attachments", async (req, res) => {

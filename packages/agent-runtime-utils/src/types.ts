@@ -183,6 +183,71 @@ export interface AgentRuntimeInvocationMeta {
   context?: Record<string, unknown>;
 }
 
+export type AgentRuntimeControlInterruptReason = "operator_stop" | "steer_fallback";
+
+export type AgentRuntimeControlInterruptResult =
+  | "acknowledged"
+  | "waiting_safe_boundary"
+  | "unverified";
+
+export interface AgentRuntimeControlSteerInput {
+  text: string;
+  clientMessageId: string;
+}
+
+export type AgentRuntimeControlSteerResult =
+  | {
+      disposition: "accepted_current";
+      providerThreadId: string;
+      providerTurnId: string;
+    }
+  | {
+      disposition: "acceptance_unknown";
+      providerThreadId?: string | null;
+      providerTurnId?: string | null;
+      reason: string;
+    }
+  | {
+      disposition: "closing" | "unsupported";
+      reason?: string | null;
+    };
+
+export interface AgentRuntimeControlHandle {
+  runtimeType: string;
+  providerThreadId?: string | null;
+  providerTurnId?: string | null;
+  capabilities: {
+    steer: "native" | "interrupt_continue";
+    interrupt: "native" | "process" | "remote";
+  };
+  steer(input: AgentRuntimeControlSteerInput): Promise<AgentRuntimeControlSteerResult>;
+  interrupt(reason: AgentRuntimeControlInterruptReason): Promise<AgentRuntimeControlInterruptResult>;
+  dispose(): Promise<void>;
+}
+
+export interface AgentRuntimeControlHandleLease {
+  isCurrent(): boolean;
+  release(): Promise<void>;
+}
+
+export interface AgentRuntimeControlAttemptLease {
+  attemptEpoch: number;
+  ownerToken: string;
+  register(handle: AgentRuntimeControlHandle): Promise<AgentRuntimeControlHandleLease | null>;
+  complete(): Promise<void>;
+}
+
+export interface AgentRuntimeControlAttempt {
+  attemptIndex: number;
+  runtimeType: string;
+  model: string | null;
+  isFallback: boolean;
+}
+
+export interface AgentRuntimeControlCoordinator {
+  beginAttempt(attempt: AgentRuntimeControlAttempt): Promise<AgentRuntimeControlAttemptLease>;
+}
+
 export interface AgentRuntimeExecutionContext {
   runId: string;
   agent: AgentRuntimeAgent;
@@ -195,6 +260,8 @@ export interface AgentRuntimeExecutionContext {
   onSpawn?: (meta: { pid: number; startedAt: string }) => Promise<void>;
   authToken?: string;
   abortSignal?: AbortSignal;
+  controlCoordinator?: AgentRuntimeControlCoordinator;
+  controlAttempt?: AgentRuntimeControlAttemptLease;
 }
 
 export interface AgentRuntimeMediaAttachment {

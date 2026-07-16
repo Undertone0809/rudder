@@ -289,6 +289,7 @@ export async function executeAdapterWithModelFallbacks(
       );
     }
 
+    let controlAttempt: Awaited<ReturnType<NonNullable<typeof ctx.controlCoordinator>["beginAttempt"]>> | null = null;
     try {
       const attemptConfig = buildAttemptConfig(
         ctx.config,
@@ -297,6 +298,12 @@ export async function executeAdapterWithModelFallbacks(
         attemptRuntimeType,
         browserCapabilitySource,
       );
+      controlAttempt = await ctx.controlCoordinator?.beginAttempt({
+        attemptIndex: attempt.index,
+        runtimeType: attemptRuntimeType,
+        model: attempt.model,
+        isFallback: attempt.isFallback,
+      }) ?? null;
       await options.onAttemptStart?.(attempt, attemptAdapter);
       const result = await attemptAdapter.execute({
         ...ctx,
@@ -309,6 +316,7 @@ export async function executeAdapterWithModelFallbacks(
         context: buildAttemptContext(ctx.context, attempt),
         runtime: attempt.isFallback ? clearRuntimeSession(ctx.runtime) : ctx.runtime,
         authToken: options.createAuthToken?.(attemptRuntimeType) ?? ctx.authToken,
+        controlAttempt: controlAttempt ?? undefined,
         onMeta: ctx.onMeta
           ? async (meta) => {
             await ctx.onMeta?.(wrapMeta(meta, attempt, previousFailure));
@@ -327,6 +335,8 @@ export async function executeAdapterWithModelFallbacks(
         throw err;
       }
       previousFailure = err;
+    } finally {
+      await controlAttempt?.complete();
     }
   }
 

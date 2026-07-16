@@ -4,6 +4,7 @@ import {
   inferOpenAiCompatibleBiller,
   pickRudderMcpManagedEnv,
   rudderMcpRuntimeMetadata,
+  type AgentRuntimeControlHandleLease,
   type AgentRuntimeExecutionContext,
   type AgentRuntimeExecutionResult,
 } from "@rudderhq/agent-runtime-utils";
@@ -34,6 +35,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isCodexClosedStdinToolSessionError } from "../shared/tool-errors.js";
+import { executeCodexAppServerChat } from "./app-server-chat.js";
 import {
   discoverExternalCodexSkillDisablePaths,
   prepareManagedCodexHome,
@@ -635,6 +637,104 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     heartbeatPromptChars: renderedPrompt.length,
   };
 
+  const appServerUnsupportedArgs = extraArgs.filter((arg) => arg !== "--skip-git-repo-check");
+  const useAppServerChat =
+    runtimeScene === "chat"
+    && context.chatMode === true
+    && context.rudderChatResultRepair !== true
+    && asBoolean(config.chatAppServerEnabled, command === "codex")
+    && appServerUnsupportedArgs.length === 0;
+
+  if (useAppServerChat) {
+    const appServerArgs = ["app-server", "--stdio", "--disable", "plugins"];
+    if (onMeta) {
+      await onMeta({
+        agentRuntimeType: "codex_local",
+        command,
+        cwd,
+        commandNotes: [
+          ...commandNotes,
+          "Using Codex App Server for interactive chat Steer and Stop controls.",
+        ],
+        commandArgs: appServerArgs,
+        env: redactEnvForLogs(env),
+        prompt,
+        agentInstructionStack: prompt,
+        promptMetrics,
+        loadedSkills,
+        realizedSkills: loadedSkills,
+        rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled }),
+        context,
+      });
+    }
+    try {
+      const appResult = await executeCodexAppServerChat({
+        command,
+        cwd,
+        env: Object.fromEntries(
+          Object.entries(runtimeEnv).filter(
+            (entry): entry is [string, string] => typeof entry[1] === "string",
+          ),
+        ),
+        prompt,
+        model,
+        modelReasoningEffort,
+        search,
+        bypassApprovalsAndSandbox: bypass,
+        imagePaths,
+        sessionId,
+        timeoutSec,
+        onLog,
+        onSpawn,
+        abortSignal: ctx.abortSignal,
+        controlAttempt: ctx.controlAttempt,
+      });
+      const estimatedCostUsd =
+        billingType === "subscription" && countSubscriptionUsageAsCost
+          ? estimateCodexCostUsd(model, appResult.usage)
+          : null;
+      const resolvedSessionParams = appResult.sessionId
+        ? ({
+          sessionId: appResult.sessionId,
+          cwd,
+          ...(workspaceId ? { workspaceId } : {}),
+          ...(workspaceRepoUrl ? { repoUrl: workspaceRepoUrl } : {}),
+          ...(workspaceRepoRef ? { repoRef: workspaceRepoRef } : {}),
+        } as Record<string, unknown>)
+        : null;
+      return {
+        exitCode: appResult.exitCode,
+        signal: appResult.signal,
+        timedOut: appResult.timedOut,
+        errorMessage: appResult.errorMessage,
+        usage: appResult.usage,
+        sessionId: appResult.sessionId,
+        sessionParams: resolvedSessionParams,
+        sessionDisplayId: appResult.sessionId,
+        provider: "openai",
+        biller: resolveCodexBiller(effectiveEnv, billingType),
+        model,
+        billingType: resolveCodexResultBillingType(
+          billingType,
+          countSubscriptionUsageAsCost,
+          estimatedCostUsd !== null,
+        ),
+        costUsd: estimatedCostUsd,
+        resultJson: {
+          stdout: appResult.stdout,
+          stderr: appResult.stderr,
+          providerThreadId: appResult.sessionId,
+          providerTurnId: appResult.providerTurnId,
+          transport: "codex_app_server",
+        },
+        summary: appResult.summary,
+        clearSession: appResult.clearSession,
+      };
+    } finally {
+      await pruneProviderManagedMemoryState(effectiveCodexHome, onLog);
+    }
+  }
+
   const buildArgs = (resumeSessionId: string | null) => {
     const args = ["exec", "--json", "--disable", "plugins"];
     if (search) args.unshift("--search");
@@ -786,7 +886,32 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     };
   };
 
+  let cliControlLease: AgentRuntimeControlHandleLease | null = null;
   try {
+    if (ctx.controlAttempt) {
+      cliControlLease = await ctx.controlAttempt.register({
+        runtimeType: "codex_local",
+        providerThreadId: sessionId,
+        providerTurnId: null,
+        capabilities: { steer: "interrupt_continue", interrupt: "process" },
+        async steer() {
+          return {
+            disposition: "unsupported",
+            reason: "Codex exec cannot append input to an active turn",
+          };
+        },
+        async interrupt() {
+          return ctx.abortSignal?.aborted ? "acknowledged" : "unverified";
+        },
+        async dispose() {
+          // Process lifetime is owned by runChildProcess and the attempt abort signal.
+        },
+      });
+      if (!cliControlLease) {
+        throw new Error("Codex exec control handle lost its attempt lease");
+      }
+    }
+
     const initial = await runAttempt(sessionId);
     if (
       sessionId &&
@@ -804,6 +929,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
     return toResult(initial);
   } finally {
+    await cliControlLease?.release().catch(() => undefined);
     await pruneProviderManagedMemoryState(effectiveCodexHome, onLog);
   }
 }

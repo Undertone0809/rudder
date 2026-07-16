@@ -42,7 +42,13 @@ const mockState = vi.hoisted(() => ({
   routeBase: "/messenger/chat",
   workspaceDirectories: {} as Record<string, { directoryPath: string; entries: OrganizationWorkspaceFileEntry[] }>,
   workspaceFiles: {} as Record<string, { rootPath?: string | null; filePath: string; content: string | null; contentType: string | null; previewKind: "text" | "image" | "pdf" | "binary"; contentPath: string | null; message?: string | null; truncated: boolean }>,
-  queueSnapshot: { activeGenerationId: null, items: [] } as ChatQueueSnapshot,
+  queueSnapshot: {
+    activeGenerationId: null,
+    activeAttemptEpoch: null,
+    activeControlVersion: null,
+    activeGenerationStatus: null,
+    items: [],
+  } as ChatQueueSnapshot,
   cancelQueuedMessage: vi.fn(),
   createQueuedMessage: vi.fn(),
   steerQueuedMessage: vi.fn(),
@@ -813,8 +819,23 @@ function queuedMessage(overrides: Partial<ChatQueuedMessage> = {}): ChatQueuedMe
       effort: null,
       metadata: null,
     },
+    deliveryIntent: "queue",
+    deliveryDisposition: null,
+    controlActionId: null,
     expectedGenerationId: null,
     activeGenerationId: null,
+    attemptEpoch: null,
+    providerClientMessageId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    providerEvidence: null,
+    continuationGenerationId: null,
+    continuationMessageId: null,
+    deliveryLeaseToken: null,
+    deliveryLeaseEpoch: 0,
+    deliveryLeaseOwner: null,
+    deliveryLeaseExpiresAt: null,
+    reconciliationReason: null,
     deliveryAttempts: 0,
     lastAttemptAt: null,
     lastDeliveryReason: null,
@@ -825,6 +846,17 @@ function queuedMessage(overrides: Partial<ChatQueuedMessage> = {}): ChatQueuedMe
     dequeuedAt: null,
     createdAt: new Date("2026-05-12T09:04:00.000Z"),
     updatedAt: new Date("2026-05-12T09:04:00.000Z"),
+    ...overrides,
+  };
+}
+
+function queueSnapshot(overrides: Partial<ChatQueueSnapshot> = {}): ChatQueueSnapshot {
+  return {
+    activeGenerationId: null,
+    activeAttemptEpoch: null,
+    activeControlVersion: null,
+    activeGenerationStatus: null,
+    items: [],
     ...overrides,
   };
 }
@@ -1160,7 +1192,7 @@ beforeEach(() => {
     "chat-1": [imageMessage(), pendingIssueProposal()],
     "chat-2": [message({ id: "other-message-1", conversationId: "chat-2", body: "Other chat" })],
   };
-  mockState.queueSnapshot = { activeGenerationId: null, items: [] };
+  mockState.queueSnapshot = queueSnapshot();
   mockState.cancelQueuedMessage.mockReset();
   mockState.cancelQueuedMessage.mockResolvedValue(queuedMessage({ status: "cancelled" }));
   mockState.createQueuedMessage.mockReset();
@@ -1168,7 +1200,15 @@ beforeEach(() => {
     queuedMessage({ payload: { body: data.payload.body, attachmentIds: [], projectId: null, skillRefs: [], accessMode: null, model: null, effort: null, metadata: null } })
   );
   mockState.steerQueuedMessage.mockReset();
-  mockState.steerQueuedMessage.mockResolvedValue({ result: "queued_fallback", item: queuedMessage(), queueVersion: 1 });
+  mockState.steerQueuedMessage.mockResolvedValue({
+    result: "pending",
+    disposition: "pending",
+    controlActionId: "20000000-0000-4000-8000-000000000002",
+    activeGenerationId: "generation-1",
+    item: queuedMessage({ status: "steer_pending", deliveryIntent: "steer", deliveryDisposition: "pending" }),
+    queueVersion: 1,
+    transcriptEventId: null,
+  });
   mockState.updateQueuedMessage.mockReset();
   mockState.updateQueuedMessage.mockImplementation(async (_chatId: string, itemId: string, data: { payload: ChatQueuedMessage["payload"] }) =>
     queuedMessage({ id: itemId, payload: data.payload })
@@ -1189,7 +1229,7 @@ beforeEach(() => {
   mockState.setQueriesData.mockReset();
   mockState.setQueryData.mockReset();
   mockState.stopMessageStream.mockReset();
-  mockState.stopMessageStream.mockResolvedValue(undefined);
+  mockState.stopMessageStream.mockResolvedValue({ stopped: true, disposition: "stopping" });
   mockState.sendMessageStream.mockImplementation(async (chatId: string, body: string, options: {
     onEvent: (event: unknown) => void | Promise<void>;
   }) => {
@@ -3817,7 +3857,11 @@ describe("Chat streaming controls", () => {
 
     await clickEnabledButtonByAriaLabel(container, "Stop streaming");
 
-    expect(mockState.stopMessageStream).toHaveBeenCalledWith("chat-1");
+    expect(mockState.stopMessageStream).toHaveBeenCalledWith("chat-1", expect.objectContaining({
+      controlActionId: expect.any(String),
+      lastCommittedRenderSeq: 0,
+      renderedBodyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    }));
     expect(mockState.abortChatStream).not.toHaveBeenCalled();
     expect(mockState.setStreamDraftForChat).toHaveBeenCalledTimes(1);
     const freezeUpdate = mockState.setStreamDraftForChat.mock.calls[0]?.[1] as (
@@ -3892,26 +3936,120 @@ describe("Chat streaming controls", () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
     };
-    mockState.queueSnapshot = {
+    mockState.queueSnapshot = queueSnapshot({
       activeGenerationId: "generation-1",
-      items: [],
-    };
+      activeAttemptEpoch: 1,
+      activeControlVersion: 0,
+      activeGenerationStatus: "running",
+    });
 
     const { container } = renderChat();
 
     await clickEnabledButtonByAriaLabel(container, "Stop streaming");
 
-    expect(mockState.stopMessageStream).toHaveBeenCalledWith("chat-1");
+    expect(mockState.stopMessageStream).toHaveBeenCalledWith("chat-1", expect.objectContaining({
+      controlActionId: expect.any(String),
+      expectedGenerationId: "generation-1",
+      expectedAttemptEpoch: 1,
+      expectedControlVersion: 0,
+    }));
+    const [, stopRequest] = mockState.stopMessageStream.mock.calls.at(-1) ?? [];
+    expect(stopRequest).not.toHaveProperty("lastCommittedRenderSeq");
+    expect(stopRequest).not.toHaveProperty("renderedBodyHash");
+  });
+
+  it("uses one coherent server generation fence while retaining the rendered draft checkpoint", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    mockState.sendInFlightByChatId = { "chat-1": true };
+    mockState.streamDrafts = {
+      "chat-1": {
+        chatId: "chat-1",
+        streamKey: "stream-1",
+        userBody: "Please draft a plan.",
+        userCreatedAt: new Date("2026-05-12T09:04:00.000Z"),
+        userMessageId: "user-message-1",
+        chatTurnId: "turn-1",
+        turnVariant: 0,
+        editedFromCreatedAt: null,
+        body: "Visible prefix",
+        generationId: "generation-1",
+        attemptEpoch: 1,
+        lastCommittedRenderSeq: 9,
+        renderedBodyHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        state: "streaming",
+        createdAt: new Date("2026-05-12T09:04:01.000Z"),
+        transcript: [],
+        replyingAgentId: "agent-1",
+      },
+    };
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-1",
+      activeAttemptEpoch: 2,
+      activeControlVersion: 7,
+      activeGenerationStatus: "running",
+    });
+
+    const { container } = renderChat();
+    await clickEnabledButtonByAriaLabel(container, "Stop streaming");
+
+    expect(mockState.stopMessageStream).toHaveBeenCalledWith("chat-1", expect.objectContaining({
+      expectedGenerationId: "generation-1",
+      expectedAttemptEpoch: 2,
+      expectedControlVersion: 7,
+      lastCommittedRenderSeq: 9,
+      renderedBodyHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    }));
+  });
+
+  it("restores the live draft state when Stop is rejected", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    mockState.sendInFlightByChatId = { "chat-1": true };
+    mockState.streamDrafts = {
+      "chat-1": {
+        chatId: "chat-1",
+        streamKey: "stream-1",
+        userBody: "Please draft a plan.",
+        userCreatedAt: new Date("2026-05-12T09:04:00.000Z"),
+        userMessageId: "user-message-1",
+        chatTurnId: "turn-1",
+        turnVariant: 0,
+        editedFromCreatedAt: null,
+        body: "Visible prefix",
+        state: "streaming",
+        createdAt: new Date("2026-05-12T09:04:01.000Z"),
+        transcript: [],
+        replyingAgentId: "agent-1",
+      },
+    };
+    mockState.stopMessageStream.mockRejectedValueOnce(new Error("control version changed"));
+
+    const { container } = renderChat();
+    await clickEnabledButtonByAriaLabel(container, "Stop streaming");
+
+    await vi.waitFor(() => expect(mockState.setStreamDraftForChat).toHaveBeenCalledTimes(2));
+    const restoreUpdate = mockState.setStreamDraftForChat.mock.calls[1]?.[1] as (
+      current: ChatStreamDraft | null,
+    ) => ChatStreamDraft | null;
+    expect(restoreUpdate({ ...mockState.streamDrafts["chat-1"]!, state: "stopping" })).toMatchObject({
+      state: "streaming",
+      body: "Visible prefix",
+    });
   });
 
   it("queues a composer follow-up instead of sending a new stream when the server reports an active generation", async () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
     };
-    mockState.queueSnapshot = {
+    mockState.queueSnapshot = queueSnapshot({
       activeGenerationId: "generation-1",
-      items: [],
-    };
+      activeAttemptEpoch: 1,
+      activeControlVersion: 0,
+      activeGenerationStatus: "running",
+    });
 
     const { container } = renderChat();
     const textarea = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']");
@@ -3940,8 +4078,11 @@ describe("Chat streaming controls", () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
     };
-    mockState.queueSnapshot = {
+    mockState.queueSnapshot = queueSnapshot({
       activeGenerationId: "generation-1",
+      activeAttemptEpoch: 1,
+      activeControlVersion: 0,
+      activeGenerationStatus: "running",
       items: [
         queuedMessage({
           status: "dequeue_claimed",
@@ -3957,7 +4098,7 @@ describe("Chat streaming controls", () => {
           },
         }),
       ],
-    };
+    });
 
     const { container } = renderChat();
     const queueItem = container.querySelector("[data-testid='chat-running-queue-item']");
@@ -3969,11 +4110,167 @@ describe("Chat streaming controls", () => {
     expect(queueItem?.textContent).not.toContain("Steer");
   });
 
-  it("does not expose steering for retained queued follow-ups after a reply is no longer running", () => {
+  it("sends durable Steer identity and reports same-run delivery without an unsupported warning", async () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
     };
-    mockState.queueSnapshot = {
+    const item = queuedMessage({
+      id: "queue-steer-1",
+      expectedGenerationId: "generation-1",
+      payload: {
+        body: "Use the public API instead.",
+        attachmentIds: [],
+        projectId: null,
+        skillRefs: [],
+        accessMode: null,
+        model: null,
+        effort: null,
+        metadata: null,
+      },
+    });
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-1",
+      activeAttemptEpoch: 3,
+      activeControlVersion: 7,
+      activeGenerationStatus: "running",
+      items: [item],
+    });
+    mockState.steerQueuedMessage.mockResolvedValueOnce({
+      result: "delivered_current",
+      disposition: "accepted_current",
+      controlActionId: "20000000-0000-4000-8000-000000000002",
+      activeGenerationId: "generation-1",
+      item: queuedMessage({
+        ...item,
+        status: "accepted_current",
+        deliveryIntent: "steer",
+        deliveryDisposition: "accepted_current",
+      }),
+      queueVersion: 2,
+      transcriptEventId: null,
+    });
+
+    const { container } = renderChat();
+    await clickEnabledButton(container, "Steer");
+
+    expect(mockState.steerQueuedMessage).toHaveBeenCalledWith(
+      "chat-1",
+      "queue-steer-1",
+      {
+        expectedActiveGenerationId: "generation-1",
+        controlActionId: expect.any(String),
+        expectedAttemptEpoch: 3,
+        expectedControlVersion: 7,
+      },
+    );
+    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Delivered to current run",
+      tone: "success",
+    }));
+    expect(mockState.pushToast).not.toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.stringContaining("cannot accept mid-run steering"),
+    }));
+  });
+
+  it("locks Steer immediately and applies the durable response item without waiting for refetch", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    let resolveSteer!: (value: Awaited<ReturnType<typeof mockState.steerQueuedMessage>>) => void;
+    const item = queuedMessage({ id: "queue-steer-lock", payload: { body: "Apply this now", attachmentIds: [], projectId: null, skillRefs: [], accessMode: null, model: null, effort: null, metadata: null } });
+    mockState.queueSnapshot = queueSnapshot({ items: [item] });
+    mockState.steerQueuedMessage.mockReturnValueOnce(new Promise((resolve) => {
+      resolveSteer = resolve;
+    }));
+
+    const { container } = renderChat();
+    await clickEnabledButton(container, "Steer");
+
+    expect(mockState.steerQueuedMessage).toHaveBeenCalledTimes(1);
+    expect(container.querySelector("button")?.textContent).not.toContain("Steer");
+    const optimisticUpdater = mockState.setQueryData.mock.calls[0]?.[1] as (
+      current: ChatQueueSnapshot,
+    ) => ChatQueueSnapshot;
+    expect(optimisticUpdater(mockState.queueSnapshot).items[0]).toMatchObject({
+      status: "steer_pending",
+      deliveryDisposition: "pending",
+    });
+
+    await act(async () => {
+      resolveSteer({
+        result: "scheduled_next",
+        disposition: "continuation_pending",
+        controlActionId: "20000000-0000-4000-8000-000000000002",
+        activeGenerationId: null,
+        item: queuedMessage({ ...item, status: "continuation_pending", deliveryIntent: "steer", deliveryDisposition: "continuation_pending" }),
+        queueVersion: 2,
+        transcriptEventId: null,
+      });
+      await Promise.resolve();
+    });
+    const durableUpdater = mockState.setQueryData.mock.calls.at(-1)?.[1] as (
+      current: ChatQueueSnapshot,
+    ) => ChatQueueSnapshot;
+    expect(durableUpdater(mockState.queueSnapshot).items[0]).toMatchObject({
+      status: "continuation_pending",
+      deliveryDisposition: "continuation_pending",
+    });
+  });
+
+  it("reports actionable Steer failure instead of an in-progress success", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    const item = queuedMessage({ id: "queue-steer-failed" });
+    mockState.queueSnapshot = queueSnapshot({ items: [item] });
+    mockState.steerQueuedMessage.mockResolvedValueOnce({
+      result: "failed_actionable",
+      disposition: "failed_actionable",
+      controlActionId: "20000000-0000-4000-8000-000000000002",
+      activeGenerationId: null,
+      item: queuedMessage({ ...item, status: "failed_actionable", deliveryIntent: "steer", deliveryDisposition: "failed_actionable" }),
+      queueVersion: 2,
+      transcriptEventId: null,
+    });
+
+    const { container } = renderChat();
+    await clickEnabledButton(container, "Steer");
+
+    await vi.waitFor(() => expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Feedback needs attention",
+      tone: "error",
+    })));
+  });
+
+  it("renders accepted Steer feedback as delivered instead of still queued", () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-1",
+      activeAttemptEpoch: 1,
+      activeControlVersion: 2,
+      activeGenerationStatus: "running",
+      items: [queuedMessage({
+        status: "accepted_current",
+        deliveryIntent: "steer",
+        deliveryDisposition: "accepted_current",
+        lastDeliveryReason: null,
+      })],
+    });
+
+    const { container } = renderChat();
+    const queueItem = container.querySelector("[data-testid='chat-running-queue-item']");
+
+    expect(queueItem?.textContent).toContain("Delivered to current run");
+    expect(queueItem?.textContent).not.toContain("Still queued");
+  });
+
+  it("offers Steer for retained queued follow-ups after Stop so feedback resumes server-side", () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    mockState.queueSnapshot = queueSnapshot({
       activeGenerationId: null,
       items: [
         queuedMessage({
@@ -3991,7 +4288,7 @@ describe("Chat streaming controls", () => {
           },
         }),
       ],
-    };
+    });
 
     const { container } = renderChat();
     const queueItem = container.querySelector("[data-testid='chat-running-queue-item']");
@@ -3999,7 +4296,7 @@ describe("Chat streaming controls", () => {
     expect(container.querySelector("[data-testid='chat-running-queue']")?.textContent).toContain("Queued follow-ups retained");
     expect(queueItem?.textContent).toContain("Still queued");
     expect(queueItem?.textContent).toContain("Continue from the interrupted chat run.");
-    expect(queueItem?.textContent).not.toContain("Steer");
+    expect(queueItem?.textContent).toContain("Steer");
     expect(queueItem?.querySelector("button[aria-label='Edit queued message']")).not.toBeNull();
     expect(queueItem?.querySelector("button[aria-label='Delete queued message']")).not.toBeNull();
     expect(mockState.steerQueuedMessage).not.toHaveBeenCalled();
@@ -4009,8 +4306,11 @@ describe("Chat streaming controls", () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
     };
-    mockState.queueSnapshot = {
+    mockState.queueSnapshot = queueSnapshot({
       activeGenerationId: "generation-2",
+      activeAttemptEpoch: 1,
+      activeControlVersion: 0,
+      activeGenerationStatus: "running",
       items: [
         queuedMessage({
           status: "running",
@@ -4028,7 +4328,7 @@ describe("Chat streaming controls", () => {
           },
         }),
       ],
-    };
+    });
 
     const { container } = renderChat();
 

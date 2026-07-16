@@ -7,6 +7,7 @@ import {
   approvalComments,
   approvals,
   assets,
+  chatControlActions,
   chatConversations,
   chatGenerations,
   chatMessages,
@@ -277,6 +278,328 @@ describe("messengerService and issue follows", () => {
       status: "stopped",
       terminalReason: "stopped",
     });
+  });
+
+  it("archives accepted-current Steer feedback when its generation becomes terminal", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const generationId = randomUUID();
+    const controlActionId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Accepted Steer Cleanup Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Accepted Steer Cleanup Org"),
+      issuePrefix: `A${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Accepted Steer cleanup chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      id: generationId,
+      orgId,
+      conversationId,
+      status: "running",
+    });
+    const queued = await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId,
+      clientMutationId: "accepted-steer-cleanup",
+      expectedGenerationId: generationId,
+      payload: { body: "Use this feedback in the current turn" },
+    });
+    const started = await chatSvc.beginSteerControlAction({
+      orgId,
+      conversationId,
+      itemId: queued.id,
+      controlActionId,
+      expectedGenerationId: generationId,
+      expectedAttemptEpoch: 1,
+      expectedControlVersion: 0,
+    });
+    await chatSvc.resolveSteerControlAction({
+      orgId,
+      conversationId,
+      itemId: queued.id,
+      controlActionId,
+      status: "accepted_current",
+      disposition: "accepted_current",
+      providerDisposition: "acknowledged",
+    });
+
+    expect(started.generation?.id).toBe(generationId);
+    expect(await chatSvc.listQueuedMessages(conversationId)).toEqual([]);
+    await chatSvc.markGenerationTerminal(generationId, "completed");
+
+    const [storedQueueItem] = await db
+      .select()
+      .from(chatQueuedMessages)
+      .where(eq(chatQueuedMessages.id, queued.id));
+    const [storedAction] = await db
+      .select()
+      .from(chatControlActions)
+      .where(eq(chatControlActions.id, controlActionId));
+    expect(storedQueueItem).toMatchObject({
+      status: "delivered",
+      deliveryDisposition: "delivered",
+    });
+    expect(storedAction).toMatchObject({
+      localDisposition: "delivered",
+      providerDisposition: "acknowledged",
+    });
+    expect(await chatSvc.listQueuedMessages(conversationId)).toEqual([]);
+  });
+
+  it("atomically schedules Steer as a continuation when Stop terminalizes first", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const generationId = randomUUID();
+    const controlActionId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Stop Steer Race Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Stop Steer Race Org"),
+      issuePrefix: `S${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Stop Steer race chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      id: generationId,
+      orgId,
+      conversationId,
+      status: "running",
+    });
+    const queued = await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId,
+      clientMutationId: "stop-steer-race",
+      expectedGenerationId: generationId,
+      payload: { body: "Continue with this feedback after Stop" },
+    });
+    await chatSvc.markGenerationTerminal(generationId, "stopped");
+
+    const scheduled = await chatSvc.beginSteerControlAction({
+      orgId,
+      conversationId,
+      itemId: queued.id,
+      controlActionId,
+      expectedGenerationId: generationId,
+      expectedAttemptEpoch: 1,
+      expectedControlVersion: 0,
+    });
+    const retried = await chatSvc.beginSteerControlAction({
+      orgId,
+      conversationId,
+      itemId: queued.id,
+      controlActionId,
+      expectedGenerationId: generationId,
+      expectedAttemptEpoch: 1,
+      expectedControlVersion: 0,
+    });
+
+    expect(scheduled).toMatchObject({
+      idempotent: false,
+      action: { localDisposition: "continuation_pending", providerDisposition: "not_sent" },
+      item: { status: "continuation_pending", deliveryIntent: "steer" },
+    });
+    expect(retried).toMatchObject({
+      idempotent: true,
+      action: { id: controlActionId, localDisposition: "continuation_pending" },
+      item: { id: queued.id, status: "continuation_pending" },
+    });
+    expect(retried.item.version).toBe(scheduled.item.version);
+
+    const claim = await chatSvc.claimNextServerQueuedMessage({
+      workerId: "continuation-worker-test",
+      leaseMs: 30_000,
+    });
+    expect(claim).toMatchObject({
+      item: {
+        id: queued.id,
+        status: "running_next",
+        deliveryDisposition: "running_next",
+      },
+    });
+    expect(claim?.generationId).toBeTruthy();
+    expect(claim?.userMessageId).toBeTruthy();
+    expect(await chatSvc.renewServerQueuedMessageClaim({
+      itemId: claim!.item.id,
+      generationId: claim!.generationId,
+      leaseToken: claim!.leaseToken,
+      leaseEpoch: claim!.leaseEpoch,
+      leaseMs: 30_000,
+    })).toBe(true);
+    const lateReceipt = await chatSvc.resolveSteerControlAction({
+      orgId,
+      conversationId,
+      itemId: queued.id,
+      controlActionId,
+      status: "accepted_current",
+      disposition: "accepted_current",
+      providerDisposition: "acknowledged",
+      providerEvidence: { receipt: "late_same_turn_ack" },
+    });
+    expect(lateReceipt).toMatchObject({ applied: false, item: { status: "running_next" } });
+    const completed = await chatSvc.completeServerQueuedMessageDelivery({
+      itemId: claim!.item.id,
+      generationId: claim!.generationId,
+      leaseToken: claim!.leaseToken,
+      leaseEpoch: claim!.leaseEpoch,
+      status: "completed",
+    });
+    expect(completed).toMatchObject({
+      id: queued.id,
+      status: "delivered",
+      deliveryDisposition: "delivered",
+    });
+    expect(await chatSvc.listQueuedMessages(conversationId)).toEqual([]);
+  });
+
+  it("moves pending Steer feedback to continuation when an unregistered attempt completes", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const generationId = randomUUID();
+    const controlActionId = randomUUID();
+    const ownerToken = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Pending Steer Reconciliation Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Pending Steer Reconciliation Org"),
+      issuePrefix: `P${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Pending Steer reconciliation chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      id: generationId,
+      orgId,
+      conversationId,
+      status: "active",
+    });
+    await chatSvc.beginGenerationControlAttempt({
+      orgId,
+      conversationId,
+      generationId,
+      attemptEpoch: 1,
+      ownerToken,
+      runtimeType: "codex_local",
+    });
+    const queued = await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId,
+      clientMutationId: "pending-steer-attempt-complete",
+      expectedGenerationId: generationId,
+      payload: { body: "Run this in a continuation if no handle registers" },
+    });
+    await chatSvc.beginSteerControlAction({
+      orgId,
+      conversationId,
+      itemId: queued.id,
+      controlActionId,
+      expectedGenerationId: generationId,
+      expectedAttemptEpoch: 1,
+      expectedControlVersion: 0,
+    });
+
+    await chatSvc.markGenerationControlAttemptCompleted({
+      generationId,
+      attemptEpoch: 1,
+      ownerToken,
+    });
+
+    const [storedQueueItem] = await db
+      .select()
+      .from(chatQueuedMessages)
+      .where(eq(chatQueuedMessages.id, queued.id));
+    const [storedAction] = await db
+      .select()
+      .from(chatControlActions)
+      .where(eq(chatControlActions.id, controlActionId));
+    expect(storedQueueItem).toMatchObject({
+      status: "continuation_pending",
+      deliveryDisposition: "continuation_pending",
+      reconciliationReason: "runtime_attempt_completed_without_steer_acceptance",
+    });
+    expect(storedAction).toMatchObject({
+      localDisposition: "continuation_pending",
+      providerDisposition: "not_sent",
+      lastError: "runtime_attempt_completed_without_steer_acceptance",
+    });
+  });
+
+  it("claims eligible queue work beyond more than twenty-five active conversation heads", async () => {
+    const orgId = randomUUID();
+    const blockedConversationIds = Array.from({ length: 26 }, () => randomUUID());
+    const eligibleConversationId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Queue Fairness Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Queue Fairness Org"),
+      issuePrefix: `Q${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values(
+      [...blockedConversationIds, eligibleConversationId].map((conversationId, index) => ({
+        id: conversationId,
+        orgId,
+        title: `Queue fairness ${index}`,
+        issueCreationMode: "manual_approval" as const,
+        planMode: false,
+      })),
+    );
+    await db.insert(chatGenerations).values(blockedConversationIds.map((conversationId) => ({
+      id: randomUUID(),
+      orgId,
+      conversationId,
+      status: "running" as const,
+    })));
+    const blockedItems = blockedConversationIds.map((conversationId, index) => ({
+      id: randomUUID(),
+      orgId,
+      conversationId,
+      position: 1,
+      status: "queued" as const,
+      clientMutationId: `blocked-${index}`,
+      payload: { body: `Blocked ${index}` },
+    }));
+    const eligibleItemId = randomUUID();
+    await db.insert(chatQueuedMessages).values([
+      ...blockedItems,
+      {
+        id: eligibleItemId,
+        orgId,
+        conversationId: eligibleConversationId,
+        position: 1,
+        status: "queued" as const,
+        clientMutationId: "eligible-after-blocked-heads",
+        payload: { body: "Eligible work" },
+      },
+    ]);
+
+    const claim = await chatSvc.claimNextServerQueuedMessage({
+      workerId: "fairness-worker",
+      leaseMs: 30_000,
+    });
+
+    expect(claim?.item).toMatchObject({ id: eligibleItemId, conversationId: eligibleConversationId });
   });
 
   it("paginates Messenger thread summaries with stable cursors", async () => {
