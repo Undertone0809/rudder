@@ -294,13 +294,14 @@ async function resolveServerLogPath(logsDir) {
   return latestPath;
 }
 
-async function createCompany(baseUrl) {
+async function createCompany(baseUrl, issuePrefix = "DES") {
   console.log("[desktop-smoke] creating company");
   const response = await fetch(`${baseUrl}/api/orgs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       name: "Desktop Smoke Co",
+      issuePrefix,
       description: "Desktop smoke test company",
     }),
   });
@@ -1187,8 +1188,12 @@ async function verifyIssueDetailEscapeNavigation(page, companyId, issuePrefix, i
     mode,
   });
 
-  await setSmokeRoute(`/${issuePrefix}/issues`);
+  await page.evaluate((nextCompanyId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", nextCompanyId);
+  }, companyId);
+  await page.goto(new URL(`/${issuePrefix}/issues`, page.url()).href);
   await waitForPath(`/${issuePrefix}/issues`);
+  await page.waitForLoadState("networkidle");
   await setSmokeRoute(`/${issuePrefix}/issues/${issueRouteId}`, "push");
   await page.waitForURL(new RegExp(`/${issuePrefix}/issues/${issueRouteId}$`), { timeout: 30_000 });
   await page.getByRole("heading", { name: issue.title }).waitFor({ state: "visible", timeout: 30_000 });
@@ -1220,6 +1225,15 @@ async function verifyOrganizationWorkspacesNavigation(electronApp, page, company
   return page;
 }
 
+async function pressFocusedElectronShortcut(electronApp, keyCode, modifiers) {
+  await electronApp.evaluate(({ webContents }, input) => {
+    const focusedContents = webContents.getFocusedWebContents();
+    if (!focusedContents) throw new Error("Desktop shortcut smoke requires focused web contents");
+    focusedContents.sendInputEvent({ type: "keyDown", ...input });
+    focusedContents.sendInputEvent({ type: "keyUp", ...input });
+  }, { keyCode, modifiers });
+}
+
 async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expectedUrl) {
   console.log("[desktop-smoke] verifying Side Panel resize across the native Browser webview");
   assert.ok(electronApp, "native Side Panel resize requires the Electron application");
@@ -1244,14 +1258,28 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
     "resize smoke requires a real Electron Browser webview",
   );
 
+  const beginResizeDrag = async (box) => {
+    const pointerY = box.y + box.height / 2;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await page.mouse.move(box.x + box.width / 2, pointerY);
+      await page.mouse.down();
+      try {
+        await page.getByTestId("side-panel-resize-shield").waitFor({ state: "visible", timeout: 2_000 });
+        return pointerY;
+      } catch (error) {
+        await page.mouse.up();
+        if (attempt === 3) throw error;
+        await page.waitForTimeout(100);
+      }
+    }
+    throw new Error("Side Panel resize drag did not start");
+  };
+
   const dragResizer = async (targetX) => {
     const resizer = page.getByTestId("side-panel-resizer");
     const box = await resizer.boundingBox();
     assert.ok(box, "Side Panel resizer should have geometry");
-    const pointerY = box.y + box.height / 2;
-    await page.mouse.move(box.x + box.width / 2, pointerY);
-    await page.mouse.down();
-    await page.getByTestId("side-panel-resize-shield").waitFor({ state: "visible", timeout: 5_000 });
+    const pointerY = await beginResizeDrag(box);
     await page.mouse.move(targetX, pointerY, { steps: 12 });
     await page.mouse.up();
     await page.getByTestId("side-panel-resize-shield").waitFor({ state: "detached", timeout: 5_000 });
@@ -1261,18 +1289,20 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
   const initialResizerBox = await page.getByTestId("side-panel-resizer").boundingBox();
   assert.ok(initialPanelBox && initialResizerBox, "Side Panel should be docked before native resize");
   await dragResizer(initialResizerBox.x - 80);
+  await page.waitForFunction(({ initialWidth }) => {
+    const panel = document.querySelector("[data-testid='chat-side-panel']");
+    return panel instanceof HTMLElement && panel.getBoundingClientRect().width > initialWidth + 30;
+  }, { initialWidth: initialPanelBox.width }, { timeout: 5_000 });
   const expandedPanelBox = await sidePanel.boundingBox();
   assert.ok(
     expandedPanelBox && expandedPanelBox.width > initialPanelBox.width + 30,
     "dragging left should continuously widen the Side Panel",
   );
+  await page.waitForTimeout(500);
 
   const cancelResizerBox = await page.getByTestId("side-panel-resizer").boundingBox();
   assert.ok(cancelResizerBox, "Side Panel resizer should remain available after widening");
-  const cancelY = cancelResizerBox.y + cancelResizerBox.height / 2;
-  await page.mouse.move(cancelResizerBox.x + cancelResizerBox.width / 2, cancelY);
-  await page.mouse.down();
-  await page.getByTestId("side-panel-resize-shield").waitFor({ state: "visible", timeout: 5_000 });
+  const cancelY = await beginResizeDrag(cancelResizerBox);
   await page.mouse.move(cancelResizerBox.x + 36, cancelY, { steps: 4 });
   const releasedPointerId = await page.getByTestId("side-panel-resizer").evaluate((element) => {
     window.__rudderDesktopSmokeLostCaptureCount = 0;
@@ -1311,10 +1341,15 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
   const restartResizerBox = await page.getByTestId("side-panel-resizer").boundingBox();
   assert.ok(restartResizerBox, "cancelled resize should release the active lifecycle");
   await dragResizer(restartResizerBox.x + 40);
+  await page.waitForFunction(({ previousWidth }) => {
+    const panel = document.querySelector("[data-testid='chat-side-panel']");
+    return panel instanceof HTMLElement && panel.getBoundingClientRect().width < previousWidth - 20;
+  }, { previousWidth: widthAfterCancel }, { timeout: 5_000 });
   assert.ok(
     (await sidePanel.boundingBox())?.width < widthAfterCancel - 20,
     "a new resize should start after cancellation",
   );
+  await page.waitForTimeout(500);
 
   const collapsePanelBox = await sidePanel.boundingBox();
   assert.ok(collapsePanelBox, "Side Panel should remain visible before collapse drag");
@@ -1453,7 +1488,7 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
 
     if (exerciseRouting) {
       const rudderUrl = page.url();
-      const shortcutModifier = process.platform === "darwin" ? "Meta" : "Control";
+      const shortcutModifier = process.platform === "darwin" ? "meta" : "control";
       const hostShortcutMarker = randomUUID();
       await page.evaluate((marker) => {
         window.__rudderBrowserShortcutHostMarker = marker;
@@ -1468,24 +1503,30 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
       await page.waitForFunction(() => (
         document.activeElement?.matches("[data-testid='chat-side-panel-browser-webview'][data-active='true']")
       ), null, { timeout: 15_000 });
-      await page.keyboard.press(`${shortcutModifier}+L`);
-      await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Browser URL", null, {
-        timeout: 15_000,
-      });
+      await pressFocusedElectronShortcut(electronApp, "L", [shortcutModifier]);
+      await page.waitForFunction(
+        () => document.activeElement?.getAttribute("aria-label") === "Browser URL",
+        null,
+        { timeout: 15_000 },
+      );
       assert.deepEqual(await browserUrlInput.evaluate((input) => [
         input.selectionStart,
         input.selectionEnd,
         input.value.length,
       ]), [0, fixtureUrl.length, fixtureUrl.length]);
 
-      for (const shortcut of [`${shortcutModifier}+R`, `${shortcutModifier}+Shift+R`]) {
+      for (const shortcut of [
+        { label: `${shortcutModifier}+R`, modifiers: [shortcutModifier] },
+        { label: `${shortcutModifier}+Shift+R`, modifiers: [shortcutModifier, "shift"] },
+      ]) {
         const guestMarker = randomUUID();
         await page.evaluate(async (marker) => {
           const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
           if (!webview || typeof webview.executeJavaScript !== "function") throw new Error("Browser webview unavailable");
+          webview.focus();
           await webview.executeJavaScript(`window.__rudderBrowserReloadMarker = ${JSON.stringify(marker)}; document.querySelector('[aria-label="Smoke input"]')?.focus()`);
         }, guestMarker);
-        await page.keyboard.press(shortcut);
+        await pressFocusedElectronShortcut(electronApp, "R", shortcut.modifiers);
         await page.waitForFunction(async ({ marker }) => {
           if (window.__rudderBrowserShortcutHostMarker !== marker) return false;
           const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
@@ -1496,21 +1537,21 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
             return false;
           }
         }, { marker: hostShortcutMarker }, { timeout: 30_000 });
-        assert.equal(page.url(), rudderUrl, `${shortcut} must not reload the Rudder host route`);
+        assert.equal(page.url(), rudderUrl, `${shortcut.label} must not reload the Rudder host route`);
       }
 
       await browserUrlInput.focus();
-      await page.keyboard.press(`${shortcutModifier}+=`);
+      await pressFocusedElectronShortcut(electronApp, "=", [shortcutModifier]);
       await sidePanel.getByTestId("chat-side-panel-browser-zoom").waitFor({ state: "visible", timeout: 15_000 });
       assert.equal(await sidePanel.getByTestId("chat-side-panel-browser-zoom").textContent(), "110%");
-      await page.keyboard.press(`${shortcutModifier}+0`);
+      await pressFocusedElectronShortcut(electronApp, "0", [shortcutModifier]);
       await sidePanel.getByTestId("chat-side-panel-browser-zoom").waitFor({ state: "detached", timeout: 15_000 });
 
       const browserTabCountBeforeShortcut = await sidePanel.getByTestId("chat-side-panel-tab").count();
       const nativeWindowCountBeforeShortcut = electronApp
         ? await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)
         : null;
-      await page.keyboard.press(`${shortcutModifier}+T`);
+      await pressFocusedElectronShortcut(electronApp, "T", [shortcutModifier]);
       await page.waitForFunction((expectedCount) => (
         document.querySelectorAll("[data-testid='chat-side-panel-tab']").length === expectedCount
       ), browserTabCountBeforeShortcut + 1, { timeout: 15_000 });
@@ -1708,7 +1749,7 @@ async function assertDesktopServiceWorkersDisabled(page) {
   assert.equal(state.hasController, false, "desktop shell should not keep a service worker controller");
 }
 
-async function verifyReloadRecovery(electronApp, page, companyId, issuePrefix) {
+async function verifyReloadRecovery(electronApp, page, companyId, issuePrefix, organizationRouteKey) {
   console.log("[desktop-smoke] verifying desktop reload recovery");
   page = await waitForBoardWindow(electronApp, page);
   await page.evaluate(({ nextCompanyId, nextPath }) => {
@@ -1729,7 +1770,7 @@ async function verifyReloadRecovery(electronApp, page, companyId, issuePrefix) {
   await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
 
   await page.waitForLoadState("networkidle");
-  await page.waitForURL(new RegExp(`/${issuePrefix}/dashboard$`), { timeout: 30_000 });
+  await page.waitForURL(new RegExp(`/${organizationRouteKey}/dashboard$`), { timeout: 30_000 });
   await dismissReleaseNotesDialogIfVisible(page);
   await page.getByRole("button", { name: "System settings" }).waitFor({ state: "visible", timeout: 30_000 });
   await assertDesktopServiceWorkersDisabled(page);
@@ -2010,6 +2051,7 @@ async function runCleanScenario(mode) {
   const browserFixture = await startBrowserSmokeFixture();
   try {
     const company = await createCompany(firstRun.baseUrl);
+    const companyRouteKey = company.urlKey ?? company.issuePrefix;
     assert.deepEqual(
       await readBrowserSettings(firstRun.baseUrl),
       { enabled: true, openLinksIn: "built_in" },
@@ -2023,20 +2065,26 @@ async function runCleanScenario(mode) {
     if (mode === "packaged") {
       await verifyPackagedDesktopCli(firstRun.baseUrl, ceo, issue);
     }
-    firstRun.page = await verifyReloadRecovery(firstRun.electronApp, firstRun.page, company.id, company.issuePrefix);
-    firstRun.page = await verifyNativeApplicationMenu(firstRun.electronApp, firstRun.page, company.id, company.issuePrefix);
-    await verifyIssueDetailEscapeNavigation(firstRun.page, company.id, company.issuePrefix, issue);
-    firstRun.page = await verifyOrganizationWorkspacesNavigation(
+    firstRun.page = await verifyReloadRecovery(
       firstRun.electronApp,
       firstRun.page,
       company.id,
       company.issuePrefix,
+      companyRouteKey,
+    );
+    firstRun.page = await verifyNativeApplicationMenu(firstRun.electronApp, firstRun.page, company.id, companyRouteKey);
+    await verifyIssueDetailEscapeNavigation(firstRun.page, company.id, companyRouteKey, issue);
+    firstRun.page = await verifyOrganizationWorkspacesNavigation(
+      firstRun.electronApp,
+      firstRun.page,
+      company.id,
+      companyRouteKey,
     );
     firstRun.page = await verifyChatSidePanelBrowser(
       firstRun.page,
       firstRun.baseUrl,
       company.id,
-      company.issuePrefix,
+      companyRouteKey,
       { electronApp: firstRun.electronApp, fixture: browserFixture, seedStorage: true },
     );
     assert.equal(
@@ -2059,13 +2107,14 @@ async function runCleanScenario(mode) {
 
     await setBrowserEnabled(firstRun.page, firstRun.baseUrl, true);
     await verifyBrowserSkillState(firstRun.baseUrl, company.id, true);
-    const secondCompany = await createCompany(firstRun.baseUrl);
+    const secondCompany = await createCompany(firstRun.baseUrl, "DS2");
+    const secondCompanyRouteKey = secondCompany.urlKey ?? secondCompany.issuePrefix;
     await verifyBundledSkills(firstRun.baseUrl, secondCompany.id);
     firstRun.page = await verifyChatSidePanelBrowser(
       firstRun.page,
       firstRun.baseUrl,
       secondCompany.id,
-      secondCompany.issuePrefix,
+      secondCompanyRouteKey,
       {
         electronApp: firstRun.electronApp,
         exerciseRouting: false,
@@ -2077,7 +2126,7 @@ async function runCleanScenario(mode) {
     );
     console.log("[desktop-smoke] Browser profile survived disable and was shared with a second organization");
 
-    await verifySettingsOverlayFlow(firstRun.page, company.id, company.issuePrefix);
+    await verifySettingsOverlayFlow(firstRun.page, company.id, companyRouteKey);
     console.log("[desktop-smoke] closing first app run");
     await closeDesktop(firstRun.electronApp);
 
@@ -2117,7 +2166,7 @@ async function runCleanScenario(mode) {
         secondRun.page,
         secondRun.baseUrl,
         secondCompany.id,
-        secondCompany.issuePrefix,
+        secondCompanyRouteKey,
         {
           electronApp: secondRun.electronApp,
           exerciseRouting: false,
@@ -2151,7 +2200,7 @@ async function runCleanScenario(mode) {
         secondRun.page,
         secondRun.baseUrl,
         secondCompany.id,
-        secondCompany.issuePrefix,
+        secondCompanyRouteKey,
         {
           electronApp: secondRun.electronApp,
           exerciseRouting: false,
@@ -2191,7 +2240,7 @@ async function runBrowserScenario(mode) {
       run.page,
       run.baseUrl,
       company.id,
-      company.issuePrefix,
+      company.urlKey ?? company.issuePrefix,
       { electronApp: run.electronApp, fixture },
     );
     await verifyOperatorBrowserRoutingWhileAgentAccessIsDisabled(
