@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { ThemeProvider } from "@/context/ThemeContext";
 import type { ChatMessage } from "@rudderhq/shared";
 import fs from "node:fs";
 import path from "node:path";
@@ -7,7 +8,6 @@ import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ThemeProvider } from "@/context/ThemeContext";
 import {
   buildInlineVisualSrcDoc,
   ChatInlineVisualContent,
