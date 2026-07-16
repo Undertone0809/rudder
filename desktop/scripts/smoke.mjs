@@ -1225,13 +1225,23 @@ async function verifyOrganizationWorkspacesNavigation(electronApp, page, company
   return page;
 }
 
-async function pressFocusedElectronShortcut(electronApp, keyCode, modifiers) {
+async function pressElectronSurfaceShortcut(electronApp, surfaceType, keyCode, modifiers) {
   await electronApp.evaluate(({ webContents }, input) => {
     const focusedContents = webContents.getFocusedWebContents();
-    if (!focusedContents) throw new Error("Desktop shortcut smoke requires focused web contents");
-    focusedContents.sendInputEvent({ type: "keyDown", ...input });
-    focusedContents.sendInputEvent({ type: "keyUp", ...input });
-  }, { keyCode, modifiers });
+    const candidates = webContents.getAllWebContents().filter((contents) => (
+      !contents.isDestroyed() && contents.getType() === input.surfaceType
+    ));
+    const targetContents = focusedContents?.getType() === input.surfaceType
+      ? focusedContents
+      : candidates.length === 1
+        ? candidates[0]
+        : null;
+    if (!targetContents) {
+      throw new Error(`Desktop shortcut smoke expected one ${input.surfaceType} surface; found ${candidates.length}`);
+    }
+    targetContents.sendInputEvent({ type: "keyDown", keyCode: input.keyCode, modifiers: input.modifiers });
+    targetContents.sendInputEvent({ type: "keyUp", keyCode: input.keyCode, modifiers: input.modifiers });
+  }, { surfaceType, keyCode, modifiers });
 }
 
 async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expectedUrl) {
@@ -1503,7 +1513,7 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
       await page.waitForFunction(() => (
         document.activeElement?.matches("[data-testid='chat-side-panel-browser-webview'][data-active='true']")
       ), null, { timeout: 15_000 });
-      await pressFocusedElectronShortcut(electronApp, "L", [shortcutModifier]);
+      await pressElectronSurfaceShortcut(electronApp, "webview", "L", [shortcutModifier]);
       await page.waitForFunction(
         () => document.activeElement?.getAttribute("aria-label") === "Browser URL",
         null,
@@ -1526,7 +1536,7 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
           webview.focus();
           await webview.executeJavaScript(`window.__rudderBrowserReloadMarker = ${JSON.stringify(marker)}; document.querySelector('[aria-label="Smoke input"]')?.focus()`);
         }, guestMarker);
-        await pressFocusedElectronShortcut(electronApp, "R", shortcut.modifiers);
+        await pressElectronSurfaceShortcut(electronApp, "webview", "R", shortcut.modifiers);
         await page.waitForFunction(async ({ marker }) => {
           if (window.__rudderBrowserShortcutHostMarker !== marker) return false;
           const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
@@ -1541,17 +1551,17 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
       }
 
       await browserUrlInput.focus();
-      await pressFocusedElectronShortcut(electronApp, "=", [shortcutModifier]);
+      await pressElectronSurfaceShortcut(electronApp, "window", "=", [shortcutModifier]);
       await sidePanel.getByTestId("chat-side-panel-browser-zoom").waitFor({ state: "visible", timeout: 15_000 });
       assert.equal(await sidePanel.getByTestId("chat-side-panel-browser-zoom").textContent(), "110%");
-      await pressFocusedElectronShortcut(electronApp, "0", [shortcutModifier]);
+      await pressElectronSurfaceShortcut(electronApp, "window", "0", [shortcutModifier]);
       await sidePanel.getByTestId("chat-side-panel-browser-zoom").waitFor({ state: "detached", timeout: 15_000 });
 
       const browserTabCountBeforeShortcut = await sidePanel.getByTestId("chat-side-panel-tab").count();
       const nativeWindowCountBeforeShortcut = electronApp
         ? await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)
         : null;
-      await pressFocusedElectronShortcut(electronApp, "T", [shortcutModifier]);
+      await pressElectronSurfaceShortcut(electronApp, "window", "T", [shortcutModifier]);
       await page.waitForFunction((expectedCount) => (
         document.querySelectorAll("[data-testid='chat-side-panel-tab']").length === expectedCount
       ), browserTabCountBeforeShortcut + 1, { timeout: 15_000 });
@@ -1562,7 +1572,7 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
           "Browser new-tab shortcut must not create a native Electron window",
         );
       }
-      await sidePanel.getByTestId("chat-side-panel-tab").first().click();
+      await sidePanel.getByTestId("chat-side-panel-tab").first().evaluate((button) => button.click());
       await page.waitForFunction(({ expectedUrl, marker }) => {
         if (window.__rudderBrowserShortcutHostMarker !== marker) return false;
         const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
