@@ -105,6 +105,9 @@ owning domain contract.
   issue/approval/run attention: `MESSENGER.ATTENTION.001`.
 - Messenger Issue Detail as the post-create destination for every non-Issues
   primary surface: `ISSUE.SURFACE.001`.
+- Messenger split-Issue title regeneration, Fast Intelligence visibility,
+  bounded Issue context, and synchronized title refresh:
+  `ISSUE.TITLE.GENERATION.001`.
 - Messenger custom group membership, grouped-row navigation/read behavior, and
   group pin priority: `MESSENGER.CUSTOM.GROUPS.001`.
 - Feishu/IM source badges on Feishu-bound chat rows: `IM.FEISHU.001`.

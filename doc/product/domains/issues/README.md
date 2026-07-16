@@ -45,6 +45,9 @@ edit_policy: user_confirmed_only
   integration.
 - `ISSUE.SURFACE.001`: issue surfaces expose state and linked evidence without
   reauthoring cross-domain rules.
+- `ISSUE.TITLE.GENERATION.001`: board operators can use organization-scoped
+  Fast Intelligence to regenerate a split Issue title from bounded Issue
+  context in Messenger.
 
 ## Cross-Domain Integrations
 

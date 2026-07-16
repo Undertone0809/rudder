@@ -10,6 +10,7 @@ related_code:
   - server/src/services/issues.ts
 related_tests:
   - server/src/__tests__/issue-comment-reopen-routes.test.ts
+  - server/src/__tests__/issue-lifecycle-routes.test.ts
   - tests/e2e/issue-detail-toolbar-actions.spec.ts
 edit_policy: user_confirmed_only
 ---
@@ -29,6 +30,8 @@ Behavior:
 - Updating material issue fields records `issue.updated` activity.
 - Updating only content fields publishes live update events without inventing a
   material activity entry.
+- Issue title regeneration follows the content-only update path defined by
+  `ISSUE.TITLE.GENERATION.001`; it does not invent a material workflow event.
 - Adding a comment records `issue.comment_added` activity and may wake mentioned
   agents through routing contracts.
 - Review decisions record `issue.review_decision_recorded`. If a reviewer needs
@@ -57,4 +60,5 @@ Related code:
 Related tests:
 
 - `server/src/__tests__/issue-comment-reopen-routes.test.ts`
+- `server/src/__tests__/issue-lifecycle-routes.test.ts`
 - `tests/e2e/issue-detail-toolbar-actions.spec.ts`

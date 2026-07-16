@@ -11,6 +11,7 @@ related_code:
   - ui/src/components/InspectableImage.tsx
   - ui/src/context/ImagePreviewContext.tsx
   - ui/src/components/InlineEditor.tsx
+  - ui/src/components/MessengerContextSidebar.tsx
   - ui/src/components/NewIssueDialog.tsx
   - ui/src/lib/new-issue-dialog.ts
   - ui/src/index.css
@@ -18,6 +19,7 @@ related_code:
   - ui/src/pages/Issues.tsx
 related_tests:
   - ui/src/components/InlineEditor.test.tsx
+  - ui/src/components/MessengerContextSidebar.actions.test.tsx
   - ui/src/lib/new-issue-dialog.test.ts
   - ui/src/pages/IssueDetail.test.tsx
   - tests/e2e/codex-model-order.spec.ts
@@ -25,6 +27,7 @@ related_tests:
   - tests/e2e/issue-description-image-preview.spec.ts
   - tests/e2e/issue-board-display-properties.spec.ts
   - tests/e2e/new-issue-project-context.spec.ts
+  - tests/e2e/messenger-chat-title-regenerate.spec.ts
 edit_policy: user_confirmed_only
 ---
 
@@ -63,6 +66,13 @@ Behavior:
   from Messenger, Library, Agents, Organization, Projects, Automations, or any
   other non-Issues primary surface opens the created Issue Detail under
   Messenger at `/messenger/issues/:issueRef`.
+- A split Issue row in Messenger exposes `Regenerate title` from `Thread
+  actions` only when Fast Intelligence is configured. The action, pending
+  state, generated title, and cache synchronization are owned by
+  `ISSUE.TITLE.GENERATION.001`.
+- Issue title regeneration remains subject to the failed-mutation feedback rule
+  below; its current missing dedicated error feedback is recorded as a known
+  implementation gap in `ISSUE.TITLE.GENERATION.001`.
 - The created Issue destination uses the organization's canonical route key.
   The Issues branch keeps an Issues return breadcrumb; the Messenger branch
   uses a Messenger return breadcrumb to `/messenger/issues`.
@@ -109,6 +119,7 @@ Related code:
 - `ui/src/context/ImagePreviewContext.tsx`
 - `ui/src/components/InlineEditor.tsx`
 - `ui/src/components/NewIssueDialog.tsx`
+- `ui/src/components/MessengerContextSidebar.tsx`
 - `ui/src/lib/new-issue-dialog.ts`
 - `ui/src/index.css`
 - `ui/src/pages/IssueDetail.tsx`
@@ -119,8 +130,10 @@ Related tests:
 - `ui/src/components/InlineEditor.test.tsx`
 - `ui/src/lib/new-issue-dialog.test.ts`
 - `ui/src/pages/IssueDetail.test.tsx`
+- `ui/src/components/MessengerContextSidebar.actions.test.tsx`
 - `tests/e2e/codex-model-order.spec.ts`
 - `tests/e2e/issue-detail-toolbar-actions.spec.ts`
 - `tests/e2e/issue-description-image-preview.spec.ts`
 - `tests/e2e/issue-board-display-properties.spec.ts`
 - `tests/e2e/new-issue-project-context.spec.ts`
+- `tests/e2e/messenger-chat-title-regenerate.spec.ts`
