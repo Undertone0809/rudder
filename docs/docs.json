@@ -16,7 +16,15 @@
   "seo": {
     "metatags": {
       "robots": "index,follow",
-      "author": "Rudder"
+      "author": "Rudder",
+      "og:image": "https://docs.rudderhq.dev/images/rudder-social-card.png",
+      "og:image:type": "image/png",
+      "og:image:width": "1200",
+      "og:image:height": "630",
+      "og:image:alt": "Rudder - Build your self-improving Agent Team.",
+      "twitter:card": "summary_large_image",
+      "twitter:image": "https://docs.rudderhq.dev/images/rudder-social-card.png",
+      "twitter:image:alt": "Rudder - Build your self-improving Agent Team."
     }
   },
   "metadata": {

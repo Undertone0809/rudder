@@ -4,6 +4,18 @@ import fs from "node:fs";
 import path from "node:path";
 
 const CANONICAL_ORIGIN = "https://docs.rudderhq.dev";
+const SOCIAL_IMAGE_URL = `${CANONICAL_ORIGIN}/images/rudder-social-card.png`;
+const SOCIAL_IMAGE_ALT = "Rudder - Build your self-improving Agent Team.";
+const SOCIAL_META = [
+  { attribute: "property", key: "og:image", content: SOCIAL_IMAGE_URL },
+  { attribute: "property", key: "og:image:type", content: "image/png" },
+  { attribute: "property", key: "og:image:width", content: "1200" },
+  { attribute: "property", key: "og:image:height", content: "630" },
+  { attribute: "property", key: "og:image:alt", content: SOCIAL_IMAGE_ALT },
+  { attribute: "name", key: "twitter:card", content: "summary_large_image" },
+  { attribute: "name", key: "twitter:image", content: SOCIAL_IMAGE_URL },
+  { attribute: "name", key: "twitter:image:alt", content: SOCIAL_IMAGE_ALT },
+];
 const MARKDOWN_ALTERNATE_RE =
   /<link\b(?=[^>]*\brel=["']alternate["'])(?=[^>]*\btype=["']text\/markdown["'])[^>]*\/?\s*>/gi;
 const HREFLANG_ALTERNATE_RE =
@@ -76,11 +88,34 @@ function injectLanguageAlternates(html, pair) {
   return html.replace("</head>", `${tags}</head>`);
 }
 
+function injectSocialMeta(html) {
+  for (const { key } of SOCIAL_META) {
+    const tagRe = new RegExp(
+      `<meta\\b(?=[^>]*\\b(?:name|property)=["']${key}["'])[^>]*\\/?\\s*>`,
+      "gi",
+    );
+    html = html.replace(tagRe, "");
+  }
+
+  const tags = SOCIAL_META.map(
+    ({ attribute, key, content }) => `<meta ${attribute}="${key}" content="${content}"/>`,
+  ).join("");
+
+  if (!html.includes("</head>")) {
+    throw new Error("Exported docs page is missing </head>");
+  }
+  return html.replace("</head>", `${tags}</head>`);
+}
+
 function injectSeoGuard(html, isChinese) {
   const languageGuard = isChinese
     ? 'if(document.documentElement.lang!=="zh-CN")document.documentElement.lang="zh-CN";'
     : "";
-  const script = `<script data-rudder-seo-guard>(function(){const fix=function(){${languageGuard}document.querySelectorAll('link[rel="alternate"][type="text/markdown"]').forEach(function(link){link.remove()})};fix();new MutationObserver(fix).observe(document.documentElement,{attributes:true,attributeFilter:["lang"],childList:true,subtree:true})})()</script>`;
+  const socialGuard = SOCIAL_META.map(
+    ({ attribute, key, content }) =>
+      `setMeta(${JSON.stringify(attribute)},${JSON.stringify(key)},${JSON.stringify(content)});`,
+  ).join("");
+  const script = `<script data-rudder-seo-guard>(function(){const setMeta=function(a,k,v){const nodes=Array.from(document.querySelectorAll('meta[property="'+k+'"],meta[name="'+k+'"]'));let node=nodes.shift();if(!node){node=document.createElement("meta");document.head.appendChild(node)}if(node.getAttribute(a)!==k)node.setAttribute(a,k);const other=a==="property"?"name":"property";if(node.hasAttribute(other))node.removeAttribute(other);if(node.getAttribute("content")!==v)node.setAttribute("content",v);nodes.forEach(function(extra){extra.remove()})};const fix=function(){${languageGuard}document.querySelectorAll('link[rel="alternate"][type="text/markdown"]').forEach(function(link){link.remove()});${socialGuard}};fix();new MutationObserver(fix).observe(document.documentElement,{attributes:true,attributeFilter:["lang","content","name","property"],childList:true,subtree:true})})()</script>`;
 
   if (!html.includes("</head>")) {
     throw new Error("Exported docs page is missing </head>");
@@ -153,6 +188,7 @@ function postprocessExport(exportDir) {
       pairedPages += 1;
     }
 
+    html = injectSocialMeta(html);
     html = injectSeoGuard(html, isChinese);
 
     if (isChinese) {
