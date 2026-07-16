@@ -1,4 +1,5 @@
 import { heartbeatRuns, type Db } from "@rudderhq/db";
+import { toPublicHeartbeatRunContextSnapshot } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
@@ -170,7 +171,10 @@ export function activityRoutes(db: Db) {
     }
     assertCompanyAccess(req, issue.orgId);
     const result = await svc.runsForIssue(issue.orgId, issue.id);
-    res.json(result);
+    res.json(result.map((run) => ({
+      ...run,
+      contextSnapshot: toPublicHeartbeatRunContextSnapshot(run.contextSnapshot),
+    })));
   });
 
   async function handleIssuesForRun(req: Request, res: Response, notFoundMessage: string) {

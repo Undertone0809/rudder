@@ -12,7 +12,7 @@ function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
-function toPublicContextSnapshot(
+export function toPublicHeartbeatRunContextSnapshot(
   value: HeartbeatRun["contextSnapshot"],
 ): HeartbeatRun["contextSnapshot"] {
   if (!value) return null;
@@ -133,7 +133,7 @@ export function toHeartbeatRun(run: HeartbeatRun): HeartbeatRun {
     processStartedAt: run.processStartedAt,
     retryOfRunId: run.retryOfRunId,
     processLossRetryCount: run.processLossRetryCount,
-    contextSnapshot: toPublicContextSnapshot(run.contextSnapshot),
+    contextSnapshot: toPublicHeartbeatRunContextSnapshot(run.contextSnapshot),
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
   };

@@ -164,6 +164,7 @@ export function chatAgentRunService(db: Db) {
         triggerDetail: input.triggerDetail,
         status: "running",
         startedAt: now,
+        sessionReuseScope: "none",
         executionOwnerToken,
         executionLeaseExpiresAt: new Date(now.getTime() + RUN_EXECUTION_LEASE_MS),
         chatConversationId: input.conversation.id,

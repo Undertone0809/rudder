@@ -357,6 +357,64 @@ describe("activityService.forIssue", () => {
     expect(orgActivity[1]?.details).toMatchObject({ status: "in_progress" });
   });
 
+  it("projects issue run context through the public allowlist", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const issueId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder Issue Runs Org",
+      urlKey: deriveOrganizationUrlKey("Rudder Issue Runs Org"),
+      issuePrefix: `I${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Issue run agent",
+      role: "engineer",
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Issue with private run context",
+      status: "in_progress",
+      priority: "medium",
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "failed",
+      contextSnapshot: {
+        issueId,
+        resumeFromRunId: "source-run-id",
+        resumeSessionDisplayId: "private-display-id",
+        resumeSessionParams: {
+          sessionId: "nested-private-session",
+          cwd: "/nested/private/cwd",
+          workspaceId: "private-workspace",
+          repoUrl: "https://private.example/repo.git",
+          repoRef: "private-ref",
+        },
+      },
+    });
+
+    const result = await svc.runsForIssue(orgId, issueId);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.contextSnapshot).toEqual({
+      issueId,
+      resumeFromRunId: "source-run-id",
+    });
+    expect(JSON.stringify(result)).not.toMatch(
+      /private-display-id|nested-private-session|nested\/private\/cwd|private-workspace|private\.example|private-ref/,
+    );
+  });
+
   it("does not return issues from another organization through contaminated run activity", async () => {
     const orgId = randomUUID();
     const otherOrgId = randomUUID();

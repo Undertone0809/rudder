@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toAgentRun, toHeartbeatRun, type HeartbeatRun } from "./index.js";
+import { toAgentRun, toHeartbeatRun, toPublicHeartbeatRunContextSnapshot, type HeartbeatRun } from "./index.js";
 
 function heartbeatRun(overrides: Partial<HeartbeatRun>): HeartbeatRun {
   return {
@@ -42,6 +42,31 @@ function heartbeatRun(overrides: Partial<HeartbeatRun>): HeartbeatRun {
 }
 
 describe("toAgentRun", () => {
+  it("projects recovery context through the shared public allowlist", () => {
+    const projected = toPublicHeartbeatRunContextSnapshot({
+      issueId: "issue-1",
+      resumeFromRunId: "source-run-id",
+      resumeSessionDisplayId: "private-display-id",
+      resumeSessionParams: {
+        sessionId: "nested-private-session",
+        cwd: "/nested/private/cwd",
+        workspaceId: "private-workspace",
+        repoUrl: "https://private.example/repo.git",
+        repoRef: "private-ref",
+      },
+      forceFreshSession: true,
+      sessionResumeSuppressed: true,
+    });
+
+    expect(projected).toEqual({
+      issueId: "issue-1",
+      resumeFromRunId: "source-run-id",
+    });
+    expect(JSON.stringify(projected)).not.toMatch(
+      /private-display-id|nested-private-session|nested\/private\/cwd|private-workspace|private\.example|private-ref/,
+    );
+  });
+
   it("strips internal recovery and terminal-effect fields from public run shapes", () => {
     const internalRun = {
       ...heartbeatRun({
