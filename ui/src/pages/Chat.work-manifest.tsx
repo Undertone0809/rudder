@@ -5,7 +5,6 @@ import { cn } from "@/lib/utils";
 import { isWorkspaceHtmlFilePath } from "@/lib/workspace-html-preview";
 import type { ChatWorkManifestItem, ChatWorkManifestResponse } from "@rudderhq/shared";
 import {
-  BriefcaseBusiness,
   ChevronDown,
   CircleAlert,
   ClipboardList,
@@ -18,7 +17,6 @@ import {
   MessageSquare,
   MessagesSquare,
   Paperclip,
-  Plus,
   Repeat2,
   X,
 } from "lucide-react";
@@ -32,7 +30,6 @@ export interface ChatWorkManifestProps {
   wideOpen: boolean;
   onOpenItem(item: ChatWorkManifestItem): void;
   onJumpToMessage(messageId: string): void;
-  onAddSource(): void;
 }
 
 const COLLAPSED_ROWS = 2;
@@ -115,11 +112,11 @@ export function ChatWorkManifestToggle({
     <button
       type="button"
       data-testid="chat-work-manifest-wide-toggle"
-      aria-label={open ? "Hide Work manifest" : "Show Work manifest"}
+      aria-label={open ? "Hide conversation files and links" : "Show conversation files and links"}
       aria-pressed={open}
       aria-expanded={open}
       aria-controls="chat-work-manifest-wide-panel"
-      title={open ? "Hide Work manifest" : "Show Work manifest"}
+      title={open ? "Hide conversation files and links" : "Show conversation files and links"}
       className={cn(
         "pointer-events-auto hidden h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 xl:inline-flex",
         open && "bg-[color:var(--surface-active)] text-foreground",
@@ -127,7 +124,7 @@ export function ChatWorkManifestToggle({
       onClick={onToggle}
     >
       <ListFilter className="h-4 w-4" aria-hidden />
-      <span className="sr-only">Work {count}</span>
+      <span className="sr-only">Conversation files and links {count}</span>
     </button>
   );
 }
@@ -180,6 +177,7 @@ function ManifestSection({
   label,
   icon,
   items,
+  hideHeader = false,
   onOpenItem,
   onJumpToMessage,
 }: {
@@ -187,6 +185,7 @@ function ManifestSection({
   label: string;
   icon: ReactNode;
   items: ChatWorkManifestItem[];
+  hideHeader?: boolean;
   onOpenItem(item: ChatWorkManifestItem): void;
   onJumpToMessage(messageId: string): void;
 }) {
@@ -196,11 +195,13 @@ function ManifestSection({
   const sectionId = `${idPrefix}-${label.toLowerCase()}`;
   return (
     <section className="border-t border-border/50 px-2.5 py-2 first:border-t-0" aria-label={label}>
-      <div className="flex h-7 items-center gap-2 px-1.5 text-[11px] font-medium text-muted-foreground">
-        <span className="grid size-5 place-items-center" aria-hidden="true">{icon}</span>
-        <span className="text-foreground/80">{label}</span>
-        <span className="ml-auto tabular-nums text-muted-foreground/80">{items.length}</span>
-      </div>
+      {hideHeader ? null : (
+        <div className="flex h-7 items-center gap-2 px-1.5 text-[11px] font-medium text-muted-foreground">
+          <span className="grid size-5 place-items-center" aria-hidden="true">{icon}</span>
+          <span className="text-foreground/80">{label}</span>
+          <span className="ml-auto tabular-nums text-muted-foreground/80">{items.length}</span>
+        </div>
+      )}
       <div id={sectionId} className="mt-0.5 space-y-0.5" role="list">
         {visibleItems.map((item) => (
           <div key={item.id} role="listitem">
@@ -235,8 +236,11 @@ function ManifestContent({
   error,
   onOpenItem,
   onJumpToMessage,
-  onAddSource,
-}: Omit<ChatWorkManifestProps, "sidePanelOpen"> & { idPrefix: string }) {
+  primaryLabel,
+}: Omit<ChatWorkManifestProps, "sidePanelOpen"> & {
+  idPrefix: string;
+  primaryLabel: string | null;
+}) {
   const scrollRef = useScrollbarActivityRef();
   if (loading) return null;
   if (error) {
@@ -262,6 +266,7 @@ function ManifestContent({
         label="Outputs"
         icon={<FileOutput className="size-3.5" aria-hidden="true" />}
         items={outputs}
+        hideHeader={primaryLabel === "Outputs"}
         onOpenItem={onOpenItem}
         onJumpToMessage={onJumpToMessage}
       />
@@ -270,6 +275,7 @@ function ManifestContent({
         label="Sources"
         icon={<Paperclip className="size-3.5" aria-hidden="true" />}
         items={sources}
+        hideHeader={primaryLabel === "Sources"}
         onOpenItem={onOpenItem}
         onJumpToMessage={onJumpToMessage}
       />
@@ -278,6 +284,7 @@ function ManifestContent({
         label="References"
         icon={<Link2 className="size-3.5" aria-hidden="true" />}
         items={references}
+        hideHeader={primaryLabel === "References"}
         onOpenItem={onOpenItem}
         onJumpToMessage={onJumpToMessage}
       />
@@ -288,7 +295,26 @@ function ManifestContent({
 export function ChatWorkManifest(props: ChatWorkManifestProps) {
   const [compactOpen, setCompactOpen] = useState(false);
   if (props.sidePanelOpen || props.loading || (!props.error && !hasChatWorkManifestContent(props.manifest))) return null;
-  const count = props.manifest?.totalCount ?? 0;
+  const outputs = Array.isArray(props.manifest?.outputs) ? props.manifest.outputs : [];
+  const sources = Array.isArray(props.manifest?.sources) ? props.manifest.sources : [];
+  const references = Array.isArray(props.manifest?.references) ? props.manifest.references : [];
+  const primarySection = outputs.length > 0
+    ? { label: "Outputs", count: outputs.length }
+    : sources.length > 0
+      ? { label: "Sources", count: sources.length }
+      : references.length > 0
+        ? { label: "References", count: references.length }
+        : null;
+  const primaryLabel = primarySection?.label ?? null;
+  const panelTitle = primaryLabel ?? "Conversation items";
+  const panelHeader = (
+    <div className="flex h-10 shrink-0 items-center border-b border-border/70 px-3">
+      <span className="text-xs font-semibold text-foreground">{panelTitle}</span>
+      {primarySection ? (
+        <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{primarySection.count}</span>
+      ) : null}
+    </div>
+  );
   return (
     <div className="pointer-events-none relative z-20 shrink-0" data-testid="chat-work-manifest">
       <aside
@@ -299,20 +325,19 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
             : "pointer-events-none -translate-y-1 scale-[0.98] opacity-0",
         )}
         id="chat-work-manifest-wide-panel"
-        aria-label="Work manifest"
+        aria-label="Conversation files and links"
         aria-hidden={!props.wideOpen}
         inert={props.wideOpen ? undefined : true}
         data-testid="chat-work-manifest-wide-panel"
         data-state={props.wideOpen ? "open" : "closed"}
       >
-        <div className="flex h-11 shrink-0 items-center border-b border-border/55 px-3.5">
-          <span className="text-xs font-semibold text-foreground">Work</span>
-          <span className="ml-1.5 text-[11px] tabular-nums text-muted-foreground">{count}</span>
-          <button type="button" className="ml-auto grid size-7 place-items-center rounded-[var(--radius-sm)] text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30" onClick={props.onAddSource} aria-label="Add source" title="Add source">
-            <Plus className="size-4" aria-hidden="true" />
-          </button>
-        </div>
-        <ManifestContent key={`wide:${props.manifest?.conversationId ?? "error"}`} {...props} idPrefix="chat-work-manifest-wide" />
+        {panelHeader}
+        <ManifestContent
+          key={`wide:${props.manifest?.conversationId ?? "error"}`}
+          {...props}
+          idPrefix="chat-work-manifest-wide"
+          primaryLabel={primaryLabel}
+        />
       </aside>
 
       <button
@@ -323,23 +348,32 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
         aria-expanded={compactOpen}
         aria-controls="chat-work-manifest-compact-panel"
       >
-        <BriefcaseBusiness className="size-3.5" aria-hidden="true" />
-        Work {count}
+        <ListFilter className="size-3.5" aria-hidden="true" />
+        {primarySection ? `${primarySection.label} ${primarySection.count}` : panelTitle}
       </button>
       {compactOpen ? (
         <div
           id="chat-work-manifest-compact-panel"
           className="pointer-events-auto absolute right-0 top-10 flex max-h-[min(32rem,calc(100dvh-6rem))] w-[min(20rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-[var(--radius-md)] border border-border/65 bg-[color:var(--surface-overlay)] shadow-md xl:hidden"
           data-testid="chat-work-manifest-compact-panel"
+          role="complementary"
+          aria-label="Conversation files and links"
         >
-          <div className="flex h-11 shrink-0 items-center border-b border-border/55 px-3.5">
-            <span className="text-xs font-semibold">Work</span>
-            <span className="ml-1.5 text-[11px] tabular-nums text-muted-foreground">{count}</span>
-            <button type="button" className="ml-auto grid size-7 place-items-center rounded-[var(--radius-sm)] text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30" onClick={() => setCompactOpen(false)} aria-label="Close work manifest">
+          <div className="flex h-10 shrink-0 items-center border-b border-border/70 px-3">
+            <span className="text-xs font-semibold">{panelTitle}</span>
+            {primarySection ? (
+              <span className="ml-1.5 text-[11px] tabular-nums text-muted-foreground">{primarySection.count}</span>
+            ) : null}
+            <button type="button" className="ml-auto grid size-7 place-items-center rounded-sm text-muted-foreground hover:bg-muted" onClick={() => setCompactOpen(false)} aria-label="Close conversation files and links">
               <X className="size-3.5" aria-hidden="true" />
             </button>
           </div>
-          <ManifestContent key={`compact:${props.manifest?.conversationId ?? "error"}`} {...props} idPrefix="chat-work-manifest-compact" />
+          <ManifestContent
+            key={`compact:${props.manifest?.conversationId ?? "error"}`}
+            {...props}
+            idPrefix="chat-work-manifest-compact"
+            primaryLabel={primaryLabel}
+          />
         </div>
       ) : null}
     </div>

@@ -52,9 +52,9 @@ Rudder 不会仅仅因为任务重要、耗时、成本高或已经可以执行�
 
 只有当前回复成功完成后，下一条追问才会自动发送。如果你停止回复或 run 失败，消息会继续留在队列中，供你检查、编辑或删除；Rudder 不会在一次中断的运行后静默执行它们。
 
-## 从 Chat 检查工作
+## 从 Chat 检查文件与链接
 
-Chat Work manifest 是当前线程的紧凑索引，让你不用翻找消息记录也能看到：
+Chat 的文件与链接侧栏是当前线程的紧凑索引，让你不用翻找消息记录也能看到。顶栏直接使用第一个可用分类，通常是 `Outputs`，不再增加一层 `Work`：
 
 | 分类 | 包含什么 |
 | --- | --- |
@@ -62,7 +62,7 @@ Chat Work manifest 是当前线程的紧凑索引，让你不用翻找消息记�
 | Sources | 你提供的文件、链接和 Library 资源，以及 project-scoped run 实际可用的 Project Context |
 | References | 对话中可见、被引用或推荐，但不是 agent 产出的外部网站 |
 
-Manifest 只显示当前对话里的工作，不会把同一 Project 下其他 Chat 的内容混进来。Agent 回复中的普通链接仍是 Reference，不会被宣称为 Output；Reference 也不会自动进入 Project Context。刷新或编辑回答后，过时的派生链接可以消失，但持久 Output 仍保持可检查。
+侧栏只显示当前对话里的工作，不会把同一 Project 下其他 Chat 的内容混进来。Agent 回复中的普通链接仍是 Reference，不会被宣称为 Output；Reference 也不会自动进入 Project Context。刷新或编辑回答后，过时的派生链接可以消失，但持久 Output 仍保持可检查。文件和链接仍从正常的 Chat 输入区添加；这个侧栏只负责检查和导航。
 
 你可以在 Side Panel 中打开支持的 issue、automation、Library 文件或目录、Chat 和 Browser 页面，在不离开当前页面的情况下检查或做轻量编辑。Side Panel 是 Rudder 共用的工作台，因此引用对象也可以在 Chat 或其他工作界面旁打开。
 

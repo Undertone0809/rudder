@@ -858,9 +858,9 @@ Evidence:
 
 ## Contract Summary
 
-Messenger Chat exposes a compact, conversation-scoped Work manifest that keeps
-the current thread's inspectable Outputs, Sources, and References visible
-without requiring the operator to search the transcript. Work from other
+Messenger Chat exposes a compact, conversation-scoped manifest that keeps the
+current thread's inspectable Outputs, Sources, and References visible without
+requiring the operator to search the transcript. Work from other
 conversations linked to the same Project is intentionally omitted from this
 surface and remains available from Project-level surfaces.
 
@@ -889,8 +889,9 @@ them through `CONTEXT.RESOURCES.001`.
 
 ## Actors / Objects / State
 
-- Board operator: reads the manifest, adds a Source, opens an item, jumps to its
-  source message, or opens Project-level surfaces for broader Project work.
+- Board operator: reads the manifest, opens an item, jumps to its source
+  message, or opens Project-level surfaces for broader Project work. New files
+  and links enter through normal Chat composer flows, not a manifest add action.
 - Chat conversation: organization-scoped thread and optional Project context.
 - Chat message: active, non-superseded user or assistant visible body, optional
   Run id, replying Agent id, and attachments.
@@ -916,7 +917,7 @@ them through `CONTEXT.RESOURCES.001`.
 
 ## Product Logic Flow
 
-1. The operator opens a Chat and Rudder requests its Work manifest.
+1. The operator opens a Chat and Rudder requests its conversation manifest.
 2. Rudder verifies Chat access through the same organization boundary as normal
    Chat reads.
 3. Reconciliation reads active, non-superseded user and assistant messages and
@@ -938,12 +939,16 @@ them through `CONTEXT.RESOURCES.001`.
    merely because the message that announced it was refreshed.
 9. The API returns the current Chat sections. It may continue returning a
    Project id/count as compatibility metadata, but Chat does not render it or
-   include it in the Work count.
+   include it in the visible category count.
 10. When at least one current-thread item exists, wide Chat renders the compact
-    shelf and a header icon that animates the shelf between open and collapsed
-    states; narrow Chat exposes the same data from a compact Work trigger. A
-    project-only or otherwise empty current-thread manifest renders no Work
-    control or shelf. Opening an internal target reuses Side Panel behavior from
+    shelf. Its fixed header consumes the first non-empty category in
+    `Outputs > Sources > References` order, shows that category's count, and
+    does not repeat the same section label above its rows. Later non-empty
+    categories keep their own section headers. The shelf has no add/create
+    action. A header icon animates the shelf between open and collapsed states;
+    narrow Chat exposes the same data from a compact category/count trigger. A
+    project-only or otherwise empty current-thread manifest renders no control
+    or shelf. Opening an internal target reuses Side Panel behavior from
     `CHAT.SIDE.PANEL.001`. Wide and compact panels cap their expanded height at
     `32rem` (512 CSS pixels) on normal viewports, shrink to the available
     viewport allowance when necessary, and keep longer lists internally
@@ -968,33 +973,37 @@ them through `CONTEXT.RESOURCES.001`.
 | Chat is forked | Copied historical assistant rows have no producing Run id | Sources can be re-derived; copied rows do not gain Output ownership | Fork must not claim the source thread's Outputs as newly produced | Fork/service tests |
 | Chat has a linked Project | Other Project conversations contain manifest rows | Current rows stay unchanged; other-conversation rows are omitted from Chat | Project membership must not import other conversations into the current Chat manifest | API and E2E |
 | Long manifest is expanded | Current-thread rows exceed the compact panel allowance | Panel stops growing at `32rem` (512 CSS pixels) on normal viewports, uses the smaller viewport allowance on short screens, and scrolls internally | The panel must not grow to near-full-screen height or overlap the composer | Component and Chat Work Manifest E2E |
-| No current-thread items exist | Reconciliation returns no current-thread candidates, even if compatibility metadata reports Project items | No Work control or empty shelf is rendered | UI must not reserve space or invent Create Site/Browser capability | Component/E2E tests |
-| Manifest request fails | Current manifest state cannot be confirmed | Show the compact Work error state instead of treating the result as empty | Operators must be able to distinguish retrieval failure from confirmed absence | Component/E2E tests |
+| No current-thread items exist | Reconciliation returns no current-thread candidates, even if compatibility metadata reports Project items | No manifest control or empty shelf is rendered | UI must not reserve space or invent Create Site/Browser capability | Component/E2E tests |
+| Manifest request fails | Current manifest state cannot be confirmed | Show a compact, category-neutral files-and-links error state instead of treating the result as empty | Operators must be able to distinguish retrieval failure from confirmed absence | Component/E2E tests |
 | Operator opens an image attachment | Attachment has an image content type, or a known image extension when content type is absent | Open the shared image preview with close, copy, and download actions | The attachment must not be routed into the built-in Browser or leave the operator without an exit | Image preview component tests and Chat Work Manifest E2E |
 
 ## Actor-Visible Input
 
-The operator sees the selected Chat, its normal transcript/composer, and a Work
-surface containing only the current thread's Outputs, Sources, and References.
-Each row exposes a readable title and type icon. Website rows expose the
-normalized URL and website icon instead of a generic link icon or redundant
-`From Agent` origin label.
+The operator sees the selected Chat, its normal transcript/composer, and a
+category-led files-and-links shelf containing only the current thread's
+Outputs, Sources, and References. Each row exposes a readable title and type
+icon. Website rows expose the normalized URL and website icon instead of a
+generic link icon or redundant `From Agent` origin label.
 
 ## Operator-Visible Output
 
-- Wide desktop: a compact top-right shelf with bounded rows and counts, plus a
-  header icon that collapses or restores the shelf with a short transition.
-  Expanded height is capped at `32rem` (512 CSS pixels) on normal viewports;
-  short viewports use the smaller available allowance and long lists scroll
-  inside the shelf.
-- Empty state: no Work shelf, count, trigger, or reserved rail is rendered.
-- Error state: a compact Work error remains visible so retrieval failure is not
-  mistaken for confirmed absence.
-- Narrow desktop/mobile: a compact Work count trigger that opens the same list
-  under the same `32rem` maximum and short-viewport fallback.
+- Wide desktop: a compact top-right shelf whose fixed title is the first
+  non-empty category, with bounded rows and category counts, plus a header icon
+  that collapses or restores the shelf with a short transition. Expanded height
+  is capped at `32rem` (512 CSS pixels) on normal viewports; short viewports use
+  the smaller available allowance and long lists scroll inside the shelf.
+- Category hierarchy: the promoted first category appears once; later Sources
+  or References retain their own section header and count.
+- Actions: the shelf provides open and source-message navigation, but no add or
+  create icon.
+- Empty state: no shelf, count, trigger, or reserved rail is rendered.
+- Error state: a compact, category-neutral files-and-links error remains visible
+  so retrieval failure is not mistaken for confirmed absence.
+- Narrow desktop/mobile: a compact first-category count trigger opens the same
+  list under the same `32rem` maximum and short-viewport fallback.
 - Chat scrolling: the message scrollbar remains attached to the outer right
   edge of the Chat workspace while content spacing keeps messages and the
-  composer clear of an open Work shelf.
+  composer clear of an open manifest shelf.
 - Internal Library targets: existing Side Panel preview behavior.
 - Image attachments: the shared application-level image preview with explicit
   close, copy, and download controls; `Escape` returns to the same Chat.
@@ -1038,7 +1047,7 @@ to reconcile the projection.
    - Trigger: a tool result or reasoning entry contains a URL absent from visible
      user/assistant bodies.
    - Expected state/action: no manifest item is created.
-   - Visible output: no change to Work.
+   - Visible output: no change to the manifest shelf.
    - Evidence: exclusion test.
 
 ## Invariants / Non-Goals
@@ -1052,18 +1061,21 @@ to reconcile the projection.
   refreshes unless explicitly hidden/archived by a future governed flow.
 - Manifest References are not automatically attached to Project Context.
 - Image attachment inspection is an application overlay, not Browser
-  navigation. Closing it preserves the Chat route, Work shelf, and Side Panel
+  navigation. Closing it preserves the Chat route, manifest shelf, and Side Panel
   state.
+- The shelf itself does not offer an add/create action; files and links enter
+  through normal Chat input and agent output flows.
 - V1 does not aggregate Browser sessions, crawl tool history, implement generic
   bookmarks, create Sites/documents, or replace Library/Issue work products.
 
 ## Drift Boundaries
 
 Update this contract when categories, production evidence, reconciliation,
-Project membership isolation, provenance, responsive visibility, or item-open
-behavior changes. Parser implementation, row-limit constants, icon choices,
-compatibility metadata, and query batching may change without a contract edit
-when the visible semantics and invariants remain intact.
+Project membership isolation, provenance, visible category hierarchy,
+responsive visibility, or item-open behavior changes. Parser implementation,
+row-limit constants, icon choices, compatibility metadata, and query batching
+may change without a contract edit when the visible semantics and invariants
+remain intact.
 
 ## Traceability
 
