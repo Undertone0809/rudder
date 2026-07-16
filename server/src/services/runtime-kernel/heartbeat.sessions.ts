@@ -41,15 +41,136 @@ export type ResumeSessionRow = {
   lastRunId: string | null;
 };
 
+export type SessionReuseScope = "explicit" | "task" | "none";
+export type SessionReuseSuppression =
+  | { kind: "force_fresh" }
+  | { kind: "source_session_cleared"; sourceRunId: string };
+
+export function readSessionReuseSuppression(
+  contextSnapshot: Record<string, unknown> | null | undefined,
+): SessionReuseSuppression | null {
+  const persisted = parseObject(contextSnapshot?.sessionReuseSuppression);
+  if (persisted.kind === "source_session_cleared") {
+    const sourceRunId = readNonEmptyString(persisted.sourceRunId) ??
+      readNonEmptyString(contextSnapshot?.resumeFromRunId);
+    if (sourceRunId) return { kind: "source_session_cleared", sourceRunId };
+  }
+  if (persisted.kind === "force_fresh") return { kind: "force_fresh" };
+
+  if (contextSnapshot?.sessionResumeSuppressed === true) {
+    const sourceRunId = readNonEmptyString(contextSnapshot.resumeFromRunId);
+    if (sourceRunId) return { kind: "source_session_cleared", sourceRunId };
+  }
+  if (contextSnapshot?.forceFreshSession === true) return { kind: "force_fresh" };
+  return null;
+}
+
+export function writeSessionReuseSuppression(
+  contextSnapshot: Record<string, unknown>,
+  suppression: SessionReuseSuppression | null,
+) {
+  delete contextSnapshot.forceFreshSession;
+  delete contextSnapshot.sessionResumeSuppressed;
+  if (suppression) contextSnapshot.sessionReuseSuppression = suppression;
+  else delete contextSnapshot.sessionReuseSuppression;
+  return contextSnapshot;
+}
+
+export function selectRunSessionLineage(input: {
+  forceFresh: boolean;
+  explicitSessionParams: Record<string, unknown> | null;
+  explicitSessionDisplayId: string | null;
+  taskSessionParams: Record<string, unknown> | null;
+  taskSessionDisplayId: string | null;
+}) {
+  if (input.forceFresh) {
+    return {
+      reuseScope: "none" as const,
+      sessionParams: null,
+      sessionDisplayId: null,
+    };
+  }
+
+  if (input.explicitSessionParams || input.explicitSessionDisplayId) {
+    return {
+      reuseScope: "explicit" as const,
+      sessionParams:
+        input.explicitSessionParams ??
+        (input.explicitSessionDisplayId ? { sessionId: input.explicitSessionDisplayId } : null),
+      sessionDisplayId: input.explicitSessionDisplayId,
+    };
+  }
+
+  if (input.taskSessionParams || input.taskSessionDisplayId) {
+    return {
+      reuseScope: "task" as const,
+      sessionParams:
+        input.taskSessionParams ??
+        (input.taskSessionDisplayId ? { sessionId: input.taskSessionDisplayId } : null),
+      sessionDisplayId: input.taskSessionDisplayId,
+    };
+  }
+
+  return {
+    reuseScope: "none" as const,
+    sessionParams: null,
+    sessionDisplayId: null,
+  };
+}
+
 export function buildExplicitResumeSessionOverride(input: {
   resumeFromRunId: string;
   resumeRunSessionIdBefore: string | null;
   resumeRunSessionIdAfter: string | null;
+  resumeRunSessionParamsBefore?: Record<string, unknown> | null;
+  resumeRunSessionParamsAfter?: Record<string, unknown> | null;
+  resumeRunSessionCleared?: boolean;
+  resumeRunSessionSuppression?: SessionReuseSuppression | null;
+  resumeContextSessionParams?: Record<string, unknown> | null;
+  resumeContextSessionDisplayId?: string | null;
   taskSession: ResumeSessionRow | null;
   sessionCodec: AgentRuntimeSessionCodec;
 }) {
+  if (input.resumeRunSessionCleared) {
+    return {
+      sessionDisplayId: null,
+      sessionParams: null,
+      sessionCleared: true as const,
+      sessionReuseSuppression: {
+        kind: "source_session_cleared" as const,
+        sourceRunId: input.resumeFromRunId,
+      },
+    };
+  }
+  if (input.resumeRunSessionSuppression) {
+    return {
+      sessionDisplayId: null,
+      sessionParams: null,
+      sessionCleared: input.resumeRunSessionSuppression.kind === "source_session_cleared",
+      sessionReuseSuppression: input.resumeRunSessionSuppression,
+    };
+  }
+  const afterSessionParams = normalizeSessionParams(
+    input.sessionCodec.deserialize(input.resumeRunSessionParamsAfter ?? null),
+  );
+  const beforeSessionParams = normalizeSessionParams(
+    input.sessionCodec.deserialize(input.resumeRunSessionParamsBefore ?? null),
+  );
+  const contextSessionParams = normalizeSessionParams(
+    input.sessionCodec.deserialize(input.resumeContextSessionParams ?? null),
+  );
+  const sourceRunSessionParams = afterSessionParams ?? beforeSessionParams ?? contextSessionParams;
+  const persistedDisplayId = afterSessionParams
+    ? input.resumeRunSessionIdAfter
+    : beforeSessionParams
+      ? input.resumeRunSessionIdBefore
+      : contextSessionParams
+        ? input.resumeContextSessionDisplayId
+        : input.resumeRunSessionIdAfter ?? input.resumeRunSessionIdBefore ?? input.resumeContextSessionDisplayId;
   const desiredDisplayId = truncateDisplayId(
-    input.resumeRunSessionIdAfter ?? input.resumeRunSessionIdBefore,
+    persistedDisplayId ??
+      (input.sessionCodec.getDisplayId ? input.sessionCodec.getDisplayId(sourceRunSessionParams) : null) ??
+      readNonEmptyString(sourceRunSessionParams?.sessionId),
   );
   const taskSessionParams = normalizeSessionParams(
     input.sessionCodec.deserialize(input.taskSession?.sessionParamsJson ?? null),
@@ -66,11 +187,12 @@ export function buildExplicitResumeSessionOverride(input: {
       (!!desiredDisplayId && taskSessionDisplayId === desiredDisplayId)
     );
   const sessionParams =
-    canReuseTaskSessionParams
+    sourceRunSessionParams ??
+    (canReuseTaskSessionParams
       ? taskSessionParams
       : desiredDisplayId
         ? { sessionId: desiredDisplayId }
-        : null;
+        : null);
   const sessionDisplayId = desiredDisplayId ?? (canReuseTaskSessionParams ? taskSessionDisplayId : null);
 
   if (!sessionDisplayId && !sessionParams) return null;
@@ -242,7 +364,7 @@ export function deriveTaskKey(
 export function shouldResetTaskSessionForWake(
   contextSnapshot: Record<string, unknown> | null | undefined,
 ) {
-  if (contextSnapshot?.forceFreshSession === true) return true;
+  if (readSessionReuseSuppression(contextSnapshot)) return true;
 
   const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
   if (wakeReason === "issue_assigned") return true;
@@ -259,7 +381,9 @@ export function formatRuntimeWorkspaceWarningLog(warning: string) {
 export function describeSessionResetReason(
   contextSnapshot: Record<string, unknown> | null | undefined,
 ) {
-  if (contextSnapshot?.forceFreshSession === true) return "forceFreshSession was requested";
+  const suppression = readSessionReuseSuppression(contextSnapshot);
+  if (suppression?.kind === "force_fresh") return "forceFreshSession was requested";
+  if (suppression?.kind === "source_session_cleared") return "the selected source run cleared its session";
 
   const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
   if (wakeReason === "issue_assigned") return "wake reason is issue_assigned";
@@ -330,10 +454,19 @@ export function mergeCoalescedContextSnapshot(
   incoming: Record<string, unknown>,
 ) {
   const existing = parseObject(existingRaw);
+  const existingSuppression = readSessionReuseSuppression(existing);
+  const incomingSuppression = readSessionReuseSuppression(incoming);
   const merged: Record<string, unknown> = {
     ...existing,
     ...incoming,
   };
+  const suppression =
+    existingSuppression?.kind === "source_session_cleared"
+      ? existingSuppression
+      : incomingSuppression?.kind === "source_session_cleared"
+        ? incomingSuppression
+        : existingSuppression ?? incomingSuppression;
+  writeSessionReuseSuppression(merged, suppression);
   const commentId = deriveCommentId(incoming, null);
   if (commentId) {
     merged.commentId = commentId;

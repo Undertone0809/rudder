@@ -19,6 +19,7 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { chatAgentRunService } from "../services/chat-agent-runs.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
+import { getRunSummary } from "../services/run-intelligence.ts";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -169,6 +170,7 @@ describe("chatAgentRunService", () => {
 
     expect(firstRun.status).toBe("running");
     expect(firstRun.invocationSource).toBe("chat");
+    expect(firstRun.sessionReuseScope).toBe("none");
     expect(firstRun.contextSnapshot).toMatchObject({
       scene: "chat",
       targetType: "chat_conversation",
@@ -177,6 +179,8 @@ describe("chatAgentRunService", () => {
       messageId,
       userMessageId: messageId,
     });
+    const firstRunSummary = await getRunSummary(db, firstRun.id, { orgIds: [orgId] });
+    expect(firstRunSummary?.sessionReuseScope).toBe("none");
     await expect(svc.createRun({
       conversation,
       agentId,

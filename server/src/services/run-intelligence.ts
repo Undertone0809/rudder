@@ -13,6 +13,7 @@ import {
 import {
   isUuidLike,
   summarizeTokenUsage,
+  toHeartbeatRun,
   type HeartbeatRun,
   type HeartbeatRunEvent,
   type RunEventCursorPage,
@@ -214,6 +215,7 @@ type SummaryRunRow = {
   invocationSource: string;
   triggerDetail: string | null;
   status: string;
+  sessionReuseScope: HeartbeatRun["sessionReuseScope"];
   startedAt: Date | null;
   finishedAt: Date | null;
   errorText: string | null;
@@ -364,7 +366,7 @@ async function serializeRunRow(
 ): Promise<RunExportRow> {
   const errorSummary = row.errorCode ?? row.error ?? row.stderrExcerpt ?? null;
   return {
-    run: {
+    run: toHeartbeatRun({
       id: row.id,
       orgId: row.orgId,
       agentId: row.agentId,
@@ -381,6 +383,7 @@ async function serializeRunRow(
       resultJson: row.resultJson,
       sessionIdBefore: row.sessionIdBefore,
       sessionIdAfter: row.sessionIdAfter,
+      sessionReuseScope: row.sessionReuseScope,
       logStore: row.logStore,
       logRef: row.logRef,
       logBytes: row.logBytes,
@@ -398,7 +401,7 @@ async function serializeRunRow(
       contextSnapshot: row.contextSnapshot,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
-    },
+    }),
     agentName: row.agentName,
     orgName: row.orgName,
     issue: row.issueId ? issueMap.get(row.issueId) ?? null : null,
@@ -441,6 +444,7 @@ async function loadRunRows(db: Db, input: ListObservedRunsInput): Promise<RunRow
       resultJson: heartbeatRuns.resultJson,
       sessionIdBefore: heartbeatRuns.sessionIdBefore,
       sessionIdAfter: heartbeatRuns.sessionIdAfter,
+      sessionReuseScope: heartbeatRuns.sessionReuseScope,
       logStore: heartbeatRuns.logStore,
       logRef: heartbeatRuns.logRef,
       logBytes: heartbeatRuns.logBytes,
@@ -503,6 +507,7 @@ async function loadSummaryRunRows(db: Db, input: ListRunSummariesInput): Promise
       invocationSource: heartbeatRuns.invocationSource,
       triggerDetail: heartbeatRuns.triggerDetail,
       status: heartbeatRuns.status,
+      sessionReuseScope: heartbeatRuns.sessionReuseScope,
       startedAt: heartbeatRuns.startedAt,
       finishedAt: heartbeatRuns.finishedAt,
       errorText: sql<string | null>`left(coalesce(
@@ -627,6 +632,7 @@ async function loadRunRowById(db: Db, runId: string): Promise<RunRow | null> {
       resultJson: heartbeatRuns.resultJson,
       sessionIdBefore: heartbeatRuns.sessionIdBefore,
       sessionIdAfter: heartbeatRuns.sessionIdAfter,
+      sessionReuseScope: heartbeatRuns.sessionReuseScope,
       logStore: heartbeatRuns.logStore,
       logRef: heartbeatRuns.logRef,
       logBytes: heartbeatRuns.logBytes,
@@ -737,6 +743,7 @@ export async function listRunSummaries(db: Db, input: ListRunSummariesInput): Pr
       invocationSource: row.invocationSource as RunSummary["invocationSource"],
       triggerDetail: row.triggerDetail as RunSummary["triggerDetail"],
       status: row.status as RunSummary["status"],
+      sessionReuseScope: row.sessionReuseScope,
       issue: row.issueId ? issueMap.get(row.issueId) ?? null : null,
       target: row.targetType && row.targetId ? { type: row.targetType, id: row.targetId } : null,
       chatConversationId: row.chatConversationId,

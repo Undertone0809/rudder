@@ -32,7 +32,7 @@ export {
   type PluginStateScopeKind, type PluginStatus, type PluginUiSlotEntityType, type PluginUiSlotType, type PluginWebhookDeliveryStatus, type PrincipalType, type ProjectIconName, type ProjectResourceAttachmentRole, type ProjectStatus, type RudderAgentV1McpToolName, type SecretProvider, type StorageProvider, type WakeupRequestStatus, type WakeupTriggerDetail
 } from "./constants.js";
 
-export { resolveAgentRunScene, toAgentRun, toAgentRuns, toHeartbeatRun, toHeartbeatRuns } from "./agent-run.js";
+export { resolveAgentRunScene, toAgentRun, toAgentRuns, toHeartbeatRun, toHeartbeatRuns, toPublicHeartbeatRunContextSnapshot } from "./agent-run.js";
 export {
   WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS, WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS, WORKSPACE_BACKUP_OFFLINE_INTERVAL_HOURS,
   WORKSPACE_BACKUP_RUNNING_INTERVAL_HOURS
@@ -115,7 +115,7 @@ export type {
   HeartbeatRun,
   HeartbeatRunContextSnapshot,
   HeartbeatRunEvent,
-  HeartbeatRunRecoveryContext, InstanceBrowserSettings, InstanceGeneralSettings, InstanceLocale, InstanceNotificationSettings, InstancePathPickerRequest,
+  HeartbeatRunRecoveryContext, HeartbeatSessionReuseScope, HeartbeatSessionReuseSuppression, InstanceBrowserSettings, InstanceGeneralSettings, InstanceLocale, InstanceNotificationSettings, InstancePathPickerRequest,
   InstancePathPickerResult,
   InstancePathPickerSelectionType, InstanceSchedulerHeartbeatAgent, InstanceSettings, InstanceUserRoleGrant, Invite, Issue,
   IssueAssigneeAgentRuntimeOverrides, IssueAttachment, IssueComment,

@@ -126,6 +126,10 @@ test.describe("Chat Work Manifest", () => {
     });
 
     const runId = randomUUID();
+    const overflowReferences = Array.from(
+      { length: 24 },
+      (_, index) => `https://x.com/rudder/status/${index + 1}`,
+    ).join(" ");
     await e2eDb.insert(heartbeatRuns).values({
       id: runId,
       orgId: organization.id,
@@ -152,7 +156,7 @@ test.describe("Chat Work Manifest", () => {
         orgId: organization.id,
         conversationId: chat.id,
         role: "assistant",
-        body: `Produced ${outputFile.markdownLink} and ${websiteOutputFile.markdownLink}. Source duplicate: https://source.example/research#section. Reference: https://reference.example/docs.`,
+        body: `Produced ${outputFile.markdownLink} and ${websiteOutputFile.markdownLink}. Source duplicate: https://source.example/research#section. Reference: https://reference.example/docs. ${overflowReferences}`,
         status: "completed",
         runId,
         replyingAgentId: agent.id,
@@ -193,7 +197,7 @@ test.describe("Chat Work Manifest", () => {
       .toBeVisible();
     await expect(shelf).not.toContainText("From Agent");
     const references = shelf.locator("section[aria-label='References']");
-    await references.getByRole("button", { name: "View all 4" }).click();
+    await references.getByRole("button", { name: "View all 28" }).click();
     await expect(references).toContainText("https://reference.example/docs");
     await expect(references.getByRole("button", { name: /reference\.example/ }).locator("[data-website-icon]"))
       .toBeVisible();
@@ -220,6 +224,34 @@ test.describe("Chat Work Manifest", () => {
     await issueSidePanel.getByTestId("chat-side-panel-tab-close").click();
     await expect(issueSidePanel).toHaveCount(0);
     await expect(shelf).toBeVisible();
+
+    const manifestScrollRegion = shelf.getByTestId("chat-work-manifest-scroll-region");
+    await expect(manifestScrollRegion).toBeVisible();
+    const shelfGeometry = await shelf.evaluate((element) => {
+      const panel = element.getBoundingClientRect();
+      const scrollRegion = element.querySelector<HTMLElement>("[data-testid='chat-work-manifest-scroll-region']");
+      return {
+        bottom: panel.bottom,
+        viewportHeight: window.innerHeight,
+        clientHeight: scrollRegion?.clientHeight ?? 0,
+        scrollHeight: scrollRegion?.scrollHeight ?? 0,
+      };
+    });
+    expect(shelfGeometry.bottom).toBeLessThanOrEqual(shelfGeometry.viewportHeight);
+    expect(shelfGeometry.scrollHeight).toBeGreaterThan(shelfGeometry.clientHeight);
+    await manifestScrollRegion.hover();
+    await page.mouse.wheel(0, 600);
+    await expect.poll(() => manifestScrollRegion.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${otherChat.id}`);
+    const otherShelf = page.getByRole("complementary", { name: "Work manifest" });
+    await expect(otherShelf).toBeVisible();
+    await expect(otherShelf).toContainText("other-source.example");
+    await expect.poll(() => (
+      otherShelf.getByTestId("chat-work-manifest-scroll-region").evaluate((element) => element.scrollTop)
+    )).toBe(0);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    await expect(shelf).toBeVisible();
+    await expect.poll(() => manifestScrollRegion.evaluate((element) => element.scrollTop)).toBe(0);
 
     const [scrollBox, workspaceBox] = await Promise.all([
       page.getByTestId("chat-messages-scroll-region").boundingBox(),

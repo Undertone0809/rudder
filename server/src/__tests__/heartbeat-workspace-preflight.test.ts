@@ -343,7 +343,15 @@ describe("heartbeat managed workspace preflight", () => {
   }
 
   it("fails before adapter execution and records a workspace preflight event", async () => {
-    const { agentId } = await seedAgentFixture();
+    const { orgId, agentId } = await seedAgentFixture();
+    await db.insert(agentTaskSessions).values({
+      orgId,
+      agentId,
+      agentRuntimeType: "codex_local",
+      taskKey: "preflight:failure",
+      sessionParamsJson: { sessionId: "preflight-session", cwd: "/tmp/preflight-source" },
+      sessionDisplayId: "preflight-session",
+    });
     mockPreflight.fail = true;
 
     const run = await heartbeatService(db).wakeup(agentId, {
@@ -365,6 +373,9 @@ describe("heartbeat managed workspace preflight", () => {
     expect(failedRun).toEqual(expect.objectContaining({
       status: "failed",
       errorCode: "workspace_permission_repair_needed",
+      sessionIdBefore: "preflight-session",
+      sessionParamsBeforeJson: expect.objectContaining({ sessionId: "preflight-session" }),
+      sessionReuseScope: "task",
     }));
     const events = await getRunEvents(run!.id);
     expect(events).toEqual([
@@ -374,6 +385,168 @@ describe("heartbeat managed workspace preflight", () => {
       }),
     ]);
     expect(mockRuntimeAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it("preserves full explicit lineage across a retry that fails preflight", async () => {
+    const { orgId, agentId } = await seedAgentFixture();
+    const sourceRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: sourceRunId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "failed",
+      error: "source failure",
+      finishedAt: new Date(),
+      processExitedAt: new Date(),
+      sessionIdAfter: "source-session",
+      sessionParamsAfterJson: {
+        sessionId: "source-session",
+        providerThreadId: "source-thread",
+        cwd: "/tmp/source-cwd",
+      },
+      contextSnapshot: {},
+    });
+
+    const heartbeat = heartbeatService(db);
+    mockPreflight.fail = true;
+    const failedRetry = await heartbeat.retryRun(sourceRunId, {
+      requestedByActorType: "user",
+      requestedByActorId: "local-board",
+    });
+    await waitForCondition(async () => {
+      const current = await getRun(failedRetry.id);
+      return current?.status === "failed" && current.terminalEffectsPending === false;
+    });
+    expect(await getRun(failedRetry.id)).toMatchObject({
+      sessionIdBefore: "source-session",
+      sessionParamsBeforeJson: expect.objectContaining({
+        sessionId: "source-session",
+        providerThreadId: "source-thread",
+      }),
+      sessionReuseScope: "explicit",
+    });
+
+    mockPreflight.fail = false;
+    const secondRetry = await heartbeat.retryRun(failedRetry.id, {
+      requestedByActorType: "user",
+      requestedByActorId: "local-board",
+    });
+    await waitForCondition(async () => {
+      const current = await getRun(secondRetry.id);
+      return current?.status === "succeeded" && current.terminalEffectsPending === false;
+    });
+
+    const [invoke] = mockRuntimeAdapter.execute.mock.calls.at(-1) ?? [];
+    expect(invoke.runtime).toMatchObject({
+      sessionId: "source-session",
+      sessionDisplayId: "source-session",
+      sessionParams: expect.objectContaining({
+        sessionId: "source-session",
+        providerThreadId: "source-thread",
+      }),
+    });
+    expect(await getRun(secondRetry.id)).toMatchObject({ sessionReuseScope: "explicit" });
+  });
+
+  it("does not resume a source session after the adapter explicitly clears it", async () => {
+    const { orgId, agentId } = await seedAgentFixture();
+    const sourceRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: sourceRunId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "failed",
+      error: "source failure",
+      finishedAt: new Date(),
+      processExitedAt: new Date(),
+      sessionIdAfter: "stale-session",
+      sessionParamsAfterJson: { sessionId: "stale-session", providerThreadId: "stale-thread" },
+      contextSnapshot: { taskKey: "issue:clear-session" },
+    });
+    mockRuntimeAdapter.execute.mockImplementationOnce(async () => ({
+      summary: "provider rejected the session",
+      resultJson: null,
+      timedOut: false,
+      exitCode: 1,
+      errorMessage: "unknown session",
+      clearSession: true,
+      sessionId: null,
+      sessionParams: null,
+    }));
+    const heartbeat = heartbeatService(db);
+
+    const clearedRun = await heartbeat.retryRun(sourceRunId, {
+      requestedByActorType: "user",
+      requestedByActorId: "local-board",
+    });
+    await waitForCondition(async () => {
+      const current = await getRun(clearedRun.id);
+      return current?.status === "failed" && current.terminalEffectsPending === false;
+    });
+    expect(await getRun(clearedRun.id)).toMatchObject({
+      sessionParamsAfterJson: {},
+      sessionIdAfter: null,
+    });
+    await db.insert(agentTaskSessions).values({
+      orgId,
+      agentId,
+      agentRuntimeType: "codex_local",
+      taskKey: "issue:clear-session",
+      sessionDisplayId: "newer-task-session",
+      sessionParamsJson: {
+        sessionId: "newer-task-session",
+        providerThreadId: "newer-task-thread",
+      },
+    });
+
+    mockPreflight.fail = true;
+    const failedFreshRetry = await heartbeat.retryRun(clearedRun.id, {
+      requestedByActorType: "user",
+      requestedByActorId: "local-board",
+    });
+    await waitForCondition(async () => {
+      const current = await getRun(failedFreshRetry.id);
+      return current?.status === "failed" && current.terminalEffectsPending === false;
+    });
+    expect(await getRun(failedFreshRetry.id)).toMatchObject({
+      sessionIdBefore: null,
+      sessionParamsBeforeJson: null,
+      sessionReuseScope: "none",
+      contextSnapshot: expect.objectContaining({
+        sessionReuseSuppression: {
+          kind: "source_session_cleared",
+          sourceRunId: clearedRun.id,
+        },
+      }),
+    });
+
+    mockPreflight.fail = false;
+    const freshRetry = await heartbeat.retryRun(failedFreshRetry.id, {
+      requestedByActorType: "user",
+      requestedByActorId: "local-board",
+    });
+    await waitForCondition(async () => {
+      const current = await getRun(freshRetry.id);
+      return current?.status === "succeeded" && current.terminalEffectsPending === false;
+    });
+
+    const [invoke] = mockRuntimeAdapter.execute.mock.calls.at(-1) ?? [];
+    expect(invoke.runtime).toMatchObject({
+      sessionId: null,
+      sessionDisplayId: null,
+      sessionParams: null,
+    });
+    expect(await getRun(freshRetry.id)).toMatchObject({ sessionReuseScope: "none" });
+    expect(await getRun(freshRetry.id)).toMatchObject({
+      contextSnapshot: expect.objectContaining({
+        sessionReuseSuppression: {
+          kind: "source_session_cleared",
+          sourceRunId: clearedRun.id,
+        },
+      }),
+    });
   });
 
   it("creates missing managed workspace directories before adapter execution", async () => {
@@ -408,6 +581,92 @@ describe("heartbeat managed workspace preflight", () => {
     await expect(fs.stat(path.join(agentHome, "memory")).then((stat) => stat.isDirectory())).resolves.toBe(true);
     await expect(fs.stat(path.join(agentHome, "life")).then((stat) => stat.isDirectory())).resolves.toBe(true);
     await expect(fs.stat(path.join(agentHome, "skills")).then((stat) => stat.isDirectory())).resolves.toBe(true);
+  });
+
+  it("keeps consecutive ordinary taskless invocations fresh", async () => {
+    const { agentId } = await seedAgentFixture();
+    mockRuntimeAdapter.execute.mockImplementationOnce(async () => ({
+      summary: "first taskless run",
+      resultJson: null,
+      timedOut: false,
+      exitCode: 0,
+      errorMessage: null,
+      sessionId: "first-taskless-session",
+      sessionParams: { sessionId: "first-taskless-session", providerThreadId: "thread-1" },
+    }));
+    const heartbeat = heartbeatService(db);
+
+    const firstRun = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      reason: "taskless_first",
+      contextSnapshot: {},
+    });
+    await waitForCondition(async () => (await getRun(firstRun!.id))?.status === "succeeded");
+    await waitForCondition(async () => (await getAgent(agentId))?.status === "idle");
+
+    const secondRun = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      reason: "taskless_second",
+      contextSnapshot: {},
+    });
+    await waitForCondition(async () => {
+      const current = await getRun(secondRun!.id);
+      return current?.status === "succeeded" && current.terminalEffectsPending === false;
+    });
+
+    expect(mockRuntimeAdapter.execute).toHaveBeenCalledTimes(2);
+    for (const [invoke] of mockRuntimeAdapter.execute.mock.calls) {
+      expect(invoke.runtime).toMatchObject({
+        sessionId: null,
+        sessionDisplayId: null,
+        sessionParams: null,
+      });
+    }
+    expect(await getRun(secondRun!.id)).toMatchObject({ sessionReuseScope: "none" });
+  });
+
+  it("reuses the first run session for a same-task follow-up", async () => {
+    const { agentId } = await seedAgentFixture();
+    mockRuntimeAdapter.execute.mockImplementationOnce(async () => ({
+      summary: "first task run",
+      resultJson: null,
+      timedOut: false,
+      exitCode: 0,
+      errorMessage: null,
+      sessionId: "same-task-session",
+      sessionParams: { sessionId: "same-task-session", providerThreadId: "task-thread" },
+    }));
+    const heartbeat = heartbeatService(db);
+    const contextSnapshot = { taskKey: "issue:same-task" };
+
+    const firstRun = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      reason: "same_task_first",
+      contextSnapshot,
+    });
+    await waitForCondition(async () => (await getRun(firstRun!.id))?.status === "succeeded");
+    await waitForCondition(async () => (await getAgent(agentId))?.status === "idle");
+
+    const secondRun = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      reason: "same_task_second",
+      contextSnapshot,
+    });
+    await waitForCondition(async () => {
+      const current = await getRun(secondRun!.id);
+      return current?.status === "succeeded" && current.terminalEffectsPending === false;
+    });
+
+    const [secondInvoke] = mockRuntimeAdapter.execute.mock.calls[1] ?? [];
+    expect(secondInvoke.runtime).toMatchObject({
+      sessionId: "same-task-session",
+      sessionDisplayId: "same-task-session",
+      sessionParams: expect.objectContaining({
+        sessionId: "same-task-session",
+        providerThreadId: "task-thread",
+      }),
+    });
+    expect(await getRun(secondRun!.id)).toMatchObject({ sessionReuseScope: "task" });
   });
 
   it("applies issue runtime overrides only while the agent remains the assignee", async () => {
@@ -733,6 +992,7 @@ describe("heartbeat managed workspace preflight", () => {
       exitCode: 0,
       errorMessage: null,
       sessionId: "late-session",
+      sessionParams: { sessionId: "late-session", cwd: "/tmp/late-session" },
       usage: { inputTokens: 100, cachedInputTokens: 20, outputTokens: 10 },
       costUsd: 0.25,
       provider: "openai",
@@ -752,6 +1012,7 @@ describe("heartbeat managed workspace preflight", () => {
     expect(finalRun?.finishedAt?.toISOString()).toBe(watchdogFinishedAt);
     expect(finalRun?.resultJson).toMatchObject({ stdout: "late stdout" });
     expect(finalRun?.usageJson).toMatchObject({ inputTokens: 100, outputTokens: 10 });
+    expect((await getRun(run!.id))?.sessionParamsAfterJson).toBeNull();
 
     const [runtimeState] = await db
       .select()

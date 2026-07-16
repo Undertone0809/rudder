@@ -351,9 +351,28 @@ export function createHeartbeatReleaseHandlers(context: any) {
           payload: promotedPayload,
         });
 
-        const sessionBefore =
-          readNonEmptyString(promotedContextSnapshot.resumeSessionDisplayId) ??
-          await resolveSessionBeforeForWakeup(deferredAgent, promotedTaskKey);
+        const sessionCodec = getAgentRuntimeSessionCodec(deferredAgent.agentRuntimeType);
+        const explicitSessionParams = normalizeSessionParams(
+          sessionCodec.deserialize(
+            promotedContextSnapshot.resumeSessionParams &&
+              typeof promotedContextSnapshot.resumeSessionParams === "object"
+              ? promotedContextSnapshot.resumeSessionParams as Record<string, unknown>
+              : null,
+          ),
+        );
+        const resetTaskSession = shouldResetTaskSessionForWake(promotedContextSnapshot);
+        const taskSessionDisplayId = resetTaskSession
+          ? null
+          : await resolveSessionBeforeForWakeup(deferredAgent, promotedTaskKey);
+        const promotedSessionSelection = heartbeatSessions.selectRunSessionLineage({
+          forceFresh: Boolean(heartbeatSessions.readSessionReuseSuppression(promotedContextSnapshot)),
+          explicitSessionParams,
+          explicitSessionDisplayId: readNonEmptyString(promotedContextSnapshot.resumeSessionDisplayId),
+          taskSessionParams: null,
+          taskSessionDisplayId,
+        });
+        const sessionBefore = promotedSessionSelection.sessionDisplayId ??
+          readNonEmptyString(promotedSessionSelection.sessionParams?.sessionId);
         const now = new Date();
         const newRun = await tx
           .insert(heartbeatRuns)
@@ -366,6 +385,8 @@ export function createHeartbeatReleaseHandlers(context: any) {
             wakeupRequestId: deferred.id,
             contextSnapshot: promotedContextSnapshot,
             sessionIdBefore: sessionBefore,
+            sessionParamsBeforeJson: promotedSessionSelection.sessionParams,
+            sessionReuseScope: promotedSessionSelection.reuseScope,
           })
           .returning()
           .then((rows) => rows[0]);

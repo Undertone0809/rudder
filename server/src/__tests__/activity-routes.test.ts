@@ -164,11 +164,21 @@ describe("activity routes", () => {
       id: "issue-uuid-1",
       orgId: "organization-1",
     });
-    mockActivityService.runsForIssue.mockResolvedValue([
-      {
-        runId: "run-1",
+    mockActivityService.runsForIssue.mockResolvedValue([{
+      runId: "run-1",
+      contextSnapshot: {
+        issueId: "issue-uuid-1",
+        resumeFromRunId: "source-run-id",
+        resumeSessionDisplayId: "private-display-id",
+        resumeSessionParams: {
+          sessionId: "nested-private-session",
+          cwd: "/nested/private/cwd",
+          workspaceId: "private-workspace",
+          repoUrl: "https://private.example/repo.git",
+          repoRef: "private-ref",
+        },
       },
-    ]);
+    }]);
 
     const res = await request(createApp()).get("/api/issues/PAP-475/runs");
 
@@ -176,7 +186,16 @@ describe("activity routes", () => {
     expect(mockIssueService.getByIdentifier).toHaveBeenCalledWith("PAP-475");
     expect(mockIssueService.getById).not.toHaveBeenCalled();
     expect(mockActivityService.runsForIssue).toHaveBeenCalledWith("organization-1", "issue-uuid-1");
-    expect(res.body).toEqual([{ runId: "run-1" }]);
+    expect(res.body).toEqual([{
+      runId: "run-1",
+      contextSnapshot: {
+        issueId: "issue-uuid-1",
+        resumeFromRunId: "source-run-id",
+      },
+    }]);
+    expect(JSON.stringify(res.body)).not.toMatch(
+      /private-display-id|nested-private-session|nested\/private\/cwd|private-workspace|private\.example|private-ref/,
+    );
   });
 
   it("aliases agent run issue lookup to the agent run issue route", async () => {
