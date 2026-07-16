@@ -245,12 +245,14 @@ test.describe("Chat Work Manifest", () => {
       const scrollRegion = element.querySelector<HTMLElement>("[data-testid='chat-work-manifest-scroll-region']");
       return {
         bottom: panel.bottom,
+        height: panel.height,
         viewportHeight: window.innerHeight,
         clientHeight: scrollRegion?.clientHeight ?? 0,
         scrollHeight: scrollRegion?.scrollHeight ?? 0,
       };
     });
     expect(shelfGeometry.bottom).toBeLessThanOrEqual(shelfGeometry.viewportHeight);
+    expect(shelfGeometry.height).toBeLessThanOrEqual(512);
     expect(shelfGeometry.scrollHeight).toBeGreaterThan(shelfGeometry.clientHeight);
     await manifestScrollRegion.hover();
     await page.mouse.wheel(0, 600);
@@ -359,13 +361,21 @@ test.describe("Chat Work Manifest", () => {
     const compactPanel = page.getByTestId("chat-work-manifest-compact-panel");
     await expect(compactPanel).toBeVisible();
     await expect(compactPanel).toContainText("report.md");
+    await compactPanel.getByRole("button", { name: "View all 28" }).click();
+    const compactScrollRegion = compactPanel.getByTestId("chat-work-manifest-scroll-region");
     const [panelBox, composerBox] = await Promise.all([
       compactPanel.boundingBox(),
       page.getByTestId("chat-composer-toolbar").boundingBox(),
     ]);
     expect(panelBox).not.toBeNull();
     expect(composerBox).not.toBeNull();
+    expect(panelBox!.height).toBeLessThanOrEqual(512);
     expect(panelBox!.y + panelBox!.height).toBeLessThanOrEqual(composerBox!.y);
+    const compactScrollGeometry = await compactScrollRegion.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }));
+    expect(compactScrollGeometry.scrollHeight).toBeGreaterThan(compactScrollGeometry.clientHeight);
     await page.screenshot({ path: `${screenshotDir}/compact.png`, fullPage: true });
 
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${emptyChat.id}`);

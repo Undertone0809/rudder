@@ -293,7 +293,7 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
     <div className="pointer-events-none relative z-20 shrink-0" data-testid="chat-work-manifest">
       <aside
         className={cn(
-          "hidden max-h-[calc(100dvh-5rem)] w-72 origin-top-right flex-col overflow-hidden rounded-[var(--radius-md)] border border-border/65 bg-[color:var(--surface-overlay)] shadow-md transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none xl:flex",
+          "hidden max-h-[min(32rem,calc(100dvh-8rem))] w-72 origin-top-right flex-col overflow-hidden rounded-[var(--radius-md)] border border-border/65 bg-[color:var(--surface-overlay)] shadow-md transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none xl:flex",
           props.wideOpen
             ? "pointer-events-auto translate-y-0 scale-100 opacity-100"
             : "pointer-events-none -translate-y-1 scale-[0.98] opacity-0",
@@ -329,7 +329,7 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
       {compactOpen ? (
         <div
           id="chat-work-manifest-compact-panel"
-          className="pointer-events-auto absolute right-0 top-10 flex max-h-[calc(100dvh-6rem)] w-[min(20rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-[var(--radius-md)] border border-border/65 bg-[color:var(--surface-overlay)] shadow-md xl:hidden"
+          className="pointer-events-auto absolute right-0 top-10 flex max-h-[min(32rem,calc(100dvh-6rem))] w-[min(20rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-[var(--radius-md)] border border-border/65 bg-[color:var(--surface-overlay)] shadow-md xl:hidden"
           data-testid="chat-work-manifest-compact-panel"
         >
           <div className="flex h-11 shrink-0 items-center border-b border-border/55 px-3.5">
