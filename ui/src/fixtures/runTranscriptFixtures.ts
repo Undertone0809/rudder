@@ -276,6 +276,11 @@ export const runTranscriptFixtureEntries: TranscriptEntry[] = [
   },
   {
     kind: "system",
+    ts: "2026-03-11T15:22:28.460Z",
+    text: "item started: file_change (id=item_fixture_file_change)",
+  },
+  {
+    kind: "system",
     ts: "2026-03-11T15:22:28.520Z",
     text: "file changes: update /Users/zeeland/.rudder/instances/default/organizations/org/workspaces/projects/rudder/proposals/2026-06-10-rudder-cli-capability-parity.md",
   },

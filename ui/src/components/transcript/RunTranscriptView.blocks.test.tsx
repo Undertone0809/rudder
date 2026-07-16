@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { ExpandableTranscriptResponsePre } from "./RunTranscriptView.blocks";
+import { ExpandableTranscriptResponsePre, TranscriptEventRow } from "./RunTranscriptView.blocks";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -85,5 +85,41 @@ describe("ExpandableTranscriptResponsePre", () => {
         Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
       }
     }
+  });
+});
+
+describe("TranscriptEventRow", () => {
+  it("renders a file change as one disclosure row and expands its raw event", () => {
+    const rawEvent = "file changes: update /Users/zeeland/project/ui/src/pages/AgentDetail.tsx";
+    const container = render(
+      <TranscriptEventRow
+        density="comfortable"
+        presentation="detail"
+        block={{
+          type: "event",
+          ts: "2026-07-16T12:00:00.000Z",
+          label: "file change",
+          tone: "neutral",
+          text: "Updated src/pages/AgentDetail.tsx",
+          detail: rawEvent,
+          collapseByDefault: true,
+        }}
+      />,
+    );
+    const button = container.querySelector("button");
+
+    expect(container.querySelectorAll('[data-transcript-file-change="true"]')).toHaveLength(1);
+    expect(container.textContent?.match(/File change/g)).toHaveLength(1);
+    expect(button?.getAttribute("aria-expanded")).toBe("false");
+    expect(button?.getAttribute("aria-label")).toBe("Expand file change details: Updated src/pages/AgentDetail.tsx");
+    expect(container.textContent).not.toContain(rawEvent);
+
+    act(() => {
+      button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(button?.getAttribute("aria-expanded")).toBe("true");
+    expect(button?.getAttribute("aria-label")).toBe("Collapse file change details: Updated src/pages/AgentDetail.tsx");
+    expect(container.textContent).toContain(rawEvent);
   });
 });

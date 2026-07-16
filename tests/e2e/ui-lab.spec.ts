@@ -146,12 +146,17 @@ test.describe("UI Lab", () => {
     expect(metrics.rowToNextGap).toBeLessThanOrEqual(6);
 
     await page.locator("button").filter({ hasText: "Run Detail" }).click();
-    await expect(page.locator('[data-transcript-file-change="true"]').first()).toBeVisible();
-    await expect(page.getByText("File Change", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("Updated rudder/proposals/2026-06-10-rudder-cli-capability-parity.md", { exact: false })).toBeVisible();
+    const fileChange = page.locator('[data-transcript-file-change="true"]');
+    await expect(fileChange).toHaveCount(1);
+    await expect(page.getByText(/^File change$/i)).toHaveCount(1);
+    await expect(fileChange).toContainText("Updated rudder/proposals/2026-06-10-rudder-cli-capability-parity.md");
     await expect(page.getByText("/Users/zeeland/.rudder/instances/default/organizations/org/workspaces/projects/rudder/proposals", { exact: false })).toHaveCount(0);
-    await page.locator('[data-transcript-file-change="true"] button').first().click();
-    await expect(page.getByText("/Users/zeeland/.rudder/instances/default/organizations/org/workspaces/projects/rudder/proposals", { exact: false })).toBeVisible();
+    const fileChangeDisclosure = fileChange.locator("button");
+    await expect(fileChangeDisclosure).toHaveAttribute("aria-label", "Expand file change details: Updated rudder/proposals/2026-06-10-rudder-cli-capability-parity.md");
+    await fileChangeDisclosure.click();
+    await expect(fileChangeDisclosure).toHaveAttribute("aria-expanded", "true");
+    await expect(fileChangeDisclosure).toHaveAttribute("aria-label", "Collapse file change details: Updated rudder/proposals/2026-06-10-rudder-cli-capability-parity.md");
+    await expect(fileChange.getByText("file changes:", { exact: false })).toBeVisible();
   });
 
   test("renders Markdown website links as inline icon-leading text", async ({ page }) => {
