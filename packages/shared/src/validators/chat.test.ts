@@ -1,13 +1,87 @@
 import { describe, expect, it } from "vitest";
 import {
+  appendChatGenerationEventSchema,
   chatAskUserRequestFromStructuredPayload,
   chatAskUserRequestSchema,
   chatAutomationCreateFromStructuredPayload,
+  chatControlDispositionSchema,
   chatIssueProposalFromStructuredPayload,
+  chatQueuedMessageStatusSchema,
   chatRichReferencesFromStructuredPayload,
   convertChatToIssueSchema,
   sanitizeChatStructuredPayload,
+  steerChatQueuedMessageSchema,
+  stopChatGenerationSchema,
 } from "./chat.js";
+
+const generationId = "11111111-1111-4111-8111-111111111111";
+const controlActionId = "22222222-2222-4222-8222-222222222222";
+
+describe("durable chat controls", () => {
+  it("accepts every honest queue disposition and durable state", () => {
+    for (const disposition of [
+      "accepted_current",
+      "acceptance_unknown",
+      "continuation_pending",
+      "running_next",
+      "delivered",
+      "failed_actionable",
+    ]) {
+      expect(chatControlDispositionSchema.parse(disposition)).toBe(disposition);
+      expect(chatQueuedMessageStatusSchema.parse(disposition)).toBe(disposition);
+    }
+  });
+
+  it("requires a complete generation fence once durable Steer identity is supplied", () => {
+    expect(steerChatQueuedMessageSchema.safeParse({
+      expectedActiveGenerationId: generationId,
+    }).success).toBe(true);
+
+    const incomplete = steerChatQueuedMessageSchema.safeParse({
+      expectedActiveGenerationId: generationId,
+      controlActionId,
+    });
+    expect(incomplete.success).toBe(false);
+
+    expect(steerChatQueuedMessageSchema.safeParse({
+      expectedActiveGenerationId: generationId,
+      controlActionId,
+      expectedAttemptEpoch: 2,
+      expectedControlVersion: 3,
+    }).success).toBe(true);
+  });
+
+  it("validates Stop cutoff proof and normalized generation events", () => {
+    expect(stopChatGenerationSchema.safeParse({
+      controlActionId,
+      expectedGenerationId: generationId,
+      expectedAttemptEpoch: 1,
+      expectedControlVersion: 0,
+      lastCommittedRenderSeq: 12,
+      renderedBodyHash: "a".repeat(64),
+    }).success).toBe(true);
+
+    expect(stopChatGenerationSchema.safeParse({
+      controlActionId,
+      expectedGenerationId: generationId,
+      expectedAttemptEpoch: 0,
+      expectedControlVersion: 0,
+      lastCommittedRenderSeq: -1,
+      renderedBodyHash: "not-a-hash",
+    }).success).toBe(false);
+
+    expect(appendChatGenerationEventSchema.safeParse({
+      generationId,
+      generationSeq: 12,
+      attemptEpoch: 1,
+      eventKind: "output_cutoff",
+      payload: { reason: "operator_stop" },
+      bodyOffset: 128,
+      bodyLength: 0,
+      controlActionId,
+    }).success).toBe(true);
+  });
+});
 
 describe("chat ask_user request payloads", () => {
   it("accepts one to three structured questions with two to three options", () => {

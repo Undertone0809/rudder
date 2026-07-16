@@ -64,6 +64,24 @@ export {
   type UpdateCustomIntegrationBinding
 } from "./validators/custom-integration.js";
 
+export {
+  appendChatGenerationEventSchema,
+  chatClientCheckpointSchema,
+  chatControlActionKindSchema,
+  chatControlDispositionSchema,
+  chatGenerationControlStateSchema,
+  chatGenerationEventKindSchema,
+  chatGenerationStatusSchema,
+  chatProviderControlDispositionSchema,
+  chatQueueDeliveryIntentSchema,
+  chatQueuedMessageStatusSchema,
+  chatTerminalOutboxStatusSchema,
+  stopChatGenerationSchema,
+  type AppendChatGenerationEvent,
+  type ChatClientCheckpoint,
+  type StopChatGeneration
+} from "./validators/chat.js";
+
 
 export type {
   ActivityEvent, Agent,
@@ -79,13 +97,15 @@ export type {
   CalendarEventListResponse, CalendarSource, ChatAskUserOption,
   ChatAskUserQuestion,
   ChatAskUserRequest, ChatAttachment,
-  ChatContextLink, ChatConversation, ChatLinkedEntity, ChatMessage, ChatOperationProposalDecision, ChatOperationProposalDecisionAction,
-  ChatOperationProposalDecisionStatus, ChatPrimaryIssueSummary, ChatQueueClaimResponse, ChatQueueSnapshot, ChatQueuedMessage, ChatQueuedMessagePayload, ChatQueuedMessageStatus, ChatRichReference, ChatRichReferenceDisplay,
+  ChatContextLink, ChatControlAction, ChatControlActionKind, ChatControlDisposition, ChatConversation,
+  ChatGeneration, ChatGenerationControlState, ChatGenerationEvent, ChatGenerationEventKind, ChatGenerationStatus,
+  ChatGenerationTerminalOutboxEntry, ChatLinkedEntity, ChatMessage, ChatOperationProposalDecision, ChatOperationProposalDecisionAction,
+  ChatOperationProposalDecisionStatus, ChatPrimaryIssueSummary, ChatProviderControlDisposition, ChatQueueClaimResponse, ChatQueueDeliveryIntent, ChatQueueRequestActor, ChatQueueSnapshot, ChatQueuedMessage, ChatQueuedMessagePayload, ChatQueuedMessageStatus, ChatRichReference, ChatRichReferenceDisplay,
   ChatRuntimeDescriptor, ChatSteerResponse, ChatSteerResult, ChatStreamAckEvent,
   ChatStreamAssistantDeltaEvent,
   ChatStreamAssistantStateEvent, ChatStreamErrorEvent,
   ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTodoItem,
-  ChatStreamTranscriptTodoItemStatus, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestTargetType, CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent,
+  ChatStreamTranscriptTodoItemStatus, ChatTerminalOutboxStatus, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestTargetType, CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent,
   CostSummary,
   CostTrendPoint, CostWindowSpendRow, CreateOrganizationResourceRequest, CreateProjectInlineResourceInput, DashboardSummary, DocumentFormat, EnvBinding, ExecutionWorkspace, ExecutionWorkspaceMode, ExecutionWorkspaceProviderType, ExecutionWorkspaceStatus, ExecutionWorkspaceStrategy, ExecutionWorkspaceStrategyType, FeishuIntegrationSettings, FinanceByBiller,
   FinanceByKind, FinanceEvent, FinanceSummary, Goal,

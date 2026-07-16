@@ -1,0 +1,125 @@
+#!/usr/bin/env node
+import readline from "node:readline";
+
+const threadId = "thread-e2e-app-server";
+const turnId = "turn-e2e-app-server";
+const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
+let prompt = "";
+let completed = false;
+let fallbackTimer = null;
+
+function resultSentinel() {
+  return prompt.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1] ?? "__RUDDER_RESULT_TEST__";
+}
+
+function finish(body, status = "completed") {
+  if (completed) return;
+  completed = true;
+  if (fallbackTimer) clearTimeout(fallbackTimer);
+  if (status !== "interrupted") {
+    const finalText = `${body}\n${resultSentinel()}${JSON.stringify({
+      kind: "message",
+      body,
+      structuredPayload: null,
+    })}`;
+    send({
+      method: "thread/tokenUsage/updated",
+      params: {
+        threadId,
+        turnId,
+        tokenUsage: {
+          total: {
+            totalTokens: 4,
+            inputTokens: 2,
+            cachedInputTokens: 0,
+            outputTokens: 2,
+            reasoningOutputTokens: 0,
+          },
+          last: {
+            totalTokens: 4,
+            inputTokens: 2,
+            cachedInputTokens: 0,
+            outputTokens: 2,
+            reasoningOutputTokens: 0,
+          },
+          modelContextWindow: 1000,
+        },
+      },
+    });
+    send({
+      method: "item/agentMessage/delta",
+      params: { threadId, turnId, itemId: "agent-e2e", delta: finalText },
+    });
+    send({
+      method: "item/completed",
+      params: {
+        threadId,
+        turnId,
+        completedAtMs: Date.now(),
+        item: {
+          type: "agentMessage",
+          id: "agent-e2e",
+          text: finalText,
+          phase: null,
+          memoryCitation: null,
+        },
+      },
+    });
+  }
+  send({
+    method: "turn/completed",
+    params: {
+      threadId,
+      turn: {
+        id: turnId,
+        items: [],
+        itemsView: { type: "full" },
+        status,
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1,
+      },
+    },
+  });
+}
+
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialized") return;
+  if (message.method === "initialize") {
+    send({ id: message.id, result: { userAgent: "rudder-e2e-app-server" } });
+    return;
+  }
+  if (message.method === "thread/start" || message.method === "thread/resume") {
+    send({ id: message.id, result: { thread: { id: threadId } } });
+    return;
+  }
+  if (message.method === "turn/start") {
+    prompt = message.params?.input?.find((item) => item?.type === "text")?.text ?? "";
+    send({ id: message.id, result: { turn: { id: turnId } } });
+    send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+    fallbackTimer = setTimeout(() => finish("Initial App Server reply"), 10_000);
+    return;
+  }
+  if (message.method === "turn/steer") {
+    if (message.params?.expectedTurnId !== turnId) {
+      send({
+        id: message.id,
+        error: { code: -32602, message: "expectedTurnId does not match the active turn" },
+      });
+      return;
+    }
+    const feedback = message.params?.input?.find((item) => item?.type === "text")?.text ?? "feedback";
+    send({ id: message.id, result: { turnId } });
+    finish(`Native steer applied: ${feedback}`);
+    return;
+  }
+  if (message.method === "turn/interrupt") {
+    send({ id: message.id, result: {} });
+    finish("", "interrupted");
+  }
+});
+
+process.on("SIGTERM", () => process.exit(0));

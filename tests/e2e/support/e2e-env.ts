@@ -68,6 +68,7 @@ export const E2E_INSTANCE_ID = nonEmpty(process.env.RUDDER_E2E_INSTANCE_ID)
 export const E2E_INSTANCE_ROOT = path.join(E2E_HOME, "instances", E2E_INSTANCE_ID);
 export const E2E_BIN_DIR = path.join(E2E_HOME, "bin");
 export const E2E_CODEX_STUB = path.join(E2E_BIN_DIR, "codex");
+export const E2E_CODEX_APP_SERVER_STUB = path.join(E2E_ROOT, "fixtures", "codex-app-server");
 export const E2E_CLAUDE_STUB = path.join(E2E_BIN_DIR, "claude");
 export const E2E_CODEX_ERROR_STUB = path.join(E2E_BIN_DIR, "codex-error");
 export const E2E_DATABASE_URL =

@@ -1,4 +1,5 @@
 import { execute } from "@rudderhq/agent-runtime-codex-local/server";
+import type { AgentRuntimeControlHandle } from "@rudderhq/agent-runtime-utils";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -66,6 +67,58 @@ if (capturePath) {
 console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-1" }));
 console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "hello" } }));
 console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
+async function writeBlockingCodexCommand(commandPath: string): Promise<void> {
+  const script = `#!/usr/bin/env node
+process.stdin.resume();
+setInterval(() => undefined, 1_000);
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
+async function writeFakeCodexAppServerCommand(commandPath: string): Promise<void> {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+const readline = require("node:readline");
+const capturePath = process.env.RUDDER_TEST_CAPTURE_PATH;
+if (capturePath) fs.writeFileSync(capturePath, JSON.stringify(process.argv.slice(2)), "utf8");
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialized") return;
+  if (message.method === "initialize") {
+    send({ id: message.id, result: { userAgent: "fake", platformFamily: "unix", platformOs: "macos" } });
+    return;
+  }
+  if (message.method === "thread/start") {
+    send({ id: message.id, result: { thread: { id: "thread-default-app-server" } } });
+    return;
+  }
+  if (message.method === "turn/start") {
+    send({ id: message.id, result: { turn: { id: "turn-default-app-server" } } });
+    send({ method: "item/agentMessage/delta", params: {
+      threadId: "thread-default-app-server",
+      turnId: "turn-default-app-server",
+      itemId: "agent-default",
+      delta: "hello",
+    } });
+    send({ method: "item/completed", params: {
+      threadId: "thread-default-app-server",
+      turnId: "turn-default-app-server",
+      item: { type: "agentMessage", id: "agent-default", text: "hello" },
+    } });
+    send({ method: "turn/completed", params: {
+      threadId: "thread-default-app-server",
+      turn: { id: "turn-default-app-server", status: "completed", error: null },
+    } });
+  }
+});
 `;
   await fs.writeFile(commandPath, script, "utf8");
   await fs.chmod(commandPath, 0o755);
@@ -402,6 +455,194 @@ function managedCodexHomePath(input: {
 }
 
 describe("codex execute", { timeout: 20_000 }, () => {
+  it("keeps custom Codex commands on exec unless App Server is explicitly enabled", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-app-server-gate-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+    try {
+      const result = await execute({
+        runId: "run-chat-app-server-gate",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: { RUDDER_TEST_CAPTURE_PATH: capturePath },
+          promptTemplate: "Reply in chat.",
+        },
+        context: {
+          rudderScene: "chat",
+          chatMode: true,
+        },
+        onLog: async () => undefined,
+      });
+
+      expect(result.exitCode).toBe(0);
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.argv).toContain("exec");
+      expect(capture.argv).not.toContain("app-server");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses App Server by default for the standard Codex chat command", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-app-server-default-"));
+    const workspace = path.join(root, "workspace");
+    const binDir = path.join(root, "bin");
+    const commandPath = path.join(binDir, "codex");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(binDir, { recursive: true });
+    await writeFakeCodexAppServerCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+    try {
+      const result = await execute({
+        runId: "run-chat-app-server-default",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: "codex",
+          cwd: workspace,
+          env: {
+            PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Reply in chat.",
+          dangerouslyBypassApprovalsAndSandbox: true,
+        },
+        context: {
+          rudderScene: "chat",
+          chatMode: true,
+        },
+        onLog: async () => undefined,
+      });
+
+      expect(result).toMatchObject({
+        exitCode: 0,
+        summary: "hello",
+        resultJson: { transport: "codex_app_server" },
+      });
+      const argv = JSON.parse(await fs.readFile(capturePath, "utf8")) as string[];
+      expect(argv).toContain("app-server");
+      expect(argv).not.toContain("exec");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("publishes an interrupt-and-continue handle for Codex exec chat fallback", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-exec-control-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "custom-codex");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeBlockingCodexCommand(commandPath);
+
+    const controller = new AbortController();
+    let releaseCount = 0;
+    let publishHandle!: (handle: AgentRuntimeControlHandle) => void;
+    const handleReady = new Promise<AgentRuntimeControlHandle>((resolve) => {
+      publishHandle = resolve;
+    });
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+    try {
+      const execution = execute({
+        runId: "run-chat-exec-control",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          promptTemplate: "Keep running.",
+          chatAppServerEnabled: false,
+          graceSec: 20,
+        },
+        context: {
+          rudderScene: "chat",
+          chatMode: true,
+        },
+        abortSignal: controller.signal,
+        controlAttempt: {
+          attemptEpoch: 1,
+          ownerToken: "exec-owner",
+          async register(handle) {
+            publishHandle(handle);
+            return {
+              isCurrent: () => true,
+              async release() {
+                releaseCount += 1;
+                await handle.dispose();
+              },
+            };
+          },
+          async complete() {},
+        },
+        onLog: async () => undefined,
+      });
+
+      const handle = await handleReady;
+      expect(handle.capabilities).toEqual({
+        steer: "interrupt_continue",
+        interrupt: "process",
+      });
+      controller.abort(new Error("steer fallback"));
+      await expect(handle.interrupt("steer_fallback")).resolves.toBe("acknowledged");
+      const result = await execution;
+      expect(result.signal).toBe("SIGTERM");
+      expect(releaseCount).toBe(1);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("prepares isolated HOME Git config from the workspace repository identity", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-git-identity-"));
     const workspace = path.join(root, "workspace");

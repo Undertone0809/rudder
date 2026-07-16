@@ -1,4 +1,8 @@
-import type { AgentRuntimeMediaAttachment, TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import type {
+  AgentRuntimeControlCoordinator,
+  AgentRuntimeMediaAttachment,
+  TranscriptEntry,
+} from "@rudderhq/agent-runtime-utils";
 import type { RudderSkillEntry } from "@rudderhq/agent-runtime-utils/server-utils";
 import type {
   AgentRuntimeType,
@@ -98,6 +102,7 @@ export interface StreamChatAssistantReplyInput extends GenerateChatAssistantRepl
   runContext?: Record<string, unknown> | null;
   stream?: boolean;
   abortSignal?: AbortSignal;
+  controlCoordinator?: AgentRuntimeControlCoordinator;
   onRunCreated?: (runId: string) => Promise<void> | void;
   onAssistantDelta?: (delta: string) => Promise<void> | void;
   onAssistantState?: (state: "streaming" | "finalizing" | "stopped") => Promise<void> | void;

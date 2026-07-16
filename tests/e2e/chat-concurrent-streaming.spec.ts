@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createE2EChatAgent } from "./support/chat-agent";
-import { E2E_CODEX_STUB } from "./support/e2e-env";
+import { E2E_CODEX_APP_SERVER_STUB, E2E_CODEX_STUB } from "./support/e2e-env";
 
 async function createStreamingOrg(page: Page, name: string) {
   const orgRes = await page.request.post("/api/orgs", {
@@ -156,12 +156,12 @@ test("queues a follow-up by default while the current chat is streaming", async 
   expect(editedQueue.items[0].payload.body).toBe("This queued follow-up was edited in place");
 
   await page.getByTestId("chat-running-queue-item").first().getByRole("button", { name: "Steer" }).click();
-  await expect(page.getByTestId("chat-running-queue-item").first()).toContainText("Still queued", { timeout: 15_000 });
-
-  const steeredQueueRes = await page.request.get(`/api/chats/${chatId}/queue`);
-  expect(steeredQueueRes.ok()).toBe(true);
-  const steeredQueue = await steeredQueueRes.json();
-  expect(steeredQueue.items[0].lastDeliveryReason).toBe("unsupported");
+  await expect.poll(async () => {
+    const response = await page.request.get(`/api/chats/${chatId}/queue`);
+    expect(response.ok()).toBe(true);
+    const snapshot = await response.json();
+    return snapshot.items[0]?.status ?? "delivered";
+  }, { timeout: 30_000 }).toMatch(/continuation_pending|running_next|delivered/);
 
   await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "This queued follow-up was edited in place" })).toBeVisible({
     timeout: 30_000,
@@ -177,7 +177,55 @@ test("queues a follow-up by default while the current chat is streaming", async 
   expect(finalQueue.items).toHaveLength(0);
 });
 
-test("keeps queued follow-ups parked after stopping the running reply", async ({ page }) => {
+test("delivers native Codex Steer into the active App Server turn", async ({ page }) => {
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Native-Steer-${Date.now()}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json();
+  const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+    name: "Native Steer Agent",
+    agentRuntimeConfig: {
+      model: "gpt-5.4",
+      command: E2E_CODEX_APP_SERVER_STUB,
+      chatAppServerEnabled: true,
+    },
+  });
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${chatAgent.id}`);
+
+  const composer = page.locator(".rudder-mdxeditor-content").first();
+  await composer.fill("Start a controllable App Server turn");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page).toHaveURL(/\/messenger\/chat\/[^/]+$/i, { timeout: 15_000 });
+  const chatId = currentChatId(page.url());
+  await expect.poll(async () => {
+    const response = await page.request.get(`/api/chats/${chatId}/queue`);
+    expect(response.ok()).toBe(true);
+    return (await response.json()).activeGenerationStatus;
+  }, { timeout: 15_000 }).toBe("running");
+
+  await composer.fill("Use the revised direction");
+  await composer.press("Enter");
+  const queueItem = page.getByTestId("chat-running-queue-item").first();
+  await expect(queueItem).toContainText("Use the revised direction", { timeout: 15_000 });
+  await queueItem.getByRole("button", { name: "Steer" }).click();
+
+  await expect(page.getByTestId("chat-assistant-message").last()).toContainText(
+    "Native steer applied: Use the revised direction",
+    { timeout: 20_000 },
+  );
+  await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Use the revised direction" })).toHaveCount(0);
+  const queueRes = await page.request.get(`/api/chats/${chatId}/queue`);
+  expect(queueRes.ok()).toBe(true);
+  expect((await queueRes.json()).items).toHaveLength(0);
+});
+
+test("runs Stop-then-Steer feedback as a server-owned continuation", async ({ page }) => {
   const organization = await createStreamingOrg(page, `Running-Queue-Stop-${Date.now()}`);
 
   await page.goto("/");
@@ -212,30 +260,25 @@ test("keeps queued follow-ups parked after stopping the running reply", async ({
   await expect(page.getByTestId("chat-running-queue")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("chat-running-queue")).toContainText("Queued follow-ups retained");
   await expect(page.getByTestId("chat-running-queue-item").first()).toContainText("This should stay parked after stop");
-  await expect(page.getByTestId("chat-running-queue").getByRole("button", { name: "Steer" })).toHaveCount(0);
+  await expect(page.getByTestId("chat-running-queue").getByRole("button", { name: "Steer" })).toHaveCount(3);
   await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "This should stay parked after stop" })).toHaveCount(0);
 
-  await composer.fill("Fresh message after stop should send now");
-  await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 15_000 });
-
-  const queueRes = await page.request.get(`/api/chats/${chatId}/queue`);
-  expect(queueRes.ok()).toBe(true);
-  const queue = await queueRes.json();
-  expect(queue.activeGenerationId).toBeNull();
-  expect(queue.items).toHaveLength(3);
-  expect(queue.items[0].payload.body).toBe("This should stay parked after stop");
-  expect(queue.items[1].payload.body).toBe("Second parked follow-up");
-  expect(queue.items[2].payload.body).toBe("Third parked follow-up");
-  const staleSteerRes = await page.request.post(`/api/chats/${chatId}/queue/${queue.items[0].id}/steer`, {
-    data: { expectedActiveGenerationId: queue.items[0].expectedGenerationId },
+  await page.getByTestId("chat-running-queue-item").first().getByRole("button", { name: "Steer" }).click();
+  await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "This should stay parked after stop" })).toBeVisible({
+    timeout: 30_000,
   });
-  expect(staleSteerRes.status()).toBe(409);
-
-  await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Fresh message after stop should send now" })).toBeVisible({
-    timeout: 15_000,
+  await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Second parked follow-up" })).toBeVisible({
+    timeout: 45_000,
   });
-  await expect(page.getByTestId("chat-running-queue-item").filter({ hasText: "Fresh message after stop should send now" })).toHaveCount(0);
+  await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Third parked follow-up" })).toBeVisible({
+    timeout: 45_000,
+  });
+  await expect(page.getByTestId("chat-running-queue")).toHaveCount(0, { timeout: 45_000 });
+
+  const finalQueueRes = await page.request.get(`/api/chats/${chatId}/queue`);
+  expect(finalQueueRes.ok()).toBe(true);
+  const finalQueue = await finalQueueRes.json();
+  expect(finalQueue.items).toHaveLength(0);
 });
 
 test("keeps a streaming chat visible after navigating to issue detail and back", async ({ page }) => {
