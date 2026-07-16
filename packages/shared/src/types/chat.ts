@@ -32,8 +32,8 @@ export interface ChatAttachment {
   conversationId: string;
   messageId: string;
   assetId: string;
-  provider: string;
-  objectKey: string;
+  provider?: string;
+  objectKey?: string;
   contentType: string;
   byteSize: number;
   sha256: string;

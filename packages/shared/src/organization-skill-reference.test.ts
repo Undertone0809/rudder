@@ -74,15 +74,18 @@ const bundledSkill: OrganizationSkillListItem = {
 };
 
 describe("organization-skill-reference", () => {
-  it("keeps Browser known but activates it only with the instance capability", () => {
+  it("keeps Visualize active while Browser remains capability-gated", () => {
     expect(RUDDER_BUNDLED_SKILL_SLUGS).toContain("browser");
+    expect(RUDDER_BUNDLED_SKILL_SLUGS).toContain("visualize");
     expect(getActiveRudderBundledSkillSlugs(false)).not.toContain("browser");
+    expect(getActiveRudderBundledSkillSlugs(false)).toContain("visualize");
     expect(getActiveRudderBundledSkillSlugs(true)).toEqual([
       "para-memory-files",
       "rudder",
       "rudder-create-agent",
       "rudder-create-plugin",
       "skill-creator",
+      "visualize",
       "browser",
     ]);
   });

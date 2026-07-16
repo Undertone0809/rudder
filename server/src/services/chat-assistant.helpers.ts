@@ -14,9 +14,11 @@ import type {
   OperatorProfileSettings,
 } from "@rudderhq/shared";
 import {
+  MAX_CODEX_INLINE_VISUALS,
   chatAskUserRequestFromStructuredPayload,
   chatAutomationCreateFromStructuredPayload,
   chatIssueProposalFromStructuredPayload,
+  parseCodexInlineVisualDirectives,
   sanitizeChatStructuredPayload,
 } from "@rudderhq/shared";
 import { createWriteStream } from "node:fs";
@@ -77,15 +79,29 @@ export interface ChatAssistantResult {
   structuredPayload: Record<string, unknown> | null;
   replyingAgentId?: string | null;
   generatedAttachments?: ChatGeneratedAttachment[];
+  inlineVisuals?: ChatInlineVisualResult[];
 }
 
-export interface ChatGeneratedAttachment {
-  source: "codex_image_generation";
-  originalFilename: string;
-  contentType: string;
-  body: Buffer;
-  toolCallId?: string | null;
-}
+export type ChatGeneratedAttachment =
+  | {
+    source: "codex_image_generation";
+    originalFilename: string;
+    contentType: string;
+    body: Buffer;
+    toolCallId?: string | null;
+  }
+  | {
+    source: "codex_inline_visual";
+    originalFilename: string;
+    contentType: "text/html";
+    body: Buffer;
+    directiveIndex: number;
+    directiveFile: string;
+  };
+
+export type ChatInlineVisualResult =
+  | { directiveIndex: number; file: string; status: "captured" }
+  | { directiveIndex: number; file: string; status: "unavailable"; reason: string };
 
 export interface GenerateChatAssistantReplyInput {
   conversation: ChatConversation;
@@ -745,6 +761,70 @@ export function extractGeneratedAttachments(result: AgentRuntimeExecutionResult)
   return attachments;
 }
 
+export function extractCodexInlineVisualArtifacts(result: AgentRuntimeExecutionResult): {
+  attachments: ChatGeneratedAttachment[];
+  inlineVisuals: ChatInlineVisualResult[];
+} {
+  const raw = result.resultJson && typeof result.resultJson === "object" && !Array.isArray(result.resultJson)
+    ? result.resultJson as Record<string, unknown>
+    : null;
+  const entries = Array.isArray(raw?.inlineVisuals) ? raw.inlineVisuals : [];
+  const attachments: ChatGeneratedAttachment[] = [];
+  const inlineVisuals: ChatInlineVisualResult[] = [];
+  const seenIndexes = new Set<number>();
+  const allowedUnavailableReasons = new Set(["missing", "out_of_window", "path_escape", "too_large", "unreadable"]);
+
+  for (const value of entries) {
+    if (inlineVisuals.length >= MAX_CODEX_INLINE_VISUALS) break;
+    const entry = asRecord(value);
+    if (!entry) continue;
+    const directiveIndex = typeof entry.directiveIndex === "number" && Number.isInteger(entry.directiveIndex)
+      ? entry.directiveIndex
+      : -1;
+    const file = typeof entry.file === "string" ? entry.file : "";
+    const parsed = parseCodexInlineVisualDirectives(`::codex-inline-vis{file="${file}"}`);
+    if (
+      directiveIndex < 0
+      || directiveIndex >= MAX_CODEX_INLINE_VISUALS
+      || seenIndexes.has(directiveIndex)
+      || parsed.directives.length !== 1
+      || parsed.directives[0]?.file !== file
+    ) continue;
+
+    if (entry.status === "unavailable") {
+      const reason = typeof entry.reason === "string" ? entry.reason : "";
+      if (!allowedUnavailableReasons.has(reason)) continue;
+      seenIndexes.add(directiveIndex);
+      inlineVisuals.push({ directiveIndex, file, status: "unavailable", reason });
+      continue;
+    }
+    if (entry.status !== "captured" || entry.contentType !== "text/html") continue;
+    const declaredSize = typeof entry.byteSize === "number" && Number.isInteger(entry.byteSize)
+      ? entry.byteSize
+      : -1;
+    const body = base64PngToBuffer(entry.bodyBase64);
+    if (!body || declaredSize !== body.length || declaredSize > 2 * 1024 * 1024) continue;
+    seenIndexes.add(directiveIndex);
+    inlineVisuals.push({ directiveIndex, file, status: "captured" });
+    attachments.push({
+      source: "codex_inline_visual",
+      originalFilename: file,
+      contentType: "text/html",
+      body,
+      directiveIndex,
+      directiveFile: file,
+    });
+  }
+
+  inlineVisuals.sort((a, b) => a.directiveIndex - b.directiveIndex);
+  attachments.sort((a, b) =>
+    a.source === "codex_inline_visual" && b.source === "codex_inline_visual"
+      ? a.directiveIndex - b.directiveIndex
+      : 0
+  );
+  return { attachments, inlineVisuals };
+}
+
 export function isImageAttachment(attachment: Pick<ChatMessage["attachments"][number], "contentType">) {
   return attachment.contentType.toLowerCase().startsWith("image/");
 }
@@ -810,6 +890,7 @@ export async function prepareChatAttachmentReferences(input: {
   const preparedMedia = await Promise.all(attachments.map(async (attachment, index) => {
     const targetPath = path.join(dir, safeAttachmentFilename(attachment, index));
     try {
+      if (!attachment.objectKey) throw new Error("Attachment storage reference is unavailable");
       const object = await input.storage!.getObject(attachment.orgId, attachment.objectKey);
       await pipeline(object.stream, createWriteStream(targetPath, { mode: 0o600 }));
       references.set(attachment.id, { localPath: targetPath });
@@ -848,10 +929,14 @@ export function validateAssistantResult(
   const kind = typeof payload.kind === "string" ? payload.kind : "message";
   const payloadBody = typeof payload.body === "string" ? payload.body.trim() : "";
   const body = options.bodyOverride?.trim() || payloadBody || options.bodyFallback?.trim() || "";
-  const structuredPayload =
+  const sanitizedStructuredPayload =
     payload.structuredPayload && typeof payload.structuredPayload === "object" && !Array.isArray(payload.structuredPayload)
       ? sanitizeChatStructuredPayload(payload.structuredPayload as Record<string, unknown>)
       : null;
+  const structuredPayload = sanitizedStructuredPayload
+    ? (({ inlineVisuals: _untrustedInlineVisuals, ...trustedPayload }) =>
+      Object.keys(trustedPayload).length > 0 ? trustedPayload : null)(sanitizedStructuredPayload)
+    : null;
 
   if (!body) {
     throw new Error("Assistant response body was empty");

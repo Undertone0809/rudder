@@ -6,6 +6,18 @@ export {
   type BrowserShortcutInput
 } from "./browser-shortcuts.js";
 export {
+  CODEX_INLINE_VISUAL_DIRECTIVE_PREFIX,
+  MAX_CODEX_INLINE_VISUALS,
+  chatInlineVisualMappingsFromStructuredPayload,
+  parseCodexInlineVisualDirectives,
+  stripCodexInlineVisualDirectives,
+  type ChatInlineVisualMapping,
+  type CodexInlineVisualDirective,
+  type CodexInlineVisualDirectiveIssue,
+  type CodexInlineVisualDirectiveIssueCode,
+  type CodexInlineVisualDirectiveParseResult
+} from "./chat-inline-visuals.js";
+export {
   extractVisibleChatWorkTargets,
   normalizeChatWorkExternalUrl,
   preferChatWorkManifestCategory,

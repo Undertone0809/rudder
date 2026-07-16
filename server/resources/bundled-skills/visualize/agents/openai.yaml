@@ -1,0 +1,7 @@
+interface:
+  display_name: "Visualize"
+  short_description: "Create safe inline visuals in Rudder Chat"
+  default_prompt: "Use $visualize to create a clear Rudder-native chart, diagram, comparison, or other inline visual when it improves understanding."
+
+policy:
+  allow_implicit_invocation: true

@@ -9,6 +9,7 @@ import { assetService, logActivity } from "../services/index.js";
 import type { StorageService } from "../storage/types.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 const SVG_CONTENT_TYPE = "image/svg+xml";
+const HTML_CONTENT_TYPE = "text/html";
 const ALLOWED_COMPANY_LOGO_CONTENT_TYPES = new Set([
   "image/png",
   "image/jpeg",
@@ -320,15 +321,20 @@ export function assetRoutes(db: Db, storage: StorageService) {
 
     const object = await storage.getObject(asset.orgId, asset.objectKey);
     const responseContentType = asset.contentType || object.contentType || "application/octet-stream";
-    res.setHeader("Content-Type", responseContentType);
+    const normalizedContentType = responseContentType.split(";", 1)[0]?.trim().toLowerCase();
+    const isHtml = normalizedContentType === HTML_CONTENT_TYPE;
+    res.setHeader("Content-Type", isHtml ? "application/octet-stream" : responseContentType);
     res.setHeader("Content-Length", String(asset.byteSize || object.contentLength || 0));
     res.setHeader("Cache-Control", "private, max-age=60");
     res.setHeader("X-Content-Type-Options", "nosniff");
     if (responseContentType === SVG_CONTENT_TYPE) {
       res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'");
+    } else if (isHtml) {
+      res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'; connect-src 'none'; form-action 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'");
     }
     const filename = asset.originalFilename ?? "asset";
-    res.setHeader("Content-Disposition", `inline; filename=\"${filename.replaceAll("\"", "")}\"`);
+    const disposition = isHtml || req.query.download === "1" ? "attachment" : "inline";
+    res.setHeader("Content-Disposition", `${disposition}; filename=\"${filename.replaceAll("\"", "")}\"`);
 
     object.stream.on("error", (err) => {
       next(err);

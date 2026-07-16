@@ -191,12 +191,13 @@ describe("organization skill references", () => {
 
     const skills = await skillSvc.list(orgId);
 
-    expect(skills.slice(0, 6).map((skill) => skill.key)).toEqual([
+    expect(skills.slice(0, 7).map((skill) => skill.key)).toEqual([
       "rudder/para-memory-files",
       "rudder/rudder",
       "rudder/rudder-create-agent",
       "rudder/rudder-create-plugin",
       "rudder/skill-creator",
+      "rudder/visualize",
       "rudder/browser",
     ]);
 
@@ -204,6 +205,7 @@ describe("organization skill references", () => {
       "rudder/rudder",
       "rudder/rudder-create-agent",
       "rudder/skill-creator",
+      "rudder/visualize",
       `organization/${orgId}/deep-research`,
       `organization/${orgId}/software-product-advisor`,
     ]));
@@ -223,6 +225,13 @@ describe("organization skill references", () => {
       sourceBadge: "rudder",
       sourceLabel: "Bundled by Rudder",
       editable: false,
+    });
+    expect(skills.find((skill) => skill.slug === "visualize")).toMatchObject({
+      key: "rudder/visualize",
+      sourceBadge: "rudder",
+      sourceLabel: "Bundled by Rudder",
+      editable: false,
+      trustLevel: "assets",
     });
   });
 

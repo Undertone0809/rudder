@@ -49,6 +49,7 @@ import { agentUrl, cn, relativeTime } from "@/lib/utils";
 import {
   ISSUE_PRIORITIES,
   ISSUE_STATUSES,
+  chatInlineVisualMappingsFromStructuredPayload,
   type Agent,
   type ChatAskUserQuestion,
   type ChatAskUserRequest,
@@ -73,7 +74,8 @@ import {
   Sparkles
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
-import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, statusChipClassName } from "./Chat.parts";
+import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, AttachmentPreviewState, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, statusChipClassName } from "./Chat.parts";
+import { ChatInlineVisualContent } from "./ChatInlineVisual";
 
 export function ChatAssistantAttributionRow({
   replyingAgentId,
@@ -970,11 +972,13 @@ function CopyMessageButton({ onClick }: { onClick: () => void }) {
 
 export function ChatLongMessageBody({
   body,
+  message,
   skillReferences,
   onMarkdownLinkClick,
   className,
 }: {
   body: string;
+  message?: ChatMessage;
   skillReferences: MarkdownSkillReferencePreview[];
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
   className?: string;
@@ -982,9 +986,16 @@ export function ChatLongMessageBody({
   return (
     <div className={cn("min-w-0", className)}>
       <div data-testid="chat-long-message-body" className="min-w-0">
-        <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick} enableCodeBlockCopy>
-          {body}
-        </MarkdownBody>
+        {message ? (
+          <ChatInlineVisualContent
+            message={message}
+            markdownProps={{ skillReferences, onLinkClick: onMarkdownLinkClick, enableCodeBlockCopy: true }}
+          />
+        ) : (
+          <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick} enableCodeBlockCopy>
+            {body}
+          </MarkdownBody>
+        )}
       </div>
     </div>
   );
@@ -2196,6 +2207,14 @@ export function ChatMessageItem({
 
   const isUser = message.role === "user";
   const statusLabel = !isUser ? assistantStateLabel(message.status) : null;
+  const inlineVisualAttachmentIds = new Set(
+    chatInlineVisualMappingsFromStructuredPayload(message.structuredPayload)
+      .filter((mapping) => mapping.status === "ready")
+      .map((mapping) => mapping.attachmentId),
+  );
+  const visibleMessageAttachments = message.attachments.filter(
+    (attachment) => !inlineVisualAttachmentIds.has(attachment.id),
+  );
   const canContinueInterrupted = Boolean(onContinueInterruptedMessage) && canContinueInterruptedChatMessage(message);
   const recoverableFailure = message.status === "failed" ? recoverableFailureFromMessage(message) : null;
   const canRetryFailed = Boolean(onRetryFailedMessage) && canRetryFailedChatMessage(message);
@@ -2267,6 +2286,7 @@ export function ChatMessageItem({
           ) : (
             <ChatLongMessageBody
               body={message.body}
+              message={message}
               skillReferences={skillReferences}
               onMarkdownLinkClick={onMarkdownLinkClick}
               className="max-w-[72ch] text-[15px] leading-7 text-foreground"
@@ -2274,7 +2294,8 @@ export function ChatMessageItem({
           )}
           <ChatRichReferences message={message} />
           <ChatAttachmentList
-            attachments={message.attachments}
+            attachments={visibleMessageAttachments}
+            onOpenImage={onOpenImage}
             onOpenFile={onOpenFile}
           />
           {!isEmptyStreamingAssistant ? (

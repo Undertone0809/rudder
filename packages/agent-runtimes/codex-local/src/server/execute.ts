@@ -44,6 +44,7 @@ import {
   resolveTrustedOperatorHome,
 } from "./codex-home.js";
 import { estimateCodexCostUsd } from "./cost.js";
+import { captureCodexInlineVisuals, codexInlineVisualDirectiveBody } from "./inline-visuals.js";
 import { isCodexUnknownSessionError, parseCodexJsonl } from "./parse.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -755,6 +756,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   };
 
   const runAttempt = async (resumeSessionId: string | null) => {
+    const startedAt = new Date();
     const args = buildArgs(resumeSessionId);
     if (onMeta) {
       await onMeta({
@@ -816,13 +818,15 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       },
       rawStderr: proc.stderr,
       parsed: parseCodexJsonl(proc.stdout),
+      startedAt,
+      endedAt: new Date(),
     };
   };
 
-  const toResult = (
-    attempt: { proc: { exitCode: number | null; signal: string | null; timedOut: boolean; stdout: string; stderr: string }; rawStderr: string; parsed: ReturnType<typeof parseCodexJsonl> },
+  const toResult = async (
+    attempt: { proc: { exitCode: number | null; signal: string | null; timedOut: boolean; stdout: string; stderr: string }; rawStderr: string; parsed: ReturnType<typeof parseCodexJsonl>; startedAt: Date; endedAt: Date },
     clearSessionOnMissingSession = false,
-  ): AgentRuntimeExecutionResult => {
+  ): Promise<AgentRuntimeExecutionResult> => {
     if (attempt.proc.timedOut) {
       return {
         exitCode: attempt.proc.exitCode,
@@ -859,13 +863,27 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       countSubscriptionUsageAsCost,
       estimatedCostUsd !== null,
     );
+    const inlineVisuals = resolvedSessionId
+      && attempt.proc.exitCode === 0
+      && attempt.proc.signal === null
+      ? await captureCodexInlineVisuals({
+        body: codexInlineVisualDirectiveBody(attempt.parsed.summary),
+        codexHome: effectiveCodexHome,
+        threadId: resolvedSessionId,
+        startedAt: attempt.startedAt,
+        endedAt: attempt.endedAt,
+      }).catch(async () => {
+        await onLog("stderr", "[rudder] Codex inline visual capture failed; the visual will be unavailable.\n").catch(() => {});
+        return [];
+      })
+      : [];
 
     return {
       exitCode: attempt.proc.exitCode,
       signal: attempt.proc.signal,
       timedOut: false,
       errorMessage:
-        (attempt.proc.exitCode ?? 0) === 0
+        attempt.proc.exitCode === 0 && attempt.proc.signal === null
           ? null
           : fallbackErrorMessage,
       usage: attempt.parsed.usage,
@@ -880,6 +898,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       resultJson: {
         stdout: attempt.proc.stdout,
         stderr: attempt.proc.stderr,
+        ...(inlineVisuals.length > 0 ? { inlineVisuals } : {}),
       },
       summary: attempt.parsed.summary,
       clearSession: Boolean(clearSessionOnMissingSession && !resolvedSessionId),
@@ -924,10 +943,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         `[rudder] Codex resume session "${sessionId}" is unavailable; retrying with a fresh session.\n`,
       );
       const retry = await runAttempt(null);
-      return toResult(retry, true);
+      return await toResult(retry, true);
     }
 
-    return toResult(initial);
+    return await toResult(initial);
   } finally {
     await cliControlLease?.release().catch(() => undefined);
     await pruneProviderManagedMemoryState(effectiveCodexHome, onLog);
