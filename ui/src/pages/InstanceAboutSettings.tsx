@@ -145,6 +145,15 @@ function buildUpdateFeedback(
       tone: "success",
     };
   }
+  if (result.status === "quarantined") {
+    return {
+      title: t("about.updates.quarantined.toastTitle"),
+      body: t("about.updates.quarantined.toastBody", {
+        version: formatVersion(result.quarantinedVersion, t("common.unknown")),
+      }),
+      tone: "warn",
+    };
+  }
   return {
     title: t("about.updates.unavailable.toastTitle"),
     body: t("about.updates.unavailable.toastBody"),
@@ -524,9 +533,13 @@ export function InstanceAboutSettings() {
                           currentVersion: formatVersion(updateResult.currentVersion, t("common.unknown")),
                           channel: formatUpdateChannel(t, updateResult.channel),
                         })
-                        : t("about.updates.unavailable.inline", {
-                          channel: formatUpdateChannel(t, updateResult.channel),
-                        })}
+                        : updateResult.status === "quarantined"
+                          ? t("about.updates.quarantined.inline", {
+                            version: formatVersion(updateResult.quarantinedVersion, t("common.unknown")),
+                          })
+                          : t("about.updates.unavailable.inline", {
+                            channel: formatUpdateChannel(t, updateResult.channel),
+                          })}
                   </div>
                 ) : null}
               </div>

@@ -238,31 +238,45 @@ export function createDesktopQuitFlow(context: {
     });
   }
 
-  async function finalizeQuit(options: { forceExit?: boolean } = {}): Promise<void> {
+  async function finalizeQuit(options: {
+    forceExit?: boolean;
+    beforeExit?: () => Promise<void> | void;
+  } = {}): Promise<void> {
     if (quitting) return;
     quitting = true;
     quitRequested = true;
     installQuitExceptionGuard();
 
+    let exitReady = false;
     try {
-      const mainWindow = context.getMainWindow();
-      if (options.forceExit && mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.destroy();
-        context.setMainWindow(null);
-      }
       try {
         await context.prepareForQuit?.();
       } catch (error) {
         console.warn("[rudder-desktop] failed to finish Browser cleanup before quit", error);
       }
       await context.stopLocalRudder();
-    } finally {
-      context.destroyResidentTray();
-      if (options.forceExit) {
-        app.exit(0);
-        return;
+      await options.beforeExit?.();
+      exitReady = true;
+      const mainWindow = context.getMainWindow();
+      if (options.forceExit && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.destroy();
+        context.setMainWindow(null);
       }
-      app.quit();
+    } catch (error) {
+      if (options.forceExit) {
+        quitting = false;
+        quitRequested = false;
+      }
+      throw error;
+    } finally {
+      if (!options.forceExit || exitReady) {
+        context.destroyResidentTray();
+        if (options.forceExit) {
+          app.exit(0);
+        } else {
+          app.quit();
+        }
+      }
     }
   }
 
@@ -359,9 +373,15 @@ export function createDesktopQuitFlow(context: {
       }
 
       hideWindowForUpdateQuit();
-      writeUpdateQuitResponse(responsePath, { ok: true, status: "quitting", pid: process.pid });
-      await finalizeQuit({ forceExit: true });
+      await finalizeQuit({
+        forceExit: true,
+        beforeExit: () => {
+          writeUpdateQuitResponse(responsePath, { ok: true, status: "quitting", pid: process.pid });
+        },
+      });
     } catch (error) {
+      const mainWindow = context.getMainWindow();
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
       writeUpdateQuitResponse(responsePath, {
         ok: false,
         status: "failed",

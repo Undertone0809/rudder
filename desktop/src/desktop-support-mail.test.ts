@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createDesktopBugReportUrl,
   createDesktopSupportMailtoUrl,
   DESKTOP_BUG_REPORT_URL,
   DESKTOP_FEEDBACK_EMAIL,
@@ -60,6 +61,36 @@ describe("desktop support mail", () => {
     expect(parsed.origin).toBe("https://github.com");
     expect(parsed.pathname).toBe("/Undertone0809/rudder/issues/new");
     expect(parsed.searchParams.get("template")).toBe("bug_report.yml");
+  });
+
+  it("prefills rollback email and public GitHub drafts with the same safe failure context", () => {
+    const input = {
+      version: "0.4.6",
+      failedVersion: "0.4.7",
+      restoredVersion: "0.4.6",
+      platform: "darwin",
+      arch: "arm64",
+      profile: "prod_local",
+      instance: "default",
+      context: "rollback" as const,
+      failure: {
+        id: "failure-rollback",
+        occurredAt: "2026-07-16T10:00:00.000Z",
+        stage: "database",
+        attempt: 1,
+        category: "database" as const,
+        summary: "The local database did not start cleanly.",
+      },
+    };
+
+    const mail = createDesktopSupportMailtoUrl(input);
+    const issue = createDesktopBugReportUrl(input);
+    expect(new URL(mail).searchParams.get("body")).toContain("Failure ID: failure-rollback");
+    expect(new URL(mail).searchParams.get("body")).toContain("Failed update: 0.4.7");
+    expect(new URL(issue).pathname).toBe("/Undertone0809/rudder/issues/new");
+    expect(new URL(issue).searchParams.get("title")).toContain("0.4.7 failed and rolled back");
+    expect(new URL(issue).searchParams.get("body")).toContain("Failure ID: failure-rollback");
+    expect(issue).not.toContain("+");
   });
 
   it("bounds all renderer-adjacent metadata before encoding", () => {

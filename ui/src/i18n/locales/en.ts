@@ -544,6 +544,7 @@ export const en = {
   "about.updates.available.inline": "{{channel}} release available: {{latestVersion}}.",
   "about.updates.current.inline": "{{channel}} is already current: {{currentVersion}}.",
   "about.updates.unavailable.inline": "{{channel}} release comparison is not available right now.",
+  "about.updates.quarantined.inline": "{{version}} is paused because it previously failed to start.",
   "about.updates.available.toastTitle": "New version available",
   "about.updates.available.toastBody": "{{latestVersion}} is ready to download.",
   "about.updates.installStarted.toastTitle": "Update started",
@@ -584,6 +585,8 @@ export const en = {
   "about.updates.current.toastBody": "This desktop build is already on {{currentVersion}}.",
   "about.updates.unavailable.toastTitle": "Update check unavailable",
   "about.updates.unavailable.toastBody": "Could not compare this build against the latest desktop release.",
+  "about.updates.quarantined.toastTitle": "Update paused",
+  "about.updates.quarantined.toastBody": "{{version}} previously failed to start. Rudder will wait for a newer release.",
   "about.updates.browserFallback.toastTitle": "Opened releases page",
   "about.updates.browserFallback.toastBody":
     "Desktop update checks run inside the packaged app. The releases page was opened instead.",

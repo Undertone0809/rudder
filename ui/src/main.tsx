@@ -1,6 +1,7 @@
 import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConsoleRingBuffer } from "@/lib/console-ring-buffer";
+import { readDesktopShell } from "@/lib/desktop-shell";
 import { BrowserRouter } from "@/lib/router";
 import "@mdxeditor/editor/style.css";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -111,6 +112,10 @@ function AppRoot() {
   if (import.meta.env.DEV && window.__RUDDER_E2E_THROW_APP_RENDER_ERROR__ === "children-only") {
     throw new Error(E2E_CHILDREN_ONLY_ERROR_MESSAGE);
   }
+
+  React.useEffect(() => {
+    readDesktopShell()?.reportAppReady?.();
+  }, []);
 
   return <App />;
 }

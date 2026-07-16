@@ -40,10 +40,11 @@ export type DesktopBootState = {
 };
 
 export type DesktopUpdateCheckResult = {
-  status: "update-available" | "up-to-date" | "unavailable";
+  status: "update-available" | "up-to-date" | "unavailable" | "quarantined";
   channel: "stable" | "canary";
   currentVersion: string;
   latestVersion?: string;
+  quarantinedVersion?: string;
   releaseUrl?: string;
   checkedAt: string;
 };
@@ -223,6 +224,7 @@ export type DesktopWebLinkRequest = {
 };
 
 export type DesktopShellApi = {
+  reportAppReady?(): void;
   getBootState(): Promise<DesktopBootState>;
   onBootState(listener: (state: DesktopBootState) => void): () => void;
   openPath(targetPath: string): Promise<void>;

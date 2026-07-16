@@ -23,6 +23,7 @@ import {
   isInstalledDesktopCurrent,
   isPersistentCliVersionCurrent,
   isSuccessfulRobocopyExitCode,
+  movePath,
   parseChecksumFile,
   prepareForDesktopReplace,
   pruneDesktopAssetCache,
@@ -39,6 +40,7 @@ import {
   resolveDesktopReleaseTag,
   resolveDesktopReleaseVersion,
   resolveDesktopShellAssetName,
+  resolveDesktopUpdateDatabasePlan,
   runtimeSupportsDesktopShellAssets,
   selectChecksumAsset,
   selectChecksummedDesktopAssetCandidate,
@@ -385,6 +387,66 @@ describe("persistent CLI install helpers", () => {
 });
 
 describe("desktop start command helpers", () => {
+  it("fails closed for runtime DATABASE_URL before considering embedded config", () => {
+    expect(resolveDesktopUpdateDatabasePlan({
+      databaseUrl: "postgres://external.example/rudder",
+      config: {
+        database: {
+          mode: "embedded-postgres",
+          embeddedPostgresDataDir: "/tmp/irrelevant-embedded-db",
+        },
+      },
+    })).toEqual({ mode: "external-postgres" });
+  });
+
+  it("uses the configured embedded data directory only without an external target", () => {
+    expect(resolveDesktopUpdateDatabasePlan({
+      databaseUrl: null,
+      config: {
+        database: {
+          mode: "embedded-postgres",
+          embeddedPostgresDataDir: "/tmp/rudder-update-db",
+        },
+      },
+    })).toEqual({ mode: "embedded-postgres", dataDir: "/tmp/rudder-update-db" });
+  });
+
+  it("marks a cross-volume backup ready before deleting the source app", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-cross-volume-backup."));
+    const sourcePath = path.join(root, "source", "Rudder.app");
+    const destinationPath = path.join(root, "backup", "Rudder.app");
+    const sourceExecutable = path.join(sourcePath, "Contents", "MacOS", "Rudder");
+    const backupExecutable = path.join(destinationPath, "Contents", "MacOS", "Rudder");
+    await mkdir(path.dirname(sourceExecutable), { recursive: true });
+    await writeFile(sourceExecutable, "last-known-good");
+    let backupReady = false;
+    const crossVolumeError = Object.assign(new Error("cross-volume move"), { code: "EXDEV" });
+
+    try {
+      await expect(movePath(sourcePath, destinationPath, {
+        renamePath: async () => { throw crossVolumeError; },
+        copyPath: async (source, destination) => {
+          await cp(source, destination, { recursive: true, verbatimSymlinks: true });
+        },
+        onDestinationReady: async () => {
+          expect(await readFile(backupExecutable, "utf8")).toBe("last-known-good");
+          backupReady = true;
+        },
+        removeSourcePath: async () => {
+          expect(backupReady).toBe(true);
+          await rm(sourceExecutable, { force: true });
+          throw new Error("injected interruption while deleting source");
+        },
+      })).rejects.toThrow("injected interruption");
+
+      expect(backupReady).toBe(true);
+      await expect(readFile(backupExecutable, "utf8")).resolves.toBe("last-known-good");
+      await expect(readFile(sourceExecutable, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("parses an explicit desktop target version without invoking the root CLI version flag", async () => {
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
@@ -398,6 +460,14 @@ describe("desktop start command helpers", () => {
         "0.3.1",
         "--repo",
         "example/rudder",
+        "--desktop-update-id",
+        "update-1",
+        "--desktop-update-origin",
+        "upgrade",
+        "--desktop-from-version",
+        "0.3.0",
+        "--desktop-update-ready-timeout-ms",
+        "2500",
         "--dry-run",
         "--no-open",
       ])).resolves.toBe(0);

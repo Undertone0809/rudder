@@ -1,5 +1,6 @@
 import type { BrowserWindowConstructorOptions, IpcMainInvokeEvent, OpenDialogOptions, WebContents } from "electron";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, session, shell, systemPreferences, Tray } from "electron";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -36,7 +37,7 @@ import {
   installBrowserWebviewPolicy,
   installDefaultWindowOpenDenyPolicy,
 } from "./browser-webview-policy.js";
-import { ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
+import { DESKTOP_CLI_FLAG, ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
 import { runDesktopCliMode } from "./cli-runner.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
 import {
@@ -101,8 +102,26 @@ import {
   createDesktopStartupFailureView,
   type DesktopStartupFailureView,
 } from "./desktop-startup-failure.js";
-import { DESKTOP_BUG_REPORT_URL, DESKTOP_FEEDBACK_EMAIL } from "./desktop-support-mail.js";
+import {
+  createDesktopBugReportUrl,
+  createDesktopSupportMailtoUrl,
+  DESKTOP_BUG_REPORT_URL,
+  DESKTOP_FEEDBACK_EMAIL,
+} from "./desktop-support-mail.js";
 import { createDesktopUpdateFlow, INSTANCE_SETTINGS_GENERAL_PATH } from "./desktop-update-flow.js";
+import {
+  createRollbackNoticeCopy,
+  findPendingDesktopUpdateRecoveryTransactionPath,
+  markDesktopUpdateCandidateFailed,
+  markDesktopUpdateCandidateReady,
+  markRollbackNoticeShown,
+  readDesktopUpdateTransaction,
+  readPendingRollbackIncident,
+  resolveCandidateUpdateTransactionPath,
+  resolveRollbackIncidentPath,
+  waitForDesktopUpdateCommit,
+  type DesktopUpdateTransaction,
+} from "./desktop-update-recovery.js";
 import {
   toWorkspaceLaunchTargetPayload,
   type DesktopWorkspaceLaunchTargetPayload,
@@ -115,6 +134,11 @@ type BootState = {
   detail?: string;
   error?: string;
   failure?: DesktopStartupFailureView;
+  fallback?: {
+    status: "checking" | "available" | "unavailable" | "installing";
+    version?: string;
+    releaseUrl?: string;
+  };
   capabilities?: DesktopCapabilities;
   permissions?: DesktopSystemPermissions;
   diagnostics?: {
@@ -146,6 +170,8 @@ type StartServerOptions = {
   openOnListen?: boolean;
   runtimeOverrides?: Record<string, unknown>;
   onEvent?: (event: { stage: string; message: string }) => void;
+  deferBackgroundWork?: boolean;
+  desktopUpdateId?: string;
 };
 
 type StartManagedLocalServerOptions = StartServerOptions & {
@@ -169,6 +195,7 @@ type StartedServer = {
     version: string;
   };
   stop(): Promise<void>;
+  activateBackgroundWork(): void;
 };
 
 type ServerModule = {
@@ -414,6 +441,10 @@ if (desktopUserDataOverride) {
 }
 
 const initialPaths = resolveSharedInstancePaths(initialProfile.instanceId);
+const candidateUpdateTransactionPath = resolveCandidateUpdateTransactionPath();
+const candidateUpdateTransaction = readDesktopUpdateTransaction(candidateUpdateTransactionPath);
+const rollbackIncidentPath = resolveRollbackIncidentPath();
+let pendingRollbackIncident: DesktopUpdateTransaction | null = readPendingRollbackIncident(rollbackIncidentPath);
 
 let mainWindow: BrowserWindow | null = null;
 let currentMainRenderer: WebContents | null = null;
@@ -524,9 +555,9 @@ const desktopUpdateFlow = createDesktopUpdateFlow({
   showMainWindow,
 });
 const {
-  checkForUpdates, getDesktopUpdateChannel, setDesktopUpdateChannel, resolveRudderAppVersion,
+  checkForUpdates, checkForFallbackRelease, getDesktopUpdateChannel, setDesktopUpdateChannel, resolveRudderAppVersion,
   maybeShowStartupUpdateNotice, showManualUpdateCheckDialog, installUpdate, applyUpdate,
-  createFeedbackMailtoUrl, getDesktopUpdateProgress,
+  installFallback, createFeedbackMailtoUrl, getDesktopUpdateProgress,
 } = desktopUpdateFlow;
 
 function resolveDesktopWindowBackgroundColor(appearance: DesktopAppearance = currentAppearance): string {
@@ -869,6 +900,7 @@ function createBootScreenState(): BootScreenState {
     view: currentBootState.stage === "error" ? "failed" : "loading",
     stage: currentBootState.stage,
     ...(currentBootState.failure ? { failure: currentBootState.failure } : {}),
+    ...(currentBootState.fallback ? { fallback: currentBootState.fallback } : {}),
     runtime: {
       profile: currentBootState.runtime?.localEnv,
       instance: currentBootState.runtime?.instanceId,
@@ -895,6 +927,115 @@ function createCurrentRecoveryDiagnostic(): string {
     profile: currentBootState.runtime?.localEnv,
     instance: currentBootState.runtime?.instanceId,
   });
+}
+
+function createCurrentBugReportUrl(): string {
+  return createDesktopBugReportUrl({
+    version: resolveRudderAppVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    failure: currentBootState.failure,
+    profile: currentBootState.runtime?.localEnv,
+    instance: currentBootState.runtime?.instanceId,
+  });
+}
+
+function createRollbackSupportInput(transaction: DesktopUpdateTransaction) {
+  return {
+    version: transaction.fromVersion ?? resolveRudderAppVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    failure: transaction.failure ?? null,
+    profile: currentBootState.runtime?.localEnv,
+    instance: currentBootState.runtime?.instanceId,
+    context: "rollback" as const,
+    failedVersion: transaction.targetVersion,
+    restoredVersion: transaction.fromVersion,
+  };
+}
+
+function createRollbackDiagnostic(transaction: DesktopUpdateTransaction): string {
+  if (!transaction.failure) {
+    return [
+      "Rudder update rollback diagnostic",
+      "",
+      `Failed update: ${transaction.targetVersion}`,
+      `Restored version: ${transaction.fromVersion ?? "unknown"}`,
+      "",
+      "Review this diagnostic before sharing it.",
+    ].join("\n");
+  }
+  return [
+    createDesktopRecoveryDiagnostic({
+      failure: transaction.failure,
+      version: transaction.fromVersion ?? resolveRudderAppVersion(),
+      platform: process.platform,
+      arch: process.arch,
+      profile: currentBootState.runtime?.localEnv,
+      instance: currentBootState.runtime?.instanceId,
+    }),
+    `Failed update: ${transaction.targetVersion}`,
+    `Restored version: ${transaction.fromVersion ?? "unknown"}`,
+  ].join("\n");
+}
+
+async function maybeShowUpdateRollbackNotice(): Promise<void> {
+  const transaction = pendingRollbackIncident;
+  if (!transaction || !rollbackIncidentPath) return;
+  pendingRollbackIncident = null;
+  const copy = createRollbackNoticeCopy(transaction);
+  const buttons = [
+    `继续使用 ${transaction.fromVersion ? `v${transaction.fromVersion.replace(/^v/, "")}` : "当前版本"}`,
+    "Email support",
+    "Report on GitHub",
+    "复制技术诊断",
+  ];
+  const smokeRecordPath = process.env.RUDDER_DESKTOP_SMOKE_ROLLBACK_NOTICE_PATH?.trim();
+  let response = 0;
+  if (smokeRecordPath) {
+    fs.appendFileSync(path.resolve(smokeRecordPath), `${JSON.stringify({
+      message: copy.message,
+      detail: copy.detail,
+      buttons,
+      transaction,
+    })}\n`, "utf8");
+    response = Number.parseInt(process.env.RUDDER_DESKTOP_SMOKE_ROLLBACK_NOTICE_RESPONSE ?? "0", 10) || 0;
+  } else {
+    const options: Electron.MessageBoxOptions = {
+      type: "warning",
+      title: APP_NAME,
+      buttons,
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+      message: copy.message,
+      detail: `${copy.detail}\n\nGitHub Issue 是公开内容，提交前请检查其中的信息。`,
+    };
+    const result = mainWindow && !mainWindow.isDestroyed()
+      ? await dialog.showMessageBox(mainWindow, options)
+      : await dialog.showMessageBox(options);
+    response = result.response;
+  }
+  try {
+    if (response === 1) {
+      await openDesktopSupportDraft(createDesktopSupportMailtoUrl(createRollbackSupportInput(transaction)));
+    } else if (response === 2) {
+      await openDesktopBugReport(createDesktopBugReportUrl(createRollbackSupportInput(transaction)));
+    } else if (response === 3) {
+      clipboard.writeText(createRollbackDiagnostic(transaction));
+    }
+    markRollbackNoticeShown(rollbackIncidentPath, transaction);
+  } catch (error) {
+    pendingRollbackIncident = transaction;
+    const message = error instanceof Error ? error.message : String(error);
+    await dialog.showMessageBox({
+      type: "error",
+      title: APP_NAME,
+      buttons: ["OK"],
+      message: "Rudder could not open that feedback destination.",
+      detail: `${message}\n\nThe recovery notice will remain available after the next launch.`,
+    });
+  }
 }
 
 function resolveBootScreenUrl(): string {
@@ -981,7 +1122,20 @@ async function promptForUnresponsiveRenderer(): Promise<void> {
   }
 }
 
-function installRendererRecoveryHandlers(window: BrowserWindow, initialUrl: string): void {
+type RendererFailureReason = {
+  title?: string;
+  message?: string;
+  detail?: string;
+};
+
+function installRendererRecoveryHandlers(
+  window: BrowserWindow,
+  initialUrl: string,
+  options: {
+    onFatalRendererFailure?: (reason: RendererFailureReason) => boolean;
+    shouldRejectRendererFailure?: () => boolean;
+  } = {},
+): void {
   const allowedOrigins = () => collectDesktopNavigationOrigins(
     initialUrl,
     resolveDesktopAppBaseUrl(),
@@ -1003,6 +1157,16 @@ function installRendererRecoveryHandlers(window: BrowserWindow, initialUrl: stri
       });
     }
     return true;
+  };
+  const handleRendererFailure = (reason: RendererFailureReason) => {
+    if (options.onFatalRendererFailure && (options.shouldRejectRendererFailure?.() ?? true)) {
+      const failureRecorded = options.onFatalRendererFailure(reason);
+      if (failureRecorded) {
+        if (!window.isDestroyed()) window.destroy();
+        return;
+      }
+    }
+    void showRendererRecovery(reason);
   };
 
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -1039,7 +1203,7 @@ function installRendererRecoveryHandlers(window: BrowserWindow, initialUrl: stri
 
   window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     if (!isMainFrame || errorCode === -3 || validatedURL.startsWith("data:")) return;
-    void showRendererRecovery({
+    handleRendererFailure({
       title: "Load failed",
       message: "Rudder could not load the UI.",
       detail: `${errorDescription || "Unknown load error"} (${errorCode})`,
@@ -1047,7 +1211,7 @@ function installRendererRecoveryHandlers(window: BrowserWindow, initialUrl: stri
   });
 
   window.webContents.on("render-process-gone", (_event, details) => {
-    void showRendererRecovery({
+    handleRendererFailure({
       title: "Renderer exited",
       message: "Rudder's UI process exited unexpectedly.",
       detail: `${details.reason}${typeof details.exitCode === "number" ? ` (${details.exitCode})` : ""}`,
@@ -1055,7 +1219,15 @@ function installRendererRecoveryHandlers(window: BrowserWindow, initialUrl: stri
   });
 
   window.on("unresponsive", () => {
-    void promptForUnresponsiveRenderer();
+    if (options.onFatalRendererFailure) {
+      handleRendererFailure({
+        title: "Renderer unresponsive",
+        message: "Rudder's UI stopped responding during update validation.",
+        detail: "The update candidate did not remain responsive before commit.",
+      });
+    } else {
+      void promptForUnresponsiveRenderer();
+    }
   });
 }
 
@@ -1098,7 +1270,15 @@ function installMainWindowSidePanelCloseShortcutHandler(window: BrowserWindow): 
   });
 }
 
-async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Promise<BrowserWindow> {
+async function createDesktopWindow(
+  initialUrl: string,
+  kind: "app" | "boot",
+  options: {
+    onFatalRendererFailure?: (reason: RendererFailureReason) => boolean;
+    requireAppReady?: boolean;
+    shouldRejectRendererFailure?: () => boolean;
+  } = {},
+): Promise<BrowserWindow> {
   const preloadPath = path.resolve(MODULE_DIR, kind === "boot" ? "boot-preload.js" : "preload.js");
   const macWindowEffects = process.platform === "darwin"
     ? resolveMacWindowEffects()
@@ -1156,10 +1336,37 @@ async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Pr
     updateResidentShellMenu();
   });
 
+  installRendererRecoveryHandlers(window, initialUrl, options);
+  const appReadyPromise = options.requireAppReady
+    ? new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          cleanup();
+          reject(new Error("The update candidate UI did not report app readiness before timeout."));
+        }, 30_000);
+        const onAppReady = (event: Electron.IpcMainEvent) => {
+          if (event.sender !== window.webContents) return;
+          cleanup();
+          resolve();
+        };
+        const onClosed = () => {
+          cleanup();
+          reject(new Error("The update candidate window closed before reporting app readiness."));
+        };
+        const cleanup = () => {
+          clearTimeout(timeout);
+          ipcMain.removeListener("desktop:app-ready", onAppReady);
+          window.removeListener("closed", onClosed);
+        };
+        ipcMain.on("desktop:app-ready", onAppReady);
+        window.once("closed", onClosed);
+      })
+    : null;
+
   try {
     await window.loadURL(initialUrl);
+    await appReadyPromise;
   } catch (error) {
-    if (kind === "boot") {
+    if (kind === "boot" || options.onFatalRendererFailure) {
       if (!window.isDestroyed()) window.destroy();
       throw error;
     }
@@ -1173,7 +1380,6 @@ async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Pr
     await window.loadURL(resolveRendererRecoveryScreenUrl(reason));
   }
 
-  installRendererRecoveryHandlers(window, initialUrl);
   if (kind === "app") installMainWindowSidePanelCloseShortcutHandler(window);
   return window;
 }
@@ -1207,6 +1413,7 @@ async function openAppWindow(loadUrl: string): Promise<void> {
 function schedulePostUpdateRendererReloadIfNeeded(): void {
   const marker = consumePostUpdateReloadMarker(app.getPath("userData"));
   if (!marker) return;
+  if (rollbackIncidentPath) return;
   latestPostUpdateReloadMarker = marker;
 
   const delayMs = resolvePostUpdateReloadDelayMs();
@@ -1476,12 +1683,46 @@ async function retryStartupFromBootScreen(): Promise<void> {
       detail: "Preparing the embedded database and board UI.",
       error: undefined,
       failure: undefined,
+      fallback: undefined,
     });
     await startLocalRudder();
   })().finally(() => {
     restartInFlight = null;
   });
   return restartInFlight;
+}
+
+async function resolveFreshInstallFallback(failureId: string): Promise<void> {
+  if (!app.isPackaged || candidateUpdateTransactionPath || rollbackIncidentPath) return;
+  if (currentBootState.stage !== "error" || currentBootState.failure?.id !== failureId) return;
+  if (process.env.DATABASE_URL?.trim()) return;
+  try {
+    const configPath = currentBootState.paths?.configPath;
+    const config = configPath && fs.existsSync(configPath)
+      ? JSON.parse(fs.readFileSync(configPath, "utf8")) as { database?: { mode?: unknown; connectionString?: unknown } }
+      : null;
+    if (config?.database?.mode === "postgres" && typeof config.database.connectionString === "string") return;
+  } catch {
+    return;
+  }
+  const defaultEmbeddedDataDir = currentBootState.paths?.instanceRoot
+    ? path.join(currentBootState.paths.instanceRoot, "db")
+    : null;
+  if (defaultEmbeddedDataDir && fs.existsSync(path.join(defaultEmbeddedDataDir, "PG_VERSION"))) return;
+  updateBootState({
+    stage: "error",
+    message: "Rudder failed to start.",
+    fallback: { status: "checking" },
+  });
+  const result = await checkForFallbackRelease();
+  if (currentBootState.stage !== "error" || currentBootState.failure?.id !== failureId) return;
+  updateBootState({
+    stage: "error",
+    message: "Rudder failed to start.",
+    fallback: result.status === "available" && result.fallbackVersion
+      ? { status: "available", version: result.fallbackVersion, releaseUrl: result.releaseUrl }
+      : { status: "unavailable", releaseUrl: result.releaseUrl },
+  });
 }
 
 function requestQuit(): void {
@@ -1492,6 +1733,10 @@ function serverRuntimeOptions(): StartServerOptions {
   return {
     printBanner: false,
     openOnListen: false,
+    deferBackgroundWork: Boolean(candidateUpdateTransactionPath),
+    ...(candidateUpdateTransaction
+      ? { desktopUpdateId: candidateUpdateTransaction.updateId }
+      : {}),
     runtimeOverrides: {
       host: "127.0.0.1",
       deploymentMode: "local_trusted",
@@ -1594,8 +1839,54 @@ async function startLocalRudder(): Promise<void> {
           transport: "fresh-window",
         });
       }
-      await openAppWindow(loadUrl);
+      if (candidateUpdateTransactionPath) {
+        rememberAppUrl(loadUrl);
+        let candidateInProbation = true;
+        const candidateWindow = await createDesktopWindow(loadUrl, "app", {
+          requireAppReady: true,
+          shouldRejectRendererFailure: () => candidateInProbation,
+          onFatalRendererFailure: (reason) => (
+            markDesktopUpdateCandidateFailed(
+              candidateUpdateTransactionPath,
+              createDesktopStartupFailureView({
+                error: new Error(reason.detail ?? reason.message ?? "The candidate renderer failed before commit."),
+                stage: "renderer",
+                attempt,
+              }),
+            )
+          ),
+        });
+        try {
+          if (
+            serverHandle.runtime.mode !== "owned"
+            || serverHandle.runtime.ownerKind !== "desktop"
+            || serverHandle.runtime.localEnv !== initialProfile.name
+            || serverHandle.runtime.instanceId !== initialProfile.instanceId
+          ) {
+            throw new Error(
+              "The update candidate did not acquire the expected Desktop-owned local runtime.",
+            );
+          }
+          markDesktopUpdateCandidateReady({
+            transactionPath: candidateUpdateTransactionPath,
+            appVersion: app.getVersion(),
+            runtimeVersion: serverHandle.runtime.version,
+            enforceAppVersion: app.isPackaged,
+          });
+          await waitForDesktopUpdateCommit(candidateUpdateTransactionPath);
+          serverHandle.activateBackgroundWork();
+          await replaceMainWindow(candidateWindow, "app");
+          candidateInProbation = false;
+        } catch (error) {
+          if (!candidateWindow.isDestroyed()) candidateWindow.destroy();
+          throw error;
+        }
+      } else {
+        await openAppWindow(loadUrl);
+        serverHandle.activateBackgroundWork();
+      }
       schedulePostUpdateRendererReloadIfNeeded();
+      await maybeShowUpdateRollbackNotice();
       await captureDesktopWindowIfRequested();
     } catch (error) {
       console.error("[rudder-desktop] managed local server startup failed", error);
@@ -1604,6 +1895,7 @@ async function startLocalRudder(): Promise<void> {
         stage: currentBootState.stage,
         attempt,
       });
+      markDesktopUpdateCandidateFailed(candidateUpdateTransactionPath, failure);
       updateBootState({
         stage: "error",
         message: "Rudder failed to start.",
@@ -1612,6 +1904,7 @@ async function startLocalRudder(): Promise<void> {
         failure,
         paths: serverHandle?.instancePaths ?? currentBootState.paths,
       });
+      void resolveFreshInstallFallback(failure.id);
     } finally {
       startInFlight = null;
     }
@@ -1696,8 +1989,7 @@ function desktopWorkspaceFileAllowedRoots() {
   return resolveDesktopOrganizationWorkspaceAllowedRoots(process.env, instanceId);
 }
 
-async function openDesktopSupportDraft(): Promise<void> {
-  const url = createFeedbackMailtoUrl();
+async function openDesktopSupportDraft(url = createFeedbackMailtoUrl()): Promise<void> {
   const smokeRecordPath = process.env.RUDDER_DESKTOP_SMOKE_SUPPORT_HANDOFF_PATH?.trim();
   if (!smokeRecordPath) {
     await shell.openExternal(url);
@@ -1720,10 +2012,10 @@ async function openDesktopSupportDraft(): Promise<void> {
   }
 }
 
-async function openDesktopBugReport(): Promise<void> {
+async function openDesktopBugReport(url = DESKTOP_BUG_REPORT_URL): Promise<void> {
   const smokeRecordPath = process.env.RUDDER_DESKTOP_SMOKE_BUG_REPORT_HANDOFF_PATH?.trim();
   if (!smokeRecordPath) {
-    await shell.openExternal(DESKTOP_BUG_REPORT_URL);
+    await shell.openExternal(url);
     return;
   }
 
@@ -1731,7 +2023,7 @@ async function openDesktopBugReport(): Promise<void> {
   const attempt = bugReportHandoffAttemptCount;
   fs.appendFileSync(
     path.resolve(smokeRecordPath),
-    `${JSON.stringify({ attempt, url: DESKTOP_BUG_REPORT_URL })}\n`,
+    `${JSON.stringify({ attempt, url })}\n`,
     "utf8",
   );
   const delayValues = (process.env.RUDDER_DESKTOP_SMOKE_BUG_REPORT_HANDOFF_DELAY_SEQUENCE ?? "80")
@@ -1769,6 +2061,41 @@ function registerIpc(): void {
     }
     await retryStartupFromBootScreen();
   });
+  ipcMain.handle("desktop:install-fallback", async (event) => {
+    assertStartupRecoveryFrame(event, "Desktop fallback install");
+    const fallbackVersion = currentBootState.fallback?.status === "available"
+      ? currentBootState.fallback.version
+      : null;
+    if (currentBootState.stage !== "error" || !fallbackVersion) {
+      throw new Error("No verified fallback release is available for this startup failure.");
+    }
+    const response = await dialog.showMessageBox(mainWindow!, {
+      type: "warning",
+      title: APP_NAME,
+      buttons: [`Install v${fallbackVersion.replace(/^v/, "")}`, "Cancel"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+      message: `Install the recommended previous version v${fallbackVersion.replace(/^v/, "")}?`,
+      detail:
+        "Rudder will download the checksummed release, replace this failed package, and reopen automatically. "
+        + "Your local instance data will stay in place.",
+    });
+    if (response.response !== 0) return;
+    updateBootState({
+      stage: "error",
+      message: "Rudder failed to start.",
+      fallback: { ...currentBootState.fallback, status: "installing", version: fallbackVersion },
+    });
+    const result = await installFallback(fallbackVersion);
+    if (result.status === "started" || result.status === "waiting") return;
+    updateBootState({
+      stage: "error",
+      message: "Rudder failed to start.",
+      fallback: { ...currentBootState.fallback, status: "available", version: fallbackVersion },
+    });
+    throw new Error(result.message);
+  });
   ipcMain.handle("desktop:copy-support-email", async (event) => {
     assertStartupRecoveryFrame(event, "Support email copy");
     clipboard.writeText(DESKTOP_FEEDBACK_EMAIL);
@@ -1781,7 +2108,7 @@ function registerIpc(): void {
     const failureId = currentBootState.failure?.id;
     if (!failureId) throw new Error("No failed startup report context is available.");
     if (bugReportInFlight?.failureId === failureId) return bugReportInFlight.promise;
-    const promise = openDesktopBugReport().finally(() => {
+    const promise = openDesktopBugReport(createCurrentBugReportUrl()).finally(() => {
       if (bugReportInFlight?.promise === promise) bugReportInFlight = null;
     });
     bugReportInFlight = { failureId, promise };
@@ -1792,7 +2119,7 @@ function registerIpc(): void {
     if (currentBootState.stage !== "error") {
       throw new Error("Bug reporting is available only after startup fails.");
     }
-    clipboard.writeText(DESKTOP_BUG_REPORT_URL);
+    clipboard.writeText(createCurrentBugReportUrl());
   });
   ipcMain.handle("desktop:copy-recovery-diagnostic", async (event) => {
     assertStartupRecoveryFrame(event, "Recovery diagnostic copy");
@@ -2082,6 +2409,45 @@ async function captureDesktopWindowIfRequested(): Promise<void> {
   console.info("[rudder-desktop] wrote window capture", path.resolve(targetPath));
 }
 
+function resumePendingDesktopUpdateRecovery(profile: LocalEnvProfile): boolean {
+  if (!app.isPackaged || candidateUpdateTransactionPath || rollbackIncidentPath) return false;
+  const transactionPath = findPendingDesktopUpdateRecoveryTransactionPath();
+  if (!transactionPath) return false;
+  updateBootState({
+    stage: "recovery",
+    message: "Finishing Desktop update recovery...",
+    detail: "Rudder is restoring the last working app and database state before startup.",
+  });
+  const child = spawn(process.execPath, [
+    DESKTOP_CLI_FLAG,
+    "--local-env",
+    profile.name,
+    "_desktop-update-recover",
+    "--transaction",
+    transactionPath,
+  ], {
+    detached: false,
+    stdio: "ignore",
+    env: process.env,
+  });
+  child.on("error", (error) => {
+    updateBootState({
+      stage: "error",
+      message: "Rudder could not resume Desktop update recovery.",
+      detail: error.message,
+    });
+  });
+  child.on("exit", (code) => {
+    if (code === 0) return;
+    updateBootState({
+      stage: "error",
+      message: "Rudder could not finish Desktop update recovery.",
+      detail: `The recovery helper exited with code ${code ?? 1}.`,
+    });
+  });
+  return true;
+}
+
 async function bootstrap(): Promise<void> {
   const profile = applyDesktopEnvironment();
   const appName = applyDesktopAppIdentity(profile);
@@ -2164,6 +2530,7 @@ async function bootstrap(): Promise<void> {
     }
     return;
   }
+  if (resumePendingDesktopUpdateRecovery(profile)) return;
   if (desktopDebugEnabled()) {
     console.info("[rudder-desktop] bootstrap:start-runtime");
   }

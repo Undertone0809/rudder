@@ -39,10 +39,11 @@ type BootState = {
 };
 
 type DesktopUpdateCheckResult = {
-  status: "update-available" | "up-to-date" | "unavailable";
+  status: "update-available" | "up-to-date" | "unavailable" | "quarantined";
   channel: "stable" | "canary";
   currentVersion: string;
   latestVersion?: string;
+  quarantinedVersion?: string;
   releaseUrl?: string;
   checkedAt: string;
 };
@@ -196,6 +197,7 @@ async function invokeOptionalDesktopChannel(
 }
 
 contextBridge.exposeInMainWorld("desktopShell", {
+  reportAppReady: () => ipcRenderer.send("desktop:app-ready"),
   getBootState: () => ipcRenderer.invoke("desktop:get-boot-state") as Promise<BootState>,
   onBootState: (listener: (state: BootState) => void) => {
     const wrapped = (_event: IpcRendererEvent, payload: BootState) => {
@@ -328,6 +330,7 @@ contextBridge.exposeInMainWorld("desktopShell", {
 declare global {
   interface Window {
     desktopShell: {
+      reportAppReady(): void;
       getBootState(): Promise<BootState>;
       onBootState(listener: (state: BootState) => void): () => void;
       openPath(targetPath: string): Promise<void>;

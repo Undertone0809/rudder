@@ -29,7 +29,11 @@ const FAILURE_COPY: Record<DesktopStartupFailureCategory, string> = {
 };
 
 function classifyStartupFailure(error: unknown, stage: string): DesktopStartupFailureCategory {
-  const source = error instanceof Error ? `${error.name} ${error.message}` : String(error);
+  const source = error instanceof Error
+    ? `${error.name} ${error.message}`
+    : error && typeof error === "object" && "message" in error
+      ? `${"name" in error ? String(error.name) : "Error"} ${String(error.message)}`
+      : String(error);
   if (/EADDRINUSE|address already in use/iu.test(source)) return "port_in_use";
   if (/library load denied by system policy|code signature.+not valid for use in process/iu.test(source)) {
     return "system_policy";

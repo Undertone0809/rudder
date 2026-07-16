@@ -40,6 +40,7 @@ const browserImportMalformedCookieName = "rudder_browser_import_malformed";
 const browserImportEncryptedCookieName = "rudder_browser_import_encrypted";
 const browserImportSmokeCookieUrl = "http://127.0.0.1/";
 const browserSmokeScreenshotPath = process.env.RUDDER_DESKTOP_SMOKE_SCREENSHOT?.trim() || null;
+const startupRecoveryScreenshotPath = process.env.RUDDER_DESKTOP_STARTUP_RECOVERY_SCREENSHOT?.trim() || null;
 const windowsToUnixEpochMicroseconds = 11_644_473_600_000_000n;
 const REQUIRED_BUNDLED_SKILLS = [
   "browser",
@@ -639,11 +640,13 @@ async function verifyPackagedDesktopCli(baseUrl, ceo, issue) {
   );
 }
 
-async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}) {
+async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}, extraArgs = []) {
   console.log(`[desktop-smoke] launching ${mode} desktop app`);
   const paths = resolveInstancePaths(userDataDir);
   const executablePath = mode === "packaged" ? await resolvePackagedExecutablePath() : electronBinary;
-  const args = mode === "packaged" ? [] : [path.resolve(desktopDir, "dist/main.js")];
+  const args = mode === "packaged"
+    ? [...extraArgs]
+    : [path.resolve(desktopDir, "dist/main.js"), ...extraArgs];
   const smokeAppName = `Rudder-smoke-${mode}-${ports.appPort}`;
   const smokeHomeDir = path.join(userDataDir, "home");
   await mkdir(smokeHomeDir, { recursive: true });
@@ -956,7 +959,7 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
 
 async function closeDesktop(electronApp) {
   await electronApp.evaluate(({ app }) => {
-    app.exit(0);
+    app.quit();
   });
   await electronApp.close();
 }
@@ -1708,7 +1711,7 @@ async function assertDesktopServiceWorkersDisabled(page) {
   assert.equal(state.hasController, false, "desktop shell should not keep a service worker controller");
 }
 
-async function verifyReloadRecovery(electronApp, page, companyId, issuePrefix) {
+async function verifyReloadRecovery(electronApp, page, companyId, organizationRouteKey) {
   console.log("[desktop-smoke] verifying desktop reload recovery");
   page = await waitForBoardWindow(electronApp, page);
   await page.evaluate(({ nextCompanyId, nextPath }) => {
@@ -1717,9 +1720,9 @@ async function verifyReloadRecovery(electronApp, page, companyId, issuePrefix) {
     window.dispatchEvent(new PopStateEvent("popstate"));
   }, {
     nextCompanyId: companyId,
-    nextPath: `/${issuePrefix}/dashboard`,
+    nextPath: `/${organizationRouteKey}/dashboard`,
   });
-  await page.waitForURL(new RegExp(`/${issuePrefix}/dashboard$`), { timeout: 30_000 });
+  await page.waitForURL(new RegExp(`/${organizationRouteKey}/dashboard$`), { timeout: 30_000 });
   await page.waitForLoadState("networkidle");
   await dismissReleaseNotesDialogIfVisible(page);
   await page.getByRole("button", { name: "System settings" }).waitFor({ state: "visible", timeout: 30_000 });
@@ -1729,7 +1732,7 @@ async function verifyReloadRecovery(electronApp, page, companyId, issuePrefix) {
   await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
 
   await page.waitForLoadState("networkidle");
-  await page.waitForURL(new RegExp(`/${issuePrefix}/dashboard$`), { timeout: 30_000 });
+  await page.waitForURL((url) => url.pathname.startsWith(`/${organizationRouteKey}/`), { timeout: 30_000 });
   await dismissReleaseNotesDialogIfVisible(page);
   await page.getByRole("button", { name: "System settings" }).waitFor({ state: "visible", timeout: 30_000 });
   await assertDesktopServiceWorkersDisabled(page);
@@ -1839,6 +1842,11 @@ async function runStartupRecoveryScenario(mode) {
     assert.equal(initialState.view, "failed", "startup recovery should expose a failed safe view model");
     assert.equal(initialState.failure?.attempt, 1, "the first startup failure should be attempt one");
     await page.waitForFunction(() => document.activeElement?.id === "failure-title");
+    if (startupRecoveryScreenshotPath) {
+      await mkdir(path.dirname(startupRecoveryScreenshotPath), { recursive: true });
+      await page.screenshot({ path: startupRecoveryScreenshotPath, fullPage: true });
+      console.log(`[desktop-smoke] screenshot saved to ${startupRecoveryScreenshotPath}`);
+    }
     assert.equal(
       await page.getByRole("button", { name: "Try again" }).isEnabled(),
       true,
@@ -1852,7 +1860,7 @@ async function runStartupRecoveryScenario(mode) {
     assert.equal(
       await page.getByRole("button", { name: "Report on GitHub" }).isEnabled(),
       true,
-      "the fixed GitHub bug report should be available after failure",
+      "the prefilled GitHub bug report should be available after failure",
     );
     assert.equal(
       await page.locator("#technical-details").evaluate((details) => details.open),
@@ -1911,11 +1919,12 @@ async function runStartupRecoveryScenario(mode) {
     assert.equal(await issueButton.isEnabled(), true, "GitHub reporting should be reusable after handoff completes");
     let issueHandoffs = await readSupportHandoffs(bugReportHandoffPath);
     assert.equal(issueHandoffs.length, 1, "the first GitHub action should perform one OS handoff");
-    assert.equal(
-      issueHandoffs[0].url,
-      "https://github.com/Undertone0809/rudder/issues/new?template=bug_report.yml",
-      "the boot renderer must route to the fixed repository bug template",
-    );
+    const firstIssueUrl = new URL(issueHandoffs[0].url);
+    assert.equal(firstIssueUrl.origin, "https://github.com");
+    assert.equal(firstIssueUrl.pathname, "/Undertone0809/rudder/issues/new");
+    assert.match(firstIssueUrl.searchParams.get("body") ?? "", /Failure ID:/u);
+    assert.match(firstIssueUrl.searchParams.get("body") ?? "", /Failure summary:/u);
+    assert.doesNotMatch(issueHandoffs[0].url, /\+/u, "issue draft should percent-encode spaces consistently");
 
     await page.evaluate(() => Promise.all([
       window.rudderBoot.openBugReport(),
@@ -1982,11 +1991,10 @@ async function runStartupRecoveryScenario(mode) {
     const copyIssueLinkButton = page.getByRole("button", { name: "Copy issue link" });
     assert.equal(await copyIssueLinkButton.isVisible(), true);
     await copyIssueLinkButton.click();
-    assert.equal(
-      await electronApp.evaluate(({ clipboard }) => clipboard.readText()),
-      "https://github.com/Undertone0809/rudder/issues/new?template=bug_report.yml",
-      "the fallback should copy the fixed bug report URL",
-    );
+    const copiedIssueUrl = new URL(await electronApp.evaluate(({ clipboard }) => clipboard.readText()));
+    assert.equal(copiedIssueUrl.pathname, "/Undertone0809/rudder/issues/new");
+    assert.match(copiedIssueUrl.searchParams.get("body") ?? "", /Failure ID:/u);
+    assert.match(copiedIssueUrl.searchParams.get("body") ?? "", /Failure summary:/u);
     issueHandoffs = await readSupportHandoffs(bugReportHandoffPath);
     assert.equal(issueHandoffs.length, 5, "the current failure rejection should be recorded as one distinct attempt");
 
@@ -1995,7 +2003,7 @@ async function runStartupRecoveryScenario(mode) {
       1,
       "startup retry should remain in one Desktop window",
     );
-    console.log("[desktop-smoke] startup recovery kept diagnostics hidden, used fixed support intents, and coalesced retry");
+    console.log("[desktop-smoke] startup recovery kept diagnostics hidden, used prefilled support intents, and coalesced retry");
   } finally {
     await closeDesktop(electronApp).catch(() => {});
   }
@@ -2010,6 +2018,7 @@ async function runCleanScenario(mode) {
   const browserFixture = await startBrowserSmokeFixture();
   try {
     const company = await createCompany(firstRun.baseUrl);
+    const companyRouteKey = company.urlKey ?? company.issuePrefix;
     assert.deepEqual(
       await readBrowserSettings(firstRun.baseUrl),
       { enabled: true, openLinksIn: "built_in" },
@@ -2023,20 +2032,25 @@ async function runCleanScenario(mode) {
     if (mode === "packaged") {
       await verifyPackagedDesktopCli(firstRun.baseUrl, ceo, issue);
     }
-    firstRun.page = await verifyReloadRecovery(firstRun.electronApp, firstRun.page, company.id, company.issuePrefix);
-    firstRun.page = await verifyNativeApplicationMenu(firstRun.electronApp, firstRun.page, company.id, company.issuePrefix);
-    await verifyIssueDetailEscapeNavigation(firstRun.page, company.id, company.issuePrefix, issue);
+    firstRun.page = await verifyReloadRecovery(
+      firstRun.electronApp,
+      firstRun.page,
+      company.id,
+      companyRouteKey,
+    );
+    firstRun.page = await verifyNativeApplicationMenu(firstRun.electronApp, firstRun.page, company.id, companyRouteKey);
+    await verifyIssueDetailEscapeNavigation(firstRun.page, company.id, companyRouteKey, issue);
     firstRun.page = await verifyOrganizationWorkspacesNavigation(
       firstRun.electronApp,
       firstRun.page,
       company.id,
-      company.issuePrefix,
+      companyRouteKey,
     );
     firstRun.page = await verifyChatSidePanelBrowser(
       firstRun.page,
       firstRun.baseUrl,
       company.id,
-      company.issuePrefix,
+      companyRouteKey,
       { electronApp: firstRun.electronApp, fixture: browserFixture, seedStorage: true },
     );
     assert.equal(
@@ -2060,12 +2074,13 @@ async function runCleanScenario(mode) {
     await setBrowserEnabled(firstRun.page, firstRun.baseUrl, true);
     await verifyBrowserSkillState(firstRun.baseUrl, company.id, true);
     const secondCompany = await createCompany(firstRun.baseUrl);
+    const secondCompanyRouteKey = secondCompany.urlKey ?? secondCompany.issuePrefix;
     await verifyBundledSkills(firstRun.baseUrl, secondCompany.id);
     firstRun.page = await verifyChatSidePanelBrowser(
       firstRun.page,
       firstRun.baseUrl,
       secondCompany.id,
-      secondCompany.issuePrefix,
+      secondCompanyRouteKey,
       {
         electronApp: firstRun.electronApp,
         exerciseRouting: false,
@@ -2077,7 +2092,7 @@ async function runCleanScenario(mode) {
     );
     console.log("[desktop-smoke] Browser profile survived disable and was shared with a second organization");
 
-    await verifySettingsOverlayFlow(firstRun.page, company.id, company.issuePrefix);
+    await verifySettingsOverlayFlow(firstRun.page, company.id, companyRouteKey);
     console.log("[desktop-smoke] closing first app run");
     await closeDesktop(firstRun.electronApp);
 
@@ -2117,7 +2132,7 @@ async function runCleanScenario(mode) {
         secondRun.page,
         secondRun.baseUrl,
         secondCompany.id,
-        secondCompany.issuePrefix,
+        secondCompanyRouteKey,
         {
           electronApp: secondRun.electronApp,
           exerciseRouting: false,
@@ -2151,7 +2166,7 @@ async function runCleanScenario(mode) {
         secondRun.page,
         secondRun.baseUrl,
         secondCompany.id,
-        secondCompany.issuePrefix,
+        secondCompanyRouteKey,
         {
           electronApp: secondRun.electronApp,
           exerciseRouting: false,
@@ -2187,11 +2202,12 @@ async function runBrowserScenario(mode) {
   const fixture = await startBrowserSmokeFixture();
   try {
     const company = await createCompany(run.baseUrl);
+    const companyRouteKey = company.urlKey ?? company.issuePrefix;
     await verifyChatSidePanelBrowser(
       run.page,
       run.baseUrl,
       company.id,
-      company.issuePrefix,
+      companyRouteKey,
       { electronApp: run.electronApp, fixture },
     );
     await verifyOperatorBrowserRoutingWhileAgentAccessIsDisabled(
@@ -2230,14 +2246,365 @@ async function runUpgradeScenario(mode) {
   await assertUpgradeRepairLogged(paths.logsDir);
 }
 
+async function waitForJsonFile(filePath, predicate, timeoutMs = 30_000) {
+  const startedAt = Date.now();
+  let lastValue = null;
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const value = JSON.parse(await readFile(filePath, "utf8"));
+      lastValue = value;
+      if (predicate(value)) return value;
+    } catch {
+      // The producer may be between its atomic temp write and rename.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Timed out waiting for ${filePath}; last value: ${JSON.stringify(lastValue)}`);
+}
+
+async function runUpdateRecoveryScenario(mode) {
+  const scenarioRoot = path.join(tmpRoot, "update-recovery");
+  const paths = resolveInstancePaths(scenarioRoot);
+  const version = JSON.parse(await readFile(path.join(desktopDir, "package.json"), "utf8")).version;
+  const transactionsDir = path.join(paths.rudderHome, "desktop-updates", "transactions");
+  await mkdir(transactionsDir, { recursive: true });
+
+  if (mode === "packaged") {
+    const helperInstallRoot = path.join(scenarioRoot, "helper-install");
+    const helperAppPath = path.join(helperInstallRoot, "Rudder.app");
+    const helperBackupPath = path.join(paths.rudderHome, "desktop-updates", "backups", "helper", "Rudder.app");
+    const helperMetadataPath = path.join(helperInstallRoot, ".rudder-desktop-install.json");
+    const helperDataDir = path.join(paths.rudderHome, "instances", "default", "db-helper");
+    const helperCheckpointPath = path.join(paths.rudderHome, "desktop-updates", "checkpoints", "default", "helper-rollback", "db");
+    const helperTransactionPath = path.join(transactionsDir, "helper-rollback.json");
+    const maintenanceLockPath = path.join(paths.rudderHome, "instances", "default", "desktop-update-maintenance.json");
+    await mkdir(helperAppPath, { recursive: true });
+    await mkdir(helperBackupPath, { recursive: true });
+    await mkdir(helperDataDir, { recursive: true });
+    await mkdir(helperCheckpointPath, { recursive: true });
+    await mkdir(path.dirname(maintenanceLockPath), { recursive: true });
+    await writeFile(path.join(helperAppPath, "proof.txt"), "candidate-app");
+    await writeFile(path.join(helperBackupPath, "proof.txt"), "last-known-good-app");
+    await writeFile(path.join(helperDataDir, "PG_VERSION"), "18\n");
+    await writeFile(path.join(helperDataDir, "proof.txt"), "candidate-db");
+    await writeFile(path.join(helperCheckpointPath, "PG_VERSION"), "18\n");
+    await writeFile(path.join(helperCheckpointPath, "proof.txt"), "last-known-good-db");
+    const previousMetadata = {
+      version: 1,
+      releaseTag: "v0.4.5",
+      assetName: "Rudder-0.4.5-macos-arm64-portable.zip",
+      assetChecksum: "a".repeat(64),
+      assetKind: "full",
+      installedAt: new Date().toISOString(),
+    };
+    await writeFile(helperMetadataPath, JSON.stringify({
+      version: 2,
+      current: { ...previousMetadata, releaseTag: `v${version}`, assetChecksum: "b".repeat(64) },
+      lastKnownGood: previousMetadata,
+      previous: previousMetadata,
+    }));
+    const failure = {
+      id: "helper-rollback-failure",
+      occurredAt: new Date().toISOString(),
+      stage: "renderer",
+      attempt: 1,
+      category: "runtime",
+      summary: "The candidate renderer exited before commit.",
+    };
+    const interruptedAt = new Date().toISOString();
+    await writeFile(helperTransactionPath, JSON.stringify({
+      version: 1,
+      updateId: "helper-rollback",
+      origin: "upgrade",
+      phase: "candidate_ready",
+      fromVersion: "0.4.5",
+      targetVersion: version,
+      createdAt: interruptedAt,
+      updatedAt: interruptedAt,
+      install: {
+        appPath: helperAppPath,
+        backupAppPath: helperBackupPath,
+        metadataPath: helperMetadataPath,
+        previousMetadata,
+      },
+      database: {
+        mode: "embedded-postgres",
+        dataDir: helperDataDir,
+        checkpointPath: helperCheckpointPath,
+      },
+      failure,
+    }));
+    await writeFile(maintenanceLockPath, JSON.stringify({
+      version: 1,
+      updateId: "helper-rollback",
+      targetVersion: version,
+      createdAt: interruptedAt,
+    }));
+    const packagedExecutable = await resolvePackagedExecutablePath();
+    await runDesktopCliCommand(packagedExecutable, [
+      "_desktop-update-recover",
+      "--transaction",
+      helperTransactionPath,
+    ], {
+      ...process.env,
+      RUDDER_HOME: paths.rudderHome,
+      RUDDER_INSTANCE_ID: "default",
+    });
+    const helperTransaction = await waitForJsonFile(helperTransactionPath, (value) => value.phase === "rolled_back");
+    assert.ok(
+      Date.parse(helperTransaction.rollback.attemptedAt) >= Date.parse(interruptedAt),
+      "resume must record the first rollback attempt after the interrupted candidate",
+    );
+    assert.equal(await readFile(path.join(helperAppPath, "proof.txt"), "utf8"), "last-known-good-app");
+    assert.equal(await readFile(path.join(helperDataDir, "proof.txt"), "utf8"), "last-known-good-db");
+    assert.equal(JSON.parse(await readFile(helperMetadataPath, "utf8")).releaseTag, "v0.4.5");
+    assert.equal(await pathExists(maintenanceLockPath), false, "successful rollback must release maintenance lock");
+    const quarantine = JSON.parse(await readFile(path.join(paths.rudderHome, "desktop-updates", "quarantine.json"), "utf8"));
+    assert.ok(quarantine.entries.some((entry) => entry.targetVersion === version));
+    console.log("[desktop-smoke] real rollback helper restored app, database, metadata, quarantine, and maintenance lock");
+
+    const cancelInstallRoot = path.join(scenarioRoot, "helper-cancel-install");
+    const cancelAppPath = path.join(cancelInstallRoot, "Rudder.app");
+    const cancelBackupPath = path.join(paths.rudderHome, "desktop-updates", "backups", "helper-cancel", "Rudder.app");
+    const cancelMetadataPath = path.join(cancelInstallRoot, ".rudder-desktop-install.json");
+    const cancelCheckpointPath = path.join(
+      paths.rudderHome,
+      "desktop-updates",
+      "checkpoints",
+      "default",
+      "helper-cancel",
+      "db",
+    );
+    const cancelTransactionPath = path.join(transactionsDir, "helper-cancel.json");
+    await mkdir(cancelAppPath, { recursive: true });
+    await mkdir(cancelCheckpointPath, { recursive: true });
+    await writeFile(path.join(cancelAppPath, "proof.txt"), "unchanged-old-app");
+    await writeFile(path.join(cancelCheckpointPath, "PG_VERSION"), "18\n");
+    const cancelAt = new Date().toISOString();
+    await writeFile(cancelTransactionPath, JSON.stringify({
+      version: 1,
+      updateId: "helper-cancel",
+      origin: "upgrade",
+      phase: "prepared",
+      fromVersion: "0.4.5",
+      targetVersion: version,
+      createdAt: cancelAt,
+      updatedAt: cancelAt,
+      install: {
+        appPath: cancelAppPath,
+        backupAppPath: cancelBackupPath,
+        metadataPath: cancelMetadataPath,
+        previousMetadata,
+      },
+      database: {
+        mode: "embedded-postgres",
+        dataDir: helperDataDir,
+        checkpointPath: cancelCheckpointPath,
+      },
+    }));
+    await writeFile(maintenanceLockPath, JSON.stringify({
+      version: 1,
+      updateId: "helper-cancel",
+      targetVersion: version,
+      createdAt: cancelAt,
+    }));
+    await runDesktopCliCommand(packagedExecutable, [
+      "_desktop-update-recover",
+      "--transaction",
+      cancelTransactionPath,
+    ], {
+      ...process.env,
+      RUDDER_HOME: paths.rudderHome,
+      RUDDER_INSTANCE_ID: "default",
+    });
+    assert.equal(JSON.parse(await readFile(cancelTransactionPath, "utf8")).phase, "cancelled");
+    assert.equal(await readFile(path.join(cancelAppPath, "proof.txt"), "utf8"), "unchanged-old-app");
+    assert.equal(await pathExists(cancelCheckpointPath), false, "cancelled update must remove its checkpoint");
+    assert.equal(await pathExists(maintenanceLockPath), false, "cancelled update must release maintenance lock");
+
+    const incompleteInstallRoot = path.join(scenarioRoot, "helper-incomplete-install");
+    const incompleteAppPath = path.join(incompleteInstallRoot, "Rudder.app");
+    const incompleteTransactionPath = path.join(transactionsDir, "helper-incomplete.json");
+    const incompleteAt = new Date().toISOString();
+    await mkdir(incompleteAppPath, { recursive: true });
+    await writeFile(path.join(incompleteAppPath, "proof.txt"), "current-app-still-present");
+    await writeFile(incompleteTransactionPath, JSON.stringify({
+      version: 1,
+      updateId: "helper-incomplete",
+      origin: "upgrade",
+      phase: "candidate_ready",
+      fromVersion: "0.4.5",
+      targetVersion: version,
+      createdAt: incompleteAt,
+      updatedAt: incompleteAt,
+      install: {
+        appPath: incompleteAppPath,
+        backupAppPath: path.join(paths.rudderHome, "desktop-updates", "backups", "missing.app"),
+        metadataPath: path.join(incompleteInstallRoot, ".rudder-desktop-install.json"),
+        previousMetadata,
+      },
+      database: {
+        mode: "embedded-postgres",
+        dataDir: helperDataDir,
+        checkpointPath: path.join(paths.rudderHome, "desktop-updates", "checkpoints", "missing"),
+      },
+    }));
+    await writeFile(maintenanceLockPath, JSON.stringify({
+      version: 1,
+      updateId: "helper-incomplete",
+      targetVersion: version,
+      createdAt: incompleteAt,
+    }));
+    await assert.rejects(
+      runDesktopCliCommand(packagedExecutable, [
+        "_desktop-update-recover",
+        "--transaction",
+        incompleteTransactionPath,
+      ], {
+        ...process.env,
+        RUDDER_HOME: paths.rudderHome,
+        RUDDER_INSTANCE_ID: "default",
+      }),
+      /complete physical recovery snapshots/,
+    );
+    assert.equal(
+      await readFile(path.join(incompleteAppPath, "proof.txt"), "utf8"),
+      "current-app-still-present",
+      "incomplete snapshots must fail before replacing the current app",
+    );
+    assert.equal(await pathExists(maintenanceLockPath), true, "failed-closed recovery must preserve its lock");
+    await rm(maintenanceLockPath, { force: true });
+    console.log("[desktop-smoke] prepared cancellation and incomplete-snapshot fail-closed paths verified");
+  }
+
+  const crashedCandidatePath = path.join(transactionsDir, "smoke-crashed-candidate.json");
+  await writeFile(crashedCandidatePath, JSON.stringify({
+    version: 1,
+    updateId: "smoke-crashed-candidate",
+    origin: "upgrade",
+    phase: "candidate_installed",
+    fromVersion: "0.4.5",
+    targetVersion: version,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    install: { appPath: "/tmp/Rudder.app", metadataPath: "/tmp/.rudder-desktop-install.json" },
+    database: { mode: "embedded-postgres" },
+  }));
+  const crashedCandidatePorts = await allocateSmokePorts();
+  const crashedCandidate = await launchDesktopWindow(
+    scenarioRoot,
+    mode,
+    crashedCandidatePorts,
+    {},
+    [`--rudder-update-transaction=${crashedCandidatePath}`],
+  );
+  await waitForJsonFile(crashedCandidatePath, (value) => value.phase === "candidate_ready");
+  await crashedCandidate.electronApp.evaluate(({ BrowserWindow }) => {
+    const candidateWindow = BrowserWindow.getAllWindows().find((window) => window.webContents.getURL().startsWith("http"));
+    if (!candidateWindow) throw new Error("The probation candidate window was not found.");
+    candidateWindow.webContents.forcefullyCrashRenderer();
+  });
+  const candidateFailurePath = `${crashedCandidatePath}.failure.json`;
+  const rendererFailure = await waitForJsonFile(candidateFailurePath, (value) => value.stage === "renderer");
+  assert.equal(rendererFailure.category, "runtime");
+  assert.equal(
+    (await waitForJsonFile(crashedCandidatePath, (value) => value.phase === "candidate_ready")).phase,
+    "candidate_ready",
+    "renderer failure must not overwrite or commit the transaction journal",
+  );
+  await closeDesktop(crashedCandidate.electronApp).catch(() => {});
+
+  const candidatePath = path.join(transactionsDir, "smoke-candidate.json");
+  await writeFile(candidatePath, JSON.stringify({
+    version: 1,
+    updateId: "smoke-candidate",
+    origin: "upgrade",
+    phase: "candidate_installed",
+    fromVersion: "0.4.5",
+    targetVersion: version,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    install: { appPath: "/tmp/Rudder.app", metadataPath: "/tmp/.rudder-desktop-install.json" },
+    database: { mode: "embedded-postgres" },
+  }));
+  const candidatePorts = await allocateSmokePorts();
+  const candidate = await launchDesktopWindow(
+    scenarioRoot,
+    mode,
+    candidatePorts,
+    {},
+    [`--rudder-update-transaction=${candidatePath}`],
+  );
+  const candidateReady = await waitForJsonFile(candidatePath, (value) => value.phase === "candidate_ready");
+  await writeFile(candidatePath, JSON.stringify({
+    ...candidateReady,
+    phase: "committed",
+    committedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }));
+  const candidatePage = await waitForBoardWindow(candidate.electronApp, candidate.page);
+  assert.ok(candidatePage.url().startsWith("http"), "candidate board should reach the real application renderer");
+  console.log("[desktop-smoke] candidate versions", {
+    app: await candidate.electronApp.evaluate(({ app }) => app.getVersion()),
+    runtime: (await candidatePage.evaluate(() => window.desktopShell.getBootState())).runtime?.version,
+    expected: version,
+  });
+  await waitForJsonFile(candidatePath, (value) => value.phase === "committed");
+  await closeDesktop(candidate.electronApp);
+
+  const rollbackPath = path.join(transactionsDir, "smoke-rollback.json");
+  const noticePath = path.join(scenarioRoot, "rollback-notice.jsonl");
+  await writeFile(rollbackPath, JSON.stringify({
+    version: 1,
+    updateId: "smoke-rollback",
+    origin: "upgrade",
+    phase: "rolled_back",
+    fromVersion: version,
+    targetVersion: "0.4.7-smoke",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    install: { appPath: "/tmp/Rudder.app", metadataPath: "/tmp/.rudder-desktop-install.json" },
+    database: { mode: "embedded-postgres", restoredAt: new Date().toISOString() },
+    failure: {
+      id: "smoke-rollback-failure",
+      occurredAt: new Date().toISOString(),
+      stage: "database",
+      attempt: 1,
+      category: "database",
+      summary: "The local database did not start cleanly.",
+    },
+    quarantinedTarget: "0.4.7-smoke",
+    rollback: { attemptedAt: new Date().toISOString(), completedAt: new Date().toISOString() },
+  }));
+  const rollbackPorts = await allocateSmokePorts();
+  const rollback = await launchDesktopWindow(
+    scenarioRoot,
+    mode,
+    rollbackPorts,
+    { RUDDER_DESKTOP_SMOKE_ROLLBACK_NOTICE_PATH: noticePath },
+    [`--rudder-update-recovery=${rollbackPath}`],
+  );
+  const rollbackPage = await waitForBoardWindow(rollback.electronApp, rollback.page);
+  assert.ok(rollbackPage.url().startsWith("http"), "restored version should open the real application renderer");
+  const notice = await waitForJsonFile(noticePath, (value) => Boolean(value.message));
+  assert.equal(notice.message, `Rudder 已恢复到 v${version}`);
+  assert.match(notice.detail, /未能正常启动/);
+  assert.match(notice.detail, /你的数据已保留/);
+  assert.match(notice.detail, /后续修复该问题的新版本/);
+  assert.deepEqual(notice.buttons.slice(1), ["Email support", "Report on GitHub", "复制技术诊断"]);
+  await waitForJsonFile(rollbackPath, (value) => Boolean(value.noticeShownAt));
+  await closeDesktop(rollback.electronApp);
+  console.log("[desktop-smoke] update candidate readiness and one-shot rollback notice verified");
+}
+
 function resolveScenarioList(mode, scenario) {
   if (!scenario || scenario === "default") {
     return mode === "packaged"
-      ? ["startup-recovery", "clean", "upgrade"]
-      : ["startup-recovery", "clean"];
+      ? ["startup-recovery", "update-recovery", "clean", "upgrade"]
+      : ["startup-recovery", "update-recovery", "clean"];
   }
-  if (scenario === "all") return ["startup-recovery", "clean", "upgrade"];
-  if (scenario === "startup-recovery" || scenario === "clean" || scenario === "upgrade" || scenario === "browser") {
+  if (scenario === "all") return ["startup-recovery", "update-recovery", "clean", "upgrade"];
+  if (scenario === "startup-recovery" || scenario === "update-recovery" || scenario === "clean" || scenario === "upgrade" || scenario === "browser") {
     return [scenario];
   }
   throw new Error(`Unknown smoke scenario: ${scenario}`);
@@ -2249,6 +2616,8 @@ try {
     console.log(`[desktop-smoke] running ${scenario} scenario`);
     if (scenario === "startup-recovery") {
       await runStartupRecoveryScenario(smokeMode);
+    } else if (scenario === "update-recovery") {
+      await runUpdateRecoveryScenario(smokeMode);
     } else if (scenario === "clean") {
       await runCleanScenario(smokeMode);
     } else if (scenario === "browser") {

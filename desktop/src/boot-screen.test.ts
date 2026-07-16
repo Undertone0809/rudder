@@ -38,6 +38,7 @@ describe("desktop boot screen", () => {
         category: "migration",
         summary: "The local database could not finish its migration.",
       },
+      fallback: { status: "available", version: "0.4.5" },
       runtime: { profile: "prod_local", instance: "default", version: "0.4.6" },
       instanceRoot: "/Users/alice/.rudder/instances/default",
     });
@@ -49,9 +50,12 @@ describe("desktop boot screen", () => {
     expect(html).toContain("Try again");
     expect(html).toContain("Email support");
     expect(html).toContain("Report on GitHub");
+    expect(html).toContain("Install previous stable version");
+    expect(html).toContain("window.rudderBoot.installFallback()");
+    expect(html).toContain('"version":"0.4.5"');
     expect(html).toContain("Choose a support path");
     expect(html).toContain("Opens an editable draft");
-    expect(html).toContain("Opens a public bug form");
+    expect(html).toContain("editable public issue draft");
     expect(html).toContain("A useful report includes");
     expect(html).toContain("The smallest numbered steps that reproduce the failure.");
     expect(html).toContain("What happened, and what you expected instead.");

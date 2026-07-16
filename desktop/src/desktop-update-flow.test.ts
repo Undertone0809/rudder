@@ -87,7 +87,14 @@ function createFlow(overrides: Partial<Parameters<typeof createDesktopUpdateFlow
     appName: "Rudder",
     getMainWindow: () => mainWindow,
     getServerHandle: () => ({ runtime: { version: "0.3.3" } }),
-    getBootState: () => ({ runtime: { localEnv: "prod_local", version: "0.3.3" } }),
+    getBootState: () => ({
+      runtime: {
+        localEnv: "prod_local",
+        version: "0.3.3",
+        mode: "owned",
+        ownerKind: "desktop",
+      },
+    }),
     listRunningRunsForUpdate: async () => createRunSummary(),
     formatUpdateRunDetail: (summary) => summary.blockers
       .map((blocker) => `${blocker.organizationName}: ${blocker.agentName} (run ${blocker.runId})`)
@@ -124,6 +131,53 @@ describe("desktop update flow", () => {
       message: "Update installer exited with code 1.",
       error: "No checksummed Rudder Desktop asset found",
     });
+  });
+
+  it("passes an owned recovery transaction and last-known-good version to the updater helper", async () => {
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const { flow } = createFlow();
+
+    const result = await flow.installUpdate("0.3.4");
+    const args = spawnMock.mock.calls[0]?.[1] as string[];
+    expect(args).toEqual(expect.arrayContaining([
+      "--desktop-update-id",
+      result.updateId,
+      "--desktop-update-origin",
+      "upgrade",
+      "--desktop-from-version",
+      "0.3.3",
+    ]));
+
+    const fallbackChild = createMockUpdateChild();
+    spawnMock.mockReturnValue(fallbackChild);
+    const { flow: fallbackFlow } = createFlow();
+    await fallbackFlow.installFallback("0.3.2");
+    const fallbackArgs = spawnMock.mock.calls[1]?.[1] as string[];
+    expect(fallbackArgs).toEqual(expect.arrayContaining([
+      "--desktop-update-origin",
+      "fresh_install",
+    ]));
+    expect(fallbackArgs).not.toContain("--desktop-from-version");
+  });
+
+  it("fails closed when Desktop does not own the runtime needed for a stopped database checkpoint", async () => {
+    const { flow } = createFlow({
+      getBootState: () => ({
+        runtime: {
+          localEnv: "prod_local",
+          version: "0.3.3",
+          mode: "attached",
+          ownerKind: "cli",
+        },
+      }),
+    });
+
+    await expect(flow.installUpdate("0.3.4")).resolves.toMatchObject({
+      status: "blocked",
+      message: expect.stringContaining("another process owns"),
+    });
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("does not overwrite a child spawn error when close also fires", async () => {

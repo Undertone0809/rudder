@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld("rudderBoot", {
     return () => ipcRenderer.removeListener("desktop:recovery-state", wrapped);
   },
   retryStartup: () => ipcRenderer.invoke("desktop:retry-startup") as Promise<void>,
+  installFallback: () => ipcRenderer.invoke("desktop:install-fallback") as Promise<void>,
   openSupportDraft: () => ipcRenderer.invoke("desktop:send-feedback") as Promise<void>,
   openBugReport: () => ipcRenderer.invoke("desktop:open-bug-report") as Promise<void>,
   copySupportEmail: () => ipcRenderer.invoke("desktop:copy-support-email") as Promise<void>,
@@ -23,6 +24,7 @@ declare global {
       getState(): Promise<BootScreenState>;
       onState(listener: (state: BootScreenState) => void): () => void;
       retryStartup(): Promise<void>;
+      installFallback(): Promise<void>;
       openSupportDraft(): Promise<void>;
       openBugReport(): Promise<void>;
       copySupportEmail(): Promise<void>;

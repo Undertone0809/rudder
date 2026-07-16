@@ -442,6 +442,57 @@ same force-stop escalation without restarting the update. Settings > About can
 show the same update session as a denser phase-by-phase diagnostic panel for
 debugging or validation.
 
+On packaged macOS, in-app replacement is supervised by a persistent update
+transaction under `RUDDER_HOME/desktop-updates/`. Before replacing a healthy
+installation, the CLI stops the owned runtime, creates a physical checkpoint of
+the default embedded PostgreSQL directory, preserves the current app bundle and
+pins its exact runtime/asset. The candidate starts with background work deferred
+and loads the real renderer in a hidden window. Readiness requires the expected
+Desktop-owned `prod_local/default` runtime plus an `app-ready` IPC emitted after
+the React application mounts; `loadURL` alone is insufficient. Candidate
+failure and helper commit share an exclusive decision lock, and commit rechecks
+the journal plus failure sidecar before accepting the candidate. Only then does
+Desktop activate schedulers and reveal the window.
+
+Checkpoint and restore work is protected by an instance maintenance lock. The
+server fails closed for ordinary or mismatched runtime starts while the lock is
+present. Maintenance creation waits for the per-instance runtime start lock,
+and server admission rechecks maintenance while holding that same start lock,
+so a new ordinary runtime cannot cross the checkpoint boundary. The checkpoint
+also rejects a live `postmaster.pid`. App and database restore use immutable
+snapshots, same-volume staging and atomic rename swaps.
+An explicit failure or timeout restores the database, app bundle and install
+metadata, launches the last-known-good version, quarantines the failed target
+and records the one-time feedback notice. If the helper exits between restore
+steps, the next packaged launch scans recoverable uncommitted phases from
+`prepared` through `rollback_failed`, verifies the physical App backup and the
+checkpoint's `PG_VERSION`, runs `_desktop-update-recover`, and resumes before
+normal server startup. A `prepared` journal whose original App is still present
+is cancelled without destructive restore; the helper releases maintenance,
+removes its checkpoint and reopens that unchanged App. The helper records
+`backup_ready` after an atomic rename, or after a cross-volume copy completes
+but before the source App is deleted. Missing or incomplete
+snapshots fail closed before the helper asks the current App to quit. External PostgreSQL fails closed before replacement because
+this first recovery implementation cannot create a trusted checkpoint for it.
+The instance maintenance lock is removed only by commit, completed rollback or
+safe cancellation. If preparation or its compensating App restore fails while
+a resumable journal remains, the lock and all recovery artifacts remain in
+place so no runtime can write data that a later checkpoint restore would erase.
+If Desktop is attached to a CLI/browser-owned runtime, the update fails closed
+before download/apply and asks the operator to stop that runtime and reopen
+Desktop as the instance owner; live PostgreSQL directories are never copied as
+checkpoints.
+
+Use `node desktop/scripts/smoke.mjs --mode=dev --scenario=update-recovery` for a
+focused handshake/notice check. Packaged mode additionally invokes the real
+recovery CLI against isolated app, database and metadata fixtures and verifies
+atomic restore, pre-backup cancellation, incomplete-snapshot failure,
+quarantine, journal state and maintenance-lock release.
+`pnpm desktop:verify` includes the same scenario against the packaged app. The
+first release containing this protocol is an
+arming release; pre-arming versions cannot guarantee recovery if their
+successor never reaches Electron main.
+
 This is a layered asset replacement path, not a binary-delta patcher. Fresh
 installs still download the server runtime and a Desktop app, but routine
 macOS/Windows Desktop updates avoid redownloading the server runtime when the

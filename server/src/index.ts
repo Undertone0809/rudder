@@ -42,6 +42,7 @@ import { shouldStartAutomaticBackupSchedulers } from "./backup-scheduler-policy.
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
 import { loadConfig, type Config } from "./config.js";
 import { runScheduledDatabaseBackupOnce } from "./database-backup-scheduler.js";
+import { assertDesktopUpdateMaintenanceAccess } from "./desktop-update-maintenance.js";
 import {
   reconcileOrganizationStorageRoots,
   resolveRudderHomeDir,
@@ -109,6 +110,7 @@ export interface StartedServer {
   };
   stop(): Promise<void>;
   dispose(): Promise<void>;
+  activateBackgroundWork(): void;
 }
 
 export interface ManagedStartedServer {
@@ -129,6 +131,7 @@ export interface ManagedStartedServer {
   };
   stop(): Promise<void>;
   dispose(): Promise<void>;
+  activateBackgroundWork(): void;
 }
 
 export type ServerBootstrapStage =
@@ -161,6 +164,8 @@ export interface StartServerOptions {
   printBanner?: boolean;
   onEvent?: (event: ServerBootstrapEvent) => void;
   runtimeOwnerKind?: LocalRuntimeOwnerKind | null;
+  deferBackgroundWork?: boolean;
+  desktopUpdateId?: string;
 }
 
 export interface BootstrapCeoInviteOptions {
@@ -278,7 +283,6 @@ export async function startManagedLocalServer(
   const takeoverOnVersionMismatch = options.takeoverOnVersionMismatch ?? true;
   const preferredOwner = options.preferredOwner ?? false;
   const gracefulStopTimeoutMs = options.gracefulStopTimeoutMs ?? 10_000;
-
   return await withRuntimeStartLock(
     {
       instanceId,
@@ -286,6 +290,12 @@ export async function startManagedLocalServer(
       timeoutMs: options.runtimeStartupLockTimeoutMs,
     },
     async () => {
+      const desktopUpdateMaintenancePath = resolve(resolveRudderInstanceRoot(), "desktop-update-maintenance.json");
+      assertDesktopUpdateMaintenanceAccess({
+        lockPath: desktopUpdateMaintenancePath,
+        instanceId,
+        desktopUpdateId: options.desktopUpdateId,
+      });
       const probe = await probeLocalRuntime({
         instanceId,
         localEnv,
@@ -332,6 +342,7 @@ export async function startManagedLocalServer(
             },
             stop: async () => {},
             dispose: async () => {},
+            activateBackgroundWork: () => {},
           };
         } else {
           throw new Error(
@@ -364,6 +375,7 @@ export async function startManagedLocalServer(
         },
         stop: started.stop,
         dispose: started.dispose,
+        activateBackgroundWork: started.activateBackgroundWork,
       };
     },
   );
@@ -1042,6 +1054,12 @@ async function startServerRuntime(
   });
   supervisor.own("live-events-websocket", () => liveEventsRuntime.close());
 
+  const automaticBackupSchedulersEnabled = shouldStartAutomaticBackupSchedulers(localEnv);
+  let backgroundWorkActivated = false;
+  const activateBackgroundWork = () => {
+    if (backgroundWorkActivated) return;
+    try {
+
   void reconcilePersistedRuntimeServicesOnStartup(db as any)
     .then((result) => {
       if (result.reconciled > 0) {
@@ -1133,8 +1151,6 @@ async function startServerRuntime(
       });
   }
   
-  const automaticBackupSchedulersEnabled = shouldStartAutomaticBackupSchedulers(localEnv);
-
   if (config.databaseBackupEnabled && automaticBackupSchedulersEnabled) {
     const backupIntervalMs = config.databaseBackupIntervalMinutes * 60 * 1000;
     let backupInFlight = false;
@@ -1287,6 +1303,14 @@ async function startServerRuntime(
       void runScheduledWorkspaceBackups("running");
     }, WORKSPACE_BACKUP_SCHEDULER_TICK_MS));
   }
+    } catch (err) {
+      logger.error({ err }, "failed to activate deferred background work");
+      throw err;
+    }
+    backgroundWorkActivated = true;
+  };
+
+  if (!options.deferBackgroundWork) activateBackgroundWork();
   
   options.onEvent?.({ stage: "listening", message: "Starting local HTTP server" });
   await new Promise<void>((resolveListen, rejectListen) => {
@@ -1418,6 +1442,7 @@ async function startServerRuntime(
     },
     stop,
     dispose: stop,
+    activateBackgroundWork,
   };
 }
 

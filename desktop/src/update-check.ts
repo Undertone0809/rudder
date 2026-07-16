@@ -1,4 +1,4 @@
-export type DesktopUpdateCheckStatus = "update-available" | "up-to-date" | "unavailable";
+export type DesktopUpdateCheckStatus = "update-available" | "up-to-date" | "unavailable" | "quarantined";
 export type DesktopUpdateChannel = "stable" | "canary";
 
 export type DesktopUpdateCheckResult = {
@@ -6,6 +6,16 @@ export type DesktopUpdateCheckResult = {
   channel: DesktopUpdateChannel;
   currentVersion: string;
   latestVersion?: string;
+  quarantinedVersion?: string;
+  releaseUrl?: string;
+  checkedAt: string;
+};
+
+export type DesktopFallbackCheckResult = {
+  status: "available" | "unavailable";
+  channel: DesktopUpdateChannel;
+  currentVersion: string;
+  fallbackVersion?: string;
   releaseUrl?: string;
   checkedAt: string;
 };
@@ -139,6 +149,24 @@ export function chooseLatestRelease(
 
 export const chooseLatestStableRelease = (releases: GitHubRelease[]) => chooseLatestRelease(releases, "stable");
 
+export function choosePreviousRelease(
+  releases: GitHubRelease[],
+  currentVersion: string,
+  channel: DesktopUpdateChannel = "stable",
+): { version: string; releaseUrl?: string } | null {
+  let fallback: { version: string; releaseUrl?: string } | null = null;
+  for (const release of releases) {
+    if (release.draft || !release.tag_name) continue;
+    if (channel === "stable" && release.prerelease) continue;
+    const version = normalizeReleaseDisplayVersion(release.tag_name, channel);
+    if (!version || compareRudderVersions(version, currentVersion) >= 0) continue;
+    if (!fallback || compareRudderVersions(version, fallback.version) > 0) {
+      fallback = { version, releaseUrl: release.html_url };
+    }
+  }
+  return fallback;
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -164,14 +192,14 @@ function releasesPageToReleaseList(html: string, repo: string): GitHubRelease[] 
   return releases;
 }
 
-async function fetchLatestReleaseWithFallback(options: {
+async function fetchReleaseListWithFallback(options: {
   appName: string;
   channel: DesktopUpdateChannel;
   currentVersion: string;
   fetchImpl: typeof fetch;
   repo: string;
   releasesUrl: string;
-}): Promise<{ version: string; releaseUrl?: string } | null> {
+}): Promise<GitHubRelease[]> {
   const { appName, channel, currentVersion, fetchImpl, repo, releasesUrl } = options;
   const headers = {
     Accept: "application/vnd.github+json",
@@ -185,8 +213,7 @@ async function fetchLatestReleaseWithFallback(options: {
     }
 
     const payload = await response.json() as GitHubRelease[];
-    const latest = chooseLatestRelease(Array.isArray(payload) ? payload : [], channel);
-    if (latest) return latest;
+    if (Array.isArray(payload) && payload.length > 0) return payload;
   } catch (error) {
     console.warn("[rudder-desktop] GitHub releases API update check failed", error);
   }
@@ -201,7 +228,18 @@ async function fetchLatestReleaseWithFallback(options: {
     throw new Error(`GitHub releases page lookup failed (${response.status})`);
   }
 
-  return chooseLatestRelease(releasesPageToReleaseList(await response.text(), repo), channel);
+  return releasesPageToReleaseList(await response.text(), repo);
+}
+
+async function fetchLatestReleaseWithFallback(options: {
+  appName: string;
+  channel: DesktopUpdateChannel;
+  currentVersion: string;
+  fetchImpl: typeof fetch;
+  repo: string;
+  releasesUrl: string;
+}): Promise<{ version: string; releaseUrl?: string } | null> {
+  return chooseLatestRelease(await fetchReleaseListWithFallback(options), options.channel);
 }
 
 export async function checkForRudderDesktopUpdates(
@@ -232,6 +270,41 @@ export async function checkForRudderDesktopUpdates(
     };
   } catch (error) {
     console.warn("[rudder-desktop] update check failed", error);
+    return {
+      status: "unavailable",
+      channel,
+      currentVersion,
+      releaseUrl: releasesUrl,
+      checkedAt: new Date().toISOString(),
+    };
+  }
+}
+
+export async function checkForRudderDesktopFallback(
+  options: CheckForRudderDesktopUpdatesOptions,
+): Promise<DesktopFallbackCheckResult> {
+  const { currentVersion, appName, repo, releasesUrl, channel = "stable", fetchImpl = fetch } = options;
+  try {
+    const releases = await fetchReleaseListWithFallback({
+      appName,
+      channel,
+      currentVersion,
+      fetchImpl,
+      repo,
+      releasesUrl,
+    });
+    const fallback = choosePreviousRelease(releases, currentVersion, channel);
+    if (!fallback) throw new Error(`GitHub release lookup returned no previous ${channel} release`);
+    return {
+      status: "available",
+      channel,
+      currentVersion,
+      fallbackVersion: fallback.version,
+      releaseUrl: fallback.releaseUrl ?? releasesUrl,
+      checkedAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    console.warn("[rudder-desktop] fallback release check failed", error);
     return {
       status: "unavailable",
       channel,

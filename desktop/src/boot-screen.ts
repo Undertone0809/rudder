@@ -22,6 +22,11 @@ export type BootScreenState = {
     instance?: string | null;
     version?: string | null;
   };
+  fallback?: {
+    status: "checking" | "available" | "unavailable" | "installing";
+    version?: string;
+    releaseUrl?: string;
+  };
   instanceRoot?: string | null;
 };
 
@@ -200,6 +205,8 @@ export function createBootScreenHtml(
       p { margin: 0; }
       .failure-summary { margin-top: 7px; color: var(--muted); font-size: 14px; line-height: 1.5; }
       .actions { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 8px; }
+      .version-fallback { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+      .version-fallback p { margin: 0 0 10px; color: var(--muted); font-size: 13px; line-height: 1.5; }
       button {
         min-height: 36px;
         appearance: none;
@@ -312,13 +319,17 @@ export function createBootScreenHtml(
           <button class="secondary" id="email-button" type="button">Email support</button>
           <button class="secondary" id="issue-button" type="button">Report on GitHub</button>
         </div>
+        <div class="version-fallback" id="version-fallback" hidden>
+          <p id="version-fallback-copy"></p>
+          <button class="secondary" id="install-fallback-button" type="button">Install previous stable version</button>
+        </div>
         <div class="support-guide">
           <strong>Choose a support path</strong>
           <dl class="report-paths">
             <dt>Email support</dt>
             <dd>Opens an editable draft. Rudder adds the failure ID, time, version, system, startup stage, category, attempt, profile, and instance.</dd>
             <dt>GitHub Issue</dt>
-            <dd>Opens a public bug form. Use <b>Copy diagnostic</b> below and paste it into <b>Environment details</b>.</dd>
+            <dd>Opens an editable public issue draft with the same bounded diagnostic. Review it before submitting.</dd>
           </dl>
           <strong class="report-checklist-title">A useful report includes</strong>
           <ol>
@@ -358,6 +369,9 @@ export function createBootScreenHtml(
       const retryButton = document.getElementById("retry-button");
       const emailButton = document.getElementById("email-button");
       const issueButton = document.getElementById("issue-button");
+      const versionFallback = document.getElementById("version-fallback");
+      const versionFallbackCopy = document.getElementById("version-fallback-copy");
+      const installFallbackButton = document.getElementById("install-fallback-button");
       const copyDiagnosticButton = document.getElementById("copy-diagnostic-button");
       const openInstanceButton = document.getElementById("open-instance-button");
       const inlineStatus = document.getElementById("inline-status");
@@ -416,12 +430,22 @@ export function createBootScreenHtml(
           retryButton.disabled = false;
           emailButton.disabled = false;
           issueButton.disabled = false;
+          installFallbackButton.disabled = false;
+          versionFallback.hidden = true;
           copyEmailButton.hidden = true;
           copyIssueButton.hidden = true;
           syncFallbackActions();
           return;
         }
         failureSummary.textContent = state.failure?.summary || "The local runtime did not start cleanly.";
+        const fallbackVersion = state.fallback?.version;
+        const fallbackAvailable = state.fallback?.status === "available" && Boolean(fallbackVersion);
+        versionFallback.hidden = !fallbackAvailable;
+        if (fallbackAvailable) {
+          versionFallbackCopy.textContent = "This version could not start on this computer. Rudder can install the recommended previous stable release v" + String(fallbackVersion).replace(/^v/, "") + ".";
+          installFallbackButton.textContent = "Install v" + String(fallbackVersion).replace(/^v/, "");
+          installFallbackButton.disabled = false;
+        }
         renderDiagnostic(state);
         if (!failureWasVisible) {
           failureWasVisible = true;
@@ -435,6 +459,7 @@ export function createBootScreenHtml(
         retryButton.disabled = true;
         emailButton.disabled = true;
         issueButton.disabled = true;
+        installFallbackButton.disabled = true;
         inlineStatus.textContent = "Trying again…";
         try {
           await window.rudderBoot.retryStartup();
@@ -443,6 +468,22 @@ export function createBootScreenHtml(
           retryButton.disabled = false;
           emailButton.disabled = false;
           issueButton.disabled = false;
+          installFallbackButton.disabled = false;
+        }
+      });
+      installFallbackButton.addEventListener("click", async () => {
+        if (installFallbackButton.disabled || latestState.fallback?.status !== "available") return;
+        const fallbackVersion = latestState.fallback?.version;
+        installFallbackButton.disabled = true;
+        inlineStatus.textContent = "Preparing the recommended previous version…";
+        try {
+          await window.rudderBoot.installFallback();
+          inlineStatus.textContent = fallbackVersion
+            ? "Installing v" + String(fallbackVersion).replace(/^v/, "") + ". Rudder will reopen automatically."
+            : "Installing the previous stable version. Rudder will reopen automatically.";
+        } catch {
+          installFallbackButton.disabled = false;
+          inlineStatus.textContent = "Rudder could not begin the fallback install. Try again or use Email support.";
         }
       });
       emailButton.addEventListener("click", async () => {

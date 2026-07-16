@@ -25,7 +25,7 @@ import { envCommand } from "./commands/env.js";
 import { heartbeatRun } from "./commands/heartbeat-run.js";
 import { onboard } from "./commands/onboard.js";
 import { runCommand } from "./commands/run.js";
-import { startCommand } from "./commands/start.js";
+import { recoverPendingDesktopUpdateCommand, startCommand } from "./commands/start.js";
 import { applyDataDirOverride, type DataDirOptionLike } from "./config/data-dir.js";
 import { loadRudderEnvFile } from "./config/env.js";
 import { applyLocalEnvProfile } from "./config/local-env.js";
@@ -97,9 +97,21 @@ export function createProgram(): Command {
     .option("--wait-for-active-runs", "Wait for active Rudder runs to finish before replacing Desktop", false)
     .option("--desktop-progress-json", "Emit newline-delimited Desktop update progress events")
     .option("--desktop-wait-for-apply", "Wait for an apply signal after downloading and verifying the Desktop update", false)
+    .option("--desktop-update-id <id>", "Desktop-owned update transaction id")
+    .option("--desktop-update-origin <origin>", "Desktop update origin (upgrade or fresh_install)")
+    .option("--desktop-from-version <version>", "Last-known-good Desktop version for update recovery")
+    .option("--desktop-update-ready-timeout-ms <ms>", "Desktop candidate readiness timeout", numberOption)
     .option("--no-version-check", "Skip checking npm for a newer Rudder CLI version")
     .option("--dry-run", "Print the start actions without changing the machine", false)
     .action(startCommand);
+
+  program
+    .command("_desktop-update-recover")
+    .description("Internal Desktop update rollback resume helper")
+    .requiredOption("--transaction <path>", "Owned Desktop update transaction path")
+    .action((options: { transaction: string }) => recoverPendingDesktopUpdateCommand({
+      transactionPath: options.transaction,
+    }));
 
   program
     .command("onboard")

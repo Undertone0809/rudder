@@ -2,7 +2,7 @@ import * as p from "@clack/prompts";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream, constants as fsConstants, mkdirSync, readFileSync } from "node:fs";
-import { access, chmod, copyFile, cp, mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -10,7 +10,36 @@ import { pipeline } from "node:stream/promises";
 import { clearTimeout, setTimeout } from "node:timers";
 import { setTimeout as delay } from "node:timers/promises";
 import pc from "picocolors";
-import { resolveRudderHomeDir } from "../config/home.js";
+import {
+  expandHomePrefix,
+  resolveDefaultEmbeddedPostgresDir,
+  resolveRudderHomeDir,
+  resolveRudderInstanceId,
+} from "../config/home.js";
+import { readConfig } from "../config/store.js";
+import {
+  createDesktopUpdateMaintenanceLock,
+  createEmbeddedPostgresCheckpoint,
+  hasResumableDesktopUpdateRecoveryTransaction,
+  inspectDesktopUpdateRecoveryArtifacts,
+  quarantineDesktopUpdateTarget,
+  readDesktopUpdateTransaction,
+  removeDesktopUpdateMaintenanceLock,
+  removeDesktopUpdateRecoveryArtifacts,
+  resolveDesktopUpdateBackupPath,
+  resolveDesktopUpdateCheckpointPath,
+  resolveDesktopUpdateMaintenanceLockPath,
+  resolveDesktopUpdateTransactionPath,
+  resolveOwnedDesktopUpdateTransactionPath,
+  restorePathFromSnapshotAtomically,
+  updateDesktopUpdateTransaction,
+  waitForDesktopUpdateCandidate,
+  waitForDesktopUpdateCandidateStability,
+  withDesktopUpdateDecisionLock,
+  writeDesktopUpdateTransaction,
+  type DesktopUpdateFailureRecord,
+  type DesktopUpdateTransaction,
+} from "../desktop-update-recovery.js";
 import {
   CLI_NPM_PACKAGE_NAME,
   getGlobalInstalledPackageVersion,
@@ -75,18 +104,34 @@ interface StartCommandOptions {
   waitForActiveRuns?: boolean;
   desktopProgressJson?: boolean;
   desktopWaitForApply?: boolean;
+  desktopUpdateId?: string;
+  desktopUpdateOrigin?: "upgrade" | "fresh_install";
+  desktopFromVersion?: string;
+  desktopUpdateReadyTimeoutMs?: number;
   dryRun?: boolean;
   versionCheck?: boolean;
 }
 
-export interface DesktopInstallMetadata {
-  version: 1;
+export interface DesktopInstallRecord {
   releaseTag: string;
   assetName: string;
   assetChecksum: string;
   assetKind?: "full" | "shell";
   installedAt: string;
 }
+
+export interface DesktopInstallMetadataV1 extends DesktopInstallRecord {
+  version: 1;
+}
+
+export interface DesktopInstallMetadataV2 {
+  version: 2;
+  current: DesktopInstallRecord;
+  lastKnownGood: DesktopInstallRecord;
+  previous?: DesktopInstallRecord;
+}
+
+export type DesktopInstallMetadata = DesktopInstallMetadataV1 | DesktopInstallMetadataV2;
 
 export interface DesktopAssetCacheRetentionOptions {
   now?: Date;
@@ -1275,11 +1320,24 @@ async function findWindowsAppDir(extractDir: string): Promise<string> {
 async function readInstallMetadata(metadataPath: string): Promise<DesktopInstallMetadata | null> {
   try {
     const parsed = JSON.parse(await readFile(metadataPath, "utf8")) as DesktopInstallMetadata;
-    if (parsed.version !== 1) return null;
+    if (parsed.version !== 1 && parsed.version !== 2) return null;
     return parsed;
   } catch {
     return null;
   }
+}
+
+function currentInstallRecord(metadata: DesktopInstallMetadata | null): DesktopInstallRecord | null {
+  if (!metadata) return null;
+  return metadata.version === 1
+    ? {
+        releaseTag: metadata.releaseTag,
+        assetName: metadata.assetName,
+        assetChecksum: metadata.assetChecksum,
+        assetKind: metadata.assetKind,
+        installedAt: metadata.installedAt,
+      }
+    : metadata.current;
 }
 
 export function isInstalledDesktopCurrent(
@@ -1288,11 +1346,12 @@ export function isInstalledDesktopCurrent(
   assetName: string,
   assetChecksum: string,
 ): boolean {
+  const current = currentInstallRecord(metadata);
   return Boolean(
-    metadata &&
-    metadata.releaseTag === releaseTag &&
-    metadata.assetName === assetName &&
-    metadata.assetChecksum === assetChecksum,
+    current &&
+    current.releaseTag === releaseTag &&
+    current.assetName === assetName &&
+    current.assetChecksum === assetChecksum,
   );
 }
 
@@ -1458,6 +1517,8 @@ export async function prepareForDesktopReplace(
     forceQuitDesktopProcess?: (pid: number, target: DesktopAssetTarget) => void;
     waitForDesktopProcessExit?: (pid: number) => Promise<boolean>;
     findDesktopExecutablePids?: (executablePath: string, target: DesktopAssetTarget) => number[];
+    beforeRemove?: () => Promise<void>;
+    preserveInstallPath?: boolean;
   } = {},
 ): Promise<void> {
   const forceQuitPid = options.forceQuitDesktopProcess ?? forceQuitDesktopProcess;
@@ -1548,6 +1609,8 @@ export async function prepareForDesktopReplace(
     }
   }
 
+  if (options.preserveInstallPath) return;
+  await options.beforeRemove?.();
   const replacePath = target.platform === "windows" ? paths.installRoot : paths.appPath;
   if (await removePathWithRetry(replacePath)) return;
 
@@ -1675,36 +1738,467 @@ async function createPlatformLaunchers(paths: DesktopInstallPaths, target: Deskt
   }
 }
 
-function launchDesktop(paths: DesktopInstallPaths, target: DesktopAssetTarget): void {
+function launchDesktop(paths: DesktopInstallPaths, target: DesktopAssetTarget, args: string[] = []): void {
   if (target.platform === "macos") {
-    spawn("open", [paths.appPath], { detached: true, stdio: "ignore" }).unref();
+    spawn("open", [paths.appPath, ...(args.length > 0 ? ["--args", ...args] : [])], { detached: true, stdio: "ignore" }).unref();
     return;
   }
   if (target.platform === "windows") {
-    spawn("cmd.exe", ["/c", "start", "", paths.executablePath], { detached: true, stdio: "ignore" }).unref();
+    spawn("cmd.exe", ["/c", "start", "", paths.executablePath, ...args], { detached: true, stdio: "ignore" }).unref();
     return;
   }
-  spawn(paths.executablePath, [], { detached: true, stdio: "ignore" }).unref();
+  spawn(paths.executablePath, args, { detached: true, stdio: "ignore" }).unref();
 }
 
-async function writeInstallMetadata(
+async function writeInstallMetadataValue(
   paths: DesktopInstallPaths,
+  metadata: DesktopInstallMetadata,
+): Promise<void> {
+  mkdirSync(path.dirname(paths.metadataPath), { recursive: true });
+  mkdirSync(paths.installRoot, { recursive: true });
+  const tempPath = `${paths.metadataPath}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(tempPath, `${JSON.stringify(metadata, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await rename(tempPath, paths.metadataPath);
+}
+
+function createInstallRecord(
   releaseTag: string,
   assetName: string,
   assetChecksum: string,
   assetKind: "full" | "shell" = "full",
-): Promise<void> {
-  mkdirSync(path.dirname(paths.metadataPath), { recursive: true });
-  const metadata: DesktopInstallMetadata = {
-    version: 1,
+): DesktopInstallRecord {
+  return {
     releaseTag,
     assetName,
     assetChecksum,
     assetKind,
     installedAt: new Date().toISOString(),
   };
-  mkdirSync(paths.installRoot, { recursive: true });
-  await writeFile(paths.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
+}
+
+async function writeCandidateInstallMetadata(
+  paths: DesktopInstallPaths,
+  current: DesktopInstallRecord,
+  previousMetadata: DesktopInstallMetadata | null,
+): Promise<void> {
+  const previous = currentInstallRecord(previousMetadata);
+  await writeInstallMetadataValue(paths, previous
+    ? { version: 2, current, lastKnownGood: previous, previous }
+    : { version: 2, current, lastKnownGood: current });
+}
+
+export type DesktopUpdateRecoveryContext = {
+  maintenanceLockPath: string;
+  transactionPath: string;
+  transaction: DesktopUpdateTransaction;
+};
+
+export function resolveDesktopUpdateDatabasePlan(input: {
+  databaseUrl?: string | null;
+  config?: { database?: { mode?: unknown; connectionString?: unknown; embeddedPostgresDataDir?: unknown } } | null;
+} = {}): { mode: "embedded-postgres"; dataDir: string } | { mode: "external-postgres" } {
+  const databaseUrl = input.databaseUrl === undefined ? process.env.DATABASE_URL : input.databaseUrl;
+  if (databaseUrl?.trim()) return { mode: "external-postgres" };
+  const resolvedConfig = input.config === undefined ? readConfig() : input.config;
+  if (
+    resolvedConfig?.database?.mode === "postgres"
+    && typeof resolvedConfig.database.connectionString === "string"
+    && resolvedConfig.database.connectionString.trim()
+  ) {
+    return { mode: "external-postgres" };
+  }
+  const configured = typeof resolvedConfig?.database?.embeddedPostgresDataDir === "string"
+    ? resolvedConfig.database.embeddedPostgresDataDir.trim()
+    : "";
+  const dataDir = configured
+    ? path.resolve(expandHomePrefix(configured))
+    : resolveDefaultEmbeddedPostgresDir();
+  return { mode: "embedded-postgres", dataDir };
+}
+
+export async function movePath(
+  sourcePath: string,
+  destinationPath: string,
+  options: {
+    onDestinationReady?: () => Promise<void>;
+    renamePath?: (source: string, destination: string) => Promise<void>;
+    copyPath?: (source: string, destination: string) => Promise<void>;
+    removeSourcePath?: (source: string) => Promise<void>;
+  } = {},
+): Promise<void> {
+  await mkdir(path.dirname(destinationPath), { recursive: true });
+  await rm(destinationPath, { recursive: true, force: true });
+  const renamePath = options.renamePath ?? rename;
+  const copyPath = options.copyPath ?? ((source: string, destination: string) => (
+    cp(source, destination, { recursive: true, verbatimSymlinks: true })
+  ));
+  const removeSourcePath = options.removeSourcePath ?? ((source: string) => (
+    rm(source, { recursive: true, force: true })
+  ));
+  try {
+    await renamePath(sourcePath, destinationPath);
+    await options.onDestinationReady?.();
+  } catch (error) {
+    const code = typeof error === "object" && error && "code" in error
+      ? String((error as { code?: unknown }).code)
+      : "";
+    if (code !== "EXDEV") throw error;
+    await copyPath(sourcePath, destinationPath);
+    await options.onDestinationReady?.();
+    await removeSourcePath(sourcePath);
+  }
+}
+
+function createTimeoutFailure(targetVersion: string): DesktopUpdateFailureRecord {
+  return {
+    id: randomUUID(),
+    occurredAt: new Date().toISOString(),
+    stage: "readiness",
+    attempt: 1,
+    category: "runtime",
+    summary: `Rudder ${targetVersion} did not become ready before the recovery timeout.`,
+  };
+}
+
+async function prepareDesktopUpdateRecovery(input: {
+  opts: StartCommandOptions;
+  target: DesktopAssetTarget;
+  installPaths: DesktopInstallPaths;
+  previousMetadata: DesktopInstallMetadata | null;
+  targetVersion: string;
+  maintenanceLockPath: string;
+}): Promise<DesktopUpdateRecoveryContext | null> {
+  const updateId = input.opts.desktopUpdateId?.trim();
+  if (!updateId || input.target.platform !== "macos") return null;
+  const origin = input.opts.desktopUpdateOrigin === "fresh_install" ? "fresh_install" : "upgrade";
+  const fromVersion = input.opts.desktopFromVersion?.trim();
+  const databasePlan = resolveDesktopUpdateDatabasePlan();
+  if (databasePlan.mode === "external-postgres") {
+    throw new Error(
+      "Rudder cannot safely auto-recover this update because the instance uses external PostgreSQL. "
+      + "Keep the current version and update after a release explicitly declares database compatibility.",
+    );
+  }
+
+  const homeDir = resolveRudderHomeDir();
+  const backupAppPath = origin === "upgrade" && await pathExists(input.installPaths.appPath)
+    ? resolveDesktopUpdateBackupPath({
+        updateId,
+        installRoot: input.installPaths.installRoot,
+        appName: path.basename(input.installPaths.appPath),
+        homeDir,
+      })
+    : undefined;
+  if (origin === "upgrade" && !backupAppPath) {
+    throw new Error(
+      "Rudder could not preserve the currently installed Desktop app, so the update was not applied.",
+    );
+  }
+  const checkpointPath = origin === "upgrade" && databasePlan.mode === "embedded-postgres"
+    ? resolveDesktopUpdateCheckpointPath({ updateId, instanceId: resolveRudderInstanceId(), homeDir })
+    : undefined;
+  if (
+    checkpointPath
+    && databasePlan.mode === "embedded-postgres"
+    && !await createEmbeddedPostgresCheckpoint(databasePlan.dataDir, checkpointPath)
+  ) {
+    throw new Error(
+      "Rudder could not create a verified pre-update PostgreSQL checkpoint, so the update was not applied.",
+    );
+  }
+  const now = new Date().toISOString();
+  const transaction: DesktopUpdateTransaction = {
+    version: 1,
+    updateId,
+    origin,
+    phase: "prepared",
+    ...(fromVersion ? { fromVersion } : {}),
+    targetVersion: input.targetVersion,
+    createdAt: now,
+    updatedAt: now,
+    install: {
+      appPath: input.installPaths.appPath,
+      ...(backupAppPath ? { backupAppPath } : {}),
+      metadataPath: input.installPaths.metadataPath,
+      ...(input.previousMetadata ? { previousMetadata: input.previousMetadata } : {}),
+    },
+    database: checkpointPath
+      ? { mode: "embedded-postgres", dataDir: databasePlan.dataDir, checkpointPath }
+      : { mode: "none" },
+  };
+  const transactionPath = resolveDesktopUpdateTransactionPath(updateId, homeDir);
+  try {
+    await writeDesktopUpdateTransaction(transactionPath, transaction);
+    let backupReady = transaction;
+    if (backupAppPath) {
+      await movePath(input.installPaths.appPath, backupAppPath, {
+        onDestinationReady: async () => {
+          backupReady = await updateDesktopUpdateTransaction(
+            transactionPath,
+            (current) => ({ ...current, phase: "backup_ready" }),
+          );
+        },
+      });
+    }
+    return { maintenanceLockPath: input.maintenanceLockPath, transactionPath, transaction: backupReady };
+  } catch (error) {
+    let restoreError: unknown;
+    const latest = await readDesktopUpdateTransaction(transactionPath);
+    const appPresent = await pathExists(input.installPaths.appPath);
+    const backupPresent = Boolean(backupAppPath && await pathExists(backupAppPath));
+    if (backupAppPath && backupPresent && (!appPresent || latest?.phase === "backup_ready")) {
+      try {
+        await restorePathFromSnapshotAtomically({
+          snapshotPath: backupAppPath,
+          destinationPath: input.installPaths.appPath,
+          operationId: `${updateId}-preparation`,
+        });
+      } catch (caught) {
+        restoreError = caught;
+      }
+    }
+    if (!restoreError) {
+      await rm(transactionPath, { force: true }).catch(() => undefined);
+      if (checkpointPath) await rm(checkpointPath, { recursive: true, force: true }).catch(() => undefined);
+      if (backupAppPath) await rm(backupAppPath, { recursive: true, force: true }).catch(() => undefined);
+    }
+    if (restoreError) {
+      const originalMessage = error instanceof Error ? error.message : String(error);
+      const restoreMessage = restoreError instanceof Error ? restoreError.message : String(restoreError);
+      throw new Error(
+        `Desktop update preparation failed (${originalMessage}) and the preserved app could not be restored (${restoreMessage}).`,
+      );
+    }
+    throw error;
+  }
+}
+
+async function commitDesktopUpdateRecovery(
+  context: DesktopUpdateRecoveryContext,
+  installPaths: DesktopInstallPaths,
+): Promise<void> {
+  const committed = await withDesktopUpdateDecisionLock(context.transactionPath, async () => {
+    const transaction = await readDesktopUpdateTransaction(context.transactionPath);
+    if (!transaction || transaction.phase !== "candidate_ready" || transaction.failure) {
+      throw new Error("The Desktop update candidate failed the final commit decision.");
+    }
+    const metadata = await readInstallMetadata(installPaths.metadataPath);
+    const current = currentInstallRecord(metadata);
+    const previous = currentInstallRecord(
+      context.transaction.install.previousMetadata as DesktopInstallMetadata | null,
+    );
+    if (current) {
+      await writeInstallMetadataValue(installPaths, {
+        version: 2,
+        current,
+        lastKnownGood: current,
+        ...(previous ? { previous } : {}),
+      });
+    }
+    return updateDesktopUpdateTransaction(context.transactionPath, (latest) => {
+      if (latest.phase !== "candidate_ready" || latest.failure) {
+        throw new Error("The Desktop update candidate changed before commit.");
+      }
+      return {
+        ...latest,
+        phase: "committed",
+        committedAt: new Date().toISOString(),
+      };
+    });
+  });
+  await removeDesktopUpdateRecoveryArtifacts(committed, context.transactionPath);
+  await removeDesktopUpdateMaintenanceLock(context.maintenanceLockPath, context.transaction.updateId);
+}
+
+export async function rollbackDesktopUpdateRecovery(input: {
+  context: DesktopUpdateRecoveryContext;
+  installPaths: DesktopInstallPaths;
+  target: DesktopAssetTarget;
+  failure?: DesktopUpdateFailureRecord;
+}): Promise<void> {
+  const current = await readDesktopUpdateTransaction(input.context.transactionPath) ?? input.context.transaction;
+  if (current.phase === "rolled_back" || current.phase === "committed") {
+    throw new Error("This Desktop update transaction already attempted automatic recovery.");
+  }
+  if (!current.install.backupAppPath) {
+    throw new Error("No last-known-good Desktop bundle is available for automatic recovery.");
+  }
+  const artifacts = await inspectDesktopUpdateRecoveryArtifacts(current);
+  if (!artifacts.backupAppPresent) {
+    throw new Error("The last-known-good Desktop bundle is missing or incomplete; the current app was not closed.");
+  }
+  if (current.database.mode !== "embedded-postgres" || !artifacts.checkpointPresent) {
+    throw new Error("The pre-update PostgreSQL checkpoint is missing or incomplete; the current app was not closed.");
+  }
+  if (current.phase === "prepared" && artifacts.appPresent) {
+    throw new Error("The Desktop replacement did not start; destructive rollback is not required.");
+  }
+  const failure = input.failure ?? current.failure ?? createTimeoutFailure(current.targetVersion);
+  const attemptedAt = current.rollback?.attemptedAt ?? new Date().toISOString();
+  await updateDesktopUpdateTransaction(input.context.transactionPath, (transaction) => ({
+    ...transaction,
+    phase: "rollback_pending",
+    failure,
+    quarantinedTarget: transaction.targetVersion,
+    rollback: { attemptedAt },
+  }));
+
+  try {
+    await prepareForDesktopReplace(input.installPaths, input.target, {
+      forceUpdate: true,
+      preserveInstallPath: true,
+    });
+    await restorePathFromSnapshotAtomically({
+      snapshotPath: current.install.backupAppPath,
+      destinationPath: input.installPaths.appPath,
+      operationId: `${current.updateId}-app`,
+    });
+    if (current.install.previousMetadata) {
+      await writeInstallMetadataValue(
+        input.installPaths,
+        current.install.previousMetadata as DesktopInstallMetadata,
+      );
+    } else {
+      await rm(input.installPaths.metadataPath, { force: true });
+    }
+    if (
+      current.database.mode === "embedded-postgres"
+      && current.database.dataDir
+      && current.database.checkpointPath
+    ) {
+      await restorePathFromSnapshotAtomically({
+        snapshotPath: current.database.checkpointPath,
+        destinationPath: current.database.dataDir,
+        operationId: `${current.updateId}-database`,
+      });
+    }
+    await quarantineDesktopUpdateTarget({
+      targetVersion: current.targetVersion,
+      failedAt: failure.occurredAt,
+      failureId: failure.id,
+    });
+    await updateDesktopUpdateTransaction(input.context.transactionPath, (transaction) => ({
+      ...transaction,
+      phase: "rolled_back",
+      failure,
+      quarantinedTarget: transaction.targetVersion,
+      database: transaction.database.mode === "embedded-postgres"
+        ? { ...transaction.database, restoredAt: new Date().toISOString() }
+        : transaction.database,
+      rollback: { attemptedAt, completedAt: new Date().toISOString() },
+    }));
+    await removeDesktopUpdateMaintenanceLock(input.context.maintenanceLockPath, current.updateId);
+    await removeMacQuarantine(input.installPaths, input.target);
+    await createPlatformLaunchers(input.installPaths, input.target);
+    launchDesktop(input.installPaths, input.target, [
+      `--rudder-update-recovery=${input.context.transactionPath}`,
+    ]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await updateDesktopUpdateTransaction(input.context.transactionPath, (transaction) => ({
+      ...transaction,
+      phase: "rollback_failed",
+      failure,
+      rollback: { attemptedAt, error: message },
+    })).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function cancelPreparedDesktopUpdateRecovery(input: {
+  context: DesktopUpdateRecoveryContext;
+  installPaths: DesktopInstallPaths;
+  target: DesktopAssetTarget;
+}): Promise<void> {
+  const current = await readDesktopUpdateTransaction(input.context.transactionPath);
+  if (!current || current.phase !== "prepared") {
+    throw new Error("The interrupted Desktop update is no longer eligible for safe cancellation.");
+  }
+  const artifacts = await inspectDesktopUpdateRecoveryArtifacts(current);
+  if (!artifacts.appPresent || !artifacts.checkpointPresent) {
+    throw new Error("The interrupted Desktop update cannot be cancelled without a complete current app and checkpoint.");
+  }
+
+  await removeDesktopUpdateMaintenanceLock(input.context.maintenanceLockPath, current.updateId);
+  const cancelled = await updateDesktopUpdateTransaction(input.context.transactionPath, (transaction) => {
+    if (transaction.phase !== "prepared") {
+      throw new Error("The interrupted Desktop update changed before cancellation.");
+    }
+    return { ...transaction, phase: "cancelled" };
+  });
+  await removeDesktopUpdateRecoveryArtifacts(cancelled, input.context.transactionPath);
+  await prepareForDesktopReplace(input.installPaths, input.target, {
+    forceUpdate: true,
+    preserveInstallPath: true,
+  });
+  await removeMacQuarantine(input.installPaths, input.target);
+  await createPlatformLaunchers(input.installPaths, input.target);
+  launchDesktop(input.installPaths, input.target);
+}
+
+export async function recoverPendingDesktopUpdateCommand(input: { transactionPath: string }): Promise<void> {
+  const transactionPath = resolveOwnedDesktopUpdateTransactionPath(input.transactionPath);
+  if (!transactionPath) throw new Error("The Desktop update recovery transaction path is outside RUDDER_HOME.");
+  const transaction = await readDesktopUpdateTransaction(transactionPath);
+  if (!transaction || ![
+    "prepared",
+    "backup_ready",
+    "candidate_installed",
+    "candidate_ready",
+    "rollback_pending",
+    "rollback_failed",
+  ].includes(transaction.phase)) {
+    throw new Error("No resumable Desktop update rollback transaction was found.");
+  }
+  const target = resolveDesktopAssetTarget();
+  if (target.platform !== "macos") {
+    throw new Error("Automatic Desktop update rollback resume is currently available only on macOS.");
+  }
+  const installPaths = resolveDesktopInstallPaths(target, path.dirname(transaction.install.appPath));
+  if (
+    installPaths.appPath !== path.resolve(transaction.install.appPath)
+    || installPaths.metadataPath !== path.resolve(transaction.install.metadataPath)
+  ) {
+    throw new Error("The Desktop update recovery install paths do not match the current platform layout.");
+  }
+  const artifacts = await inspectDesktopUpdateRecoveryArtifacts(transaction);
+  const canCancelBeforeReplacement = transaction.phase === "prepared"
+    && artifacts.appPresent
+    && artifacts.checkpointPresent;
+  if (canCancelBeforeReplacement) {
+    await cancelPreparedDesktopUpdateRecovery({
+      context: {
+        maintenanceLockPath: resolveDesktopUpdateMaintenanceLockPath(resolveRudderInstanceId()),
+        transactionPath,
+        transaction,
+      },
+      installPaths,
+      target,
+    });
+    return;
+  }
+  if (
+    !transaction.install.backupAppPath
+    || transaction.database.mode !== "embedded-postgres"
+    || !transaction.database.dataDir
+    || !transaction.database.checkpointPath
+    || !artifacts.backupAppPresent
+    || !artifacts.checkpointPresent
+  ) {
+    throw new Error(
+      "The interrupted Desktop update does not have complete physical recovery snapshots; the current app was not closed.",
+    );
+  }
+  await rollbackDesktopUpdateRecovery({
+    context: {
+      maintenanceLockPath: resolveDesktopUpdateMaintenanceLockPath(resolveRudderInstanceId()),
+      transactionPath,
+      transaction,
+    },
+    installPaths,
+    target,
+    ...(transaction.failure ? { failure: transaction.failure } : {}),
+  });
 }
 
 async function runStartPhase<T>(
@@ -1774,7 +2268,13 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
       const spinner = p.spinner();
       spinner.start("Installing or reusing Rudder runtime...");
       try {
-        const runtime = await ensureRuntimeInstalled({ version, preparePostgresPayload: true });
+        const runtime = await ensureRuntimeInstalled({
+          version,
+          preparePostgresPayload: true,
+          ...(opts.desktopFromVersion?.trim()
+            ? { protectedVersions: [opts.desktopFromVersion.trim()] }
+            : {}),
+        });
         runtimeSupportsShellAssets = runtimeSupportsDesktopShellAssets(version, runtime);
         spinner.stop(
           runtime.status === "hit"
@@ -1904,6 +2404,29 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
       let expectedChecksum = selectedCandidate.expectedChecksum;
 
       const metadata = await readInstallMetadata(installPaths.metadataPath);
+      const previousInstall = currentInstallRecord(metadata);
+      const recoveryState: {
+        context: DesktopUpdateRecoveryContext | null;
+        maintenanceLockPath: string | null;
+      } = { context: null, maintenanceLockPath: null };
+      if (target.platform === "macos" && opts.desktopUpdateId?.trim()) {
+        const databasePlan = resolveDesktopUpdateDatabasePlan();
+        if (databasePlan.mode === "external-postgres") {
+          throw new Error(
+            "Rudder cannot safely auto-recover this update because the instance uses external PostgreSQL. "
+            + "Keep the current version and update after a release explicitly declares database compatibility.",
+          );
+        }
+        if (
+          opts.desktopUpdateOrigin === "fresh_install"
+          && databasePlan.mode === "embedded-postgres"
+          && await pathExists(path.join(databasePlan.dataDir, "PG_VERSION"))
+        ) {
+          throw new Error(
+            "Rudder cannot install an older release automatically because this instance already has initialized database data.",
+          );
+        }
+      }
       if (
         isInstalledDesktopCurrent(metadata, releaseTag, selectedAsset.name, expectedChecksum) &&
         await pathExists(installPaths.executablePath)
@@ -1974,47 +2497,119 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
           });
         }
 
-        try {
-          await runStartPhase(
-            "Replacing existing Rudder Desktop if needed...",
-            "Existing Desktop install is ready for replacement.",
-            () => prepareForDesktopReplace(installPaths, target, {
-              waitForActiveRuns: opts.waitForActiveRuns === true,
-              forceUpdate: applySignal?.force === true,
-              waitForForceUpdate: applySignalController?.waitForForceRequest,
-              onActiveRunsWaiting: desktopProgressJson
-                ? (totalRuns) => writeDesktopProgress({
-                  phase: "waiting_for_active_runs",
-                  message: `Waiting for ${totalRuns} running agent run${totalRuns === 1 ? "" : "s"} before replacing Desktop.`,
-                  totalRuns,
-                })
-                : undefined,
-            }),
-            desktopProgressJson ? (opts.waitForActiveRuns === true ? "waiting_for_active_runs" : "preparing_restart") : null,
-          );
-        } finally {
-          applySignalController?.close();
+        if (target.platform === "macos" && opts.desktopUpdateId?.trim()) {
+          recoveryState.maintenanceLockPath = await createDesktopUpdateMaintenanceLock({
+            updateId: opts.desktopUpdateId.trim(),
+            targetVersion: version,
+            instanceId: resolveRudderInstanceId(),
+          });
         }
-        await runStartPhase(
-          "Installing portable Desktop app...",
-          `Installed Rudder Desktop to ${pc.cyan(installPaths.appPath)}.`,
-          () => installPortableDesktop(cachedAsset.path, installPaths, target),
-          desktopProgressJson ? "preparing_restart" : null,
-        );
-        await runStartPhase(
-          "Preparing Desktop launchers...",
-          "Desktop launchers ready.",
-          async () => {
-            await removeMacQuarantine(installPaths, target);
-            await createPlatformLaunchers(installPaths, target);
-          },
-          desktopProgressJson ? "preparing_restart" : null,
-        );
-        await writeInstallMetadata(installPaths, releaseTag, selectedAsset.name, checksum, selectedAssetKind);
+
+        try {
+          try {
+            await runStartPhase(
+              "Replacing existing Rudder Desktop if needed...",
+              "Existing Desktop install is ready for replacement.",
+              () => prepareForDesktopReplace(installPaths, target, {
+                waitForActiveRuns: opts.waitForActiveRuns === true,
+                forceUpdate: applySignal?.force === true,
+                waitForForceUpdate: applySignalController?.waitForForceRequest,
+                onActiveRunsWaiting: desktopProgressJson
+                  ? (totalRuns) => writeDesktopProgress({
+                    phase: "waiting_for_active_runs",
+                    message: `Waiting for ${totalRuns} running agent run${totalRuns === 1 ? "" : "s"} before replacing Desktop.`,
+                    totalRuns,
+                  })
+                  : undefined,
+                beforeRemove: async () => {
+                  recoveryState.context = await prepareDesktopUpdateRecovery({
+                    opts,
+                    target,
+                    installPaths,
+                    maintenanceLockPath: recoveryState.maintenanceLockPath!,
+                    previousMetadata: metadata,
+                    targetVersion: version,
+                  });
+                },
+              }),
+              desktopProgressJson ? (opts.waitForActiveRuns === true ? "waiting_for_active_runs" : "preparing_restart") : null,
+            );
+          } finally {
+            applySignalController?.close();
+          }
+          await runStartPhase(
+            "Installing portable Desktop app...",
+            `Installed Rudder Desktop to ${pc.cyan(installPaths.appPath)}.`,
+            () => installPortableDesktop(cachedAsset.path, installPaths, target),
+            desktopProgressJson ? "preparing_restart" : null,
+          );
+          await runStartPhase(
+            "Preparing Desktop launchers...",
+            "Desktop launchers ready.",
+            async () => {
+              await removeMacQuarantine(installPaths, target);
+              await createPlatformLaunchers(installPaths, target);
+            },
+            desktopProgressJson ? "preparing_restart" : null,
+          );
+          const candidateRecord = createInstallRecord(
+            releaseTag,
+            selectedAsset.name,
+            checksum,
+            selectedAssetKind,
+          );
+          await writeCandidateInstallMetadata(installPaths, candidateRecord, metadata);
+          if (recoveryState.context) {
+            recoveryState.context.transaction = await updateDesktopUpdateTransaction(
+              recoveryState.context.transactionPath,
+              (transaction) => ({ ...transaction, phase: "candidate_installed" }),
+            );
+          }
+        } catch (error) {
+          const updateId = opts.desktopUpdateId?.trim();
+          const preserveMaintenanceLock = Boolean(
+            !recoveryState.context
+            && updateId
+            && await hasResumableDesktopUpdateRecoveryTransaction(updateId),
+          );
+          if (recoveryState.context?.transaction.install.backupAppPath) {
+            await rollbackDesktopUpdateRecovery({
+              context: recoveryState.context,
+              installPaths,
+              target,
+              failure: {
+                id: randomUUID(),
+                occurredAt: new Date().toISOString(),
+                stage: "install",
+                attempt: 1,
+                category: "runtime",
+                summary: "The new Rudder Desktop package could not be installed completely.",
+              },
+            });
+          } else if (preserveMaintenanceLock) {
+            p.log.warn(
+              "Desktop update recovery remains pending; preserving the instance maintenance lock and recovery snapshots.",
+            );
+          } else if (updateId && await pathExists(installPaths.executablePath)) {
+            if (recoveryState.maintenanceLockPath) {
+              await removeDesktopUpdateMaintenanceLock(
+                recoveryState.maintenanceLockPath,
+                updateId,
+              );
+            }
+            launchDesktop(installPaths, target);
+          } else if (recoveryState.maintenanceLockPath && updateId) {
+            await removeDesktopUpdateMaintenanceLock(
+              recoveryState.maintenanceLockPath,
+              updateId,
+            );
+          }
+          throw error;
+        }
       }
 
       const desktopAssetPrune = await maybePruneDesktopAssetCache({
-        protectedChecksums: [expectedChecksum],
+        protectedChecksums: [expectedChecksum, previousInstall?.assetChecksum].filter(Boolean) as string[],
       });
       if (desktopAssetPrune) {
         if (desktopAssetPrune.deleted.length > 0) {
@@ -2029,9 +2624,66 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
         await runStartPhase(
           "Launching Rudder Desktop...",
           "Rudder Desktop launched.",
-          () => launchDesktop(installPaths, target),
+          () => launchDesktop(
+            installPaths,
+            target,
+            recoveryState.context ? [`--rudder-update-transaction=${recoveryState.context.transactionPath}`] : [],
+          ),
           desktopProgressJson ? "closing" : null,
         );
+        if (recoveryState.context) {
+          const outcome = await waitForDesktopUpdateCandidate(recoveryState.context.transactionPath, {
+            ...(opts.desktopUpdateReadyTimeoutMs
+              ? { timeoutMs: Math.max(1_000, opts.desktopUpdateReadyTimeoutMs) }
+              : {}),
+          });
+          const candidateStable = outcome.status === "ready"
+            ? await waitForDesktopUpdateCandidateStability(recoveryState.context.transactionPath)
+            : false;
+          if (outcome.status === "ready" && candidateStable) {
+            try {
+              await commitDesktopUpdateRecovery(recoveryState.context, installPaths);
+            } catch (error) {
+              const latest = await readDesktopUpdateTransaction(recoveryState.context.transactionPath);
+              if (recoveryState.context.transaction.install.backupAppPath) {
+                await rollbackDesktopUpdateRecovery({
+                  context: recoveryState.context,
+                  installPaths,
+                  target,
+                  ...(latest?.failure ? { failure: latest.failure } : {}),
+                });
+              } else {
+                await removeDesktopUpdateMaintenanceLock(
+                  recoveryState.context.maintenanceLockPath,
+                  recoveryState.context.transaction.updateId,
+                );
+              }
+              throw error;
+            }
+          } else if (recoveryState.context.transaction.install.backupAppPath) {
+            await rollbackDesktopUpdateRecovery({
+              context: recoveryState.context,
+              installPaths,
+              target,
+              ...(outcome.transaction?.failure ? { failure: outcome.transaction.failure } : {}),
+            });
+            throw new Error(
+              outcome.status === "timeout"
+                ? `Rudder ${version} did not become ready; the last working version was restored.`
+                : `Rudder ${version} failed to start; the last working version was restored.`,
+            );
+          } else {
+            await removeDesktopUpdateMaintenanceLock(
+              recoveryState.context.maintenanceLockPath,
+              recoveryState.context.transaction.updateId,
+            );
+            throw new Error(
+              outcome.status === "timeout"
+                ? `Rudder ${version} did not become ready after the fallback install.`
+                : `Rudder ${version} failed to start after the fallback install.`,
+            );
+          }
+        }
       }
     });
   } else if (serverOnly) {

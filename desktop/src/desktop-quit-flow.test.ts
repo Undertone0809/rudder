@@ -187,6 +187,53 @@ describe("desktop quit flow update handoff", () => {
     }
   });
 
+  it("fails closed without acknowledging update quit when runtime stop fails", async () => {
+    const stopLocalRudder = vi.fn(async () => {
+      throw new Error("embedded postgres did not stop");
+    });
+    const window = {
+      destroy: vi.fn(),
+      hide: vi.fn(),
+      isDestroyed: () => false,
+      show: vi.fn(),
+    };
+    const fetchMock = vi.fn(async (url: string) => {
+      const pathName = new URL(url).pathname;
+      if (pathName === "/api/orgs") return jsonResponse([]);
+      return new Response("not found", { status: 404, statusText: "Not Found" });
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock as never;
+    const responseDir = await mkdtemp(path.join(tmpdir(), "rudder-update-stop-failed-response."));
+    const responsePath = path.join(responseDir, "response.json");
+
+    try {
+      const quitFlow = createDesktopQuitFlow({
+        appName: "Rudder",
+        getMainWindow: () => window as never,
+        setMainWindow: vi.fn(),
+        getServerHandle: () => ({ apiUrl: "http://127.0.0.1:3100", runtime: { mode: "owned" } }),
+        stopLocalRudder,
+        destroyResidentTray: vi.fn(),
+      });
+
+      await quitFlow.handleUpdateQuitRequest(responsePath);
+
+      expect(await readQuitResponse(responsePath)).toMatchObject({
+        ok: false,
+        status: "failed",
+        message: "embedded postgres did not stop",
+      });
+      expect(window.hide).toHaveBeenCalledTimes(1);
+      expect(window.show).toHaveBeenCalledTimes(1);
+      expect(window.destroy).not.toHaveBeenCalled();
+      expect(appExitMock).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+      await rm(responseDir, { recursive: true, force: true });
+    }
+  });
+
   it("cancels active runs before confirming a forced update quit", async () => {
     const stopLocalRudder = vi.fn(async () => undefined);
     const destroyResidentTray = vi.fn();

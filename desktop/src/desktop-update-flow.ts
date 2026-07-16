@@ -2,12 +2,14 @@
 import { app, BrowserWindow, dialog, shell } from "electron";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { DESKTOP_CLI_FLAG } from "./cli-link.js";
 import { createDesktopSupportMailtoUrl, DESKTOP_FEEDBACK_EMAIL } from "./desktop-support-mail.js";
 import {
   appendBoundedDesktopUpdateOutput,
   summarizeDesktopUpdateChildOutput,
 } from "./desktop-update-diagnostics.js";
+import { readQuarantinedDesktopVersions } from "./desktop-update-recovery.js";
 import {
   clearPostUpdateReloadMarker,
   writePostUpdateReloadMarker,
@@ -18,7 +20,9 @@ import {
   writeDesktopUpdateChannel,
 } from "./update-channel-preference.js";
 import {
+  checkForRudderDesktopFallback,
   checkForRudderDesktopUpdates,
+  type DesktopFallbackCheckResult,
   type DesktopUpdateChannel,
   type DesktopUpdateCheckResult,
 } from "./update-check.js";
@@ -140,7 +144,30 @@ export function createDesktopUpdateFlow(context: {
 
   async function checkForUpdates(): Promise<DesktopUpdateCheckResult> {
     const channel = readDesktopUpdateChannel(app.getPath("userData"));
-    return checkForRudderDesktopUpdates({
+    const result = await checkForRudderDesktopUpdates({
+      currentVersion: resolveRudderAppVersion(),
+      appName: app.getName(),
+      repo: DESKTOP_GITHUB_REPO,
+      releasesUrl: DESKTOP_RELEASES_URL,
+      channel,
+    });
+    if (
+      result.status === "update-available"
+      && result.latestVersion
+      && readQuarantinedDesktopVersions().has(result.latestVersion)
+    ) {
+      return {
+        ...result,
+        status: "quarantined",
+        quarantinedVersion: result.latestVersion,
+      };
+    }
+    return result;
+  }
+
+  async function checkForFallbackRelease(): Promise<DesktopFallbackCheckResult> {
+    const channel = readDesktopUpdateChannel(app.getPath("userData"));
+    return checkForRudderDesktopFallback({
       currentVersion: resolveRudderAppVersion(),
       appName: app.getName(),
       repo: DESKTOP_GITHUB_REPO,
@@ -276,6 +303,17 @@ export function createDesktopUpdateFlow(context: {
   function formatVersionForDisplay(version: string | null | undefined): string {
     if (!version) return "unknown";
     return version.startsWith("v") ? version : `v${version}`;
+  }
+
+  function resolveCurrentDesktopInstallDir(): string | null {
+    if (!app.isPackaged) return null;
+    if (process.platform === "darwin") {
+      const marker = `${path.sep}Contents${path.sep}MacOS${path.sep}`;
+      const markerIndex = process.execPath.lastIndexOf(marker);
+      if (markerIndex < 0) return null;
+      return path.dirname(process.execPath.slice(0, markerIndex));
+    }
+    return path.dirname(process.execPath);
   }
 
   function clearActiveDesktopUpdateAttempt(updateId: string): void {
@@ -483,6 +521,23 @@ export function createDesktopUpdateFlow(context: {
       return;
     }
 
+    if (result.status === "quarantined") {
+      const response = await showMessageBox({
+        type: "warning",
+        title: context.appName,
+        buttons: ["Open Releases", "OK"],
+        defaultId: 1,
+        cancelId: 1,
+        noLink: true,
+        message: `${formatVersionForDisplay(result.quarantinedVersion)} is paused on this computer.`,
+        detail:
+          "That version previously failed to start and Rudder restored the last working version. "
+          + "Wait for a newer release, or open Releases to inspect available builds.",
+      });
+      if (response.response === 0) await shell.openExternal(result.releaseUrl ?? DESKTOP_RELEASES_URL);
+      return;
+    }
+
     const response = await showMessageBox({
       type: "warning",
       title: context.appName,
@@ -498,7 +553,10 @@ export function createDesktopUpdateFlow(context: {
     }
   }
 
-  async function installUpdate(version: string | null | undefined): Promise<DesktopUpdateInstallResult> {
+  async function installUpdate(
+    version: string | null | undefined,
+    options: { origin?: "upgrade" | "fresh_install" } = {},
+  ): Promise<DesktopUpdateInstallResult> {
     const normalizedVersion = version?.trim();
     if (!app.isPackaged) {
       return {
@@ -517,7 +575,11 @@ export function createDesktopUpdateFlow(context: {
     if (existingUpdate) return existingUpdate;
 
     const updateId = randomUUID();
-    const installPromise = Promise.resolve().then(() => installUpdateWithLock(updateId, normalizedVersion));
+    const installPromise = Promise.resolve().then(() => installUpdateWithLock(
+      updateId,
+      normalizedVersion,
+      options.origin ?? "upgrade",
+    ));
     activeDesktopUpdateAttempt = {
       updateId,
       version: normalizedVersion,
@@ -526,8 +588,22 @@ export function createDesktopUpdateFlow(context: {
     return installPromise;
   }
 
-  async function installUpdateWithLock(updateId: string, normalizedVersion: string): Promise<DesktopUpdateInstallResult> {
+  async function installUpdateWithLock(
+    updateId: string,
+    normalizedVersion: string,
+    origin: "upgrade" | "fresh_install",
+  ): Promise<DesktopUpdateInstallResult> {
     try {
+      const runtime = context.getBootState().runtime;
+      if (origin === "upgrade" && (runtime?.mode !== "owned" || runtime?.ownerKind !== "desktop")) {
+        return {
+          status: "blocked",
+          totalRuns: 0,
+          message:
+            "Rudder cannot create a safe rollback checkpoint while another process owns the local runtime. "
+            + "Stop the external Rudder runtime, reopen Desktop so it owns the instance, then run the update again.",
+        };
+      }
       updateDesktopUpdateProgress(updateId, normalizedVersion, {
         phase: "starting",
         message: `Starting update to ${formatVersionForDisplay(normalizedVersion)}.`,
@@ -567,6 +643,7 @@ export function createDesktopUpdateFlow(context: {
       }
 
       const profileName = context.getBootState().runtime?.localEnv;
+      const installDir = resolveCurrentDesktopInstallDir();
       const args = [
         DESKTOP_CLI_FLAG,
         ...(profileName ? ["--local-env", profileName] : []),
@@ -579,6 +656,12 @@ export function createDesktopUpdateFlow(context: {
         "--no-version-check",
         "--desktop-progress-json",
         "--desktop-wait-for-apply",
+        "--desktop-update-id",
+        updateId,
+        "--desktop-update-origin",
+        origin,
+        ...(origin === "upgrade" ? ["--desktop-from-version", resolveRudderAppVersion()] : []),
+        ...(installDir ? ["--desktop-install-dir", installDir] : []),
         ...(!forceWhenApplying ? ["--wait-for-active-runs"] : []),
       ];
       const child = spawn(process.execPath, args, {
@@ -813,12 +896,14 @@ export function createDesktopUpdateFlow(context: {
 
   return {
     checkForUpdates,
+    checkForFallbackRelease,
     getDesktopUpdateChannel,
     setDesktopUpdateChannel,
     resolveRudderAppVersion,
     maybeShowStartupUpdateNotice,
     showManualUpdateCheckDialog,
     installUpdate,
+    installFallback: (version: string) => installUpdate(version, { origin: "fresh_install" }),
     applyUpdate,
     createFeedbackMailtoUrl,
     getDesktopUpdateProgress: () => latestDesktopUpdateProgress,

@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  checkForRudderDesktopFallback,
   checkForRudderDesktopUpdates,
   chooseLatestRelease,
+  choosePreviousRelease,
   compareRudderVersions,
   normalizeReleaseVersion,
   resolveUpdateChannel,
@@ -59,6 +61,35 @@ describe("desktop update checks", () => {
     ], "canary")).toEqual({
       version: "0.2.1",
       releaseUrl: "stable",
+    });
+  });
+
+  it("chooses the nearest eligible previous release instead of guessing semver", () => {
+    expect(choosePreviousRelease([
+      { tag_name: "v0.4.7", prerelease: false, html_url: "current" },
+      { tag_name: "v0.4.6", prerelease: false, html_url: "recommended" },
+      { tag_name: "v0.4.5", prerelease: false, html_url: "older" },
+      { tag_name: "v0.4.8-canary.1", prerelease: true, html_url: "canary" },
+    ], "0.4.7")).toEqual({ version: "0.4.6", releaseUrl: "recommended" });
+  });
+
+  it("returns the recommended previous release for fresh-install recovery", async () => {
+    const result = await checkForRudderDesktopFallback({
+      currentVersion: "0.4.7",
+      appName: "Rudder",
+      repo: "example/rudder",
+      releasesUrl: "https://example.test/releases",
+      fetchImpl: async () => new Response(JSON.stringify([
+        { tag_name: "v0.4.7", prerelease: false, html_url: "current" },
+        { tag_name: "v0.4.6", prerelease: false, html_url: "fallback" },
+      ])),
+    });
+
+    expect(result).toMatchObject({
+      status: "available",
+      currentVersion: "0.4.7",
+      fallbackVersion: "0.4.6",
+      releaseUrl: "fallback",
     });
   });
 

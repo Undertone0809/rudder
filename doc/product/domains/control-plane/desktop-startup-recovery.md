@@ -11,7 +11,9 @@ related_code:
   - desktop/src/boot-preload.ts
   - desktop/src/desktop-startup-failure.ts
   - desktop/src/desktop-support-mail.ts
+  - desktop/src/desktop-update-recovery.ts
   - desktop/src/main.ts
+  - ui/src/main.tsx
 related_tests:
   - desktop/src/boot-screen.test.ts
   - desktop/src/desktop-startup-failure.test.ts
@@ -34,8 +36,10 @@ progress, runtime metadata, local paths, or recovery controls. Recovery content
 appears only after managed local server startup reports a failure.
 
 The failure surface keeps the operator in the startup window, prioritizes a
-single retry, and offers an editable support-email draft plus progressively
-disclosed technical details. Rudder never sends mail or uploads local data
+single retry, and offers editable support-email and public GitHub Issue drafts
+plus progressively disclosed technical details. For update-owned failures,
+`ORG.DESKTOP.UPDATE.ROLLBACK.001` may restore the last-known-good version before
+this surface remains actionable. Rudder never sends mail or uploads local data
 without the operator.
 
 ## Intent / User Job
@@ -65,8 +69,9 @@ trust placed in a renderer that is active before the normal application loads.
 - Desktop managed-local startup.
 - A startup-stage update owned by the main process.
 - A managed startup exception.
-- Operator actions: `Try again`, `Email support`, technical disclosure, copy
-  diagnostics, and open data folder.
+- Operator actions: `Try again`, `Email support`, `Report on GitHub`, eligible
+  previous-release install, technical disclosure, copy diagnostics, and open
+  data folder.
 
 ## Product Logic Flow
 
@@ -76,18 +81,29 @@ trust placed in a renderer that is active before the normal application loads.
    visible status copy or percentage progress.
 3. When managed local startup throws, the main process classifies and owns the
    failure state. The same boot window reveals a plain-language summary, `Try
-   again`, `Email support`, and collapsed `Technical details`.
+   again`, `Email support`, `Report on GitHub`, and collapsed `Technical
+   details`.
 4. `Try again` returns the existing window to its quiet loading state and starts
    one restart attempt. Concurrent retry requests coalesce rather than creating
    multiple runtime or window transitions.
 5. `Email support` asks the main process to open an editable draft addressed to
    `zeeland4work@gmail.com`. The draft contains only allowlisted, bounded
    diagnostic fields and guidance about useful context and unsafe attachments.
-6. If the mail client cannot open, the surface keeps the support address and
-   diagnostic-copy fallback available.
-7. Technical paths and allowlisted failure metadata remain behind explicit
+6. `Report on GitHub` opens an editable public issue draft containing the same
+   bounded diagnostic fields. The surface tells the operator that the issue is
+   public.
+7. If the mail client or browser cannot open, the surface keeps copy fallbacks
+   for the support address, issue URL and diagnostic.
+8. When a packaged first launch has no initialized embedded database and a
+   previous release is available, Rudder identifies the exact fallback version
+   and requires confirmation before the checksummed package is installed.
+9. Technical paths and allowlisted failure metadata remain behind explicit
    disclosure. The original exception stays in the main-process log and never
    enters the boot renderer, copied diagnostic, or support draft.
+10. An update candidate is not considered ready merely because its URL loaded.
+    The hidden candidate must run the real React tree and report `app-ready`
+    through the narrow preload IPC after mount; render/bootstrap failure stays
+    owned by the update recovery transaction.
 
 ## Decision Table
 
@@ -97,13 +113,18 @@ trust placed in a renderer that is active before the normal application loads.
 | Managed startup throws | Reveal failure summary, retry, support, and collapsed details in the boot window | Replace the failure with a silent exit or expose unallowlisted exception text |
 | Retry clicked repeatedly | Start one restart and return the same window to quiet loading | Start duplicate runtimes or create duplicate windows |
 | Email support clicked | Open one editable, bounded draft or expose copy fallback | Send automatically, upload data, or attach private files |
+| GitHub Issue clicked | Open one editable public draft with bounded diagnostics or expose copy fallback | Open a blank report that omits the failure ID, or submit automatically |
+| Fresh packaged install fails before embedded data is initialized | Offer one confirmed, checksum-verified previous release when available | Silently downgrade or risk initialized data |
+| Update candidate fails before commit | Let `ORG.DESKTOP.UPDATE.ROLLBACK.001` restore last-known-good and then show its one-time notice | Make the failed candidate responsible for restoring itself |
+| Candidate URL loads but React does not mount | Keep candidate hidden and enter update recovery | Treat `loadURL` as application readiness |
 | Reduced motion requested | Keep a recognizable static/low-motion branded state | Require continuous motion to understand failure or recovery |
 
 ## Actor-Visible Input
 
 - Healthy startup requires no input.
-- Failure presents retry, support email, disclosure, diagnostic-copy, and data
-  folder actions with explicit labels.
+- Failure presents retry, support email, public issue, disclosure,
+  diagnostic-copy, data-folder and eligible fresh-install fallback actions with
+  explicit labels.
 - Support guidance asks for what the operator was doing, what changed, and
   whether retry behaved differently; it warns against sensitive attachments.
 
@@ -140,6 +161,9 @@ trust placed in a renderer that is active before the normal application loads.
 - Failure actions must remain available without a healthy local API.
 - The main process, not untrusted renderer input, owns the failure record used
   for support diagnostics.
+- Update readiness IPC is accepted only from the candidate window's own
+  `webContents`; ordinary page load, child exit or a recovery renderer is not a
+  readiness signal.
 - Support drafts are bounded and encoded. They exclude config contents, `.env`,
   databases, credentials, API keys, raw logs, and workspace contents.
 - Renderer and copied diagnostics use the same bounded failure-metadata
@@ -156,8 +180,10 @@ trust placed in a renderer that is active before the normal application loads.
 
 ## Drift Boundaries
 
-- This contract covers managed local server startup that resolves or throws. It
-  does not add a watchdog for startup work that never settles.
+- This contract covers managed local server startup that resolves or throws.
+  Update-candidate timeout supervision belongs to
+  `ORG.DESKTOP.UPDATE.ROLLBACK.001`; ordinary non-update startup still has no
+  general hang watchdog.
 - Renderer-load recovery keeps its separate reload/restart semantics. This
   contract does not claim an initial renderer-load black-box path that the
   current Electron/macOS harness cannot execute reliably.

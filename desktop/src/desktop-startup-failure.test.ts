@@ -5,6 +5,20 @@ import {
 } from "./desktop-startup-failure.js";
 
 describe("desktop startup failure view", () => {
+  it("classifies database errors thrown across a dynamic-loader realm", () => {
+    expect(createDesktopStartupFailureView({
+      error: {
+        name: "Error",
+        message: "RUDDER_POSTGRES_BIN_DIR is missing initdb and pg_ctl",
+      },
+      stage: "starting",
+      attempt: 1,
+    })).toMatchObject({
+      category: "database",
+      summary: "The local database did not start cleanly.",
+    });
+  });
+
   it("classifies startup errors without exposing the original error", () => {
     const failure = createDesktopStartupFailureView({
       error: new Error("postgres://rudder:secret@127.0.0.1:5432 migration failed at /Users/alice/private"),

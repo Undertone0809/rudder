@@ -8,9 +8,12 @@ contract_ids:
   - ORG.SETTINGS.001
   - ORG.ONBOARDING.001
   - ORG.DESKTOP.UPDATE.001
+  - ORG.DESKTOP.UPDATE.ROLLBACK.001
   - ORG.DESKTOP.RELEASE.NOTES.001
   - ORG.PORTABILITY.001
 related_code:
+  - cli/src/commands/start.ts
+  - cli/src/desktop-update-recovery.ts
   - packages/db/src/schema/organization_issue_prefix_aliases.ts
   - packages/db/src/schema/organizations.ts
   - packages/shared/src/organization-issue-key.ts
@@ -18,9 +21,13 @@ related_code:
   - desktop/src/browser-profile.ts
   - desktop/src/desktop-quit-flow.ts
   - desktop/src/desktop-update-flow.ts
+  - desktop/src/desktop-update-recovery.ts
   - desktop/src/main.ts
   - desktop/src/post-update-reload.ts
   - desktop/src/release-notes.ts
+  - desktop/src/update-check.ts
+  - server/src/index.ts
+  - server/src/desktop-update-maintenance.ts
   - packages/db/src/schema/instance_settings.ts
   - packages/db/src/schema/operator_profiles.ts
   - packages/db/src/schema/organization_intelligence_profiles.ts
@@ -67,13 +74,17 @@ related_code:
   - ui/src/components/DesktopUpdatePromptBridge.tsx
   - ui/src/components/DesktopUpdateStatusCard.tsx
 related_tests:
+  - cli/src/__tests__/desktop-update-recovery.test.ts
   - desktop/src/browser-ipc.test.ts
   - desktop/src/browser-profile.test.ts
   - desktop/src/desktop-quit-flow.test.ts
   - desktop/src/desktop-update-flow.test.ts
+  - desktop/src/desktop-update-recovery.test.ts
   - desktop/src/release-notes.test.ts
   - desktop/src/post-update-reload.test.ts
+  - desktop/src/update-check.test.ts
   - server/src/__tests__/instance-settings-service.test.ts
+  - server/src/__tests__/desktop-update-maintenance.test.ts
   - server/src/__tests__/instance-settings-routes.test.ts
   - server/src/__tests__/operator-profile-service.test.ts
   - server/src/__tests__/organization-intelligence-profiles.test.ts
@@ -508,6 +519,9 @@ Invariants:
   waiting.
 - A successful in-app update writes the post-update restart marker consumed by
   `ORG.DESKTOP.RELEASE.NOTES.001`.
+- Installer launch handoff is not update success. A packaged macOS update is
+  accepted only after `ORG.DESKTOP.UPDATE.ROLLBACK.001` records the exact
+  Desktop/runtime candidate as ready and commits the update transaction.
 
 Evidence:
 
@@ -522,6 +536,249 @@ Evidence:
   running-blocker cancellation failure cases.
 - `tests/e2e/desktop-update-prompt.spec.ts` covers cross-organization blocker
   identity and readable update actions in desktop and narrow viewports.
+
+## ORG.DESKTOP.UPDATE.ROLLBACK.001
+
+## Contract Summary
+
+Rudder treats a packaged Desktop update as a recoverable transaction with one
+candidate and one local last-known-good installation. The recovery unit is the
+verified Desktop bundle, exact server runtime, PostgreSQL payload, update
+channel and architecture, plus a compatible embedded-database state.
+
+The current automatic rollback scope is packaged macOS Desktop using the local
+`prod_local/default` instance and embedded PostgreSQL. GitHub Releases is the
+current fallback release catalog, and every downloaded fallback package passes
+the release checksum gate before replacement.
+
+## Intent / User Job
+
+An existing operator whose accepted update cannot start should return to the
+last working Rudder version without reconstructing the installation or risking
+their local data. A fresh operator should receive one explicit, confirmed path
+to a verified previous package when doing so is safe.
+
+## Why / Design Reasoning
+
+- A Desktop update that replaces a working installation but cannot start must
+  not strand an operator without Rudder or require them to reconstruct the
+  previous installation manually.
+- A binary downgrade is not a safe recovery by itself because the new version
+  may have changed the embedded database before startup failed.
+
+## Actors / Objects / State
+
+- Actors: Desktop operator, installed Desktop main process and supervising CLI
+  recovery helper.
+- Objects: candidate bundle/runtime, last-known-good bundle/runtime, embedded
+  PostgreSQL checkpoint, update journal, quarantine and rollback incident.
+- States: prepared, backup ready, candidate installed, candidate ready,
+  committed, cancelled, rollback pending, rolled back and rollback failed.
+
+## Entry Points / Inputs
+
+- Accepted packaged Desktop update after instance-wide active-run gates pass.
+- Candidate startup failure or readiness timeout before commit.
+- First packaged launch failure without initialized embedded instance data.
+- Operator feedback and confirmed fallback-install actions.
+
+## Product Logic Flow
+
+- The first recovery-capable release is an arming release. Automatic recovery
+  is guaranteed only when the version being replaced already contains the
+  recovery protocol and can supervise its successor.
+- The current automatic rollback scope is packaged macOS Desktop using the
+  local `prod_local/default` instance and embedded PostgreSQL. External
+  PostgreSQL and other platforms remain outside automatic rollback until their
+  data and launcher guarantees are implemented and verified.
+- GitHub Releases is the current fallback release catalog. Every downloaded
+  fallback package still passes the release checksum gate before replacement.
+
+### Existing-User Flow
+
+1. After the operator accepts an update and active-run gates pass, the helper
+   creates a physical embedded-PostgreSQL checkpoint and records an atomic
+   `prepared` transaction with update ID, from/to versions, install paths,
+   previous install metadata and checkpoint.
+2. With the existing runtime fully stopped, the helper moves the current
+   Desktop bundle into a transaction-owned backup. Only after that physical
+   snapshot is complete does it persist `backup_ready` and install the
+   candidate. For cross-volume moves, `backup_ready` is persisted after copy
+   completion and before source deletion, so an interrupted delete restores
+   from the complete backup instead of cancelling onto a partial App. If
+   the helper exits while still `prepared`, recovery cancels the update when
+   the original App remains present, or restores only when the physical backup
+   and checkpoint are both complete.
+3. Candidate startup runs in probation. Queue recovery, heartbeat/automation
+   schedulers, Feishu long connections and automatic backup work remain
+   inactive. The candidate loads the real application renderer in a hidden
+   window, verifies that the Desktop target and exact Desktop-owned server
+   runtime match the selected profile/instance, and waits for a preload IPC
+   signal emitted only after the React application mounts.
+4. The candidate writes `candidate_ready`. Candidate failure and helper commit
+   contend on one exclusive decision lock; commit re-reads the journal and
+   failure sidecar while holding that lock and rejects any non-ready or failed
+   candidate. The helper then promotes the candidate to last-known-good and
+   removes the temporary bundle/checkpoint. Only after commit does Desktop
+   activate background work and show the application window.
+5. An explicit startup failure or readiness timeout moves the transaction to
+   `rollback_pending`. The helper quits the candidate, restores the database
+   checkpoint and previous bundle/metadata with same-volume staging and rename
+   swaps, launches the restored version and quarantines the failed target. If
+   the helper exits after backup, candidate installation/readiness, or between
+   restore steps, the next packaged launch finds the uncommitted journal,
+   validates the physical App backup and checkpoint `PG_VERSION`, and resumes
+   the idempotent rollback before starting Rudder. Missing or incomplete
+   snapshots fail closed before the current App is asked to quit.
+6. Once the restored version is healthy, it shows a one-time notice:
+   `Rudder 已恢复到 vX`. The detail explains that vY failed to start, the
+   previous version was reopened, data was preserved, vY is paused, and the
+   operator may continue until a later fixed version is available.
+7. The notice offers continue, editable Email support, editable public GitHub
+   Issue and diagnostic-copy actions. Both feedback drafts contain the same
+   bounded failure ID, stage, category, versions and system context.
+
+### Fresh-Install Flow
+
+1. If a packaged first launch fails and the default embedded PostgreSQL data
+   directory has not been initialized, Desktop queries the release catalog for
+   the nearest eligible previous release below the failed version.
+2. Desktop explains the exact recommended version and requires explicit
+   confirmation before downloading or replacing the failed package.
+3. The CLI downloads and checksum-verifies that release, installs it into the
+   current Desktop install root and requires the same candidate readiness
+   handshake before accepting it.
+4. If initialized instance data exists, Rudder does not present an automatic
+   downgrade as safe. Retry and feedback remain available until a compatible
+   data recovery path exists.
+
+## Decision Table
+
+| Situation | Expected result | Must not happen |
+| --- | --- | --- |
+| Candidate reaches exact runtime and hidden-renderer readiness | Commit once, activate background work, then show the app | Treat child exit or process spawn as update success |
+| Candidate throws or times out before commit | Restore checkpoint and bundle, launch last-known-good, quarantine target | Expose the half-started candidate for normal work |
+| Helper exits while `prepared` and the original App is still present | Cancel the update, release maintenance, remove the checkpoint and reopen the unchanged App | Enter destructive rollback from journal path strings alone |
+| Restored version becomes healthy | Show the one-time recovery notice and feedback actions | Reinstall the quarantined target on the next check |
+| Fresh install has no initialized embedded DB | Offer one exact previous release and require confirmation | Silently downgrade or walk recursively through releases |
+| External DB, missing checkpoint, corrupt backup or second rollback attempt | Stop automatic recovery before quitting the current App and expose bounded diagnostics | Guess that a binary-only downgrade is safe |
+| Another process owns the local runtime | Block recovery-capable update until Desktop owns and can stop the instance | Copy a live PostgreSQL data directory |
+| A runtime starts while checkpoint/recovery maintenance is active | Allow only the candidate carrying the transaction update ID | Let an ordinary CLI/Desktop runtime mutate the instance during recovery |
+| Rollback helper exits between app, database or metadata restore steps | Resume the pending journal on next packaged launch | Start either app version against a partially restored instance |
+
+## Actor-Visible Input
+
+- Existing-user automatic rollback requires no second confirmation after the
+  operator accepted the update and all safety gates passed.
+- The restored-version notice offers continue, Email support, public GitHub
+  Issue and diagnostic copy.
+- Fresh fallback names the exact previous version and requires confirmation
+  before download and replacement.
+
+## Operator-Visible Output
+
+- Candidate probation remains behind the startup window; the half-started board
+  is not available for ordinary work.
+- Successful rollback opens the healthy restored board and then shows
+  `Rudder 已恢复到 vX` with the failed version, preserved-data statement,
+  quarantine status and continue-until-fixed guidance.
+- Blocked or failed recovery exposes bounded failure diagnostics instead of
+  claiming that a binary-only downgrade is safe.
+
+## Persisted Evidence
+
+- The atomic transaction under `RUDDER_HOME/desktop-updates/transactions/`
+  records update identity, versions, phase, install paths, database checkpoint,
+  failure metadata, rollback result and one-time notice state.
+- Quarantine records the failed target locally so update checks do not offer it
+  again; a later release remains eligible.
+- Temporary bundle and database checkpoints remain transaction-owned and are
+  removed only after commit or safe pre-replacement cancellation.
+- The instance maintenance lock identifies the one update transaction allowed
+  to start its Desktop-owned candidate runtime. Missing, invalid or mismatched
+  update identity fails closed until commit or successful rollback removes it.
+  Maintenance admission and ordinary runtime startup coordinate through the
+  same per-instance runtime start-lock boundary.
+  Commit, successful rollback and safe pre-replacement cancellation are the
+  only paths that release maintenance. A failed preparation compensation keeps
+  the resumable journal, App backup, database checkpoint and lock together.
+
+## Canonical Scenarios
+
+1. Candidate success: hidden renderer and exact runtime become ready, helper
+   commits, background work activates, and the application becomes visible.
+2. Existing-user failure: candidate throws, helper restores database and bundle,
+   old version opens, and the one-time feedback notice appears.
+3. Fresh safe fallback: no embedded DB is initialized, operator confirms the
+   named prior release, and the checksummed package completes the same readiness
+   handshake.
+4. Unsafe downgrade: external or initialized incompatible data prevents an
+   automatic downgrade and keeps retry/feedback available.
+
+## Invariants / Non-Goals
+
+- Each update transaction may automatically roll back at most once. Rudder
+  never recursively searches older versions.
+- The failed target stays quarantined on this computer. A newer release remains
+  eligible and supersedes the paused target.
+- The previous bundle, checkpoint and install metadata must stay available
+  until the candidate commits. Cache pruning protects the current and previous
+  checksummed assets and exact runtime versions during the transaction.
+- Automatic rollback requires a stopped, verified embedded-PostgreSQL
+  checkpoint: a live `postmaster.pid` is rejected, and an instance maintenance
+  lock prevents another runtime from starting while checkpoint or restore work
+  is in flight. Updates using external PostgreSQL fail closed before the
+  current installation is replaced.
+- Desktop must own the managed local runtime before a recovery-capable update.
+  Attached CLI/browser runtimes must be stopped and reopened under Desktop
+  ownership so the PostgreSQL checkpoint cannot be copied live.
+- Email and GitHub actions open editable drafts only. GitHub is identified as
+  public. No feedback action sends automatically, uploads local files or adds
+  raw logs, secrets, prompts, private paths or database contents.
+- Recovery dialogs owned only by the failed candidate are insufficient. The
+  supervising helper remains outside the candidate lifecycle and owns commit
+  or restore.
+- Recovery actions remain single-flight and each transaction may attempt
+  automatic rollback only once.
+- App and database restoration use immutable snapshots, same-volume staging
+  and atomic rename swaps. Recoverable `prepared`, `backup_ready`,
+  `candidate_installed`, `candidate_ready`, `rollback_pending` and
+  `rollback_failed` journals are resumable; a retry preserves the first
+  `attemptedAt` value. `prepared` is never treated as proof of a backup: the
+  scanner and helper inspect the physical App and checkpoint before choosing
+  cancellation or rollback.
+
+## Drift Boundaries
+
+- This contract does not yet promise recovery from OS rejection before the
+  packaged executable or recovery helper can run.
+- Windows, Linux, external PostgreSQL and recursive multi-version fallback are
+  outside the current automatic rollback scope.
+- General crash recovery after a committed candidate is not update rollback.
+- A fresh install with initialized instance data does not receive automatic
+  downgrade until a release-compatibility or data-restore contract exists.
+
+## Traceability
+
+- `cli/src/__tests__/desktop-update-recovery.test.ts` covers atomic journals,
+  readiness/failure observation, physical snapshot inspection, checkpoint
+  restore and quarantine.
+- `desktop/src/desktop-update-recovery.test.ts` covers owned-path validation,
+  exact-version and React-mount readiness, decision-lock failure handling,
+  helper commit waiting, physical recovery scanning, safe `prepared`
+  cancellation and one-time notice copy.
+- `server/src/__tests__/desktop-update-maintenance.test.ts` covers the
+  fail-closed instance lock and exact candidate update-ID admission.
+- `desktop/src/desktop-support-mail.test.ts` covers rollback Email/Issue drafts,
+  bounded diagnostics and percent encoding without literal `+` spaces.
+- `desktop/src/update-check.test.ts` covers nearest eligible previous-release
+  selection rather than semver decrement guessing.
+- `desktop/scripts/smoke.mjs --scenario=update-recovery` covers real Electron
+  candidate readiness, helper commit gating, restored application startup and
+  one-time rollback notice handoff in development and packaged modes. Packaged
+  mode also invokes the real `_desktop-update-recover` helper against temporary
+  app/database/metadata fixtures and verifies rollback, pre-backup
+  cancellation, incomplete-snapshot failure, quarantine and lock release.
 
 ## ORG.DESKTOP.RELEASE.NOTES.001
 

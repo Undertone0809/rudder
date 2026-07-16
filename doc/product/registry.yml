@@ -1319,6 +1319,7 @@ contracts:
       - desktop/src/boot-preload.ts
       - desktop/src/desktop-startup-failure.ts
       - desktop/src/desktop-support-mail.ts
+      - desktop/src/desktop-update-recovery.ts
       - desktop/src/main.ts
     related_tests:
       - desktop/src/boot-screen.test.ts
@@ -1562,6 +1563,34 @@ contracts:
       - desktop/src/desktop-quit-flow.test.ts
       - ui/src/components/DesktopUpdatePromptBridge.test.tsx
       - ui/src/components/DesktopUpdateStatusCard.test.tsx
+  ORG.DESKTOP.UPDATE.ROLLBACK.001:
+    owner: product
+    domain: organizations-and-goals
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/organizations-and-goals/settings-onboarding-portability.md
+    related_code:
+      - cli/src/commands/start.ts
+      - cli/src/desktop-update-recovery.ts
+      - desktop/src/boot-preload.ts
+      - desktop/src/boot-screen.ts
+      - desktop/src/desktop-support-mail.ts
+      - desktop/src/desktop-update-flow.ts
+      - desktop/src/desktop-update-recovery.ts
+      - desktop/src/main.ts
+      - desktop/src/update-check.ts
+      - server/src/desktop-update-maintenance.ts
+      - server/src/index.ts
+      - ui/src/main.tsx
+      - ui/src/pages/InstanceAboutSettings.tsx
+    related_tests:
+      - cli/src/__tests__/desktop-update-recovery.test.ts
+      - desktop/src/boot-screen.test.ts
+      - desktop/src/desktop-support-mail.test.ts
+      - desktop/src/desktop-update-recovery.test.ts
+      - desktop/src/update-check.test.ts
+      - desktop/scripts/smoke.mjs
+      - server/src/__tests__/desktop-update-maintenance.test.ts
   ORG.DESKTOP.RELEASE.NOTES.001:
     owner: product
     domain: organizations-and-goals
