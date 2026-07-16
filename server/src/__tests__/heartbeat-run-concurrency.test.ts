@@ -517,6 +517,64 @@ describe("heartbeat run concurrency", () => {
     expect(persisted?.sessionReuseScope).toBe("task");
   });
 
+  it("keeps force-fresh sticky when an ordinary wake coalesces into a queued run", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const taskKey = "issue:sticky-force-fresh";
+    await db.insert(agentTaskSessions).values({
+      orgId,
+      agentId,
+      agentRuntimeType: "codex_local",
+      taskKey,
+      sessionDisplayId: "stale-task-session",
+      sessionParamsJson: { sessionId: "stale-task-session" },
+    });
+    const heartbeat = heartbeatService(db);
+
+    const queuedFreshRun = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "queued_force_fresh",
+      payload: { taskKey },
+      contextSnapshot: { taskKey, forceFreshSession: true },
+      startImmediately: false,
+    });
+    expect(queuedFreshRun?.status).toBe("queued");
+
+    const coalescedRun = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "ordinary_followup",
+      payload: { taskKey },
+      contextSnapshot: { taskKey, forceFreshSession: false },
+      startImmediately: false,
+    });
+    expect(coalescedRun?.id).toBe(queuedFreshRun?.id);
+
+    const queued = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, queuedFreshRun!.id))
+      .then((rows) => rows[0]!);
+    expect(queued).toMatchObject({
+      sessionIdBefore: null,
+      sessionParamsBeforeJson: null,
+      sessionReuseScope: "none",
+      contextSnapshot: expect.objectContaining({
+        sessionReuseSuppression: { kind: "force_fresh" },
+      }),
+    });
+
+    await heartbeat.resumeQueuedRuns();
+    await waitForCondition(async () =>
+      mockRuntimeAdapter.calls.some((call) => call.runId === queuedFreshRun!.id),
+    );
+    expect(mockRuntimeAdapter.calls.find((call) => call.runId === queuedFreshRun!.id)).toMatchObject({
+      sessionId: null,
+      sessionDisplayId: null,
+      sessionParams: null,
+    });
+  });
+
   it("retries the selected taskless run instead of the latest global session", async () => {
     const { orgId, agentId } = await seedAgentFixture(1);
     await db.insert(agentRuntimeState).values({
@@ -583,6 +641,14 @@ describe("heartbeat run concurrency", () => {
         cwd: "/tmp/selected-run",
       },
     });
+    const publicRetry = (await heartbeatService(db).list(orgId, agentId)).find(
+      (candidate) => candidate.id === retryRun.id,
+    );
+    expect(publicRetry?.contextSnapshot).toMatchObject({
+      resumeFromRunId: sourceRunId,
+    });
+    expect(publicRetry?.contextSnapshot).not.toHaveProperty("resumeSessionParams");
+    expect(publicRetry?.contextSnapshot).not.toHaveProperty("resumeSessionDisplayId");
   });
 
   it("promotes queued runs up to the configured concurrency limit", async () => {
@@ -899,6 +965,76 @@ describe("heartbeat run concurrency", () => {
       sessionId: null,
       sessionDisplayId: null,
       sessionParams: null,
+    });
+  });
+
+  it("persists deferred admission lineage before a promoted run can execute", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const heartbeat = heartbeatService(db);
+    const blocker = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "occupy_concurrency_slot",
+      contextSnapshot: { taskKey: "blocking-task" },
+    });
+    await waitForCondition(async () =>
+      mockRuntimeAdapter.calls.some((call) => call.runId === blocker!.id),
+    );
+
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "in_progress" });
+    const taskKey = `issue:${issueId}`;
+    await db.insert(agentTaskSessions).values({
+      orgId,
+      agentId,
+      agentRuntimeType: "codex_local",
+      taskKey,
+      sessionDisplayId: "stale-task-session",
+      sessionParamsJson: { sessionId: "stale-task-session" },
+    });
+    const terminalRunId = await seedLiveIssueExecution({
+      orgId,
+      agentId,
+      issueId,
+      status: "timed_out",
+      terminalEffectsPending: true,
+    });
+
+    expect(await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "deferred_force_fresh_admission",
+      payload: { issueId },
+      contextSnapshot: { issueId, taskKey, forceFreshSession: true },
+    })).toBeNull();
+    const deferredWakeup = (await listWakeupRequestsForAgent(agentId)).find(
+      (wakeup) => wakeup.status === "deferred_issue_execution",
+    );
+    expect(deferredWakeup?.id).toBeTruthy();
+
+    await db
+      .update(heartbeatRuns)
+      .set({ processExitedAt: new Date() })
+      .where(eq(heartbeatRuns.id, terminalRunId));
+    await heartbeat.reapOrphanedRuns();
+    const promoted = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.wakeupRequestId, deferredWakeup!.id))
+      .then((rows) => rows[0]!);
+    expect(promoted).toMatchObject({
+      status: "queued",
+      sessionIdBefore: null,
+      sessionParamsBeforeJson: null,
+      sessionReuseScope: "none",
+    });
+    expect(mockRuntimeAdapter.calls.some((call) => call.runId === promoted.id)).toBe(false);
+
+    await heartbeat.cancelRun(promoted.id);
+    expect(await heartbeat.getRun(promoted.id)).toMatchObject({
+      status: "cancelled",
+      sessionIdBefore: null,
+      sessionParamsBeforeJson: null,
+      sessionReuseScope: "none",
     });
   });
 

@@ -72,27 +72,30 @@ export function createHeartbeatRecoveryHandlers(context: any) {
     });
     const issueId = readNonEmptyString(recoveryContextSnapshot.issueId);
     const taskKey = deriveTaskKey(recoveryContextSnapshot, null);
-    const inheritedSessionSuppression = recoveryContextSnapshot.sessionResumeSuppressed === true;
-    delete recoveryContextSnapshot.forceFreshSession;
+    const inheritedSessionSuppression = heartbeatSessions.readSessionReuseSuppression(recoveryContextSnapshot);
     delete recoveryContextSnapshot.resumeFromRunId;
     delete recoveryContextSnapshot.resumeSessionDisplayId;
     delete recoveryContextSnapshot.resumeSessionParams;
-    delete recoveryContextSnapshot.sessionResumeSuppressed;
+    heartbeatSessions.writeSessionReuseSuppression(recoveryContextSnapshot, null);
     const explicitResumeSession = await resolveExplicitResumeSessionOverride(
       agent,
       { resumeFromRunId: run.id },
       taskKey,
     );
-    const suppressSessionReuse =
-      explicitResumeSession?.sessionCleared === true ||
-      (!explicitResumeSession && inheritedSessionSuppression && run.sessionIdAfter == null);
-    if (explicitResumeSession && !explicitResumeSession.sessionCleared) {
+    const sessionReuseSuppression =
+      explicitResumeSession?.sessionReuseSuppression ??
+      (!explicitResumeSession ? inheritedSessionSuppression : null);
+    const suppressSessionReuse = Boolean(sessionReuseSuppression);
+    if (explicitResumeSession && !sessionReuseSuppression) {
       recoveryContextSnapshot.resumeFromRunId = explicitResumeSession.resumeFromRunId;
       recoveryContextSnapshot.resumeSessionDisplayId = explicitResumeSession.sessionDisplayId;
       recoveryContextSnapshot.resumeSessionParams = explicitResumeSession.sessionParams;
-    } else if (suppressSessionReuse) {
-      recoveryContextSnapshot.forceFreshSession = true;
-      recoveryContextSnapshot.sessionResumeSuppressed = true;
+    } else if (sessionReuseSuppression) {
+      recoveryContextSnapshot.resumeFromRunId = run.id;
+      heartbeatSessions.writeSessionReuseSuppression(
+        recoveryContextSnapshot,
+        sessionReuseSuppression,
+      );
     }
     const sessionBefore =
       suppressSessionReuse

@@ -501,7 +501,29 @@ describe("heartbeat managed workspace preflight", () => {
       },
     });
 
-    const freshRetry = await heartbeat.retryRun(clearedRun.id, {
+    mockPreflight.fail = true;
+    const failedFreshRetry = await heartbeat.retryRun(clearedRun.id, {
+      requestedByActorType: "user",
+      requestedByActorId: "local-board",
+    });
+    await waitForCondition(async () => {
+      const current = await getRun(failedFreshRetry.id);
+      return current?.status === "failed" && current.terminalEffectsPending === false;
+    });
+    expect(await getRun(failedFreshRetry.id)).toMatchObject({
+      sessionIdBefore: null,
+      sessionParamsBeforeJson: null,
+      sessionReuseScope: "none",
+      contextSnapshot: expect.objectContaining({
+        sessionReuseSuppression: {
+          kind: "source_session_cleared",
+          sourceRunId: clearedRun.id,
+        },
+      }),
+    });
+
+    mockPreflight.fail = false;
+    const freshRetry = await heartbeat.retryRun(failedFreshRetry.id, {
       requestedByActorType: "user",
       requestedByActorId: "local-board",
     });
@@ -517,6 +539,14 @@ describe("heartbeat managed workspace preflight", () => {
       sessionParams: null,
     });
     expect(await getRun(freshRetry.id)).toMatchObject({ sessionReuseScope: "none" });
+    expect(await getRun(freshRetry.id)).toMatchObject({
+      contextSnapshot: expect.objectContaining({
+        sessionReuseSuppression: {
+          kind: "source_session_cleared",
+          sourceRunId: clearedRun.id,
+        },
+      }),
+    });
   });
 
   it("creates missing managed workspace directories before adapter execution", async () => {

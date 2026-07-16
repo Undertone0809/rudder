@@ -36,9 +36,9 @@ export const heartbeatRuns = pgTable(
     sessionParamsBeforeJson: jsonb("session_params_before_json").$type<Record<string, unknown>>(),
     sessionParamsAfterJson: jsonb("session_params_after_json").$type<Record<string, unknown>>(),
     sessionReuseScope: text("session_reuse_scope")
-      .$type<"explicit" | "task" | "none">()
+      .$type<"explicit" | "task" | "none" | "unknown">()
       .notNull()
-      .default("none"),
+      .default("unknown"),
     logStore: text("log_store"),
     logRef: text("log_ref"),
     logBytes: bigint("log_bytes", { mode: "number" }),
@@ -107,7 +107,7 @@ export const heartbeatRuns = pgTable(
       .where(sql`${table.chatConversationId} is not null and (${table.status} in ('queued', 'running') or ${table.terminalEffectsPending} = true)`),
     sessionReuseScopeCheck: check(
       "heartbeat_runs_session_reuse_scope_check",
-      sql`${table.sessionReuseScope} in ('explicit', 'task', 'none')`,
+      sql`${table.sessionReuseScope} in ('explicit', 'task', 'none', 'unknown')`,
     ),
   }),
 );

@@ -595,10 +595,10 @@ describe("applyPendingMigrations", () => {
         expect(legacyRun).toEqual({
           session_params_before_json: null,
           session_params_after_json: null,
-          session_reuse_scope: "none",
+          session_reuse_scope: "unknown",
         });
 
-        for (const scope of ["explicit", "task", "none"]) {
+        for (const scope of ["explicit", "task", "none", "unknown"]) {
           await expect(verifySql.unsafe(`
             UPDATE "heartbeat_runs"
             SET "session_reuse_scope" = '${scope}',
