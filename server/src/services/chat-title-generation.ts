@@ -25,7 +25,6 @@ type ChatTitleMessage = {
 };
 
 type ChatTitleStore = {
-  listMessages(conversationId: string, options?: { includeTranscript?: boolean }): Promise<ChatTitleMessage[] | null>;
   updateDefaultTitle(
     id: string,
     title: string,
@@ -71,34 +70,9 @@ export function chatTitleGenerationService(input: {
       return expected && expected.length > 0 ? expected : null;
     }
     const currentTitle = conversation.title.trim();
+    if (conversation.forkedFromConversationId) return null;
     if (currentTitle === "New chat") return "New chat";
-    if (conversation.forkedFromConversationId && currentTitle.length > 0) return currentTitle;
     return null;
-  }
-
-  function isForkSystemEvent(message: ChatTitleMessage) {
-    if (message.role !== "system" || message.kind !== "system_event") return false;
-    if (message.structuredPayload?.eventType === "chat_fork" || message.structuredPayload?.type === "chat_fork") {
-      return true;
-    }
-    return message.body.startsWith("Forked from ");
-  }
-
-  async function isFirstUserMessageAfterFork(conversationId: string, userMessage: ChatTitleMessage) {
-    const messages = (await chats.listMessages(conversationId, { includeTranscript: false })) ?? [];
-    let forkEventIndex = -1;
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const message = messages[index];
-      if (message && isForkSystemEvent(message)) {
-        forkEventIndex = index;
-        break;
-      }
-    }
-    if (forkEventIndex < 0) return false;
-    const firstNewUserMessage = messages
-      .slice(forkEventIndex + 1)
-      .find((message) => message.role === "user" && message.kind === "message");
-    return firstNewUserMessage?.id === userMessage.id;
   }
 
   function startAutomaticGeneration(
@@ -116,10 +90,6 @@ export function chatTitleGenerationService(input: {
         ? chats.updateDefaultTitle(conversation.id, title)
         : chats.updateDefaultTitle(conversation.id, title, expectedCurrentTitle);
     void (async () => {
-      if (conversation.forkedFromConversationId) {
-        const shouldRetitleFork = await isFirstUserMessageAfterFork(conversation.id, userMessage);
-        if (!shouldRetitleFork) return;
-      }
       if (fallbackTitle) {
         await updateTitleIfExpected(fallbackTitle);
       }

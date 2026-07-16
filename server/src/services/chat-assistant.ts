@@ -327,16 +327,62 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         },
       });
     };
+    const assistantTextAccumulator = createAssistantTextAccumulator();
+    const sentinelStream = createSentinelStream(resultSentinel);
+    let stopCutoffPartialBody: string | null = null;
+    const freezeStopCutoff = () => {
+      if (stopCutoffPartialBody !== null) return;
+      stopCutoffPartialBody =
+        partialBodyFromRawAssistantText(assistantTextAccumulator.fullText, resultSentinel)
+        || (safeTrim(sentinelStream.visibleText) ?? "");
+    };
+    const isStopped = () => input.abortSignal?.aborted === true;
+    let removeAbortListener: (() => void) | null = null;
+    if (input.abortSignal) {
+      const abortSignal = input.abortSignal;
+      if (abortSignal.aborted) {
+        freezeStopCutoff();
+      } else {
+        abortSignal.addEventListener("abort", freezeStopCutoff, { once: true });
+        removeAbortListener = () => abortSignal.removeEventListener("abort", freezeStopCutoff);
+      }
+    }
+    type StoppedReply = Extract<StreamChatAssistantReplyResult, { outcome: "stopped" }>;
+    let stoppedReplyPromise: Promise<StoppedReply> | null = null;
+    const finalizeStoppedReply = (): Promise<StoppedReply> => {
+      if (stoppedReplyPromise) return stoppedReplyPromise;
+      freezeStopCutoff();
+      const partialBody = stopCutoffPartialBody ?? "";
+      stoppedReplyPromise = (async () => {
+        await maybeEmitAssistantState(input.onAssistantState, "stopped");
+        if (!runFinalized) {
+          await finalizeChatRun({
+            status: "cancelled",
+            error: "Chat run stopped before completion",
+            errorCode: "chat_stopped",
+            resultJson: {
+              outcome: "stopped",
+              partialBody,
+            },
+          });
+        }
+        return {
+          outcome: "stopped",
+          partialBody,
+          replyingAgentId: runtimeAgentId,
+        };
+      })();
+      return stoppedReplyPromise;
+    };
     const guardActiveRun = async <T>(operation: () => T | Promise<T>): Promise<T> => {
       try {
         return await operation();
       } catch (error) {
+        if (isStopped()) throw error;
         await finalizeUnhandledRunFailure(error);
         throw error;
       }
     };
-    const assistantTextAccumulator = createAssistantTextAccumulator();
-    const sentinelStream = createSentinelStream(resultSentinel);
     let cleanupPreparedAttachments: (() => Promise<void>) | null = null;
     try {
       let parser = adapter.parseStdoutLine;
@@ -366,6 +412,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
 
       const processTranscriptEntries = async (entries: TranscriptEntry[]) => {
         for (const entry of entries) {
+          if (isStopped()) return;
           if (entry.kind === "assistant") {
             const delta = assistantTextAccumulator.push(entry.text, entry.delta === true);
             if (!delta) continue;
@@ -379,7 +426,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
                 delta: true,
               };
               await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, assistantTranscriptEntry);
+              if (isStopped()) return;
               await maybeEmitTranscriptEntry(input.onTranscriptEntry, assistantTranscriptEntry);
+              if (isStopped()) return;
               await chatRunsSvc.appendTranscriptEntry(chatRun, assistantTranscriptEntry);
             }
             continue;
@@ -392,34 +441,40 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           } else if (!(entry.kind === "stdout" && entry.text.includes(resultSentinel))) {
             await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, entry);
           }
+          if (isStopped()) return;
           if (shouldSuppressChatTranscriptEntry(entry, resultSentinel)) {
             continue;
           }
           await maybeEmitTranscriptEntry(input.onTranscriptEntry, entry);
+          if (isStopped()) return;
           await chatRunsSvc.appendTranscriptEntry(chatRun, entry);
         }
       };
 
       const processStdoutLine = async (line: string) => {
-        if (!parser || !line.trim()) return;
+        if (isStopped() || !parser || !line.trim()) return;
         await processTranscriptEntries(parser(line, new Date().toISOString()));
       };
 
       const flushStdoutChunk = async (chunk: string, finalize = false) => {
+        if (isStopped()) return;
         const combined = `${stdoutLineBuffer}${chunk}`;
         const lines = combined.split(/\r?\n/);
         stdoutLineBuffer = lines.pop() ?? "";
         for (const line of lines) {
+          if (isStopped()) return;
           await processStdoutLine(line);
         }
-        if (finalize && stdoutLineBuffer.trim()) {
+        if (!isStopped() && finalize && stdoutLineBuffer.trim()) {
           const trailing = stdoutLineBuffer;
           stdoutLineBuffer = "";
           await processStdoutLine(trailing);
         }
       };
 
+      if (isStopped()) return finalizeStoppedReply();
       await guardActiveRun(() => maybeEmitAssistantState(input.onAssistantState, "streaming"));
+      if (isStopped()) return finalizeStoppedReply();
 
       const { chatAttachments, media } = await guardActiveRun(() => {
         const chatAttachments = input.messages
@@ -470,7 +525,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           },
           ...(media.length > 0 ? { media } : {}),
           onMeta: async (meta) => {
+            if (isStopped()) return;
             await chatRunsSvc.appendAdapterInvoke(chatRun, meta, runtimeSource.runtimeSkills);
+            if (isStopped()) return;
             await input.onInvocationMeta?.({
               ...meta,
               loadedSkills: runtimeSource.runtimeSkills,
@@ -486,6 +543,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             : undefined,
           abortSignal: input.abortSignal,
           onLog: async (stream, chunk) => {
+            if (isStopped()) return;
             if (stream === "stdout") {
               if (chunk.startsWith("[rudder]")) {
                 const entry: TranscriptEntry = {
@@ -494,7 +552,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
                   text: chunk,
                 };
                 await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, entry);
+                if (isStopped()) return;
                 await maybeEmitTranscriptEntry(input.onTranscriptEntry, entry);
+                if (isStopped()) return;
                 await chatRunsSvc.appendTranscriptEntry(chatRun, entry);
                 return;
               }
@@ -549,6 +609,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             ...(linkedIssueIds.length > 0 ? { issueIds: linkedIssueIds } : {}),
           },
           onMeta: async (meta) => {
+            if (isStopped()) return;
             await chatRunsSvc.appendAdapterInvoke(chatRun, {
               ...meta,
               commandNotes: [...(meta.commandNotes ?? []), "internal chat result sentinel repair"],
@@ -573,8 +634,11 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
 
       const result = await guardActiveRun(() => executeChatAdapter(prompt));
 
+      if (isStopped()) return finalizeStoppedReply();
       await guardActiveRun(() => flushStdoutChunk("", true));
+      if (isStopped()) return finalizeStoppedReply();
       await guardActiveRun(() => maybeEmitAssistantDelta(input.onAssistantDelta, sentinelStream.finish()));
+      if (isStopped()) return finalizeStoppedReply();
 
       const rawResultText = resultText(result);
       const rawAssistantText = assistantTextAccumulator.fullText;
@@ -588,23 +652,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         finalBodyFromRawAssistantText(rawResultText, resultSentinel)
         || finalBodyFromRawAssistantText(rawAssistantText, resultSentinel);
 
-      if (input.abortSignal?.aborted) {
-        await maybeEmitAssistantState(input.onAssistantState, "stopped");
-        await finalizeChatRun({
-          status: "cancelled",
-          error: "Chat run stopped before completion",
-          errorCode: "chat_stopped",
-          resultJson: {
-            outcome: "stopped",
-            partialBody,
-          },
-        });
-        return {
-          outcome: "stopped",
-          partialBody,
-          replyingAgentId: runtimeAgentId,
-        };
-      }
+      if (isStopped()) return finalizeStoppedReply();
 
       if (result.timedOut) {
         const errorCode = "chat_timed_out";
@@ -669,7 +717,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         );
       }
 
+      if (isStopped()) return finalizeStoppedReply();
       await guardActiveRun(() => maybeEmitAssistantState(input.onAssistantState, "finalizing"));
+      if (isStopped()) return finalizeStoppedReply();
 
       const raw = resultText(result) || assistantTextAccumulator.fullText;
       const generatedAttachments = extractGeneratedAttachments(result);
@@ -693,6 +743,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
               priorText,
             });
             const repairResult = await guardActiveRun(() => executeChatRepairAdapter(repairPrompt));
+            if (isStopped()) return finalizeStoppedReply();
             repairResultUsage = repairResult.usage;
             if (!repairResult.timedOut && (repairResult.exitCode ?? 0) === 0 && !repairResult.errorMessage) {
               try {
@@ -778,9 +829,12 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
 
       const streamedBody = safeTrim(sentinelStream.visibleText) ?? "";
       if (!sentinelRepairSucceeded && finalBody && finalBody !== streamedBody) {
+        if (isStopped()) return finalizeStoppedReply();
         await guardActiveRun(() => maybeEmitAssistantDelta(input.onAssistantDelta, finalBody));
+        if (isStopped()) return finalizeStoppedReply();
       }
 
+      if (isStopped()) return finalizeStoppedReply();
       await finalizeChatRun({
         status: "succeeded",
         resultJson: {
@@ -799,6 +853,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         usageJson: combineChatUsage(result.usage, repairResultUsage),
       });
 
+      if (isStopped()) return finalizeStoppedReply();
       return {
         outcome: "completed",
         reply,
@@ -806,6 +861,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         replyingAgentId: runtimeAgentId,
       };
     } catch (error) {
+      if (isStopped()) return finalizeStoppedReply();
       await finalizeUnhandledRunFailure(error);
       if (error instanceof ChatAssistantStreamError) {
         throw error;
@@ -821,6 +877,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         },
       );
     } finally {
+      removeAbortListener?.();
       await cleanupPreparedAttachments?.().catch(() => undefined);
     }
   }

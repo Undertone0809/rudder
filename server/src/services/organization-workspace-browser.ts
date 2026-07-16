@@ -326,6 +326,13 @@ export function organizationWorkspaceBrowserService(db: Db) {
     );
   }
 
+  async function isOrphanedAgentWorkspaceDirectory(orgId: string, normalizedPath: string) {
+    const segments = normalizedPath.split("/").filter(Boolean);
+    if (segments.length !== 2 || segments[0] !== "agents") return false;
+    const agentDirectoriesByWorkspaceKey = await listAgentWorkspaceDirectoryMap(orgId);
+    return !agentDirectoriesByWorkspaceKey.has(segments[1] ?? "");
+  }
+
   /**
    * Keep immutable workspace directory handles while showing the current Agent
    * identity in `/workspaces`.
@@ -349,7 +356,13 @@ export function organizationWorkspaceBrowserService(db: Db) {
     return entries.map((entry) => {
       if (!entry.isDirectory) return entry;
       const agentDirectory = agentDirectoriesByWorkspaceKey.get(entry.name);
-      if (!agentDirectory) return entry;
+      if (!agentDirectory) {
+        return {
+          ...entry,
+          entityType: "orphaned_agent_workspace",
+          workspaceKey: entry.name,
+        };
+      }
       return {
         ...entry,
         displayLabel: agentDirectory.name,
@@ -899,11 +912,14 @@ export function organizationWorkspaceBrowserService(db: Db) {
       if (!rootExists) {
         throw notFound("The shared Library root is not available on this machine yet.");
       }
-      assertMutableWorkspaceEntry(normalizedPath);
-
       const stat = await statWorkspaceEntry(resolvedTarget);
       if (!stat) {
         throw notFound("Entry not found inside the organization Library");
+      }
+      const canDeleteOrphanedAgentWorkspace = stat.isDirectory()
+        && await isOrphanedAgentWorkspaceDirectory(orgId, normalizedPath);
+      if (!canDeleteOrphanedAgentWorkspace) {
+        assertMutableWorkspaceEntry(normalizedPath);
       }
 
       await fs.rm(resolvedTarget, { recursive: true, force: false });

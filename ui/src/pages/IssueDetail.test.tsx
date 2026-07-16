@@ -694,11 +694,13 @@ describe("IssueDetail", () => {
     expect(html).toContain('href="/library?path=docs%2Fproduct-brief.md"');
   });
 
-  it("keeps issue body and activity in one desktop scroll flow", () => {
+  it("keeps the desktop issue detail in one page-level scroll flow", () => {
     const html = renderToStaticMarkup(<IssueDetail />);
 
-    expect(html).toContain("mx-auto flex h-full min-h-0 max-w-6xl flex-col xl:grid");
-    expect(html).toContain('class="scrollbar-auto-hide min-w-0 space-y-6 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:pr-1" data-testid="issue-detail-main-scroll"');
+    expect(html).toContain('data-testid="issue-detail-main-scroll"');
+    expect(html).toContain("h-full min-h-0 w-full scrollbar-auto-hide overflow-y-auto overscroll-contain");
+    expect(html).toContain("mx-auto flex min-h-full w-full max-w-6xl flex-col xl:grid");
+    expect(html).toContain('<div class="min-w-0 space-y-6">');
     expect(html).toContain('class="min-w-0 space-y-6" data-testid="issue-detail-primary-content"');
     expect(html).toContain('aria-label="Activity" class="flex flex-col space-y-2"');
     expect(capturedCommentThreadProps).toMatchObject({
@@ -707,7 +709,8 @@ describe("IssueDetail", () => {
     });
     expect(html).not.toContain('data-testid="issue-detail-primary-scroll"');
     expect(html).not.toContain('data-testid="comment-thread-timeline-scroll"');
-    expect(html).toContain('<aside class="mt-6 xl:mt-0 xl:min-h-0 xl:overflow-y-auto">');
+    expect(html).toContain('<aside class="mt-6 xl:mt-0 xl:min-h-0">');
+    expect(html).not.toContain('xl:overflow-y-auto');
     expect(html).not.toContain('class="space-y-3 xl:sticky xl:top-4"');
   });
 

@@ -47,6 +47,8 @@ owning domain contract.
 ## Issues List
 
 - Issue state and visible issue metadata: `ISSUE.SURFACE.001`.
+- New Issue post-create routing between Primary Rail Issues and Messenger Issue
+  Detail: `ISSUE.SURFACE.001`.
 - Assignment/reviewer display and inline updates: `ROUTING.ASSIGNMENT.001`,
   `ROUTING.REVIEWER.001`.
 
@@ -78,6 +80,8 @@ owning domain contract.
 
 - Library file lifecycle, protected paths, and references:
   `LIBRARY.FILES.001`.
+- Isolated multi-file HTML rendering, Connected/Offline behavior, unified
+  preview controls, and preview Open actions: `LIBRARY.WEB.PREVIEW.001`.
 - Organization/project resources: `CONTEXT.RESOURCES.001`.
 - Project and execution workspace policy: `WORKSPACE.PROJECT.001`,
   `WORKSPACE.RUN.001`.
@@ -94,8 +98,13 @@ owning domain contract.
   object workbench behavior: `CHAT.SIDE.PANEL.001`, with target-specific
   behavior still owned by the issue, automation, Library, chat, and Messenger
   contracts below.
+- HTML Library references rendered in the Side Panel follow
+  `LIBRARY.WEB.PREVIEW.001` for the isolated runtime, Connected default, shared
+  toolbar, and Open in Library behavior.
 - Messenger thread attention, unread/read state, ordering, pin/archive, and
   issue/approval/run attention: `MESSENGER.ATTENTION.001`.
+- Messenger Issue Detail as the post-create destination for every non-Issues
+  primary surface: `ISSUE.SURFACE.001`.
 - Messenger custom group membership, grouped-row navigation/read behavior, and
   group pin priority: `MESSENGER.CUSTOM.GROUPS.001`.
 - Feishu/IM source badges on Feishu-bound chat rows: `IM.FEISHU.001`.

@@ -29,6 +29,8 @@ import type {
   OrganizationWorkspaceFileEntry,
   OrganizationWorkspaceFileList,
   OrganizationWorkspaceFileUpdateRequest,
+  OrganizationWorkspaceWebPreviewSession,
+  OrganizationWorkspaceWebPreviewSessionRequest,
   RestoreLibraryDocumentRevision,
   UpdateLibraryDocument,
   UpdateOrganizationBranding,
@@ -140,6 +142,13 @@ export const organizationsApi = {
       `/orgs/${orgId}/workspace/file${query ? `?${query}` : ""}`,
     );
   },
+  createWorkspaceWebPreviewSession: (
+    orgId: string,
+    data: OrganizationWorkspaceWebPreviewSessionRequest,
+  ) => api.post<OrganizationWorkspaceWebPreviewSession>(
+    `/orgs/${orgId}/workspace/web-preview-sessions`,
+    data,
+  ),
   createWorkspaceFile: (orgId: string, data: OrganizationWorkspaceFileCreateRequest) =>
     api.post<OrganizationWorkspaceFileDetail>(`/orgs/${orgId}/workspace/file`, data),
   createWorkspaceDirectory: (orgId: string, data: OrganizationWorkspaceDirectoryCreateRequest) =>

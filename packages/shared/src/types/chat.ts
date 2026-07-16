@@ -200,7 +200,11 @@ export interface ChatMessage {
 
 export type ChatWorkManifestTargetType =
   | "attachment"
+  | "automation"
+  | "chat_conversation"
   | "external_url"
+  | "issue"
+  | "issue_comment"
   | "library_entry"
   | "library_file"
   | "project_resource";

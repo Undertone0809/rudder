@@ -2,6 +2,7 @@ import {
   isAllowedBrowserBootstrapUrl,
   isAllowedBrowserNavigationUrl,
   isBlockedBrowserControlPlaneUrl,
+  isLocalAbsoluteFileUrl,
 } from "./browser-profile.js";
 
 type PreventableEvent = {
@@ -95,6 +96,10 @@ function isWebProtocolUrl(target: string): boolean {
   }
 }
 
+function isAllowedMainFrameRequestUrl(target: string): boolean {
+  return isWebProtocolUrl(target) || isLocalAbsoluteFileUrl(target);
+}
+
 export function installBrowserSessionPolicy(browserSession: BrowserSessionPolicyTarget, options: {
   getControlPlaneOrigins(): string[];
 }): void {
@@ -104,8 +109,11 @@ export function installBrowserSessionPolicy(browserSession: BrowserSessionPolicy
   });
   browserSession.on("will-download", denyBrowserDownload);
   browserSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
-    const isFrameNavigation = details.resourceType === "mainFrame" || details.resourceType === "subFrame";
-    if (isFrameNavigation && !isWebProtocolUrl(details.url)) {
+    if (details.resourceType === "mainFrame" && !isAllowedMainFrameRequestUrl(details.url)) {
+      callback({ cancel: true });
+      return;
+    }
+    if (details.resourceType === "subFrame" && !isWebProtocolUrl(details.url)) {
       callback({ cancel: true });
       return;
     }

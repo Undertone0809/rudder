@@ -31,20 +31,10 @@ import {
   Loader2
 } from "lucide-react";
 import { useCallback, useEffect, useRef, type CSSProperties } from "react";
-export { ChatAttachmentList, ChatAttachmentPreviewDialog, ChatFileAttachmentChip, ChatImageAttachmentTile, PendingAttachmentPreview } from "./Chat.attachments";
+export { ChatAttachmentList, ChatFileAttachmentChip, ChatImageAttachmentTile, PendingAttachmentPreview } from "./Chat.attachments";
 export { AskUserAnswerBubble, AskUserHistoryRecord, AskUserPanel, AssistantDraftItem, ChatAssistantAttributionRow, chatIssueApprovalPayloadWithProposalOverride, ChatLongMessageBody, chatMessageHoverBarClass, ChatMessageItem, ChatMessagesLoadingState, ChatSystemMessageBody, issueCreatedSystemMessageParts, LazyStreamTranscriptItem, OptimisticUserDraftItem, ProposalCard, readStructuredPayloadString, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, StreamTranscriptItem } from "./Chat.messages";
 
 export type ApprovalAction = "approve" | "reject" | "requestRevision";
-export type AttachmentPreviewState = {
-  src: string;
-  name: string;
-};
-
-export type ChatImageContextMenuPosition = {
-  left: number;
-  top: number;
-};
-
 export const EMPTY_STATE_PROMPT_GROUPS = [
   {
     id: "create",
@@ -165,6 +155,11 @@ export type EmptyStatePromptGroupId = EmptyStatePromptGroup["id"];
 export type EmptyStatePromptSuggestion = EmptyStatePromptGroup["suggestions"][number] & {
   groupId: EmptyStatePromptGroupId;
 };
+
+export function chatPromptGroupForExactTrigger(draft: string) {
+  const query = chatPromptQueryKey(draft);
+  return EMPTY_STATE_PROMPT_GROUPS.find((group) => normalizedPromptQuery(group.trigger) === query) ?? null;
+}
 
 const CHAT_SKILL_REFERENCE_PATTERN = /\[[^\]\n]+\]\(skill:\/\/[^)\n]+\)/gu;
 
@@ -332,6 +327,10 @@ export function ChatEmptyStatePromptOptions({
     >
       {suggestions.map((suggestion, index) => {
         const active = index === activeIndex;
+        const group = EMPTY_STATE_PROMPT_GROUPS.find((candidate) => candidate.id === suggestion.groupId);
+        const emphasizedPrefix = group && suggestion.label.startsWith(group.trigger)
+          ? group.trigger
+          : null;
         return (
           <button
             key={suggestion.id}
@@ -351,13 +350,19 @@ export function ChatEmptyStatePromptOptions({
             className={cn(
               "t-stagger-line group flex min-h-10 w-full items-center gap-3 rounded-[var(--radius-md)] px-3 py-2 text-left text-sm text-muted-foreground outline-none",
               `t-stagger-line--${index + 1}`,
-              "transition-colors",
-              "focus-visible:ring-2 focus-visible:ring-ring/35",
+              "transition-colors focus-visible:ring-2 focus-visible:ring-ring/35",
               active && "bg-[color:var(--surface-active)] text-foreground",
             )}
           >
             <ChatEmptyStatePromptIcon groupId={suggestion.groupId} className="h-4 w-4 shrink-0 text-[color:var(--rudder-doc-link)]" />
-            <span className="min-w-0 flex-1 truncate">{suggestion.label}</span>
+            <span className="min-w-0 flex-1 truncate">
+              {emphasizedPrefix ? (
+                <>
+                  <strong className="font-semibold text-foreground">{emphasizedPrefix}</strong>
+                  {suggestion.label.slice(emphasizedPrefix.length)}
+                </>
+              ) : suggestion.label}
+            </span>
           </button>
         );
       })}
@@ -615,14 +620,6 @@ export function attachmentDisplayName(input: { originalFilename?: string | null;
   return input.originalFilename ?? input.name ?? input.assetId ?? "attachment";
 }
 
-export function clampChatImageContextMenuPosition(left: number, top: number): ChatImageContextMenuPosition {
-  if (typeof window === "undefined") return { left, top };
-  return {
-    left: Math.min(left, Math.max(8, window.innerWidth - 190)),
-    top: Math.min(top, Math.max(8, window.innerHeight - 96)),
-  };
-}
-
 export function shouldHandlePlainChatLinkClick(event: Parameters<MarkdownLinkClickHandler>[0]["event"]) {
   return event.button === 0 && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
 }
@@ -765,7 +762,6 @@ export function recentConversationPreview(
 
 type ChatEmptyStateRecentConversationsProps = {
   conversations: ChatConversation[];
-  projectName: string | null;
   visible: boolean;
   conversationPath: (id: string) => string;
   onPrefetchConversation: (id: string) => void;
@@ -777,7 +773,6 @@ type ChatEmptyStateRecentConversationsProps = {
 
 export function ChatEmptyStateRecentConversations({
   conversations,
-  projectName,
   visible,
   conversationPath,
   onPrefetchConversation,
@@ -820,36 +815,33 @@ export function ChatEmptyStateRecentConversations({
       aria-label="Recent project conversations"
       aria-hidden={!visible}
     >
-      <div className="flex h-4 items-center justify-end gap-3">
-        {projectName ? (
-          <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">{projectName}</span>
-        ) : null}
-      </div>
       <div
         ref={setScrollRef}
+        data-testid="chat-empty-state-recent-conversations-scroll"
         className="scrollbar-auto-hide max-h-[min(34vh,360px)] overflow-y-auto border-y border-[color:var(--border-soft)]"
       >
         <div className="divide-y divide-[color:var(--border-soft)]">
           {conversations.map((conversation) => (
-            <Link
-              key={conversation.id}
-              to={conversationPath(conversation.id)}
-              data-testid={`chat-empty-state-recent-conversation-${conversation.id}`}
-              tabIndex={visible ? undefined : -1}
-              className="group flex min-w-0 items-center gap-3 px-1 py-2.5 text-sm transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-active)_58%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-              onPointerDown={() => {
-                if (visible) onPrefetchConversation(conversation.id);
-              }}
-              onMouseEnter={() => {
-                if (visible) onPrefetchConversation(conversation.id);
-              }}
-            >
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-medium text-foreground">{recentConversationDisplayTitle(conversation)}</span>
-                <span className="mt-0.5 block truncate text-xs text-muted-foreground">{recentConversationPreview(conversation)}</span>
-              </span>
-              <span className="shrink-0 text-xs text-muted-foreground">{relativeTime(conversation.lastMessageAt ?? conversation.updatedAt)}</span>
-            </Link>
+            <div key={conversation.id}>
+              <Link
+                to={conversationPath(conversation.id)}
+                data-testid={`chat-empty-state-recent-conversation-${conversation.id}`}
+                tabIndex={visible ? undefined : -1}
+                className="group flex min-w-0 items-center gap-3 px-3 py-2.5 text-sm transition-[background-color,border-radius] hover:mx-1 hover:rounded-[var(--radius-md)] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_58%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/30"
+                onPointerDown={() => {
+                  if (visible) onPrefetchConversation(conversation.id);
+                }}
+                onMouseEnter={() => {
+                  if (visible) onPrefetchConversation(conversation.id);
+                }}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium text-foreground">{recentConversationDisplayTitle(conversation)}</span>
+                  <span className="mt-0.5 block truncate text-xs text-muted-foreground">{recentConversationPreview(conversation)}</span>
+                </span>
+                <span className="shrink-0 text-xs text-muted-foreground">{relativeTime(conversation.lastMessageAt ?? conversation.updatedAt)}</span>
+              </Link>
+            </div>
           ))}
         </div>
         {hasMoreConversations || loadingMoreConversations ? (
@@ -1154,7 +1146,7 @@ export function isAskUserMessageAnswered(
   const targetIndex = messages.findIndex((message) => message.id === target.id);
   if (targetIndex < 0) return false;
   return messages.slice(targetIndex + 1).some((message) =>
-    message.role === "user" && !message.supersededAt
+    message.role === "user"
   );
 }
 
@@ -1166,7 +1158,6 @@ export function findLatestUnansweredAskUserMessage(messages: ChatMessage[]) {
     if (!askUserRequestFromMessage(message)) continue;
     if (!messages.slice(index + 1).some((candidate) =>
       candidate.role === "user"
-      && !candidate.supersededAt
     )) return message;
   }
   return null;
@@ -1289,13 +1280,13 @@ export function parseAskUserAnswerMessage(
 }
 
 export function askUserAnswerFromMessage(message: ChatMessage, messages: ChatMessage[]) {
-  if (message.role !== "user" || message.kind !== "message" || message.supersededAt) return null;
+  if (message.role !== "user" || message.kind !== "message") return null;
   const targetIndex = messages.findIndex((candidate) => candidate.id === message.id);
   if (targetIndex < 0) return null;
 
   for (let index = targetIndex - 1; index >= 0; index -= 1) {
     const candidate = messages[index];
-    if (!candidate || candidate.supersededAt) continue;
+    if (!candidate) continue;
     if (candidate.role === "user") return null;
     const request = askUserRequestFromMessage(candidate);
     if (request) return parseAskUserAnswerMessage(request, message.body);

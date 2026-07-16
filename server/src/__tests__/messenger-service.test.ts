@@ -3893,6 +3893,7 @@ describe("messengerService and issue follows", () => {
     });
 
     const groups = await messengerSvc.listCustomGroups(orgId, userId);
+    expect(child.title).toBe("Leaf fork topic (2)");
     expect(groups.groups).toHaveLength(1);
     expect(groups.groups[0]?.name).toBe("Leaf fork topic");
     expect(groups.groups[0]?.icon).toBe(MESSENGER_FORK_GROUP_DEFAULT_ICON);
@@ -3900,6 +3901,129 @@ describe("messengerService and issue follows", () => {
       `chat:${source.id}`,
       `chat:${child.id}`,
     ]);
+  });
+
+  it("allocates Codex-style numbered titles across concurrent and nested forks", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-chat-fork-numbering";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Chat Fork Numbering Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Chat Fork Numbering Org"),
+      issuePrefix: `N${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    const source = await chatSvc.create(orgId, {
+      title: "Numbered fork topic",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+    });
+
+    const [firstFork, secondFork] = await Promise.all([
+      chatSvc.forkConversation({
+        sourceConversationId: source.id,
+        orgId,
+        userId,
+        createdByUserId: userId,
+      }),
+      chatSvc.forkConversation({
+        sourceConversationId: source.id,
+        orgId,
+        userId,
+        createdByUserId: userId,
+      }),
+    ]);
+    expect([firstFork.title, secondFork.title].sort()).toEqual([
+      "Numbered fork topic (2)",
+      "Numbered fork topic (3)",
+    ]);
+
+    const nestedSource = firstFork.title.endsWith("(2)") ? firstFork : secondFork;
+    const nestedFork = await chatSvc.forkConversation({
+      sourceConversationId: nestedSource.id,
+      orgId,
+      userId,
+      createdByUserId: userId,
+    });
+
+    expect(nestedFork.title).toBe("Numbered fork topic (4)");
+    expect(nestedFork.forkRootConversationId).toBe(source.id);
+  });
+
+  it("preserves a manually renamed numeric suffix when forking again", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-chat-fork-manual-numeric-title";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Chat Fork Manual Numeric Title Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Chat Fork Manual Numeric Title Org"),
+      issuePrefix: `M${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    const source = await chatSvc.create(orgId, {
+      title: "Plan",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+    });
+    const firstFork = await chatSvc.forkConversation({
+      sourceConversationId: source.id,
+      orgId,
+      userId,
+      createdByUserId: userId,
+    });
+    await chatSvc.update(firstFork.id, { title: "Plan (2026)" });
+
+    const nestedFork = await chatSvc.forkConversation({
+      sourceConversationId: firstFork.id,
+      orgId,
+      userId,
+      createdByUserId: userId,
+    });
+
+    expect(nestedFork.title).toBe("Plan (2026) (2)");
+  });
+
+  it("keeps nested numbering stable when the base title requires truncation", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-chat-fork-long-title";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Chat Fork Long Title Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Chat Fork Long Title Org"),
+      issuePrefix: `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    const longTitle = "L".repeat(200);
+    const source = await chatSvc.create(orgId, {
+      title: longTitle,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+    });
+    let latestFork = source;
+    for (let index = 2; index <= 10; index += 1) {
+      latestFork = await chatSvc.forkConversation({
+        sourceConversationId: source.id,
+        orgId,
+        userId,
+        createdByUserId: userId,
+      });
+    }
+    expect(latestFork.title).toBe(`${"L".repeat(195)} (10)`);
+
+    const nestedFork = await chatSvc.forkConversation({
+      sourceConversationId: latestFork.id,
+      orgId,
+      userId,
+      createdByUserId: userId,
+    });
+
+    expect(nestedFork.title).toBe(`${"L".repeat(195)} (11)`);
   });
 
   it("forks a chat from a middle message and keeps the fork family in one custom group", async () => {

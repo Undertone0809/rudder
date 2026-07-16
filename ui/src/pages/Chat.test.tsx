@@ -1,5 +1,6 @@
 // @vitest-environment node
 
+import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
 import { I18nProvider } from "@/context/I18nContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import {
@@ -34,6 +35,7 @@ import {
   INTERRUPTED_CHAT_CONTINUATION_PROMPT,
   NO_PROJECT_ID,
   ProposalCard,
+  applyChatStreamProgressEvent,
   askUserAnswerFromMessage,
   askUserRequestFromMessage,
   assistantStateLabel,
@@ -83,6 +85,83 @@ vi.mock("@/lib/router", () => ({
   useParams: () => ({}),
   useSearchParams: () => [new URLSearchParams()],
 }));
+
+describe("chat stream stop cutoff", () => {
+  const draft = (overrides: Partial<ChatStreamDraft> = {}): ChatStreamDraft => ({
+    chatId: "chat-1",
+    streamKey: "stream-1",
+    userBody: "Draft a plan",
+    userCreatedAt: new Date("2026-07-16T09:00:00.000Z"),
+    userMessageId: "user-1",
+    chatTurnId: "turn-1",
+    turnVariant: 0,
+    editedFromCreatedAt: null,
+    body: "Frozen prefix",
+    state: "streaming",
+    createdAt: new Date("2026-07-16T09:00:01.000Z"),
+    transcript: [],
+    replyingAgentId: "agent-1",
+    ...overrides,
+  });
+
+  it("accepts progress only for the matching active generation", () => {
+    const current = draft();
+
+    expect(applyChatStreamProgressEvent(current, "stream-1", {
+      type: "assistant_delta",
+      delta: " before stop",
+    })).toMatchObject({
+      body: "Frozen prefix before stop",
+      state: "streaming",
+    });
+
+    const replacement = draft({ streamKey: "stream-2", body: "Replacement generation" });
+    expect(applyChatStreamProgressEvent(replacement, "stream-1", {
+      type: "assistant_delta",
+      delta: " stale output",
+    })).toBe(replacement);
+  });
+
+  it("keeps body, state, and transcript immutable after Stop freezes the generation", () => {
+    const frozen = draft({
+      state: "stopping",
+      transcript: [{
+        kind: "thinking",
+        ts: "2026-07-16T09:00:02.000Z",
+        text: "Reasoning before stop",
+      }],
+    });
+
+    expect(applyChatStreamProgressEvent(frozen, "stream-1", {
+      type: "assistant_delta",
+      delta: " late output",
+    })).toBe(frozen);
+    expect(applyChatStreamProgressEvent(frozen, "stream-1", {
+      type: "assistant_state",
+      state: "finalizing",
+    })).toBe(frozen);
+    expect(applyChatStreamProgressEvent(frozen, "stream-1", {
+      type: "transcript_entry",
+      entry: {
+        kind: "thinking",
+        ts: "2026-07-16T09:00:03.000Z",
+        text: "Reasoning after stop",
+      },
+    })).toBe(frozen);
+
+    const stopped = draft({ state: "stopped" });
+    expect(applyChatStreamProgressEvent(stopped, "stream-1", {
+      type: "assistant_delta",
+      delta: " output after confirmation",
+    })).toBe(stopped);
+
+    expect(frozen).toMatchObject({
+      body: "Frozen prefix",
+      state: "stopping",
+      transcript: [{ text: "Reasoning before stop" }],
+    });
+  });
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -221,7 +300,6 @@ function renderChatMessageItem(messageToRender: ChatMessage, options?: { canRefr
         onRetryFailedMessage={vi.fn()}
         canRefreshAssistantMessage={options?.canRefreshAssistantMessage ?? false}
         onRefreshAssistantMessage={vi.fn()}
-        onOpenImage={vi.fn()}
         onOpenFile={vi.fn()}
         skillReferences={[]}
       />
@@ -1434,6 +1512,49 @@ describe("ask_user chat messages", () => {
     expect(isAskUserMessageAnswered(firstAsk, messages)).toBe(true);
     expect(isAskUserMessageAnswered(secondAsk, messages)).toBe(false);
     expect(findLatestUnansweredAskUserMessage(messages)).toBe(secondAsk);
+  });
+
+  it("treats a visible superseded branch answer as answered", () => {
+    const ask = message({
+      id: "ask-branch",
+      role: "assistant",
+      kind: "ask_user",
+      body: "Need scope.",
+      structuredPayload: askUserPayload,
+      createdAt: new Date("2026-05-07T00:00:01.000Z"),
+    });
+    const answer = message({
+      id: "answer-branch",
+      role: "user",
+      kind: "message",
+      body: formatAskUserAnswerMessage(askUserPayload.requestUserInput, {
+        scope: { kind: "option", label: "Narrow path" },
+      }),
+      chatTurnId: "answer-turn",
+      turnVariant: 0,
+      supersededAt: new Date("2026-05-07T00:00:04.000Z"),
+      createdAt: new Date("2026-05-07T00:00:02.000Z"),
+    });
+    const failedReply = message({
+      id: "failed-branch",
+      role: "assistant",
+      kind: "message",
+      status: "failed",
+      chatTurnId: "answer-turn",
+      turnVariant: 0,
+      supersededAt: new Date("2026-05-07T00:00:04.000Z"),
+      createdAt: new Date("2026-05-07T00:00:03.000Z"),
+    });
+    const visibleBranch = computeDisplayedChatMessages(
+      [ask, answer, failedReply],
+      { chatTurnId: "answer-turn", turnVariant: 0 },
+    );
+
+    expect(isAskUserMessageAnswered(ask, visibleBranch)).toBe(true);
+    expect(findLatestUnansweredAskUserMessage(visibleBranch)).toBeNull();
+    expect(askUserAnswerFromMessage(answer, visibleBranch)).toEqual([
+      { questionId: "scope", title: "Scope", answer: "Narrow path" },
+    ]);
   });
 
   it("formats selected and freeform answers as a normal user message", () => {

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
+import { ImagePreviewProvider } from "@/context/ImagePreviewContext";
 import { SidePanelProvider, useSidePanel } from "@/context/SidePanelContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { readChatAskUserDraft } from "@/lib/chat-draft-storage";
@@ -25,6 +26,7 @@ const PREVIEW_IMAGE_SRC =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='320' viewBox='0 0 480 320'%3E%3Crect width='480' height='320' fill='%232f80ed'/%3E%3Ctext x='240' y='168' fill='white' font-size='34' font-family='Arial' text-anchor='middle'%3EPreview%3C/text%3E%3C/svg%3E";
 
 const mockState = vi.hoisted(() => ({
+  abortChatStream: vi.fn(),
   conversationId: "chat-1" as string | null,
   conversations: [] as ChatConversation[],
   messagesByChatId: {} as Record<string, ChatMessage[]>,
@@ -55,6 +57,7 @@ const mockState = vi.hoisted(() => ({
   updateWorkspaceFile: vi.fn(),
   sendInFlightByChatId: {} as Record<string, true>,
   sendMessageStream: vi.fn(),
+  setStreamDraftForChat: vi.fn(),
   setSidebarOpen: vi.fn(),
   sidebarOpen: true,
   setQueriesData: vi.fn(),
@@ -305,6 +308,7 @@ vi.mock("@/context/BreadcrumbContext", () => ({
 }));
 
 vi.mock("@/context/ToastContext", () => ({
+  useOptionalToast: () => null,
   useToast: () => ({ pushToast: mockState.pushToast }),
 }));
 
@@ -336,11 +340,11 @@ vi.mock("@/plugins/launchers", () => ({
 
 vi.mock("@/context/ChatGenerationContext", () => ({
   useChatGenerations: () => ({
-    abortChatStream: vi.fn(),
+    abortChatStream: mockState.abortChatStream,
     sendInFlightByChatId: mockState.sendInFlightByChatId,
     setChatSendInFlight: vi.fn(),
     setStreamAbortController: vi.fn(),
-    setStreamDraftForChat: vi.fn(),
+    setStreamDraftForChat: mockState.setStreamDraftForChat,
     streamDrafts: mockState.streamDrafts,
   }),
 }));
@@ -394,6 +398,11 @@ vi.mock("@/api/issues", () => ({
 
 vi.mock("@/api/orgs", () => ({
   organizationsApi: {
+    createWorkspaceWebPreviewSession: vi.fn(async (_organizationId: string, request: { networkMode: "connected" | "offline" }) => ({
+      previewUrl: "http://preview.localhost:3100/workspace-preview/test-token/index.html",
+      networkMode: request.networkMode,
+      expiresAt: "2026-07-15T12:00:00.000Z",
+    })),
     readWorkspaceFile: vi.fn(async (_organizationId: string, filePath: string) => mockState.workspaceFiles[filePath]),
     listWorkspaceFiles: vi.fn(),
     updateWorkspaceFile: (...args: unknown[]) => mockState.updateWorkspaceFile(...args),
@@ -1020,15 +1029,17 @@ function renderChat({ expanded = false }: { expanded?: boolean } = {}) {
   const render = (targetRoot: Root) => {
     targetRoot.render(
       <ThemeProvider>
-        <SidePanelProvider>
-          <SidePanelTestContextBinder />
-          <Chat />
-          <ChatSidePanel
-            selectedOrganizationId="org-1"
-            expanded={expanded}
-            onToggleExpanded={toggleSidePanelExpanded}
-          />
-        </SidePanelProvider>
+        <ImagePreviewProvider>
+          <SidePanelProvider>
+            <SidePanelTestContextBinder />
+            <Chat />
+            <ChatSidePanel
+              selectedOrganizationId="org-1"
+              expanded={expanded}
+              onToggleExpanded={toggleSidePanelExpanded}
+            />
+          </SidePanelProvider>
+        </ImagePreviewProvider>
       </ThemeProvider>,
     );
   };
@@ -1109,6 +1120,7 @@ beforeEach(() => {
   });
   resetChatPendingAttachmentsForTests();
   mockState.conversationId = "chat-1";
+  mockState.abortChatStream.mockReset();
   mockState.conversations = [
     chat({ id: "chat-1", title: "Pending proposal chat" }),
     chat({ id: "chat-2", title: "Other chat", lastMessageAt: new Date("2026-05-12T09:10:00.000Z") }),
@@ -1172,6 +1184,7 @@ beforeEach(() => {
   mockState.sendInFlightByChatId = {};
   mockState.sendMessageStream.mockReset();
   mockState.setSidebarOpen.mockReset();
+  mockState.setStreamDraftForChat.mockReset();
   mockState.sidebarOpen = true;
   mockState.setQueriesData.mockReset();
   mockState.setQueryData.mockReset();
@@ -2821,7 +2834,7 @@ describe("Chat Side Panel link handling", () => {
     expect(container.textContent).not.toContain("No inline preview is available for this file.");
   });
 
-  it.each([false, true])("offers Desktop app launch targets for a Library file when expanded is %s", async (expanded) => {
+  it.each([false, true])("offers Desktop app launch targets from the HTML toolbar when expanded is %s", async (expanded) => {
     const openWorkspaceFileLocation = vi.fn(async () => {});
     const openWorkspaceFileInIde = vi.fn(async () => {});
     Object.defineProperty(window, "desktopShell", {
@@ -2837,11 +2850,11 @@ describe("Chat Side Panel link handling", () => {
       },
     });
     mockState.workspaceFiles = {
-      "reports/activity.md": {
+      "reports/activity.html": {
         rootPath: "/Users/tester/Documents/Rudder/rudder",
-        filePath: "reports/activity.md",
-        content: "# Activity report\n",
-        contentType: "text/markdown",
+        filePath: "reports/activity.html",
+        content: "<!doctype html><html><body><h1>Activity report</h1></body></html>",
+        contentType: "text/html",
         previewKind: "text",
         contentPath: null,
         truncated: false,
@@ -2860,7 +2873,7 @@ describe("Chat Side Panel link handling", () => {
             <ChatSidePanel
               expanded={expanded}
               selectedOrganizationId="org-1"
-              target={{ kind: "library_file", filePath: "reports/activity.md", label: "activity.md" }}
+              target={{ kind: "library_file", filePath: "reports/activity.html", label: "activity.html" }}
             />
           </SidePanelProvider>
         </ThemeProvider>,
@@ -2873,8 +2886,9 @@ describe("Chat Side Panel link handling", () => {
     expect(trigger).not.toBeNull();
     expect(trigger?.textContent).toContain("Open");
     const toolbar = container.querySelector<HTMLElement>("[data-testid='chat-side-panel-library-file-toolbar']");
-    expect(toolbar?.querySelector("nav[aria-label='Library file path']")?.textContent).toBe("reportsactivity.md");
-    expect(toolbar?.textContent).not.toContain("text/markdown");
+    expect(toolbar?.querySelector("nav[aria-label='Library file path']")?.textContent).toBe("reportsactivity.html");
+    expect(container.querySelector("[data-testid='chat-side-panel-library-html-preview-toolbar']")?.contains(trigger))
+      .toBe(true);
     await act(async () => {
       trigger?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
       await Promise.resolve();
@@ -2896,7 +2910,7 @@ describe("Chat Side Panel link handling", () => {
     });
     expect(openWorkspaceFileLocation).toHaveBeenCalledWith(
       "/Users/tester/Documents/Rudder/rudder",
-      "reports/activity.md",
+      "reports/activity.html",
       "terminal",
     );
   }, 15_000);
@@ -3180,9 +3194,149 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
 
-    expect(webview?.getAttribute("src")).toBe("https://example.org/redirected");
+    expect(webview?.getAttribute("src")).toBe("https://www.google.com/search?q=google");
+    expect(sidePanel?.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]')?.value).toBe(
+      "https://example.org/redirected",
+    );
+    expect(container.querySelector("[data-testid='chat-side-panel-tab']")?.textContent).toContain("example.org");
     expect(container.querySelector("[data-testid='chat-side-panel-browser-webview']")).toBe(webview);
     expect(container.querySelector("[data-testid='chat-side-panel-browser-view']")).not.toBeNull();
+  });
+
+  it("renders a full Browser connection error state and reloads the current webview", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "browser-error-message", body: "Open the browser panel." })],
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const sidePanelButton = container.querySelector<HTMLButtonElement>('button[aria-label="Open Side Panel"]');
+    await act(async () => {
+      sidePanelButton?.click();
+      await Promise.resolve();
+    });
+
+    let sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    const browserOption = Array.from(sidePanel!.querySelectorAll<HTMLButtonElement>("button")).find(
+      (candidate) => candidate.textContent?.includes("Browser"),
+    );
+    await act(async () => {
+      browserOption?.click();
+      await Promise.resolve();
+    });
+
+    sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    const urlInput = sidePanel!.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]');
+    await act(async () => {
+      urlInput!.value = "127.0.0.1:3201";
+      urlInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      urlInput!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    const webview = container.querySelector<HTMLElement & {
+      canGoBack?: () => boolean;
+      canGoForward?: () => boolean;
+      getURL?: () => string;
+      reload?: () => void;
+    }>("[data-testid='chat-side-panel-browser-webview']");
+    expect(webview).not.toBeNull();
+    const reload = vi.fn();
+    Object.assign(webview!, {
+      canGoBack: () => false,
+      canGoForward: () => false,
+      getURL: () => "http://127.0.0.1:3201/",
+      reload,
+    });
+
+    const removeEventListener = vi.spyOn(webview!, "removeEventListener");
+    await act(async () => {
+      webview!.dispatchEvent(new Event("dom-ready"));
+      webview!.dispatchEvent(Object.assign(new Event("did-start-navigation"), {
+        isMainFrame: true,
+        url: "http://127.0.0.1:3201/",
+      }));
+      await Promise.resolve();
+    });
+    expect(removeEventListener).not.toHaveBeenCalledWith("did-fail-load", expect.any(Function));
+
+    await act(async () => {
+      webview!.dispatchEvent(Object.assign(new Event("did-fail-load"), {
+        errorDescription: "ERR_CONNECTION_REFUSED",
+        isMainFrame: false,
+        validatedURL: "http://127.0.0.1:3201/subframe",
+      }));
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='chat-side-panel-browser-error']")).toBeNull();
+    expect(webview?.className).not.toContain("invisible");
+
+    await act(async () => {
+      webview!.dispatchEvent(Object.assign(new Event("did-fail-load"), {
+        errorDescription: "ERR_ABORTED",
+        isMainFrame: true,
+        validatedURL: "http://127.0.0.1:3201/",
+      }));
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='chat-side-panel-browser-error']")).toBeNull();
+    expect(webview?.className).not.toContain("invisible");
+
+    await act(async () => {
+      webview!.dispatchEvent(Object.assign(new Event("did-fail-load"), {
+        errorDescription: "ERR_CONNECTION_REFUSED",
+        isMainFrame: true,
+        validatedURL: "http://127.0.0.1:3201/",
+      }));
+      await Promise.resolve();
+    });
+
+    const errorState = container.querySelector<HTMLElement>("[data-testid='chat-side-panel-browser-error']");
+    expect(errorState).not.toBeNull();
+    expect(errorState?.textContent).toContain("This site can't be reached");
+    expect(errorState?.textContent).toContain("127.0.0.1 refused to connect.");
+    expect(errorState?.textContent).toContain("ERR_CONNECTION_REFUSED");
+    expect(webview?.getAttribute("src")).toBe("http://127.0.0.1:3201");
+    expect(webview?.className).toContain("invisible");
+
+    const detailsButton = Array.from(errorState!.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.includes("Details"),
+    );
+    await act(async () => {
+      detailsButton?.click();
+      await Promise.resolve();
+    });
+    expect(errorState?.textContent).toContain("http://127.0.0.1:3201/");
+
+    const reloadButton = Array.from(errorState!.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.includes("Reload"),
+    );
+    await act(async () => {
+      reloadButton?.click();
+      await Promise.resolve();
+    });
+    expect(reload).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      webview!.dispatchEvent(new Event("did-start-loading"));
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='chat-side-panel-browser-error']")).toBeNull();
+
+    await act(async () => {
+      webview!.dispatchEvent(Object.assign(new Event("did-fail-load"), {
+        errorDescription: "ERR_NAME_NOT_RESOLVED",
+        isMainFrame: true,
+        validatedURL: "http://missing.test/",
+      }));
+      await Promise.resolve();
+    });
+    const dnsErrorState = container.querySelector<HTMLElement>("[data-testid='chat-side-panel-browser-error']");
+    expect(dnsErrorState?.textContent).toContain("missing.test's server IP address could not be found.");
+    expect(dnsErrorState?.textContent).not.toContain("refused to connect");
   });
 
   it("hides Browser entry points outside the Desktop Browser capability", async () => {
@@ -3605,6 +3759,7 @@ describe("Chat streaming controls", () => {
     mockState.streamDrafts = {
       "chat-1": {
         chatId: "chat-1",
+        streamKey: "stream-1",
         userBody: "Please draft a plan.",
         userCreatedAt: new Date("2026-05-12T09:04:00.000Z"),
         userMessageId: "user-message-1",
@@ -3624,7 +3779,11 @@ describe("Chat streaming controls", () => {
     expect(container.querySelector(".chat-composer")?.className).toContain("chat-composer--streaming");
   });
 
-  it("notifies the operator after stopping an active response", async () => {
+  it("freezes an active response immediately and waits for stop confirmation without aborting the stream", async () => {
+    let resolveStop!: (value: { stopped: boolean }) => void;
+    mockState.stopMessageStream.mockReturnValue(new Promise((resolve) => {
+      resolveStop = resolve;
+    }));
     mockState.messagesByChatId = {
       "chat-1": [
         message({
@@ -3638,6 +3797,7 @@ describe("Chat streaming controls", () => {
     mockState.streamDrafts = {
       "chat-1": {
         chatId: "chat-1",
+        streamKey: "stream-1",
         userBody: "Please draft a plan.",
         userCreatedAt: new Date("2026-05-12T09:04:00.000Z"),
         userMessageId: "user-message-1",
@@ -3653,18 +3813,79 @@ describe("Chat streaming controls", () => {
     };
 
     const { container } = renderChat();
+    mockState.setStreamDraftForChat.mockClear();
 
     await clickEnabledButtonByAriaLabel(container, "Stop streaming");
+
+    expect(mockState.stopMessageStream).toHaveBeenCalledWith("chat-1");
+    expect(mockState.abortChatStream).not.toHaveBeenCalled();
+    expect(mockState.setStreamDraftForChat).toHaveBeenCalledTimes(1);
+    const freezeUpdate = mockState.setStreamDraftForChat.mock.calls[0]?.[1] as (
+      current: ChatStreamDraft | null,
+    ) => ChatStreamDraft | null;
+    const frozen = freezeUpdate(mockState.streamDrafts["chat-1"] ?? null);
+    expect(frozen).toMatchObject({
+      streamKey: "stream-1",
+      body: "Working on it...",
+      state: "stopping",
+    });
+    expect(mockState.pushToast).not.toHaveBeenCalledWith(expect.objectContaining({
+      title: "Response stopped",
+    }));
+
     await act(async () => {
+      resolveStop({ stopped: true });
       await Promise.resolve();
     });
 
-    expect(mockState.stopMessageStream).toHaveBeenCalledWith("chat-1");
+    expect(mockState.setStreamDraftForChat).toHaveBeenCalledTimes(2);
+    const stoppedUpdate = mockState.setStreamDraftForChat.mock.calls[1]?.[1] as (
+      current: ChatStreamDraft | null,
+    ) => ChatStreamDraft | null;
+    expect(stoppedUpdate(frozen)).toMatchObject({
+      streamKey: "stream-1",
+      body: "Working on it...",
+      state: "stopped",
+    });
     expect(mockState.pushToast).toHaveBeenCalledWith({
       title: "Response stopped",
       body: "Rudder interrupted the current reply.",
       tone: "info",
     });
+  });
+
+  it.each([
+    { state: "stopping" as const, label: "Stopping response" },
+    { state: "stopped" as const, label: "Response stopped" },
+  ])("exposes a stable $state state without offering Stop again", ({ state, label }) => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    mockState.sendInFlightByChatId = { "chat-1": true };
+    mockState.streamDrafts = {
+      "chat-1": {
+        chatId: "chat-1",
+        streamKey: "stream-1",
+        userBody: "Please draft a plan.",
+        userCreatedAt: new Date("2026-05-12T09:04:00.000Z"),
+        userMessageId: "user-message-1",
+        chatTurnId: "turn-1",
+        turnVariant: 0,
+        editedFromCreatedAt: null,
+        body: "Working on it...",
+        state,
+        createdAt: new Date("2026-05-12T09:04:01.000Z"),
+        transcript: [],
+        replyingAgentId: "agent-1",
+      },
+    };
+
+    const { container } = renderChat();
+
+    const statusButton = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+    expect(statusButton).not.toBeNull();
+    expect(statusButton?.disabled).toBe(true);
+    expect(container.querySelector("button[aria-label='Stop streaming']")).toBeNull();
   });
 
   it("keeps stop available when only the server reports an active generation", async () => {
@@ -4330,6 +4551,7 @@ describe("Chat ask_user panel", () => {
     mockState.streamDrafts = {
       "chat-1": {
         chatId: "chat-1",
+        streamKey: "stream-ask-user",
         userBody: multilineFreeformAnswer,
         userCreatedAt: new Date("2026-05-12T09:04:00.000Z"),
         userMessageId: null,

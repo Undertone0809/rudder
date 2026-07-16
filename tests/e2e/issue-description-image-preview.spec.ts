@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { E2E_BASE_URL } from "./support/e2e-env";
 
-test("issue description markdown images open a preview on double click", async ({ page }) => {
+test("issue description and attachment images open the global preview", async ({ page }) => {
   test.setTimeout(120_000);
 
   const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
@@ -54,6 +54,18 @@ test("issue description markdown images open a preview on double click", async (
   expect(attachmentRes.ok()).toBe(true);
   const attachment = await attachmentRes.json() as { contentPath: string };
 
+  const issueAttachmentRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/issues/${issue.id}/attachments`, {
+    multipart: {
+      usage: "issue",
+      file: {
+        name: "issue-evidence.png",
+        mimeType: "image/png",
+        buffer: imageBuffer,
+      },
+    },
+  });
+  expect(issueAttachmentRes.ok()).toBe(true);
+
   const descriptionRes = await page.request.patch(`${E2E_BASE_URL}/api/issues/${issue.id}`, {
     data: {
       description: `Inspect this screenshot:\n\n![Description evidence](${attachment.contentPath})`,
@@ -67,11 +79,13 @@ test("issue description markdown images open a preview on double click", async (
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
 
-  const descriptionImage = page.locator(".rudder-milkdown-content img").first();
+  const descriptionImage = page.getByRole("button", {
+    name: "Open image preview: Description evidence",
+  });
   await expect(descriptionImage).toBeVisible();
-  await descriptionImage.dblclick();
+  await descriptionImage.click();
 
-  const previewDialog = page.getByTestId("markdown-editor-image-preview-dialog");
+  const previewDialog = page.getByTestId("markdown-body-image-preview-dialog");
   await expect(previewDialog).toBeVisible();
   await expect(previewDialog.getByAltText("Description evidence")).toBeVisible();
   await expect(previewDialog.getByRole("button", { name: "Copy Image" })).toBeVisible();
@@ -88,4 +102,18 @@ test("issue description markdown images open a preview on double click", async (
   expect(previewMetrics.renderedWidth).toBeGreaterThan(600);
   expect(previewMetrics.renderedHeight).toBeGreaterThan(330);
   expect(previewMetrics.ratioDelta).toBeLessThan(0.01);
+
+  await page.keyboard.press("Escape");
+  await expect(previewDialog).toHaveCount(0);
+
+  const attachmentName = page.getByRole("button", { name: "issue-evidence.png", exact: true });
+  await expect(attachmentName).toBeVisible();
+  await attachmentName.click();
+
+  const attachmentPreview = page.getByTestId("issue-attachment-image-preview-dialog");
+  await expect(attachmentPreview).toBeVisible();
+  await expect(attachmentPreview.getByRole("button", { name: "Close image preview" })).toBeVisible();
+  await expect(attachmentPreview.getByRole("button", { name: "Copy Image" })).toBeVisible();
+  await expect(attachmentPreview.getByRole("button", { name: "Download Image" })).toBeVisible();
+  await page.screenshot({ path: "/tmp/rudder-issue-attachment-image-preview.png", fullPage: false });
 });

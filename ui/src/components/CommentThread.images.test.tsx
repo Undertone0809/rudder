@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { ImagePreviewProvider } from "@/context/ImagePreviewContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { ToastProvider } from "@/context/ToastContext";
 import { act, type ReactNode } from "react";
@@ -101,25 +102,27 @@ describe("CommentThread markdown images", () => {
   it("opens issue comment image previews on double-click", () => {
     const container = render(
       <ThemeProvider>
-        <ToastProvider>
-          <MemoryRouter>
-            <CommentThread
-              comments={[
-                {
-                  id: "comment-1",
-                  issueId: "issue-1",
-                  orgId: "org-1",
-                  authorUserId: "user-1",
-                  authorAgentId: null,
-                  body: "Evidence: ![Screenshot](/api/attachments/comment-image/content)",
-                  createdAt: new Date("2026-05-13T00:00:00.000Z"),
-                  updatedAt: new Date("2026-05-13T00:00:00.000Z"),
-                },
-              ]}
-              onAdd={async () => undefined}
-            />
-          </MemoryRouter>
-        </ToastProvider>
+        <MemoryRouter>
+          <ToastProvider>
+            <ImagePreviewProvider>
+              <CommentThread
+                comments={[
+                  {
+                    id: "comment-1",
+                    issueId: "issue-1",
+                    orgId: "org-1",
+                    authorUserId: "user-1",
+                    authorAgentId: null,
+                    body: "Evidence: ![Screenshot](/api/attachments/comment-image/content)",
+                    createdAt: new Date("2026-05-13T00:00:00.000Z"),
+                    updatedAt: new Date("2026-05-13T00:00:00.000Z"),
+                  },
+                ]}
+                onAdd={async () => undefined}
+              />
+            </ImagePreviewProvider>
+          </ToastProvider>
+        </MemoryRouter>
       </ThemeProvider>,
     );
 
@@ -135,27 +138,32 @@ describe("CommentThread markdown images", () => {
   });
 
   it("renders issue comment images with preview and context-menu actions", () => {
+    const parentClick = vi.fn();
     const container = render(
       <ThemeProvider>
-        <ToastProvider>
-          <MemoryRouter>
-            <CommentThread
-              comments={[
-                {
-                  id: "comment-1",
-                  issueId: "issue-1",
-                  orgId: "org-1",
-                  authorUserId: "user-1",
-                  authorAgentId: null,
-                  body: "Evidence: ![Screenshot](/api/attachments/comment-image/content)",
-                  createdAt: new Date("2026-05-13T00:00:00.000Z"),
-                  updatedAt: new Date("2026-05-13T00:00:00.000Z"),
-                },
-              ]}
-              onAdd={async () => undefined}
-            />
-          </MemoryRouter>
-        </ToastProvider>
+        <MemoryRouter>
+          <ToastProvider>
+            <ImagePreviewProvider>
+              <div onClick={parentClick}>
+                <CommentThread
+                  comments={[
+                    {
+                      id: "comment-1",
+                      issueId: "issue-1",
+                      orgId: "org-1",
+                      authorUserId: "user-1",
+                      authorAgentId: null,
+                      body: "Evidence: ![Screenshot](/api/attachments/comment-image/content)",
+                      createdAt: new Date("2026-05-13T00:00:00.000Z"),
+                      updatedAt: new Date("2026-05-13T00:00:00.000Z"),
+                    },
+                  ]}
+                  onAdd={async () => undefined}
+                />
+              </div>
+            </ImagePreviewProvider>
+          </ToastProvider>
+        </MemoryRouter>
       </ThemeProvider>,
     );
 
@@ -166,6 +174,7 @@ describe("CommentThread markdown images", () => {
       imageButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
     expect(document.body.querySelector('[data-testid="markdown-body-image-preview-dialog"]')).toBeTruthy();
+    expect(parentClick).not.toHaveBeenCalled();
 
     const image = container.querySelector("img");
     act(() => {

@@ -4,6 +4,15 @@ export function isImageContentType(contentType: string | null | undefined) {
   return Boolean(contentType?.toLowerCase().startsWith("image/"));
 }
 
+const PREVIEWABLE_IMAGE_EXTENSION = /\.(?:avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i;
+
+export function isPreviewableImage(contentType: string | null | undefined, name: string) {
+  const normalizedContentType = contentType?.trim();
+  if (normalizedContentType) return isImageContentType(normalizedContentType);
+  const path = name.split(/[?#]/u, 1)[0] ?? name;
+  return PREVIEWABLE_IMAGE_EXTENSION.test(path);
+}
+
 function extensionForImageContentType(contentType: string) {
   switch (contentType.toLowerCase().split(";")[0]) {
     case "image/jpeg":
@@ -96,10 +105,6 @@ export async function showImageInFolder(src: string, name: string) {
 
 export function canShowImageInFolder() {
   return Boolean(readDesktopShell()?.showImageInFolder);
-}
-
-export function openImage(src: string) {
-  window.open(src, "_blank", "noopener,noreferrer");
 }
 
 export async function downloadImage(src: string, name: string) {

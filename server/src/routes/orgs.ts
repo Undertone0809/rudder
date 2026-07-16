@@ -6,6 +6,7 @@ import {
   createOrganizationSchema,
   createOrganizationWorkspaceDirectorySchema,
   createOrganizationWorkspaceFileSchema,
+  createOrganizationWorkspaceWebPreviewSessionSchema,
   createWorkspaceBackupSchema,
   moveOrganizationWorkspaceEntrySchema,
   organizationIntelligenceProfilePurposeSchema,
@@ -44,6 +45,7 @@ import {
 } from "../services/index.js";
 import { libraryEntryService } from "../services/library-entries.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
+import type { WorkspaceWebPreviewRuntime } from "../services/workspace-web-preview.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
@@ -57,7 +59,23 @@ function assertNoEmbeddedImageDataUrls(content: string) {
   }
 }
 
-export function organizationRoutes(db: Db, storage?: StorageService) {
+function requestBrowserOrigin(req: Request) {
+  const origin = req.header("origin")?.trim();
+  if (origin) return origin;
+  const referer = req.header("referer")?.trim();
+  if (!referer) return "";
+  try {
+    return new URL(referer).origin;
+  } catch {
+    return "";
+  }
+}
+
+export function organizationRoutes(
+  db: Db,
+  storage?: StorageService,
+  workspacePreview?: WorkspaceWebPreviewRuntime,
+) {
   const router = Router();
   const svc = organizationService(db);
   const agents = agentService(db);
@@ -543,6 +561,26 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     res.setHeader("Content-Disposition", `inline; filename="${workspaceFile.originalFilename.replaceAll("\"", "")}"`);
     res.send(workspaceFile.buffer);
   });
+
+  if (workspacePreview) {
+    router.post(
+      "/:orgId/workspace/web-preview-sessions",
+      validate(createOrganizationWorkspaceWebPreviewSessionSchema),
+      async (req, res) => {
+        const orgId = req.params.orgId as string;
+        assertCompanyAccess(req, orgId);
+        assertBoard(req);
+        const session = await workspacePreview.createSession({
+          orgId,
+          entryPath: req.body.entryPath,
+          networkMode: req.body.networkMode,
+          htmlContent: req.body.htmlContent,
+          parentOrigin: requestBrowserOrigin(req),
+        });
+        res.status(201).json(session);
+      },
+    );
+  }
 
   router.get("/:orgId/workspace/mention-files", async (req, res) => {
     const orgId = req.params.orgId as string;

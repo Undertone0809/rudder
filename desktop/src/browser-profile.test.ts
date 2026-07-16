@@ -7,6 +7,8 @@ import {
   deriveBrowserPartition,
   isAllowedBrowserBootstrapUrl,
   isAllowedBrowserNavigationUrl,
+  isAllowedOperatorBrowserNavigationUrl,
+  isLocalAbsoluteFileUrl,
 } from "./browser-profile.js";
 
 const tempRoots: string[] = [];
@@ -80,8 +82,33 @@ describe("Rudder Browser URL policy", () => {
   it("allows web URLs but rejects the Rudder control-plane origin", () => {
     expect(isAllowedBrowserNavigationUrl("https://example.com/path?q=1", controlPlaneOrigins)).toBe(true);
     expect(isAllowedBrowserNavigationUrl("http://example.test/", controlPlaneOrigins)).toBe(true);
+    expect(isAllowedBrowserNavigationUrl("file:///Users/example/report.html", controlPlaneOrigins)).toBe(false);
     expect(isAllowedBrowserNavigationUrl("http://127.0.0.1:3100/api/orgs", controlPlaneOrigins)).toBe(false);
     expect(isAllowedBrowserNavigationUrl("https://rudder.internal/settings", controlPlaneOrigins)).toBe(false);
+  });
+
+  it("allows operator-entered local file URLs without broadening Agent Browser navigation", () => {
+    expect(isAllowedOperatorBrowserNavigationUrl("file:///Users/example/report.html", controlPlaneOrigins)).toBe(true);
+    expect(isAllowedOperatorBrowserNavigationUrl("file:///C:/Users/example/report.html", controlPlaneOrigins)).toBe(true);
+    expect(isAllowedOperatorBrowserNavigationUrl("https://example.com/path?q=1", controlPlaneOrigins)).toBe(true);
+    expect(isAllowedOperatorBrowserNavigationUrl("file://remote-host/share/report.html", controlPlaneOrigins)).toBe(false);
+    expect(isAllowedOperatorBrowserNavigationUrl("file://localhost/tmp/report.html", controlPlaneOrigins)).toBe(false);
+    expect(isAllowedOperatorBrowserNavigationUrl("file:relative.html", controlPlaneOrigins)).toBe(false);
+    expect(isAllowedOperatorBrowserNavigationUrl("http://127.0.0.1:3100/api/orgs", controlPlaneOrigins)).toBe(false);
+    expect(isAllowedOperatorBrowserNavigationUrl("javascript:alert(1)", controlPlaneOrigins)).toBe(false);
+  });
+
+  it("recognizes only canonical local absolute file URLs", () => {
+    expect(isLocalAbsoluteFileUrl("file:///tmp/report.html")).toBe(true);
+    expect(isLocalAbsoluteFileUrl("file:///C:/Users/example/report.html")).toBe(true);
+    expect(isLocalAbsoluteFileUrl("file://remote-host/share/report.html")).toBe(false);
+    expect(isLocalAbsoluteFileUrl("file://localhost/tmp/report.html")).toBe(false);
+    expect(isLocalAbsoluteFileUrl("file:////server/share/report.html")).toBe(false);
+    expect(isLocalAbsoluteFileUrl("file:///\\\\server\\share\\report.html")).toBe(false);
+    expect(isLocalAbsoluteFileUrl("file:///%2F%2Fserver/share/report.html")).toBe(false);
+    expect(isLocalAbsoluteFileUrl("file:///%5C%5Cserver%5Cshare%5Creport.html")).toBe(false);
+    expect(isLocalAbsoluteFileUrl("file:/tmp/report.html")).toBe(false);
+    expect(isLocalAbsoluteFileUrl("file:report.html")).toBe(false);
   });
 
   it.each([
@@ -118,6 +145,9 @@ describe("Rudder Browser URL policy", () => {
     expect(isAllowedBrowserBootstrapUrl("about:blank", controlPlaneOrigins)).toBe(true);
     expect(isAllowedBrowserBootstrapUrl("about:blank#injected", controlPlaneOrigins)).toBe(false);
     expect(isAllowedBrowserBootstrapUrl("https://example.com", controlPlaneOrigins)).toBe(true);
+    expect(isAllowedBrowserBootstrapUrl("file:///Users/example/report.html", controlPlaneOrigins)).toBe(true);
+    expect(isAllowedBrowserBootstrapUrl("file://remote-host/share/report.html", controlPlaneOrigins)).toBe(false);
+    expect(isAllowedBrowserBootstrapUrl("file:////server/share/report.html", controlPlaneOrigins)).toBe(false);
     expect(isAllowedBrowserNavigationUrl("about:blank", controlPlaneOrigins)).toBe(false);
   });
 

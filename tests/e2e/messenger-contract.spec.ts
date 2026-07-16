@@ -1194,6 +1194,21 @@ test.describe("Messenger unified threads contract", () => {
     await issuesRow.hover();
     await issuesRow.getByRole("button", { name: "Thread actions" }).click();
     await page.getByRole("menuitem", { name: "New group" }).click();
+    const customGroupPopover = page.getByTestId("messenger-custom-group-popover");
+    await expect(customGroupPopover).toBeVisible();
+    await expect(page.getByRole("menu", { name: "Thread actions" })).toBeHidden();
+    await expect(page.getByLabel("Group name")).toBeFocused();
+    await expect(customGroupPopover).toHaveAttribute("data-side", "right");
+    expect(await customGroupPopover.evaluate((element) =>
+      element.closest('[data-testid="workspace-sidebar"]') === null,
+    )).toBe(true);
+    await expect.poll(async () => {
+      const [rowBox, popoverBox] = await Promise.all([
+        issuesRow.boundingBox(),
+        customGroupPopover.boundingBox(),
+      ]);
+      return Boolean(rowBox && popoverBox && popoverBox.x >= rowBox.x + rowBox.width + 4);
+    }).toBe(true);
     await expectCustomGroupIconPickerKeepsEmojiInGrid(page);
     await page.getByLabel("Group name").fill("Issue row group");
 

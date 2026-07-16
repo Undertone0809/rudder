@@ -64,6 +64,7 @@ import {
   readIssueAutosave,
   readNewIssuePreferences,
   readSavedIssueDraft,
+  resolveCreatedIssueNavigation,
   resolveDefaultNewIssueProjectId,
   resolveDraftBackedNewIssueValues,
   saveIssueAutosave,
@@ -105,24 +106,6 @@ const ISSUE_METADATA_SELECTOR_CLASSNAME = "h-auto min-h-12 w-full py-2";
 type ViewTransitionDocument = Document & {
   startViewTransition?: (callback: () => void) => { finished: Promise<void> };
 };
-
-function buildCreatedIssueDetailHref(input: {
-  issue: { id: string; identifier: string | null };
-  orgId: string;
-  organizations: Array<{ id: string; issuePrefix?: string | null }>;
-}): string {
-  const issueRef = input.issue.identifier ?? input.issue.id;
-  const organizationPrefix = input.organizations
-    .find((organization) => organization.id === input.orgId)
-    ?.issuePrefix
-    ?.trim();
-  return organizationPrefix ? `/${organizationPrefix}/issues/${issueRef}` : `/issues/${issueRef}`;
-}
-
-function buildIssueDetailSourceHref(openContextLocation: { pathname: string; search: string } | null): string {
-  if (!openContextLocation) return "/issues";
-  return `${openContextLocation.pathname}${openContextLocation.search}`;
-}
 
 const ISSUE_THINKING_EFFORT_OPTIONS = {
   claude_local: [
@@ -462,14 +445,18 @@ export function NewIssueDialog() {
         projectId,
       });
       const issueRef = issue.identifier ?? issue.id;
-      const issueDetailHref = buildCreatedIssueDetailHref({ issue, orgId, organizations });
-      const sourceHref = buildIssueDetailSourceHref(openContextLocationRef.current);
+      const issueNavigation = resolveCreatedIssueNavigation({
+        issue,
+        orgId,
+        organizations,
+        openContextLocation: openContextLocationRef.current,
+      });
       if (failures.length > 0) {
         pushToast({
           title: `Created ${issueRef} with upload warnings`,
           body: `${failures.length} staged ${failures.length === 1 ? "file" : "files"} could not be added.`,
           tone: "warn",
-          action: { label: `Open ${issueRef}`, href: issueDetailHref },
+          action: { label: `Open ${issueRef}`, href: issueNavigation.detailHref },
         });
       }
       setRedirectingIssueRef(issueRef);
@@ -481,13 +468,19 @@ export function NewIssueDialog() {
       const transitionDocument = document as ViewTransitionDocument;
       if (transitionDocument.startViewTransition) {
         await transitionDocument.startViewTransition(() => {
-          navigate(issueDetailHref, {
-            state: createIssueDetailLocationState("Issues", sourceHref),
+          navigate(issueNavigation.detailHref, {
+            state: createIssueDetailLocationState(
+              issueNavigation.breadcrumbLabel,
+              issueNavigation.breadcrumbHref,
+            ),
           });
         }).finished.catch(() => undefined);
       } else {
-        navigate(issueDetailHref, {
-          state: createIssueDetailLocationState("Issues", sourceHref),
+        navigate(issueNavigation.detailHref, {
+          state: createIssueDetailLocationState(
+            issueNavigation.breadcrumbLabel,
+            issueNavigation.breadcrumbHref,
+          ),
         });
       }
     },

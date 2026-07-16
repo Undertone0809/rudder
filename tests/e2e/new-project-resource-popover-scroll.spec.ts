@@ -62,6 +62,13 @@ test("keeps external resource creation at the top while the resource list scroll
     button.closest('[data-testid="new-project-add-resources-popover-scroll"]') === null
   ))).toBe(true);
 
+  const dimensions = await scroller.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }));
+  expect(dimensions.clientHeight).toBeGreaterThan(0);
+  expect(dimensions.scrollHeight).toBeGreaterThan(dimensions.clientHeight);
+
   const box = await scroller.boundingBox();
   expect(box).not.toBeNull();
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);

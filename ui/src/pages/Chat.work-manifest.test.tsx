@@ -49,6 +49,29 @@ function item(id: string, category: "output" | "source" | "reference", title: st
   };
 }
 
+function attachmentItem(id: string, title: string, contentType: string | null = null): ChatWorkManifestItem {
+  return {
+    ...item(id, "output", title),
+    targetType: "attachment",
+    metadata: { contentType },
+  };
+}
+
+function referenceItem(id: string, targetType: ChatWorkManifestItem["targetType"], title: string): ChatWorkManifestItem {
+  return {
+    ...item(id, "reference", title),
+    targetType,
+    url: null,
+    metadata: targetType === "issue" || targetType === "issue_comment"
+      ? { issueId: id, commentId: targetType === "issue_comment" ? `comment-${id}` : null }
+      : targetType === "automation"
+        ? { automationId: id }
+        : targetType === "chat_conversation"
+          ? { conversationId: id }
+          : {},
+  };
+}
+
 const manifest: ChatWorkManifestResponse = {
   conversationId: "chat-1",
   totalCount: 6,
@@ -96,6 +119,84 @@ describe("ChatWorkManifest", () => {
     expect(container.querySelector("[data-website-icon]")).not.toBeNull();
   });
 
+  it("uses typed website, image, document, and attachment icons", () => {
+    const fileManifest: ChatWorkManifestResponse = {
+      ...manifest,
+      totalCount: 7,
+      outputs: [
+        attachmentItem("html", "index.html", "text/html"),
+        attachmentItem("image", "hero.png", "image/png"),
+        attachmentItem("table", "results.csv", "text/csv"),
+        attachmentItem("code", "styles.css", "text/css"),
+        attachmentItem("document", "README.md", "text/markdown"),
+        attachmentItem("unknown", "Artifact"),
+      ],
+      sources: [],
+      references: [item("website", "reference", "docs.example")],
+    };
+    const container = render(
+      <ChatWorkManifest
+        manifest={fileManifest}
+        loading={false}
+        error={null}
+        sidePanelOpen={false}
+        wideOpen
+        {...handlers}
+      />,
+    );
+
+    const panel = container.querySelector("[data-testid='chat-work-manifest-wide-panel']");
+    const expandButton = Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+      .find((button) => button.textContent?.includes("View all 6"));
+    act(() => expandButton?.click());
+    const iconFor = (title: string) => Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+      .find((button) => button.title === title)
+      ?.querySelector("[data-file-icon]")
+      ?.getAttribute("data-file-icon");
+    expect(iconFor("index.html")).toBe("website");
+    expect(iconFor("hero.png")).toBe("image");
+    expect(iconFor("results.csv")).toBe("document");
+    expect(iconFor("styles.css")).toBe("document");
+    expect(iconFor("README.md")).toBe("document");
+    expect(iconFor("Artifact")).toBe("attachment");
+    expect(panel?.querySelector("[data-website-icon]")).not.toBeNull();
+  });
+
+  it("uses typed icons for Rudder references", () => {
+    const referenceManifest: ChatWorkManifestResponse = {
+      ...manifest,
+      totalCount: 4,
+      outputs: [],
+      sources: [],
+      references: [
+        referenceItem("issue-1", "issue", "ZST-1"),
+        referenceItem("automation-1", "automation", "Daily report"),
+        referenceItem("chat-1", "chat_conversation", "Planning chat"),
+      ],
+    };
+    const container = render(
+      <ChatWorkManifest
+        manifest={referenceManifest}
+        loading={false}
+        error={null}
+        sidePanelOpen={false}
+        wideOpen
+        {...handlers}
+      />,
+    );
+
+    const panel = container.querySelector("[data-testid='chat-work-manifest-wide-panel']");
+    const expandButton = Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+      .find((button) => button.textContent?.includes("View all 3"));
+    act(() => expandButton?.click());
+    const iconFor = (title: string) => Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+      .find((button) => button.title === title)
+      ?.querySelector("[data-file-icon]")
+      ?.getAttribute("data-file-icon");
+    expect(iconFor("ZST-1")).toBe("issue");
+    expect(iconFor("Daily report")).toBe("automation");
+    expect(iconFor("Planning chat")).toBe("chat");
+  });
   it("does not render while loading or when thread work is empty", () => {
     const loading = render(
       <ChatWorkManifest manifest={null} loading error={null} sidePanelOpen={false} {...wideProps} {...handlers} />,

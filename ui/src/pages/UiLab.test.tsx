@@ -45,7 +45,6 @@ describe("UiLab coverage registry", () => {
       "ChatFileAttachmentChip",
       "PendingAttachmentPreview",
       "ChatAttachmentList",
-      "ChatAttachmentPreviewDialog",
       "ChatAssistantAttributionRow",
       "ProposalCard",
       "ChatLongMessageBody",

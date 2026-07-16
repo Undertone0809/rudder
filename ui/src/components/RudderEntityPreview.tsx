@@ -14,6 +14,7 @@ import { issuesApi } from "../api/issues";
 import { organizationsApi } from "../api/orgs";
 import { projectsApi } from "../api/projects";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
+import { getImagePreviewName } from "../lib/image-preview";
 import {
   __clearLibraryEntryMetadataCacheForTests,
   loadLibraryEntryMetadata,
@@ -26,6 +27,7 @@ import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "../l
 import { formatPriorityLabel } from "../lib/priorities";
 import { cn } from "../lib/utils";
 import { AgentIcon } from "./AgentAvatar";
+import { InspectableImage } from "./InspectableImage";
 import { PriorityIcon } from "./PriorityIcon";
 import { ProjectIcon } from "./ProjectIdentity";
 import { StatusIcon } from "./StatusIcon";
@@ -531,9 +533,20 @@ const previewMarkdownComponents: Components = {
       </a>
     );
   },
-  img: ({ node: _node, src, alt, ...props }) => (
-    <img {...props} src={src ?? ""} alt={alt ?? ""} loading="lazy" />
-  ),
+  img: ({ node: _node, src, alt, ...props }) => {
+    const imageSrc = src ?? "";
+    return (
+      <InspectableImage
+        {...props}
+        src={imageSrc}
+        alt={alt ?? ""}
+        name={getImagePreviewName(alt, imageSrc)}
+        loading="lazy"
+        previewTestId="entity-image-preview-dialog"
+        previewTitleFallback="Image preview"
+      />
+    );
+  },
 };
 
 function currentOrganizationPrefixFromLocation(): string | null {

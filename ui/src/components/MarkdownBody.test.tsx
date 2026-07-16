@@ -4,7 +4,9 @@ import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ImagePreviewProvider } from "../context/ImagePreviewContext";
 import { ThemeProvider } from "../context/ThemeContext";
 import { __clearWebsiteMetadataIconCacheForTests, MarkdownBody, WebsiteLinkIcon } from "./MarkdownBody";
 import type { MentionOption } from "./MarkdownEditor";
@@ -184,7 +186,11 @@ function render(element: ReactNode) {
     container.remove();
   };
   act(() => {
-    root.render(element);
+    root.render(
+      <MemoryRouter>
+        <ImagePreviewProvider>{element}</ImagePreviewProvider>
+      </MemoryRouter>,
+    );
   });
   return container;
 }
@@ -555,7 +561,6 @@ describe("MarkdownBody", () => {
   });
 
   it("shows image actions from the custom markdown image context menu", () => {
-    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
     const container = render(
       <ThemeProvider>
         <MarkdownBody>{"![Evidence](/api/attachments/test/content)"}</MarkdownBody>
@@ -585,9 +590,8 @@ describe("MarkdownBody", () => {
     act(() => {
       openItem?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
-    expect(openSpy).toHaveBeenCalledWith("/api/attachments/test/content", "_blank", "noopener,noreferrer");
-
-    openSpy.mockRestore();
+    const previewRoot = document.body.querySelector('[data-testid="markdown-body-image-preview-dialog"]');
+    expect(previewRoot?.querySelector("img")?.getAttribute("alt")).toBe("Evidence");
   });
 
   it("leaves images non-interactive when preview is disabled", () => {
@@ -1325,6 +1329,12 @@ describe("MarkdownBody", () => {
     expect(previewBody?.textContent).toContain("Keep this readable.");
     expect(image?.getAttribute("src")).toBe("/api/assets/comment-image/content");
     expect(image?.getAttribute("alt")).toBe("Hover card");
+    const imageTrigger = previewBody?.querySelector<HTMLButtonElement>(".rudder-inspectable-image-trigger");
+    await act(async () => {
+      imageTrigger?.click();
+    });
+    expect(document.body.querySelector("[data-testid='entity-image-preview-dialog']"))
+      .not.toBeNull();
   });
 
   it("loads agent, project, and Library previews from rendered mention chips", async () => {

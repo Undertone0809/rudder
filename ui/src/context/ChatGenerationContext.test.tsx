@@ -48,6 +48,7 @@ function streamDraft(overrides: Partial<ChatStreamDraft> = {}): ChatStreamDraft 
   const createdAt = new Date("2026-05-06T10:00:00.000Z");
   return {
     chatId: "chat-1",
+    streamKey: "stream-1",
     userBody: "hello",
     userCreatedAt: createdAt,
     userMessageId: null,

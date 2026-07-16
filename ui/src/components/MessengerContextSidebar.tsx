@@ -21,6 +21,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useChatGenerations } from "@/context/ChatGenerationContext";
 import { useDialog } from "@/context/DialogContext";
@@ -735,7 +736,7 @@ function CustomGroupEditor({
   return (
     <form
       data-testid="messenger-custom-group-editor"
-      className="mx-3 mt-2 rounded-md border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_96%,transparent)] p-2.5 shadow-sm"
+      className="p-2.5"
       onSubmit={(event) => {
         event.preventDefault();
         onSubmit();
@@ -1374,8 +1375,10 @@ function MessengerThreadSectionHeader({
   onRuleChange: (rule: ThreadOrganizationRule) => void;
   onDensityChange: (density: MessengerThreadDensity) => void;
   onSplitIssueNotificationsChange: (enabled: boolean) => void;
-  onCreateCustomGroup: () => void;
+  onCreateCustomGroup: (anchor: HTMLElement, invoker: HTMLButtonElement) => void;
 }) {
+  const organizerTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const customGroupHandoffRef = useRef(false);
   const activeRule = rule !== DEFAULT_THREAD_ORGANIZATION_RULE && rule !== "custom";
   const compact = density === "compact";
   const statusLabels = [
@@ -1394,6 +1397,7 @@ function MessengerThreadSectionHeader({
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
+            ref={organizerTriggerRef}
             type="button"
             data-testid="messenger-thread-organization-trigger"
             className={cn(
@@ -1405,7 +1409,15 @@ function MessengerThreadSectionHeader({
             <ListFilter className="h-3.5 w-3.5" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="morph-popover morph-popover--from-right surface-overlay w-48 text-foreground">
+        <DropdownMenuContent
+          align="end"
+          className="morph-popover morph-popover--from-right surface-overlay w-48 text-foreground"
+          onCloseAutoFocus={(event) => {
+            if (!customGroupHandoffRef.current) return;
+            event.preventDefault();
+            customGroupHandoffRef.current = false;
+          }}
+        >
           <DropdownMenuLabel className="text-xs text-muted-foreground">View</DropdownMenuLabel>
           <DropdownMenuCheckboxItem
             checked={compact}
@@ -1429,7 +1441,11 @@ function MessengerThreadSectionHeader({
             ))}
           </DropdownMenuRadioGroup>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => onCreateCustomGroup()}>
+          <DropdownMenuItem onClick={() => {
+            if (!organizerTriggerRef.current) return;
+            customGroupHandoffRef.current = true;
+            onCreateCustomGroup(organizerTriggerRef.current, organizerTriggerRef.current);
+          }}>
             <FolderPlus className="h-4 w-4" />
             New group
           </DropdownMenuItem>
@@ -1499,13 +1515,16 @@ function ChatThreadRow({
   customGroupPending?: boolean;
   onMoveToCustomGroup?: (groupId: string) => void;
   onRemoveFromCustomGroup?: () => void;
-  onCreateCustomGroup?: () => void;
+  onCreateCustomGroup?: (anchor: HTMLElement, invoker: HTMLButtonElement) => void;
   dragHandleProps?: SortableDragHandleProps;
   dragging?: boolean;
   onSelect: (href: string) => void;
 }) {
   const timeLabel = relativeTime(conversation.lastMessageAt ?? conversation.updatedAt, { compactDate: true });
   const [actionsOpen, setActionsOpen] = useState(false);
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  const actionsTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const customGroupHandoffRef = useRef(false);
   const compact = density === "compact";
   const rightActionClass = compact ? "right-1.5" : "right-2";
   const secondaryActionClass = compact ? "right-7" : "right-8";
@@ -1527,6 +1546,7 @@ function ChatThreadRow({
       suppressed={actionsOpen}
     >
     <div
+      ref={rowRef}
       data-testid={`messenger-thread-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
       data-messenger-thread-key={`chat:${conversation.id}`}
       className={cn(
@@ -1685,6 +1705,7 @@ function ChatThreadRow({
           <DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
             <DropdownMenuTrigger asChild>
               <button
+                ref={actionsTriggerRef}
                 type="button"
                 className={cn(
                   "absolute top-1/2 z-10 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-page)] hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
@@ -1697,7 +1718,15 @@ function ChatThreadRow({
                 <MoreHorizontal className="h-3.5 w-3.5" />
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="messenger-thread-actions-menu morph-popover morph-popover--from-right surface-overlay text-foreground">
+            <DropdownMenuContent
+              align="end"
+              className="messenger-thread-actions-menu morph-popover morph-popover--from-right surface-overlay text-foreground"
+              onCloseAutoFocus={(event) => {
+                if (!customGroupHandoffRef.current) return;
+                event.preventDefault();
+                customGroupHandoffRef.current = false;
+              }}
+            >
               {onStartRename ? (
                 <DropdownMenuItem onClick={onStartRename}>
                   <PencilLine className="h-4 w-4" />
@@ -1751,7 +1780,11 @@ function ChatThreadRow({
               {customGroups && !customGroupPending ? (
                 <>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={onCreateCustomGroup}>
+                  <DropdownMenuItem onClick={() => {
+                    if (!rowRef.current || !actionsTriggerRef.current) return;
+                    customGroupHandoffRef.current = true;
+                    onCreateCustomGroup?.(rowRef.current, actionsTriggerRef.current);
+                  }}>
                     <FolderPlus className="h-4 w-4" />
                     New group
                   </DropdownMenuItem>
@@ -1838,7 +1871,7 @@ function ThreadRow({
   customGroupPending?: boolean;
   onMoveToCustomGroup?: (groupId: string) => void;
   onRemoveFromCustomGroup?: () => void;
-  onCreateCustomGroup?: () => void;
+  onCreateCustomGroup?: (anchor: HTMLElement, invoker: HTMLButtonElement) => void;
   dragHandleProps?: SortableDragHandleProps;
   dragging?: boolean;
   onSelect: (thread: ReturnType<typeof useMessengerModel>["threadSummaries"][number]) => void;
@@ -1847,6 +1880,9 @@ function ThreadRow({
   const preview = formatMessengerPreview(thread.preview) || formatMessengerPreview(thread.subtitle) || messengerThreadKindLabel(thread.kind);
   const compact = density === "compact";
   const [actionsOpen, setActionsOpen] = useState(false);
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  const actionsTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const customGroupHandoffRef = useRef(false);
   const rightActionClass = compact ? "right-1.5" : "right-2";
   const secondaryActionClass = compact ? "right-7" : "right-8";
   const canTogglePin = thread.metadata?.splitIssue === true;
@@ -1884,6 +1920,7 @@ function ThreadRow({
       suppressed={actionsOpen}
     >
     <div
+      ref={rowRef}
       data-testid={`messenger-thread-${sanitizeThreadKey(thread.threadKey)}`}
       data-messenger-thread-key={thread.threadKey}
       className={cn(
@@ -1999,6 +2036,7 @@ function ThreadRow({
         <DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
           <DropdownMenuTrigger asChild>
             <button
+              ref={actionsTriggerRef}
               type="button"
               className={cn(
                 "absolute top-1/2 z-10 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-page)] hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
@@ -2010,7 +2048,15 @@ function ThreadRow({
               <MoreHorizontal className="h-3.5 w-3.5" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="messenger-thread-actions-menu morph-popover morph-popover--from-right surface-overlay text-foreground">
+          <DropdownMenuContent
+            align="end"
+            className="messenger-thread-actions-menu morph-popover morph-popover--from-right surface-overlay text-foreground"
+            onCloseAutoFocus={(event) => {
+              if (!customGroupHandoffRef.current) return;
+              event.preventDefault();
+              customGroupHandoffRef.current = false;
+            }}
+          >
             {canTogglePin ? (
               <DropdownMenuItem onClick={onTogglePin}>
                 {thread.isPinned ? (
@@ -2035,7 +2081,11 @@ function ThreadRow({
             {customGroups && !customGroupPending ? (
               <>
                 {(canTogglePin || canHideIssue) ? <DropdownMenuSeparator /> : null}
-                <DropdownMenuItem onClick={onCreateCustomGroup}>
+                <DropdownMenuItem onClick={() => {
+                  if (!rowRef.current || !actionsTriggerRef.current) return;
+                  customGroupHandoffRef.current = true;
+                  onCreateCustomGroup?.(rowRef.current, actionsTriggerRef.current);
+                }}>
                   <FolderPlus className="h-4 w-4" />
                   New group
                 </DropdownMenuItem>
@@ -2555,7 +2605,11 @@ export function MessengerContextSidebar() {
   const route = resolveMessengerRoute(relativePath);
   const markedThreadRef = useRef<string | null>(null);
   const sidebarScrollbarActivityRef = useScrollbarActivityRef("rudder:sidebar-scroll:messenger");
+  const customGroupEditorScrollbarActivityRef = useScrollbarActivityRef();
   const sidebarScrollElementRef = useRef<HTMLElement | null>(null);
+  const customGroupEditorAnchorRef = useRef<HTMLElement>(null!);
+  const customGroupEditorInvokerRef = useRef<HTMLButtonElement>(null!);
+  const customGroupEditorRestoreFocusRef = useRef(true);
   const loadMoreThreadSummariesRef = useRef<HTMLDivElement | null>(null);
   const unreadScrollCursorRef = useRef<string | null>(null);
   const handledUnreadScrollRequestIdRef = useRef(0);
@@ -3594,7 +3648,14 @@ export function MessengerContextSidebar() {
     });
   };
 
-  const openCreateCustomGroupEditor = (threadKey?: string) => {
+  const openCreateCustomGroupEditor = (
+    anchor: HTMLElement,
+    invoker: HTMLButtonElement,
+    threadKey?: string,
+  ) => {
+    customGroupEditorAnchorRef.current = anchor;
+    customGroupEditorInvokerRef.current = invoker;
+    customGroupEditorRestoreFocusRef.current = true;
     setCustomGroupRename(null);
     setCustomGroupEditor({ mode: "create", threadKey });
     setCustomGroupNameDraft("");
@@ -3602,12 +3663,12 @@ export function MessengerContextSidebar() {
     setCustomGroupColorDraft("amber");
   };
 
-  const closeCustomGroupEditor = () => {
+  const closeCustomGroupEditor = useCallback(() => {
     setCustomGroupEditor(null);
     setCustomGroupNameDraft("");
     setCustomGroupIconDraft("folder");
     setCustomGroupColorDraft("amber");
-  };
+  }, []);
 
   const submitCustomGroupEditor = () => {
     if (!customGroupEditor) return;
@@ -3622,9 +3683,33 @@ export function MessengerContextSidebar() {
     closeCustomGroupEditor();
   };
 
-  const handleCreateCustomGroup = (threadKey?: string) => {
-    openCreateCustomGroupEditor(threadKey);
+  const handleCreateCustomGroup = (
+    anchor: HTMLElement,
+    invoker: HTMLButtonElement,
+    threadKey?: string,
+  ) => {
+    window.setTimeout(() => {
+      if (anchor.isConnected && invoker.isConnected) {
+        openCreateCustomGroupEditor(anchor, invoker, threadKey);
+      }
+    }, 0);
   };
+
+  useEffect(() => {
+    if (!customGroupEditor) return undefined;
+    const anchor = customGroupEditorAnchorRef.current;
+    const sidebarScrollElement = sidebarScrollElementRef.current;
+    if (!anchor?.isConnected || !sidebarScrollElement?.contains(anchor)) return undefined;
+    const closeWhenAnchorLeavesSidebar = () => {
+      const anchorRect = anchor.getBoundingClientRect();
+      const sidebarRect = sidebarScrollElement.getBoundingClientRect();
+      if (anchorRect.bottom > sidebarRect.top && anchorRect.top < sidebarRect.bottom) return;
+      customGroupEditorRestoreFocusRef.current = false;
+      closeCustomGroupEditor();
+    };
+    sidebarScrollElement.addEventListener("scroll", closeWhenAnchorLeavesSidebar, { passive: true });
+    return () => sidebarScrollElement.removeEventListener("scroll", closeWhenAnchorLeavesSidebar);
+  }, [closeCustomGroupEditor, customGroupEditor]);
 
   const handleRenameCustomGroup = (group: MessengerCustomGroupWithEntries) => {
     setCustomGroupEditor(null);
@@ -3776,7 +3861,7 @@ export function MessengerContextSidebar() {
           customGroupPending={entry.customGroupId ? !customGroups.some((group) => group.id === entry.customGroupId) : false}
           onMoveToCustomGroup={(groupId) => assignCustomGroupEntryMutation.mutate({ groupId, threadKey: thread.threadKey })}
           onRemoveFromCustomGroup={() => removeCustomGroupEntryMutation.mutate(thread.threadKey)}
-          onCreateCustomGroup={() => handleCreateCustomGroup(thread.threadKey)}
+          onCreateCustomGroup={(anchor, invoker) => handleCreateCustomGroup(anchor, invoker, thread.threadKey)}
           dragHandleProps={dragHandleProps}
           dragging={dragging}
           onSelect={handleMessengerEntrySelect}
@@ -3806,7 +3891,7 @@ export function MessengerContextSidebar() {
         customGroupPending={entry.customGroupId ? !customGroups.some((group) => group.id === entry.customGroupId) : false}
         onMoveToCustomGroup={(groupId) => assignCustomGroupEntryMutation.mutate({ groupId, threadKey: thread.threadKey })}
         onRemoveFromCustomGroup={() => removeCustomGroupEntryMutation.mutate(thread.threadKey)}
-        onCreateCustomGroup={() => handleCreateCustomGroup(thread.threadKey)}
+        onCreateCustomGroup={(anchor, invoker) => handleCreateCustomGroup(anchor, invoker, thread.threadKey)}
         dragHandleProps={dragHandleProps}
         dragging={dragging}
         onSelect={handleMessengerThreadSelect}
@@ -4659,21 +4744,53 @@ export function MessengerContextSidebar() {
         onRuleChange={handleThreadOrganizationRuleChange}
         onDensityChange={handleThreadDensityChange}
         onSplitIssueNotificationsChange={handleSplitIssueNotificationsChange}
-        onCreateCustomGroup={handleCreateCustomGroup}
+        onCreateCustomGroup={(anchor, invoker) => handleCreateCustomGroup(anchor, invoker)}
       />
-      {customGroupEditor ? (
-        <CustomGroupEditor
-          name={customGroupNameDraft}
-          icon={customGroupIconDraft}
-          color={customGroupColorDraft}
-          pending={createCustomGroupMutation.isPending || updateCustomGroupMutation.isPending}
-          onNameChange={setCustomGroupNameDraft}
-          onIconChange={setCustomGroupIconDraft}
-          onColorChange={setCustomGroupColorDraft}
-          onCancel={closeCustomGroupEditor}
-          onSubmit={submitCustomGroupEditor}
-        />
-      ) : null}
+      <Popover
+        open={Boolean(customGroupEditor)}
+        onOpenChange={(open) => {
+          if (!open) closeCustomGroupEditor();
+        }}
+      >
+        <PopoverAnchor virtualRef={customGroupEditorAnchorRef} />
+        {customGroupEditor ? (
+          <PopoverContent
+            ref={customGroupEditorScrollbarActivityRef}
+            side={isMobile ? "bottom" : "right"}
+            align="center"
+            sideOffset={8}
+            collisionPadding={12}
+            hideWhenDetached
+            onInteractOutside={() => {
+              customGroupEditorRestoreFocusRef.current = false;
+            }}
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              if (
+                customGroupEditorRestoreFocusRef.current
+                && customGroupEditorInvokerRef.current?.isConnected
+              ) {
+                customGroupEditorInvokerRef.current.focus();
+              }
+            }}
+            aria-label="Create Messenger group"
+            data-testid="messenger-custom-group-popover"
+            className="scrollbar-auto-hide surface-overlay z-[70] max-h-[min(34rem,var(--radix-popover-content-available-height))] w-[min(25rem,calc(100vw-2rem))] overflow-y-auto p-0 text-foreground"
+          >
+            <CustomGroupEditor
+              name={customGroupNameDraft}
+              icon={customGroupIconDraft}
+              color={customGroupColorDraft}
+              pending={createCustomGroupMutation.isPending || updateCustomGroupMutation.isPending}
+              onNameChange={setCustomGroupNameDraft}
+              onIconChange={setCustomGroupIconDraft}
+              onColorChange={setCustomGroupColorDraft}
+              onCancel={closeCustomGroupEditor}
+              onSubmit={submitCustomGroupEditor}
+            />
+          </PopoverContent>
+        ) : null}
+      </Popover>
       {customGroupRename ? (
         <CustomGroupRenameForm
           name={customGroupRename.name}

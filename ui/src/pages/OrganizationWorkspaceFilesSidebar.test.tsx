@@ -27,7 +27,7 @@ vi.mock("@tanstack/react-query", () => ({
         displayLabel?: string;
         path: string;
         isDirectory: boolean;
-        entityType?: "agent_workspace" | "organization_workspace";
+        entityType?: "agent_workspace" | "orphaned_agent_workspace" | "organization_workspace";
       }>> = {
         "": [
           {
@@ -59,6 +59,13 @@ vi.mock("@tanstack/react-query", () => ({
             path: "agents/Asher",
             isDirectory: true,
             entityType: "agent_workspace",
+          },
+          {
+            name: "deleted-agent--deadbeef",
+            displayLabel: "deleted-agent--deadbeef",
+            path: "agents/deleted-agent--deadbeef",
+            isDirectory: true,
+            entityType: "orphaned_agent_workspace",
           },
         ],
         "agents/Asher": [
@@ -456,6 +463,34 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     expect(heartbeatMenu?.textContent).not.toContain("Create copy");
     expect(heartbeatMenu?.textContent).not.toContain("Delete");
     expect(heartbeatMenu?.textContent).not.toContain("Rename");
+  });
+
+  it("offers deletion only for agent workspace folders no longer linked to an agent", () => {
+    renderSidebar();
+
+    const activeAgentMenu = openEntryMenu("agents/Asher");
+    expect(activeAgentMenu?.textContent).not.toContain("Delete");
+
+    act(() => {
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    const orphanedAgentMenu = openEntryMenu("agents/deleted-agent--deadbeef");
+    expect(orphanedAgentMenu?.textContent).toContain("Delete");
+    expect(orphanedAgentMenu?.textContent).not.toContain("Create copy");
+    expect(orphanedAgentMenu?.textContent).not.toContain("Rename");
+    expect(orphanedAgentMenu?.textContent).not.toContain("New file");
+
+    const deleteItem = Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"))
+      .find((item) => item.textContent?.includes("Delete"));
+    act(() => {
+      deleteItem?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const dialog = document.querySelector<HTMLElement>("[role='dialog']");
+    expect(dialog?.textContent).toContain("Delete deleted agent folder?");
+    expect(dialog?.textContent).toContain("no longer linked to an active agent");
+    expect(dialog?.textContent).toContain("agents/deleted-agent--deadbeef");
   });
 
   it("routes legacy HEARTBEAT.md selection through the Library path owner", () => {

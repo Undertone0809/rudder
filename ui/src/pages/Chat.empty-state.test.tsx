@@ -12,6 +12,7 @@ import {
   ChatEmptyStatePromptStarters,
   ChatEmptyStateRecentConversations,
   ChatLongMessageBody,
+  chatPromptGroupForExactTrigger,
   chatPromptQueryFromDraft,
   chatPromptSuggestionsForDraft,
   EMPTY_STATE_PROMPT_GROUPS,
@@ -167,6 +168,12 @@ describe("Chat empty-state prompt starters", () => {
     ]);
   });
 
+  it("recognizes only an exact prompt-group trigger for composer emphasis", () => {
+    expect(chatPromptGroupForExactTrigger("Create a")?.id).toBe("create");
+    expect(chatPromptGroupForExactTrigger("Create a new")).toBeNull();
+    expect(chatPromptGroupForExactTrigger("Automate")?.id).toBe("automate");
+  });
+
   it.each([
     ["file", "create"],
     ["plan", "research"],
@@ -260,6 +267,26 @@ describe("Chat empty-state prompt starters", () => {
     });
     expect(onSuggestionSelect).not.toHaveBeenCalled();
   });
+
+  it("emphasizes each prompt group's shared trigger", () => {
+    const container = render(
+      <ChatEmptyStatePromptOptions
+        suggestions={EMPTY_STATE_PROMPT_GROUPS.flatMap((group) => (
+          group.suggestions.map((suggestion) => ({ ...suggestion, groupId: group.id }))
+        ))}
+        optionsId="chat-empty-state-prompt-options"
+        activeIndex={0}
+        onActiveIndexChange={vi.fn()}
+        onSuggestionSelect={vi.fn()}
+      />,
+    );
+
+    const options = Array.from(container.querySelectorAll<HTMLElement>("[role='option']"));
+    expect(options).toHaveLength(16);
+    expect(options.map((option) => option.querySelector("strong")?.textContent)).toEqual(
+      EMPTY_STATE_PROMPT_GROUPS.flatMap((group) => Array(4).fill(group.trigger)),
+    );
+  });
 });
 
 describe("ChatEmptyStateRecentConversations", () => {
@@ -274,7 +301,6 @@ describe("ChatEmptyStateRecentConversations", () => {
             latestReplyPreview: "Confirmed: release-maintainer was forked and can be used directly.",
           }),
         ]}
-        projectName="Rudder dev"
         visible
         conversationPath={(id) => `/chat/${id}`}
         onPrefetchConversation={vi.fn()}
@@ -298,7 +324,6 @@ describe("ChatEmptyStateRecentConversations", () => {
             latestReplyPreview: "Confirmed: release-maintainer was forked and can be used directly.",
           }),
         ]}
-        projectName="Rudder dev"
         visible
         conversationPath={(id) => `/chat/${id}`}
         onPrefetchConversation={vi.fn()}
@@ -322,7 +347,6 @@ describe("ChatEmptyStateRecentConversations", () => {
             latestReplyPreview: "Assistant reply should stay hidden.",
           }),
         ]}
-        projectName="Rudder dev"
         visible
         conversationPath={(id) => `/chat/${id}`}
         onPrefetchConversation={vi.fn()}
@@ -341,7 +365,6 @@ describe("ChatEmptyStateRecentConversations", () => {
     const visibleContainer = render(
       <ChatEmptyStateRecentConversations
         conversations={[chatConversation()]}
-        projectName="Rudder dev"
         visible
         conversationPath={(id) => `/chat/${id}`}
         onPrefetchConversation={vi.fn()}
@@ -363,7 +386,6 @@ describe("ChatEmptyStateRecentConversations", () => {
     const hiddenContainer = render(
       <ChatEmptyStateRecentConversations
         conversations={[chatConversation()]}
-        projectName="Rudder dev"
         visible={false}
         conversationPath={(id) => `/chat/${id}`}
         onPrefetchConversation={vi.fn()}
@@ -410,7 +432,6 @@ describe("ChatEmptyStateRecentConversations", () => {
       const container = render(
         <ChatEmptyStateRecentConversations
           conversations={[chatConversation()]}
-          projectName="Rudder dev"
           visible
           conversationPath={(id) => `/chat/${id}`}
           onPrefetchConversation={vi.fn()}

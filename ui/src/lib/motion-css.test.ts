@@ -78,7 +78,7 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain(".motion-chat-prompt-flow");
     expect(motionCss).toContain(".t-page-slide");
     expect(motionCss).toContain(".t-stagger-line--4");
-    expect(motionCss).toContain('grid-template-rows: 0fr');
+    expect(motionCss).toContain("grid-template-rows: 0fr");
     expect(motionCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.t-stagger-line,[\s\S]*?\.t-page-slide \.t-page,[\s\S]*?animation: none !important/);
     expect(motionCss).toMatch(/\.motion-chat-prompt-flow,\n\s+\.t-page-slide \.t-page,\n\s+\.t-stagger-line,[\s\S]*?transition: none !important/);
   });

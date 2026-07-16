@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  createOperatorInterruptAbortReason,
   ensureLocalCliCredentialShimsInPath,
   ensureRudderCliInPath,
   loadAgentInstructionsPrefix,
@@ -23,6 +24,7 @@ const ORIGINAL_RUDDER_OPERATOR_HOME = process.env.RUDDER_OPERATOR_HOME;
 const ORIGINAL_ZDOTDIR = process.env.ZDOTDIR;
 const ORIGINAL_GIT_AUTHOR_EMAIL = process.env.GIT_AUTHOR_EMAIL;
 const ORIGINAL_GIT_COMMITTER_EMAIL = process.env.GIT_COMMITTER_EMAIL;
+const ORIGINAL_RUDDER_DESKTOP_CLI_ENTRY = process.env.RUDDER_DESKTOP_CLI_ENTRY;
 
 afterEach(() => {
   if (ORIGINAL_HOME === undefined) delete process.env.HOME;
@@ -35,6 +37,8 @@ afterEach(() => {
   else process.env.GIT_AUTHOR_EMAIL = ORIGINAL_GIT_AUTHOR_EMAIL;
   if (ORIGINAL_GIT_COMMITTER_EMAIL === undefined) delete process.env.GIT_COMMITTER_EMAIL;
   else process.env.GIT_COMMITTER_EMAIL = ORIGINAL_GIT_COMMITTER_EMAIL;
+  if (ORIGINAL_RUDDER_DESKTOP_CLI_ENTRY === undefined) delete process.env.RUDDER_DESKTOP_CLI_ENTRY;
+  else process.env.RUDDER_DESKTOP_CLI_ENTRY = ORIGINAL_RUDDER_DESKTOP_CLI_ENTRY;
 });
 
 function readPathValue(env: NodeJS.ProcessEnv): string {
@@ -100,6 +104,40 @@ describe("ensureRudderCliInPath", () => {
       const shimPath = path.join(firstPathEntry!, shimName());
       const shim = await fs.readFile(shimPath, "utf8");
 
+      expect(shim).toContain(desktopCli);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the Desktop CLI entry when the server runs from an external runtime cache", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cli-external-runtime-shim-"));
+    const runtimeModuleDir = path.join(root, "runtimes", "0.4.6", "node_modules", "@rudderhq", "agent-runtime-utils", "dist");
+    const desktopCli = path.join(root, "Desktop.app", "Contents", "Resources", "server-package", "desktop-cli.js");
+    const staleBinDir = path.join(root, "stale-bin");
+    const staleRudder = path.join(staleBinDir, shimName());
+
+    try {
+      await fs.mkdir(runtimeModuleDir, { recursive: true });
+      await fs.mkdir(path.dirname(desktopCli), { recursive: true });
+      await fs.mkdir(staleBinDir, { recursive: true });
+      await fs.writeFile(desktopCli, "console.log('fresh desktop cli');\n", "utf8");
+      await fs.writeFile(
+        staleRudder,
+        process.platform === "win32" ? "@echo off\r\necho stale\r\n" : "#!/bin/sh\necho stale\n",
+        "utf8",
+      );
+      await fs.chmod(staleRudder, 0o755);
+      process.env.RUDDER_DESKTOP_CLI_ENTRY = desktopCli;
+
+      const env = await ensureRudderCliInPath(runtimeModuleDir, {
+        PATH: staleBinDir,
+      });
+      const firstPathEntry = readPathValue(env).split(path.delimiter)[0];
+      const shimPath = path.join(firstPathEntry!, shimName());
+      const shim = await fs.readFile(shimPath, "utf8");
+
+      expect(firstPathEntry).not.toBe(staleBinDir);
       expect(shim).toContain(desktopCli);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
@@ -804,6 +842,34 @@ describe("loadAgentInstructionsPrefix", () => {
 });
 
 describe("runChildProcess", () => {
+  function isPidAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      const code = error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : null;
+      return code === "EPERM";
+    }
+  }
+
+  async function waitForPidExit(pid: number, timeoutMs = 2_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (!isPidAlive(pid)) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error(`process ${pid} remained alive after ${timeoutMs}ms`);
+  }
+
+  function forceKillProcessGroup(pid: number | null): void {
+    if (process.platform === "win32" || pid === null) return;
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      // The group already exited.
+    }
+  }
+
   it("preserves explicit blank Git identity env overrides", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-run-child-process-git-env-"));
     const capturePath = path.join(root, "env.json");
@@ -932,10 +998,11 @@ describe("runChildProcess", () => {
     }
   });
 
-  it("forces SIGKILL after the grace period when an aborted child ignores SIGTERM", async () => {
+  it.runIf(process.platform !== "win32")("keeps the configured grace for a generic abort without an operator reason", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-run-child-process-abort-"));
     const scriptPath = path.join(root, "ignore-sigterm.mjs");
     let spawnedPid: number | null = null;
+    let abortedAt = 0;
     await fs.writeFile(
       scriptPath,
       [
@@ -957,18 +1024,111 @@ describe("runChildProcess", () => {
         abortSignal: controller.signal,
         onSpawn: async ({ pid }) => {
           spawnedPid = pid;
-          setTimeout(() => controller.abort(), 50);
+          setTimeout(() => {
+            abortedAt = Date.now();
+            controller.abort();
+          }, 50);
         },
         onLog: async () => {},
       });
 
       expect(result.signal).toBe("SIGTERM");
       expect(Date.now() - startedAt).toBeLessThan(5_000);
+      expect(abortedAt).toBeGreaterThan(0);
+      expect(Date.now() - abortedAt).toBeGreaterThanOrEqual(800);
       expect(spawnedPid).not.toBeNull();
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(() => process.kill(spawnedPid!, 0)).toThrow();
     } finally {
       controller.abort();
+      forceKillProcessGroup(spawnedPid);
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  it.runIf(process.platform !== "win32")("kills a stubborn parent and grandchild by the operator hard deadline without forwarding post-abort output", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-run-child-process-group-abort-"));
+    const parentScriptPath = path.join(root, "stubborn-parent.mjs");
+    const grandchildScriptPath = path.join(root, "stubborn-grandchild.mjs");
+    const grandchildPidPath = path.join(root, "grandchild.pid");
+    const controller = new AbortController();
+    const liveLogs: string[] = [];
+    let parentPid: number | null = null;
+    let grandchildPid: number | null = null;
+    let abortedAt = 0;
+
+    await fs.writeFile(
+      grandchildScriptPath,
+      [
+        "process.on('SIGTERM', () => console.log('grandchild-after-abort'));",
+        "console.log('grandchild-ready');",
+        "setInterval(() => console.log('grandchild-tick'), 25);",
+      ].join("\n"),
+      "utf8",
+    );
+    await fs.writeFile(
+      parentScriptPath,
+      [
+        "import { spawn } from 'node:child_process';",
+        "import fs from 'node:fs';",
+        "process.on('SIGTERM', () => console.log('parent-after-abort'));",
+        `const grandchild = spawn(process.execPath, [${JSON.stringify(grandchildScriptPath)}], { stdio: ['ignore', 'inherit', 'inherit'] });`,
+        "fs.writeFileSync(process.argv[2], String(grandchild.pid));",
+        "console.log('parent-ready');",
+        "setInterval(() => console.log('parent-tick'), 25);",
+      ].join("\n"),
+      "utf8",
+    );
+
+    try {
+      const result = await runChildProcess(
+        "run-child-process-group-operator-abort",
+        process.execPath,
+        [parentScriptPath, grandchildPidPath],
+        {
+          cwd: root,
+          env: {},
+          timeoutSec: 10,
+          graceSec: 5,
+          abortSignal: controller.signal,
+          onSpawn: async ({ pid }) => {
+            parentPid = pid;
+          },
+          onLog: async (_stream, chunk) => {
+            liveLogs.push(chunk);
+            if (abortedAt === 0 && chunk.includes("grandchild-ready")) {
+              grandchildPid = Number(await fs.readFile(grandchildPidPath, "utf8"));
+              abortedAt = Date.now();
+              controller.abort(createOperatorInterruptAbortReason(250));
+            }
+          },
+        },
+      );
+
+      expect(result.signal).toBe("SIGTERM");
+      expect(abortedAt).toBeGreaterThan(0);
+      expect(Date.now() - abortedAt).toBeGreaterThanOrEqual(150);
+      expect(Date.now() - abortedAt).toBeLessThan(1_500);
+      expect(result.stdout).toContain("parent-after-abort");
+      expect(result.stdout).toContain("grandchild-after-abort");
+      expect(liveLogs.join("")).not.toContain("parent-after-abort");
+      expect(liveLogs.join("")).not.toContain("grandchild-after-abort");
+      expect(parentPid).not.toBeNull();
+      expect(grandchildPid).not.toBeNull();
+      await waitForPidExit(parentPid!);
+      await waitForPidExit(grandchildPid!);
+    } finally {
+      if (!controller.signal.aborted) {
+        controller.abort(createOperatorInterruptAbortReason(1));
+      }
+      forceKillProcessGroup(parentPid);
+      if (grandchildPid !== null && isPidAlive(grandchildPid)) {
+        try {
+          process.kill(grandchildPid, "SIGKILL");
+        } catch {
+          // The process already exited.
+        }
+      }
       await fs.rm(root, { recursive: true, force: true });
     }
   }, 10_000);

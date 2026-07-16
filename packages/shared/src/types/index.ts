@@ -128,7 +128,8 @@ export type {
 export type {
   LibraryEntry, Organization, OrganizationLegacyHeartbeatInstructionDeleteResult, OrganizationWorkspace, OrganizationWorkspaceDirectoryCreateRequest, OrganizationWorkspaceEntryCopyRequest, OrganizationWorkspaceEntryMoveRequest,
   OrganizationWorkspaceEntryMutationResult, OrganizationWorkspaceEntryRenameRequest, OrganizationWorkspaceFileCreateRequest, OrganizationWorkspaceFileDetail, OrganizationWorkspaceFileEntry,
-  OrganizationWorkspaceFileList, OrganizationWorkspaceFileUpdateRequest, OrganizationWorkspaceRootSource
+  OrganizationWorkspaceFileList, OrganizationWorkspaceFileUpdateRequest, OrganizationWorkspaceRootSource, OrganizationWorkspaceWebPreviewSession, OrganizationWorkspaceWebPreviewSessionRequest,
+  WorkspaceWebPreviewNetworkMode
 } from "./organization.js";
 export type {
   JsonSchema, PaperclipPluginManifestV1, PluginConfig, PluginEntityQuery, PluginEntityRecord, PluginJobDeclaration, PluginJobRecord,

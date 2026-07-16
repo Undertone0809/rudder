@@ -990,6 +990,7 @@ async function startServerRuntime(
     deploymentExposure: config.deploymentExposure,
     allowedHostnames: config.allowedHostnames,
     bindHost: config.host,
+    workspacePreviewOrigin: config.workspacePreviewOrigin,
     authReady,
     companyDeletionEnabled: config.companyDeletionEnabled,
     instanceId,

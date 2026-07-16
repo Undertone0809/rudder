@@ -2519,6 +2519,9 @@ describe("chatAssistantService operator profile prompt injection", () => {
     const svc = chatAssistantService({} as any);
     const controller = new AbortController();
     const states: string[] = [];
+    const assistantDeltas: string[] = [];
+    const transcriptEntries: Array<{ kind: string; text?: string }> = [];
+    const observedEntries: Array<{ kind: string; text?: string }> = [];
 
     mockAdapter.execute.mockImplementationOnce(async (ctx) => {
       await ctx.onLog(
@@ -2529,8 +2532,29 @@ describe("chatAssistantService operator profile prompt injection", () => {
         })}\n`,
       );
       controller.abort();
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "item.completed",
+          item: { type: "agent_message", text: " Late assistant output" },
+        })}\n`,
+      );
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "result",
+          result: "Late result output",
+        })}\n`,
+      );
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "item.completed",
+          item: { type: "reasoning", text: "Late reasoning output" },
+        })}\n`,
+      );
       return {
-        summary: "Partial streamed reply",
+        summary: "Partial streamed reply Late assistant output Late result output",
         resultJson: null,
         timedOut: false,
         exitCode: null,
@@ -2547,6 +2571,15 @@ describe("chatAssistantService operator profile prompt injection", () => {
       onAssistantState: (state) => {
         states.push(state);
       },
+      onAssistantDelta: (delta) => {
+        assistantDeltas.push(delta);
+      },
+      onTranscriptEntry: (entry) => {
+        transcriptEntries.push(entry);
+      },
+      onObservedTranscriptEntry: (entry) => {
+        observedEntries.push(entry);
+      },
     });
 
     expect(result).toEqual({
@@ -2555,6 +2588,14 @@ describe("chatAssistantService operator profile prompt injection", () => {
       replyingAgentId: "agent-1",
     });
     expect(states).toEqual(["streaming", "stopped"]);
+    expect(assistantDeltas.join("")).not.toContain("Late");
+    expect(transcriptEntries).toEqual([
+      expect.objectContaining({ kind: "assistant", text: "Partial streamed reply" }),
+    ]);
+    expect(observedEntries).toEqual([
+      expect.objectContaining({ kind: "assistant", text: "Partial streamed reply" }),
+    ]);
+    expect(mockChatAgentRuns.appendTranscriptEntry).toHaveBeenCalledTimes(1);
   });
 
   it("does not expose reasoning as a stopped partial reply", async () => {

@@ -56,6 +56,41 @@ type ConversationSourceMetadata = {
 type ContextLinkRow = typeof chatContextLinks.$inferSelect;
 type ApprovalRow = typeof approvals.$inferSelect;
 
+const CHAT_TITLE_MAX_LENGTH = 200;
+const FORK_TITLE_SUFFIX_PATTERN = / \(([1-9]\d*)\)$/;
+
+function baseForkTitle(title: string, sourceIsFork: boolean, familyTitles: Set<string>) {
+  const trimmed = title.trim() || "Forked conversation";
+  if (!sourceIsFork) return trimmed;
+  const match = trimmed.match(FORK_TITLE_SUFFIX_PATTERN);
+  const index = Number(match?.[1]);
+  if (!match || index < 2) return trimmed;
+  for (const familyTitle of familyTitles) {
+    const candidateBase = familyTitle.trim();
+    if (!candidateBase || candidateBase === trimmed) continue;
+    if (numberedForkTitle(candidateBase, index) !== trimmed) continue;
+    if (index === 2 || familyTitles.has(numberedForkTitle(candidateBase, index - 1))) {
+      return candidateBase;
+    }
+  }
+  return trimmed;
+}
+
+function numberedForkTitle(baseTitle: string, index: number) {
+  const suffix = ` (${index})`;
+  const availableBaseLength = CHAT_TITLE_MAX_LENGTH - suffix.length;
+  const truncatedBase = baseTitle.slice(0, availableBaseLength).trimEnd() || "Forked conversation";
+  return `${truncatedBase}${suffix}`;
+}
+
+function nextForkTitle(source: ConversationRow, familyTitles: string[]) {
+  const existingTitles = new Set(familyTitles);
+  const baseTitle = baseForkTitle(source.title, Boolean(source.forkedFromConversationId), existingTitles);
+  let index = 2;
+  while (existingTitles.has(numberedForkTitle(baseTitle, index))) index += 1;
+  return numberedForkTitle(baseTitle, index);
+}
+
 function conversationMutability(
   row: ConversationRow,
   sourceMetadata: ConversationSourceMetadata | null | undefined,
@@ -1424,6 +1459,29 @@ export function chatService(db: Db) {
     createdByUserId: string | null;
   }) {
     const created = await db.transaction(async (tx) => {
+      const initialSource = await tx
+        .select()
+        .from(chatConversations)
+        .where(and(eq(chatConversations.id, input.sourceConversationId), eq(chatConversations.orgId, input.orgId)))
+        .then((rows) => rows[0] ?? null);
+      if (!initialSource) throw notFound("Chat conversation not found");
+
+      const initialRootConversationId = initialSource.forkRootConversationId ?? initialSource.id;
+      await tx.execute(sql`
+        SELECT ${chatConversations.id}
+        FROM ${chatConversations}
+        WHERE ${chatConversations.id} = ${initialRootConversationId}
+        FOR UPDATE
+      `);
+      if (initialSource.id !== initialRootConversationId) {
+        await tx.execute(sql`
+          SELECT ${chatConversations.id}
+          FROM ${chatConversations}
+          WHERE ${chatConversations.id} = ${initialSource.id}
+          FOR UPDATE
+        `);
+      }
+
       const source = await tx
         .select()
         .from(chatConversations)
@@ -1432,6 +1490,18 @@ export function chatService(db: Db) {
       if (!source) throw notFound("Chat conversation not found");
 
       const rootConversationId = source.forkRootConversationId ?? source.id;
+      const familyTitles = await tx
+        .select({ title: chatConversations.title })
+        .from(chatConversations)
+        .where(and(
+          eq(chatConversations.orgId, input.orgId),
+          or(
+            eq(chatConversations.id, rootConversationId),
+            eq(chatConversations.forkRootConversationId, rootConversationId),
+          ),
+        ))
+        .then((rows) => rows.map((row) => row.title));
+      const childTitle = input.title?.trim() || nextForkTitle(source, familyTitles);
       const messageConditions = [
         eq(chatMessages.conversationId, source.id),
         eq(chatMessages.orgId, input.orgId),
@@ -1462,7 +1532,7 @@ export function chatService(db: Db) {
         .values({
           orgId: input.orgId,
           status: "active",
-          title: input.title?.trim() || source.title,
+          title: childTitle,
           summary: source.summary,
           preferredAgentId: source.preferredAgentId,
           routedAgentId: source.routedAgentId,

@@ -180,7 +180,6 @@ function renderChatMessageItem(messageToRender: ChatMessage) {
         onEditUserMessage={vi.fn()}
         onContinueInterruptedMessage={vi.fn()}
         onRetryFailedMessage={vi.fn()}
-        onOpenImage={vi.fn()}
         onOpenFile={vi.fn()}
         skillReferences={[]}
       />
@@ -529,7 +528,6 @@ describe("failed chat transcript rendering", () => {
           onEditUserMessage={vi.fn()}
           onContinueInterruptedMessage={vi.fn()}
           onRetryFailedMessage={vi.fn()}
-          onOpenImage={vi.fn()}
           onOpenFile={vi.fn()}
           skillReferences={[]}
         />

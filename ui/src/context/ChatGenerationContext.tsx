@@ -2,10 +2,11 @@ import type { TranscriptEntry } from "@/agent-runtimes";
 import { setChatFlagState, setChatScopedState } from "@/lib/chat-stream-state";
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 
-export type ChatStreamDraftState = "streaming" | "finalizing" | "stopped" | "failed";
+export type ChatStreamDraftState = "streaming" | "finalizing" | "stopping" | "stopped" | "failed";
 
 export type ChatStreamDraft = {
   chatId: string;
+  streamKey: string;
   userBody: string;
   userCreatedAt: Date;
   userMessageId: string | null;

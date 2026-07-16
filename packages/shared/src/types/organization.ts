@@ -11,7 +11,9 @@ export interface OrganizationWorkspace {
 
 export type OrganizationWorkspaceRootSource = "org_root";
 
-export type OrganizationWorkspaceFileEntryEntityType = "agent_workspace";
+export type OrganizationWorkspaceFileEntryEntityType =
+  | "agent_workspace"
+  | "orphaned_agent_workspace";
 
 export interface OrganizationWorkspaceFileEntry {
   name: string;
@@ -56,6 +58,20 @@ export interface OrganizationWorkspaceFileDetail {
 export interface OrganizationWorkspaceFileUpdateRequest {
   content: string;
   expectedContent?: string;
+}
+
+export type WorkspaceWebPreviewNetworkMode = "offline" | "connected";
+
+export interface OrganizationWorkspaceWebPreviewSessionRequest {
+  entryPath: string;
+  networkMode: WorkspaceWebPreviewNetworkMode;
+  htmlContent?: string;
+}
+
+export interface OrganizationWorkspaceWebPreviewSession {
+  previewUrl: string;
+  networkMode: WorkspaceWebPreviewNetworkMode;
+  expiresAt: string;
 }
 
 export interface OrganizationWorkspaceFileCreateRequest {
