@@ -483,6 +483,9 @@ vi.mock("../context/BreadcrumbContext", () => ({
 }));
 
 vi.mock("../context/ToastContext", () => ({
+  useOptionalToast: () => ({
+    pushToast: mockState.pushToast,
+  }),
   useToast: () => ({
     pushToast: mockState.pushToast,
   }),
@@ -570,6 +573,7 @@ vi.mock("../components/MarkdownBody", () => ({
 vi.mock("@/components/ui/tooltip", () => ({
   Tooltip: ({ children }: { children: import("react").ReactNode }) => <>{children}</>,
   TooltipContent: ({ children }: { children: import("react").ReactNode }) => <div>{children}</div>,
+  TooltipProvider: ({ children }: { children: import("react").ReactNode }) => <>{children}</>,
   TooltipTrigger: ({ children }: { children: import("react").ReactNode }) => <>{children}</>,
 }));
 

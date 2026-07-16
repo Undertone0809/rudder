@@ -90,13 +90,13 @@ describe("budgetService", () => {
     const dbStub = createDbStub([
       [policy],
       [{ total: 150 }],
-      [],
       [{
         orgId: "organization-1",
         name: "Budget Agent",
         status: "running",
         pauseReason: null,
       }],
+      [],
     ]);
 
     dbStub.queueInsert([{
