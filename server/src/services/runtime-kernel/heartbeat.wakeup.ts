@@ -47,8 +47,15 @@ export function createHeartbeatWakeupHandlers(context: any) {
     const explicitResumeSession = await resolveExplicitResumeSessionOverride(agent, payload, taskKey);
     if (explicitResumeSession) {
       enrichedContextSnapshot.resumeFromRunId = explicitResumeSession.resumeFromRunId;
-      enrichedContextSnapshot.resumeSessionDisplayId = explicitResumeSession.sessionDisplayId;
-      enrichedContextSnapshot.resumeSessionParams = explicitResumeSession.sessionParams;
+      if (explicitResumeSession.sessionCleared) {
+        delete enrichedContextSnapshot.resumeSessionDisplayId;
+        delete enrichedContextSnapshot.resumeSessionParams;
+        enrichedContextSnapshot.forceFreshSession = true;
+        enrichedContextSnapshot.sessionResumeSuppressed = true;
+      } else {
+        enrichedContextSnapshot.resumeSessionDisplayId = explicitResumeSession.sessionDisplayId;
+        enrichedContextSnapshot.resumeSessionParams = explicitResumeSession.sessionParams;
+      }
       if (!readNonEmptyString(enrichedContextSnapshot.issueId) && explicitResumeSession.issueId) {
         enrichedContextSnapshot.issueId = explicitResumeSession.issueId;
       }
@@ -67,7 +74,8 @@ export function createHeartbeatWakeupHandlers(context: any) {
       ? null
       : await resolveSessionBeforeForWakeup(agent, effectiveTaskKey);
     const admissionSessionSelection = heartbeatSessions.selectRunSessionLineage({
-      forceFresh: enrichedContextSnapshot.forceFreshSession === true,
+      forceFresh:
+        enrichedContextSnapshot.forceFreshSession === true || explicitResumeSession?.sessionCleared === true,
       explicitSessionParams: explicitResumeSession?.sessionParams ?? null,
       explicitSessionDisplayId: explicitResumeSession?.sessionDisplayId ?? null,
       taskSessionParams: null,

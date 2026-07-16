@@ -424,7 +424,11 @@ describe("buildExplicitResumeSessionOverride", () => {
       resumeRunSessionCleared: true,
       taskSession: null,
       sessionCodec: codexSessionCodec,
-    })).toBeNull();
+    })).toEqual({
+      sessionDisplayId: null,
+      sessionParams: null,
+      sessionCleared: true,
+    });
   });
 
   it("prefers session params persisted on the selected source run", () => {

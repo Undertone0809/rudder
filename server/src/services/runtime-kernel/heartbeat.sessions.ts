@@ -97,7 +97,13 @@ export function buildExplicitResumeSessionOverride(input: {
   taskSession: ResumeSessionRow | null;
   sessionCodec: AgentRuntimeSessionCodec;
 }) {
-  if (input.resumeRunSessionCleared) return null;
+  if (input.resumeRunSessionCleared) {
+    return {
+      sessionDisplayId: null,
+      sessionParams: null,
+      sessionCleared: true as const,
+    };
+  }
   const afterSessionParams = normalizeSessionParams(
     input.sessionCodec.deserialize(input.resumeRunSessionParamsAfter ?? null),
   );
