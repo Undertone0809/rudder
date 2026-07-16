@@ -3317,7 +3317,15 @@ describe("chat routes", () => {
     expect(res.status).toBe(201);
     expect(mockStorage.putFile).not.toHaveBeenCalled();
     expect(mockChatService.createAttachment).not.toHaveBeenCalled();
-    expect(mockChatService.updateMessage).not.toHaveBeenCalled();
+    expect(mockChatService.updateMessage).toHaveBeenCalledWith(
+      "chat-1",
+      "message-assistant",
+      expect.objectContaining({
+        body,
+        status: "completed",
+        structuredPayload: null,
+      }),
+    );
   });
 
   it("persists the selected agent as replyingAgentId for preferred-agent chats", async () => {
