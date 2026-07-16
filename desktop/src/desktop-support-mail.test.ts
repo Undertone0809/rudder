@@ -12,7 +12,7 @@ describe("desktop support mail", () => {
       version: "0.4.6",
       platform: "darwin",
       arch: "arm64",
-    })).toBe(`mailto:${DESKTOP_FEEDBACK_EMAIL}?subject=Rudder+feedback+%280.4.6%29`);
+    })).toBe(`mailto:${DESKTOP_FEEDBACK_EMAIL}?subject=Rudder%20feedback%20(0.4.6)`);
   });
 
   it("builds a bounded startup draft from the safe failure view", () => {
@@ -41,15 +41,16 @@ describe("desktop support mail", () => {
     expect(parsed.searchParams.has("cc")).toBe(false);
     expect(parsed.searchParams.has("attach")).toBe(false);
     expect(body).toContain("Failure ID: failure-123");
-    expect(body).toContain("Summary: [What broke, and which workflow is blocked?]");
-    expect(body).toContain("Steps to reproduce:");
-    expect(body).toContain("Actual result:");
-    expect(body).toContain("Expected result:");
+    expect(body).toContain("What were you trying to do?");
+    expect(body).toContain("What changed before this started?");
     expect(body).toContain("Did Try again change the result?");
-    expect(body).toContain("Impact and workaround:");
-    expect(body).toContain("Environment details:");
-    expect(body).toContain("Safe diagnostic summary (added by Rudder)");
+    expect(body).toContain("Impact or workaround:");
+    expect(body).toContain("Safe diagnostic (added by Rudder)");
+    expect(body).toContain("Failure summary: The local database could not finish its migration.");
     expect(body).toContain("Do not attach .env");
+    expect(url).not.toContain("+");
+    expect(url).toContain("%20");
+    expect(url).toContain("%0A");
     expect(url.length).toBeLessThanOrEqual(MAX_DESKTOP_SUPPORT_MAILTO_LENGTH);
   });
 

@@ -14,9 +14,9 @@ function cleanMailField(value: string | null | undefined, maxLength: number): st
 }
 
 function createMailto(subject: string, body?: string): string {
-  const params = new URLSearchParams({ subject });
-  if (body) params.set("body", body);
-  const url = `mailto:${DESKTOP_FEEDBACK_EMAIL}?${params.toString()}`;
+  const params = [`subject=${encodeURIComponent(subject)}`];
+  if (body) params.push(`body=${encodeURIComponent(body)}`);
+  const url = `mailto:${DESKTOP_FEEDBACK_EMAIL}?${params.join("&")}`;
   if (url.length > MAX_DESKTOP_SUPPORT_MAILTO_LENGTH) {
     throw new Error("The support email draft exceeds the safe mailto length.");
   }
@@ -44,26 +44,15 @@ export function createDesktopSupportMailtoUrl(input: {
   const body = [
     "Hi,",
     "",
-    "Rudder could not start. Please replace the bracketed prompts before sending.",
+    "Rudder could not start. Please add the context below before sending.",
     "",
-    "Report",
-    "Summary: [What broke, and which workflow is blocked?]",
+    "What were you trying to do? [Add context]",
+    "What changed before this started? [Update, install, configuration, or system change]",
+    "Did Try again change the result? [Yes/no]",
+    "Impact or workaround: [Add context]",
+    "Evidence: [Optional screenshot or relevant log lines after review]",
     "",
-    "Steps to reproduce:",
-    "1. [First action]",
-    "2. [Next action]",
-    "3. [What happened]",
-    "",
-    "Actual result: [What did you see? Include the exact short error if useful.]",
-    "Expected result: [What should have happened?]",
-    "When did this begin? [Approximate time or first affected version]",
-    "What changed beforehand? [Install, update, configuration, or system change]",
-    "Did Try again change the result? [Yes/no and what changed]",
-    "Impact and workaround: [Who is blocked? Is there a workaround?]",
-    "Evidence: [Add a screenshot or a few relevant log lines after removing private data.]",
-    "Environment details: [OS version and how Rudder was installed or launched.]",
-    "",
-    "Safe diagnostic summary (added by Rudder)",
+    "Safe diagnostic (added by Rudder)",
     `Failure ID: ${failure.id}`,
     `Occurred at: ${failure.occurredAt}`,
     `Rudder version: ${version}`,
@@ -71,10 +60,11 @@ export function createDesktopSupportMailtoUrl(input: {
     `Stage: ${failure.stage}`,
     `Attempt: ${failure.attempt}`,
     `Category: ${failure.category}`,
+    `Failure summary: ${failure.summary}`,
     `Profile: ${profile}`,
     `Instance: ${instance}`,
     "",
-    "Before sending, remove API keys, tokens, cookies, passwords, private URLs, prompts, command output, and private paths. Do not attach .env, config.json, databases, credentials, or private workspace files.",
+    "Review before sending. Remove secrets, private URLs, prompts, command output, and private paths. Do not attach .env, config.json, databases, credentials, or private workspace files.",
   ].join("\n");
 
   return createMailto(`Rudder startup support (${version})`, body);

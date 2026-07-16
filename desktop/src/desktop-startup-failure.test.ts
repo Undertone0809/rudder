@@ -44,11 +44,40 @@ describe("desktop startup failure view", () => {
     });
 
     expect(diagnostic).toContain("Failure ID: failure-456");
+    expect(diagnostic).toContain("Summary: Rudder could not access a required local file or folder.");
     expect(diagnostic).not.toContain("/Users/alice");
     expect(diagnostic).not.toContain("Instance folder");
     expect(diagnostic).not.toContain("token=secret");
     expect(diagnostic).not.toContain("config.json");
     expect(diagnostic).not.toContain(".env");
     expect(diagnostic.length).toBeLessThan(1_200);
+  });
+
+  it("classifies a macOS library policy rejection without exposing raw dyld output", () => {
+    const failure = createDesktopStartupFailureView({
+      error: new Error(
+        "Library not loaded: liblz4.1.dylib; code signature not valid for use in process: library load denied by system policy",
+      ),
+      stage: "database",
+      attempt: 1,
+      id: "failure-policy",
+      occurredAt: "2026-07-16T08:05:47.098Z",
+    });
+
+    expect(failure.category).toBe("system_policy");
+    expect(failure.summary).toBe("The operating system blocked a required local database library.");
+    expect(JSON.stringify(failure)).not.toContain("liblz4");
+    expect(JSON.stringify(failure)).not.toContain("code signature");
+  });
+
+  it("uses the last startup stage when a child process rejects without an Error", () => {
+    const failure = createDesktopStartupFailureView({
+      error: undefined,
+      stage: "database",
+      attempt: 1,
+    });
+
+    expect(failure.category).toBe("database");
+    expect(failure.summary).toBe("The local database did not start cleanly.");
   });
 });

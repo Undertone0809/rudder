@@ -883,6 +883,7 @@ async function clearBrowserProfile(page) {
 async function waitForBoardWindow(electronApp, initialPage, options = {}) {
   const { expectedUrlPattern } = options;
   let page = initialPage;
+  let bridgeConfirmed = false;
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     const openWindows = electronApp.windows().filter((candidate) => !candidate.isClosed());
@@ -910,6 +911,7 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
     }
     if (boardPage) {
       page = boardPage;
+      bridgeConfirmed = true;
       break;
     }
 
@@ -933,11 +935,8 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
         continue;
       }
-      if (bootState.stage === "error") {
-        throw new Error(`desktop boot failed: ${bootState.error || bootState.message}`);
-      }
-      if (bootState.view === "failed") {
-        throw new Error(`desktop boot failed: ${bootState.failure?.message || bootState.message}`);
+      if (bootState.stage === "error" || bootState.view === "failed") {
+        throw new Error(`desktop boot failed: ${bootState.failure?.summary || bootState.stage}`);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -947,6 +946,7 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
     }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
+  assert.equal(bridgeConfirmed, true, `expected desktop window with active IPC bridge, got ${page?.url() ?? "no window"}`);
   assert.ok(page.url().startsWith("http"), `expected desktop window to reach board UI, got ${page.url()}`);
   if (expectedUrlPattern) {
     assert.match(page.url(), expectedUrlPattern, `expected desktop window URL to match ${expectedUrlPattern}`);
@@ -1887,6 +1887,9 @@ async function runStartupRecoveryScenario(mode) {
     assert.equal(mailto.searchParams.has("cc"), false);
     assert.equal(mailto.searchParams.has("bcc"), false);
     assert.match(mailto.searchParams.get("body") ?? "", /Failure ID:/u);
+    assert.match(mailto.searchParams.get("body") ?? "", /Failure summary:/u);
+    assert.doesNotMatch(handoffs[0].url, /\+/u, "mailto handoff should not expose form-encoded spaces as literal plus signs");
+    assert.match(handoffs[0].url, /%20/u, "mailto handoff should percent-encode spaces for desktop mail clients");
 
     await page.evaluate(() => Promise.all([
       window.rudderBoot.openSupportDraft(),
@@ -1936,10 +1939,14 @@ async function runStartupRecoveryScenario(mode) {
     assert.equal(issueHandoffs.length, 3, "the same-failure state replay should not create another handoff");
 
     await page.locator("#technical-details summary").click();
-    assert.match(await page.locator("#diagnostic-grid").innerText(), /Failure ID/u);
-    assert.match(await page.locator("#diagnostic-grid").innerText(), /Instance folder/u);
+    const technicalDiagnostic = await page.locator("#diagnostic-grid").innerText();
+    assert.match(technicalDiagnostic, /Failure ID/u);
+    assert.match(technicalDiagnostic, /Summary/u);
+    assert.match(technicalDiagnostic, /local database/iu);
+    assert.match(technicalDiagnostic, /Instance folder/u);
     await page.getByRole("button", { name: "Copy diagnostic" }).click();
     const copiedDiagnostic = await electronApp.evaluate(({ clipboard }) => clipboard.readText());
+    assert.match(copiedDiagnostic, /Summary: The local database/iu);
     assert.doesNotMatch(copiedDiagnostic, /Instance folder|\/Users\//u, "shareable diagnostic should omit local paths");
 
     await issueButton.click();

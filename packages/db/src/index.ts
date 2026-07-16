@@ -16,6 +16,7 @@ export {
 } from "./client.js";
 export {
   cleanupStaleSysvSharedMemorySegments,
+  createEmbeddedPostgresStartupError,
   isEmbeddedPostgresSharedMemoryError,
   parseSysvSharedMemorySegments,
   type CleanupStaleSysvSharedMemoryResult,
