@@ -10,7 +10,9 @@ contextBridge.exposeInMainWorld("rudderBoot", {
   },
   retryStartup: () => ipcRenderer.invoke("desktop:retry-startup") as Promise<void>,
   openSupportDraft: () => ipcRenderer.invoke("desktop:send-feedback") as Promise<void>,
+  openBugReport: () => ipcRenderer.invoke("desktop:open-bug-report") as Promise<void>,
   copySupportEmail: () => ipcRenderer.invoke("desktop:copy-support-email") as Promise<void>,
+  copyBugReportUrl: () => ipcRenderer.invoke("desktop:copy-bug-report-url") as Promise<void>,
   copyDiagnostic: () => ipcRenderer.invoke("desktop:copy-recovery-diagnostic") as Promise<void>,
   openInstanceFolder: () => ipcRenderer.invoke("desktop:open-recovery-instance-folder") as Promise<void>,
 });
@@ -22,7 +24,9 @@ declare global {
       onState(listener: (state: BootScreenState) => void): () => void;
       retryStartup(): Promise<void>;
       openSupportDraft(): Promise<void>;
+      openBugReport(): Promise<void>;
       copySupportEmail(): Promise<void>;
+      copyBugReportUrl(): Promise<void>;
       copyDiagnostic(): Promise<void>;
       openInstanceFolder(): Promise<void>;
     };

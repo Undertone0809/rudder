@@ -1,6 +1,7 @@
 import type { DesktopStartupFailureView } from "./desktop-startup-failure.js";
 
 export const DESKTOP_FEEDBACK_EMAIL = "zeeland4work@gmail.com";
+export const DESKTOP_BUG_REPORT_URL = "https://github.com/Undertone0809/rudder/issues/new?template=bug_report.yml";
 export const MAX_DESKTOP_SUPPORT_MAILTO_LENGTH = 1_900;
 
 function cleanMailField(value: string | null | undefined, maxLength: number): string | null {
@@ -43,15 +44,26 @@ export function createDesktopSupportMailtoUrl(input: {
   const body = [
     "Hi,",
     "",
-    "Rudder could not start. Please add the context below before sending:",
+    "Rudder could not start. Please replace the bracketed prompts before sending.",
     "",
-    "What were you trying to do?",
-    "[Add context here]",
+    "Report",
+    "Summary: [What broke, and which workflow is blocked?]",
     "",
-    "What changed before this started?",
-    "[Add context here]",
+    "Steps to reproduce:",
+    "1. [First action]",
+    "2. [Next action]",
+    "3. [What happened]",
     "",
-    "Diagnostic summary",
+    "Actual result: [What did you see? Include the exact short error if useful.]",
+    "Expected result: [What should have happened?]",
+    "When did this begin? [Approximate time or first affected version]",
+    "What changed beforehand? [Install, update, configuration, or system change]",
+    "Did Try again change the result? [Yes/no and what changed]",
+    "Impact and workaround: [Who is blocked? Is there a workaround?]",
+    "Evidence: [Add a screenshot or a few relevant log lines after removing private data.]",
+    "Environment details: [OS version and how Rudder was installed or launched.]",
+    "",
+    "Safe diagnostic summary (added by Rudder)",
     `Failure ID: ${failure.id}`,
     `Occurred at: ${failure.occurredAt}`,
     `Rudder version: ${version}`,
@@ -62,7 +74,7 @@ export function createDesktopSupportMailtoUrl(input: {
     `Profile: ${profile}`,
     `Instance: ${instance}`,
     "",
-    "Please do not attach .env, config.json, databases, API keys, credentials, or private workspace files.",
+    "Before sending, remove API keys, tokens, cookies, passwords, private URLs, prompts, command output, and private paths. Do not attach .env, config.json, databases, credentials, or private workspace files.",
   ].join("\n");
 
   return createMailto(`Rudder startup support (${version})`, body);
