@@ -239,14 +239,15 @@ export async function ensureRuntimeInstalled(
 ): Promise<RuntimeInstallResult> {
   const packageName = options.packageName ?? RUNTIME_NPM_PACKAGE_NAME;
   const packageVersion = resolveRuntimePackageVersion(options.version);
-  const cacheDir = resolveRuntimeCacheDir(packageVersion, options.homeDir);
+  const homeDir = options.homeDir ?? resolveRudderHomeDir();
+  const cacheDir = resolveRuntimeCacheDir(packageVersion, homeDir);
   const packageSpec = resolveRuntimePackageSpec(packageVersion, packageName);
   const command = formatRuntimeInstallCommand(cacheDir, packageSpec);
   const preparePostgresPayload = options.preparePostgresPayload === true;
   const postgresVersionProbe = options.postgresVersionProbe ?? readPostgresVersion;
 
   if (await isRuntimeCacheHit({ cacheDir, version: packageVersion, packageName })) {
-    const postgresPayload = await stageRuntimePostgresPayload(cacheDir, preparePostgresPayload, postgresVersionProbe);
+    const postgresPayload = await stageRuntimePostgresPayload(cacheDir, homeDir, preparePostgresPayload, postgresVersionProbe);
     await touchRuntimeInstallMetadata(cacheDir);
     const prune = await maybePruneRuntimeCache({
       homeDir: options.homeDir,
@@ -268,7 +269,7 @@ export async function ensureRuntimeInstalled(
     packageVersion,
   });
   if (existingRuntimeOutput !== null) {
-    const postgresPayload = await stageRuntimePostgresPayload(cacheDir, preparePostgresPayload, postgresVersionProbe);
+    const postgresPayload = await stageRuntimePostgresPayload(cacheDir, homeDir, preparePostgresPayload, postgresVersionProbe);
     const metadata: RuntimeInstallMetadata = {
       version: 1,
       packageName,
@@ -304,6 +305,7 @@ export async function ensureRuntimeInstalled(
     if (await isRuntimeCacheHit({ cacheDir: fallbackCacheDir, version: fallbackVersion, packageName })) {
       const fallbackPostgresPayload = await stageRuntimePostgresPayload(
         fallbackCacheDir,
+        homeDir,
         preparePostgresPayload,
         postgresVersionProbe,
       );
@@ -333,6 +335,7 @@ export async function ensureRuntimeInstalled(
       );
       const postgresPayload = await stageRuntimePostgresPayload(
         fallbackCacheDir,
+        homeDir,
         preparePostgresPayload,
         postgresVersionProbe,
       );
@@ -368,7 +371,7 @@ export async function ensureRuntimeInstalled(
     output,
     await ensureRequiredEmbeddedPostgresPlatformPackage(spawnSyncImpl, cacheDir),
   );
-  const postgresPayload = await stageRuntimePostgresPayload(cacheDir, preparePostgresPayload, postgresVersionProbe);
+  const postgresPayload = await stageRuntimePostgresPayload(cacheDir, homeDir, preparePostgresPayload, postgresVersionProbe);
 
   const metadata: RuntimeInstallMetadata = {
     version: 1,
@@ -397,6 +400,20 @@ export function resolveRuntimePostgresPayloadBinDir(
   arch: NodeJS.Architecture = process.arch,
 ): string {
   return path.join(cacheDir, RUNTIME_POSTGRES_PAYLOAD_DIR, runtimePostgresPlatformSegment(platform, arch), "bin");
+}
+
+export function resolveSharedRuntimePostgresPayloadBinDir(
+  homeDir: string = resolveRudderHomeDir(),
+  platform: NodeJS.Platform = process.platform,
+  arch: NodeJS.Architecture = process.arch,
+): string {
+  return path.join(
+    homeDir,
+    "runtime-payloads",
+    RUNTIME_POSTGRES_PAYLOAD_DIR,
+    runtimePostgresPlatformSegment(platform, arch),
+    "bin",
+  );
 }
 
 export function resolveRuntimeServerEntrypoint(cacheDir: string, packageName = RUNTIME_NPM_PACKAGE_NAME): string {
@@ -738,6 +755,7 @@ async function isRuntimePostgresPayloadUsable(
 
 async function stageRuntimePostgresPayload(
   cacheDir: string,
+  homeDir: string,
   enabled: boolean,
   postgresVersionProbe: RuntimePostgresVersionProbe,
 ): Promise<RuntimePostgresPayloadStageResult> {
@@ -748,11 +766,15 @@ async function stageRuntimePostgresPayload(
     return { output: "", binDir: targetBinDir };
   }
   if (!enabled) return { output: "" };
-  const sourceBinDir = process.env[RUDDER_POSTGRES_BIN_DIR_ENV]?.trim();
-  if (!sourceBinDir) return { output: "" };
-
-  const resolvedSourceBinDir = path.resolve(sourceBinDir);
-  await assertRuntimePostgresBinDirComplete(cacheDir, resolvedSourceBinDir);
+  const explicitSourceBinDir = process.env[RUDDER_POSTGRES_BIN_DIR_ENV]?.trim();
+  const resolvedSourceBinDir = explicitSourceBinDir
+    ? path.resolve(explicitSourceBinDir)
+    : resolveSharedRuntimePostgresPayloadBinDir(homeDir);
+  if (explicitSourceBinDir) {
+    await assertRuntimePostgresBinDirComplete(cacheDir, resolvedSourceBinDir);
+  } else if (!await isRuntimePostgresPayloadUsable(cacheDir, resolvedSourceBinDir, postgresVersionProbe)) {
+    return { output: "" };
+  }
   const sourceTemplateDir = await resolveRuntimePostgresTemplateDir(resolvedSourceBinDir);
   if (!sourceTemplateDir) {
     throw new RuntimeInstallError(

@@ -17,6 +17,43 @@ export type CleanupStaleSysvSharedMemoryResult = {
   skippedIds: string[];
 };
 
+export function createEmbeddedPostgresStartupError(
+  error: unknown,
+  fallbackMessage: string,
+  recentLogs: string[] = [],
+): Error {
+  let base: Error;
+  if (error instanceof Error) {
+    base = error;
+  } else if (error === undefined || error === null) {
+    base = new Error(fallbackMessage);
+  } else if (typeof error === "string") {
+    base = new Error(`${fallbackMessage}: ${error}`);
+  } else {
+    try {
+      base = new Error(`${fallbackMessage}: ${JSON.stringify(error)}`);
+    } catch {
+      base = new Error(`${fallbackMessage}: ${String(error)}`);
+    }
+  }
+
+  const details = recentLogs.map((line) => line.trim()).filter(Boolean);
+  if (details.length === 0) return base;
+  const wrapped = new Error(
+    `${base.message}\nRecent embedded-postgres logs:\n${details.join("\n")}`,
+    { cause: base },
+  );
+  wrapped.name = base.name;
+  if (base.stack) {
+    const originalFrames = base.stack.split("\n").slice(1);
+    wrapped.stack = [`${wrapped.name}: ${wrapped.message}`, ...originalFrames].join("\n");
+  }
+  if ("code" in base) {
+    (wrapped as Error & { code?: unknown }).code = base.code;
+  }
+  return wrapped;
+}
+
 function isProcessAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {

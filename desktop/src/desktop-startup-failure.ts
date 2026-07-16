@@ -6,6 +6,7 @@ export type DesktopStartupFailureCategory =
   | "migration"
   | "permission"
   | "port_in_use"
+  | "system_policy"
   | "runtime";
 
 export type DesktopStartupFailureView = {
@@ -23,16 +24,23 @@ const FAILURE_COPY: Record<DesktopStartupFailureCategory, string> = {
   migration: "The local database could not finish its migration.",
   permission: "Rudder could not access a required local file or folder.",
   port_in_use: "A local port required by Rudder is already in use.",
+  system_policy: "The operating system blocked a required local database library.",
   runtime: "The local Rudder runtime did not start cleanly.",
 };
 
-function classifyStartupFailure(error: unknown): DesktopStartupFailureCategory {
+function classifyStartupFailure(error: unknown, stage: string): DesktopStartupFailureCategory {
   const source = error instanceof Error ? `${error.name} ${error.message}` : String(error);
   if (/EADDRINUSE|address already in use/iu.test(source)) return "port_in_use";
+  if (/library load denied by system policy|code signature.+not valid for use in process/iu.test(source)) {
+    return "system_policy";
+  }
   if (/EACCES|EPERM|permission denied|operation not permitted/iu.test(source)) return "permission";
   if (/migration|drizzle|schema drift/iu.test(source)) return "migration";
   if (/postgres|database|initdb|pg_ctl|ECONNREFUSED/iu.test(source)) return "database";
   if (/config|environment|\.env/iu.test(source)) return "configuration";
+  if (/migration/iu.test(stage)) return "migration";
+  if (/database|postgres/iu.test(stage)) return "database";
+  if (/config/iu.test(stage)) return "configuration";
   return "runtime";
 }
 
@@ -43,7 +51,7 @@ export function createDesktopStartupFailureView(input: {
   id?: string;
   occurredAt?: string;
 }): DesktopStartupFailureView {
-  const category = classifyStartupFailure(input.error);
+  const category = classifyStartupFailure(input.error, input.stage);
   return {
     id: input.id ?? randomUUID(),
     occurredAt: input.occurredAt ?? new Date().toISOString(),

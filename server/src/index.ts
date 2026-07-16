@@ -4,6 +4,7 @@ import {
   authUsers,
   cleanupStaleSysvSharedMemorySegments,
   createDb,
+  createEmbeddedPostgresStartupError,
   createLocalPostgresInstance,
   ensurePostgresDatabase,
   ensurePostgresRolePassword,
@@ -603,17 +604,23 @@ async function startServerRuntime(
         }
       }
     };
-    const logEmbeddedPostgresFailure = (phase: "initialise" | "start", err: unknown) => {
+    const recordEmbeddedPostgresFailure = (phase: "initialise" | "start", err: unknown): Error => {
+      const startupError = createEmbeddedPostgresStartupError(
+        err,
+        `Embedded PostgreSQL failed during ${phase}`,
+        embeddedPostgresLogBuffer,
+      );
       if (embeddedPostgresLogBuffer.length > 0) {
         logger.error(
           {
             phase,
             recentLogs: embeddedPostgresLogBuffer,
-            err,
+            err: err instanceof Error ? err : startupError,
           },
           "Embedded PostgreSQL failed; showing buffered startup logs",
         );
       }
+      return startupError;
     };
     const resolveEmbeddedAdminConnectionString = async (candidatePort: number): Promise<string> => {
       const result = await ensurePostgresRolePassword({
@@ -709,8 +716,7 @@ async function startServerRuntime(
           try {
             await embeddedPostgres.initialise();
           } catch (err) {
-            logEmbeddedPostgresFailure("initialise", err);
-            throw err;
+            throw recordEmbeddedPostgresFailure("initialise", err);
           }
         } else {
           logger.info(`Embedded PostgreSQL cluster already exists (${clusterVersionFile}); skipping init`);
@@ -734,16 +740,13 @@ async function startServerRuntime(
               try {
                 await embeddedPostgres.start();
               } catch (retryErr) {
-                logEmbeddedPostgresFailure("start", retryErr);
-                throw retryErr;
+                throw recordEmbeddedPostgresFailure("start", retryErr);
               }
             } else {
-              logEmbeddedPostgresFailure("start", err);
-              throw err;
+              throw recordEmbeddedPostgresFailure("start", err);
             }
           } else {
-            logEmbeddedPostgresFailure("start", err);
-            throw err;
+            throw recordEmbeddedPostgresFailure("start", err);
           }
         }
         embeddedPostgresStartedByThisProcess = true;

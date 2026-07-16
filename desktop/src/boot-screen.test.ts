@@ -59,6 +59,7 @@ describe("desktop boot screen", () => {
     expect(html).toContain("Your workflow impact, severity, and any workaround.");
     expect(html).toContain("Do not attach .env, config.json, databases");
     expect(html).toContain("Technical details");
+    expect(html).toContain('["Summary", state.failure?.summary]');
     expect(html).toContain("window.rudderBoot.retryStartup()");
     expect(html).toContain("window.rudderBoot.openSupportDraft()");
     expect(html).toContain("window.rudderBoot.openBugReport()");

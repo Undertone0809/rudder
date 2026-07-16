@@ -4,6 +4,7 @@ import path from "node:path";
 import { ensurePostgresDatabase, getPostgresDataDirectory } from "./client.js";
 import {
   cleanupStaleSysvSharedMemorySegments,
+  createEmbeddedPostgresStartupError,
   isEmbeddedPostgresSharedMemoryError,
 } from "./embedded-postgres-recovery.js";
 import {
@@ -18,18 +19,6 @@ export type MigrationConnection = {
   source: string;
   stop: () => Promise<void>;
 };
-
-function toError(error: unknown, fallbackMessage: string): Error {
-  if (error instanceof Error) return error;
-  if (error === undefined) return new Error(fallbackMessage);
-  if (typeof error === "string") return new Error(`${fallbackMessage}: ${error}`);
-
-  try {
-    return new Error(`${fallbackMessage}: ${JSON.stringify(error)}`);
-  } catch {
-    return new Error(`${fallbackMessage}: ${String(error)}`);
-  }
-}
 
 function readRunningPostmasterPid(postmasterPidFile: string): number | null {
   if (!existsSync(postmasterPidFile)) return null;
@@ -102,12 +91,11 @@ async function ensureEmbeddedPostgresConnection(
     }
   };
   const formatStartFailure = (error: unknown): Error => {
-    const base = toError(
+    return createEmbeddedPostgresStartupError(
       error,
       `Failed to start embedded PostgreSQL on port ${selectedPort}`,
+      recentLogs,
     );
-    if (recentLogs.length === 0) return base;
-    return new Error(`${base.message}\nRecent embedded-postgres logs:\n${recentLogs.join("\n")}`);
   };
   const runningPid = readRunningPostmasterPid(postmasterPidFile);
   const runningPort = readPidFilePort(postmasterPidFile);
@@ -171,9 +159,10 @@ async function ensureEmbeddedPostgresConnection(
     try {
       await instance.initialise();
     } catch (error) {
-      throw toError(
+      throw createEmbeddedPostgresStartupError(
         error,
         `Failed to initialize embedded PostgreSQL cluster in ${dataDir} on port ${selectedPort}`,
+        recentLogs,
       );
     }
   }

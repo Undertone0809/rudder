@@ -377,9 +377,10 @@ export function createBootScreenHtml(
         const entries = [
           ["Failure ID", state.failure?.id],
           ["Occurred at", state.failure?.occurredAt],
-          ["Stage", state.stage],
+          ["Stage", state.failure?.stage || state.stage],
           ["Attempt", state.failure?.attempt],
           ["Category", state.failure?.category],
+          ["Summary", state.failure?.summary],
           ["Profile", state.runtime?.profile],
           ["Instance", state.runtime?.instance],
           ["Version", state.runtime?.version],
