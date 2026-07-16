@@ -10768,7 +10768,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'none'"
+          "default": "'unknown'"
         },
         "log_store": {
           "name": "log_store",
@@ -11201,7 +11201,7 @@
       "checkConstraints": {
         "heartbeat_runs_session_reuse_scope_check": {
           "name": "heartbeat_runs_session_reuse_scope_check",
-          "value": "\"heartbeat_runs\".\"session_reuse_scope\" in ('explicit', 'task', 'none')"
+          "value": "\"heartbeat_runs\".\"session_reuse_scope\" in ('explicit', 'task', 'none', 'unknown')"
         }
       },
       "isRLSEnabled": false

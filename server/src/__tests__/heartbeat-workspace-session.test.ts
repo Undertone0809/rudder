@@ -428,6 +428,10 @@ describe("buildExplicitResumeSessionOverride", () => {
       sessionDisplayId: null,
       sessionParams: null,
       sessionCleared: true,
+      sessionReuseSuppression: {
+        kind: "source_session_cleared",
+        sourceRunId: "run-1",
+      },
     });
   });
 

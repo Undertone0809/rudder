@@ -365,7 +365,7 @@ export function createHeartbeatReleaseHandlers(context: any) {
           ? null
           : await resolveSessionBeforeForWakeup(deferredAgent, promotedTaskKey);
         const promotedSessionSelection = heartbeatSessions.selectRunSessionLineage({
-          forceFresh: promotedContextSnapshot.forceFreshSession === true,
+          forceFresh: Boolean(heartbeatSessions.readSessionReuseSuppression(promotedContextSnapshot)),
           explicitSessionParams,
           explicitSessionDisplayId: readNonEmptyString(promotedContextSnapshot.resumeSessionDisplayId),
           taskSessionParams: null,

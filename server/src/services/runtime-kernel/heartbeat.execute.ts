@@ -255,7 +255,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
         readNonEmptyString(taskSessionParams?.sessionId),
     );
     const sessionSelection = selectRunSessionLineage({
-      forceFresh: context.forceFreshSession === true,
+      forceFresh: Boolean(heartbeatSessions.readSessionReuseSuppression(context)),
       explicitSessionParams: explicitResumeSessionParams,
       explicitSessionDisplayId: explicitResumeSessionDisplayId,
       taskSessionParams,

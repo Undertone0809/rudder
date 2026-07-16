@@ -162,7 +162,23 @@ describe("agent run retry route", () => {
       invocationSource: "on_demand",
       triggerDetail: "manual",
       status: "failed",
-      contextSnapshot: {},
+      contextSnapshot: {
+        resumeFromRunId: "source-run-id",
+        resumeSessionDisplayId: "public-display-id",
+        resumeSessionParams: {
+          sessionId: "nested-private-session",
+          cwd: "/nested/private/cwd",
+          workspaceId: "private-workspace",
+          repoUrl: "https://private.example/repo.git",
+          repoRef: "private-ref",
+        },
+        forceFreshSession: true,
+        sessionResumeSuppressed: true,
+        sessionReuseSuppression: {
+          kind: "source_session_cleared",
+          sourceRunId: "source-run-id",
+        },
+      },
       sessionReuseScope: "explicit",
       sessionParamsBeforeJson: { sessionId: "private-before" },
       sessionParamsAfterJson: { sessionId: "private-after" },
@@ -206,6 +222,13 @@ describe("agent run retry route", () => {
       expect(res.body.sessionReuseScope).toBe("explicit");
       expect(res.body).not.toHaveProperty("sessionParamsBeforeJson");
       expect(res.body).not.toHaveProperty("sessionParamsAfterJson");
+      expect(res.body.contextSnapshot).toEqual({
+        resumeFromRunId: "source-run-id",
+        sessionReuseSuppression: {
+          kind: "source_session_cleared",
+          sourceRunId: "source-run-id",
+        },
+      });
       expect(res.body).not.toHaveProperty("executionOwnerToken");
       expect(res.body).not.toHaveProperty("executionLeaseExpiresAt");
       expect(res.body).not.toHaveProperty("processExitedAt");

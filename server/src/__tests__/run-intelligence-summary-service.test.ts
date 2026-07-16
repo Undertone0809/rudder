@@ -298,7 +298,7 @@ describe("listRunSummaries", () => {
       logBytes: 1_000_000,
       error: "failure_0",
       outcome: "result-0",
-      sessionReuseScope: "none",
+      sessionReuseScope: "unknown",
       skillEvidence: {
         evidenceType: "used",
         matchedSkillKey: "performance-review",
@@ -336,7 +336,24 @@ describe("listRunSummaries", () => {
       orgId,
       agentId,
       status: "succeeded",
-      contextSnapshot: { issueId: foreignIssueId },
+      contextSnapshot: {
+        issueId: foreignIssueId,
+        resumeFromRunId: "source-run-id",
+        resumeSessionDisplayId: "public-display-id",
+        resumeSessionParams: {
+          sessionId: "nested-private-session",
+          cwd: "/nested/private/cwd",
+          workspaceId: "private-workspace",
+          repoUrl: "https://private.example/repo.git",
+          repoRef: "private-ref",
+        },
+        forceFreshSession: true,
+        sessionResumeSuppressed: true,
+        sessionReuseSuppression: {
+          kind: "source_session_cleared",
+          sourceRunId: "source-run-id",
+        },
+      },
     });
 
     const summary = await listRunSummaries(db, {
@@ -356,6 +373,25 @@ describe("listRunSummaries", () => {
     expect(observed).toHaveLength(1);
     expect(observed[0]?.issue).toBeNull();
     expect(detail?.issue).toBeNull();
+    expect(observed[0]?.run.contextSnapshot).toEqual({
+      issueId: foreignIssueId,
+      resumeFromRunId: "source-run-id",
+      sessionReuseSuppression: {
+        kind: "source_session_cleared",
+        sourceRunId: "source-run-id",
+      },
+    });
+    expect(detail?.run.contextSnapshot).toEqual({
+      issueId: foreignIssueId,
+      resumeFromRunId: "source-run-id",
+      sessionReuseSuppression: {
+        kind: "source_session_cleared",
+        sourceRunId: "source-run-id",
+      },
+    });
+    expect(JSON.stringify({ observed, detail })).not.toMatch(
+      /nested-private-session|nested\/private\/cwd|private-workspace|private\.example|private-ref|public-display-id/,
+    );
     expect(JSON.stringify({ summary, observed, detail })).not.toContain("Foreign organization secret issue");
   });
 

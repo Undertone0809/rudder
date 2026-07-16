@@ -13,6 +13,7 @@ import {
 import {
   isUuidLike,
   summarizeTokenUsage,
+  toHeartbeatRun,
   type HeartbeatRun,
   type HeartbeatRunEvent,
   type RunEventCursorPage,
@@ -365,7 +366,7 @@ async function serializeRunRow(
 ): Promise<RunExportRow> {
   const errorSummary = row.errorCode ?? row.error ?? row.stderrExcerpt ?? null;
   return {
-    run: {
+    run: toHeartbeatRun({
       id: row.id,
       orgId: row.orgId,
       agentId: row.agentId,
@@ -400,7 +401,7 @@ async function serializeRunRow(
       contextSnapshot: row.contextSnapshot,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
-    },
+    }),
     agentName: row.agentName,
     orgName: row.orgName,
     issue: row.issueId ? issueMap.get(row.issueId) ?? null : null,

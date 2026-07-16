@@ -12,9 +12,10 @@ import {
   issues,
   organizations
 } from "@rudderhq/db";
-import type { AgentSkillAnalytics } from "@rudderhq/shared";
+import type { AgentSkillAnalytics, HeartbeatRun } from "@rudderhq/shared";
 import {
-  summarizeTokenUsage
+  summarizeTokenUsage,
+  toHeartbeatRun
 } from "@rudderhq/shared";
 import { and, asc, desc, eq, gt, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -389,6 +390,10 @@ export function heartbeatService(
       ? await getTaskSession(agent.orgId, agent.id, agent.agentRuntimeType, resumeTaskKey)
       : null;
     const sessionCodec = getAgentRuntimeSessionCodec(agent.agentRuntimeType);
+    const persistedSessionSuppression = heartbeatSessions.readSessionReuseSuppression(resumeContext);
+    const resumeRunHasSessionAfter =
+      Boolean(readNonEmptyString(resumeRun.sessionIdAfter)) ||
+      Boolean(resumeRun.sessionParamsAfterJson && Object.keys(resumeRun.sessionParamsAfterJson).length > 0);
     const sessionOverride = buildExplicitResumeSessionOverride({
       resumeFromRunId,
       resumeRunSessionIdBefore: resumeRun.sessionIdBefore,
@@ -399,6 +404,7 @@ export function heartbeatService(
         resumeRun.sessionIdAfter == null &&
         resumeRun.sessionParamsAfterJson != null &&
         Object.keys(resumeRun.sessionParamsAfterJson).length === 0,
+      resumeRunSessionSuppression: resumeRunHasSessionAfter ? null : persistedSessionSuppression,
       resumeContextSessionParams: parseObject(resumeContext.resumeSessionParams),
       resumeContextSessionDisplayId: readNonEmptyString(resumeContext.resumeSessionDisplayId),
       taskSession: resumeTaskSession,
@@ -414,6 +420,10 @@ export function heartbeatService(
       sessionDisplayId: sessionOverride.sessionDisplayId,
       sessionParams: sessionOverride.sessionParams,
       sessionCleared: "sessionCleared" in sessionOverride && sessionOverride.sessionCleared === true,
+      sessionReuseSuppression:
+        "sessionReuseSuppression" in sessionOverride
+          ? sessionOverride.sessionReuseSuppression
+          : null,
     };
   }
 
@@ -1717,7 +1727,7 @@ export function heartbeatService(
         }
       }
 
-      return rows.map((row) => ({
+      return rows.map((row) => toHeartbeatRun({
         ...row,
         resultJson: (() => {
           const summary = summarizeHeartbeatRunResultJson(row.resultJson);
@@ -1739,7 +1749,7 @@ export function heartbeatService(
             skillEvidenceSkills: skillPayload,
           };
         })(),
-      }));
+      } as HeartbeatRun));
     },
 
     getAgentSkillAnalytics: async (

@@ -44,7 +44,26 @@ function heartbeatRun(overrides: Partial<HeartbeatRun>): HeartbeatRun {
 describe("toAgentRun", () => {
   it("strips internal recovery and terminal-effect fields from public run shapes", () => {
     const internalRun = {
-      ...heartbeatRun({ id: "internal-run" }),
+      ...heartbeatRun({
+        id: "internal-run",
+        contextSnapshot: {
+          resumeFromRunId: "source-run-id",
+          resumeSessionDisplayId: "public-display-id",
+          resumeSessionParams: {
+            sessionId: "nested-private-session",
+            cwd: "/nested/private/cwd",
+            workspaceId: "private-workspace",
+            repoUrl: "https://private.example/repo.git",
+            repoRef: "private-ref",
+          },
+          forceFreshSession: true,
+          sessionResumeSuppressed: true,
+          sessionReuseSuppression: {
+            kind: "source_session_cleared",
+            sourceRunId: "source-run-id",
+          },
+        },
+      }),
       executionOwnerToken: "owner-secret",
       executionLeaseExpiresAt: new Date(),
       processExitedAt: new Date(),
@@ -66,6 +85,13 @@ describe("toAgentRun", () => {
       expect(publicRun).not.toHaveProperty("terminalEffectsLastError");
       expect(publicRun).not.toHaveProperty("sessionParamsBeforeJson");
       expect(publicRun).not.toHaveProperty("sessionParamsAfterJson");
+      expect(publicRun.contextSnapshot).toEqual({
+        resumeFromRunId: "source-run-id",
+        sessionReuseSuppression: {
+          kind: "source_session_cleared",
+          sourceRunId: "source-run-id",
+        },
+      });
     }
   });
 
