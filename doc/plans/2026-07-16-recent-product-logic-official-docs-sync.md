@@ -2,7 +2,7 @@
 title: Sync Recent Product Logic Into Official Docs
 date: 2026-07-16
 kind: implementation
-status: in_progress
+status: completed
 area: developer_workflow
 entities:
   - official_docs
@@ -19,7 +19,8 @@ related_code:
   - doc/product/domains/issues/identity.md
   - doc/product/domains/organizations-and-goals/settings-onboarding-portability.md
   - docs/docs.json
-commit_refs: []
+commit_refs:
+  - 2730034f2
 updated_at: 2026-07-16
 ---
 
@@ -91,6 +92,13 @@ and pixel-level UI acceptance rules.
 - Review the final diff for accidental `doc/product/**` edits and unrelated
   workspace changes.
 - Obtain an independent docs review before commit.
+
+## Publication Gate
+
+The Built-in Browser landed after the current `v0.4.5` stable release. This
+docs source may merge with the product changes, but the production docs site
+must not publish these Browser claims before the `v0.4.6` stable release makes
+the capability available through the documented `@latest` install path.
 
 ## Out Of Scope
 

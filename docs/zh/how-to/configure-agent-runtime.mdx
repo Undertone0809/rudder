@@ -71,7 +71,7 @@ Codex、Claude Code、Gemini CLI、OpenCode、Pi、Cursor 这类本地 CLI agent
 3. 选择 model。如果你不知道选哪个，先用默认值。
 4. 如果这个 agent 需要固定角色说明，再填写 agent instructions file。没有就先空着。
 5. 运行环境测试。
-6. 分配一个低风险 issue，跑一次 heartbeat。
+6. 跑一次低风险 Chat turn，或者分配一个低风险 issue 并跑一次 heartbeat。
 
 Instructions file 是给 agent 的额外说明文件。要填就填绝对路径，例如：
 
@@ -97,6 +97,8 @@ Claude Code 常见选项包括 Chrome 访问、权限行为和每次运行最大
 - Managed tools 不可用时，内置的 `rudder` CLI skill 仍可作为 fallback。
 
 这些工具覆盖 issue、run、Chat、automation、Library 文件、approval、skill 和 agent 等 Rudder control-plane 操作。在 Desktop `local_trusted` 部署中，启用实例能力后，受支持的本地 run 还可以获得[内置浏览器](/zh/concepts/built-in-browser)工具。
+
+看到 managed tool 不代表 agent 获得了额外权限。每次调用仍然限制在当前 organization 和 run，并继续经过对应操作原有的 permission、ownership 和 approval 检查。Rudder 也不会把任意 user 或 provider MCP server 自动继承到这套 managed run surface。
 
 工具可用性取决于具体 runtime。远程、gateway、generic process 和不受支持的 runtime 不会自动获得 managed tools 或本地 Desktop Browser 控制能力。请用环境测试和一次真实 run 验证你所选 runtime 的实际能力。
 
@@ -219,11 +221,11 @@ Rudder 调用进程时，也会提供 Rudder runtime 环境变量。不要把密
 
 分配真实工作前，先点环境测试。它会检查 Rudder 能不能找到 Codex、Claude Code、脚本或 URL。
 
-环境测试通过，只说明 Rudder 大概率能叫醒 runtime。真正的证明是一次 heartbeat 留下可检查证据：
+环境测试通过，只说明 Rudder 大概率能叫醒 runtime。真正的证明是一次 Chat turn 或 issue heartbeat 留下可检查证据：
 
 - run 使用了预期 runtime
 - run 上出现 transcript 条目或原始输出
-- issue 收到 progress、blocked、review 或 done 信号
+- 来源 Chat 或 issue 收到可见 result、progress、blocked、review 或 done 信号
 - agent 不依赖只存在于你交互式 shell 里的凭据或权限
 
 ## 操作检查表
@@ -236,7 +238,7 @@ Rudder 调用进程时，也会提供 Rudder runtime 环境变量。不要把密
 - model 和 instructions 设置匹配要做的工作
 - 宽权限只给可信任的 agent 开启
 - 环境测试通过，或每个 warning 都有明确解释
-- 第一次真实 heartbeat 留下 transcript 或 issue 证据
+- 第一次真实 Chat turn 或 issue heartbeat 在来源 Chat 或 issue 中留下证据
 
 ## 下一步
 

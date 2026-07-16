@@ -1,67 +1,67 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://docs.rudderhq.dev</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>1.0</priority></url>
-  <url><loc>https://docs.rudderhq.dev/get-started/installation</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
-  <url><loc>https://docs.rudderhq.dev/get-started/first-organization</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
-  <url><loc>https://docs.rudderhq.dev/concepts/overview</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://docs.rudderhq.dev</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>1.0</priority></url>
+  <url><loc>https://docs.rudderhq.dev/get-started/installation</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://docs.rudderhq.dev/get-started/first-organization</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://docs.rudderhq.dev/concepts/overview</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://docs.rudderhq.dev/concepts/goals-projects-issues</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://docs.rudderhq.dev/concepts/agents</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://docs.rudderhq.dev/concepts/agents</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://docs.rudderhq.dev/concepts/built-in-browser</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://docs.rudderhq.dev/concepts/issues</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://docs.rudderhq.dev/concepts/chat-messenger</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://docs.rudderhq.dev/concepts/issues</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://docs.rudderhq.dev/concepts/chat-messenger</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://docs.rudderhq.dev/concepts/calendar</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://docs.rudderhq.dev/concepts/workspaces</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://docs.rudderhq.dev/concepts/workspaces</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://docs.rudderhq.dev/concepts/skills</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://docs.rudderhq.dev/concepts/automations</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://docs.rudderhq.dev/concepts/automations</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://docs.rudderhq.dev/concepts/reviews-feedback-learning</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://docs.rudderhq.dev/concepts/control-plane</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://docs.rudderhq.dev/concepts/control-plane</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://docs.rudderhq.dev/concepts/plugins</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://docs.rudderhq.dev/how-to/issue-lifecycle</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://docs.rudderhq.dev/how-to/issue-lifecycle</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
   <url><loc>https://docs.rudderhq.dev/how-to/create-agent</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://docs.rudderhq.dev/how-to/create-automation</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://docs.rudderhq.dev/how-to/create-automation</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://docs.rudderhq.dev/how-to/review-agent-work</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://docs.rudderhq.dev/how-to/manage-workspaces-and-library</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://docs.rudderhq.dev/how-to/export-import-organization</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://docs.rudderhq.dev/how-to/manage-workspaces-and-library</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://docs.rudderhq.dev/how-to/export-import-organization</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://docs.rudderhq.dev/how-to/manage-plugins</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://docs.rudderhq.dev/how-to/configure-feishu-integration</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://docs.rudderhq.dev/how-to/configure-agent-runtime</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://docs.rudderhq.dev/how-to/configure-feishu-integration</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://docs.rudderhq.dev/how-to/configure-agent-runtime</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://docs.rudderhq.dev/reference/issue-statuses</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/reference/runtime-types</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/reference/runtime-types</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/reference/workspace-boundaries</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/reference/automation-output-routing</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/reference/permissions-and-platforms</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/reference/automation-output-routing</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/reference/permissions-and-platforms</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/about</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/contact</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/releases</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/get-started/installation</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/get-started/first-organization</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/concepts/overview</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/get-started/installation</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/get-started/first-organization</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/concepts/overview</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/concepts/goals-projects-issues</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/concepts/agents</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/concepts/agents</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/concepts/built-in-browser</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/concepts/issues</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/concepts/chat-messenger</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/concepts/issues</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/concepts/chat-messenger</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/concepts/calendar</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/concepts/workspaces</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/concepts/workspaces</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/concepts/skills</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/concepts/automations</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/concepts/automations</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/concepts/reviews-feedback-learning</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/concepts/control-plane</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/concepts/control-plane</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/concepts/plugins</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/how-to/issue-lifecycle</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/how-to/issue-lifecycle</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/how-to/create-agent</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/how-to/create-automation</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/how-to/create-automation</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/how-to/review-agent-work</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/how-to/manage-workspaces-and-library</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/how-to/export-import-organization</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/how-to/manage-workspaces-and-library</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/how-to/export-import-organization</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/how-to/manage-plugins</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/how-to/configure-feishu-integration</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/how-to/configure-agent-runtime</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/how-to/configure-feishu-integration</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/how-to/configure-agent-runtime</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/reference/issue-statuses</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/reference/runtime-types</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/reference/runtime-types</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/reference/workspace-boundaries</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/reference/automation-output-routing</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/reference/permissions-and-platforms</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/reference/automation-output-routing</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/reference/permissions-and-platforms</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/releases</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
 </urlset>
