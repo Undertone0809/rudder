@@ -298,6 +298,7 @@ describe("listRunSummaries", () => {
       logBytes: 1_000_000,
       error: "failure_0",
       outcome: "result-0",
+      sessionReuseScope: "none",
       skillEvidence: {
         evidenceType: "used",
         matchedSkillKey: "performance-review",

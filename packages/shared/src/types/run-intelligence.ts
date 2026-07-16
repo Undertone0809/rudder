@@ -1,4 +1,5 @@
 import type { HeartbeatInvocationSource, HeartbeatRunStatus, WakeupTriggerDetail } from "../constants.js";
+import type { HeartbeatSessionReuseScope } from "./heartbeat.js";
 
 export interface RunSummaryIssue {
   id: string;
@@ -40,6 +41,7 @@ export interface RunSummary {
   invocationSource: HeartbeatInvocationSource;
   triggerDetail: WakeupTriggerDetail | null;
   status: HeartbeatRunStatus;
+  sessionReuseScope: HeartbeatSessionReuseScope;
   issue: RunSummaryIssue | null;
   target: RunSummaryTarget | null;
   chatConversationId: string | null;

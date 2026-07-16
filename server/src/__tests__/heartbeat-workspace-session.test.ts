@@ -384,14 +384,17 @@ describe("buildExplicitResumeSessionOverride", () => {
     const result = buildExplicitResumeSessionOverride({
       resumeFromRunId: "run-1",
       resumeRunSessionIdBefore: "session-before",
-      resumeRunSessionIdAfter: null,
+      resumeRunSessionIdAfter: "invalid-after",
       resumeRunSessionParamsBefore: { sessionId: "session-before", cwd: "/tmp/before" },
       resumeRunSessionParamsAfter: {},
       taskSession: null,
       sessionCodec: codexSessionCodec,
     });
 
-    expect(result?.sessionParams).toEqual({ sessionId: "session-before", cwd: "/tmp/before" });
+    expect(result).toEqual({
+      sessionDisplayId: "session-before",
+      sessionParams: { sessionId: "session-before", cwd: "/tmp/before" },
+    });
   });
 
   it("uses explicit context params when a recovery run failed before column persistence", () => {
