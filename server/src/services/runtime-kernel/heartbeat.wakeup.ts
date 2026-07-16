@@ -89,6 +89,66 @@ export function createHeartbeatWakeupHandlers(context: any) {
     const sessionBefore = admissionSessionSelection.sessionDisplayId ??
       readNonEmptyString(admissionSessionSelection.sessionParams?.sessionId);
 
+    const mergeCoalescedRunAdmission = async (
+      database: any,
+      targetRun: typeof heartbeatRuns.$inferSelect,
+      mergedContextSnapshot: Record<string, unknown>,
+    ) => {
+      const updateContextOnly = async () => database
+        .update(heartbeatRuns)
+        .set({
+          contextSnapshot: mergedContextSnapshot,
+          updatedAt: new Date(),
+        })
+        .where(eq(heartbeatRuns.id, targetRun.id))
+        .returning()
+        .then((rows: Array<typeof heartbeatRuns.$inferSelect>) => rows[0] ?? targetRun);
+
+      if (targetRun.status !== "queued") return updateContextOnly();
+
+      const sessionCodec = getAgentRuntimeSessionCodec(agent.agentRuntimeType);
+      const explicitSessionParams = normalizeSessionParams(
+        sessionCodec.deserialize(mergedContextSnapshot.resumeSessionParams ?? null),
+      );
+      const explicitSessionDisplayId = truncateDisplayId(
+        readNonEmptyString(mergedContextSnapshot.resumeSessionDisplayId) ??
+          (sessionCodec.getDisplayId ? sessionCodec.getDisplayId(explicitSessionParams) : null) ??
+          readNonEmptyString(explicitSessionParams?.sessionId),
+      );
+      const taskSessionParams = targetRun.sessionReuseScope === "task"
+        ? normalizeSessionParams(sessionCodec.deserialize(targetRun.sessionParamsBeforeJson ?? null))
+        : null;
+      const taskSessionDisplayId = targetRun.sessionReuseScope === "task"
+        ? truncateDisplayId(
+            targetRun.sessionIdBefore ??
+              (sessionCodec.getDisplayId ? sessionCodec.getDisplayId(taskSessionParams) : null) ??
+              readNonEmptyString(taskSessionParams?.sessionId),
+          )
+        : null;
+      const sessionSelection = heartbeatSessions.selectRunSessionLineage({
+        forceFresh: Boolean(heartbeatSessions.readSessionReuseSuppression(mergedContextSnapshot)),
+        explicitSessionParams,
+        explicitSessionDisplayId,
+        taskSessionParams,
+        taskSessionDisplayId,
+      });
+      const queuedRun = await database
+        .update(heartbeatRuns)
+        .set({
+          contextSnapshot: mergedContextSnapshot,
+          sessionIdBefore:
+            sessionSelection.sessionDisplayId ?? readNonEmptyString(sessionSelection.sessionParams?.sessionId),
+          sessionParamsBeforeJson: sessionSelection.sessionParams,
+          sessionReuseScope: sessionSelection.reuseScope,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(heartbeatRuns.id, targetRun.id), eq(heartbeatRuns.status, "queued")))
+        .returning()
+        .then((rows: Array<typeof heartbeatRuns.$inferSelect>) => rows[0] ?? null);
+
+      return queuedRun ?? updateContextOnly();
+    };
+
     const writeSkippedRequest = async (skipReason: string, diagnostics?: Record<string, unknown>) => {
       const skippedPayload = diagnostics
         ? {
@@ -394,25 +454,11 @@ export function createHeartbeatWakeupHandlers(context: any) {
               activeExecutionRun.contextSnapshot,
               enrichedContextSnapshot,
             );
-            const queuedSessionSuppressed =
-              activeExecutionRun.status === "queued" &&
-              Boolean(heartbeatSessions.readSessionReuseSuppression(mergedContextSnapshot));
-            const mergedRun = await tx
-              .update(heartbeatRuns)
-              .set({
-                contextSnapshot: mergedContextSnapshot,
-                ...(queuedSessionSuppressed
-                  ? {
-                      sessionIdBefore: null,
-                      sessionParamsBeforeJson: null,
-                      sessionReuseScope: "none" as const,
-                    }
-                  : {}),
-                updatedAt: new Date(),
-              })
-              .where(eq(heartbeatRuns.id, activeExecutionRun.id))
-              .returning()
-              .then((rows) => rows[0] ?? activeExecutionRun);
+            const mergedRun = await mergeCoalescedRunAdmission(
+              tx,
+              activeExecutionRun,
+              mergedContextSnapshot,
+            );
 
             if (existingWakeupRequestId) {
               await updateWakeupRequestRecord(tx, existingWakeupRequestId, {
@@ -642,25 +688,11 @@ export function createHeartbeatWakeupHandlers(context: any) {
         coalescedTargetRun.contextSnapshot,
         enrichedContextSnapshot,
       );
-      const queuedSessionSuppressed =
-        coalescedTargetRun.status === "queued" &&
-        Boolean(heartbeatSessions.readSessionReuseSuppression(mergedContextSnapshot));
-      const mergedRun = await db
-        .update(heartbeatRuns)
-        .set({
-          contextSnapshot: mergedContextSnapshot,
-          ...(queuedSessionSuppressed
-            ? {
-                sessionIdBefore: null,
-                sessionParamsBeforeJson: null,
-                sessionReuseScope: "none" as const,
-              }
-            : {}),
-          updatedAt: new Date(),
-        })
-        .where(eq(heartbeatRuns.id, coalescedTargetRun.id))
-        .returning()
-        .then((rows) => rows[0] ?? coalescedTargetRun);
+      const mergedRun = await mergeCoalescedRunAdmission(
+        db,
+        coalescedTargetRun,
+        mergedContextSnapshot,
+      );
 
       if (existingWakeupRequestId) {
         await setWakeupStatus(existingWakeupRequestId, "coalesced", {
