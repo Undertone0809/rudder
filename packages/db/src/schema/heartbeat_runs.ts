@@ -7,7 +7,7 @@
  * @see doc/product/domains/execution/run-admission-and-recovery.md - retry and process-loss recovery
  */
 import { sql } from "drizzle-orm";
-import { type AnyPgColumn, bigint, boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { type AnyPgColumn, bigint, boolean, check, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { agentWakeupRequests } from "./agent_wakeup_requests.js";
 import { agents } from "./agents.js";
 import { chatConversations } from "./chat_conversations.js";
@@ -33,6 +33,12 @@ export const heartbeatRuns = pgTable(
     resultSummaryJson: jsonb("result_summary_json").$type<Record<string, unknown>>(),
     sessionIdBefore: text("session_id_before"),
     sessionIdAfter: text("session_id_after"),
+    sessionParamsBeforeJson: jsonb("session_params_before_json").$type<Record<string, unknown>>(),
+    sessionParamsAfterJson: jsonb("session_params_after_json").$type<Record<string, unknown>>(),
+    sessionReuseScope: text("session_reuse_scope")
+      .$type<"explicit" | "task" | "none">()
+      .notNull()
+      .default("none"),
     logStore: text("log_store"),
     logRef: text("log_ref"),
     logBytes: bigint("log_bytes", { mode: "number" }),
@@ -99,5 +105,9 @@ export const heartbeatRuns = pgTable(
     activeChatConversationUniqueIdx: uniqueIndex("heartbeat_runs_active_chat_conversation_uq")
       .on(table.orgId, table.chatConversationId)
       .where(sql`${table.chatConversationId} is not null and (${table.status} in ('queued', 'running') or ${table.terminalEffectsPending} = true)`),
+    sessionReuseScopeCheck: check(
+      "heartbeat_runs_session_reuse_scope_check",
+      sql`${table.sessionReuseScope} in ('explicit', 'task', 'none')`,
+    ),
   }),
 );

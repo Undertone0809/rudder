@@ -11,6 +11,7 @@ import type {
 
 export type HeartbeatRecoveryTrigger = "manual" | "automatic";
 export type HeartbeatRecoveryMode = "continue_preferred";
+export type HeartbeatSessionReuseScope = "explicit" | "task" | "none";
 
 export interface HeartbeatRunRecoveryContext {
   originalRunId: string;
@@ -63,6 +64,7 @@ export interface HeartbeatRun {
   resultJson: Record<string, unknown> | null;
   sessionIdBefore: string | null;
   sessionIdAfter: string | null;
+  sessionReuseScope: HeartbeatSessionReuseScope;
   logStore: string | null;
   logRef: string | null;
   logBytes: number | null;

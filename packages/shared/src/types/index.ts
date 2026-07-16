@@ -81,7 +81,7 @@ export type { Goal, GoalDependencies, GoalDependencyPreview } from "./goal.js";
 export type {
   AgentRun, AgentRuntimeState, AgentTaskSession,
   AgentWakeupRequest, HeartbeatRecoveryMode,
-  HeartbeatRecoveryTrigger, HeartbeatRun, HeartbeatRunContextSnapshot, HeartbeatRunEvent, HeartbeatRunRecoveryContext, InstanceSchedulerHeartbeatAgent
+  HeartbeatRecoveryTrigger, HeartbeatRun, HeartbeatRunContextSnapshot, HeartbeatRunEvent, HeartbeatRunRecoveryContext, HeartbeatSessionReuseScope, InstanceSchedulerHeartbeatAgent
 } from "./heartbeat.js";
 export type {
   InstanceBrowserSettings, InstanceGeneralSettings, InstanceLocale, InstanceNotificationSettings, InstancePathPickerRequest,

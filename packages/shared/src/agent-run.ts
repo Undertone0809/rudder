@@ -106,6 +106,7 @@ export function toHeartbeatRun(run: HeartbeatRun): HeartbeatRun {
     resultJson: run.resultJson,
     sessionIdBefore: run.sessionIdBefore,
     sessionIdAfter: run.sessionIdAfter,
+    sessionReuseScope: run.sessionReuseScope ?? "none",
     logStore: run.logStore,
     logRef: run.logRef,
     logBytes: run.logBytes,

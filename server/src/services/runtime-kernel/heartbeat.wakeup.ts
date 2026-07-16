@@ -62,9 +62,19 @@ export function createHeartbeatWakeupHandlers(context: any) {
     }
     await hydrateWakeContextSnapshot(db, agent.orgId, enrichedContextSnapshot);
     const effectiveTaskKey = readNonEmptyString(enrichedContextSnapshot.taskKey) ?? taskKey;
-    const sessionBefore =
-      explicitResumeSession?.sessionDisplayId ??
-      await resolveSessionBeforeForWakeup(agent, effectiveTaskKey);
+    const resetTaskSession = shouldResetTaskSessionForWake(enrichedContextSnapshot);
+    const taskSessionDisplayId = resetTaskSession
+      ? null
+      : await resolveSessionBeforeForWakeup(agent, effectiveTaskKey);
+    const admissionSessionSelection = heartbeatSessions.selectRunSessionLineage({
+      forceFresh: enrichedContextSnapshot.forceFreshSession === true,
+      explicitSessionParams: explicitResumeSession?.sessionParams ?? null,
+      explicitSessionDisplayId: explicitResumeSession?.sessionDisplayId ?? null,
+      taskSessionParams: null,
+      taskSessionDisplayId,
+    });
+    const sessionBefore = admissionSessionSelection.sessionDisplayId ??
+      readNonEmptyString(admissionSessionSelection.sessionParams?.sessionId);
 
     const writeSkippedRequest = async (skipReason: string, diagnostics?: Record<string, unknown>) => {
       const skippedPayload = diagnostics
@@ -531,6 +541,8 @@ export function createHeartbeatWakeupHandlers(context: any) {
             wakeupRequestId: wakeupRequest.id,
             contextSnapshot: enrichedContextSnapshot,
             sessionIdBefore: sessionBefore,
+            sessionParamsBeforeJson: admissionSessionSelection.sessionParams,
+            sessionReuseScope: admissionSessionSelection.reuseScope,
           })
           .returning()
           .then((rows) => rows[0]);
@@ -715,6 +727,8 @@ export function createHeartbeatWakeupHandlers(context: any) {
           wakeupRequestId: wakeupRequest.id,
           contextSnapshot: enrichedContextSnapshot,
           sessionIdBefore: sessionBefore,
+          sessionParamsBeforeJson: admissionSessionSelection.sessionParams,
+          sessionReuseScope: admissionSessionSelection.reuseScope,
         })
         .returning()
         .then((rows) => rows[0]);
@@ -882,9 +896,27 @@ export function createHeartbeatWakeupHandlers(context: any) {
         payload: pendingPayload,
       });
       await hydrateWakeContextSnapshot(db, agent.orgId, recoveredContext);
-      const sessionBefore =
-        readNonEmptyString(recoveredContext.resumeSessionDisplayId) ??
-        await resolveSessionBeforeForWakeup(agent, taskKey);
+      const sessionCodec = getAgentRuntimeSessionCodec(agent.agentRuntimeType);
+      const explicitSessionParams = normalizeSessionParams(
+        sessionCodec.deserialize(
+          recoveredContext.resumeSessionParams && typeof recoveredContext.resumeSessionParams === "object"
+            ? recoveredContext.resumeSessionParams as Record<string, unknown>
+            : null,
+        ),
+      );
+      const resetTaskSession = shouldResetTaskSessionForWake(recoveredContext);
+      const taskSessionDisplayId = resetTaskSession
+        ? null
+        : await resolveSessionBeforeForWakeup(agent, taskKey);
+      const recoveredSessionSelection = heartbeatSessions.selectRunSessionLineage({
+        forceFresh: recoveredContext.forceFreshSession === true,
+        explicitSessionParams,
+        explicitSessionDisplayId: readNonEmptyString(recoveredContext.resumeSessionDisplayId),
+        taskSessionParams: null,
+        taskSessionDisplayId,
+      });
+      const sessionBefore = recoveredSessionSelection.sessionDisplayId ??
+        readNonEmptyString(recoveredSessionSelection.sessionParams?.sessionId);
       const now = new Date();
       const recoveredRun = await db.transaction(async (tx) => {
         await tx.execute(
@@ -928,6 +960,8 @@ export function createHeartbeatWakeupHandlers(context: any) {
             wakeupRequestId: pendingWakeup.id,
             contextSnapshot: recoveredContext,
             sessionIdBefore: sessionBefore,
+            sessionParamsBeforeJson: recoveredSessionSelection.sessionParams,
+            sessionReuseScope: recoveredSessionSelection.reuseScope,
             createdAt: now,
             updatedAt: now,
           })

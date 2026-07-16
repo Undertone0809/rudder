@@ -162,6 +162,33 @@ function createLegacyTerminalMigrationsFolder() {
   return { manifest, migrationsFolder };
 }
 
+function createCurrentMigrationsFolderThrough(maxIdx: number) {
+  const migrationsFolder = fs.mkdtempSync(path.join(os.tmpdir(), `rudder-migrations-through-${maxIdx}-`));
+  tempPaths.push(migrationsFolder);
+  fs.mkdirSync(path.join(migrationsFolder, "meta"));
+
+  const currentMigrationsUrl = new URL("./migrations/", import.meta.url);
+  const currentJournal = JSON.parse(
+    fs.readFileSync(new URL("meta/_journal.json", currentMigrationsUrl), "utf8"),
+  ) as { version: string; dialect: string; entries: MigrationJournalEntry[] };
+  const entries = currentJournal.entries.filter((entry) => entry.idx <= maxIdx);
+  for (const entry of entries) {
+    fs.copyFileSync(
+      new URL(`${entry.tag}.sql`, currentMigrationsUrl),
+      path.join(migrationsFolder, `${entry.tag}.sql`),
+    );
+  }
+  fs.writeFileSync(
+    path.join(migrationsFolder, "meta", "_journal.json"),
+    JSON.stringify({
+      version: currentJournal.version,
+      dialect: currentJournal.dialect,
+      entries,
+    }),
+  );
+  return migrationsFolder;
+}
+
 afterEach(async () => {
   while (runningInstances.length > 0) {
     const instance = runningInstances.pop();
@@ -454,6 +481,7 @@ describe("applyPendingMigrations", () => {
         pendingMigrations: [
           "0055_illegal_sheva_callister.sql",
           "0102_complex_retro_girl.sql",
+          "0103_cute_colonel_america.sql",
         ],
         reason: "pending-migrations",
       });
@@ -478,6 +506,9 @@ describe("applyPendingMigrations", () => {
             AND column_name IN (
               'execution_owner_token',
               'execution_lease_expires_at',
+              'session_params_after_json',
+              'session_params_before_json',
+              'session_reuse_scope',
               'terminal_effects_completed_json',
               'terminal_effects_last_error'
             )
@@ -486,6 +517,9 @@ describe("applyPendingMigrations", () => {
         expect(columns.map((row) => row.column_name)).toEqual([
           "execution_lease_expires_at",
           "execution_owner_token",
+          "session_params_after_json",
+          "session_params_before_json",
+          "session_reuse_scope",
           "terminal_effects_completed_json",
           "terminal_effects_last_error",
         ]);
@@ -505,6 +539,79 @@ describe("applyPendingMigrations", () => {
           "heartbeat_runs_active_chat_conversation_uq",
           "heartbeat_runs_status_execution_lease_created_idx",
         ]);
+      } finally {
+        await verifySql.end();
+      }
+    },
+    20_000,
+  );
+
+  it(
+    "upgrades 0102 heartbeat runs with durable session lineage columns",
+    async () => {
+      const connectionString = await createTempDatabase();
+      const migrationsThrough0102 = createCurrentMigrationsFolderThrough(102);
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        await migratePg(drizzlePg(sql), { migrationsFolder: migrationsThrough0102 });
+        await sql.unsafe(`
+          INSERT INTO "organizations" ("id", "url_key", "name", "issue_prefix")
+          VALUES ('00000000-0000-0000-0000-000000000103', 'session-lineage', 'Session Lineage', 'SLG')
+        `);
+        await sql.unsafe(`
+          INSERT INTO "agents" ("id", "org_id", "name")
+          VALUES (
+            '00000000-0000-0000-0000-000000000104',
+            '00000000-0000-0000-0000-000000000103',
+            'Migration Agent'
+          )
+        `);
+        await sql.unsafe(`
+          INSERT INTO "heartbeat_runs" ("id", "org_id", "agent_id")
+          VALUES (
+            '00000000-0000-0000-0000-000000000105',
+            '00000000-0000-0000-0000-000000000103',
+            '00000000-0000-0000-0000-000000000104'
+          )
+        `);
+      } finally {
+        await sql.end();
+      }
+
+      await expect(applyPendingMigrations(connectionString)).resolves.toBeUndefined();
+      expect((await inspectMigrations(connectionString)).status).toBe("upToDate");
+
+      const verifySql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        const [legacyRun] = await verifySql.unsafe<{
+          session_params_before_json: Record<string, unknown> | null;
+          session_params_after_json: Record<string, unknown> | null;
+          session_reuse_scope: string;
+        }[]>(`
+          SELECT session_params_before_json, session_params_after_json, session_reuse_scope
+          FROM "heartbeat_runs"
+          WHERE "id" = '00000000-0000-0000-0000-000000000105'
+        `);
+        expect(legacyRun).toEqual({
+          session_params_before_json: null,
+          session_params_after_json: null,
+          session_reuse_scope: "none",
+        });
+
+        for (const scope of ["explicit", "task", "none"]) {
+          await expect(verifySql.unsafe(`
+            UPDATE "heartbeat_runs"
+            SET "session_reuse_scope" = '${scope}',
+                "session_params_before_json" = '{"sessionId":"before"}'::jsonb,
+                "session_params_after_json" = '{"sessionId":"after"}'::jsonb
+            WHERE "id" = '00000000-0000-0000-0000-000000000105'
+          `)).resolves.toBeDefined();
+        }
+        await expect(verifySql.unsafe(`
+          UPDATE "heartbeat_runs"
+          SET "session_reuse_scope" = 'global'
+          WHERE "id" = '00000000-0000-0000-0000-000000000105'
+        `)).rejects.toMatchObject({ code: "23514" });
       } finally {
         await verifySql.end();
       }

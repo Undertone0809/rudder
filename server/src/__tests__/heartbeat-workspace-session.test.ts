@@ -9,6 +9,7 @@ import {
   parseSessionCompactionPolicy,
   prioritizeProjectWorkspaceCandidatesForRun,
   resolveRuntimeSessionParamsForWorkspace,
+  selectRunSessionLineage,
   shouldResetTaskSessionForWake,
   type ResolvedWorkspaceForRun,
 } from "../services/heartbeat.ts";
@@ -379,6 +380,83 @@ describe("hydrateWakeContextSnapshot", () => {
 });
 
 describe("buildExplicitResumeSessionOverride", () => {
+  it("falls back from invalid after params to valid before params", () => {
+    const result = buildExplicitResumeSessionOverride({
+      resumeFromRunId: "run-1",
+      resumeRunSessionIdBefore: "session-before",
+      resumeRunSessionIdAfter: null,
+      resumeRunSessionParamsBefore: { sessionId: "session-before", cwd: "/tmp/before" },
+      resumeRunSessionParamsAfter: {},
+      taskSession: null,
+      sessionCodec: codexSessionCodec,
+    });
+
+    expect(result?.sessionParams).toEqual({ sessionId: "session-before", cwd: "/tmp/before" });
+  });
+
+  it("uses explicit context params when a recovery run failed before column persistence", () => {
+    const result = buildExplicitResumeSessionOverride({
+      resumeFromRunId: "retry-run",
+      resumeRunSessionIdBefore: "source-session",
+      resumeRunSessionIdAfter: null,
+      resumeContextSessionParams: { sessionId: "source-session", cwd: "/tmp/source" },
+      resumeContextSessionDisplayId: "source-session",
+      taskSession: null,
+      sessionCodec: codexSessionCodec,
+    });
+
+    expect(result).toEqual({
+      sessionDisplayId: "source-session",
+      sessionParams: { sessionId: "source-session", cwd: "/tmp/source" },
+    });
+  });
+
+  it("does not resume a source run that explicitly cleared its session", () => {
+    expect(buildExplicitResumeSessionOverride({
+      resumeFromRunId: "run-1",
+      resumeRunSessionIdBefore: "stale-session",
+      resumeRunSessionIdAfter: null,
+      resumeRunSessionParamsBefore: { sessionId: "stale-session" },
+      resumeRunSessionParamsAfter: {},
+      resumeRunSessionCleared: true,
+      taskSession: null,
+      sessionCodec: codexSessionCodec,
+    })).toBeNull();
+  });
+
+  it("prefers session params persisted on the selected source run", () => {
+    const result = buildExplicitResumeSessionOverride({
+      resumeFromRunId: "run-1",
+      resumeRunSessionIdBefore: "session-before",
+      resumeRunSessionIdAfter: "session-after",
+      resumeRunSessionParamsBefore: {
+        sessionId: "session-before",
+        cwd: "/tmp/before",
+      },
+      resumeRunSessionParamsAfter: {
+        sessionId: "session-after",
+        cwd: "/tmp/selected-run",
+      },
+      taskSession: {
+        sessionParamsJson: {
+          sessionId: "session-after",
+          cwd: "/tmp/newer-global-state",
+        },
+        sessionDisplayId: "session-after",
+        lastRunId: "run-2",
+      },
+      sessionCodec: codexSessionCodec,
+    });
+
+    expect(result).toEqual({
+      sessionDisplayId: "session-after",
+      sessionParams: {
+        sessionId: "session-after",
+        cwd: "/tmp/selected-run",
+      },
+    });
+  });
+
   it("reuses saved task session params when they belong to the selected failed run", () => {
     const result = buildExplicitResumeSessionOverride({
       resumeFromRunId: "run-1",
@@ -452,6 +530,78 @@ describe("buildExplicitResumeSessionOverride", () => {
         cwd: "/tmp/project",
         workspaceId: "workspace-1",
       },
+    });
+  });
+});
+
+describe("selectRunSessionLineage", () => {
+  it("starts ordinary taskless runs fresh", () => {
+    expect(selectRunSessionLineage({
+      forceFresh: false,
+      explicitSessionParams: null,
+      explicitSessionDisplayId: null,
+      taskSessionParams: null,
+      taskSessionDisplayId: null,
+    })).toEqual({
+      reuseScope: "none",
+      sessionParams: null,
+      sessionDisplayId: null,
+    });
+  });
+
+  it("reuses a saved task session when no explicit lineage exists", () => {
+    expect(selectRunSessionLineage({
+      forceFresh: false,
+      explicitSessionParams: null,
+      explicitSessionDisplayId: null,
+      taskSessionParams: { sessionId: "task-session", cwd: "/tmp/task" },
+      taskSessionDisplayId: "task-session",
+    })).toEqual({
+      reuseScope: "task",
+      sessionParams: { sessionId: "task-session", cwd: "/tmp/task" },
+      sessionDisplayId: "task-session",
+    });
+  });
+
+  it("prefers explicit retry lineage over a newer task session", () => {
+    expect(selectRunSessionLineage({
+      forceFresh: false,
+      explicitSessionParams: { sessionId: "selected-run", cwd: "/tmp/selected" },
+      explicitSessionDisplayId: "selected-run",
+      taskSessionParams: { sessionId: "newer-task", cwd: "/tmp/newer" },
+      taskSessionDisplayId: "newer-task",
+    })).toEqual({
+      reuseScope: "explicit",
+      sessionParams: { sessionId: "selected-run", cwd: "/tmp/selected" },
+      sessionDisplayId: "selected-run",
+    });
+  });
+
+  it("lets forceFresh override explicit and task lineage", () => {
+    expect(selectRunSessionLineage({
+      forceFresh: true,
+      explicitSessionParams: { sessionId: "selected-run" },
+      explicitSessionDisplayId: "selected-run",
+      taskSessionParams: { sessionId: "task-session" },
+      taskSessionDisplayId: "task-session",
+    })).toEqual({
+      reuseScope: "none",
+      sessionParams: null,
+      sessionDisplayId: null,
+    });
+  });
+
+  it("preserves explicit lineage when an assignment reset suppresses the task candidate", () => {
+    expect(selectRunSessionLineage({
+      forceFresh: false,
+      explicitSessionParams: { sessionId: "retry-session" },
+      explicitSessionDisplayId: "retry-session",
+      taskSessionParams: null,
+      taskSessionDisplayId: null,
+    })).toEqual({
+      reuseScope: "explicit",
+      sessionParams: { sessionId: "retry-session" },
+      sessionDisplayId: "retry-session",
     });
   });
 });

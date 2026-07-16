@@ -29,6 +29,7 @@ function makeRunDetail(status: ObservedRunDetail["run"]["status"] = "succeeded")
       resultJson: null,
       sessionIdBefore: null,
       sessionIdAfter: null,
+      sessionReuseScope: "none",
       logStore: null,
       logRef: null,
       logBytes: null,
