@@ -4,6 +4,7 @@ import { chatsApi } from "@/api/chats";
 import { ApiError } from "@/api/client";
 import { messengerApi } from "@/api/messenger";
 import { organizationsApi } from "@/api/orgs";
+import { projectsApi } from "@/api/projects";
 import { AgentIcon } from "@/components/AgentAvatar";
 import { ProjectIcon } from "@/components/ProjectIdentity";
 import { StatusIcon } from "@/components/StatusIcon";
@@ -74,7 +75,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { buildChatMentionHref, DEFAULT_PROJECT_ICON, formatMessengerPreview, formatMessengerTitle, MESSENGER_CUSTOM_GROUP_EMOJI_ICONS, PROJECT_ICONS, type Agent, type ChatConversation, type MessengerCustomGroupWithEntries, type ProjectIconName } from "@rudderhq/shared";
+import { buildChatMentionHref, DEFAULT_PROJECT_ICON, formatMessengerPreview, formatMessengerTitle, MESSENGER_CUSTOM_GROUP_EMOJI_ICONS, PROJECT_ICONS, type Agent, type ChatConversation, type MessengerCustomGroupWithEntries, type Project, type ProjectIconName } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -1036,6 +1037,8 @@ interface ThreadGroup {
   key: string;
   label: string;
   sortLabel?: string;
+  projectIcon?: string | null;
+  projectColor?: string | null;
 }
 
 interface UnreadThreadTarget {
@@ -1163,24 +1166,51 @@ function sortManagedThreadSections(
   });
 }
 
-function chatProjectGroup(conversation: ChatConversation | null): ThreadGroup {
+function projectIdentityForGroup(projectId: string | null, projectsById: ReadonlyMap<string, Project>) {
+  return projectId ? projectsById.get(projectId) ?? null : null;
+}
+
+function chatProjectGroup(
+  conversation: ChatConversation | null,
+  projectsById: ReadonlyMap<string, Project>,
+): ThreadGroup {
   const projectLink = conversation?.contextLinks?.find((link) => link.entityType === "project") ?? null;
   const projectId = typeof projectLink?.entityId === "string" && projectLink.entityId.trim()
     ? projectLink.entityId.trim()
     : null;
-  const label = projectLink?.entity?.label || projectLink?.entity?.identifier || (projectLink ? "Unknown project" : "No project");
+  const project = projectIdentityForGroup(projectId, projectsById);
+  const label = project?.name
+    || projectLink?.entity?.label
+    || projectLink?.entity?.identifier
+    || (projectLink ? "Unknown project" : "No project");
   return projectId
-    ? { key: `project:${projectId}`, label, sortLabel: label }
+    ? {
+        key: `project:${projectId}`,
+        label,
+        sortLabel: label,
+        projectIcon: project?.icon,
+        projectColor: project?.color,
+      }
     : { key: "project:none", label };
 }
 
-function splitIssueProjectGroup(thread: MessengerThreadSummaryItem): ThreadGroup | null {
+function splitIssueProjectGroup(
+  thread: MessengerThreadSummaryItem,
+  projectsById: ReadonlyMap<string, Project>,
+): ThreadGroup | null {
   if (thread.metadata?.splitIssue !== true) return null;
   const metadata = thread.metadata as Record<string, unknown>;
   const projectId = metadataString(metadata, "projectId");
-  const label = metadataString(metadata, "projectName") ?? (projectId ? "Unknown project" : "No project");
+  const project = projectIdentityForGroup(projectId, projectsById);
+  const label = project?.name ?? metadataString(metadata, "projectName") ?? (projectId ? "Unknown project" : "No project");
   return projectId
-    ? { key: `project:${projectId}`, label, sortLabel: label }
+    ? {
+        key: `project:${projectId}`,
+        label,
+        sortLabel: label,
+        projectIcon: project?.icon,
+        projectColor: project?.color,
+      }
     : { key: "project:none", label };
 }
 
@@ -2295,6 +2325,8 @@ interface OrganizedThreadSection {
   key: string;
   label: string | null;
   icon?: string | null;
+  projectIcon?: string | null;
+  projectColor?: string | null;
   isPinned?: boolean;
   pending?: boolean;
   entries: OrganizedThreadEntry[];
@@ -2469,6 +2501,8 @@ function groupEntries(
     .map(({ group, entries: sectionEntries }) => ({
       key: group.key,
       label: group.label,
+      projectIcon: group.projectIcon,
+      projectColor: group.projectColor,
       entries: [...sectionEntries].sort(compareThreadEntries),
     }));
 }
@@ -2477,6 +2511,7 @@ function organizeThreadEntries(
   entries: OrganizedThreadEntry[],
   rule: ThreadOrganizationRule,
   agentsById: Map<string, Agent>,
+  projectsById: ReadonlyMap<string, Project>,
 ): OrganizedThreadSection[] {
   const sorted = [...entries].sort(compareThreadEntries);
   if (rule === "latest") {
@@ -2495,10 +2530,10 @@ function organizeThreadEntries(
   }
   if (rule === "project") {
     return groupEntries(sorted, (entry) => {
-      const splitIssueProject = splitIssueProjectGroup(entry.thread);
+      const splitIssueProject = splitIssueProjectGroup(entry.thread, projectsById);
       if (splitIssueProject) return splitIssueProject;
       if (entry.thread.kind !== "chat") return { key: "system", label: "System" };
-      return chatProjectGroup(entry.conversation);
+      return chatProjectGroup(entry.conversation, projectsById);
     });
   }
   if (rule === "agent") {
@@ -2786,6 +2821,11 @@ export function MessengerContextSidebar() {
     queryFn: () => agentsApi.list(model.selectedOrganizationId!),
     enabled: !!model.selectedOrganizationId,
   });
+  const projectsQuery = useQuery({
+    queryKey: queryKeys.projects.list(model.selectedOrganizationId ?? "__none__"),
+    queryFn: () => projectsApi.list(model.selectedOrganizationId!),
+    enabled: !!model.selectedOrganizationId && threadOrganizationRule === "project",
+  });
   const intelligenceProfilesQuery = useQuery({
     queryKey: queryKeys.organizations.intelligenceProfiles(model.selectedOrganizationId ?? "__none__"),
     queryFn: () => organizationsApi.listIntelligenceProfiles(model.selectedOrganizationId!),
@@ -2825,6 +2865,14 @@ export function MessengerContextSidebar() {
     }
     return map;
   }, [agentsQuery.data]);
+
+  const projectsById = useMemo(() => {
+    const map = new Map<string, Project>();
+    for (const project of projectsQuery.data ?? []) {
+      map.set(project.id, project);
+    }
+    return map;
+  }, [projectsQuery.data]);
 
   const canRegenerateChatTitles = useMemo(() => {
     const profiles = intelligenceProfilesQuery.data ?? [];
@@ -3003,11 +3051,11 @@ export function MessengerContextSidebar() {
           : null,
       };
     });
-    const sections = organizeThreadEntries(entries, effectiveThreadOrganizationRule, agentsById);
+    const sections = organizeThreadEntries(entries, effectiveThreadOrganizationRule, agentsById, projectsById);
     return isManagedThreadGroupRule(effectiveThreadOrganizationRule)
       ? sortManagedThreadSections(sections, effectiveThreadOrganizationRule, projectOrderIds, threadSectionOrderIds)
       : sections;
-  }, [agentsById, conversationsById, customGroupedThreadKeys, customGroups, defaultThreadOrderKeys, effectiveThreadOrganizationRule, locallyReadThreadWatermarks, model.selectedOrganizationId, pendingChatRenameTitles, projectOrderIds, threadSectionOrderIds, splitIssueNotifications, visibleThreadSummaries]);
+  }, [agentsById, conversationsById, customGroupedThreadKeys, customGroups, defaultThreadOrderKeys, effectiveThreadOrganizationRule, locallyReadThreadWatermarks, model.selectedOrganizationId, pendingChatRenameTitles, projectOrderIds, projectsById, threadSectionOrderIds, splitIssueNotifications, visibleThreadSummaries]);
   const customEntryGroupByThreadKey = useMemo(() => {
     const map = new Map<string, string | null>();
     for (const group of customGroups) {
@@ -4193,6 +4241,15 @@ export function MessengerContextSidebar() {
                 ) : (
                   <ChevronDown className="h-3 w-3 shrink-0" aria-hidden />
                 )}
+                {projectIdFromSectionKey(section.key) && section.projectIcon ? (
+                  <ProjectIcon
+                    color={section.projectColor}
+                    icon={section.projectIcon}
+                    size="xs"
+                    iconClassName="h-3.5 w-3.5"
+                    testId={`messenger-thread-section-${sanitizeThreadKey(section.key)}-project-icon`}
+                  />
+                ) : null}
                 <span className="min-w-0 flex-1 truncate">{section.label}</span>
                 {attentionCount > 0 ? (
                   <span

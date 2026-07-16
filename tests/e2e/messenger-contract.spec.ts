@@ -660,6 +660,8 @@ test.describe("Messenger unified threads contract", () => {
       data: {
         name: "Launch Context Project",
         status: "in_progress",
+        icon: "rocket",
+        color: "#0ea5e9",
       },
     });
     expect(projectRes.ok()).toBe(true);
@@ -744,6 +746,10 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.getByText("Threads organized by project")).toBeVisible({ timeout: 15_000 });
     await expect(projectSection).toBeVisible();
     await expect(projectSection).toHaveAttribute("aria-expanded", "true");
+    const projectIcon = page.getByTestId(`messenger-thread-section-project-${project.id}-project-icon`);
+    await expect(projectIcon).toBeVisible();
+    await expect(projectIcon.locator("svg.lucide-rocket")).toBeVisible();
+    await expect(projectIcon).toHaveCSS("color", "rgb(14, 165, 233)");
     await expect(page.getByTestId(projectChatTestId)).toBeVisible();
     await expect(page.getByTestId(assignedIssueTestId)).toBeVisible();
 
