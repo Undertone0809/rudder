@@ -59,6 +59,7 @@ import { SettingsSidebar } from "./SettingsSidebar";
 import { ThreeColumnContextSidebar } from "./ThreeColumnContextSidebar";
 import { WorkspaceBackupFilesSidebar } from "./WorkspaceBackupFilesSidebar";
 import { WorktreeBanner } from "./WorktreeBanner";
+import { startSidePanelResizeLifecycle, type SidePanelResizeMoveEvent } from "./side-panel-resize-lifecycle";
 
 const INSTANCE_SETTINGS_MEMORY_KEY = "rudder.lastInstanceSettingsPath";
 const LAST_WORKSPACE_PATH_KEY = "rudder.lastWorkspacePath";
@@ -69,7 +70,8 @@ const SIDE_PANEL_MIN_WIDTH = 340;
 const SIDE_PANEL_MAX_WIDTH = 560;
 const SIDE_PANEL_EXPANDED_WIDTH = 720;
 const SIDE_PANEL_COLLAPSE_WIDTH = 292;
-const SIDE_PANEL_RESIZER_WIDTH = 10;
+const SIDE_PANEL_RESIZER_WIDTH = 4;
+const SIDE_PANEL_RESIZER_HIT_WIDTH = 10;
 const SIDE_PANEL_MIN_MAIN_WIDTH = 340;
 
 type WorkspaceColumnFamily = "chat" | "messenger" | "issues" | "calendar" | "projects" | "agents" | "org" | "backups";
@@ -473,7 +475,10 @@ function getSidePanelMaxWidth(
     );
   }
   if (viewportWidth === null) return SIDE_PANEL_MAX_WIDTH;
-  return Math.max(SIDE_PANEL_MIN_WIDTH, Math.floor(viewportWidth * 0.42));
+  return Math.min(
+    SIDE_PANEL_EXPANDED_WIDTH,
+    Math.max(SIDE_PANEL_MIN_WIDTH, Math.floor(viewportWidth * 0.42)),
+  );
 }
 
 function clampSidePanelWidth(
@@ -554,6 +559,7 @@ function DesktopSidePanelSlot({
   const previousSidePanelOpenRef = useRef(sidePanel.open);
   const sidePanelFocusWithinRef = useRef(false);
   const sidePanelResizeActiveRef = useRef(false);
+  const sidePanelResizeCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined" || !widthInitializedRef.current) return;
@@ -620,6 +626,7 @@ function DesktopSidePanelSlot({
 
   const resetSidePanelWidth = useCallback(() => {
     setUseEqualDefaultWidth(true);
+    hasRememberedWidthRef.current = false;
     widthInitializedRef.current = false;
     try {
       window.localStorage.removeItem(SIDE_PANEL_WIDTH_KEY);
@@ -636,39 +643,33 @@ function DesktopSidePanelSlot({
     ? resolveDefaultSidePanelWidth(workspaceWidth, viewportWidth)
     : sidePanelWidth;
 
+  useEffect(() => () => {
+    sidePanelResizeCleanupRef.current?.();
+  }, []);
+
   const startSidePanelResize = useCallback((event: ReactPointerEvent<HTMLDivElement> | ReactMouseEvent<HTMLDivElement>) => {
     if (!sidePanel.open || sidePanelResizeActiveRef.current) return;
     event.preventDefault();
     sidePanelResizeActiveRef.current = true;
     setUseEqualDefaultWidth(false);
+    hasRememberedWidthRef.current = true;
     widthInitializedRef.current = true;
     const startX = event.clientX;
     const resizeHandle = event.currentTarget;
-    const renderedPanelWidth = resizeHandle.nextElementSibling instanceof HTMLElement
-      ? resizeHandle.nextElementSibling.getBoundingClientRect().width
-      : null;
-    const resizeWorkspaceWidth = workspaceAnchorRef.current?.parentElement?.getBoundingClientRect().width ?? workspaceWidth;
+    const resizeWorkspace = workspaceAnchorRef.current?.parentElement;
+    const renderedPanelWidth = resizeWorkspace
+      ?.querySelector<HTMLElement>("[data-testid='chat-side-panel']")
+      ?.getBoundingClientRect().width ?? null;
+    const resizeWorkspaceWidth = resizeWorkspace?.getBoundingClientRect().width ?? workspaceWidth;
     const startWidth = renderedPanelWidth !== null && renderedPanelWidth > 0 ? renderedPanelWidth : dockedPanelWidth;
     const pointerId = "pointerId" in event ? event.pointerId : null;
     let latestWidth = startWidth;
     let collapsedByDrag = false;
-    const cleanupStyle = {
-      cursor: document.body.style.cursor,
-      userSelect: document.body.style.userSelect,
-    };
-
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-    if (pointerId !== null) {
-      try {
-        resizeHandle.setPointerCapture(pointerId);
-      } catch {
-        // The window listeners and drag shield still keep resizing active.
-      }
-    }
+    setProportionalSidePanelWidth(startWidth);
     setResizingSidePanel(true);
 
-    const onPointerMove = (moveEvent: PointerEvent | MouseEvent) => {
+    let stopResizing = () => {};
+    const onPointerMove = (moveEvent: SidePanelResizeMoveEvent) => {
       const deltaX = moveEvent.clientX - startX;
       latestWidth = startWidth - deltaX;
       if (resizeWorkspaceWidth !== null && shouldAutoExpandSidePanel(latestWidth, resizeWorkspaceWidth)) {
@@ -686,32 +687,22 @@ function DesktopSidePanelSlot({
       setProportionalSidePanelWidth(latestWidth);
     };
 
-    const stopResizing = () => {
-      document.body.style.cursor = cleanupStyle.cursor;
-      document.body.style.userSelect = cleanupStyle.userSelect;
-      if (pointerId !== null) {
-        try {
-          if (resizeHandle.hasPointerCapture(pointerId)) resizeHandle.releasePointerCapture(pointerId);
-        } catch {
-          // Ignore pointer capture release races after cancellation.
+    const lifecycle = startSidePanelResizeLifecycle({
+      resizeHandle,
+      pointerId,
+      onMove: onPointerMove,
+      onStop: () => {
+        sidePanelResizeCleanupRef.current = null;
+        sidePanelResizeActiveRef.current = false;
+        setResizingSidePanel(false);
+        if (!collapsedByDrag && latestWidth <= SIDE_PANEL_COLLAPSE_WIDTH) {
+          sidePanel.hidePanel();
+          resetSidePanelWidth();
         }
-      }
-      sidePanelResizeActiveRef.current = false;
-      setResizingSidePanel(false);
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", stopResizing);
-      window.removeEventListener("mousemove", onPointerMove);
-      window.removeEventListener("mouseup", stopResizing);
-      if (!collapsedByDrag && latestWidth <= SIDE_PANEL_COLLAPSE_WIDTH) {
-        sidePanel.hidePanel();
-        resetSidePanelWidth();
-      }
-    };
-
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", stopResizing, { once: true });
-    window.addEventListener("mousemove", onPointerMove);
-    window.addEventListener("mouseup", stopResizing, { once: true });
+      },
+    });
+    stopResizing = lifecycle.stop;
+    sidePanelResizeCleanupRef.current = lifecycle.isActive() ? stopResizing : null;
   }, [dockedPanelWidth, onExpandedChange, resetSidePanelWidth, setProportionalSidePanelWidth, sidePanel, workspaceWidth]);
 
   const panelVisible = contextReady && sidePanel.open;
@@ -756,6 +747,12 @@ function DesktopSidePanelSlot({
         aria-orientation="vertical"
         aria-label={resizerVisible ? "Resize Side Panel" : undefined}
       >
+        <span
+          data-testid="side-panel-resizer-hit-target"
+          className="absolute inset-y-0 left-1/2 -translate-x-1/2"
+          style={{ width: SIDE_PANEL_RESIZER_HIT_WIDTH }}
+          aria-hidden="true"
+        />
         <div className="workspace-column-resizer-line" />
       </div>
       {resizingSidePanel ? (

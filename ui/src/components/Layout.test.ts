@@ -48,7 +48,7 @@ describe("workspace context column sizing", () => {
   });
 
   it("defaults the side panel to half of the shared main workspace", () => {
-    expect(resolveDefaultSidePanelWidth(1210, 1440)).toBe(600);
+    expect(resolveDefaultSidePanelWidth(1204, 1440)).toBe(600);
   });
 
   it("only auto-expands after the side panel exceeds a 2:1 ratio over main content", () => {
@@ -61,12 +61,14 @@ describe("workspace context column sizing", () => {
 
     expect(resolveProportionalSidePanelWidth(ratio, 1000)).toBe(340);
     expect(resolveProportionalSidePanelWidth(720 / 1440, 1440)).toBe(604);
+    expect(resolveProportionalSidePanelWidth(1, 2400)).toBe(720);
   });
 
-  it("lets docked side panels use the actual workspace width", () => {
+  it("uses the actual workspace width while preserving room for main content", () => {
     expect(resolveProportionalSidePanelWidth(720 / 1440, 1440, 1320)).toBe(720);
-    expect(resolveProportionalSidePanelWidth(900 / 1440, 1440, 980)).toBe(630);
+    expect(resolveProportionalSidePanelWidth(900 / 1440, 1440, 980)).toBe(636);
   });
+
 });
 
 describe("side panel route context", () => {
