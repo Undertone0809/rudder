@@ -463,7 +463,7 @@ describe("heartbeat managed workspace preflight", () => {
       processExitedAt: new Date(),
       sessionIdAfter: "stale-session",
       sessionParamsAfterJson: { sessionId: "stale-session", providerThreadId: "stale-thread" },
-      contextSnapshot: {},
+      contextSnapshot: { taskKey: "issue:clear-session" },
     });
     mockRuntimeAdapter.execute.mockImplementationOnce(async () => ({
       summary: "provider rejected the session",
@@ -488,6 +488,17 @@ describe("heartbeat managed workspace preflight", () => {
     expect(await getRun(clearedRun.id)).toMatchObject({
       sessionParamsAfterJson: {},
       sessionIdAfter: null,
+    });
+    await db.insert(agentTaskSessions).values({
+      orgId,
+      agentId,
+      agentRuntimeType: "codex_local",
+      taskKey: "issue:clear-session",
+      sessionDisplayId: "newer-task-session",
+      sessionParamsJson: {
+        sessionId: "newer-task-session",
+        providerThreadId: "newer-task-thread",
+      },
     });
 
     const freshRetry = await heartbeat.retryRun(clearedRun.id, {

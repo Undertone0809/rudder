@@ -413,6 +413,7 @@ export function heartbeatService(
       taskId: readNonEmptyString(resumeContext.taskId) ?? readNonEmptyString(resumeContext.issueId),
       sessionDisplayId: sessionOverride.sessionDisplayId,
       sessionParams: sessionOverride.sessionParams,
+      sessionCleared: "sessionCleared" in sessionOverride && sessionOverride.sessionCleared === true,
     };
   }
 

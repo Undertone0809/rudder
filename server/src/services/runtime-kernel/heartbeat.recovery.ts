@@ -72,23 +72,33 @@ export function createHeartbeatRecoveryHandlers(context: any) {
     });
     const issueId = readNonEmptyString(recoveryContextSnapshot.issueId);
     const taskKey = deriveTaskKey(recoveryContextSnapshot, null);
+    const inheritedSessionSuppression = recoveryContextSnapshot.sessionResumeSuppressed === true;
     delete recoveryContextSnapshot.forceFreshSession;
     delete recoveryContextSnapshot.resumeFromRunId;
     delete recoveryContextSnapshot.resumeSessionDisplayId;
     delete recoveryContextSnapshot.resumeSessionParams;
+    delete recoveryContextSnapshot.sessionResumeSuppressed;
     const explicitResumeSession = await resolveExplicitResumeSessionOverride(
       agent,
       { resumeFromRunId: run.id },
       taskKey,
     );
-    if (explicitResumeSession) {
+    const suppressSessionReuse =
+      explicitResumeSession?.sessionCleared === true ||
+      (!explicitResumeSession && inheritedSessionSuppression && run.sessionIdAfter == null);
+    if (explicitResumeSession && !explicitResumeSession.sessionCleared) {
       recoveryContextSnapshot.resumeFromRunId = explicitResumeSession.resumeFromRunId;
       recoveryContextSnapshot.resumeSessionDisplayId = explicitResumeSession.sessionDisplayId;
       recoveryContextSnapshot.resumeSessionParams = explicitResumeSession.sessionParams;
+    } else if (suppressSessionReuse) {
+      recoveryContextSnapshot.forceFreshSession = true;
+      recoveryContextSnapshot.sessionResumeSuppressed = true;
     }
     const sessionBefore =
-      explicitResumeSession?.sessionDisplayId ??
-      await resolveSessionBeforeForWakeup(agent, taskKey);
+      suppressSessionReuse
+        ? null
+        : explicitResumeSession?.sessionDisplayId ??
+          await resolveSessionBeforeForWakeup(agent, taskKey);
     const recovery = recoveryContextSnapshot.recovery as HeartbeatRunRecoveryContext;
     const requestPayload: Record<string, unknown> = {
       originalRunId: run.id,
@@ -224,8 +234,11 @@ export function createHeartbeatRecoveryHandlers(context: any) {
           contextSnapshot: recoveryContextSnapshot,
           sessionIdBefore: sessionBefore,
           sessionParamsBeforeJson:
-            explicitResumeSession?.sessionParams ?? (sessionBefore ? { sessionId: sessionBefore } : null),
-          sessionReuseScope: explicitResumeSession ? "explicit" : sessionBefore ? "task" : "none",
+            suppressSessionReuse
+              ? null
+              : explicitResumeSession?.sessionParams ?? (sessionBefore ? { sessionId: sessionBefore } : null),
+          sessionReuseScope:
+            suppressSessionReuse ? "none" : explicitResumeSession ? "explicit" : sessionBefore ? "task" : "none",
           retryOfRunId: run.id,
           processLossRetryCount:
             opts.recoveryTrigger === "automatic"
