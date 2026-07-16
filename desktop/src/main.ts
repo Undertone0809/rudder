@@ -192,8 +192,18 @@ type DesktopOrganization = {
 type DesktopLiveRun = {
   id: string;
   status: string;
+  agentId?: string | null;
   agentName: string;
   issueId?: string | null;
+};
+
+type DesktopUpdateBlocker = {
+  runId: string;
+  agentId: string | null;
+  agentName: string;
+  issueId: string | null;
+  organizationId: string;
+  organizationName: string;
 };
 
 type DesktopPathPickOptions = {
@@ -216,6 +226,7 @@ type DesktopDeferredUpdatePrompt = {
   message: string;
   detail: string;
   totalRuns: number;
+  blockers: DesktopUpdateBlocker[];
   confirmLabel: string;
   forceLabel: string;
   cancelLabel: string;
@@ -491,7 +502,9 @@ const desktopQuitFlow = createDesktopQuitFlow({
 });
 const {
   listActiveRunsForQuit,
+  listRunningRunsForUpdate,
   formatQuitRunDetail,
+  formatUpdateRunDetail,
   beginQuitFlow,
   resolveUpdateQuitResponsePath,
   resolveUpdateQuitForce,
@@ -505,8 +518,8 @@ const desktopUpdateFlow = createDesktopUpdateFlow({
   getMainWindow: () => mainWindow,
   getServerHandle: () => serverHandle,
   getBootState: () => currentBootState,
-  listActiveRunsForQuit,
-  formatQuitRunDetail,
+  listRunningRunsForUpdate,
+  formatUpdateRunDetail,
   promptForDeferredUpdate: promptRendererForDeferredUpdate,
   showMainWindow,
 });

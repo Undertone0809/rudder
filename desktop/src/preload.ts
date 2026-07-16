@@ -49,6 +49,15 @@ type DesktopUpdateCheckResult = {
 
 type DesktopUpdateChannel = DesktopUpdateCheckResult["channel"];
 
+type DesktopUpdateBlocker = {
+  runId: string;
+  agentId: string | null;
+  agentName: string;
+  issueId: string | null;
+  organizationId: string;
+  organizationName: string;
+};
+
 type DesktopUpdateInstallResult =
   | { status: "started"; version: string; updateId?: string }
   | { status: "waiting"; version: string; updateId?: string; totalRuns: number; message: string }
@@ -78,6 +87,8 @@ type DesktopUpdateProgressEvent = {
   transferredBytes?: number;
   totalBytes?: number;
   totalRuns?: number;
+  blockers?: DesktopUpdateBlocker[];
+  automaticApply?: boolean;
   error?: string;
   at: string;
 };
@@ -97,6 +108,7 @@ type DesktopDeferredUpdatePrompt = {
   message: string;
   detail: string;
   totalRuns: number;
+  blockers: DesktopUpdateBlocker[];
   confirmLabel: string;
   forceLabel: string;
   cancelLabel: string;

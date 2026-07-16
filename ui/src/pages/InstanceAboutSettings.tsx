@@ -220,6 +220,24 @@ function UpdateProgressDetails({
           );
         })}
       </div>
+      {progress.blockers?.length ? (
+        <div className="mt-3 rounded-[var(--radius-sm)] border border-amber-500/25 bg-amber-500/8 px-3 py-2">
+          <div className="text-[11px] font-semibold text-foreground">
+            {t("about.updates.progress.blockersTitle")}
+          </div>
+          <div className="mt-1 grid gap-0.5">
+            {progress.blockers.map((blocker) => (
+              <div key={blocker.runId} className="break-words text-xs leading-4 text-muted-foreground">
+                {t("about.updates.progress.blockerRun", {
+                  organization: blocker.organizationName,
+                  agent: blocker.agentName,
+                  runId: blocker.runId.slice(0, 8),
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {progress.error ? (
         <div className="mt-3 rounded-[var(--radius-sm)] border border-destructive/25 bg-destructive/8 px-3 py-2 text-xs text-destructive">
           {progress.error}

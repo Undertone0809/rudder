@@ -1454,6 +1454,113 @@ describe("desktop start command helpers", () => {
     }
   });
 
+  it.skipIf(process.platform === "win32")("keeps polling update quit until running work clears", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rudder-desktop-wait-active-quit-test."));
+    const installRoot = path.join(dir, "Applications");
+    const appPath = path.join(installRoot, "Rudder.app");
+    const executablePath = path.join(dir, "rudder-update-wait-active-quit-shim");
+    const counterPath = path.join(dir, "quit-attempts.txt");
+    await mkdir(appPath, { recursive: true });
+    await writeFile(
+      executablePath,
+      [
+        "#!/usr/bin/env node",
+        'const fs = require("node:fs");',
+        `const counterPath = ${JSON.stringify(counterPath)};`,
+        "const attempts = fs.existsSync(counterPath) ? Number(fs.readFileSync(counterPath, 'utf8')) + 1 : 1;",
+        "fs.writeFileSync(counterPath, String(attempts));",
+        `const prefix = ${JSON.stringify("--rudder-update-quit=")};`,
+        "const arg = process.argv.find((value) => value.startsWith(prefix));",
+        "const response = attempts < 3",
+        "  ? { ok: false, status: 'active_runs', totalRuns: 1 }",
+        "  : { ok: true, status: 'quitting', pid: 4242 };",
+        "if (arg) fs.writeFileSync(arg.slice(prefix.length), JSON.stringify(response) + '\\n', 'utf8');",
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(executablePath, 0o755);
+
+    try {
+      const waitForDesktopProcessExit = vi.fn(async () => true);
+      await prepareForDesktopReplace(
+        {
+          installRoot,
+          appPath,
+          executablePath,
+          metadataPath: path.join(installRoot, ".rudder-install.json"),
+        },
+        { platform: "macos", arch: "arm64", extension: ".zip" },
+        {
+          waitForActiveRuns: true,
+          activeRunPollIntervalMs: 1,
+          updateQuitForceDelayMs: 0,
+          waitForDesktopProcessExit,
+        },
+      );
+
+      expect(await readFile(counterPath, "utf8")).toBe("3");
+      expect(waitForDesktopProcessExit).toHaveBeenCalledWith(4242);
+      await expect(access(appPath)).rejects.toThrow();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("upgrades the final active-run guard to a force update", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rudder-desktop-force-upgrade-test."));
+    const installRoot = path.join(dir, "Applications");
+    const appPath = path.join(installRoot, "Rudder.app");
+    const executablePath = path.join(dir, "rudder-update-force-upgrade-shim");
+    const argvPath = path.join(dir, "quit-argv.json");
+    await mkdir(appPath, { recursive: true });
+    await writeFile(
+      executablePath,
+      [
+        "#!/usr/bin/env node",
+        'const fs = require("node:fs");',
+        `const argvPath = ${JSON.stringify(argvPath)};`,
+        "const calls = fs.existsSync(argvPath) ? JSON.parse(fs.readFileSync(argvPath, 'utf8')) : [];",
+        "calls.push(process.argv);",
+        "fs.writeFileSync(argvPath, JSON.stringify(calls));",
+        `const prefix = ${JSON.stringify("--rudder-update-quit=")};`,
+        "const arg = process.argv.find((value) => value.startsWith(prefix));",
+        `const forced = process.argv.includes(${JSON.stringify("--rudder-update-force")});`,
+        "const response = forced",
+        "  ? { ok: true, status: 'quitting', pid: 4242 }",
+        "  : { ok: false, status: 'active_runs', totalRuns: 1 };",
+        "if (arg) fs.writeFileSync(arg.slice(prefix.length), JSON.stringify(response) + '\\n', 'utf8');",
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(executablePath, 0o755);
+
+    try {
+      const waitForForceUpdate = vi.fn(async () => true);
+      await prepareForDesktopReplace(
+        {
+          installRoot,
+          appPath,
+          executablePath,
+          metadataPath: path.join(installRoot, ".rudder-install.json"),
+        },
+        { platform: "macos", arch: "arm64", extension: ".zip" },
+        {
+          waitForActiveRuns: true,
+          waitForForceUpdate,
+          waitForDesktopProcessExit: vi.fn(async () => true),
+        },
+      );
+
+      const calls = JSON.parse(await readFile(argvPath, "utf8")) as string[][];
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).not.toContain("--rudder-update-force");
+      expect(calls[1]).toContain("--rudder-update-force");
+      expect(waitForForceUpdate).toHaveBeenCalledTimes(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it.skipIf(process.platform === "win32")("does not replace when update quit receives no response", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "rudder-desktop-no-quit-response-test."));
     const installRoot = path.join(dir, "Applications");

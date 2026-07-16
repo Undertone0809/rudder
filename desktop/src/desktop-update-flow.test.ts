@@ -58,6 +58,21 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
+function createBlocker(runId: string, organizationName = "Z Studio", agentName = "Codex") {
+  return {
+    runId,
+    agentId: `agent-${runId}`,
+    agentName,
+    issueId: `issue-${runId}`,
+    organizationId: `org-${organizationName}`,
+    organizationName,
+  };
+}
+
+function createRunSummary(blockers: ReturnType<typeof createBlocker>[] = []) {
+  return { totalRuns: blockers.length, blockers };
+}
+
 function createFlow(overrides: Partial<Parameters<typeof createDesktopUpdateFlow>[0]> = {}) {
   const sentProgressEvents: unknown[] = [];
   const mainWindow = {
@@ -73,8 +88,11 @@ function createFlow(overrides: Partial<Parameters<typeof createDesktopUpdateFlow
     getMainWindow: () => mainWindow,
     getServerHandle: () => ({ runtime: { version: "0.3.3" } }),
     getBootState: () => ({ runtime: { localEnv: "prod_local", version: "0.3.3" } }),
-    listActiveRunsForQuit: async () => ({ totalRuns: 0 }),
-    formatQuitRunDetail: () => "",
+    listRunningRunsForUpdate: async () => createRunSummary(),
+    formatUpdateRunDetail: (summary) => summary.blockers
+      .map((blocker) => `${blocker.organizationName}: ${blocker.agentName} (run ${blocker.runId})`)
+      .join("\n"),
+    activeRunPollIntervalMs: 10,
     showMainWindow: vi.fn(),
     ...overrides,
   });
@@ -189,16 +207,16 @@ describe("desktop update flow", () => {
   it("reuses the active update attempt instead of starting a second version download", async () => {
     const child = createMockUpdateChild();
     spawnMock.mockReturnValue(child);
-    const activeRuns = createDeferred<{ totalRuns: number }>();
+    const activeRuns = createDeferred<ReturnType<typeof createRunSummary>>();
     const { flow } = createFlow({
-      listActiveRunsForQuit: vi.fn(() => activeRuns.promise),
+      listRunningRunsForUpdate: vi.fn(() => activeRuns.promise),
     });
 
     const firstInstall = flow.installUpdate("0.3.5-canary.8");
     const secondInstall = flow.installUpdate("0.3.5-canary.9");
     expect(spawnMock).not.toHaveBeenCalled();
 
-    activeRuns.resolve({ totalRuns: 0 });
+    activeRuns.resolve(createRunSummary());
     const [firstResult, secondResult] = await Promise.all([firstInstall, secondInstall]);
 
     expect(firstResult).toMatchObject({
@@ -235,11 +253,378 @@ describe("desktop update flow", () => {
     expect(spawnMock).toHaveBeenCalledTimes(1);
   });
 
+  it("applies automatically after ready when no running blockers exist", async () => {
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const { flow } = createFlow();
+
+    await expect(flow.installUpdate("0.3.5-canary.8")).resolves.toMatchObject({
+      status: "started",
+    });
+    expect(spawnMock.mock.calls[0]?.[1]).toContain("--wait-for-active-runs");
+
+    child.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "ready_to_install",
+      message: "Desktop update is downloaded and verified.",
+      percent: 100,
+    })}\n`);
+
+    await vi.waitFor(() => {
+      expect(child.stdin.write).toHaveBeenCalledWith("apply\n", expect.any(Function));
+    });
+    expect(child.stdin.write).toHaveBeenCalledTimes(1);
+    expect(flow.getDesktopUpdateProgress()).toMatchObject({ phase: "preparing_restart" });
+  });
+
+  it("waits for a blocker discovered at ready time and applies after it clears", async () => {
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const blocker = createBlocker("run-new", "Remote Org", "Wesley");
+    const listRunningRunsForUpdate = vi.fn()
+      .mockResolvedValueOnce(createRunSummary())
+      .mockResolvedValueOnce(createRunSummary([blocker]))
+      .mockResolvedValueOnce(createRunSummary());
+    const { flow, sentProgressEvents } = createFlow({
+      listRunningRunsForUpdate,
+      activeRunPollIntervalMs: 1,
+    });
+
+    await flow.installUpdate("0.3.5-canary.8");
+    child.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "ready_to_install",
+      message: "Desktop update is downloaded and verified.",
+      percent: 100,
+    })}\n`);
+
+    await vi.waitFor(() => {
+      expect(child.stdin.write).toHaveBeenCalledWith("apply\n", expect.any(Function));
+    });
+    expect(sentProgressEvents).toContainEqual(expect.objectContaining({
+      phase: "waiting_for_active_runs",
+      totalRuns: 1,
+      blockers: [blocker],
+      automaticApply: true,
+    }));
+    expect(listRunningRunsForUpdate).toHaveBeenCalledTimes(3);
+  });
+
+  it("replaces stale blocker identity while waiting and writes apply once", async () => {
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const blockerA = createBlocker("run-a", "Org A", "Mia");
+    const blockerB = createBlocker("run-b", "Org B", "Wesley");
+    const listRunningRunsForUpdate = vi.fn()
+      .mockResolvedValueOnce(createRunSummary([blockerA]))
+      .mockResolvedValueOnce(createRunSummary([blockerB]))
+      .mockResolvedValueOnce(createRunSummary());
+    const { flow, sentProgressEvents } = createFlow({
+      listRunningRunsForUpdate,
+      promptForDeferredUpdate: vi.fn(async () => "wait"),
+      activeRunPollIntervalMs: 1,
+    });
+
+    await flow.installUpdate("0.3.5-canary.8");
+    child.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "ready_to_install",
+      message: "Desktop update is downloaded and verified.",
+      percent: 100,
+    })}\n`);
+    child.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "ready_to_install",
+      message: "Duplicate ready event.",
+      percent: 100,
+    })}\n`);
+
+    await vi.waitFor(() => expect(child.stdin.write).toHaveBeenCalledTimes(1));
+    expect(sentProgressEvents).toContainEqual(expect.objectContaining({
+      phase: "waiting_for_active_runs",
+      blockers: [blockerB],
+    }));
+  });
+
+  it("fails closed and retries when the ready-time blocker query fails", async () => {
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const listRunningRunsForUpdate = vi.fn()
+      .mockResolvedValueOnce(createRunSummary())
+      .mockRejectedValueOnce(new Error("run inspection unavailable"))
+      .mockResolvedValueOnce(createRunSummary());
+    const { flow, sentProgressEvents } = createFlow({
+      listRunningRunsForUpdate,
+      activeRunPollIntervalMs: 1,
+    });
+
+    await flow.installUpdate("0.3.5-canary.8");
+    child.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "ready_to_install",
+      message: "Desktop update is downloaded and verified.",
+      percent: 100,
+    })}\n`);
+
+    await vi.waitFor(() => {
+      expect(sentProgressEvents).toContainEqual(expect.objectContaining({
+        phase: "waiting_for_active_runs",
+        error: "run inspection unavailable",
+      }));
+    });
+    await vi.waitFor(() => expect(child.stdin.write).toHaveBeenCalledWith("apply\n", expect.any(Function)));
+  });
+
+  it("hides stale blocker identity and force controls until a failed refresh recovers", async () => {
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const staleBlocker = createBlocker("run-stale", "Old Org", "Mia");
+    const currentBlocker = createBlocker("run-current", "Current Org", "Wesley");
+    const listRunningRunsForUpdate = vi.fn()
+      .mockResolvedValueOnce(createRunSummary([staleBlocker]))
+      .mockRejectedValueOnce(new Error("run inspection unavailable"))
+      .mockResolvedValue(createRunSummary([currentBlocker]));
+    const { flow, sentProgressEvents } = createFlow({
+      listRunningRunsForUpdate,
+      promptForDeferredUpdate: vi.fn(async () => "wait"),
+      activeRunPollIntervalMs: 1,
+    });
+
+    await flow.installUpdate("0.3.5-canary.8");
+    child.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "ready_to_install",
+      message: "Desktop update is downloaded and verified.",
+      percent: 100,
+    })}\n`);
+
+    const readyEvent = sentProgressEvents.find((event) => (
+      typeof event === "object"
+      && event !== null
+      && "phase" in event
+      && event.phase === "ready_to_install"
+    ));
+    expect(readyEvent).not.toHaveProperty("blockers");
+    expect(readyEvent).not.toHaveProperty("totalRuns");
+
+    await vi.waitFor(() => expect(sentProgressEvents).toContainEqual(expect.objectContaining({
+      phase: "waiting_for_active_runs",
+      error: "run inspection unavailable",
+      blockers: [],
+    })));
+    const failedInspectionEvent = sentProgressEvents.find((event) => (
+      typeof event === "object"
+      && event !== null
+      && "error" in event
+      && event.error === "run inspection unavailable"
+    ));
+    expect(failedInspectionEvent).not.toHaveProperty("totalRuns");
+    await vi.waitFor(() => expect(sentProgressEvents).toContainEqual(expect.objectContaining({
+      phase: "waiting_for_active_runs",
+      blockers: [currentBlocker],
+      totalRuns: 1,
+    })));
+
+    child.emit("close", 1);
+  });
+
+  it("stops blocker polling when the update child closes", async () => {
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const blocker = createBlocker("run-close");
+    const listRunningRunsForUpdate = vi.fn()
+      .mockResolvedValueOnce(createRunSummary())
+      .mockResolvedValue(createRunSummary([blocker]));
+    const { flow } = createFlow({
+      listRunningRunsForUpdate,
+      activeRunPollIntervalMs: 10,
+    });
+
+    await flow.installUpdate("0.3.5-canary.8");
+    child.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "ready_to_install",
+      message: "Desktop update is downloaded and verified.",
+      percent: 100,
+    })}\n`);
+    await vi.waitFor(() => expect(listRunningRunsForUpdate).toHaveBeenCalledTimes(2));
+
+    child.emit("close", 1);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(listRunningRunsForUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops blocker polling when the update child errors", async () => {
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const blocker = createBlocker("run-error");
+    const listRunningRunsForUpdate = vi.fn()
+      .mockResolvedValueOnce(createRunSummary())
+      .mockResolvedValue(createRunSummary([blocker]));
+    const { flow } = createFlow({
+      listRunningRunsForUpdate,
+      activeRunPollIntervalMs: 10,
+    });
+
+    await flow.installUpdate("0.3.5-canary.8");
+    child.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "ready_to_install",
+      message: "Desktop update is downloaded and verified.",
+      percent: 100,
+    })}\n`);
+    await vi.waitFor(() => expect(listRunningRunsForUpdate).toHaveBeenCalledTimes(2));
+
+    child.emit("error", new Error("spawn failed"));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(listRunningRunsForUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes final-guard blockers and lets the operator escalate to force apply", async () => {
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const lateBlocker = createBlocker("run-late", "Late Org", "Wesley");
+    const listRunningRunsForUpdate = vi.fn()
+      .mockResolvedValueOnce(createRunSummary())
+      .mockResolvedValueOnce(createRunSummary())
+      .mockResolvedValueOnce(createRunSummary([lateBlocker]));
+    const { flow, sentProgressEvents } = createFlow({
+      listRunningRunsForUpdate,
+    });
+
+    const installResult = await flow.installUpdate("0.3.5-canary.8");
+    child.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "ready_to_install",
+      message: "Desktop update is downloaded and verified.",
+      percent: 100,
+    })}\n`);
+    await vi.waitFor(() => expect(child.stdin.write).toHaveBeenCalledWith("apply\n", expect.any(Function)));
+
+    child.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "waiting_for_active_runs",
+      message: "Waiting for 1 running agent run before replacing Desktop.",
+      totalRuns: 1,
+    })}\n`);
+    await vi.waitFor(() => expect(sentProgressEvents).toContainEqual(expect.objectContaining({
+      phase: "waiting_for_active_runs",
+      blockers: [lateBlocker],
+      totalRuns: 1,
+    })));
+
+    await expect(flow.applyUpdate(installResult.updateId, { force: true })).resolves.toMatchObject({
+      status: "started",
+    });
+    expect(child.stdin.write).toHaveBeenCalledWith("force-apply\n", expect.any(Function));
+    expect(child.stdin.write).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps retrying blocker identity when final-guard inspection fails", async () => {
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const lateBlocker = createBlocker("run-late", "Late Org", "Wesley");
+    const listRunningRunsForUpdate = vi.fn()
+      .mockResolvedValueOnce(createRunSummary())
+      .mockResolvedValueOnce(createRunSummary())
+      .mockRejectedValueOnce(new Error("final guard inspection unavailable"))
+      .mockResolvedValueOnce(createRunSummary([lateBlocker]));
+    const { flow, sentProgressEvents } = createFlow({
+      listRunningRunsForUpdate,
+      activeRunPollIntervalMs: 1,
+    });
+
+    await flow.installUpdate("0.3.5-canary.8");
+    child.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "ready_to_install",
+      message: "Desktop update is downloaded and verified.",
+      percent: 100,
+    })}\n`);
+    await vi.waitFor(() => expect(child.stdin.write).toHaveBeenCalledWith("apply\n", expect.any(Function)));
+
+    child.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "waiting_for_active_runs",
+      message: "Waiting for 1 running agent run before replacing Desktop.",
+      totalRuns: 1,
+    })}\n`);
+
+    await vi.waitFor(() => expect(sentProgressEvents).toContainEqual(expect.objectContaining({
+      phase: "waiting_for_active_runs",
+      error: "final guard inspection unavailable",
+    })));
+    await vi.waitFor(() => expect(sentProgressEvents).toContainEqual(expect.objectContaining({
+      phase: "waiting_for_active_runs",
+      blockers: [lateBlocker],
+      totalRuns: 1,
+    })));
+    expect(listRunningRunsForUpdate.mock.calls.length).toBeGreaterThanOrEqual(4);
+
+    child.emit("close", 1);
+    const callsAfterClose = listRunningRunsForUpdate.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(listRunningRunsForUpdate).toHaveBeenCalledTimes(callsAfterClose);
+  });
+
+  it("releases an update session when the initial apply signal cannot be written", async () => {
+    const firstChild = createMockUpdateChild();
+    firstChild.stdin.write = vi.fn((_chunk, callback) => callback?.(new Error("stdin closed")));
+    const secondChild = createMockUpdateChild();
+    spawnMock.mockReturnValueOnce(firstChild).mockReturnValueOnce(secondChild);
+    const { flow } = createFlow();
+
+    await flow.installUpdate("0.3.5-canary.8");
+    firstChild.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "ready_to_install",
+      message: "Desktop update is downloaded and verified.",
+      percent: 100,
+    })}\n`);
+    await vi.waitFor(() => expect(flow.getDesktopUpdateProgress()).toMatchObject({
+      phase: "failed",
+      error: "stdin closed",
+    }));
+
+    const secondResult = await flow.installUpdate("0.3.5-canary.8");
+    expect(secondResult).toMatchObject({
+      status: "started",
+    });
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+
+    secondChild.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "ready_to_install",
+      message: "Desktop update is downloaded and verified.",
+      percent: 100,
+    })}\n`);
+    await vi.waitFor(() => expect(secondChild.stdin.write).toHaveBeenCalledWith("apply\n", expect.any(Function)));
+    const markerPath = path.join("/tmp/rudder-desktop-test", "post-update-reload.json");
+    expect(JSON.parse(fs.readFileSync(markerPath, "utf8"))).toMatchObject({
+      updateId: secondResult.updateId,
+    });
+
+    firstChild.stderr.emit("data", "late old child failure\n");
+    firstChild.emit("close", 1);
+    expect(flow.getDesktopUpdateProgress()).toMatchObject({
+      updateId: secondResult.updateId,
+      phase: "preparing_restart",
+    });
+    expect(JSON.parse(fs.readFileSync(markerPath, "utf8"))).toMatchObject({
+      updateId: secondResult.updateId,
+    });
+  });
+
   it("lets the operator force apply a deferred update despite active runs", async () => {
     const child = createMockUpdateChild();
     spawnMock.mockReturnValue(child);
     const { flow } = createFlow({
-      listActiveRunsForQuit: vi.fn(async () => ({ totalRuns: 2 })),
+      listRunningRunsForUpdate: vi.fn(async () => createRunSummary([
+        createBlocker("run-1"),
+        createBlocker("run-2"),
+      ])),
       promptForDeferredUpdate: vi.fn(async () => "wait"),
     });
 
@@ -257,11 +642,14 @@ describe("desktop update flow", () => {
     expect(child.stdin.write).toHaveBeenCalledWith("force-apply\n", expect.any(Function));
   });
 
-  it("preserves active-run count on the final ready event after download progress", async () => {
+  it("refreshes blockers at ready time and applies automatically when running work finished", async () => {
     const child = createMockUpdateChild();
     spawnMock.mockReturnValue(child);
+    const listRunningRunsForUpdate = vi.fn()
+      .mockResolvedValueOnce(createRunSummary([createBlocker("run-1"), createBlocker("run-2")]))
+      .mockResolvedValueOnce(createRunSummary());
     const { flow } = createFlow({
-      listActiveRunsForQuit: vi.fn(async () => ({ totalRuns: 2 })),
+      listRunningRunsForUpdate,
       promptForDeferredUpdate: vi.fn(async () => "wait"),
     });
 
@@ -283,17 +671,25 @@ describe("desktop update flow", () => {
       percent: 100,
     })}\n`);
 
-    expect(flow.getDesktopUpdateProgress()).toMatchObject({
-      phase: "ready_to_install",
-      totalRuns: 2,
+    await vi.waitFor(() => {
+      expect(child.stdin.write).toHaveBeenCalledWith("apply\n", expect.any(Function));
     });
+    expect(listRunningRunsForUpdate).toHaveBeenCalledTimes(2);
+    expect(flow.getDesktopUpdateProgress()).toMatchObject({
+      phase: "preparing_restart",
+    });
+    expect(flow.getDesktopUpdateProgress()).not.toHaveProperty("totalRuns");
+    expect(flow.getDesktopUpdateProgress()).not.toHaveProperty("blockers");
   });
 
   it("force-applies immediately when the deferred update prompt chooses quit and update now", async () => {
     const child = createMockUpdateChild();
     spawnMock.mockReturnValue(child);
     const { flow } = createFlow({
-      listActiveRunsForQuit: vi.fn(async () => ({ totalRuns: 2 })),
+      listRunningRunsForUpdate: vi.fn(async () => createRunSummary([
+        createBlocker("run-1"),
+        createBlocker("run-2"),
+      ])),
       promptForDeferredUpdate: vi.fn(async () => "force"),
     });
 
@@ -310,7 +706,10 @@ describe("desktop update flow", () => {
     const child = createMockUpdateChild();
     spawnMock.mockReturnValue(child);
     const { flow } = createFlow({
-      listActiveRunsForQuit: vi.fn(async () => ({ totalRuns: 2 })),
+      listRunningRunsForUpdate: vi.fn(async () => createRunSummary([
+        createBlocker("run-1"),
+        createBlocker("run-2"),
+      ])),
       promptForDeferredUpdate: vi.fn(async () => "wait"),
     });
 

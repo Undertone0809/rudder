@@ -138,6 +138,7 @@ type DesktopUpdateProgressEvent = {
   percent?: number;
   transferredBytes?: number;
   totalBytes?: number;
+  totalRuns?: number;
   error?: string;
   at: string;
 };
@@ -238,45 +239,94 @@ function createDesktopProgressFactory(): ProgressReporterFactory {
   };
 }
 
-async function waitForDesktopApplySignal(): Promise<{ force: boolean }> {
+function createDesktopApplySignalController(): {
+  waitForInitialSignal: () => Promise<{ force: boolean }>;
+  waitForForceRequest: (timeoutMs: number) => Promise<boolean>;
+  close: () => void;
+} {
   process.stdin.setEncoding("utf8");
   process.stdin.resume();
-
-  return await new Promise<{ force: boolean }>((resolve, reject) => {
-    let buffer = "";
-    const cleanup = () => {
-      process.stdin.off("data", onData);
-      process.stdin.off("end", onEnd);
-      process.stdin.off("error", onError);
-    };
-    const onData = (chunk: string) => {
-      buffer += chunk;
-      const lines = buffer.split(/\r?\n/);
-      buffer = lines.pop() ?? "";
-      const commands = lines.map((line) => line.trim());
-      if (commands.includes("force-apply")) {
-        cleanup();
-        resolve({ force: true });
-        return;
-      }
-      if (commands.includes("apply")) {
-        cleanup();
-        resolve({ force: false });
-      }
-    };
-    const onEnd = () => {
-      cleanup();
-      reject(new Error("Desktop update apply signal ended before confirmation."));
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-
-    process.stdin.on("data", onData);
-    process.stdin.on("end", onEnd);
-    process.stdin.on("error", onError);
+  let buffer = "";
+  let closed = false;
+  let initialSettled = false;
+  let forceRequested = false;
+  let resolveInitial!: (value: { force: boolean }) => void;
+  let rejectInitial!: (error: Error) => void;
+  const forceWaiters = new Set<(force: boolean) => void>();
+  const initialSignal = new Promise<{ force: boolean }>((resolve, reject) => {
+    resolveInitial = resolve;
+    rejectInitial = reject;
   });
+
+  const settleForceWaiters = (force: boolean) => {
+    for (const resolve of forceWaiters) resolve(force);
+    forceWaiters.clear();
+  };
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    process.stdin.off("data", onData);
+    process.stdin.off("end", onEnd);
+    process.stdin.off("error", onError);
+    settleForceWaiters(false);
+  };
+  const onData = (chunk: string) => {
+    buffer += chunk;
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? "";
+    for (const command of lines.map((line) => line.trim())) {
+      if (command === "force-apply") {
+        forceRequested = true;
+        if (!initialSettled) {
+          initialSettled = true;
+          resolveInitial({ force: true });
+        }
+        settleForceWaiters(true);
+      } else if (command === "apply" && !initialSettled) {
+        initialSettled = true;
+        resolveInitial({ force: false });
+      }
+    }
+  };
+  const onEnd = () => {
+    if (!initialSettled) {
+      initialSettled = true;
+      rejectInitial(new Error("Desktop update apply signal ended before confirmation."));
+    }
+    cleanup();
+  };
+  const onError = (error: Error) => {
+    if (!initialSettled) {
+      initialSettled = true;
+      rejectInitial(error);
+    }
+    cleanup();
+  };
+
+  process.stdin.on("data", onData);
+  process.stdin.on("end", onEnd);
+  process.stdin.on("error", onError);
+  return {
+    waitForInitialSignal: () => initialSignal,
+    waitForForceRequest: async (timeoutMs: number) => {
+      if (forceRequested) return true;
+      if (closed) return false;
+      return await new Promise<boolean>((resolve) => {
+        let settled = false;
+        const finish = (force: boolean) => {
+          if (settled) return;
+          settled = true;
+          forceWaiters.delete(finish);
+          clearTimeout(timer);
+          resolve(force);
+        };
+        const timer = setTimeout(() => finish(false), timeoutMs);
+        timer.unref?.();
+        forceWaiters.add(finish);
+      });
+    },
+    close: cleanup,
+  };
 }
 
 export function resolveCurrentCliVersion(env: NodeJS.ProcessEnv = process.env): string {
@@ -1398,6 +1448,8 @@ export async function prepareForDesktopReplace(
   target: DesktopAssetTarget,
   options: {
     waitForActiveRuns?: boolean;
+    waitForForceUpdate?: (timeoutMs: number) => Promise<boolean>;
+    onActiveRunsWaiting?: (totalRuns: number) => void;
     activeRunPollIntervalMs?: number;
     forceUpdate?: boolean;
     legacyUpdateQuitGraceMs?: number;
@@ -1433,20 +1485,25 @@ export async function prepareForDesktopReplace(
   const hasManagedExecutable = await pathExists(paths.executablePath);
   if (hasManagedExecutable) {
     managedExecutablePids = findPids(paths.executablePath, target);
+    let forceUpdate = options.forceUpdate === true;
     const requestQuit = () => requestDesktopQuit(paths.executablePath, target, {
-      forceUpdate: options.forceUpdate,
+      forceUpdate,
       responseTimeoutMs: options.updateQuitResponseTimeoutMs,
     });
     let quitResponse = await requestQuit();
-    while (quitResponse && !quitResponse.ok && quitResponse.status === "active_runs" && options.waitForActiveRuns && !options.forceUpdate) {
+    while (quitResponse && !quitResponse.ok && quitResponse.status === "active_runs" && options.waitForActiveRuns && !forceUpdate) {
       p.log.warn(
         `Rudder Desktop has ${quitResponse.totalRuns} active run${quitResponse.totalRuns === 1 ? "" : "s"}; waiting before replacing Desktop.`,
       );
-      await delay(options.activeRunPollIntervalMs ?? 15_000);
+      options.onActiveRunsWaiting?.(quitResponse.totalRuns);
+      const pollIntervalMs = options.activeRunPollIntervalMs ?? 15_000;
+      forceUpdate = options.waitForForceUpdate
+        ? await options.waitForForceUpdate(pollIntervalMs)
+        : (await delay(pollIntervalMs), false);
       quitResponse = await requestQuit();
     }
     if (quitResponse && !quitResponse.ok && quitResponse.status === "active_runs") {
-      if (!options.forceUpdate) {
+      if (!forceUpdate) {
         throw new Error(
           `Rudder Desktop has ${quitResponse.totalRuns} active run${quitResponse.totalRuns === 1 ? "" : "s"}. Stop active work, then rerun start.`,
         );
@@ -1900,13 +1957,15 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
         );
 
         let applySignal: { force: boolean } | null = null;
+        let applySignalController: ReturnType<typeof createDesktopApplySignalController> | null = null;
         if (desktopProgressJson && opts.desktopWaitForApply === true) {
           writeDesktopProgress({
             phase: "ready_to_install",
             message: "Desktop update is downloaded and verified.",
             percent: 100,
           });
-          applySignal = await waitForDesktopApplySignal();
+          applySignalController = createDesktopApplySignalController();
+          applySignal = await applySignalController.waitForInitialSignal();
           writeDesktopProgress({
             phase: "preparing_restart",
             message: applySignal.force
@@ -1915,15 +1974,27 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
           });
         }
 
-        await runStartPhase(
-          "Replacing existing Rudder Desktop if needed...",
-          "Existing Desktop install is ready for replacement.",
-          () => prepareForDesktopReplace(installPaths, target, {
-            waitForActiveRuns: opts.waitForActiveRuns === true,
-            forceUpdate: applySignal?.force === true,
-          }),
-          desktopProgressJson ? (opts.waitForActiveRuns === true ? "waiting_for_active_runs" : "preparing_restart") : null,
-        );
+        try {
+          await runStartPhase(
+            "Replacing existing Rudder Desktop if needed...",
+            "Existing Desktop install is ready for replacement.",
+            () => prepareForDesktopReplace(installPaths, target, {
+              waitForActiveRuns: opts.waitForActiveRuns === true,
+              forceUpdate: applySignal?.force === true,
+              waitForForceUpdate: applySignalController?.waitForForceRequest,
+              onActiveRunsWaiting: desktopProgressJson
+                ? (totalRuns) => writeDesktopProgress({
+                  phase: "waiting_for_active_runs",
+                  message: `Waiting for ${totalRuns} running agent run${totalRuns === 1 ? "" : "s"} before replacing Desktop.`,
+                  totalRuns,
+                })
+                : undefined,
+            }),
+            desktopProgressJson ? (opts.waitForActiveRuns === true ? "waiting_for_active_runs" : "preparing_restart") : null,
+          );
+        } finally {
+          applySignalController?.close();
+        }
         await runStartPhase(
           "Installing portable Desktop app...",
           `Installed Rudder Desktop to ${pc.cyan(installPaths.appPath)}.`,

@@ -30,20 +30,33 @@ export const DESKTOP_UPDATE_QUIT_ARG = "--rudder-update-quit";
 export const DESKTOP_UPDATE_FORCE_ARG = "--rudder-update-force";
 export const INSTANCE_SETTINGS_GENERAL_PATH = "/instance/settings/general";
 
-type ActiveRunSummary = any;
+type DesktopUpdateBlocker = {
+  runId: string;
+  agentId: string | null;
+  agentName: string;
+  issueId: string | null;
+  organizationId: string;
+  organizationName: string;
+};
+type DesktopUpdateRunSummary = {
+  totalRuns: number;
+  blockers: DesktopUpdateBlocker[];
+};
 
 export function createDesktopUpdateFlow(context: {
   appName: string;
   getMainWindow: () => BrowserWindow | null;
   getServerHandle: () => any;
   getBootState: () => any;
-  listActiveRunsForQuit: () => Promise<ActiveRunSummary>;
-  formatQuitRunDetail: (summary: ActiveRunSummary) => string;
+  listRunningRunsForUpdate: () => Promise<DesktopUpdateRunSummary>;
+  formatUpdateRunDetail: (summary: DesktopUpdateRunSummary) => string;
+  activeRunPollIntervalMs?: number;
   promptForDeferredUpdate?: (prompt: {
     title: string;
     message: string;
     detail: string;
     totalRuns: number;
+    blockers: DesktopUpdateBlocker[];
     confirmLabel: string;
     forceLabel: string;
     cancelLabel: string;
@@ -51,7 +64,17 @@ export function createDesktopUpdateFlow(context: {
   showMainWindow: () => void;
 }) {
   let latestDesktopUpdateProgress: DesktopUpdateProgressEvent | null = null;
-  const activeDesktopUpdates = new Map<string, { version: string; stdin: NodeJS.WritableStream | null; totalRuns?: number }>();
+  const activeDesktopUpdates = new Map<string, {
+    version: string;
+    stdin: NodeJS.WritableStream | null;
+    blockers: DesktopUpdateBlocker[];
+    applyStarted: boolean;
+    finalGuardWaiting: boolean;
+    forceEscalated: boolean;
+    blockerCheckInFlight: boolean;
+    blockerPollTimer: NodeJS.Timeout | null;
+    invalidate: () => void;
+  }>();
   let activeDesktopUpdateAttempt: {
     updateId: string;
     version: string;
@@ -88,6 +111,8 @@ export function createDesktopUpdateFlow(context: {
     transferredBytes?: number;
     totalBytes?: number;
     totalRuns?: number;
+    blockers?: DesktopUpdateBlocker[];
+    automaticApply?: boolean;
     error?: string;
     at: string;
   };
@@ -137,26 +162,10 @@ export function createDesktopUpdateFlow(context: {
   }
 
   function publishDesktopUpdateProgress(event: DesktopUpdateProgressEvent): void {
-    const activeUpdate = activeDesktopUpdates.get(event.updateId);
-    const nextEvent: DesktopUpdateProgressEvent = {
-      ...event,
-      ...(event.totalRuns === undefined
-        && activeUpdate?.totalRuns !== undefined
-        && (event.phase === "ready_to_install" || event.phase === "preparing_restart")
-        ? { totalRuns: activeUpdate.totalRuns }
-        : {}),
-      ...(event.totalRuns === undefined
-        && activeUpdate?.totalRuns === undefined
-        && latestDesktopUpdateProgress?.updateId === event.updateId
-        && latestDesktopUpdateProgress.totalRuns !== undefined
-        && (event.phase === "ready_to_install" || event.phase === "preparing_restart")
-        ? { totalRuns: latestDesktopUpdateProgress.totalRuns }
-        : {}),
-    };
-    latestDesktopUpdateProgress = nextEvent;
+    latestDesktopUpdateProgress = event;
     const mainWindow = context.getMainWindow();
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("desktop:update-progress", nextEvent);
+      mainWindow.webContents.send("desktop:update-progress", event);
     }
   }
 
@@ -181,9 +190,9 @@ export function createDesktopUpdateFlow(context: {
     }
   }
 
-  function clearPendingPostUpdateReloadMarker(): void {
+  function clearPendingPostUpdateReloadMarker(updateId: string): void {
     try {
-      clearPostUpdateReloadMarker(app.getPath("userData"));
+      clearPostUpdateReloadMarker(app.getPath("userData"), { updateId });
     } catch (error) {
       console.warn("[rudder-desktop] failed to clear post-update reload marker", error);
     }
@@ -288,6 +297,77 @@ export function createDesktopUpdateFlow(context: {
     return active.promise;
   }
 
+  function clearBlockerPoll(updateId: string): void {
+    const session = activeDesktopUpdates.get(updateId);
+    if (!session?.blockerPollTimer) return;
+    clearTimeout(session.blockerPollTimer);
+    session.blockerPollTimer = null;
+  }
+
+  function scheduleBlockerRefresh(updateId: string): void {
+    const session = activeDesktopUpdates.get(updateId);
+    if (!session || (session.applyStarted && !session.finalGuardWaiting) || session.blockerPollTimer) return;
+    session.blockerPollTimer = setTimeout(() => {
+      session.blockerPollTimer = null;
+      void refreshRunningBlockersAndApply(updateId);
+    }, context.activeRunPollIntervalMs ?? 2_000);
+    session.blockerPollTimer.unref?.();
+  }
+
+  async function refreshRunningBlockersAndApply(updateId: string): Promise<void> {
+    const session = activeDesktopUpdates.get(updateId);
+    if (!session || (session.applyStarted && !session.finalGuardWaiting) || session.blockerCheckInFlight) return;
+    session.blockerCheckInFlight = true;
+    try {
+      const summary = await context.listRunningRunsForUpdate();
+      const currentSession = activeDesktopUpdates.get(updateId);
+      if (!currentSession || (currentSession.applyStarted && !currentSession.finalGuardWaiting)) return;
+      currentSession.blockers = summary.blockers;
+      if (summary.totalRuns > 0) {
+        updateDesktopUpdateProgress(updateId, currentSession.version, {
+          phase: "waiting_for_active_runs",
+          message:
+            `Waiting for ${summary.totalRuns} running agent run${summary.totalRuns === 1 ? "" : "s"} before applying the update.`,
+          percent: 100,
+          totalRuns: summary.totalRuns,
+          blockers: summary.blockers,
+          automaticApply: true,
+        });
+        scheduleBlockerRefresh(updateId);
+        return;
+      }
+
+      if (currentSession.finalGuardWaiting) {
+        currentSession.blockers = [];
+        clearBlockerPoll(updateId);
+        updateDesktopUpdateProgress(updateId, currentSession.version, {
+          phase: "preparing_restart",
+          message: "Running work is clear. Completing the final Desktop replacement check...",
+          percent: 100,
+          automaticApply: true,
+        });
+        return;
+      }
+      await applyUpdate(updateId);
+    } catch (error) {
+      const currentSession = activeDesktopUpdates.get(updateId);
+      if (!currentSession || (currentSession.applyStarted && !currentSession.finalGuardWaiting)) return;
+      currentSession.blockers = [];
+      updateDesktopUpdateProgress(updateId, currentSession.version, {
+        phase: "waiting_for_active_runs",
+        message: "Rudder could not confirm whether running work is clear. Retrying before applying the update.",
+        percent: 100,
+        blockers: [],
+        automaticApply: true,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      scheduleBlockerRefresh(updateId);
+    } finally {
+      const currentSession = activeDesktopUpdates.get(updateId);
+      if (currentSession) currentSession.blockerCheckInFlight = false;
+    }
+  }
+
   async function showUpdateInstallFallbackDialog(installResult: Exclude<DesktopUpdateInstallResult, { status: "started" } | { status: "waiting" }>): Promise<void> {
     await showMessageBox({
       type: installResult.status === "blocked" ? "warning" : "error",
@@ -301,20 +381,21 @@ export function createDesktopUpdateFlow(context: {
     });
   }
 
-  async function promptForDeferredUpdate(summary: ActiveRunSummary): Promise<"wait" | "force" | "cancel"> {
-    const detail = context.formatQuitRunDetail(summary);
+  async function promptForDeferredUpdate(summary: DesktopUpdateRunSummary): Promise<"wait" | "force" | "cancel"> {
+    const detail = context.formatUpdateRunDetail(summary);
     const message = summary.totalRuns === 1
-      ? "There is 1 active agent run."
-      : `There are ${summary.totalRuns} active agent runs.`;
+      ? "There is 1 running agent run in this Rudder instance."
+      : `There are ${summary.totalRuns} running agent runs in this Rudder instance.`;
     const prompt = {
       title: context.appName,
       message,
       detail:
-        "Rudder can download the installer now, keep active work running, then apply the update after the runs finish. "
+        "Rudder can download the installer now, keep running work alive, then apply the update automatically after the runs finish. "
         + "The desktop app may close and reopen automatically when it is safe to replace. "
-        + "Choose Stop Runs and Update Now to cancel active runs, quit Rudder, and apply the update immediately.\n\n"
+        + "Choose Stop Runs and Update Now to cancel the listed runs, quit Rudder, and apply the update immediately.\n\n"
         + detail,
       totalRuns: summary.totalRuns,
+      blockers: summary.blockers,
       confirmLabel: "Download and Update When Idle",
       forceLabel: "Stop Runs and Update Now",
       cancelLabel: "Cancel",
@@ -451,7 +532,7 @@ export function createDesktopUpdateFlow(context: {
         phase: "starting",
         message: `Starting update to ${formatVersionForDisplay(normalizedVersion)}.`,
       });
-      const activeRuns = await context.listActiveRunsForQuit();
+      const activeRuns = await context.listRunningRunsForUpdate();
       let waitForActiveRuns = false;
       let forceWhenApplying = false;
       if (activeRuns.totalRuns > 0) {
@@ -459,16 +540,17 @@ export function createDesktopUpdateFlow(context: {
         if (decision === "cancel") {
           updateDesktopUpdateProgress(updateId, normalizedVersion, {
             phase: "failed",
-            message: "Update paused because active runs are still running.",
+            message: "Update paused because running agent work is still active.",
             totalRuns: activeRuns.totalRuns,
+            blockers: activeRuns.blockers,
           });
           clearActiveDesktopUpdateAttempt(updateId);
           return {
             status: "blocked",
             totalRuns: activeRuns.totalRuns,
             message:
-              `Rudder has ${activeRuns.totalRuns} active run${activeRuns.totalRuns === 1 ? "" : "s"}.\n\n`
-              + `${context.formatQuitRunDetail(activeRuns)}\n\nRun the update again after active work is finished.`,
+              `Rudder has ${activeRuns.totalRuns} running run${activeRuns.totalRuns === 1 ? "" : "s"}.\n\n`
+              + `${context.formatUpdateRunDetail(activeRuns)}\n\nRun the update again after running work is finished.`,
           };
         }
         waitForActiveRuns = true;
@@ -476,9 +558,11 @@ export function createDesktopUpdateFlow(context: {
         updateDesktopUpdateProgress(updateId, normalizedVersion, {
           phase: "waiting_for_active_runs",
           message: forceWhenApplying
-            ? `Rudder is downloading ${formatVersionForDisplay(normalizedVersion)} and will quit active runs when the update is ready.`
-            : `Rudder is downloading ${formatVersionForDisplay(normalizedVersion)} and will update after active runs finish.`,
+            ? `Rudder is downloading ${formatVersionForDisplay(normalizedVersion)} and will quit the listed runs when the update is ready.`
+            : `Rudder is downloading ${formatVersionForDisplay(normalizedVersion)} and will update automatically after the listed runs finish.`,
           totalRuns: activeRuns.totalRuns,
+          blockers: activeRuns.blockers,
+          automaticApply: !forceWhenApplying,
         });
       }
 
@@ -495,31 +579,57 @@ export function createDesktopUpdateFlow(context: {
         "--no-version-check",
         "--desktop-progress-json",
         "--desktop-wait-for-apply",
-        ...(waitForActiveRuns && !forceWhenApplying ? ["--wait-for-active-runs"] : []),
+        ...(!forceWhenApplying ? ["--wait-for-active-runs"] : []),
       ];
       const child = spawn(process.execPath, args, {
         detached: true,
         env: process.env,
         stdio: ["pipe", "pipe", "pipe"],
       });
+      let updateChildFinalized = false;
       activeDesktopUpdates.set(updateId, {
         version: normalizedVersion,
         stdin: child.stdin,
-        ...(waitForActiveRuns && activeRuns.totalRuns > 0 ? { totalRuns: activeRuns.totalRuns } : {}),
+        blockers: activeRuns.blockers,
+        applyStarted: false,
+        finalGuardWaiting: false,
+        forceEscalated: false,
+        blockerCheckInFlight: false,
+        blockerPollTimer: null,
+        invalidate: () => {
+          updateChildFinalized = true;
+        },
       });
       let stdoutBuffer = "";
       let diagnosticStdout = "";
       let diagnosticStderr = "";
-      let updateChildFinalized = false;
       child.stdout?.setEncoding("utf8");
       child.stdout?.on("data", (chunk: string) => {
+        if (updateChildFinalized) return;
         stdoutBuffer += chunk;
         const lines = stdoutBuffer.split(/\r?\n/);
         stdoutBuffer = lines.pop() ?? "";
         for (const line of lines) {
           const event = parseDesktopUpdateProgressLine(updateId, normalizedVersion, line.trim());
           if (event) {
-            publishDesktopUpdateProgress(event);
+            const session = activeDesktopUpdates.get(updateId);
+            if (event.phase === "ready_to_install" && session && !session.applyStarted) {
+              publishDesktopUpdateProgress({
+                ...event,
+                automaticApply: true,
+              });
+              void refreshRunningBlockersAndApply(updateId);
+            } else if (event.phase === "waiting_for_active_runs" && session) {
+              session.finalGuardWaiting = true;
+              session.blockers = [];
+              publishDesktopUpdateProgress({
+                ...event,
+                automaticApply: true,
+              });
+              void refreshRunningBlockersAndApply(updateId);
+            } else {
+              publishDesktopUpdateProgress(event);
+            }
           } else {
             diagnosticStdout = appendBoundedDesktopUpdateOutput(diagnosticStdout, `${line}\n`);
           }
@@ -527,15 +637,18 @@ export function createDesktopUpdateFlow(context: {
       });
       child.stderr?.setEncoding("utf8");
       child.stderr?.on("data", (chunk: string) => {
+        if (updateChildFinalized) return;
         const trimmed = chunk.trim();
         if (trimmed) console.warn("[rudder-desktop] update child stderr", trimmed);
         diagnosticStderr = appendBoundedDesktopUpdateOutput(diagnosticStderr, chunk);
       });
       child.on("error", (error) => {
+        if (updateChildFinalized) return;
         updateChildFinalized = true;
+        clearBlockerPoll(updateId);
         activeDesktopUpdates.delete(updateId);
         clearActiveDesktopUpdateAttempt(updateId);
-        clearPendingPostUpdateReloadMarker();
+        clearPendingPostUpdateReloadMarker(updateId);
         updateDesktopUpdateProgress(updateId, normalizedVersion, {
           phase: "failed",
           message: "Update failed to start.",
@@ -545,6 +658,7 @@ export function createDesktopUpdateFlow(context: {
       child.on("close", (code) => {
         if (updateChildFinalized) return;
         updateChildFinalized = true;
+        clearBlockerPoll(updateId);
         activeDesktopUpdates.delete(updateId);
         clearActiveDesktopUpdateAttempt(updateId);
         if (stdoutBuffer.trim()) {
@@ -560,11 +674,11 @@ export function createDesktopUpdateFlow(context: {
             message: `Update installer exited with code ${code}.`,
             ...(diagnostic ? { error: diagnostic } : {}),
           });
-          clearPendingPostUpdateReloadMarker();
+          clearPendingPostUpdateReloadMarker(updateId);
           return;
         }
         const finalProgress = latestDesktopUpdateProgress?.updateId === updateId ? latestDesktopUpdateProgress : null;
-        clearPendingPostUpdateReloadMarker();
+        clearPendingPostUpdateReloadMarker(updateId);
         updateDesktopUpdateProgress(updateId, normalizedVersion, {
           phase: "complete",
           message: finalProgress?.phase === "closing"
@@ -592,7 +706,7 @@ export function createDesktopUpdateFlow(context: {
           totalRuns: activeRuns.totalRuns,
           message:
             `Rudder is downloading ${formatVersionForDisplay(normalizedVersion)} and will update after `
-            + `${activeRuns.totalRuns} active run${activeRuns.totalRuns === 1 ? "" : "s"} finish.`,
+            + `${activeRuns.totalRuns} running run${activeRuns.totalRuns === 1 ? "" : "s"} finish.`,
         };
       }
       return { status: "started", version: normalizedVersion, updateId };
@@ -632,8 +746,19 @@ export function createDesktopUpdateFlow(context: {
       return { status: "unavailable", message: "The update session is no longer waiting to apply. Start the update again." };
     }
 
+    if (session.applyStarted && !(options.force && session.finalGuardWaiting && !session.forceEscalated)) {
+      return {
+        status: "started",
+        updateId: normalizedUpdateId,
+        version: session.version,
+      };
+    }
+
     try {
-      writePendingPostUpdateReloadMarker(normalizedUpdateId, session.version);
+      const forceEscalation = options.force === true && session.finalGuardWaiting;
+      if (!forceEscalation) session.applyStarted = true;
+      clearBlockerPoll(normalizedUpdateId);
+      if (!forceEscalation) writePendingPostUpdateReloadMarker(normalizedUpdateId, session.version);
       await new Promise<void>((resolve, reject) => {
         session.stdin.write(options.force ? "force-apply\n" : "apply\n", (error?: Error | null) => {
           if (error) {
@@ -643,9 +768,15 @@ export function createDesktopUpdateFlow(context: {
           resolve();
         });
       });
+      if (forceEscalation) {
+        session.forceEscalated = true;
+        session.finalGuardWaiting = false;
+      }
       updateDesktopUpdateProgress(normalizedUpdateId, session.version, {
         phase: "preparing_restart",
-        message: "Applying the Desktop update. Rudder will close when replacement is ready...",
+        message: forceEscalation
+          ? "Stopping the newly detected running work and applying the Desktop update..."
+          : "Applying the Desktop update. Rudder will close when replacement is ready...",
       });
       return {
         status: "started",
@@ -653,8 +784,20 @@ export function createDesktopUpdateFlow(context: {
         version: session.version,
       };
     } catch (error) {
-      clearPendingPostUpdateReloadMarker();
+      const forceEscalation = options.force === true && session.finalGuardWaiting;
+      if (!forceEscalation) {
+        session.applyStarted = false;
+        session.invalidate();
+        clearBlockerPoll(normalizedUpdateId);
+        activeDesktopUpdates.delete(normalizedUpdateId);
+        clearActiveDesktopUpdateAttempt(normalizedUpdateId);
+        clearPendingPostUpdateReloadMarker(normalizedUpdateId);
+        (session.stdin as NodeJS.WritableStream & { destroy?: () => void }).destroy?.();
+      }
       const message = error instanceof Error ? error.message : String(error);
+      if (forceEscalation) {
+        return { status: "failed", message };
+      }
       updateDesktopUpdateProgress(normalizedUpdateId, session.version, {
         phase: "failed",
         message: "Update failed to apply.",

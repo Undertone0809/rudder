@@ -6,14 +6,35 @@ type DeferredUpdatePrompt = {
   message: string;
   detail: string;
   totalRuns: number;
+  blockers: Array<{
+    runId: string;
+    agentId: string | null;
+    agentName: string;
+    issueId: string | null;
+    organizationId: string;
+    organizationName: string;
+  }>;
   confirmLabel: string;
   forceLabel: string;
   cancelLabel: string;
 };
 
+type DesktopUpdateProgress = {
+  updateId: string;
+  version: string;
+  phase: "waiting_for_active_runs" | "ready_to_install";
+  message: string;
+  percent: number;
+  blockers?: DeferredUpdatePrompt["blockers"];
+  totalRuns?: number;
+  automaticApply?: boolean;
+  at: string;
+};
+
 async function installDesktopPromptStub(page: Page) {
   await page.addInitScript(() => {
-    let listener: ((prompt: DeferredUpdatePrompt) => void) | null = null;
+    let promptListener: ((prompt: DeferredUpdatePrompt) => void) | null = null;
+    let progressListener: ((progress: DesktopUpdateProgress) => void) | null = null;
     Object.defineProperty(window, "desktopShell", {
       configurable: true,
       value: {
@@ -22,29 +43,58 @@ async function installDesktopPromptStub(page: Page) {
           paths: { instanceRoot: "/tmp/rudder-e2e" },
         }),
         onBootState: () => () => {},
-        setDeferredUpdatePromptReady: async () => undefined,
-        onDeferredUpdatePrompt: (nextListener: (prompt: DeferredUpdatePrompt) => void) => {
-          listener = nextListener;
+        getUpdateProgress: async () => null,
+        onUpdateProgress: (nextListener: (progress: DesktopUpdateProgress) => void) => {
+          progressListener = nextListener;
           return () => {
-            listener = null;
+            progressListener = null;
           };
         },
+        setDeferredUpdatePromptReady: async () => undefined,
+        onDeferredUpdatePrompt: (nextListener: (prompt: DeferredUpdatePrompt) => void) => {
+          promptListener = nextListener;
+          return () => {
+            promptListener = null;
+          };
+        },
+        applyUpdate: async () => ({
+          status: "started",
+          updateId: "update-e2e",
+          version: "0.3.7-canary.1",
+        }),
         respondDeferredUpdatePrompt: async () => undefined,
       },
     });
     Object.defineProperty(window, "__emitDeferredUpdatePrompt", {
       configurable: true,
       value: (prompt: DeferredUpdatePrompt) => {
-        listener?.(prompt);
+        promptListener?.(prompt);
+      },
+    });
+    Object.defineProperty(window, "__emitDesktopUpdateProgress", {
+      configurable: true,
+      value: (progress: DesktopUpdateProgress) => {
+        progressListener?.(progress);
       },
     });
   });
 }
 
+async function emitDesktopUpdateProgress(page: Page, progress: DesktopUpdateProgress) {
+  await page.evaluate((event) => {
+    const emitProgress = (window as typeof window & {
+      __emitDesktopUpdateProgress?: (progress: DesktopUpdateProgress) => void;
+    }).__emitDesktopUpdateProgress;
+    emitProgress?.(event);
+  }, progress);
+}
+
 async function createOrganization(page: Page) {
+  const issuePrefix = `D${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
   const orgRes = await page.request.post("/api/orgs", {
     data: {
       name: `Desktop Update Prompt ${Date.now()}`,
+      issuePrefix,
     },
   });
   expect(orgRes.ok()).toBe(true);
@@ -60,13 +110,31 @@ async function showDeferredUpdatePrompt(page: Page, issuePrefix: string) {
     emitPrompt?.({
       promptId: "prompt-e2e",
       title: "Rudder",
-      message: "There are 2 active agent runs.",
+      message: "There are 2 running agent runs in this Rudder instance.",
       detail:
-        "Rudder can download the installer now, keep active work running, then apply the update after the runs finish. "
+        "Rudder can download the installer now, keep running work alive, then apply the update automatically after the runs finish. "
         + "The desktop app may close and reopen automatically when it is safe to replace. "
-        + "Choose Stop Runs and Update Now to cancel active runs, quit Rudder, and apply the update immediately.\n\n"
-        + "Z Studio: 2 running",
+        + "Choose Stop Runs and Update Now to cancel the listed runs, quit Rudder, and apply the update immediately.\n\n"
+        + "Z Studio: Wesley (run run-wesley-1)\nZ Studio: Wesley (run run-wesley-2)",
       totalRuns: 2,
+      blockers: [
+        {
+          runId: "run-wesley-1",
+          agentId: "agent-wesley",
+          agentName: "Wesley",
+          issueId: "issue-zst-776",
+          organizationId: "org-z-studio",
+          organizationName: "Z Studio",
+        },
+        {
+          runId: "run-wesley-2",
+          agentId: "agent-wesley",
+          agentName: "Wesley",
+          issueId: null,
+          organizationId: "org-z-studio",
+          organizationName: "Z Studio",
+        },
+      ],
       confirmLabel: "Download and Update When Idle",
       forceLabel: "Stop Runs and Update Now",
       cancelLabel: "Cancel",
@@ -76,8 +144,8 @@ async function showDeferredUpdatePrompt(page: Page, issuePrefix: string) {
 
 async function assertDialogActionsFit(page: Page) {
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByText("There are 2 active agent runs.")).toBeVisible();
-  await expect(dialog.getByText("Z Studio: 2 running")).toBeVisible();
+  await expect(dialog.getByText("There are 2 running agent runs in this Rudder instance.")).toBeVisible();
+  await expect(dialog.getByText("Z Studio: Wesley (run run-wesley-1)")).toBeVisible();
 
   const dialogBox = await dialog.boundingBox();
   expect(dialogBox).toBeTruthy();
@@ -127,6 +195,76 @@ test("desktop deferred update prompt keeps wrapped actions readable on narrow da
 
   await page.screenshot({
     path: testInfo.outputPath("desktop-update-prompt-narrow-dark.png"),
+    fullPage: true,
+  });
+});
+
+test("desktop update progress replaces live blockers and needs no second automatic apply action", async ({ page }, testInfo) => {
+  await installDesktopPromptStub(page);
+  const organization = await createOrganization(page);
+  await page.goto(`/${organization.issuePrefix}/workspaces/backups`);
+
+  const blockerA = {
+    runId: "run-alpha-12345678",
+    agentId: "agent-mia",
+    agentName: "Mia",
+    issueId: "issue-alpha",
+    organizationId: "org-alpha",
+    organizationName: "Org Alpha",
+  };
+  await emitDesktopUpdateProgress(page, {
+    updateId: "update-e2e",
+    version: "0.3.7-canary.1",
+    phase: "waiting_for_active_runs",
+    message: "Waiting for 1 running agent run before applying the update.",
+    percent: 100,
+    totalRuns: 1,
+    blockers: [blockerA],
+    automaticApply: true,
+    at: new Date().toISOString(),
+  });
+
+  await expect(page.getByText("Org Alpha · Mia · run run-alph")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop runs and update now" })).toBeVisible();
+
+  await emitDesktopUpdateProgress(page, {
+    updateId: "update-e2e",
+    version: "0.3.7-canary.1",
+    phase: "waiting_for_active_runs",
+    message: "Waiting for 1 running agent run before applying the update.",
+    percent: 100,
+    totalRuns: 1,
+    blockers: [{
+      runId: "run-beta-87654321",
+      agentId: "agent-wesley",
+      agentName: "Wesley",
+      issueId: "issue-beta",
+      organizationId: "org-beta",
+      organizationName: "Org Beta",
+    }],
+    automaticApply: true,
+    at: new Date().toISOString(),
+  });
+
+  await expect(page.getByText("Org Alpha · Mia · run run-alph")).toHaveCount(0);
+  await expect(page.getByText("Org Beta · Wesley · run run-beta")).toBeVisible();
+
+  await emitDesktopUpdateProgress(page, {
+    updateId: "update-e2e",
+    version: "0.3.7-canary.1",
+    phase: "ready_to_install",
+    message: "Desktop update is downloaded and verified.",
+    percent: 100,
+    blockers: [],
+    automaticApply: true,
+    at: new Date().toISOString(),
+  });
+
+  await expect(page.getByText("Update ready")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Quit and update" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Stop runs and update now" })).toHaveCount(0);
+  await page.screenshot({
+    path: testInfo.outputPath("desktop-update-automatic-ready.png"),
     fullPage: true,
   });
 });

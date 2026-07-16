@@ -423,18 +423,24 @@ When the operator chooses Update, Desktop starts the bundled CLI
 the matching server runtime cache, downloads the preferred shell asset when
 available or the full portable fallback otherwise, verifies `SHASUMS256.txt`,
 requests the running Desktop shell to quit, replaces the per-user app, refreshes
-launchers, and reopens Rudder. If active agent runs exist, the update is blocked
-until active work is stopped.
+launchers, and reopens Rudder. Running Agent Runs across every organization in
+the local instance delay replacement; queued or terminal close-out records do
+not require a destructive Stop Runs decision.
 
 During an in-app update, Desktop shows a compact bottom-right update status card
 with structured progress from the bundled CLI. Byte-backed downloads may show a
 determinate percentage; release resolution, checksum verification, active-run
 waiting, replacement preparation, and relaunch are shown as phase status rather
-than fake percentages. After the release asset is downloaded and verified, the
-card switches to a ready state with a Restart to update action; replacement and
-relaunch begin only after that confirmation. Settings > About can also show the
-same update session as a denser phase-by-phase diagnostic panel for debugging or
-validation.
+than fake percentages. Accepting Update is sufficient intent to finish the
+replacement: after the release asset is downloaded and verified, Desktop
+refreshes instance-wide running blockers and applies automatically when none
+remain. While waiting, the card names the blocking organization and agent and
+keeps force-stop as an explicit secondary action. If the CLI's final update-quit
+check discovers a run that started after Electron's ready-time query, Desktop
+refreshes that run's identity, keeps retrying failed inspections, and allows the
+same force-stop escalation without restarting the update. Settings > About can
+show the same update session as a denser phase-by-phase diagnostic panel for
+debugging or validation.
 
 This is a layered asset replacement path, not a binary-delta patcher. Fresh
 installs still download the server runtime and a Desktop app, but routine

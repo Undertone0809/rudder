@@ -7,6 +7,7 @@ contract_ids:
   - ORG.IDENTITY.001
   - ORG.SETTINGS.001
   - ORG.ONBOARDING.001
+  - ORG.DESKTOP.UPDATE.001
   - ORG.DESKTOP.RELEASE.NOTES.001
   - ORG.PORTABILITY.001
 related_code:
@@ -15,6 +16,8 @@ related_code:
   - packages/shared/src/organization-issue-key.ts
   - desktop/src/browser-ipc.ts
   - desktop/src/browser-profile.ts
+  - desktop/src/desktop-quit-flow.ts
+  - desktop/src/desktop-update-flow.ts
   - desktop/src/main.ts
   - desktop/src/post-update-reload.ts
   - desktop/src/release-notes.ts
@@ -61,9 +64,13 @@ related_code:
   - ui/src/pages/InviteLanding.tsx
   - ui/src/pages/NotFound.tsx
   - ui/src/components/DesktopReleaseNotesDialog.tsx
+  - ui/src/components/DesktopUpdatePromptBridge.tsx
+  - ui/src/components/DesktopUpdateStatusCard.tsx
 related_tests:
   - desktop/src/browser-ipc.test.ts
   - desktop/src/browser-profile.test.ts
+  - desktop/src/desktop-quit-flow.test.ts
+  - desktop/src/desktop-update-flow.test.ts
   - desktop/src/release-notes.test.ts
   - desktop/src/post-update-reload.test.ts
   - server/src/__tests__/instance-settings-service.test.ts
@@ -89,6 +96,9 @@ related_tests:
   - ui/src/pages/InstanceSettings.test.tsx
   - ui/src/pages/InstanceShortcutsSettings.test.tsx
   - ui/src/components/DesktopReleaseNotesDialog.test.tsx
+  - ui/src/components/DesktopUpdatePromptBridge.test.tsx
+  - ui/src/components/DesktopUpdateStatusCard.test.tsx
+  - tests/e2e/desktop-update-prompt.spec.ts
   - tests/e2e/onboarding.spec.ts
   - tests/e2e/settings-appearance.spec.ts
   - tests/e2e/settings-layout.spec.ts
@@ -439,52 +449,79 @@ Product model:
 
 - In-app update install is available only from packaged Rudder Desktop builds.
 - Desktop checks the selected release channel, downloads the matching portable
-  Desktop asset, verifies checksums, and then waits for an explicit apply signal
-  before replacing the installed app.
-- If active runs exist when an update starts, Desktop can download the installer
-  while keeping those runs alive.
-- The update session preserves the active-run count across intermediate
-  download/checksum progress events so the final ready state can keep the
-  correct operator actions visible.
+  Desktop asset, verifies checksums, and automatically applies the accepted
+  update when no running Agent Run would be interrupted.
+- Desktop update safety is instance-wide. A running blocker may belong to an
+  organization other than the one currently visible in the board.
+- Only Agent Runs whose current status is `running` require an interruptive
+  Stop Runs decision. Queued work is recovered after restart, and terminal
+  records with pending close-out effects are not presented as executing runs.
+- The update session refreshes current blockers instead of treating the count
+  captured when the download started as current truth.
 
 Flow:
 
 1. The operator checks for an update or accepts the startup update prompt.
-2. If no active runs are present, Desktop downloads and verifies the update,
-   then shows a ready action to quit and update.
-3. If active runs are present, Desktop asks whether to download now and update
-   when idle, stop runs and update now, or cancel.
+2. If no running blockers are present across the instance, Desktop downloads,
+   verifies, quits, applies, and relaunches without requiring a second Update
+   button.
+3. If running blockers are present, Desktop names the affected organization and
+   agent and asks whether to update automatically when work finishes, stop the
+   named runs and update now, or cancel.
 4. When the operator chooses to update when idle, Desktop downloads and verifies
-   the update while keeping active work running. The ready status must show both
-   the idle apply path and the force apply path.
-5. Choosing the force apply path cancels active runs, quits Rudder, and applies
-   the update immediately.
-6. If a session expires or the child installer fails, Desktop reports a failed
-   update state with retry and releases-page actions.
+   the update while keeping current running work alive. At ready time it
+   refreshes blockers, shows their current identity while waiting, and applies
+   automatically as soon as none remain.
+5. A run that starts during download is discovered before apply and safely
+   delays replacement. The update-quit handoff performs a final running-run
+   check to close the Electron-to-installer race window. If that final check
+   finds a blocker, Desktop refreshes its organization and agent identity and
+   restores the force-stop action for the same accepted update session.
+6. Choosing the force apply path cancels current running blockers, quits Rudder,
+   and applies the update immediately.
+7. If blocker inspection fails while an accepted update is waiting, Desktop
+   remains fail-closed, exposes the inspection error, and retries until current
+   running work can be confirmed. An expired session or failed child installer
+   reports a failed update state with retry and releases-page actions.
 
 Invariants:
 
-- Active runs must not be cancelled by the default deferred download path.
-- A ready update that still has active runs must not collapse to a plain
-  "Quit and update" action; it must expose the explicit force update action.
+- Running blockers must not be cancelled by the default deferred download path.
+- The original Update choice, or explicit Update When Idle choice, is sufficient
+  intent to apply automatically after safety checks pass.
+- Current blocker identity must come from a fresh instance-wide query at the
+  decision boundary; an initial count must not keep stale controls visible.
+- If the local runtime is unavailable or blocker inspection fails, zero blockers
+  is not established: Desktop hides unconfirmed blocker identity and force-stop
+  controls until a fresh query succeeds.
+- A waiting update with running blockers must expose their organization and
+  agent identity plus an explicit force update action.
+- Queued and terminal-effects-pending records must not be described as running
+  blockers or cancelled solely to permit an update.
 - Retrying or starting a second update while one is active reuses the existing
   update attempt instead of launching a competing installer.
 - Failed update states must be operator-visible and should not silently close
   the board.
+- A transient blocker-inspection failure must never be treated as proof that it
+  is safe to replace Desktop, and must not discard an otherwise valid accepted
+  update session. This also applies after the CLI final race guard has started
+  waiting.
 - A successful in-app update writes the post-update restart marker consumed by
   `ORG.DESKTOP.RELEASE.NOTES.001`.
 
 Evidence:
 
 - `desktop/src/desktop-update-flow.test.ts` covers update child diagnostics,
-  deferred active-run updates, force apply, active update reuse, and preserving
-  active-run count through final ready progress.
-- `ui/src/components/DesktopUpdateStatusCard.test.tsx` covers the visible ready,
-  force update, expired-session, and failure actions.
+  live blocker refresh, automatic safe apply, force apply, and active update
+  reuse.
+- `ui/src/components/DesktopUpdateStatusCard.test.tsx` covers visible blocker
+  identity, automatic waiting, force update, and failure actions.
 - `ui/src/components/DesktopUpdatePromptBridge.test.tsx` covers the renderer
-  prompt copy and active-run choices shown before a deferred update starts.
+  prompt copy and running-blocker choices shown before a deferred update starts.
 - `desktop/src/desktop-quit-flow.test.ts` covers forced update quit handoff and
-  active-run cancellation failure cases.
+  running-blocker cancellation failure cases.
+- `tests/e2e/desktop-update-prompt.spec.ts` covers cross-organization blocker
+  identity and readable update actions in desktop and narrow viewports.
 
 ## ORG.DESKTOP.RELEASE.NOTES.001
 

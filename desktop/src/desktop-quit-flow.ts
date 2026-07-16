@@ -5,9 +5,18 @@ import path from "node:path";
 import { buildDesktopApiRequestUrl } from "./api-url.js";
 import { DESKTOP_UPDATE_FORCE_ARG, DESKTOP_UPDATE_QUIT_ARG } from "./desktop-update-flow.js";
 
-type DesktopOrganization = { id: string; name: string };
-type DesktopLiveRun = { id: string; status: string; agentName: string; issueId?: string | null };
+type DesktopOrganization = { id: string; name: string; urlKey?: string | null };
+type DesktopLiveRun = { id: string; status: string; agentId?: string | null; agentName: string; issueId?: string | null };
 type ActiveRunSummary = { totalRuns: number; organizations: Array<{ id: string; name: string; runs: DesktopLiveRun[] }> };
+type DesktopUpdateBlocker = {
+  runId: string;
+  agentId: string | null;
+  agentName: string;
+  issueId: string | null;
+  organizationId: string;
+  organizationName: string;
+};
+type DesktopUpdateRunSummary = ActiveRunSummary & { blockers: DesktopUpdateBlocker[] };
 
 export function createDesktopQuitFlow(context: {
   appName: string;
@@ -80,6 +89,30 @@ export function createDesktopQuitFlow(context: {
     };
   }
 
+  async function listRunningRunsForUpdate(): Promise<DesktopUpdateRunSummary> {
+    if (!context.getServerHandle()) {
+      throw new Error("Local Rudder runtime is not ready for update blocker inspection");
+    }
+    const activeRuns = await listActiveRunsForQuit();
+    const organizations = activeRuns.organizations.flatMap((organization) => {
+      const runs = organization.runs.filter((run) => run.status === "running");
+      return runs.length > 0 ? [{ ...organization, runs }] : [];
+    });
+    const blockers = organizations.flatMap((organization) => organization.runs.map((run) => ({
+      runId: run.id,
+      agentId: run.agentId ?? null,
+      agentName: run.agentName,
+      issueId: run.issueId ?? null,
+      organizationId: organization.id,
+      organizationName: organization.name,
+    })));
+    return {
+      totalRuns: blockers.length,
+      organizations,
+      blockers,
+    };
+  }
+
   function formatQuitRunDetail(summary: ActiveRunSummary): string {
     const lines = summary.organizations.map((organization) => {
       const runningCount = organization.runs.filter((run) => run.status === "running").length;
@@ -97,6 +130,19 @@ export function createDesktopQuitFlow(context: {
       visible.push(`+${lines.length - maxVisibleLines} more organizations`);
     }
 
+    return visible.join("\n");
+  }
+
+  function formatUpdateRunDetail(summary: Pick<DesktopUpdateRunSummary, "blockers">): string {
+    const lines = summary.blockers.map((blocker) => {
+      const runLabel = blocker.runId.slice(0, 8);
+      return `${blocker.organizationName}: ${blocker.agentName} (run ${runLabel})`;
+    });
+    const maxVisibleLines = 6;
+    const visible = lines.slice(0, maxVisibleLines);
+    if (lines.length > maxVisibleLines) {
+      visible.push(`+${lines.length - maxVisibleLines} more running runs`);
+    }
     return visible.join("\n");
   }
 
@@ -285,22 +331,22 @@ export function createDesktopQuitFlow(context: {
 
   async function handleUpdateQuitRequest(responsePath: string, options: { force?: boolean } = {}): Promise<void> {
     try {
-      let activeRuns: ActiveRunSummary = { totalRuns: 0, organizations: [] };
+      let activeRuns: DesktopUpdateRunSummary = { totalRuns: 0, organizations: [], blockers: [] };
       try {
-        activeRuns = await listActiveRunsForQuit();
+        activeRuns = await listRunningRunsForUpdate();
       } catch (error) {
-        console.warn("[rudder-desktop] failed to inspect active runs for update quit", error);
+        console.warn("[rudder-desktop] failed to inspect running runs for update quit", error);
         writeUpdateQuitResponse(responsePath, {
           ok: false,
           status: "failed",
-          message: `Could not inspect active runs before update quit: ${error instanceof Error ? error.message : String(error)}`,
+          message: `Could not inspect running runs before update quit: ${error instanceof Error ? error.message : String(error)}`,
         });
         return;
       }
 
       if (activeRuns.totalRuns > 0 && options.force) {
         await cancelActiveRunsBeforeQuit(activeRuns);
-        activeRuns = await listActiveRunsForQuit();
+        activeRuns = await listRunningRunsForUpdate();
       }
 
       if (activeRuns.totalRuns > 0) {
@@ -327,7 +373,9 @@ export function createDesktopQuitFlow(context: {
 
   return {
     listActiveRunsForQuit,
+    listRunningRunsForUpdate,
     formatQuitRunDetail,
+    formatUpdateRunDetail,
     beginQuitFlow,
     resolveUpdateQuitResponsePath,
     resolveUpdateQuitForce,

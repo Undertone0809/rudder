@@ -33,4 +33,28 @@ describe("desktop update diagnostics", () => {
       }),
     ).toBe("Unable to resolve Rudder Desktop release tag");
   });
+
+  it("filters the Node SQLite warning and keeps the actionable stderr error", () => {
+    expect(
+      summarizeDesktopUpdateChildOutput({
+        stderr: [
+          "(node:67685) ExperimentalWarning: SQLite is an experimental feature and might change at any time",
+          "(Use `Rudder --trace-warnings ...` to show where the warning was created)",
+          "Rudder Desktop has 1 running run. Wait for running work, then retry.",
+        ].join("\n"),
+      }),
+    ).toBe("Rudder Desktop has 1 running run. Wait for running work, then retry.");
+  });
+
+  it("falls back to actionable stdout when stderr contains only the Node SQLite warning", () => {
+    expect(
+      summarizeDesktopUpdateChildOutput({
+        stderr: [
+          "(node:67685) ExperimentalWarning: SQLite is an experimental feature and might change at any time",
+          "(Use `Rudder --trace-warnings ...` to show where the warning was created)",
+        ].join("\n"),
+        stdout: "Unable to replace Rudder Desktop\n",
+      }),
+    ).toBe("Unable to replace Rudder Desktop");
+  });
 });

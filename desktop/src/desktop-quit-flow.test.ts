@@ -71,6 +71,122 @@ describe("desktop quit flow update handoff", () => {
     expect(appQuitMock).toHaveBeenCalledTimes(1);
   });
 
+  it("fails closed when update blocker inspection has no runtime handle", async () => {
+    const quitFlow = createDesktopQuitFlow({
+      appName: "Rudder",
+      getMainWindow: () => null,
+      setMainWindow: vi.fn(),
+      getServerHandle: () => null,
+      stopLocalRudder: vi.fn(),
+      destroyResidentTray: vi.fn(),
+    });
+
+    await expect(quitFlow.listActiveRunsForQuit()).resolves.toEqual({
+      totalRuns: 0,
+      organizations: [],
+    });
+    await expect(quitFlow.listRunningRunsForUpdate()).rejects.toThrow(
+      "Local Rudder runtime is not ready for update blocker inspection",
+    );
+  });
+
+  it("keeps broad quit activity but exposes only running work as update blockers", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      const pathName = new URL(url).pathname;
+      if (pathName === "/api/orgs") {
+        return jsonResponse([
+          { id: "org-a", name: "Current Org" },
+          { id: "org-b", name: "Z Studio" },
+        ]);
+      }
+      if (pathName === "/api/orgs/org-a/live-runs") {
+        return jsonResponse([{ id: "run-queued", status: "queued", agentId: "agent-mia", agentName: "Mia" }]);
+      }
+      if (pathName === "/api/orgs/org-b/live-runs") {
+        return jsonResponse([
+          { id: "f5258de4-running", status: "running", agentId: "agent-wesley", agentName: "Wesley", issueId: "issue-776" },
+          { id: "run-finalizing", status: "succeeded", agentId: "agent-wesley", agentName: "Wesley" },
+        ]);
+      }
+      return new Response("not found", { status: 404, statusText: "Not Found" });
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock as never;
+
+    try {
+      const quitFlow = createDesktopQuitFlow({
+        appName: "Rudder",
+        getMainWindow: () => null,
+        setMainWindow: vi.fn(),
+        getServerHandle: () => ({ apiUrl: "http://127.0.0.1:3100", runtime: { mode: "owned" } }),
+        stopLocalRudder: vi.fn(),
+        destroyResidentTray: vi.fn(),
+      });
+
+      await expect(quitFlow.listActiveRunsForQuit()).resolves.toMatchObject({ totalRuns: 3 });
+      const updateBlockers = await quitFlow.listRunningRunsForUpdate();
+      expect(updateBlockers).toEqual({
+        totalRuns: 1,
+        organizations: [{
+          id: "org-b",
+          name: "Z Studio",
+          runs: [expect.objectContaining({ id: "f5258de4-running", status: "running" })],
+        }],
+        blockers: [{
+          runId: "f5258de4-running",
+          agentId: "agent-wesley",
+          agentName: "Wesley",
+          issueId: "issue-776",
+          organizationId: "org-b",
+          organizationName: "Z Studio",
+        }],
+      });
+      expect(quitFlow.formatUpdateRunDetail(updateBlockers)).toBe("Z Studio: Wesley (run f5258de4)");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("allows update quit when only queued or terminal records remain", async () => {
+    const stopLocalRudder = vi.fn(async () => undefined);
+    const fetchMock = vi.fn(async (url: string) => {
+      const pathName = new URL(url).pathname;
+      if (pathName === "/api/orgs") return jsonResponse([{ id: "org-1", name: "Z Studio" }]);
+      if (pathName === "/api/orgs/org-1/live-runs") {
+        return jsonResponse([
+          { id: "run-queued", status: "queued", agentName: "Mia" },
+          { id: "run-finalizing", status: "succeeded", agentName: "Wesley" },
+        ]);
+      }
+      return new Response("not found", { status: 404, statusText: "Not Found" });
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock as never;
+    const responseDir = await mkdtemp(path.join(tmpdir(), "rudder-update-non-running-response."));
+    const responsePath = path.join(responseDir, "response.json");
+
+    try {
+      const quitFlow = createDesktopQuitFlow({
+        appName: "Rudder",
+        getMainWindow: () => null,
+        setMainWindow: vi.fn(),
+        getServerHandle: () => ({ apiUrl: "http://127.0.0.1:3100", runtime: { mode: "owned" } }),
+        stopLocalRudder,
+        destroyResidentTray: vi.fn(),
+      });
+
+      await quitFlow.handleUpdateQuitRequest(responsePath);
+
+      expect(await readQuitResponse(responsePath)).toMatchObject({ ok: true, status: "quitting" });
+      expect(fetchMock.mock.calls.some(([url, init]) =>
+        new URL(String(url)).pathname.includes("/heartbeat-runs/") && init?.method === "POST")).toBe(false);
+      expect(stopLocalRudder).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      await rm(responseDir, { recursive: true, force: true });
+    }
+  });
+
   it("cancels active runs before confirming a forced update quit", async () => {
     const stopLocalRudder = vi.fn(async () => undefined);
     const destroyResidentTray = vi.fn();

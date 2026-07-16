@@ -7,13 +7,20 @@ export function appendBoundedDesktopUpdateOutput(current: string, chunk: string,
 }
 
 export function summarizeDesktopUpdateChildOutput(input: { stdout?: string; stderr?: string }, maxLength = 1000): string | null {
-  const stderr = normalizeDiagnosticLines(input.stderr ?? "").join("\n");
+  const stderr = normalizeDiagnosticLines(input.stderr ?? "")
+    .filter((line) => !isIgnorableNodeWarningLine(line))
+    .join("\n");
   if (stderr) return truncateDiagnostic(stderr, maxLength);
 
   const stdout = normalizeDiagnosticLines(input.stdout ?? "")
     .filter((line) => !isDesktopProgressJsonLine(line))
     .join("\n");
   return stdout ? truncateDiagnostic(stdout, maxLength) : null;
+}
+
+function isIgnorableNodeWarningLine(value: string): boolean {
+  return /^\(node:\d+\)\s+ExperimentalWarning:\s+SQLite is an experimental feature\b/i.test(value)
+    || /^\(Use .+--trace-warnings.+to show where the warning was created\)$/i.test(value);
 }
 
 function normalizeDiagnosticLines(value: string): string[] {

@@ -167,14 +167,14 @@ describe("DesktopUpdateStatusCard", () => {
     expect(harness.applyUpdate).toHaveBeenCalledWith("update-3", undefined);
   });
 
-  it("shows an explicit stop-runs update action when a ready update still has active runs", async () => {
-    const harness = renderHarness({
-      updateId: "update-force-ready",
+  it("does not ask for a second confirmation when ready will apply automatically", async () => {
+    renderHarness({
+      updateId: "update-auto-ready",
       version: "0.2.3",
       phase: "ready_to_install",
       message: "Desktop update is downloaded and verified.",
       percent: 100,
-      totalRuns: 2,
+      automaticApply: true,
       at: new Date().toISOString(),
     });
 
@@ -182,7 +182,40 @@ describe("DesktopUpdateStatusCard", () => {
       await Promise.resolve();
     });
 
-    expect(document.body.textContent).toContain("Update when idle");
+    expect(document.body.textContent).toContain("Update ready");
+    expect(document.body.textContent).not.toContain("Quit and update");
+    expect(document.body.textContent).not.toContain("Update when idle");
+    expect(document.body.textContent).not.toContain("Stop runs and update now");
+  });
+
+  it("shows current blocker identity and only the explicit stop-runs action while waiting", async () => {
+    const harness = renderHarness({
+      updateId: "update-force-ready",
+      version: "0.2.3",
+      phase: "waiting_for_active_runs",
+      message: "Waiting for 1 running agent run before applying the update.",
+      percent: 100,
+      totalRuns: 1,
+      automaticApply: true,
+      blockers: [{
+        runId: "f5258de4-b835-4e68-b49e-301d3e0bc97a",
+        agentId: "agent-wesley",
+        agentName: "Wesley",
+        issueId: "issue-zst-776",
+        organizationId: "org-z-studio",
+        organizationName: "Z Studio",
+      }],
+      at: new Date().toISOString(),
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("Running work delaying update");
+    expect(document.body.textContent).toContain("Z Studio · Wesley · run f5258de4");
+    expect(document.body.textContent).toContain("Rudder will update automatically");
+    expect(document.body.textContent).not.toContain("Update when idle");
     const forceAction = Array.from(document.body.querySelectorAll("button"))
       .find((button) => button.textContent === "Stop runs and update now");
     expect(forceAction).toBeTruthy();

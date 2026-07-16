@@ -55,6 +55,17 @@ describe("post-update reload marker", () => {
     expect(fs.existsSync(resolvePostUpdateReloadMarkerPath(tempDir))).toBe(false);
   });
 
+  it("does not clear a marker owned by a newer update session", () => {
+    writePostUpdateReloadMarker(tempDir, { targetVersion: "0.2.7", updateId: "update-new" });
+
+    clearPostUpdateReloadMarker(tempDir, { updateId: "update-old" });
+
+    expect(consumePostUpdateReloadMarker(tempDir)).toMatchObject({
+      targetVersion: "0.2.7",
+      updateId: "update-new",
+    });
+  });
+
   it("resolves the reload delay from the environment", () => {
     expect(resolvePostUpdateReloadDelayMs({ RUDDER_DESKTOP_POST_UPDATE_RELOAD_DELAY_MS: "25" })).toBe(25);
     expect(resolvePostUpdateReloadDelayMs({ RUDDER_DESKTOP_POST_UPDATE_RELOAD_DELAY_MS: "-10" })).toBe(0);

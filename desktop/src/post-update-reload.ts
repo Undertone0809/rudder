@@ -34,8 +34,23 @@ export function writePostUpdateReloadMarker(
   );
 }
 
-export function clearPostUpdateReloadMarker(userDataPath: string): void {
-  fs.rmSync(resolvePostUpdateReloadMarkerPath(userDataPath), { force: true });
+export function clearPostUpdateReloadMarker(
+  userDataPath: string,
+  options: { updateId?: string } = {},
+): void {
+  const markerPath = resolvePostUpdateReloadMarkerPath(userDataPath);
+  if (options.updateId) {
+    try {
+      const marker = JSON.parse(fs.readFileSync(markerPath, "utf8")) as unknown;
+      if (isPostUpdateReloadMarker(marker) && marker.updateId !== options.updateId) return;
+    } catch (error) {
+      const code = typeof error === "object" && error && "code" in error
+        ? String((error as { code?: unknown }).code)
+        : "";
+      if (code === "ENOENT") return;
+    }
+  }
+  fs.rmSync(markerPath, { force: true });
 }
 
 function isPostUpdateReloadMarker(value: unknown): value is PostUpdateReloadMarker {

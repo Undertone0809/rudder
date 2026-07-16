@@ -15,13 +15,21 @@ let cleanupFn: (() => void) | null = null;
 const prompt: DesktopDeferredUpdatePrompt = {
   promptId: "prompt-1",
   title: "Rudder",
-  message: "There is 1 active agent run.",
+  message: "There is 1 running agent run in this Rudder instance.",
   detail:
-    "Rudder can download the installer now, keep active work running, then apply the update after the runs finish. "
+    "Rudder can download the installer now, keep running work alive, then apply the update automatically after the runs finish. "
     + "The desktop app may close and reopen automatically when it is safe to replace. "
-    + "Choose Stop Runs and Update Now to cancel active runs, quit Rudder, and apply the update immediately.\n\n"
-    + "Z Studio: 1 running",
+    + "Choose Stop Runs and Update Now to cancel the listed runs, quit Rudder, and apply the update immediately.\n\n"
+    + "Z Studio: Codex (run run-1)",
   totalRuns: 1,
+  blockers: [{
+    runId: "run-1",
+    agentId: "agent-codex",
+    agentName: "Codex",
+    issueId: "issue-1",
+    organizationId: "org-z-studio",
+    organizationName: "Z Studio",
+  }],
   confirmLabel: "Download and Update When Idle",
   forceLabel: "Stop Runs and Update Now",
   cancelLabel: "Cancel",
@@ -76,10 +84,10 @@ describe("DesktopUpdatePromptBridge", () => {
     const harness = renderHarness();
     harness.emit(prompt);
 
-    expect(document.body.textContent).toContain("There is 1 active agent run.");
+    expect(document.body.textContent).toContain("There is 1 running agent run in this Rudder instance.");
     expect(document.body.textContent).toContain("Rudder can download the installer now");
-    expect(document.body.textContent).toContain("cancel active runs");
-    expect(document.body.textContent).toContain("Z Studio: 1 running");
+    expect(document.body.textContent).toContain("cancel the listed runs");
+    expect(document.body.textContent).toContain("Z Studio: Codex (run run-1)");
     expect(document.body.querySelector('[role="dialog"]')).toBeTruthy();
   });
 
@@ -87,13 +95,24 @@ describe("DesktopUpdatePromptBridge", () => {
     const harness = renderHarness();
     harness.emit({
       ...prompt,
-      message: "There are 2 active agent runs.",
+      message: "There are 2 running agent runs in this Rudder instance.",
       detail:
-        "Rudder can download the installer now, keep active work running, then apply the update after the runs finish. "
+        "Rudder can download the installer now, keep running work alive, then apply the update automatically after the runs finish. "
         + "The desktop app may close and reopen automatically when it is safe to replace. "
-        + "Choose Stop Runs and Update Now to cancel active runs, quit Rudder, and apply the update immediately.\n\n"
-        + "Z Studio: 2 running",
+        + "Choose Stop Runs and Update Now to cancel the listed runs, quit Rudder, and apply the update immediately.\n\n"
+        + "Z Studio: Codex (run run-1)\nRemote Org: Wesley (run run-2)",
       totalRuns: 2,
+      blockers: [
+        ...prompt.blockers,
+        {
+          runId: "run-2",
+          agentId: "agent-wesley",
+          agentName: "Wesley",
+          issueId: null,
+          organizationId: "org-remote",
+          organizationName: "Remote Org",
+        },
+      ],
     });
 
     const dialog = document.body.querySelector('[role="dialog"]');
@@ -127,7 +146,7 @@ describe("DesktopUpdatePromptBridge", () => {
     });
 
     expect(harness.respondDeferredUpdatePrompt).toHaveBeenCalledWith("prompt-1", "wait");
-    expect(document.body.textContent).not.toContain("There is 1 active agent run.");
+    expect(document.body.textContent).not.toContain("There is 1 running agent run in this Rudder instance.");
   });
 
   it("returns cancel when the secondary action is selected", async () => {

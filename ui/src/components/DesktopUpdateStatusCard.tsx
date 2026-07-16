@@ -64,6 +64,8 @@ export function DesktopUpdateStatusCard() {
         : transferred
       : null;
   const showIndeterminateProgress = tone === "active" && !hasMeasuredProgress;
+  const blockers = currentProgress.blockers ?? [];
+  const waitingForRunningWork = currentProgress.phase === "waiting_for_active_runs" && blockers.length > 0;
 
   async function retryUpdate() {
     const desktopShell = readDesktopShell();
@@ -141,6 +143,30 @@ export function DesktopUpdateStatusCard() {
             <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-4 text-muted-foreground">
               {currentProgress.error ?? currentProgress.message ?? t(PHASE_LABEL_KEYS[currentProgress.phase])}
             </p>
+            {waitingForRunningWork ? (
+              <div className="mt-2 rounded-[var(--radius-sm)] border border-amber-500/25 bg-amber-500/8 px-2.5 py-2">
+                <p className="text-[11px] font-semibold text-foreground">
+                  {t("about.updates.progress.blockersTitle")}
+                </p>
+                <div className="mt-1 grid gap-0.5">
+                  {blockers.slice(0, 3).map((blocker) => (
+                    <p key={blocker.runId} className="break-words text-[11px] leading-4 text-muted-foreground">
+                      {t("about.updates.progress.blockerRun", {
+                        organization: blocker.organizationName,
+                        agent: blocker.agentName,
+                        runId: blocker.runId.slice(0, 8),
+                      })}
+                    </p>
+                  ))}
+                  {blockers.length > 3 ? (
+                    <p className="text-[11px] leading-4 text-muted-foreground">+{blockers.length - 3}</p>
+                  ) : null}
+                </div>
+                <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
+                  {t("about.updates.progress.automaticApply")}
+                </p>
+              </div>
+            ) : null}
             {actionError ? (
               <p className="mt-2 rounded-[var(--radius-sm)] border border-destructive/25 bg-destructive/8 px-2.5 py-2 text-xs leading-4 text-destructive">
                 {actionError}
@@ -171,20 +197,20 @@ export function DesktopUpdateStatusCard() {
                 <div className="h-full w-2/5 rounded-full bg-emerald-700/70 animate-pulse" />
               </div>
             ) : null}
-            {currentProgress.phase === "ready_to_install" ? (
+            {currentProgress.phase === "ready_to_install" && currentProgress.automaticApply !== true ? (
               <div className="mt-2 flex flex-wrap gap-2">
                 <Button type="button" size="sm" className="h-8 px-3 text-xs" disabled={applyPending} onClick={() => void applyUpdate()}>
                   {applyPending
                     ? t("about.updates.installing")
-                    : currentProgress.totalRuns
-                      ? t("about.updates.progress.updateWhenIdle")
-                      : t("about.updates.progress.restartToUpdate")}
+                    : t("about.updates.progress.restartToUpdate")}
                 </Button>
-                {currentProgress.totalRuns ? (
-                  <Button type="button" variant="outline" size="sm" className="h-8 px-3 text-xs" disabled={applyPending} onClick={() => void applyUpdate({ force: true })}>
-                    {t("about.updates.progress.forceRestartToUpdate")}
-                  </Button>
-                ) : null}
+              </div>
+            ) : null}
+            {waitingForRunningWork ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button type="button" variant="outline" size="sm" className="h-8 px-3 text-xs" disabled={applyPending} onClick={() => void applyUpdate({ force: true })}>
+                  {applyPending ? t("about.updates.installing") : t("about.updates.progress.forceRestartToUpdate")}
+                </Button>
               </div>
             ) : null}
             {tone === "failed" ? (
