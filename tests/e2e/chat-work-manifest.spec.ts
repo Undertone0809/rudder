@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   chatMessages,
   createDb,
@@ -13,7 +15,9 @@ import { E2E_DATABASE_URL } from "./support/e2e-env";
 import { expectRightAnchoredSidePanelMotion, sampleSidePanelMotion } from "./support/side-panel-motion";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
-const screenshotDir = "/tmp/rudder-chat-work-manifest";
+const screenshotDir = process.env.RUDDER_CHAT_WORK_MANIFEST_SCREENSHOT_DIR
+  ? path.resolve(process.env.RUDDER_CHAT_WORK_MANIFEST_SCREENSHOT_DIR)
+  : fs.mkdtempSync(path.join(os.tmpdir(), "rudder-chat-work-manifest-"));
 
 test.describe("Chat Work Manifest", () => {
   test("shows category-led thread outputs across desktop and compact layouts", async ({ page }) => {
@@ -321,7 +325,10 @@ test.describe("Chat Work Manifest", () => {
     await trigger.click();
     const compactPanel = page.getByTestId("chat-work-manifest-compact-panel");
     await expect(compactPanel).toBeVisible();
+    await expect(compactPanel.getByText("Outputs", { exact: true })).toHaveCount(1);
     await expect(compactPanel).toContainText("report.md");
+    await expect(compactPanel.getByText("Work", { exact: true })).toHaveCount(0);
+    await expect(compactPanel.getByRole("button", { name: "Add source" })).toHaveCount(0);
     const [panelBox, composerBox] = await Promise.all([
       compactPanel.boundingBox(),
       page.getByTestId("chat-composer-toolbar").boundingBox(),
