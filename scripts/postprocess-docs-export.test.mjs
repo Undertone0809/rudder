@@ -22,6 +22,8 @@ function fixturePage(markdownHref, footer = "") {
     '<!doctype html><html lang="en"><head>',
     '<link rel="alternate" type="application/xml" href="/sitemap.xml"/>',
     `<link rel="alternate" type="text/markdown" href="${markdownHref}"/>`,
+    '<meta property="og:image" content="https://mintlify.example/generated-card.png"/>',
+    '<meta name="twitter:image" content="https://mintlify.example/generated-card.png"/>',
     "</head><body>",
     `<footer id="footer">${footer}</footer>`,
     "</body></html>",
@@ -53,6 +55,8 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
 
   const result = spawnSync(process.execPath, [SCRIPT_PATH, exportDir], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
+  const repeatedResult = spawnSync(process.execPath, [SCRIPT_PATH, exportDir], { encoding: "utf8" });
+  assert.equal(repeatedResult.status, 0, repeatedResult.stderr);
 
   const english = fs.readFileSync(englishPath, "utf8");
   const chinese = fs.readFileSync(chinesePath, "utf8");
@@ -65,6 +69,28 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
     assert.match(html, /data-rudder-seo-guard/);
     assert.match(html, /MutationObserver/);
     assert.match(html, /link\[rel="alternate"\]\[type="text\/markdown"\]/);
+    assert.match(
+      html,
+      /<meta property="og:image" content="https:\/\/docs\.rudderhq\.dev\/images\/rudder-social-card\.png"\/>/,
+    );
+    assert.match(html, /<meta property="og:image:type" content="image\/png"\/>/);
+    assert.match(html, /<meta property="og:image:width" content="1200"\/>/);
+    assert.match(html, /<meta property="og:image:height" content="630"\/>/);
+    assert.match(
+      html,
+      /<meta property="og:image:alt" content="Rudder - Build your self-improving Agent Team\."\/>/,
+    );
+    assert.match(html, /<meta name="twitter:card" content="summary_large_image"\/>/);
+    assert.match(
+      html,
+      /<meta name="twitter:image" content="https:\/\/docs\.rudderhq\.dev\/images\/rudder-social-card\.png"\/>/,
+    );
+    assert.match(html, /setMeta\("property","og:image"/);
+    assert.match(html, /setMeta\("name","twitter:image"/);
+    assert.match(html, /attributeFilter:\["lang","content","name","property"\]/);
+    assert.doesNotMatch(html, /mintlify\.example\/generated-card\.png/);
+    assert.equal((html.match(/<meta property="og:image"/g) ?? []).length, 1);
+    assert.equal((html.match(/<meta name="twitter:image"/g) ?? []).length, 1);
   }
 
   assert.match(english, /<html lang="en">/);
@@ -82,6 +108,15 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
   assert.match(chinese, /\\"href\\":\\"\/zh\/get-started\/installation\\"/);
   assert.match(chinese, /\\"href\\":\\"\/zh\/concepts\/calendar\\"/);
   assert.match(chinese, /\\"href\\":\\"\/about\\"/);
+});
+
+test("docs config declares the shared social preview image", () => {
+  const config = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "docs/docs.json"), "utf8"));
+  assert.equal(config.seo.metatags["og:image"], "https://docs.rudderhq.dev/images/rudder-social-card.png");
+  assert.equal(config.seo.metatags["og:image:width"], "1200");
+  assert.equal(config.seo.metatags["og:image:height"], "630");
+  assert.equal(config.seo.metatags["twitter:card"], "summary_large_image");
+  assert.equal(config.seo.metatags["twitter:image"], "https://docs.rudderhq.dev/images/rudder-social-card.png");
 });
 
 test("staging and production workflows postprocess exported docs", () => {
