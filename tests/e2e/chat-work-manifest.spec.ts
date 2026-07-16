@@ -390,7 +390,7 @@ test.describe("Chat Work Manifest", () => {
     await page.setViewportSize({ width: 1024, height: 768 });
     const trigger = page.getByTestId("chat-work-manifest-trigger");
     await expect(trigger).toBeVisible();
-    await expect(trigger).toContainText("Outputs 1");
+    await expect(trigger).toContainText("Outputs 2");
     await trigger.click();
     const compactPanel = page.getByTestId("chat-work-manifest-compact-panel");
     await expect(compactPanel).toBeVisible();

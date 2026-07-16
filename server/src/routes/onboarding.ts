@@ -737,7 +737,7 @@ export function onboardingRoutes(db: Db) {
       const linkedDescription = appendActionLinks(template, template.description, {
         projectId: project.id,
         agentId: firstAgentId,
-        organizationPrefix: organization.issuePrefix,
+        organizationPrefix: organization.urlKey,
         issueByTitle,
       });
       if (issue.description !== linkedDescription) {
