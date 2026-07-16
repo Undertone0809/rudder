@@ -2,6 +2,10 @@ import {
   execute,
   resetPiModelsCacheForTests,
 } from "@rudderhq/agent-runtime-pi-local/server";
+import {
+  RUDDER_BROWSER_MCP_CONTRACT_HASH,
+  RUDDER_MCP_CONTRACT_VERSION,
+} from "@rudderhq/agent-runtime-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -428,8 +432,14 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(nativeDiscoverableSkills).toBeUndefined();
       expect(rudderMcp).toEqual({
         available: false,
+        browserAvailable: false,
+        contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
+        contractVersion: RUDDER_MCP_CONTRACT_VERSION,
+        diagnosticCode: null,
         serverName: "rudder-control-plane",
         toolCount: 69,
+        provenance: "repo",
+        version: "0.4.6",
         fallbackReason: "Pi CLI does not expose a supported MCP server configuration surface; Rudder tools are injected through a managed Pi extension.",
       });
       expect(rudderNativeTools).toEqual({

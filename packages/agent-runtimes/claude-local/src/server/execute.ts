@@ -8,8 +8,13 @@ import {
   type AgentRuntimeExecutionContext,
   type AgentRuntimeExecutionResult,
   type RudderMcpManagedEnv,
+  type RudderMcpPreflightResult,
 } from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
+import {
+  assertRudderMcpCoreAvailable,
+  preflightRudderMcpServer,
+} from "@rudderhq/agent-runtime-utils/rudder-mcp-preflight";
 import { resolveRudderMcpCliCommand } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
 import type { RunProcessResult } from "@rudderhq/agent-runtime-utils/server-utils";
 import {
@@ -59,6 +64,7 @@ const CLAUDE_PROTECTED_ENV_KEYS = new Set([
   "AGENT_HOME",
   "HOME",
   ...RUDDER_MCP_MANAGED_ENV_KEYS,
+  "RUDDER_DESKTOP_CLI_ENTRY",
   "RUDDER_AGENT_ROOT",
   "RUDDER_OPERATOR_HOME",
   "USERPROFILE",
@@ -302,6 +308,7 @@ interface ClaudeRuntimeConfig {
   settingsPath: string;
   mcpConfigPath: string;
   runtimeTmpDir: string;
+  rudderMcpPreflight: RudderMcpPreflightResult | null;
 }
 
 function buildLoginResult(input: {
@@ -483,7 +490,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     if (CLAUDE_PROTECTED_ENV_KEYS.has(key)) continue;
     if (typeof value === "string") env[key] = value;
   }
-  const browserEnabled = applyRudderBrowserCapabilityEnv(env, config);
+  let browserEnabled = applyRudderBrowserCapabilityEnv(env, config);
 
   const sourceEnv = { ...process.env };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
@@ -507,7 +514,6 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   if (authToken) {
     env.RUDDER_API_KEY = authToken;
   }
-  await writeManagedClaudeMcpConfig(managedHome, pickRudderMcpManagedEnv(env));
   env.HOME = operatorHome;
   env.USERPROFILE = operatorHome;
   env.CLAUDE_CONFIG_DIR = managedClaudeHome.configDir;
@@ -518,6 +524,20 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   applyGitCredentialHelperPolicyEnv(env);
 
   const runtimeEnv = ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, { ...process.env, ...env }));
+  const rudderMcpPreflight = await preflightRudderMcpServer({
+    command: await resolveRudderMcpCliCommand(__moduleDir),
+    runtimeEnv,
+    managedEnv: pickRudderMcpManagedEnv(env),
+    browserEnabled,
+  });
+  assertRudderMcpCoreAvailable(rudderMcpPreflight);
+  if (browserEnabled && !rudderMcpPreflight?.browserAvailable) {
+    browserEnabled = false;
+    env.RUDDER_BROWSER_ENABLED = "false";
+    runtimeEnv.RUDDER_BROWSER_ENABLED = "false";
+    await (input.onLog ?? (async () => {}))("stderr", `[rudder] ${rudderMcpPreflight?.diagnostic}\n`);
+  }
+  await writeManagedClaudeMcpConfig(managedHome, pickRudderMcpManagedEnv(env));
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
   await ensureCommandResolvable(command, cwd, runtimeEnv);
@@ -542,6 +562,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     settingsPath: managedClaudeHome.settingsPath,
     mcpConfigPath: managedClaudeHome.mcpConfigPath,
     runtimeTmpDir,
+    rudderMcpPreflight,
   };
 }
 
@@ -618,6 +639,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     settingsPath,
     mcpConfigPath,
     runtimeTmpDir,
+    rudderMcpPreflight,
   } = runtimeConfig;
   const effectiveEnv = Object.fromEntries(
     Object.entries({ ...process.env, ...env }).filter(
@@ -819,7 +841,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         promptMetrics,
         loadedSkills,
         realizedSkills: loadedSkills,
-        rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled }),
+        rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled, preflight: rudderMcpPreflight }),
         context,
       });
     }

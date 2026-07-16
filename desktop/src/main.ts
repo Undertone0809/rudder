@@ -1589,6 +1589,11 @@ async function startLocalRudder(): Promise<void> {
 
 async function importServerModule(): Promise<ServerModule> {
   if (app.isPackaged) {
+    const packagedCliEntry = path.resolve(process.resourcesPath, "server-package", "desktop-cli.js");
+    if (fs.existsSync(packagedCliEntry)) {
+      process.env.RUDDER_DESKTOP_CLI_ENTRY = packagedCliEntry;
+    }
+
     const externalRuntime = resolveExternalRuntimeServerEntrypoint({
       version: app.getVersion(),
       onWarning: (message, error) => console.warn(`[rudder-desktop] ${message}`, error),
