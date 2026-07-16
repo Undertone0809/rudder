@@ -286,6 +286,7 @@ function ManifestContent({
   fixedSectionLabel,
   reserveActionSpace = false,
 }: Omit<ChatWorkManifestProps, "sidePanelOpen"> & {
+  idPrefix: string;
   fixedSectionLabel: string | null;
   reserveActionSpace?: boolean;
 }) {
