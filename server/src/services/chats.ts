@@ -16,7 +16,7 @@ import {
   messengerCustomGroups,
   organizations
 } from "@rudderhq/db";
-import { MESSENGER_FORK_GROUP_DEFAULT_ICON, sanitizeChatStructuredPayload, type ChatConversationMutability, type ChatQueuedMessagePayload, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
+import { chatInlineVisualMappingsFromStructuredPayload, MESSENGER_FORK_GROUP_DEFAULT_ICON, sanitizeChatStructuredPayload, type ChatConversationMutability, type ChatQueuedMessagePayload, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
 import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
@@ -606,8 +606,11 @@ export function chatService(db: Db) {
 
     const map = new Map<string, any[]>();
     for (const row of rows) {
+      const safeRow = row.contentType === "text/html" && row.createdByAgentId
+        ? (({ provider: _provider, objectKey: _objectKey, ...safe }) => safe)(row)
+        : row;
       const attachment = {
-        ...row,
+        ...safeRow,
         contentPath: contentPath(row.assetId),
       };
       const list = map.get(row.messageId);
@@ -1511,22 +1514,88 @@ export function chatService(db: Db) {
         ? messagesToCopy.slice(0, messagesToCopy.findIndex((message) => message.id === input.sourceMessageId) + 1)
         : messagesToCopy;
       if (forkMessages.length > 0) {
-        await tx.insert(chatMessages).values(forkMessages.map((message) => ({
-          orgId: input.orgId,
-          conversationId: child.id,
-          role: message.role,
-          kind: message.kind,
-          status: message.status === "streaming" ? "interrupted" : message.status,
-          body: message.body,
-          structuredPayload: null,
-          approvalId: null,
-          runId: null,
-          replyingAgentId: message.replyingAgentId,
-          chatTurnId: null,
-          turnVariant: 0,
-          createdAt: message.createdAt,
-          updatedAt: message.updatedAt,
-        })));
+        for (const message of forkMessages) {
+          const copiedMessageId = randomUUID();
+          const visualMappings = chatInlineVisualMappingsFromStructuredPayload(message.structuredPayload);
+          const readyAttachmentIds = visualMappings
+            .filter((mapping) => mapping.status === "ready")
+            .map((mapping) => mapping.attachmentId);
+          const copiedAttachmentIdBySourceId = new Map<string, string>();
+          const pendingVisualAttachments: Array<{
+            id: string;
+            orgId: string;
+            conversationId: string;
+            messageId: string;
+            assetId: string;
+          }> = [];
+          if (readyAttachmentIds.length > 0) {
+            const sourceVisualAttachments = await tx
+              .select({
+                id: chatAttachments.id,
+                assetId: chatAttachments.assetId,
+                contentType: assets.contentType,
+                createdByAgentId: assets.createdByAgentId,
+                createdByUserId: assets.createdByUserId,
+              })
+              .from(chatAttachments)
+              .innerJoin(assets, eq(chatAttachments.assetId, assets.id))
+              .where(and(
+                eq(chatAttachments.conversationId, source.id),
+                eq(chatAttachments.messageId, message.id),
+                inArray(chatAttachments.id, readyAttachmentIds),
+              ));
+            const safeVisualAttachments = sourceVisualAttachments.filter((attachment) =>
+              attachment.contentType === "text/html"
+              && Boolean(attachment.createdByAgentId)
+              && !attachment.createdByUserId
+            );
+            if (safeVisualAttachments.length > 0) {
+              pendingVisualAttachments.push(...safeVisualAttachments.map((attachment) => {
+                const copiedAttachmentId = randomUUID();
+                copiedAttachmentIdBySourceId.set(attachment.id, copiedAttachmentId);
+                return {
+                  id: copiedAttachmentId,
+                  orgId: input.orgId,
+                  conversationId: child.id,
+                  messageId: copiedMessageId,
+                  assetId: attachment.assetId,
+                };
+              }));
+            }
+          }
+          const copiedVisualMappings = visualMappings.map((mapping) => {
+            if (mapping.status === "unavailable") return mapping;
+            const copiedAttachmentId = copiedAttachmentIdBySourceId.get(mapping.attachmentId);
+            return copiedAttachmentId
+              ? { ...mapping, attachmentId: copiedAttachmentId }
+              : {
+                directiveIndex: mapping.directiveIndex,
+                file: mapping.file,
+                status: "unavailable" as const,
+                reason: "fork_source_missing",
+              };
+          });
+          await tx.insert(chatMessages).values({
+            id: copiedMessageId,
+            orgId: input.orgId,
+            conversationId: child.id,
+            role: message.role,
+            kind: message.kind,
+            status: message.status === "streaming" ? "interrupted" : message.status,
+            body: message.body,
+            structuredPayload: copiedVisualMappings.length > 0 ? { inlineVisuals: copiedVisualMappings } : null,
+            approvalId: null,
+            runId: null,
+            replyingAgentId: message.replyingAgentId,
+            chatTurnId: null,
+            turnVariant: 0,
+            createdAt: message.createdAt,
+            updatedAt: message.updatedAt,
+          });
+          if (pendingVisualAttachments.length > 0) {
+            await tx.insert(chatAttachments).values(pendingVisualAttachments);
+          }
+        }
       }
 
       const [systemEvent] = await tx
@@ -1630,6 +1699,15 @@ export function chatService(db: Db) {
     return rows;
   }
 
+  async function assetHasAttachments(assetId: string) {
+    const [row] = await db
+      .select({ id: chatAttachments.id })
+      .from(chatAttachments)
+      .where(eq(chatAttachments.assetId, assetId))
+      .limit(1);
+    return Boolean(row);
+  }
+
   async function remove(id: string) {
     return db.transaction(async (tx) => {
       const attachmentRows = await tx
@@ -1643,7 +1721,13 @@ export function chatService(db: Db) {
       if (!deleted) return null;
       const assetIds = [...new Set(attachmentRows.map((row) => row.assetId))];
       if (assetIds.length > 0) {
-        await tx.delete(assets).where(inArray(assets.id, assetIds));
+        await tx.delete(assets).where(and(
+          inArray(assets.id, assetIds),
+          sql<boolean>`not exists (
+            select 1 from ${chatAttachments}
+            where ${chatAttachments.assetId} = ${assets.id}
+          )`,
+        ));
       }
       return deleted;
     });
@@ -2752,6 +2836,7 @@ export function chatService(db: Db) {
     updateDefaultTitle,
     replaceSystemGeneratedTitle,
     listAttachmentsForConversation,
+    assetHasAttachments,
     remove,
     forkConversation,
     resolve,

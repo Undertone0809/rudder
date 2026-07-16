@@ -158,6 +158,9 @@ importers:
       '@rudderhq/agent-runtime-utils':
         specifier: workspace:*
         version: link:../../agent-runtime-utils
+      '@rudderhq/shared':
+        specifier: workspace:*
+        version: link:../../shared
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
@@ -780,6 +783,12 @@ importers:
       codemirror:
         specifier: ^6.0.2
         version: 6.0.2
+      css-tree:
+        specifier: ^3.2.1
+        version: 3.2.1
+      dompurify:
+        specifier: ^3.4.11
+        version: 3.4.11
       lexical:
         specifier: 0.35.0
         version: 0.35.0
@@ -817,6 +826,9 @@ importers:
       '@tailwindcss/vite':
         specifier: ^4.2.2
         version: 4.2.2(vite@6.4.1(@types/node@25.5.0)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0))
+      '@types/css-tree':
+        specifier: ^2.3.10
+        version: 2.3.11
       '@types/node':
         specifier: ^25.5.0
         version: 25.5.0
@@ -3805,6 +3817,9 @@ packages:
 
   '@types/cookiejar@2.1.5':
     resolution: {integrity: sha512-he+DHOWReW0nghN24E1WUqM0efK4kI9oTqDm6XmK8ZPe2djZ90BSNdGnIyCLzCPw7/pogPlGbzI2wHGGmi4O/Q==}
+
+  '@types/css-tree@2.3.11':
+    resolution: {integrity: sha512-aEokibJOI77uIlqoBOkVbaQGC9zII0A+JH1kcTNKW2CwyYWD8KM6qdo+4c77wD3wZOQfJuNWAr9M4hdk+YhDIg==}
 
   '@types/d3-array@3.2.2':
     resolution: {integrity: sha512-hOLWVbm7uRza0BYXpIIW5pxfrKe0W+D5lrFiAEYR+pb6w3N2SwSMaJbXdUfSEv+dT4MfHBLtn5js0LAWaO6otw==}
@@ -11301,6 +11316,8 @@ snapshots:
       '@types/node': 25.5.0
 
   '@types/cookiejar@2.1.5': {}
+
+  '@types/css-tree@2.3.11': {}
 
   '@types/d3-array@3.2.2': {}
 

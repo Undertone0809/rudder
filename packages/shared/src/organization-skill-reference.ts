@@ -52,6 +52,7 @@ export const RUDDER_BUNDLED_SKILL_SLUGS = [
   "rudder-create-agent",
   "rudder-create-plugin",
   "skill-creator",
+  "visualize",
   "browser",
 ] as const;
 

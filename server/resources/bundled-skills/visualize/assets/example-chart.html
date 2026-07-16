@@ -1,0 +1,89 @@
+<style>
+#widget .example-chart {
+  display: grid;
+  gap: 12px;
+}
+
+#widget .example-chart-bars {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: end;
+  gap: 10px;
+  min-height: 180px;
+  padding-block: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+#widget .example-chart-bar {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  align-items: end;
+  gap: 6px;
+  min-width: 0;
+  color: var(--foreground);
+  text-align: center;
+}
+
+#widget .example-chart-bar-mark {
+  width: 100%;
+  min-height: 12px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--viz-series-1);
+}
+
+#widget .example-chart-bar:nth-child(1) .example-chart-bar-mark {
+  height: 52px;
+}
+
+#widget .example-chart-bar:nth-child(2) .example-chart-bar-mark {
+  height: 72px;
+}
+
+#widget .example-chart-bar:nth-child(3) .example-chart-bar-mark {
+  height: 98px;
+}
+
+#widget .example-chart-bar:nth-child(4) .example-chart-bar-mark {
+  height: 118px;
+}
+
+@media (max-width: 420px) {
+  #widget .example-chart-bars {
+    gap: 5px;
+  }
+}
+</style>
+<div id="widget">
+  <figure class="example-chart" aria-labelledby="example-chart-caption">
+    <figcaption id="example-chart-caption">
+      Completed loops by week
+    </figcaption>
+    <div class="example-chart-bars" role="img" aria-label="Completed loops rose from 8 to 18 over four weeks">
+      <div class="example-chart-bar">
+        <div class="example-chart-bar-mark"></div>
+        <span class="text-small">8</span>
+      </div>
+      <div class="example-chart-bar">
+        <div class="example-chart-bar-mark"></div>
+        <span class="text-small">11</span>
+      </div>
+      <div class="example-chart-bar">
+        <div class="example-chart-bar-mark"></div>
+        <span class="text-small">15</span>
+      </div>
+      <div class="example-chart-bar">
+        <div class="example-chart-bar-mark"></div>
+        <span class="text-small">18</span>
+      </div>
+    </div>
+  </figure>
+  <details class="card">
+    <summary data-tooltip="Show how the sample values are defined">Method</summary>
+    <p class="text-small text-muted">Illustrative weekly counts for validating the Rudder fragment contract.</p>
+  </details>
+  <svg role="img" aria-label="Upward trend marker" viewBox="0 0 120 24">
+    <title>Upward trend</title>
+    <desc>A line rises from left to right across four points.</desc>
+    <polyline points="4,20 40,16 78,9 116,4" fill="none" stroke="var(--viz-series-1)" stroke-width="2" vector-effect="non-scaling-stroke" />
+  </svg>
+</div>

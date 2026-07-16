@@ -1,4 +1,5 @@
 import express from "express";
+import { Readable } from "node:stream";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
@@ -253,5 +254,33 @@ describe("POST /api/orgs/:orgId/logo", () => {
     expect(res.status).toBe(422);
     expect(res.body.error).toBe("SVG could not be sanitized");
     expect(createAssetMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/assets/:assetId/content", () => {
+  it("forces HTML assets to download with a sandboxed response", async () => {
+    const storage = createStorageService("text/html");
+    const html = "<script>document.body.dataset.executed='yes'</script>";
+    getAssetByIdMock.mockResolvedValue({
+      ...createAsset(),
+      contentType: "text/html",
+      originalFilename: "visual.html",
+      byteSize: Buffer.byteLength(html),
+      createdByAgentId: "agent-1",
+      createdByUserId: null,
+    });
+    vi.mocked(storage.getObject).mockResolvedValue({
+      stream: Readable.from([html]),
+      contentType: "text/html",
+      contentLength: Buffer.byteLength(html),
+    });
+
+    const res = await request(createApp(storage)).get("/api/assets/asset-1/content");
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("application/octet-stream");
+    expect(res.headers["content-disposition"]).toContain("attachment");
+    expect(res.headers["content-security-policy"]).toContain("sandbox");
+    expect(res.headers["content-security-policy"]).toContain("default-src 'none'");
   });
 });

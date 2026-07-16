@@ -76,6 +76,7 @@ afterEach(() => {
   markdownMentionsMock.mentions = [];
   __clearWebsiteMetadataIconCacheForTests();
   websiteMetadataApiMock.get.mockReset();
+  vi.unstubAllGlobals();
   document.body.innerHTML = "";
 });
 
@@ -437,6 +438,81 @@ describe("assistant chat message rendering", () => {
     }));
 
     expect(container.querySelector('button[aria-label="Fork from here"]')).not.toBeNull();
+  });
+
+  it("renders a persisted message-owned inline visual and hides its directive", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      '<div id="widget"><input class="form-range" type="range"><button class="btn">Run</button></div>',
+      { status: 200 },
+    )));
+    const container = renderChatMessageItem(message({
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: 'Simulator\n::codex-inline-vis{file="simulator.html"}',
+      structuredPayload: {
+        inlineVisuals: [{ directiveIndex: 0, file: "simulator.html", status: "ready", attachmentId: "visual-1" }],
+      },
+      attachments: [{
+        id: "visual-1",
+        orgId: "org-1",
+        conversationId: "chat-1",
+        messageId: "message-1",
+        assetId: "asset-1",
+        contentType: "text/html",
+        byteSize: 100,
+        sha256: "sha",
+        originalFilename: "simulator.html",
+        createdByAgentId: "agent-1",
+        createdByUserId: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        contentPath: "/api/assets/asset-1/content",
+      }],
+    }));
+
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+    expect(container.textContent).toContain("Simulator");
+    expect(container.textContent).not.toContain("::codex-inline-vis");
+    expect(container.querySelector('iframe[sandbox="allow-same-origin"]')).not.toBeNull();
+    expect(container.querySelector('iframe[sandbox*="allow-scripts"]')).toBeNull();
+  });
+
+  it("does not use an attachment owned by another branch message", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const container = renderChatMessageItem(message({
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: 'Chart\n::codex-inline-vis{file="chart.html"}',
+      structuredPayload: {
+        inlineVisuals: [{ directiveIndex: 0, file: "chart.html", status: "ready", attachmentId: "visual-other" }],
+      },
+      attachments: [{
+        id: "visual-other",
+        orgId: "org-1",
+        conversationId: "chat-1",
+        messageId: "another-variant-message",
+        assetId: "asset-other",
+        contentType: "text/html",
+        byteSize: 100,
+        sha256: "sha",
+        originalFilename: "chart.html",
+        createdByAgentId: "agent-1",
+        createdByUserId: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        contentPath: "/api/assets/asset-other/content",
+      }],
+    }));
+
+    expect(container.textContent).toContain("Visual artifact unavailable");
+    expect(container.textContent).not.toContain("::codex-inline-vis");
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

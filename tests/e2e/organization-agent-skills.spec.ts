@@ -137,6 +137,7 @@ test.describe("Organization and agent skills", () => {
       "rudder/rudder",
       "rudder/rudder-create-agent",
       "rudder/rudder-create-plugin",
+      "rudder/visualize",
       expect.stringMatching(/deep-research$/),
       expect.stringMatching(/skill-creator$/),
       expect.stringMatching(/software-product-advisor$/),
@@ -172,6 +173,7 @@ test.describe("Organization and agent skills", () => {
     const libraryFiles = page.getByTestId("org-workspaces-files-scroll");
     await expect(libraryFiles).toContainText("para-memory-files");
     await expect(libraryFiles).toContainText("rudder-create-agent");
+    await expect(libraryFiles).toContainText("visualize");
     await expect(skillsMain.getByText("conversation-to-skill")).toHaveCount(0);
     await expect(skillsMain.getByText("skill-optimizer")).toHaveCount(0);
     await expect(libraryFiles).toContainText("deep-research");
@@ -191,6 +193,8 @@ test.describe("Organization and agent skills", () => {
     await expect(agentMain.getByText("Will be mounted into the ephemeral Claude skill directory on the next run.")).toHaveCount(0);
     await expect(agentMain.getByRole("switch", { name: "para-memory-files" })).toBeDisabled();
     await expect(agentMain.getByRole("switch", { name: "para-memory-files" })).toHaveAttribute("aria-checked", "true");
+    await expect(agentMain.getByRole("switch", { name: "visualize" })).toBeDisabled();
+    await expect(agentMain.getByRole("switch", { name: "visualize" })).toHaveAttribute("aria-checked", "true");
 
     const deepResearchToggle = agentMain.getByRole("switch", { name: "deep-research" });
     await expect(deepResearchToggle).toBeVisible();

@@ -43,6 +43,8 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "codemirror": "^6.0.2",
+    "css-tree": "^3.2.1",
+    "dompurify": "^3.4.11",
     "lexical": "0.35.0",
     "lucide-react": "^0.574.0",
     "mermaid": "^11.15.0",
@@ -57,6 +59,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.2",
+    "@types/css-tree": "^2.3.10",
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

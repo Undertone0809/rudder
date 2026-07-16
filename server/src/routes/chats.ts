@@ -7,6 +7,7 @@ import {
   createChatConversationSchema,
   createChatQueuedMessageSchema,
   forkChatConversationSchema,
+  parseCodexInlineVisualDirectives,
   steerChatQueuedMessageSchema,
   updateChatConversationSchema,
   updateChatQueuedMessageSchema,
@@ -543,14 +544,29 @@ export function chatRoutes(db: Db, storage: StorageService) {
     const createdMessages: ChatMessage[] = [];
     const { chatTurnId, turnVariant } = turnContext;
     const attachGeneratedFiles = async (message: ChatMessage, generatedAttachments: ChatGeneratedAttachment[] | undefined) => {
-      if (!generatedAttachments || generatedAttachments.length === 0) return message;
+      const finalDirectives = parseCodexInlineVisualDirectives(assistantReply.body).directives;
+      const inlineVisuals = (assistantReply.inlineVisuals ?? []).filter((visual) =>
+        finalDirectives.some((directive) =>
+          directive.index === visual.directiveIndex && directive.file === visual.file
+        )
+      );
+      const generatedFiles = (generatedAttachments ?? []).filter((generated) =>
+        generated.source !== "codex_inline_visual"
+        || inlineVisuals.some((visual) =>
+          visual.status === "captured"
+          && visual.directiveIndex === generated.directiveIndex
+          && visual.file === generated.directiveFile
+        )
+      );
+      if (generatedFiles.length === 0 && inlineVisuals.length === 0) return message;
       const attachments: ChatAttachment[] = [];
-      for (const generated of generatedAttachments) {
+      const attachmentByVisualIndex = new Map<number, ChatAttachment>();
+      for (const generated of generatedFiles) {
         if (generated.body.length > MAX_ATTACHMENT_BYTES) {
           throw new ChatAssistantStreamError(
             `Generated attachment exceeds ${MAX_ATTACHMENT_BYTES} bytes`,
             assistantReply.body,
-            generatedAttachments,
+            generatedFiles,
             { partialBodyUserVisible: true },
           );
         }
@@ -574,10 +590,45 @@ export function chatRoutes(db: Db, storage: StorageService) {
           createdByAgentId: replyingAgentId,
           createdByUserId: null,
         });
-        attachments.push(attachment as ChatAttachment);
+        const typedAttachment = attachment as ChatAttachment;
+        const publicAttachment = generated.source === "codex_inline_visual"
+          ? (({ provider: _provider, objectKey: _objectKey, ...safe }) => safe)(typedAttachment)
+          : typedAttachment;
+        attachments.push(publicAttachment as ChatAttachment);
+        if (generated.source === "codex_inline_visual") {
+          attachmentByVisualIndex.set(generated.directiveIndex, publicAttachment as ChatAttachment);
+        }
+      }
+      let structuredPayload = message.structuredPayload ?? null;
+      if (inlineVisuals.length > 0) {
+        const persistedMappings = inlineVisuals.map((visual) => {
+          if (visual.status === "captured") {
+            const attachment = attachmentByVisualIndex.get(visual.directiveIndex);
+            if (attachment) {
+              return {
+                directiveIndex: visual.directiveIndex,
+                file: visual.file,
+                status: "ready" as const,
+                attachmentId: attachment.id,
+              };
+            }
+          }
+          return {
+            directiveIndex: visual.directiveIndex,
+            file: visual.file,
+            status: "unavailable" as const,
+            reason: visual.status === "unavailable" ? visual.reason : "capture_failed",
+          };
+        });
+        structuredPayload = {
+          ...(structuredPayload ?? {}),
+          inlineVisuals: persistedMappings,
+        };
+        await svc.updateMessage(conversation.id, message.id, { structuredPayload });
       }
       return {
         ...message,
+        structuredPayload,
         attachments: [...(message.attachments ?? []), ...attachments],
       } as ChatMessage;
     };
@@ -1256,7 +1307,9 @@ export function chatRoutes(db: Db, storage: StorageService) {
 
     for (const attachment of attachments) {
       try {
-        await storage.deleteObject(attachment.orgId, attachment.objectKey);
+        if (!await svc.assetHasAttachments(attachment.assetId)) {
+          await storage.deleteObject(attachment.orgId, attachment.objectKey);
+        }
       } catch (err) {
         logger.warn({ err, conversationId: existing.id, attachmentId: attachment.id }, "failed to delete chat attachment object during chat delete");
       }

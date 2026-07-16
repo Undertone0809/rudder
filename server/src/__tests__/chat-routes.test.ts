@@ -15,6 +15,7 @@ const mockChatService = vi.hoisted(() => ({
   forkConversation: vi.fn(),
   update: vi.fn(),
   listAttachmentsForConversation: vi.fn(),
+  assetHasAttachments: vi.fn(),
   remove: vi.fn(),
   markRead: vi.fn(),
   markUnread: vi.fn(),
@@ -481,6 +482,7 @@ describe("chat routes", () => {
     mockChatService.assertQueuedMessageClaimedForDelivery.mockResolvedValue(undefined);
     mockChatService.markQueuedMessageRunning.mockResolvedValue(undefined);
     mockChatService.markQueuedMessageDeliveryTerminal.mockResolvedValue(undefined);
+    mockChatService.assetHasAttachments.mockResolvedValue(false);
   });
 
   it("passes chat search query and status to the chat list service", async () => {
@@ -576,6 +578,25 @@ describe("chat routes", () => {
       entityId: "chat-1",
       details: { title: "Delete me" },
     }));
+  });
+
+  it("keeps a shared fork asset object while another conversation still references it", async () => {
+    const conversation = createConversation({ title: "Delete source" });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listAttachmentsForConversation.mockResolvedValue([{
+      id: "attachment-source",
+      orgId: "organization-1",
+      assetId: "asset-shared",
+      objectKey: "orgs/organization-1/chats/chat-1/visual.html",
+    }]);
+    mockChatService.remove.mockResolvedValue(conversation);
+    mockChatService.assetHasAttachments.mockResolvedValueOnce(true);
+
+    const res = await request(createApp()).delete("/api/chats/chat-1");
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.assetHasAttachments).toHaveBeenCalledWith("asset-shared");
+    expect(mockStorage.deleteObject).not.toHaveBeenCalled();
   });
 
   it("requires board access to delete a chat conversation", async () => {
@@ -2762,6 +2783,146 @@ describe("chat routes", () => {
         }),
       ],
     }));
+  });
+
+  it("archives inline visuals and persists a server-owned attachment mapping", async () => {
+    const conversation = createConversation();
+    const body = 'Interactive chart\n::codex-inline-vis{file="chart.html"}';
+    const userMessage = createMessage("message-user", "user", "message", "Make a chart");
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", body);
+    const generatedAttachment = {
+      id: "attachment-visual",
+      orgId: "organization-1",
+      conversationId: "chat-1",
+      messageId: "message-assistant",
+      assetId: "asset-visual",
+      provider: "local_disk",
+      objectKey: "private-object-key",
+      contentType: "text/html",
+      byteSize: 28,
+      sha256: "sha256-visual",
+      originalFilename: "chart.html",
+      createdByAgentId: "agent-1",
+      createdByUserId: null,
+      contentPath: "/api/assets/asset-visual/content",
+      createdAt: new Date("2026-07-15T08:01:00.000Z"),
+      updatedAt: new Date("2026-07-15T08:01:00.000Z"),
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatService.createAttachment.mockResolvedValueOnce(generatedAttachment);
+    mockStorage.putFile.mockResolvedValueOnce({
+      provider: "local_disk",
+      objectKey: "private-object-key",
+      contentType: "text/html",
+      byteSize: 28,
+      sha256: "sha256-visual",
+      originalFilename: "chart.html",
+    });
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: body,
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body,
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+        inlineVisuals: [{ directiveIndex: 0, file: "chart.html", status: "captured" }],
+        generatedAttachments: [{
+          source: "codex_inline_visual",
+          originalFilename: "chart.html",
+          contentType: "text/html",
+          body: Buffer.from('<div id="widget">Chart</div>'),
+          directiveIndex: 0,
+          directiveFile: "chart.html",
+        }],
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Make a chart" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockStorage.putFile).toHaveBeenCalledWith(expect.objectContaining({
+      namespace: "chats/chat-1/generated",
+      originalFilename: "chart.html",
+      contentType: "text/html",
+    }));
+    expect(mockChatService.updateMessage).toHaveBeenCalledWith(
+      "chat-1",
+      "message-assistant",
+      expect.objectContaining({
+        structuredPayload: {
+          inlineVisuals: [{
+            directiveIndex: 0,
+            file: "chart.html",
+            status: "ready",
+            attachmentId: "attachment-visual",
+          }],
+        },
+      }),
+    );
+    expect(String(res.body)).not.toContain("private-object-key");
+  });
+
+  it("does not persist a captured inline visual when the final reply removed its directive", async () => {
+    const conversation = createConversation();
+    const body = "The final reply no longer contains a visual.";
+    const userMessage = createMessage("message-user", "user", "message", "Make a chart");
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", body);
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: body,
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body,
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+        inlineVisuals: [{ directiveIndex: 0, file: "chart.html", status: "captured" }],
+        generatedAttachments: [{
+          source: "codex_inline_visual",
+          originalFilename: "chart.html",
+          contentType: "text/html",
+          body: Buffer.from('<div id="widget">Stale chart</div>'),
+          directiveIndex: 0,
+          directiveFile: "chart.html",
+        }],
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Make a chart" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockStorage.putFile).not.toHaveBeenCalled();
+    expect(mockChatService.createAttachment).not.toHaveBeenCalled();
+    expect(mockChatService.updateMessage).not.toHaveBeenCalled();
   });
 
   it("persists the selected agent as replyingAgentId for preferred-agent chats", async () => {
