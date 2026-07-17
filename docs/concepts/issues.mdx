@@ -55,13 +55,15 @@ Use `backlog` for work that is still being shaped. A backlog issue may describe 
 
 Each numbered issue has an organization-scoped id such as `R6-42`, formed from
 the organization's Issue Key and the issue number. The Issue Key begins with a
-letter and uses uppercase letters and digits.
+letter and uses uppercase letters and digits. Rudder derives and manages it as
+an internal organization identity detail rather than exposing it in regular
+organization settings.
 
-An operator can explicitly change the Issue Key in organization settings. The
-readable ids change, but issue numbers and underlying issue identity do not.
-Links that use an older Issue Key continue to resolve, so correcting the key
-does not break existing references. The organization name and stable URL remain
-separate from the Issue Key.
+The organization name and stable URL remain separate from the Issue Key.
+Compatibility migrations can explicitly select a different key while
+preserving issue numbers, underlying issue identity, and links that use an
+older Issue Key. A new-organization import can choose a fresh key, but does not
+copy Issue Key aliases from the source organization.
 
 ## Checkout semantics
 

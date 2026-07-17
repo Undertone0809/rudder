@@ -114,9 +114,10 @@ Product model:
   when the organization name or Issue Key changes.
 - `organization.name` is editable display text.
 - `organization.issuePrefix` is the Issue Key used to form readable issue
-  identifiers. New organization onboarding does not expose this implementation
-  detail: the server derives and allocates it from the organization name. An
-  operator can inspect and explicitly change it later in organization settings.
+  identifiers. New organization onboarding and Organization Settings do not
+  expose this implementation detail: the server derives and allocates it from
+  the organization name. New-organization import exposes the derived Issue Key
+  as an independently editable value before the import is applied.
 - Across different organizations, canonical `urlKey` values, current Issue
   Keys, and historical Issue Keys share one case-insensitive route namespace.
   A value owned by one organization cannot be allocated to another organization
@@ -128,22 +129,26 @@ Flow:
 2. Server derives an Issue Key that preserves letters and digits. If an
    automatically derived key conflicts, the server appends a numeric suffix
    without interrupting onboarding or exposing the key decision to the user.
-3. An Issue Key submitted explicitly through settings is validated and rejects
-   a current or historical conflict with an actionable error. Explicit key
-   changes must not silently append characters.
+3. Standard Organization Settings updates do not submit or mutate the Issue
+   Key. An Issue Key submitted explicitly through a compatibility API or the
+   new-organization import flow is validated and rejects a current or historical
+   conflict with an actionable error. Explicit key changes must not silently
+   append characters.
 4. Server allocates an independent stable `urlKey`; URL-key collisions may use
    a numeric URL suffix without changing the submitted Issue Key.
 5. Organization navigation generates `/{urlKey}/...`. Current Issue Key and
    historical Issue Key routes remain accepted during compatibility migration.
-6. An explicit settings change migrates the Issue Key and current issue
-   identifiers transactionally while preserving the previous key as an alias.
+6. An explicit compatibility API change migrates the Issue Key and current
+   issue identifiers transactionally while preserving the previous key as an
+   alias.
 
 Invariants:
 
 - Renaming an organization must not change `urlKey` or Issue Key implicitly.
-- Conflicts for an explicitly submitted Issue Key must be visible to the
-  operator and require an explicit alternative; silent suffixing is prohibited
-  for explicit key changes.
+- Conflicts for an explicitly submitted Issue Key must be visible to the API or
+  import caller and require an explicit alternative; silent suffixing is
+  prohibited for explicit key changes.
+- General Organization Settings must not expose or mutate the Issue Key.
 - URL-key allocation may add a numeric URL suffix when its preferred value is
   already owned as a URL key, current Issue Key, or historical Issue Key.
 - Changing an Issue Key must not change organization UUID, issue UUIDs, or issue
@@ -157,10 +162,11 @@ Evidence:
   derivation and explicit key normalization.
 - `server/src/__tests__/orgs-service.test.ts` covers conflict rejection,
   transactional migration, repeated migration, and historical issue lookup.
+- `tests/e2e/organization-issue-key.spec.ts` covers name-only onboarding,
+  absence from Organization Settings, compatibility migration, stable
+  navigation, and historical link resolution on the rendered product path.
 - `ui/src/lib/organization-routes.test.ts` covers stable route generation and
   historical organization-key resolution.
-- `tests/e2e/organization-issue-key.spec.ts` covers creation, migration,
-  stable navigation, and old-link compatibility on the rendered product path.
 
 ## ORG.SETTINGS.001
 

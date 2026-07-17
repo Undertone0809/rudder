@@ -54,9 +54,9 @@ npx @rudderhq/cli@latest start
 
 组织目标很重要，因为 issue、agent、项目和评审决定都应该能追溯到“为什么要做”。后面出现分歧时，目标会帮你判断：这是现在该推进的事，还是只是一个看起来不错的想法。
 
-创建组织前，检查一下 **Issue Key**。Rudder 会根据组织名称生成一个简短 key，并预览第一条可读 issue 编号，例如 `R6-1`。Issue Key 必须以字母开头，只能包含大写字母和数字，而且不能和当前实例里已有或历史使用过的 key 冲突。
+Rudder 会根据组织名称自动生成内部 **Issue Key**，并用它形成 `R6-1` 这样的可读 issue 编号。首次创建组织时，用户只需要填写组织名称，不需要理解或选择 Issue Key。
 
-组织名称、稳定 URL 和 Issue Key 各自负责不同的身份。修改组织名称不会顺带改变 URL 或 issue 编号。以后可以在组织设置中明确修改 Issue Key；已有 issue number 不变，使用旧 Issue Key 的链接仍然可以打开同一条 issue。
+组织名称、稳定 URL 和 Issue Key 各自负责不同的身份。修改组织名称不会顺带改变 URL 或 issue 编号，常规组织设置也不会暴露 Issue Key。兼容迁移更换 key 时，旧 Issue Key 的链接仍然可以打开同一条 issue。导入为新组织时可以选择新的 key，但不会复制源组织的历史 Issue Key alias。
 
 ![Rudder 仪表盘概览](../../images/board-overview.png)
 

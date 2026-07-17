@@ -57,15 +57,16 @@ Weak first goals:
 
 The organization goal matters because issues, agents, projects, and review decisions should all point back to why the work exists. When priorities conflict later, the goal helps decide whether something is the next right move or only a good-looking idea.
 
-Review the **Issue Key** before creating the organization. Rudder derives a
-short key from the organization name and previews the first readable issue id,
-such as `R6-1`. The key must begin with a letter, use only uppercase letters and
-digits, and be unique in the Rudder instance.
+Rudder derives an internal **Issue Key** from the organization name. It uses
+that key to create readable issue ids such as `R6-1`, while keeping the first
+organization setup focused on the organization name.
 
 The organization name, its stable URL, and its Issue Key have separate jobs.
-Renaming the organization does not silently change its URL or issue ids. You can
-change the Issue Key explicitly in organization settings later; existing issue
-numbers stay the same, and links that use an older Issue Key continue to resolve.
+Renaming the organization does not silently change its URL or issue ids, and
+the Issue Key is not exposed in regular organization settings. Compatibility
+migrations preserve old Issue Key links when a key must change. A
+new-organization import lets you choose a fresh key, but does not copy Issue Key
+aliases from the source organization.
 
 ![Rudder dashboard overview](../images/board-overview.png)
 

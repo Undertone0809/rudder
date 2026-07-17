@@ -54,9 +54,9 @@ Chat 和 issue 是同等重要、并列的一等任务界面。需要 issue 提�
 
 ## 可读 issue 身份
 
-每条有编号的 issue 都有组织范围内的可读 id，例如 `R6-42`。它由组织的 Issue Key 和 issue number 组成；Issue Key 必须以字母开头，只能使用大写字母和数字。
+每条有编号的 issue 都有组织范围内的可读 id，例如 `R6-42`。它由组织的 Issue Key 和 issue number 组成；Issue Key 必须以字母开头，只能使用大写字母和数字。Rudder 会自动生成和管理这个内部身份字段，常规组织设置不会暴露它。
 
-Operator 可以在组织设置中明确修改 Issue Key。可读 id 会变化，但 issue number 和底层 issue identity 不变。使用旧 Issue Key 的链接仍能解析，因此修正 key 不会破坏已有引用。组织名称和稳定 URL 也不会和 Issue Key 绑定在一起变化。
+组织名称和稳定 URL 不会和 Issue Key 绑定在一起变化。兼容迁移可以明确选择不同的 key；可读 id 会变化，但 issue number 和底层 issue identity 不变，使用旧 Issue Key 的链接仍能解析。导入为新组织时也可以选择新的 key，但不会复制源组织的历史 Issue Key alias。
 
 ## Checkout 语义
 
