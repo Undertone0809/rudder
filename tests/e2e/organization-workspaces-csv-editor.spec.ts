@@ -116,7 +116,7 @@ test("Library CSV editor keeps a source fallback and avoids padding untouched ra
 
   await page
     .getByTestId("org-workspaces-csv-editor")
-    .getByRole("button", { name: "Source" })
+    .getByRole("radio", { name: "Source" })
     .click();
   const sourceEditor = page.getByTestId("org-workspaces-csv-source-textarea");
   await expect(sourceEditor).toBeVisible();

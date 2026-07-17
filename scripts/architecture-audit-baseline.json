@@ -3,7 +3,7 @@
   "oversizedFiles": [
     {
       "path": "ui/src/pages/OrganizationWorkspaces.tsx",
-      "lines": 6008,
+      "lines": 2982,
       "owner": "workspace-ui",
       "rationale": "The workspace page still composes several editors and resource adapters while their controllers are extracted.",
       "target": "Reduce the page composer below 3000 lines in Phase 2, then below 1500 lines.",

@@ -5,11 +5,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   composeCustomGroupIconValue,
+  customGroupColorFor,
   CustomGroupEditor,
   CustomGroupIcon,
   CustomGroupIconPicker,
   CustomGroupRenameForm,
-  customGroupColorFor,
   customGroupStyle,
   isProjectIconName,
   splitCustomGroupIconValue,

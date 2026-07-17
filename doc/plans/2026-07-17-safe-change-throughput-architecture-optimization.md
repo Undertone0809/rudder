@@ -27,6 +27,9 @@ related_code:
   - ui/src/components/MessengerContextSidebar.tsx
   - ui/src/pages/OrganizationWorkspaces.tsx
   - ui/src/pages/organization-workspaces/OrganizationWorkspaceFilesSidebar.tsx
+  - ui/src/pages/organization-workspaces/ProjectResourceDetailPanel.tsx
+  - ui/src/pages/organization-workspaces/WorkspaceDocumentEditors.tsx
+  - ui/src/pages/organization-workspaces/WorkspaceTabContextMenu.tsx
   - ui/src/pages/Chat.scroll-map.tsx
   - server/src/services/chats.ts
   - server/src/services/messenger.ts
@@ -416,14 +419,14 @@ program completion around the Messenger first slice.
 
 ### Measured Result
 
-- `OrganizationWorkspaces.tsx`: 5,994 to 3,700 lines in this extraction stage;
+- `OrganizationWorkspaces.tsx`: 5,994 to 2,982 lines across the Sidebar,
+  file-tree, document-editor, project-resource, and tab-menu extraction stages;
 - `Chat.tsx`: 3,112 to 2,836 lines;
 - `server/src/routes/chats.ts`: 2,565 to 2,558 lines relative to `origin/main`;
 - new Workspace production modules: 1,090, 1,054, 168, and 156 lines;
 - `Chat.scroll-map.tsx`: 325 lines before final formatting changes;
-- current audit: 28 production files above 1,500 lines, with two still above
-  3,000 (`server/src/services/chats.ts` at 4,585 and
-  `OrganizationWorkspaces.tsx` at 3,700).
+- current audit: 28 production files above 1,500 lines, with only
+  `server/src/services/chats.ts` at 4,585 still above 3,000.
 
 ### Verification Evidence
 
@@ -447,7 +450,7 @@ program completion around the Messenger first slice.
 
 ### Remaining Program Gates
 
-- reduce production files above 3,000 from two to zero, then reduce files above
+- reduce production files above 3,000 from one to zero, then reduce files above
   1,500 to at most 15 and finally at most five;
 - complete Workspace, Chat, and Messenger controller/facade ownership rather
   than stopping at the current extraction boundaries;

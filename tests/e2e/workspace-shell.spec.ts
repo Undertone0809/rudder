@@ -573,7 +573,7 @@ test.describe("Workspace shell", () => {
       },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
 
     const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
       data: {
@@ -872,7 +872,7 @@ test.describe("Workspace shell", () => {
     treeMenu = page.getByRole("menu");
     await expect(treeMenu.getByRole("menuitem", { name: "Add resources" })).toBeVisible();
     await treeMenu.getByRole("menuitem", { name: "Add resources" }).click();
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/projects/${project.urlKey}/resources$`));
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/projects/${project.urlKey}/resources$`));
 
     await gotoOrganizationPath(page, organization, `/library?resource=${attachment.id}`);
     await expect(page.getByTestId(`org-workspaces-project-resource-${attachment.id}`)).toBeVisible();

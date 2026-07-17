@@ -12,13 +12,9 @@ import {
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useNavigate, useSearchParams } from "@/lib/router";
 import { cn } from "@/lib/utils";
@@ -36,23 +32,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown,
   ChevronRight,
-  Copy,
   ExternalLink,
   FilePlus2,
   FileText,
   FolderOpen,
   FolderPlus,
   HardDrive,
-  Link2,
   Loader2,
   MoreHorizontal,
-  Pencil,
-  Plus,
-  Trash2,
   X
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 import { assetsApi } from "../api/assets";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { organizationsApi } from "../api/orgs";
@@ -63,7 +53,6 @@ import { IssueDetailFind } from "../components/IssueDetailFind";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { MarkdownEditor, type InlineTokenClickEvent, type MarkdownEditorRef, type MentionOption } from "../components/MarkdownEditor";
 import { PageSkeleton } from "../components/PageSkeleton";
-import { ResourceLocatorField } from "../components/ResourceLocatorField";
 import { getWorkspaceCodeLanguageLabel, isWorkspaceCodeFilePath, WorkspaceCodeEditor } from "../components/WorkspaceCodeEditor";
 import { WorkspaceHtmlPreview, WorkspaceHtmlPreviewToolbar } from "../components/WorkspaceHtmlPreview";
 import { WorkspacePdfPreview } from "../components/WorkspacePdfPreview";
@@ -83,11 +72,7 @@ import { libraryCopy } from "../lib/library-copy";
 import { getCachedLibraryEntryMetadata } from "../lib/library-entry-cache";
 import { mentionChipNavigationPath, parseMentionChipHref } from "../lib/mention-chips";
 import { queryKeys } from "../lib/queryKeys";
-import {
-  organizationResourceKindLabel,
-  organizationResourceSourceTypeLabel,
-} from "../lib/resource-options";
-import { normalizeWorkspaceCsvRows, parseWorkspaceCsvContent, serializeWorkspaceCsvRows } from "../lib/workspace-csv";
+import { normalizeWorkspaceCsvRows, parseWorkspaceCsvContent } from "../lib/workspace-csv";
 import {
   containsEmbeddedImageDataUrl,
   countWorkspaceDocumentWords,
@@ -164,13 +149,16 @@ import {
   useProjectResourceTreeGroups,
   WORKSPACE_FLUSH_DRAFT_EVENT,
 } from "./organization-workspaces/organizationWorkspaceCapabilities";
+import { ProjectResourceDetailPanel } from "./organization-workspaces/ProjectResourceDetailPanel";
 import { SkillLibraryAddDialog } from "./organization-workspaces/SkillLibraryAddDialog";
+import { CsvWorkspaceEditor, LegacyHeartbeatInstructionsDialog } from "./organization-workspaces/WorkspaceDocumentEditors";
 import {
   didDragLeaveCurrentTarget,
   focusWorkspaceTreeEntry,
   parseWorkspaceDragEntry,
   WorkspaceTreeNode,
 } from "./organization-workspaces/WorkspaceFileTree";
+import { WorkspaceTabContextMenu } from "./organization-workspaces/WorkspaceTabContextMenu";
 
 export { OrganizationWorkspaceFilesSidebar } from "./organization-workspaces/OrganizationWorkspaceFilesSidebar";
 
@@ -215,632 +203,6 @@ function enrichAgentMentionMarkdown(markdown: string, mentionOptions: MentionOpt
     if (!icon || parsed.icon === icon) return match;
     return `[${label}](${buildAgentMentionHref(parsed.agentId, icon)})`;
   });
-}
-
-function LegacyHeartbeatInstructionsDialog({
-  open,
-  filePath,
-  isDeleting,
-  onKeep,
-  onDeleteAll,
-}: {
-  open: boolean;
-  filePath: string | null;
-  isDeleting: boolean;
-  onKeep: () => void;
-  onDeleteAll: () => void;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={(nextOpen) => {
-      if (!nextOpen && !isDeleting) onKeep();
-    }}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Legacy HEARTBEAT.md</DialogTitle>
-          <DialogDescription>
-            Heartbeat instructions are built into Rudder runtime now. Agents no longer load or need
-            {filePath ? ` ${filePath}` : " this file"}, so you do not need to maintain it by hand.
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onKeep}
-            disabled={isDeleting}
-          >
-            Keep files for now
-          </Button>
-          <Button
-            type="button"
-            variant="destructive"
-            onClick={onDeleteAll}
-            disabled={isDeleting}
-          >
-            {isDeleting ? "Deleting..." : "Delete all legacy HEARTBEAT.md files"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function CsvWorkspaceEditor({
-  content,
-  filePath,
-  mode,
-  onChange,
-  onModeChange,
-  scrollRef,
-}: {
-  content: string;
-  filePath: string | null;
-  mode: "table" | "source";
-  onChange: (filePath: string | null, content: string) => void;
-  onModeChange: (mode: "table" | "source") => void;
-  scrollRef: (element: HTMLElement | null) => void;
-}) {
-  const parsed = useMemo(() => parseWorkspaceCsvContent(content), [content]);
-  const { rows, columnCount } = useMemo(() => normalizeWorkspaceCsvRows(parsed.rows), [parsed.rows]);
-  const bodyRows = rows.slice(1);
-
-  const commitRows = useCallback((nextRows: string[][]) => {
-    onChange(
-      filePath,
-      serializeWorkspaceCsvRows(nextRows, parsed.lineEnding, parsed.hasTrailingLineBreak),
-    );
-  }, [filePath, onChange, parsed.hasTrailingLineBreak, parsed.lineEnding]);
-
-  const updateCell = useCallback((rowIndex: number, columnIndex: number, value: string) => {
-    const nextRows = parsed.rows.map((row) => [...row]);
-    nextRows[rowIndex] = nextRows[rowIndex] ?? Array.from({ length: columnCount }, () => "");
-    while (nextRows[rowIndex]!.length <= columnIndex) nextRows[rowIndex]!.push("");
-    nextRows[rowIndex]![columnIndex] = value;
-    commitRows(nextRows);
-  }, [columnCount, commitRows, parsed.rows]);
-
-  const addRow = useCallback(() => {
-    commitRows([...rows, Array.from({ length: columnCount }, () => "")]);
-  }, [columnCount, commitRows, rows]);
-
-  const addColumn = useCallback(() => {
-    commitRows(rows.map((row) => [...row, ""]));
-  }, [commitRows, rows]);
-
-  const removeRow = useCallback((rowIndex: number) => {
-    if (rows.length <= 1) {
-      commitRows([Array.from({ length: columnCount }, () => "")]);
-      return;
-    }
-    commitRows(rows.filter((_, index) => index !== rowIndex));
-  }, [columnCount, commitRows, rows]);
-
-  const removeColumn = useCallback((columnIndex: number) => {
-    if (columnCount <= 1) {
-      commitRows(rows.map(() => [""]));
-      return;
-    }
-    commitRows(rows.map((row) => row.filter((_, index) => index !== columnIndex)));
-  }, [columnCount, commitRows, rows]);
-
-  const renderCell = (value: string, rowIndex: number, columnIndex: number, header = false) => (
-    <textarea
-      key={`${rowIndex}:${columnIndex}`}
-      value={value}
-      rows={Math.min(4, Math.max(1, value.split(/\r\n|\r|\n/u).length))}
-      spellCheck={false}
-      aria-label={`CSV cell row ${rowIndex + 1} column ${columnIndex + 1}`}
-      data-testid={`org-workspaces-csv-cell-${rowIndex}-${columnIndex}`}
-      onChange={(event) => updateCell(rowIndex, columnIndex, event.target.value)}
-      className={cn(
-        "block min-h-9 w-full min-w-[12rem] resize-y overflow-auto border-0 bg-transparent px-2.5 py-2 text-sm leading-5 text-foreground outline-none focus:bg-[color:var(--surface-page)] focus:ring-1 focus:ring-inset focus:ring-ring",
-        header ? "font-semibold" : "font-normal",
-      )}
-    />
-  );
-
-  return (
-    <div
-      ref={scrollRef}
-      data-testid="org-workspaces-csv-editor"
-      className="scrollbar-auto-hide flex min-h-[280px] flex-1 flex-col overflow-auto bg-[color:var(--surface-elevated)]"
-    >
-      <div className="sticky top-0 z-20 flex shrink-0 items-center justify-between gap-3 border-b border-border bg-[color:var(--surface-page)] px-4 py-2">
-        <div className="min-w-0 truncate text-xs text-muted-foreground">
-          {rows.length.toLocaleString()} {rows.length === 1 ? "row" : "rows"} / {columnCount.toLocaleString()} {columnCount === 1 ? "column" : "columns"}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            size="sm"
-            spacing={0}
-            value={mode}
-            onValueChange={(value) => {
-              if (value === "table" || value === "source") onModeChange(value);
-            }}
-            aria-label="CSV file mode"
-          >
-            <ToggleGroupItem value="table">
-              Table
-            </ToggleGroupItem>
-            <ToggleGroupItem value="source">
-              Source
-            </ToggleGroupItem>
-          </ToggleGroup>
-          {mode === "table" ? (
-            <>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-7 rounded-[4px] px-2 text-xs"
-                onClick={addColumn}
-                data-testid="org-workspaces-csv-add-column"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Column
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-7 rounded-[4px] px-2 text-xs"
-                onClick={addRow}
-                data-testid="org-workspaces-csv-add-row"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Row
-              </Button>
-            </>
-          ) : null}
-        </div>
-      </div>
-      {mode === "source" ? (
-        <textarea
-          data-testid="org-workspaces-csv-source-textarea"
-          value={content}
-          onChange={(event) => onChange(filePath, event.target.value)}
-          spellCheck={false}
-          className="block min-h-[280px] flex-1 overflow-auto border-0 bg-transparent px-4 py-4 font-mono text-sm leading-6 text-foreground outline-none"
-        />
-      ) : (
-        <div className="min-w-max flex-1 p-4">
-          <table className="border-separate border-spacing-0 text-left" aria-label="CSV editor table">
-            <thead>
-              <tr>
-                <th className="sticky left-0 top-[45px] z-20 h-9 w-12 border-y border-l border-border bg-[color:var(--surface-page)] text-center text-xs font-medium text-muted-foreground">
-                  #
-                </th>
-                {rows[0]?.map((value, columnIndex) => (
-                  <th
-                    key={columnIndex}
-                    className="sticky top-[45px] z-10 min-w-[12rem] border-y border-l border-border bg-[color:var(--surface-page)] align-top last:border-r"
-                  >
-                    <div className="flex min-w-0 items-stretch">
-                      <div className="min-w-0 flex-1">{renderCell(value, 0, columnIndex, true)}</div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        className="m-1 h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
-                        aria-label={`Remove CSV column ${columnIndex + 1}`}
-                        onClick={() => removeColumn(columnIndex)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {bodyRows.map((row, bodyIndex) => {
-                const rowIndex = bodyIndex + 1;
-                return (
-                  <tr key={rowIndex}>
-                    <th className="sticky left-0 z-10 h-9 w-12 border-b border-l border-border bg-[color:var(--surface-page)] text-center align-middle text-xs font-medium text-muted-foreground">
-                      <div className="flex items-center justify-center gap-1">
-                        <span>{rowIndex + 1}</span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-xs"
-                          className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                          aria-label={`Remove CSV row ${rowIndex + 1}`}
-                          onClick={() => removeRow(rowIndex)}
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    </th>
-                    {row.map((value, columnIndex) => (
-                      <td
-                        key={columnIndex}
-                        className="min-w-[12rem] border-b border-l border-border align-top last:border-r"
-                      >
-                        {renderCell(value, rowIndex, columnIndex)}
-                      </td>
-                    ))}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ResourceMetadataRow({
-  label,
-  children,
-  mono = false,
-}: {
-  label: string;
-  children: ReactNode;
-  mono?: boolean;
-}) {
-  return (
-    <div className="grid gap-1 border-b border-border/60 py-3 last:border-b-0 sm:grid-cols-[9rem_minmax(0,1fr)]">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={cn("min-w-0 text-sm text-foreground", mono && "break-all font-mono text-xs")}>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-type ProjectResourceEditDraft = {
-  name: string;
-  locator: string;
-  description: string;
-  note: string;
-};
-
-function createProjectResourceEditDraft(attachment: ProjectResourceAttachment): ProjectResourceEditDraft {
-  return {
-    name: attachment.resource.name,
-    locator: attachment.resource.locator,
-    description: attachment.resource.description ?? "",
-    note: attachment.note ?? "",
-  };
-}
-
-function ProjectResourceDetailPanel({
-  project,
-  attachment,
-  workspaceRootPath,
-  workspaceLaunchTargets,
-  selectedWorkspaceLaunchTarget,
-  openingWorkspaceTargetId,
-  onSelectWorkspaceLaunchTarget,
-  onOpenWorkspaceTarget,
-}: {
-  project: Project;
-  attachment: ProjectResourceAttachment;
-  workspaceRootPath: string | null;
-  workspaceLaunchTargets: DesktopWorkspaceLaunchTarget[];
-  selectedWorkspaceLaunchTarget: DesktopWorkspaceLaunchTarget | null;
-  openingWorkspaceTargetId: WorkspaceOpenTargetId | null;
-  onSelectWorkspaceLaunchTarget: (target: DesktopWorkspaceLaunchTarget) => void;
-  onOpenWorkspaceTarget: (rootPath: string, target: DesktopWorkspaceLaunchTarget, toastLabel?: string) => void;
-}) {
-  const { pushToast } = useToast();
-  const queryClient = useQueryClient();
-  const [editing, setEditing] = useState(false);
-  const [resourceDraft, setResourceDraft] = useState(() => createProjectResourceEditDraft(attachment));
-  const [openingPath, setOpeningPath] = useState(false);
-  const [openingExternal, setOpeningExternal] = useState(false);
-  const locator = attachment.resource.locator.trim();
-  const resourceOpenPath = resolveResourceOpenPath(attachment, workspaceRootPath);
-  const canOpenAsWorkspace = Boolean(
-    resourceOpenPath
-    && attachment.resource.kind === "directory"
-    && selectedWorkspaceLaunchTarget
-    && workspaceLaunchTargets.length > 0,
-  );
-  const canOpenStandalonePath = Boolean(resourceOpenPath && readDesktopShell()?.openPath && !canOpenAsWorkspace);
-  const canOpenExternal = attachment.resource.kind === "url" || isHttpUrl(locator);
-
-  useEffect(() => {
-    setEditing(false);
-    setResourceDraft(createProjectResourceEditDraft(attachment));
-  }, [attachment.id, attachment.note, attachment.resource.description, attachment.resource.locator, attachment.resource.name]);
-
-  const updateResourceDetails = useMutation({
-    mutationFn: async (draft: ProjectResourceEditDraft) => {
-      const name = draft.name.trim();
-      const nextLocator = draft.locator.trim();
-      if (!name) throw new Error("Resource name is required.");
-      if (!nextLocator) throw new Error("Resource locator is required.");
-      const updatedResource = await organizationsApi.updateResource(project.orgId, attachment.resourceId, {
-        name,
-        locator: nextLocator,
-        description: draft.description.trim() || null,
-      });
-      const updatedAttachment = await projectsApi.updateResourceAttachment(project.id, attachment.id, {
-        role: attachment.role,
-        note: draft.note.trim() || null,
-        sortOrder: attachment.sortOrder,
-      }, project.orgId);
-      return { updatedResource, updatedAttachment };
-    },
-    onSuccess: () => {
-      setEditing(false);
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.list(project.orgId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(project.id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.resources(project.id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.organizations.resources(project.orgId) });
-      pushToast({ title: "Resource updated", tone: "success" });
-    },
-    onError: (error) => {
-      pushToast({
-        title: error instanceof Error ? error.message : "Failed to update resource",
-        tone: "error",
-      });
-    },
-  });
-
-  async function handleOpenPath() {
-    if (!resourceOpenPath) return;
-    const desktopShell = readDesktopShell();
-    if (!desktopShell?.openPath) return;
-    setOpeningPath(true);
-    try {
-      await desktopShell.openPath(resourceOpenPath);
-      pushToast({
-        title: attachment.resource.kind === "directory" ? "Opened resource folder" : "Opened resource file",
-        body: resourceOpenPath,
-        tone: "info",
-      });
-    } catch (error) {
-      pushToast({
-        title: "Failed to open resource",
-        body: error instanceof Error ? error.message : resourceOpenPath,
-        tone: "error",
-      });
-    } finally {
-      setOpeningPath(false);
-    }
-  }
-
-  async function handleOpenExternal() {
-    if (!locator) return;
-    const desktopShell = readDesktopShell();
-    setOpeningExternal(true);
-    try {
-      if (desktopShell?.openExternal) {
-        await desktopShell.openExternal(locator);
-      } else {
-        window.open(locator, "_blank", "noopener,noreferrer");
-      }
-      pushToast({
-        title: "Opened resource link",
-        body: locator,
-        tone: "info",
-      });
-    } catch (error) {
-      pushToast({
-        title: "Failed to open resource link",
-        body: error instanceof Error ? error.message : locator,
-        tone: "error",
-      });
-    } finally {
-      setOpeningExternal(false);
-    }
-  }
-
-  return (
-    <div
-      data-testid="org-workspaces-resource-detail"
-      className="flex h-full min-h-0 flex-col overflow-hidden"
-    >
-      <div className="shrink-0 border-b border-border bg-[color:var(--surface-elevated)] px-5 py-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div className="min-w-0">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <h3 className="min-w-0 truncate text-base font-semibold text-foreground">
-                {attachment.resource.name}
-              </h3>
-              <span className="rounded-[calc(var(--radius-sm)-1px)] border border-border/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                {organizationResourceSourceTypeLabel(attachment.resource.sourceType)} · {organizationResourceKindLabel(attachment.resource.kind)}
-              </span>
-            </div>
-            <div className="mt-1 truncate font-mono text-xs text-muted-foreground">
-              {locator}
-            </div>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant={editing ? "secondary" : "outline"}
-              size="sm"
-              onClick={() => {
-                setResourceDraft(createProjectResourceEditDraft(attachment));
-                setEditing(true);
-              }}
-              disabled={updateResourceDetails.isPending}
-              data-testid="org-workspaces-resource-edit"
-            >
-              <Pencil className="h-3.5 w-3.5" />
-              Edit
-            </Button>
-            {canOpenExternal ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => void handleOpenExternal()}
-                disabled={openingExternal}
-                data-testid="org-workspaces-resource-open-external"
-              >
-                {openingExternal ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
-                Open
-              </Button>
-            ) : null}
-            {canOpenStandalonePath ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => void handleOpenPath()}
-                disabled={openingPath}
-                data-testid="org-workspaces-resource-open-path"
-              >
-                {openingPath ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderOpen className="h-3.5 w-3.5" />}
-                Open
-              </Button>
-            ) : null}
-            {canOpenAsWorkspace && selectedWorkspaceLaunchTarget && resourceOpenPath ? (
-              <div
-                className="inline-flex h-9 items-stretch overflow-hidden rounded-[18px] border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] shadow-none"
-                data-testid="org-workspaces-resource-launcher"
-              >
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-full w-9 rounded-none border-0 text-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)]"
-                  aria-label={`Open resource in ${selectedWorkspaceLaunchTarget.label}`}
-                  onClick={() => onOpenWorkspaceTarget(resourceOpenPath, selectedWorkspaceLaunchTarget, "resource")}
-                  disabled={openingWorkspaceTargetId !== null}
-                >
-                  {openingWorkspaceTargetId === selectedWorkspaceLaunchTarget.id ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <WorkspaceLaunchTargetIcon target={selectedWorkspaceLaunchTarget} />
-                  )}
-                </Button>
-                <div className="my-1 w-px bg-[color:var(--border-soft)]" aria-hidden="true" />
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-full w-9 rounded-none border-0 text-muted-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)] hover:text-foreground"
-                      aria-label="Open resource menu"
-                      disabled={openingWorkspaceTargetId !== null}
-                    >
-                      <ChevronDown className="h-4 w-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-56 whitespace-nowrap">
-                    <DropdownMenuRadioGroup
-                      value={selectedWorkspaceLaunchTarget.id}
-                      onValueChange={(targetId) => {
-                        const target = workspaceLaunchTargets.find((candidate) => candidate.id === targetId);
-                        if (target) onSelectWorkspaceLaunchTarget(target);
-                      }}
-                    >
-                      {workspaceLaunchTargets.map((target) => (
-                        <DropdownMenuRadioItem
-                          key={target.id}
-                          value={target.id}
-                          data-testid={`org-workspaces-resource-launch-target-${target.id}`}
-                        >
-                          <WorkspaceLaunchTargetIcon target={target} />
-                          <span>{target.label}</span>
-                        </DropdownMenuRadioItem>
-                      ))}
-                    </DropdownMenuRadioGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
-      <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-auto px-5 py-4">
-        <div className="max-w-3xl">
-          {editing ? (
-            <div className="grid gap-4 md:grid-cols-2" data-testid="org-workspaces-resource-edit-form">
-              <label className="space-y-1.5">
-                <span className="text-xs text-muted-foreground">Name</span>
-                <Input
-                  value={resourceDraft.name}
-                  onChange={(event) => setResourceDraft((current) => ({ ...current, name: event.target.value }))}
-                  disabled={updateResourceDetails.isPending}
-                />
-              </label>
-              <label className="space-y-1.5 md:col-span-2">
-                <span className="text-xs text-muted-foreground">Locator</span>
-                <ResourceLocatorField
-                  kind={attachment.resource.kind}
-                  value={resourceDraft.locator}
-                  onChange={(locator) => setResourceDraft((current) => ({ ...current, locator }))}
-                  disabled={updateResourceDetails.isPending}
-                />
-              </label>
-              <label className="space-y-1.5 md:col-span-2">
-                <span className="text-xs text-muted-foreground">Description</span>
-                <Textarea
-                  value={resourceDraft.description}
-                  onChange={(event) => setResourceDraft((current) => ({ ...current, description: event.target.value }))}
-                  placeholder="What this resource contains and when agents should use it."
-                  disabled={updateResourceDetails.isPending}
-                />
-              </label>
-              <label className="space-y-1.5 md:col-span-2">
-                <span className="text-xs text-muted-foreground">Project note</span>
-                <Input
-                  value={resourceDraft.note}
-                  onChange={(event) => setResourceDraft((current) => ({ ...current, note: event.target.value }))}
-                  placeholder="Optional project-specific guidance for agents"
-                  disabled={updateResourceDetails.isPending}
-                />
-              </label>
-              <div className="flex justify-end gap-2 md:col-span-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setResourceDraft(createProjectResourceEditDraft(attachment));
-                    setEditing(false);
-                  }}
-                  disabled={updateResourceDetails.isPending}
-                >
-                  <X className="h-3.5 w-3.5" />
-                  Cancel
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={() => updateResourceDetails.mutate(resourceDraft)}
-                  disabled={
-                    updateResourceDetails.isPending
-                    || !resourceDraft.name.trim()
-                    || !resourceDraft.locator.trim()
-                  }
-                >
-                  {updateResourceDetails.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                  Save
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <>
-              <ResourceMetadataRow label="Project">{project.name}</ResourceMetadataRow>
-              <ResourceMetadataRow label="Source">
-                {organizationResourceSourceTypeLabel(attachment.resource.sourceType)} · {organizationResourceKindLabel(attachment.resource.kind)}
-              </ResourceMetadataRow>
-              <ResourceMetadataRow label="Locator" mono>{locator}</ResourceMetadataRow>
-              <ResourceMetadataRow label="Description">
-                {attachment.resource.description?.trim() || <span className="text-muted-foreground">No description.</span>}
-              </ResourceMetadataRow>
-              <ResourceMetadataRow label="Project note">
-                {attachment.note?.trim() || <span className="text-muted-foreground">No project-specific note.</span>}
-              </ResourceMetadataRow>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
 }
 
 export function OrganizationWorkspaceBrowser({
@@ -3421,101 +2783,21 @@ export function OrganizationWorkspaceBrowser({
       )}
       </div>
 
-      {tabContextMenu && typeof document !== "undefined" ? createPortal(
-        <div
-          role="menu"
-          data-testid="org-workspaces-tab-context-menu"
-          className="motion-chat-composer-menu-pop surface-overlay fixed z-50 w-[220px] overflow-hidden rounded-md border border-border p-1 text-sm text-foreground shadow-lg"
-          style={{ left: tabContextMenu.left, top: tabContextMenu.top }}
-          onPointerDown={(event) => event.stopPropagation()}
-          onContextMenu={(event) => event.preventDefault()}
-        >
-          <button
-            type="button"
-            role="menuitem"
-            data-chat-composer-menu-item
-            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground"
-            onClick={() => {
-              void handleCopyWorkspaceLink(tabContextMenu.filePath);
-              setTabContextMenu(null);
-            }}
-          >
-            <Link2 className="h-4 w-4 text-muted-foreground" />
-            Copy link
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            data-chat-composer-menu-item
-            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground"
-            onClick={() => {
-              void handleCopyWorkspaceAbsolutePath(tabContextMenu.filePath);
-              setTabContextMenu(null);
-            }}
-          >
-            <Copy className="h-4 w-4 text-muted-foreground" />
-            Copy absolute path
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            data-chat-composer-menu-item
-            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
-            disabled={!primaryIde || !workspaceRootPath}
-            onClick={() => {
-              void handleOpenFileInIde(tabContextMenu.filePath);
-              setTabContextMenu(null);
-            }}
-          >
-            <ExternalLink className="h-4 w-4 text-muted-foreground" />
-            Open in {primaryIde?.label ?? "IDE"}
-          </button>
-          <div className="-mx-1 my-1 h-px bg-border" />
-          <button
-            type="button"
-            role="menuitem"
-            data-chat-composer-menu-item
-            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground"
-            onClick={() => {
-              handleCloseFileTab(tabContextMenu.filePath);
-              setTabContextMenu(null);
-            }}
-          >
-            <X className="h-4 w-4 text-muted-foreground" />
-            Close
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            data-chat-composer-menu-item
-            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
-            disabled={!canCloseOtherTabs}
-            onClick={() => handleCloseOtherFileTabs(tabContextMenu.filePath)}
-          >
-            Close others
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            data-chat-composer-menu-item
-            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
-            disabled={!canCloseTabsToRight}
-            onClick={() => handleCloseTabsToRight(tabContextMenu.filePath)}
-          >
-            Close tabs to the right
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            data-chat-composer-menu-item
-            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground"
-            onClick={handleCloseAllFileTabs}
-          >
-            Close all
-          </button>
-        </div>,
-        document.body,
-      ) : null}
+      <WorkspaceTabContextMenu
+        menu={tabContextMenu}
+        ideLabel={primaryIde?.label ?? "IDE"}
+        canOpenInIde={Boolean(primaryIde && workspaceRootPath)}
+        canCloseOtherTabs={canCloseOtherTabs}
+        canCloseTabsToRight={canCloseTabsToRight}
+        onClose={() => setTabContextMenu(null)}
+        onCopyLink={(filePath) => void handleCopyWorkspaceLink(filePath)}
+        onCopyAbsolutePath={(filePath) => void handleCopyWorkspaceAbsolutePath(filePath)}
+        onOpenInIde={(filePath) => void handleOpenFileInIde(filePath)}
+        onCloseTab={handleCloseFileTab}
+        onCloseOtherTabs={handleCloseOtherFileTabs}
+        onCloseTabsToRight={handleCloseTabsToRight}
+        onCloseAllTabs={handleCloseAllFileTabs}
+      />
 
       <LegacyHeartbeatInstructionsDialog
         open={legacyHeartbeatDialogPath !== null}
