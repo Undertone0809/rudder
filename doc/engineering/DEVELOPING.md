@@ -105,6 +105,32 @@ Reviewers should challenge any new data surface that fetches "everything",
 resets the user's place during refresh, or proves only a tiny happy-path
 fixture when the real workflow depends on long lists.
 
+## Architecture Ratchet
+
+CI runs the architecture audit in a separate Ubuntu job without installing
+workspace dependencies. The job fetches full Git history, runs the audit's
+fixture tests, and rejects production files that newly cross or grow beyond the
+line-count ceiling relative to an event-specific commit:
+
+- pull requests compare to the pull request base SHA;
+- pushes to `main` compare to the event's `before` SHA;
+- manual runs compare to `HEAD^` when a parent commit exists;
+- an initial push with no parent comparison commit reports an explicit skip.
+
+Do not compare a `main` push to `origin/main`: after checkout that ref may equal
+`HEAD`, which makes the ratchet vacuous. To reproduce the required check
+locally, use a concrete commit SHA or another ref that resolves to the intended
+clean base:
+
+```sh
+node --test scripts/architecture-audit.test.mjs
+node scripts/architecture-audit.mjs --compare-ref <base-commit> --fail-on-regression
+```
+
+The static baseline remains useful for debt inventory. Required CI acceptance
+uses the clean comparison ref so unchanged historical debt stays visible
+without blocking unrelated work.
+
 ## Plan Docs
 
 Repo `doc/plans/` is contributor decision memory, not just scratch writing.

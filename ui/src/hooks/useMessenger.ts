@@ -10,11 +10,11 @@ import type {
   MessengerIssueThreadItem,
   MessengerSystemThreadKind,
   MessengerThreadDetail,
-  MessengerThreadKind,
   MessengerThreadSummary,
 } from "@rudderhq/shared";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
+export { messengerThreadKindLabel } from "@/lib/messenger-thread-labels";
 
 export type MessengerRouteState =
   | { kind: "root" }
@@ -39,25 +39,6 @@ export interface MessengerModel {
 }
 
 const MESSENGER_THREAD_PAGE_SIZE = 40;
-
-function titleCaseThreadKind(kind: MessengerThreadKind): string {
-  switch (kind) {
-    case "chat":
-      return "Chat";
-    case "issues":
-      return "Issues";
-    case "approvals":
-      return "Approvals";
-    case "failed-runs":
-      return "Failed runs";
-    case "budget-alerts":
-      return "Budget alerts";
-    case "join-requests":
-      return "Join requests";
-    default:
-      return kind;
-  }
-}
 
 export function resolveMessengerRoute(pathname: string): MessengerRouteState {
   if (!/^\/messenger(?:\/|$)/.test(pathname)) return { kind: "root" };
@@ -84,10 +65,6 @@ export function resolveMessengerRoute(pathname: string): MessengerRouteState {
     }
   }
   return { kind: "root" };
-}
-
-export function messengerThreadKindLabel(kind: MessengerThreadKind): string {
-  return titleCaseThreadKind(kind);
 }
 
 export function useMessengerModel(options: { splitIssues?: boolean } = {}) {

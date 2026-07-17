@@ -8,15 +8,24 @@ contract_ids:
   - CONTROL.SERVER.LIFECYCLE.001
 related_code:
   - server/src/index.ts
+  - server/src/app.ts
+  - server/src/bootstrap/create-http-app.ts
+  - server/src/bootstrap/plugin-host-runtime.ts
+  - server/src/services/plugin-dev-watcher.ts
   - server/src/runtime/runtime-supervisor.ts
   - server/src/realtime/live-events-ws.ts
 related_tests:
+  - server/src/__tests__/app-lifecycle.test.ts
+  - server/src/__tests__/http-app-vite-lifecycle.test.ts
+  - server/src/__tests__/plugin-dev-watcher.test.ts
+  - server/src/__tests__/plugin-host-runtime-lifecycle.test.ts
   - server/src/__tests__/runtime-supervisor.test.ts
   - server/src/__tests__/live-events-ws.test.ts
   - scripts/smoke/server-runtime-lifecycle.mjs
   - scripts/smoke/server-runtime-lifecycle-child.ts
 related_plans:
   - doc/plans/2026-07-13-runtime-supervisor-resource-lifecycle.md
+  - doc/plans/2026-07-17-safe-change-throughput-architecture-optimization.md
 edit_policy: user_confirmed_only
 ---
 
@@ -59,10 +68,10 @@ startup error with a secondary cleanup error.
 
 - Actors: local operator, Desktop host, process signal handler, and test or
   embedding code that starts and stops the server programmatically.
-- Lifecycle-owned runtime objects: HTTP listener, Live Events WebSocket runtime,
-  scheduler intervals, integration runtimes, application handle, database
-  client pool, optional embedded PostgreSQL instance, runtime descriptor, and
-  process signal listeners.
+- Lifecycle-owned runtime objects: HTTP listener, Vite middleware/HMR runtime,
+  Live Events WebSocket runtime, scheduler intervals, integration and plugin
+  host runtimes, application handle, database client pool, optional embedded
+  PostgreSQL instance, runtime descriptor, and process signal listeners.
 - Ownership state: whether the current process acquired a resource and, for
   embedded PostgreSQL, whether this process started that database instance.
 - Lifecycle state: accepting new work, disposal in flight, or disposal
@@ -80,15 +89,24 @@ startup error with a secondary cleanup error.
 
 1. As each resource enters explicit server lifecycle ownership, the server
    registers its cleanup with the lifecycle owner.
-2. After the HTTP listener starts, shutdown first stops new HTTP ingress.
-3. Scheduler and integration activity is detached, active and pending Live
+2. Application construction immediately registers the plugin host, then the
+   HTTP application and any owned Vite middleware/HMR runtime. A later
+   application-start failure rolls those resources back in reverse acquisition
+   order.
+3. Plugin discovery and tool-dispatcher warm-up do not block HTTP readiness,
+   but remain tracked startup work. Plugin shutdown prevents a new start,
+   removes its process listeners, stops new scheduler and watcher work, awaits
+   tracked startup work, and then completes dispatcher and plugin teardown
+   exactly once.
+4. After the HTTP listener starts, shutdown first stops new HTTP ingress.
+5. Scheduler and integration activity is detached, active and pending Live
    Events WebSocket work is closed, and the HTTP server is allowed to drain.
-4. The application handle and database client pool close after network work no
-   longer depends on them.
-5. Embedded PostgreSQL stops only when the current process started it; an
+6. The application handle, including an owned Vite runtime, and database client
+   pool close after network work no longer depends on them.
+7. Embedded PostgreSQL stops only when the current process started it; an
    externally managed or already-running PostgreSQL service remains running.
-6. The current process removes only the runtime descriptor it owns.
-7. Startup failure follows the same cleanup path and then rethrows the original
+8. The current process removes only the runtime descriptor it owns.
+9. Startup failure follows the same cleanup path and then rethrows the original
    startup error.
 
 Cleanup of registered resources is awaited, idempotent, and failure-isolated:
@@ -101,6 +119,8 @@ one resource failure is reported but does not skip later cleanup work.
 | Normal stop | Server is running, its active HTTP requests can drain, and `stop()` or a process signal requests shutdown | New ingress stops, registered resources close in safe order, and shutdown completes | Lifecycle-owned listeners, timers, DB resources, or descriptors remain solely because shutdown used a particular entry point | Lifecycle smoke and focused supervisor tests |
 | Repeated or concurrent stop | Disposal is already running or completed | Every caller observes the same in-flight or completed cleanup | A second cleanup races the first, closes a resource twice, or emits duplicate shutdown lifecycle events | `runtime-supervisor.test.ts` and lifecycle smoke |
 | Startup failure | Startup throws after acquiring and registering one or more resources | Registered resources are released and the original startup error is returned to the caller | Registered cleanup is skipped, or a cleanup error replaces the startup failure | `runtime-supervisor.test.ts` |
+| Application startup failure | HTTP app construction or prompt plugin-host startup fails after the plugin runtime is owned | The app-local supervisor closes acquired resources once in reverse order and returns the original error | Plugin process listeners or an acquired Vite runtime survive the failed app creation | `app-lifecycle.test.ts` |
+| Deferred plugin warm-up | Plugin discovery or tool-dispatcher initialization remains in flight after the HTTP app is ready | Readiness is not delayed; close stops new scheduler, watcher, and listener work, then waits for tracked startup work before final dispatcher and worker teardown | Shutdown races startup work or accumulates process listeners across same-process restarts | `plugin-host-runtime-lifecycle.test.ts` |
 | Active or pending WebSocket work | Live Events clients are connected or authenticated upgrade authorization is pending | Subscriptions, heartbeat work, clients, pending upgrade sockets, and the owned upgrade listener close without blocking HTTP shutdown | A pending upgrade keeps the HTTP listener or process alive | `live-events-ws.test.ts` |
 | Shared PostgreSQL | The server uses an external or previously running PostgreSQL instance | Rudder closes its client pool but leaves the shared database service running | The current server process stops a database service it does not own | Ownership guard in `server/src/index.ts`; lifecycle smoke proves the owned embedded case |
 | Cleanup failure | One resource disposer throws or its error reporter fails | Remaining resources still close; startup rollback preserves its original error | One failure aborts the rest of cleanup | `runtime-supervisor.test.ts` |
@@ -176,9 +196,21 @@ real child-process restart smoke.
 - Rudder must not stop PostgreSQL unless the current process started the owned
   embedded instance.
 - Startup failure must preserve the original error object.
+- Plugin discovery and tool-dispatcher warm-up must not delay HTTP readiness;
+  lifecycle close must wait for their tracked startup work before teardown.
+- Plugin watcher close marks the watcher closed before async package-path
+  resolution can finish, prevents post-close watches, and awaits every owned
+  filesystem-watcher close handle.
+- Plugin-host cleanup is failure-isolated within the host boundary: one watcher,
+  loader, dispatcher, host-service, or log-flush failure must not skip later
+  owned cleanup.
+- An owned Vite middleware/HMR runtime and plugin-host process listeners must be
+  closed during normal shutdown and application-start rollback so same-process
+  restart can reuse the same ports and listener baseline.
 - This contract does not promise cancellation or draining of already-started
-  agent runs, asynchronous recovery tasks, plugin work, backups, or workspace
-  operations beyond the resources explicitly owned by the server lifecycle.
+  agent runs, asynchronous recovery tasks, in-flight plugin tool calls or
+  scheduled job executions, backups, or workspace operations beyond the
+  resources explicitly owned by the server lifecycle.
 - This contract does not change API, persistence, organization scoping, runtime
   provider, or UI business logic.
 
@@ -198,15 +230,24 @@ guarantees and ownership boundaries above remain true.
 Related plans:
 
 - `doc/plans/2026-07-13-runtime-supervisor-resource-lifecycle.md`
+- `doc/plans/2026-07-17-safe-change-throughput-architecture-optimization.md`
 
 Related code:
 
 - `server/src/index.ts`
+- `server/src/app.ts`
+- `server/src/bootstrap/create-http-app.ts`
+- `server/src/bootstrap/plugin-host-runtime.ts`
+- `server/src/services/plugin-dev-watcher.ts`
 - `server/src/runtime/runtime-supervisor.ts`
 - `server/src/realtime/live-events-ws.ts`
 
 Related tests:
 
+- `server/src/__tests__/app-lifecycle.test.ts`
+- `server/src/__tests__/http-app-vite-lifecycle.test.ts`
+- `server/src/__tests__/plugin-dev-watcher.test.ts`
+- `server/src/__tests__/plugin-host-runtime-lifecycle.test.ts`
 - `server/src/__tests__/runtime-supervisor.test.ts`
 - `server/src/__tests__/live-events-ws.test.ts`
 - `scripts/smoke/server-runtime-lifecycle.mjs`
@@ -214,11 +255,9 @@ Related tests:
 
 Known gaps:
 
-- Fire-and-forget startup recovery, in-flight scheduler ticks or backup work,
-  Vite middleware/HMR close ownership, plugin-host `exit` / `beforeExit`
-  listener removal and tool-dispatcher teardown, in-flight plugin or Feishu
-  startup work, and workspace runtime cancellation remain outside this
-  lifecycle owner.
+- Fire-and-forget recovery, in-flight scheduler ticks or backup work, in-flight
+  plugin tool calls or job executions, Feishu startup work, and workspace
+  runtime cancellation remain outside this lifecycle owner.
 - Active HTTP requests are drained without a timeout or forced cancellation, so
   a non-terminating request can delay later resource cleanup and restart.
 - External/shared PostgreSQL exclusion is enforced by the server ownership

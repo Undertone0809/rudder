@@ -28,9 +28,9 @@ export interface PluginDevWatcher {
   /** Start watching a local-path plugin directory. */
   watch(pluginId: string, packagePath: string): void;
   /** Stop watching a specific plugin. */
-  unwatch(pluginId: string): void;
+  unwatch(pluginId: string): Promise<void>;
   /** Stop all watchers and clean up. */
-  close(): void;
+  close(): Promise<void>;
 }
 
 export type ResolvePluginPackagePath = (
@@ -42,6 +42,7 @@ export interface PluginDevWatcherFsDeps {
   readFileSync?: typeof readFileSync;
   readdirSync?: typeof readdirSync;
   statSync?: typeof statSync;
+  watch?: typeof chokidar.watch;
 }
 
 type PluginWatchTarget = {
@@ -162,10 +163,15 @@ export function createPluginDevWatcher(
   fsDeps?: PluginDevWatcherFsDeps,
 ): PluginDevWatcher {
   const watchers = new Map<string, FSWatcher>();
+  const watcherCloses = new Set<Promise<void>>();
   const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const fileExists = fsDeps?.existsSync ?? existsSync;
+  const createWatcher = fsDeps?.watch ?? chokidar.watch;
+  let closed = false;
+  let closeInFlight: Promise<void> | null = null;
 
   function watchPlugin(pluginId: string, packagePath: string): void {
+    if (closed) return;
     // Don't double-watch
     if (watchers.has(pluginId)) return;
 
@@ -188,7 +194,7 @@ export function createPluginDevWatcher(
         return;
       }
 
-      const watcher = chokidar.watch(
+      const watcher = createWatcher(
         watcherTargets.map((target) => target.path),
         {
           ignoreInitial: true,
@@ -214,6 +220,7 @@ export function createPluginDevWatcher(
           pluginId,
           setTimeout(() => {
             debounceTimers.delete(pluginId);
+            if (closed) return;
             log.info(
               { pluginId, changedFile: relativePath || path.basename(changedPath) },
               "plugin-dev-watcher: file change detected, restarting worker",
@@ -241,7 +248,7 @@ export function createPluginDevWatcher(
           },
           "plugin-dev-watcher: watcher error, stopping watch for this plugin",
         );
-        unwatchPlugin(pluginId);
+        unwatchPluginSafely(pluginId);
       });
 
       watchers.set(pluginId, watcher);
@@ -268,11 +275,17 @@ export function createPluginDevWatcher(
     }
   }
 
-  function unwatchPlugin(pluginId: string): void {
+  async function unwatchPlugin(pluginId: string): Promise<void> {
     const pluginWatcher = watchers.get(pluginId);
     if (pluginWatcher) {
-      void pluginWatcher.close();
       watchers.delete(pluginId);
+      const watcherClose = Promise.resolve(pluginWatcher.close());
+      watcherCloses.add(watcherClose);
+      try {
+        await watcherClose;
+      } finally {
+        watcherCloses.delete(watcherClose);
+      }
     }
     const timer = debounceTimers.get(pluginId);
     if (timer) {
@@ -281,23 +294,48 @@ export function createPluginDevWatcher(
     }
   }
 
-  function close(): void {
+  function unwatchPluginSafely(pluginId: string): void {
+    void unwatchPlugin(pluginId).catch((err) => {
+      log.warn(
+        { pluginId, err: err instanceof Error ? err.message : String(err) },
+        "plugin-dev-watcher: failed to close watcher cleanly",
+      );
+    });
+  }
+
+  function close(): Promise<void> {
+    if (closeInFlight) return closeInFlight;
+    closed = true;
     lifecycle.off("plugin.loaded", handlePluginLoaded);
     lifecycle.off("plugin.enabled", handlePluginEnabled);
     lifecycle.off("plugin.disabled", handlePluginDisabled);
     lifecycle.off("plugin.unloaded", handlePluginUnloaded);
 
-    for (const [pluginId] of watchers) {
-      unwatchPlugin(pluginId);
-    }
+    const pendingCloses = [...watcherCloses];
+    const pluginIds = [...watchers.keys()];
+    closeInFlight = Promise.allSettled([
+      ...pendingCloses,
+      ...pluginIds.map((pluginId) => unwatchPlugin(pluginId)),
+    ])
+      .then((results) => {
+        for (const result of results) {
+          if (result.status === "rejected") {
+            log.warn(
+              { err: result.reason instanceof Error ? result.reason.message : String(result.reason) },
+              "plugin-dev-watcher: failed to close watcher cleanly",
+            );
+          }
+        }
+      });
+    return closeInFlight;
   }
 
   async function watchLocalPluginById(pluginId: string): Promise<void> {
-    if (!resolvePluginPackagePath) return;
+    if (closed || !resolvePluginPackagePath) return;
 
     try {
       const packagePath = await resolvePluginPackagePath(pluginId);
-      if (!packagePath) return;
+      if (closed || !packagePath) return;
       watchPlugin(pluginId, packagePath);
     } catch (err) {
       log.warn(
@@ -319,11 +357,11 @@ export function createPluginDevWatcher(
   }
 
   function handlePluginDisabled(payload: { pluginId: string }): void {
-    unwatchPlugin(payload.pluginId);
+    unwatchPluginSafely(payload.pluginId);
   }
 
   function handlePluginUnloaded(payload: { pluginId: string }): void {
-    unwatchPlugin(payload.pluginId);
+    unwatchPluginSafely(payload.pluginId);
   }
 
   lifecycle.on("plugin.loaded", handlePluginLoaded);

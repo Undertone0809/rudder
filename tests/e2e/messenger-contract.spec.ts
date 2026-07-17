@@ -58,10 +58,6 @@ function threadTestId(threadKey: string) {
   return `messenger-thread-${threadKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
 
-function messengerSectionTestId(sectionKey: string) {
-  return `messenger-thread-section-${sectionKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-}
-
 function chatUnreadBadgeTestId(chatId: string) {
   return `${threadTestId(`chat:${chatId}`)}-agent-avatar-unread-badge`;
 }
@@ -331,11 +327,11 @@ test.describe("Messenger unified threads contract", () => {
       }),
     ]);
 
-    await expect(page.getByTestId("messenger-thread-section-pinned")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("messenger-thread-section-custom-pinned")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId(threadTestId(`chat:${pinnedOlderChat.id}`))).toContainText("Pinned page session 45");
   });
 
-  test("groups latest Messenger threads into pinned, today, and recent sections", async ({ page }) => {
+  test("orders latest Messenger threads with pinned items first in the Arc-style directory", async ({ page }) => {
     const sessionRes = await page.request.get("/api/auth/get-session");
     expect(sessionRes.ok()).toBe(true);
     const session = await sessionRes.json();
@@ -407,18 +403,15 @@ test.describe("Messenger unified threads contract", () => {
     const pinnedThreadTestId = threadTestId(`chat:${pinnedChatId}`);
     const todayThreadTestId = threadTestId(`chat:${todayChatId}`);
     const recentThreadTestId = threadTestId(`chat:${recentChatId}`);
-    await expect(page.getByTestId("messenger-thread-section-pinned")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId("messenger-thread-section-today")).toBeVisible();
-    await expect(page.getByTestId("messenger-thread-section-recent")).toBeVisible();
     await expect(page.getByTestId(pinnedThreadTestId)).toContainText("Pinned older planning chat");
     await expect(page.getByTestId(todayThreadTestId)).toContainText("Today sidebar activity");
     await expect(page.getByTestId(recentThreadTestId)).toContainText("Older recent sidebar activity");
+    await expect(page.getByTestId("messenger-thread-section-pinned")).toHaveCount(0);
+    await expect(page.getByTestId("messenger-thread-section-today")).toHaveCount(0);
+    await expect(page.getByTestId("messenger-thread-section-recent")).toHaveCount(0);
     await expectTestIdsInDomOrder(page, [
-      "messenger-thread-section-pinned",
       pinnedThreadTestId,
-      "messenger-thread-section-today",
       todayThreadTestId,
-      "messenger-thread-section-recent",
       recentThreadTestId,
     ]);
   });
