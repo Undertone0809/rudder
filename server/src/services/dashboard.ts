@@ -1,7 +1,8 @@
 import type { Db } from "@rudderhq/db";
 import { agents, approvals, costEvents, issues, organizations } from "@rudderhq/db";
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, isNull, sql } from "drizzle-orm";
 import { notFound } from "../errors.js";
+import { approvalVisibleOutsideArchivedChats } from "./approval-visibility.js";
 import { budgetService } from "./budgets.js";
 
 export function dashboardService(db: Db) {
@@ -25,13 +26,17 @@ export function dashboardService(db: Db) {
       const taskRows = await db
         .select({ status: issues.status, count: sql<number>`count(*)` })
         .from(issues)
-        .where(eq(issues.orgId, orgId))
+        .where(and(eq(issues.orgId, orgId), isNull(issues.archivedAt)))
         .groupBy(issues.status);
 
       const pendingApprovals = await db
         .select({ count: sql<number>`count(*)` })
         .from(approvals)
-        .where(and(eq(approvals.orgId, orgId), eq(approvals.status, "pending")))
+        .where(and(
+          eq(approvals.orgId, orgId),
+          eq(approvals.status, "pending"),
+          approvalVisibleOutsideArchivedChats(),
+        ))
         .then((rows) => Number(rows[0]?.count ?? 0));
 
       const agentCounts: Record<string, number> = {

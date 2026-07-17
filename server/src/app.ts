@@ -4,6 +4,7 @@ import { createHttpApp } from "./bootstrap/create-http-app.js";
 import { createPluginHostRuntime } from "./bootstrap/plugin-host-runtime.js";
 import type { RudderAppOptions } from "./bootstrap/types.js";
 import { configureBrowserCapabilityDeployment } from "./services/browser-capability.js";
+import { startEntityCleanupWorker } from "./services/entity-cleanup-jobs.js";
 export { resolveViteHmrPort } from "./bootstrap/create-http-app.js";
 
 export interface RudderAppHandle {
@@ -19,10 +20,12 @@ export async function createRudderApp(
   const pluginRuntime = createPluginHostRuntime(db, opts);
   const app = await createHttpApp(db, opts, pluginRuntime);
   await pluginRuntime.start();
+  const stopEntityCleanupWorker = startEntityCleanupWorker(db, opts.storageService);
 
   return {
     app,
     async close(): Promise<void> {
+      stopEntityCleanupWorker();
       await pluginRuntime.close();
     },
   };

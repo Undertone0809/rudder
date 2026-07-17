@@ -1,14 +1,23 @@
 import {
   activityLog,
   agents,
+  agentWakeupRequests,
   applyPendingMigrations,
   assets,
+  costEvents,
   createDb,
+  documents,
   ensurePostgresDatabase,
+  entityCleanupJobs,
+  entityTombstones,
   executionWorkspaces,
+  financeEvents,
   goals,
+  heartbeatRunEvents,
   heartbeatRuns,
+  issueAttachments,
   issueComments,
+  issueDocuments,
   issueLabels,
   issues,
   labels,
@@ -16,6 +25,7 @@ import {
   organizations,
   projects,
   projectWorkspaces,
+  workspaceRuntimeServices,
 } from "@rudderhq/db";
 import { buildAgentMentionHref, deriveOrganizationUrlKey, shortRefFor } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
@@ -26,9 +36,13 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import request from "supertest";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.ts";
 import { issueRoutes } from "../routes/issues.ts";
+import {
+  enqueueEntityCleanupJobs,
+  processEntityCleanupJobs,
+} from "../services/entity-cleanup-jobs.ts";
 import { issueService } from "../services/issues.ts";
 
 type EmbeddedPostgresInstance = {
@@ -110,11 +124,13 @@ async function startTempDatabase() {
 describe("issueService.list participantAgentId", () => {
   let db!: ReturnType<typeof createDb>;
   let svc!: ReturnType<typeof issueService>;
+  let connectionString = "";
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";
 
   beforeAll(async () => {
     const started = await startTempDatabase();
+    connectionString = started.connectionString;
     db = createDb(started.connectionString);
     svc = issueService(db);
     instance = started.instance;
@@ -122,14 +138,23 @@ describe("issueService.list participantAgentId", () => {
   }, 20_000);
 
   afterEach(async () => {
+    await db.delete(entityCleanupJobs);
+    await db.delete(financeEvents);
+    await db.delete(costEvents);
+    await db.delete(entityTombstones);
+    await db.delete(issueDocuments);
+    await db.delete(documents);
     await db.delete(issueComments);
     await db.delete(organizationMemberships);
     await db.delete(activityLog);
+    await db.delete(heartbeatRunEvents);
+    await db.delete(workspaceRuntimeServices);
     await db.delete(issues);
     await db.delete(goals);
     await db.delete(labels);
     await db.delete(assets);
     await db.delete(heartbeatRuns);
+    await db.delete(agentWakeupRequests);
     await db.delete(projects);
     await db.delete(agents);
     await db.delete(organizations);
@@ -2355,5 +2380,536 @@ describe("issueService.list participantAgentId", () => {
       { id: movedIssueId, boardOrder: 2000 },
       { id: secondIssueId, boardOrder: 3000 },
     ]);
+  });
+
+  it("keeps archived issues visible only through the archived query until restore", async () => {
+    const orgId = randomUUID();
+    const issueId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Issue Archive Visibility Org",
+      urlKey: deriveOrganizationUrlKey("Issue Archive Visibility Org"),
+      issuePrefix: `V${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Archive visibility issue",
+      status: "todo",
+      priority: "medium",
+    });
+
+    const archived = await svc.archive(issueId, {
+      actorType: "user",
+      actorId: "board-user",
+    });
+    expect(archived?.archivedAt).toBeInstanceOf(Date);
+    expect(await svc.getById(issueId)).toBeNull();
+    expect((await svc.list(orgId)).map((issue) => issue.id)).toEqual([]);
+    expect((await svc.list(orgId, { archivedOnly: true })).map((issue) => issue.id)).toEqual([issueId]);
+    expect(await svc.update(issueId, { title: "Must stay hidden" })).toBeNull();
+    expect(await svc.reorder(orgId, {
+      issueId,
+      targetStatus: "todo",
+      position: "start",
+    })).toBeNull();
+
+    const restored = await svc.restore(issueId, {
+      actorType: "user",
+      actorId: "board-user",
+    });
+    expect(restored?.archivedAt).toBeNull();
+    expect((await svc.list(orgId)).map((issue) => issue.id)).toEqual([issueId]);
+    expect((await db
+      .select({ action: activityLog.action })
+      .from(activityLog)
+      .where(eq(activityLog.entityId, issueId)))
+      .map((row) => row.action))
+      .toEqual(["issue.archived", "issue.restored"]);
+  });
+
+  it("rejects issue archive while a persisted run is active", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const issueId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Issue Active Run Archive Guard Org",
+      urlKey: deriveOrganizationUrlKey("Issue Active Run Archive Guard Org"),
+      issuePrefix: `G${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Archive guard agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "assignment",
+      status: "running",
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Active run issue",
+      status: "todo",
+      priority: "medium",
+      executionRunId: runId,
+    });
+
+    await expect(svc.archive(issueId)).rejects.toThrow("Cannot archive an issue while agent work is active");
+    expect((await db.select({ archivedAt: issues.archivedAt }).from(issues).where(eq(issues.id, issueId)))[0]?.archivedAt)
+      .toBeNull();
+  });
+
+  it("rejects deleting an archived issue while a context-linked run is active", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const issueId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Issue Active Run Delete Guard Org",
+      urlKey: deriveOrganizationUrlKey("Issue Active Run Delete Guard Org"),
+      issuePrefix: `X${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Delete guard agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Archived issue with active context run",
+      status: "todo",
+      priority: "medium",
+      archivedAt: new Date(),
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "assignment",
+      status: "running",
+      contextSnapshot: { issueId },
+    });
+
+    await expect(svc.remove(issueId, {
+      actorType: "user",
+      actorId: "board-user",
+    })).rejects.toThrow("Cannot delete an issue while agent work is active");
+    expect(await db.select().from(issues).where(eq(issues.id, issueId))).toHaveLength(1);
+    expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId))).toHaveLength(1);
+    expect(await db.select().from(entityTombstones).where(eq(entityTombstones.entityId, issueId))).toEqual([]);
+  });
+
+  it("deletes archived issue content, detaches ledgers, and leaves only a tombstone", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const issueId = randomUUID();
+    const assetId = randomUUID();
+    const documentId = randomUUID();
+    const wakeupId = randomUUID();
+    const runId = randomUUID();
+    const activityRunId = randomUUID();
+    const workspaceRuntimeServiceId = randomUUID();
+    const sharedRuntimeServiceId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Issue Tombstone Org",
+      urlKey: deriveOrganizationUrlKey("Issue Tombstone Org"),
+      issuePrefix: `D${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Ledger agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      issueNumber: 42,
+      identifier: `D${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}-42`,
+      title: "Sensitive issue title",
+      description: "Sensitive issue description",
+      status: "todo",
+      priority: "medium",
+      archivedAt: new Date(),
+    });
+    await db.insert(assets).values({
+      id: assetId,
+      orgId,
+      provider: "local_disk",
+      objectKey: `orgs/${orgId}/issues/${issueId}/evidence.png`,
+      contentType: "image/png",
+      byteSize: 128,
+      sha256: "a".repeat(64),
+      originalFilename: "evidence.png",
+      createdByUserId: "board-user",
+    });
+    await db.insert(issueAttachments).values({
+      orgId,
+      issueId,
+      assetId,
+      usage: "issue",
+    });
+    await db.insert(documents).values({
+      id: documentId,
+      orgId,
+      title: "Owned issue document",
+      latestBody: "Sensitive document body",
+    });
+    await db.insert(issueDocuments).values({
+      orgId,
+      issueId,
+      documentId,
+      key: "deliverable",
+    });
+    await db.insert(agentWakeupRequests).values({
+      id: wakeupId,
+      orgId,
+      agentId,
+      source: "assignment",
+      status: "completed",
+      payload: {
+        source: "legacy-assignment",
+      },
+      finishedAt: new Date(),
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "assignment",
+      status: "succeeded",
+      wakeupRequestId: wakeupId,
+      contextSnapshot: { source: "legacy-run-without-issue-context" },
+      logStore: "local_file",
+      logRef: "../deleted-issue-sensitive.ndjson",
+      resultJson: { body: "Sensitive agent result" },
+      stdoutExcerpt: "Sensitive stdout",
+      finishedAt: new Date(),
+    });
+    await db.insert(heartbeatRuns).values({
+      id: activityRunId,
+      orgId,
+      agentId,
+      invocationSource: "assignment",
+      status: "succeeded",
+      contextSnapshot: { source: "activity-only-link" },
+      resultJson: { body: "Sensitive activity-linked result" },
+      finishedAt: new Date(),
+    });
+    await db.update(issues).set({ executionRunId: runId }).where(eq(issues.id, issueId));
+    await db.insert(activityLog).values({
+      orgId,
+      actorType: "agent",
+      actorId: agentId,
+      agentId,
+      runId: activityRunId,
+      action: "issue.activity_linked_run",
+      entityType: "issue",
+      entityId: issueId,
+      details: { body: "Sensitive activity-linked output" },
+    });
+    await db.insert(workspaceRuntimeServices).values({
+      id: workspaceRuntimeServiceId,
+      orgId,
+      issueId,
+      scopeType: "run",
+      scopeId: activityRunId,
+      serviceName: "sensitive-preview",
+      status: "stopped",
+      lifecycle: "run",
+      command: "sensitive command",
+      cwd: "/sensitive/path",
+      url: "http://127.0.0.1:3999/sensitive",
+      provider: "local_process",
+      startedByRunId: null,
+    });
+    await db.insert(workspaceRuntimeServices).values({
+      id: sharedRuntimeServiceId,
+      orgId,
+      issueId,
+      scopeType: "project_workspace",
+      scopeId: "shared-project-workspace",
+      serviceName: "shared-preview",
+      status: "running",
+      lifecycle: "shared",
+      command: "shared command",
+      cwd: "/shared/path",
+      url: "http://127.0.0.1:4999/shared",
+      provider: "local_process",
+      startedByRunId: activityRunId,
+    });
+    await db.insert(heartbeatRunEvents).values({
+      orgId,
+      runId,
+      agentId,
+      seq: 1,
+      eventType: "stdout",
+      stream: "stdout",
+      message: "Sensitive event output",
+    });
+    await db.insert(costEvents).values({
+      orgId,
+      agentId,
+      issueId,
+      heartbeatRunId: runId,
+      provider: "openai",
+      biller: "openai",
+      billingType: "token",
+      model: "test-model",
+      costCents: 25,
+      occurredAt: new Date(),
+    });
+    await db.insert(financeEvents).values({
+      orgId,
+      agentId,
+      issueId,
+      heartbeatRunId: runId,
+      eventKind: "agent_usage",
+      direction: "debit",
+      biller: "openai",
+      amountCents: 25,
+      occurredAt: new Date(),
+    });
+
+    const removed = await svc.remove(issueId, {
+      actorType: "user",
+      actorId: "board-user",
+    });
+    expect(removed?.issue.id).toBe(issueId);
+    expect(await db.select().from(issues).where(eq(issues.id, issueId))).toEqual([]);
+    expect(await db.select().from(documents).where(eq(documents.id, documentId))).toEqual([]);
+    expect((await db.select({ issueId: costEvents.issueId }).from(costEvents))[0]?.issueId).toBeNull();
+    expect((await db.select({ issueId: financeEvents.issueId }).from(financeEvents))[0]?.issueId).toBeNull();
+    expect((await db.select({ heartbeatRunId: costEvents.heartbeatRunId }).from(costEvents))[0]?.heartbeatRunId)
+      .toBeNull();
+    expect((await db.select({ heartbeatRunId: financeEvents.heartbeatRunId }).from(financeEvents))[0]?.heartbeatRunId)
+      .toBeNull();
+    expect(await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, runId))).toEqual([]);
+    expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId))).toEqual([]);
+    expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, activityRunId))).toEqual([]);
+    expect(await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, wakeupId))).toEqual([]);
+    expect(await db.select().from(workspaceRuntimeServices)
+      .where(eq(workspaceRuntimeServices.id, workspaceRuntimeServiceId))).toEqual([]);
+    expect(await db.select({
+      id: workspaceRuntimeServices.id,
+      issueId: workspaceRuntimeServices.issueId,
+      startedByRunId: workspaceRuntimeServices.startedByRunId,
+    }).from(workspaceRuntimeServices).where(eq(workspaceRuntimeServices.id, sharedRuntimeServiceId)))
+      .toEqual([{ id: sharedRuntimeServiceId, issueId: null, startedByRunId: null }]);
+
+    const [tombstone] = await db.select().from(entityTombstones).where(eq(entityTombstones.entityId, issueId));
+    expect(tombstone).toMatchObject({
+      orgId,
+      entityType: "issue",
+      entityId: issueId,
+      title: "Sensitive issue title",
+      issueNumber: 42,
+      deletedByActorType: "user",
+      deletedByActorId: "board-user",
+    });
+    expect(tombstone?.title).toBe("Sensitive issue title");
+    expect(Object.keys(tombstone ?? {})).not.toContain("description");
+    expect(await db
+      .select({ entityType: activityLog.entityType, entityId: activityLog.entityId })
+      .from(activityLog)
+      .where(eq(activityLog.action, "issue.deleted")))
+      .toEqual([{ entityType: "organization", entityId: orgId }]);
+    expect(await db.select().from(activityLog).where(eq(activityLog.entityId, issueId))).toEqual([]);
+    expect(await db
+      .select({ artifactType: entityCleanupJobs.artifactType, artifactRef: entityCleanupJobs.artifactRef })
+      .from(entityCleanupJobs))
+      .toEqual(expect.arrayContaining([
+        {
+          artifactType: "storage_object",
+          artifactRef: `orgs/${orgId}/issues/${issueId}/evidence.png`,
+        },
+        {
+          artifactType: "run_log",
+          artifactRef: "../deleted-issue-sensitive.ndjson",
+        },
+      ]));
+  });
+
+  it("retries durable entity cleanup jobs until physical deletion succeeds", async () => {
+    const orgId = randomUUID();
+    const artifactRef = `orgs/${orgId}/issues/deleted-evidence.png`;
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Durable Entity Cleanup Org",
+      urlKey: deriveOrganizationUrlKey("Durable Entity Cleanup Org"),
+      issuePrefix: `Q${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await enqueueEntityCleanupJobs(db, orgId, [{
+      artifactType: "storage_object",
+      artifactRef,
+    }]);
+
+    const deleteObject = vi.fn().mockRejectedValueOnce(new Error("storage unavailable"));
+    const storage = { deleteObject } as Parameters<typeof processEntityCleanupJobs>[1];
+    const firstAttemptAt = new Date("2026-07-17T00:00:00.000Z");
+    await expect(processEntityCleanupJobs(db, storage, { now: firstAttemptAt }))
+      .resolves.toEqual({ processed: 0, failed: 1 });
+    const [pending] = await db.select().from(entityCleanupJobs);
+    expect(pending).toMatchObject({
+      orgId,
+      artifactType: "storage_object",
+      artifactRef,
+      attemptCount: 1,
+      lastError: "storage unavailable",
+    });
+
+    deleteObject.mockResolvedValueOnce(undefined);
+    await expect(processEntityCleanupJobs(db, storage, {
+      now: new Date(pending!.nextAttemptAt.getTime() + 1),
+    })).resolves.toEqual({ processed: 1, failed: 0 });
+    expect(deleteObject).toHaveBeenLastCalledWith(orgId, artifactRef);
+    expect(await db.select().from(entityCleanupJobs)).toEqual([]);
+  });
+
+  it("keeps an archived parent issue intact while sub-issues still exist", async () => {
+    const orgId = randomUUID();
+    const parentId = randomUUID();
+    const childId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Issue Delete Hierarchy Guard Org",
+      urlKey: deriveOrganizationUrlKey("Issue Delete Hierarchy Guard Org"),
+      issuePrefix: `H${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(issues).values({
+      id: parentId,
+      orgId,
+      title: "Archived parent",
+      status: "todo",
+      priority: "medium",
+    });
+    await db.insert(issues).values({
+      id: childId,
+      orgId,
+      parentId,
+      title: "Existing child",
+      status: "todo",
+      priority: "medium",
+    });
+
+    await expect(svc.archive(parentId)).rejects.toThrow("Archive sub-issues before archiving this issue");
+    expect((await db.select({ archivedAt: issues.archivedAt }).from(issues).where(eq(issues.id, parentId)))[0]?.archivedAt)
+      .toBeNull();
+
+    await expect(svc.archive(childId)).resolves.toMatchObject({ id: childId });
+    await expect(svc.archive(parentId)).resolves.toMatchObject({ id: parentId });
+    await expect(svc.restore(childId)).rejects.toThrow(
+      "Restore the parent issue before restoring this sub-issue",
+    );
+    await expect(svc.restore(parentId)).resolves.toMatchObject({ id: parentId, archivedAt: null });
+    await expect(svc.restore(childId)).resolves.toMatchObject({ id: childId, archivedAt: null });
+
+    await svc.archive(childId);
+    await svc.archive(parentId);
+
+    await expect(svc.remove(parentId, {
+      actorType: "user",
+      actorId: "board-user",
+    })).rejects.toThrow("Remove or delete sub-issues before deleting this issue");
+    expect(await db.select({ id: issues.id }).from(issues).where(eq(issues.id, parentId))).toEqual([{ id: parentId }]);
+    expect(await db.select().from(entityTombstones).where(eq(entityTombstones.entityId, parentId))).toEqual([]);
+  });
+
+  it("serializes child restore behind an in-flight parent archive", async () => {
+    const orgId = randomUUID();
+    const parentId = randomUUID();
+    const childId = randomUUID();
+    const secondConnection = createDb(connectionString);
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Issue Hierarchy Serialization Org",
+      urlKey: deriveOrganizationUrlKey("Issue Hierarchy Serialization Org"),
+      issuePrefix: `Y${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(issues).values([
+      {
+        id: parentId,
+        orgId,
+        title: "Parent being archived",
+        status: "todo",
+        priority: "medium",
+      },
+      {
+        id: childId,
+        orgId,
+        parentId,
+        title: "Archived child being restored",
+        status: "todo",
+        priority: "medium",
+        archivedAt: new Date(),
+      },
+    ]);
+
+    let signalLocked!: () => void;
+    const locked = new Promise<void>((resolve) => { signalLocked = resolve; });
+    let releaseArchive!: () => void;
+    const archiveCanCommit = new Promise<void>((resolve) => { releaseArchive = resolve; });
+    const archive = db.transaction(async (tx) => {
+      await tx
+        .select({ id: issues.id })
+        .from(issues)
+        .where(eq(issues.id, parentId))
+        .for("update");
+      signalLocked();
+      await archiveCanCommit;
+      await tx.update(issues).set({ archivedAt: new Date() }).where(eq(issues.id, parentId));
+    });
+    await locked;
+
+    const restore = issueService(secondConnection).restore(childId);
+    const stateBeforeCommit = await Promise.race([
+      restore.then(() => "resolved", () => "rejected"),
+      new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 50)),
+    ]);
+    expect(stateBeforeCommit).toBe("blocked");
+
+    releaseArchive();
+    await archive;
+    await expect(restore).rejects.toThrow("Restore the parent issue before restoring this sub-issue");
+    expect((await db.select({ archivedAt: issues.archivedAt }).from(issues).where(eq(issues.id, childId)))[0]?.archivedAt)
+      .toBeInstanceOf(Date);
   });
 });

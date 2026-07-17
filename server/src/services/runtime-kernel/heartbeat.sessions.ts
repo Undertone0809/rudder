@@ -14,7 +14,7 @@ import type {
   HeartbeatRecoveryTrigger,
   HeartbeatRunRecoveryContext
 } from "@rudderhq/shared";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import path from "node:path";
 import type {
   AgentRuntimeExecutionResult,
@@ -585,7 +585,11 @@ export async function hydrateWakeContextSnapshot(
         updatedAt: issues.updatedAt,
       })
       .from(issues)
-      .where(and(eq(issues.id, issueId), eq(issues.orgId, orgId)))
+      .where(and(
+        eq(issues.id, issueId),
+        eq(issues.orgId, orgId),
+        isNull(issues.archivedAt),
+      ))
       .then((rows) => rows[0] ?? null);
 
     if (issueRow) {

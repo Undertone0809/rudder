@@ -1,6 +1,6 @@
 import type { Db } from "@rudderhq/db";
 import { documentRevisions, documents, issueDocuments, issues } from "@rudderhq/db";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { conflict } from "../errors.js";
 
 function mapLibraryDocumentRow(
@@ -61,7 +61,7 @@ async function listIssueLinksByDocumentId(db: Db, orgId: string, documentIds?: s
     })
     .from(issueDocuments)
     .innerJoin(issues, eq(issueDocuments.issueId, issues.id))
-    .where(and(...conditions));
+    .where(and(...conditions, isNull(issues.archivedAt)));
 
   const issueLinksByDocumentId = new Map<string, Array<{
     issueId: string;

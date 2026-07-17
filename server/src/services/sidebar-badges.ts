@@ -10,6 +10,7 @@ import {
 } from "@rudderhq/db";
 import type { SidebarBadges } from "@rudderhq/shared";
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { approvalVisibleOutsideArchivedChats } from "./approval-visibility.js";
 import { visibleIncomingMessageSql } from "./chats.helpers.js";
 import { messengerService } from "./messenger.js";
 
@@ -63,6 +64,7 @@ export function sidebarBadgeService(db: Db) {
         and(
           eq(approvals.orgId, orgId),
           inArray(approvals.status, ACTIONABLE_APPROVAL_STATUSES),
+          approvalVisibleOutsideArchivedChats(),
         ),
       )
       .then((rows) => Number(rows[0]?.count ?? 0));

@@ -1,8 +1,9 @@
 import type { Db } from "@rudderhq/db";
 import { approvals, issueApprovals, issueLabels, issues, labels } from "@rudderhq/db";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { notFound, unprocessable } from "../errors.js";
 import { redactEventPayload } from "../redaction.js";
+import { approvalVisibleOutsideArchivedChats } from "./approval-visibility.js";
 
 interface LinkActor {
   agentId?: string | null;
@@ -14,7 +15,7 @@ export function issueApprovalService(db: Db) {
     return db
       .select()
       .from(issues)
-      .where(eq(issues.id, issueId))
+      .where(and(eq(issues.id, issueId), isNull(issues.archivedAt)))
       .then((rows) => rows[0] ?? null);
   }
 
@@ -22,7 +23,7 @@ export function issueApprovalService(db: Db) {
     return db
       .select()
       .from(approvals)
-      .where(eq(approvals.id, approvalId))
+      .where(and(eq(approvals.id, approvalId), approvalVisibleOutsideArchivedChats()))
       .then((rows) => rows[0] ?? null);
   }
 
@@ -87,7 +88,10 @@ export function issueApprovalService(db: Db) {
         })
         .from(issueApprovals)
         .innerJoin(approvals, eq(issueApprovals.approvalId, approvals.id))
-        .where(eq(issueApprovals.issueId, issueId))
+        .where(and(
+          eq(issueApprovals.issueId, issueId),
+          approvalVisibleOutsideArchivedChats(),
+        ))
         .orderBy(desc(issueApprovals.createdAt));
       return result.map((approval) => ({
         id: approval.id,
@@ -143,7 +147,7 @@ export function issueApprovalService(db: Db) {
         })
         .from(issueApprovals)
         .innerJoin(issues, eq(issueApprovals.issueId, issues.id))
-        .where(eq(issueApprovals.approvalId, approvalId))
+        .where(and(eq(issueApprovals.approvalId, approvalId), isNull(issues.archivedAt)))
         .orderBy(desc(issueApprovals.createdAt));
       const labelsForIssues = await labelsByIssueId(result.map((issue) => issue.id));
       return result.map((issue) => {
@@ -197,7 +201,7 @@ export function issueApprovalService(db: Db) {
           orgId: issues.orgId,
         })
         .from(issues)
-        .where(inArray(issues.id, uniqueIssueIds));
+        .where(and(inArray(issues.id, uniqueIssueIds), isNull(issues.archivedAt)));
 
       if (rows.length !== uniqueIssueIds.length) {
         throw notFound("One or more issues not found");

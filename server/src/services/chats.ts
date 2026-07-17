@@ -1,8 +1,11 @@
 import type { Db } from "@rudderhq/db";
 import {
+  activityLog,
   agentIntegrationChatBindings,
+  agentIntegrationOutboundMessages,
   agentIntegrations,
   agents,
+  approvalComments,
   approvals,
   assets,
   chatAttachments,
@@ -12,24 +15,32 @@ import {
   chatGenerations,
   chatMessages,
   chatQueuedMessages,
-  issueAttachments,
+  customIntegrationToolCalls,
+  entityTombstones,
   messengerCustomGroupEntries,
   messengerCustomGroups,
-  organizationLogos,
+  messengerThreadUserStates,
   organizations
 } from "@rudderhq/db";
 import { MESSENGER_FORK_GROUP_DEFAULT_ICON, sanitizeChatStructuredPayload, type ChatConversationMutability, type ChatQueuedMessagePayload, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
-import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { logActivity, type LogActivityInput } from "./activity-log.js";
 import { agentService } from "./agents.js";
 import { approvalService } from "./approvals.js";
+import { enqueueEntityCleanupJobs } from "./entity-cleanup-jobs.js";
+import {
+  assertNoActiveEntityRunData,
+  deleteEntityRunData,
+  removeEntityRunLogArtifacts,
+} from "./entity-run-cleanup.js";
 import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 import { organizationService } from "./orgs.js";
+import { orphanedAssetService } from "./orphaned-assets.js";
 import { isPostgresError } from "./postgres-errors.js";
 
 type ConversationRow = typeof chatConversations.$inferSelect;
@@ -105,6 +116,30 @@ export function chatService(db: Db) {
   const issueApprovalsSvc = issueApprovalService(db);
   const organizationsSvc = organizationService(db);
   const agentsSvc = agentService(db);
+
+  async function deleteChatOwnedApprovals(dbOrTx: Db, orgId: string, conversationIds: string[]) {
+    if (conversationIds.length === 0) return;
+    const approvalRows = await dbOrTx
+      .select({ id: approvals.id })
+      .from(approvals)
+      .where(and(
+        eq(approvals.orgId, orgId),
+        or(
+          inArray(sql<string>`${approvals.payload}->>'chatConversationId'`, conversationIds),
+          inArray(sql<string>`${approvals.payload}->>'conversationId'`, conversationIds),
+        ),
+      ));
+    const approvalIds = approvalRows.map((row) => row.id);
+    if (approvalIds.length === 0) return;
+    await dbOrTx.delete(approvalComments).where(and(
+      eq(approvalComments.orgId, orgId),
+      inArray(approvalComments.approvalId, approvalIds),
+    ));
+    await dbOrTx.delete(approvals).where(and(
+      eq(approvals.orgId, orgId),
+      inArray(approvals.id, approvalIds),
+    ));
+  }
 
   async function ensureConversationUserStates(rows: ConversationRow[], userId: string) {
     if (rows.length === 0) return;
@@ -1119,6 +1154,8 @@ export function chatService(db: Db) {
       const conditions = [eq(chatConversations.orgId, orgId)];
       if (status !== "all") {
         conditions.push(eq(chatConversations.status, status));
+      } else {
+        conditions.push(ne(chatConversations.status, "archived"));
       }
       if (hasSearch) {
         conditions.push(sql<boolean>`(
@@ -1200,6 +1237,8 @@ export function chatService(db: Db) {
       const threadKeySql = sql<string>`'chat:' || ${chatConversations.id}`;
       if (status !== "all") {
         conditions.push(eq(chatConversations.status, status));
+      } else {
+        conditions.push(ne(chatConversations.status, "archived"));
       }
       if (options?.after) {
         const afterActivityAt = options.after.activityAt.toISOString();
@@ -1286,11 +1325,25 @@ export function chatService(db: Db) {
     return hydrateConversationSummaries(rows, userId);
   }
 
-  async function getById(id: string, userId?: string | null) {
+  async function getByIdIncludingArchived(id: string, userId?: string | null) {
       const row = await db
         .select()
         .from(chatConversations)
         .where(eq(chatConversations.id, id))
+        .then((rows) => rows[0] ?? null);
+      if (!row) return null;
+      const [conversation] = await hydrateConversations([row], userId);
+      return conversation ?? null;
+  }
+
+  async function getById(id: string, userId?: string | null) {
+      const row = await db
+        .select()
+        .from(chatConversations)
+        .where(and(
+          eq(chatConversations.id, id),
+          ne(chatConversations.status, "archived"),
+        ))
         .then((rows) => rows[0] ?? null);
       if (!row) return null;
       const [conversation] = await hydrateConversations([row], userId);
@@ -1608,7 +1661,74 @@ export function chatService(db: Db) {
     return getById(created.id, input.userId);
   }
 
-  async function update(id: string, patch: Partial<typeof chatConversations.$inferInsert>) {
+  async function update(
+    id: string,
+    patch: Partial<typeof chatConversations.$inferInsert>,
+    activity?: Omit<LogActivityInput, "orgId" | "action" | "entityType" | "entityId" | "details">,
+  ) {
+      if (patch.status === "archived" || patch.status === "active") {
+        const result = await db.transaction(async (tx) => {
+          const existing = await tx
+            .select({
+              id: chatConversations.id,
+              orgId: chatConversations.orgId,
+              status: chatConversations.status,
+            })
+            .from(chatConversations)
+            .where(eq(chatConversations.id, id))
+            .for("update")
+            .then((rows) => rows[0] ?? null);
+          if (!existing) return null;
+
+          if (existing.status !== "archived") {
+            const [activeGeneration] = await Promise.all([
+              tx
+                .select({ id: chatGenerations.id })
+                .from(chatGenerations)
+                .where(and(
+                  eq(chatGenerations.conversationId, id),
+                  inArray(chatGenerations.status, ["active", "tool_busy", "closing"]),
+                ))
+                .limit(1)
+                .then((rows) => rows[0] ?? null),
+              assertNoActiveEntityRunData(tx as unknown as Db, {
+                orgId: existing.orgId,
+                chatConversationId: id,
+              }, "Cannot archive a chat while a reply is in progress"),
+            ]);
+            if (activeGeneration) {
+              throw conflict("Cannot archive a chat while a reply is in progress");
+            }
+          }
+
+          const [updated] = await tx
+            .update(chatConversations)
+            .set({
+              ...patch,
+              updatedAt: new Date(),
+            })
+            .where(eq(chatConversations.id, id))
+            .returning({ id: chatConversations.id, orgId: chatConversations.orgId });
+          if (!updated) return null;
+          const activityResult = activity
+            ? await logActivity(tx as unknown as Db, {
+              ...activity,
+              orgId: updated.orgId,
+              action: "chat.updated",
+              entityType: "chat",
+              entityId: updated.id,
+              details: patch,
+            }, { deferPublish: true })
+            : null;
+          return {
+            id: updated.id,
+            publishActivity: activityResult?.publish ?? null,
+          };
+        });
+        result?.publishActivity?.();
+        return result ? getByIdIncludingArchived(result.id) : null;
+      }
+
       const [updated] = await db
         .update(chatConversations)
         .set({
@@ -1664,23 +1784,147 @@ export function chatService(db: Db) {
     return rows;
   }
 
-  async function remove(id: string) {
-    return db.transaction(async (tx) => {
+  async function remove(
+    id: string,
+    activity: Omit<LogActivityInput, "orgId" | "action" | "entityType" | "entityId" | "details">,
+  ) {
+    const result = await db.transaction(async (tx) => {
+      const conversation = await tx
+        .select()
+        .from(chatConversations)
+        .where(eq(chatConversations.id, id))
+        .for("update")
+        .then((rows) => rows[0] ?? null);
+      if (!conversation) return null;
+      if (conversation.status !== "archived") {
+        throw conflict("Archive the chat before deleting it");
+      }
+      const [binding, historicalExternalMessage, activeGeneration] = await Promise.all([
+        tx
+          .select({ id: agentIntegrationChatBindings.id })
+          .from(agentIntegrationChatBindings)
+          .where(and(
+            eq(agentIntegrationChatBindings.orgId, conversation.orgId),
+            eq(agentIntegrationChatBindings.conversationId, id),
+          ))
+          .limit(1)
+          .then((rows) => rows[0] ?? null),
+        tx
+          .select({ id: chatMessages.id })
+          .from(chatMessages)
+          .where(and(
+            eq(chatMessages.orgId, conversation.orgId),
+            eq(chatMessages.conversationId, id),
+            sql<boolean>`${chatMessages.structuredPayload}->>'source' = 'agent_integration'`,
+            sql<boolean>`${chatMessages.structuredPayload}->>'provider' = 'feishu'`,
+          ))
+          .limit(1)
+          .then((rows) => rows[0] ?? null),
+        tx
+          .select({ id: chatGenerations.id })
+          .from(chatGenerations)
+          .where(and(
+            eq(chatGenerations.orgId, conversation.orgId),
+            eq(chatGenerations.conversationId, id),
+            inArray(chatGenerations.status, ["active", "tool_busy", "closing"]),
+          ))
+          .limit(1)
+          .then((rows) => rows[0] ?? null),
+        assertNoActiveEntityRunData(tx as unknown as Db, {
+          orgId: conversation.orgId,
+          chatConversationId: id,
+        }, "Cannot delete a chat while a reply is in progress"),
+      ]);
+      if (binding || historicalExternalMessage) {
+        throw conflict("Externally managed chats cannot be deleted in Rudder");
+      }
+      if (activeGeneration) {
+        throw conflict("Cannot delete a chat while a reply is in progress");
+      }
+
       const attachmentRows = await tx
         .select({ assetId: chatAttachments.assetId })
         .from(chatAttachments)
         .where(eq(chatAttachments.conversationId, id));
+      await tx.insert(entityTombstones).values({
+        orgId: conversation.orgId,
+        entityType: "chat",
+        entityId: conversation.id,
+        title: conversation.title,
+        issueNumber: null,
+        deletedByActorType: activity.actorType,
+        deletedByActorId: activity.actorId,
+      }).onConflictDoNothing({
+        target: [entityTombstones.entityType, entityTombstones.entityId],
+      });
+      const runCleanupArtifacts = await deleteEntityRunData(tx as unknown as Db, {
+        orgId: conversation.orgId,
+        chatConversationId: id,
+      }, "Cannot delete a chat while a reply is in progress");
+      await tx.delete(activityLog).where(and(
+        eq(activityLog.orgId, conversation.orgId),
+        eq(activityLog.entityType, "chat"),
+        eq(activityLog.entityId, id),
+      ));
+      const threadKey = `chat:${id}`;
+      await tx.delete(messengerCustomGroupEntries).where(and(
+        eq(messengerCustomGroupEntries.orgId, conversation.orgId),
+        eq(messengerCustomGroupEntries.threadKey, threadKey),
+      ));
+      await tx.delete(messengerThreadUserStates).where(and(
+        eq(messengerThreadUserStates.orgId, conversation.orgId),
+        eq(messengerThreadUserStates.threadKey, threadKey),
+      ));
+      await tx.delete(customIntegrationToolCalls).where(and(
+        eq(customIntegrationToolCalls.orgId, conversation.orgId),
+        eq(customIntegrationToolCalls.conversationId, id),
+      ));
+      await tx.delete(agentIntegrationOutboundMessages).where(and(
+        eq(agentIntegrationOutboundMessages.orgId, conversation.orgId),
+        eq(agentIntegrationOutboundMessages.conversationId, id),
+      ));
+      await deleteChatOwnedApprovals(tx as unknown as Db, conversation.orgId, [id]);
       const [deleted] = await tx
         .delete(chatConversations)
         .where(eq(chatConversations.id, id))
         .returning();
       if (!deleted) return null;
       const assetIds = [...new Set(attachmentRows.map((row) => row.assetId))];
-      if (assetIds.length > 0) {
-        await tx.delete(assets).where(inArray(assets.id, assetIds));
-      }
-      return deleted;
+      const orphanedAttachments = await orphanedAssetService(tx as unknown as Db)
+        .list(conversation.orgId, assetIds);
+      await enqueueEntityCleanupJobs(
+        tx as unknown as Db,
+        conversation.orgId,
+        orphanedAttachments.map((attachment) => ({
+          artifactType: "storage_object",
+          artifactRef: attachment.objectKey,
+        })),
+      );
+      const removedAttachments = await orphanedAssetService(tx as unknown as Db)
+        .remove(conversation.orgId, orphanedAttachments.map((attachment) => attachment.id));
+      const removedAttachmentIds = new Set(removedAttachments.map((attachment) => attachment.id));
+      const activityResult = await logActivity(tx as unknown as Db, {
+        ...activity,
+          orgId: conversation.orgId,
+          action: "chat.deleted",
+          entityType: "organization",
+          entityId: conversation.orgId,
+          details: { deletedEntityType: "chat" },
+      }, { deferPublish: true });
+      return {
+        conversation: deleted,
+        attachments: orphanedAttachments.filter((attachment) => removedAttachmentIds.has(attachment.id)),
+        runCleanupArtifacts,
+        publishActivity: activityResult?.publish ?? null,
+      };
     });
+    if (!result) return null;
+    result.publishActivity?.();
+    await removeEntityRunLogArtifacts(db, result.conversation.orgId, result.runCleanupArtifacts);
+    return {
+      conversation: result.conversation,
+      attachments: result.attachments,
+    };
   }
 
   async function removeArchived(
@@ -1693,7 +1937,7 @@ export function chatService(db: Db) {
     const result = await db.transaction(async (tx) => {
       const lockedConversations = ids.length > 0
         ? await tx
-          .select({ id: chatConversations.id })
+          .select({ id: chatConversations.id, title: chatConversations.title })
           .from(chatConversations)
           .where(
             and(
@@ -1705,6 +1949,9 @@ export function chatService(db: Db) {
           .for("update")
         : [];
       const lockedIds = lockedConversations.map((conversation) => conversation.id);
+      const lockedConversationById = new Map(
+        lockedConversations.map((conversation) => [conversation.id, conversation]),
+      );
       const boundConversationRows = lockedIds.length > 0
         ? await tx
           .select({ conversationId: agentIntegrationChatBindings.conversationId })
@@ -1738,21 +1985,69 @@ export function chatService(db: Db) {
       const deletableIds = lockedIds.filter((id) => !boundConversationIds.has(id));
       const skippedExternalCount = lockedIds.length - deletableIds.length;
 
-      const activeGenerations = deletableIds.length > 0
-        ? await tx
-          .select({ conversationId: chatGenerations.conversationId })
-          .from(chatGenerations)
-          .where(
-            and(
+      const [activeGenerations] = deletableIds.length > 0
+        ? await Promise.all([
+          tx
+            .select({ conversationId: chatGenerations.conversationId })
+            .from(chatGenerations)
+            .where(and(
               eq(chatGenerations.orgId, orgId),
               inArray(chatGenerations.status, ["active", "tool_busy", "closing"]),
               inArray(chatGenerations.conversationId, deletableIds),
-            ),
-          )
-          .limit(1)
-        : [];
+            ))
+            .limit(1),
+          assertNoActiveEntityRunData(tx as unknown as Db, {
+            orgId,
+            chatConversationIds: deletableIds,
+          }, "Cannot delete archived chats while a reply is in progress"),
+        ])
+        : [[]];
       if (activeGenerations.length > 0) {
         throw conflict("Cannot delete archived chats while a reply is in progress");
+      }
+
+      const runCleanupArtifacts = deletableIds.length > 0
+        ? [await deleteEntityRunData(tx as unknown as Db, {
+          orgId,
+          chatConversationIds: deletableIds,
+        }, "Cannot delete archived chats while a reply is in progress")]
+        : [];
+
+      if (deletableIds.length > 0) {
+        await tx.insert(entityTombstones).values(deletableIds.map((entityId) => ({
+          orgId,
+          entityType: "chat",
+          entityId,
+          title: lockedConversationById.get(entityId)!.title,
+          issueNumber: null,
+          deletedByActorType: activity.actorType,
+          deletedByActorId: activity.actorId,
+        }))).onConflictDoNothing({
+          target: [entityTombstones.entityType, entityTombstones.entityId],
+        });
+        await tx.delete(activityLog).where(and(
+          eq(activityLog.orgId, orgId),
+          eq(activityLog.entityType, "chat"),
+          inArray(activityLog.entityId, deletableIds),
+        ));
+        const threadKeys = deletableIds.map((conversationId) => `chat:${conversationId}`);
+        await tx.delete(messengerCustomGroupEntries).where(and(
+          eq(messengerCustomGroupEntries.orgId, orgId),
+          inArray(messengerCustomGroupEntries.threadKey, threadKeys),
+        ));
+        await tx.delete(messengerThreadUserStates).where(and(
+          eq(messengerThreadUserStates.orgId, orgId),
+          inArray(messengerThreadUserStates.threadKey, threadKeys),
+        ));
+        await tx.delete(customIntegrationToolCalls).where(and(
+          eq(customIntegrationToolCalls.orgId, orgId),
+          inArray(customIntegrationToolCalls.conversationId, deletableIds),
+        ));
+        await tx.delete(agentIntegrationOutboundMessages).where(and(
+          eq(agentIntegrationOutboundMessages.orgId, orgId),
+          inArray(agentIntegrationOutboundMessages.conversationId, deletableIds),
+        ));
+        await deleteChatOwnedApprovals(tx as unknown as Db, orgId, deletableIds);
       }
 
       const attachmentRows = deletableIds.length > 0
@@ -1790,6 +2085,19 @@ export function chatService(db: Db) {
       const deletedAttachments = attachmentRows.filter((attachment) =>
         deletedIds.has(attachment.conversationId),
       );
+      const orphanedAttachments = await orphanedAssetService(tx as unknown as Db)
+        .list(orgId, deletedAttachments.map((attachment) => attachment.assetId));
+      await enqueueEntityCleanupJobs(
+        tx as unknown as Db,
+        orgId,
+        orphanedAttachments.map((attachment) => ({
+          artifactType: "storage_object",
+          artifactRef: attachment.objectKey,
+        })),
+      );
+      const removedAttachments = await orphanedAssetService(tx as unknown as Db)
+        .remove(orgId, orphanedAttachments.map((attachment) => attachment.id));
+      const removedAttachmentIds = new Set(removedAttachments.map((attachment) => attachment.id));
 
       const activityResult = await logActivity(tx as unknown as Db, {
         ...activity,
@@ -1800,14 +2108,15 @@ export function chatService(db: Db) {
         details: {
           deletedCount: deleted.length,
           skippedExternalCount,
-          attachmentCount: deletedAttachments.length,
+          attachmentCount: orphanedAttachments.length,
         },
       }, { deferPublish: true });
 
       return {
         conversations: deleted,
-        attachments: deletedAttachments,
+        attachments: orphanedAttachments.filter((attachment) => removedAttachmentIds.has(attachment.id)),
         skippedExternalCount,
+        runCleanupArtifacts,
         publishActivity: activityResult?.publish ?? null,
       };
     });
@@ -1817,45 +2126,13 @@ export function chatService(db: Db) {
     } catch (err) {
       logger.warn({ err, orgId }, "failed to publish archived chat cleanup activity after commit");
     }
+    await Promise.all(result.runCleanupArtifacts.map((artifacts) =>
+      removeEntityRunLogArtifacts(db, orgId, artifacts)));
     return {
       conversations: result.conversations,
       attachments: result.attachments,
       skippedExternalCount: result.skippedExternalCount,
     };
-  }
-
-  function orphanedAssetConditions(orgId: string, assetIds: string[]) {
-    return and(
-      eq(assets.orgId, orgId),
-      inArray(assets.id, assetIds),
-      sql<boolean>`not exists (
-        select 1 from ${chatAttachments} where ${chatAttachments.assetId} = ${assets.id}
-      )`,
-      sql<boolean>`not exists (
-        select 1 from ${issueAttachments} where ${issueAttachments.assetId} = ${assets.id}
-      )`,
-      sql<boolean>`not exists (
-        select 1 from ${organizationLogos} where ${organizationLogos.assetId} = ${assets.id}
-      )`,
-    );
-  }
-
-  async function listOrphanedAssets(orgId: string, assetIds: string[]) {
-    const ids = [...new Set(assetIds)];
-    if (ids.length === 0) return [];
-    return db
-      .select({ id: assets.id, orgId: assets.orgId, objectKey: assets.objectKey })
-      .from(assets)
-      .where(orphanedAssetConditions(orgId, ids));
-  }
-
-  async function removeOrphanedAssets(orgId: string, assetIds: string[]) {
-    const ids = [...new Set(assetIds)];
-    if (ids.length === 0) return [];
-    return db
-      .delete(assets)
-      .where(orphanedAssetConditions(orgId, ids))
-      .returning({ id: assets.id });
   }
 
   async function resolve(id: string) {
@@ -2957,6 +3234,7 @@ export function chatService(db: Db) {
     listPinnedSummaries,
     listSummariesByIds,
     getById,
+    getByIdIncludingArchived,
     create,
     update,
     updateDefaultTitle,
@@ -2964,8 +3242,6 @@ export function chatService(db: Db) {
     listAttachmentsForConversation,
     remove,
     removeArchived,
-    listOrphanedAssets,
-    removeOrphanedAssets,
     forkConversation,
     resolve,
     markRead,

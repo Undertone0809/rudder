@@ -17,7 +17,7 @@ import {
   summarizeTokenUsage,
   toHeartbeatRun
 } from "@rudderhq/shared";
-import { and, asc, desc, eq, gt, gte, inArray, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type {
   AgentRuntimeExecutionResult
@@ -892,7 +892,11 @@ export function heartbeatService(
       const issue = await db
         .select({ id: issues.id, status: issues.status })
         .from(issues)
-        .where(and(eq(issues.id, issueId), eq(issues.orgId, run.orgId)))
+        .where(and(
+          eq(issues.id, issueId),
+          eq(issues.orgId, run.orgId),
+          isNull(issues.archivedAt),
+        ))
         .then((rows) => rows[0] ?? null);
       if (!issue) {
         return await cancelQueuedRunDuringClaim("Cancelled because the linked issue no longer exists");

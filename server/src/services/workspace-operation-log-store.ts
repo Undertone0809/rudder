@@ -37,6 +37,7 @@ export interface WorkspaceOperationLogStore {
   ): Promise<void>;
   finalize(handle: WorkspaceOperationLogHandle): Promise<WorkspaceOperationLogFinalizeSummary>;
   read(handle: WorkspaceOperationLogHandle, opts?: WorkspaceOperationLogReadOptions): Promise<WorkspaceOperationLogReadResult>;
+  remove(handle: WorkspaceOperationLogHandle): Promise<void>;
 }
 
 function safeSegments(...segments: string[]) {
@@ -148,6 +149,12 @@ function createLocalFileWorkspaceOperationLogStore(basePath: string): WorkspaceO
       const offset = opts?.offset ?? 0;
       const limitBytes = opts?.limitBytes ?? 256_000;
       return readFileRange(absPath, offset, limitBytes);
+    },
+
+    async remove(handle) {
+      if (handle.store !== "local_file") return;
+      const absPath = resolveWithin(basePath, handle.logRef);
+      await fs.rm(absPath, { force: true });
     },
   };
 }

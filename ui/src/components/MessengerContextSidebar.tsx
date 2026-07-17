@@ -1,7 +1,6 @@
 import { agentsApi } from "@/api/agents";
 import { authApi } from "@/api/auth";
 import { chatsApi } from "@/api/chats";
-import { ApiError } from "@/api/client";
 import { messengerApi } from "@/api/messenger";
 import { organizationsApi } from "@/api/orgs";
 import { projectsApi } from "@/api/projects";
@@ -105,7 +104,6 @@ import {
   Plus,
   RefreshCw,
   ShieldCheck,
-  Trash2,
   UserPlus,
   XCircle,
 } from "lucide-react";
@@ -136,7 +134,6 @@ const MANAGED_GROUP_INITIAL_VISIBLE_COUNT = 6;
 const MANAGED_GROUP_VISIBLE_INCREMENT = 10;
 const MESSENGER_AUTO_LOAD_RENDERED_THREAD_LIMIT = 160;
 const SELECTED_READ_EMPHASIS_HOLD_MS = 1200;
-const DELETE_AFTER_STOP_RETRY_DELAYS_MS = [120, 300, 700] as const;
 const MESSENGER_THREAD_PREVIEW_HOVER_DELAY_MS = 1_000;
 const MESSENGER_THREAD_PREVIEW_CLOSE_DELAY_MS = 120;
 const CUSTOM_GROUP_COLOR_OPTIONS = ["slate", "teal", "sky", "indigo", "amber", "rose", "red", "orange"] as const;
@@ -183,12 +180,6 @@ function isLocallyCollapsedThreadGroupRule(rule: ThreadOrganizationRule): rule i
 
 function isManagedThreadGroupRule(rule: ThreadOrganizationRule): rule is "project" | "agent" | "kind" | "custom" {
   return isLocalManagedThreadGroupRule(rule) || rule === "custom";
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => {
-    globalThis.setTimeout(resolve, ms);
-  });
 }
 
 function sortableTranslateTransform(transform: { x: number; y: number } | null) {
@@ -1487,8 +1478,7 @@ function ChatThreadRow({
   titleGenerating = false,
   onFork,
   onArchive,
-  onDelete,
-  archiveDeleteAllowed = true,
+  archiveAllowed = true,
   onTogglePin,
   onToggleUnread,
   onCopyConversationLink,
@@ -1519,8 +1509,7 @@ function ChatThreadRow({
   titleGenerating?: boolean;
   onFork: () => void;
   onArchive: () => void;
-  onDelete: () => void;
-  archiveDeleteAllowed?: boolean;
+  archiveAllowed?: boolean;
   onTogglePin: () => void;
   onToggleUnread: () => void;
   onCopyConversationLink: () => void;
@@ -1815,21 +1804,11 @@ function ChatThreadRow({
                   </DropdownMenuSub>
                 </>
               ) : null}
-              {archiveDeleteAllowed ? (
-                <>
-                  <DropdownMenuItem onClick={onArchive}>
-                    <Archive className="h-4 w-4" />
-                    Archive
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    variant="destructive"
-                    onClick={onDelete}
-                    title={generating ? "Stops the active reply before deleting this chat." : undefined}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    Delete
-                  </DropdownMenuItem>
-                </>
+              {archiveAllowed ? (
+                <DropdownMenuItem onClick={onArchive}>
+                  <Archive className="h-4 w-4" />
+                  Archive
+                </DropdownMenuItem>
               ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
@@ -2580,12 +2559,7 @@ export function MessengerContextSidebar() {
   const model = useMessengerModel({ splitIssues: splitIssueNotifications });
   const { isMobile, setSidebarOpen } = useSidebar();
   const { confirm } = useDialog();
-  const {
-    abortChatStream,
-    isChatGenerationActive,
-    setChatSendInFlight,
-    setStreamDraftForChat,
-  } = useChatGenerations();
+  const { isChatGenerationActive } = useChatGenerations();
   const queryClient = useQueryClient();
   const route = resolveMessengerRoute(relativePath);
   const markedThreadRef = useRef<string | null>(null);
@@ -3757,7 +3731,7 @@ export function MessengerContextSidebar() {
     const preserveUnreadEmphasis = selectedReadEmphasisKey === thread.threadKey;
     if (thread.kind === "chat" && conversation) {
       const agentId = resolveChatAgentId(conversation);
-      const archiveDeleteAllowed = !isFeishuBackedConversation(conversation);
+      const archiveAllowed = !isFeishuBackedConversation(conversation);
       return (
         <ChatThreadRow
           key={thread.threadKey}
@@ -3789,20 +3763,7 @@ export function MessengerContextSidebar() {
               data: { status: "archived" },
             });
           }}
-          onDelete={async () => {
-            const confirmed = await confirm({
-              title: "Delete chat",
-              description: `Delete "${conversationDisplayTitle(conversation)}"? This cannot be undone.`,
-              confirmLabel: "Delete",
-              tone: "destructive",
-            });
-            if (!confirmed) return;
-            deleteConversationMutation.mutate({
-              chatId: conversation.id,
-              generating: isChatGenerationActive(conversation.id),
-            });
-          }}
-          archiveDeleteAllowed={archiveDeleteAllowed}
+          archiveAllowed={archiveAllowed}
           onTogglePin={() => {
             if (model.selectedOrganizationId) {
               markMessengerChatPinnedInCache(queryClient, model.selectedOrganizationId, conversation.id, !conversation.isPinned);
@@ -4346,41 +4307,6 @@ export function MessengerContextSidebar() {
         delete next[variables.chatId];
         return next;
       });
-    },
-  });
-
-  const deleteConversationMutation = useMutation({
-    mutationFn: async ({ chatId, generating }: { chatId: string; generating: boolean }) => {
-      if (generating) {
-        abortChatStream(chatId);
-        await chatsApi.stopMessageStream(chatId).catch(() => undefined);
-        setStreamDraftForChat(chatId, null);
-        setChatSendInFlight(chatId, false);
-      }
-
-      let lastError: unknown = null;
-      for (let attempt = 0; attempt <= DELETE_AFTER_STOP_RETRY_DELAYS_MS.length; attempt += 1) {
-        try {
-          return generating
-            ? await chatsApi.remove(chatId, { cancelActive: true })
-            : await chatsApi.remove(chatId);
-        } catch (error) {
-          lastError = error;
-          const shouldRetry = generating && error instanceof ApiError && error.status === 409;
-          if (!shouldRetry || attempt >= DELETE_AFTER_STOP_RETRY_DELAYS_MS.length) {
-            throw error;
-          }
-          await sleep(DELETE_AFTER_STOP_RETRY_DELAYS_MS[attempt]!);
-        }
-      }
-
-      throw lastError;
-    },
-    onSuccess: async (conversation) => {
-      if (route.kind === "chat" && route.conversationId === conversation.id) {
-        navigate("/messenger/chat");
-      }
-      await refreshChatViews(conversation.id);
     },
   });
 

@@ -5,7 +5,7 @@ import {
   heartbeatRuns,
   issues
 } from "@rudderhq/db";
-import { and, asc, desc, eq, inArray, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { conflict, notFound } from "../../errors.js";
 import { publishLiveEvent } from "../live-events.js";
 
@@ -132,7 +132,11 @@ export function createHeartbeatWakeupHandlers(context: any) {
       projectId = await db
         .select({ projectId: issues.projectId })
         .from(issues)
-        .where(and(eq(issues.id, issueId), eq(issues.orgId, agent.orgId)))
+        .where(and(
+          eq(issues.id, issueId),
+          eq(issues.orgId, agent.orgId),
+          isNull(issues.archivedAt),
+        ))
         .then((rows) => rows[0]?.projectId ?? null);
     }
 
@@ -263,7 +267,11 @@ export function createHeartbeatWakeupHandlers(context: any) {
             executionAgentNameKey: issues.executionAgentNameKey,
           })
           .from(issues)
-          .where(and(eq(issues.id, issueId), eq(issues.orgId, agent.orgId)))
+          .where(and(
+            eq(issues.id, issueId),
+            eq(issues.orgId, agent.orgId),
+            isNull(issues.archivedAt),
+          ))
           .then((rows) => rows[0] ?? null);
 
         if (!issue) {
@@ -638,58 +646,114 @@ export function createHeartbeatWakeupHandlers(context: any) {
       (shouldQueueFollowupForCommentWake ? null : sameScopeRunningRun ?? null);
 
     if (coalescedTargetRun) {
-      const mergedContextSnapshot = mergeCoalescedContextSnapshot(
-        coalescedTargetRun.contextSnapshot,
-        enrichedContextSnapshot,
-      );
-      const queuedSessionSuppressed =
-        coalescedTargetRun.status === "queued" &&
-        Boolean(heartbeatSessions.readSessionReuseSuppression(mergedContextSnapshot));
-      const mergedRun = await db
-        .update(heartbeatRuns)
-        .set({
-          contextSnapshot: mergedContextSnapshot,
-          ...(queuedSessionSuppressed
-            ? {
-                sessionIdBefore: null,
-                sessionParamsBeforeJson: null,
-                sessionReuseScope: "none" as const,
-              }
-            : {}),
-          updatedAt: new Date(),
-        })
-        .where(eq(heartbeatRuns.id, coalescedTargetRun.id))
-        .returning()
-        .then((rows) => rows[0] ?? coalescedTargetRun);
+      const coalescedOutcome = await db.transaction(async (tx) => {
+        if (issueId) {
+          const issue = await tx
+            .select({ id: issues.id })
+            .from(issues)
+            .where(and(
+              eq(issues.id, issueId),
+              eq(issues.orgId, agent.orgId),
+              isNull(issues.archivedAt),
+            ))
+            .for("key share")
+            .then((rows) => rows[0] ?? null);
+          if (!issue) {
+            if (existingWakeupRequestId) {
+              await updateWakeupRequestRecord(tx, existingWakeupRequestId, {
+                status: "skipped",
+                reason: "issue_execution_issue_not_found",
+                runId: null,
+                claimedAt: null,
+                finishedAt: new Date(),
+                error: null,
+              });
+            }
+            return null;
+          }
+        }
 
-      if (existingWakeupRequestId) {
-        await setWakeupStatus(existingWakeupRequestId, "coalesced", {
-          runId: mergedRun.id,
-          claimedAt: null,
-          finishedAt: new Date(),
-          error: null,
-        });
-      } else {
-        await db.insert(agentWakeupRequests).values({
-          orgId: agent.orgId,
-          agentId,
-          source,
-          triggerDetail,
-          reason,
-          payload,
-          status: "coalesced",
-          coalescedCount: 1,
-          requestedByActorType: opts.requestedByActorType ?? null,
-          requestedByActorId: opts.requestedByActorId ?? null,
-          idempotencyKey: opts.idempotencyKey ?? null,
-          runId: mergedRun.id,
-          finishedAt: new Date(),
-        }).onConflictDoNothing();
-      }
-      return mergedRun;
+        const mergedContextSnapshot = mergeCoalescedContextSnapshot(
+          coalescedTargetRun.contextSnapshot,
+          enrichedContextSnapshot,
+        );
+        const queuedSessionSuppressed =
+          coalescedTargetRun.status === "queued" &&
+          Boolean(heartbeatSessions.readSessionReuseSuppression(mergedContextSnapshot));
+        const mergedRun = await tx
+          .update(heartbeatRuns)
+          .set({
+            contextSnapshot: mergedContextSnapshot,
+            ...(queuedSessionSuppressed
+              ? {
+                  sessionIdBefore: null,
+                  sessionParamsBeforeJson: null,
+                  sessionReuseScope: "none" as const,
+                }
+              : {}),
+            updatedAt: new Date(),
+          })
+          .where(eq(heartbeatRuns.id, coalescedTargetRun.id))
+          .returning()
+          .then((rows) => rows[0] ?? coalescedTargetRun);
+
+        if (existingWakeupRequestId) {
+          await updateWakeupRequestRecord(tx, existingWakeupRequestId, {
+            status: "coalesced",
+            runId: mergedRun.id,
+            claimedAt: null,
+            finishedAt: new Date(),
+            error: null,
+          });
+        } else {
+          await tx.insert(agentWakeupRequests).values({
+            orgId: agent.orgId,
+            agentId,
+            source,
+            triggerDetail,
+            reason,
+            payload,
+            status: "coalesced",
+            coalescedCount: 1,
+            requestedByActorType: opts.requestedByActorType ?? null,
+            requestedByActorId: opts.requestedByActorId ?? null,
+            idempotencyKey: opts.idempotencyKey ?? null,
+            runId: mergedRun.id,
+            finishedAt: new Date(),
+          }).onConflictDoNothing();
+        }
+        return mergedRun;
+      });
+      return coalescedOutcome;
     }
 
     const queuedOutcome = await db.transaction(async (tx) => {
+      if (issueId) {
+        const issue = await tx
+          .select({ id: issues.id })
+          .from(issues)
+          .where(and(
+            eq(issues.id, issueId),
+            eq(issues.orgId, agent.orgId),
+            isNull(issues.archivedAt),
+          ))
+          .for("key share")
+          .then((rows) => rows[0] ?? null);
+        if (!issue) {
+          if (existingWakeupRequestId) {
+            await updateWakeupRequestRecord(tx, existingWakeupRequestId, {
+              status: "skipped",
+              reason: "issue_execution_issue_not_found",
+              runId: null,
+              claimedAt: null,
+              finishedAt: new Date(),
+              error: null,
+            });
+          }
+          return { run: null, created: false };
+        }
+      }
+
       let wakeupRequest;
       if (existingWakeupRequestId) {
         await tx.execute(
@@ -776,6 +840,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
       return { run: newRun, created: true };
     });
     const newRun = queuedOutcome.run;
+    if (!newRun) return null;
 
     if (queuedOutcome.created) {
       publishLiveEvent({
@@ -838,7 +903,11 @@ export function createHeartbeatWakeupHandlers(context: any) {
             executionRunId: issues.executionRunId,
           })
           .from(issues)
-          .where(and(eq(issues.id, pendingIssueId), eq(issues.orgId, agent.orgId)))
+          .where(and(
+            eq(issues.id, pendingIssueId),
+            eq(issues.orgId, agent.orgId),
+            isNull(issues.archivedAt),
+          ))
           .then((rows) => rows[0] ?? null);
 
         if (!issue) {

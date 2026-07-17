@@ -13,14 +13,6 @@ import {
 } from "@/components/settings/SettingsScaffold";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
@@ -62,7 +54,7 @@ type AgentSnippetInput = {
   testResolutionUrl?: string | null;
 };
 
-type OrganizationSettingsView = "general" | "workspace" | "intelligence" | "chat" | "access";
+type OrganizationSettingsView = "general" | "workspace" | "intelligence" | "chat" | "issues" | "access";
 
 export function OrganizationSettings() {
   const { t } = useI18n();
@@ -91,8 +83,8 @@ export function OrganizationSettings() {
   const logoFileInputRef = useRef<HTMLInputElement | null>(null);
   const [logoFileName, setLogoFileName] = useState("");
   const [logoUploadError, setLogoUploadError] = useState<string | null>(null);
-  const [defaultChatIssueCreationMode, setDefaultChatIssueCreationMode] = useState<"manual_approval" | "auto_create">("manual_approval");
   const [archivedChatSearch, setArchivedChatSearch] = useState("");
+  const [archivedIssueSearch, setArchivedIssueSearch] = useState("");
   const [newLabelName, setNewLabelName] = useState("");
   const [newLabelColor, setNewLabelColor] = useState("#6366f1");
   const [labelDrafts, setLabelDrafts] = useState<Record<string, { name: string; color: string }>>({});
@@ -105,7 +97,6 @@ export function OrganizationSettings() {
     setDescription(viewedOrganization.description ?? "");
     setBrandColor(viewedOrganization.brandColor ?? "");
     setLogoUrl(viewedOrganization.logoUrl ?? "");
-    setDefaultChatIssueCreationMode(viewedOrganization.defaultChatIssueCreationMode ?? "manual_approval");
   }, [viewedOrganization]);
 
   useEffect(() => {
@@ -120,16 +111,13 @@ export function OrganizationSettings() {
   const isViewingSelectedOrganization =
     !!viewedOrganizationId && viewedOrganizationId === currentOrganizationId;
   const archivedChatsScrollRef = useScrollbarActivityRef("organization-settings:archived-chats");
+  const archivedIssuesScrollRef = useScrollbarActivityRef("organization-settings:archived-issues");
 
   const generalDirty =
     !!viewedOrganization &&
     (organizationName !== viewedOrganization.name ||
       description !== (viewedOrganization.description ?? "") ||
       brandColor !== (viewedOrganization.brandColor ?? ""));
-
-  const chatSettingsDirty =
-    !!viewedOrganization &&
-    defaultChatIssueCreationMode !== (viewedOrganization.defaultChatIssueCreationMode ?? "manual_approval");
 
   const generalMutation = useMutation({
     mutationFn: (data: {
@@ -152,37 +140,23 @@ export function OrganizationSettings() {
     },
   });
 
-  const chatSettingsMutation = useMutation({
-    mutationFn: (data: {
-      defaultChatIssueCreationMode: "manual_approval" | "auto_create";
-    }) =>
-      organizationsApi.update(viewedOrganizationId!, {
-        defaultChatIssueCreationMode: data.defaultChatIssueCreationMode,
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.organizations.all });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(viewedOrganizationId!, "active") });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(viewedOrganizationId!, "archived") });
-    },
-  });
-
   const restoreArchivedChatMutation = useMutation({
-    mutationFn: (chatId: string) => chatsApi.update(chatId, { status: "active" }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(viewedOrganizationId!, "active") });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(viewedOrganizationId!, "archived") });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(viewedOrganizationId!, "all") });
-      await invalidateMessengerThreadSummaryQueries(queryClient, viewedOrganizationId!);
+    mutationFn: ({ chatId }: { chatId: string; orgId: string }) => chatsApi.update(chatId, { status: "active" }),
+    onSuccess: async (_restored, variables) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(variables.orgId, "active") });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(variables.orgId, "archived") });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(variables.orgId, "all") });
+      await invalidateMessengerThreadSummaryQueries(queryClient, variables.orgId);
     },
   });
 
   const deleteArchivedChatMutation = useMutation({
-    mutationFn: (chatId: string) => chatsApi.remove(chatId),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(viewedOrganizationId!, "active") });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(viewedOrganizationId!, "archived") });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(viewedOrganizationId!, "all") });
-      await invalidateMessengerThreadSummaryQueries(queryClient, viewedOrganizationId!);
+    mutationFn: ({ chatId }: { chatId: string; orgId: string }) => chatsApi.remove(chatId),
+    onSuccess: async (_deleted, variables) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(variables.orgId, "active") });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(variables.orgId, "archived") });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(variables.orgId, "all") });
+      await invalidateMessengerThreadSummaryQueries(queryClient, variables.orgId);
     },
   });
 
@@ -216,6 +190,47 @@ export function OrganizationSettings() {
       return `${conversation.title} ${runtime}`.toLowerCase().includes(query);
     });
   }, [archivedChatSearch, archivedChats]);
+
+  const archivedIssuesQuery = useQuery({
+    queryKey: queryKeys.issues.archived(viewedOrganizationId ?? "__none__"),
+    queryFn: () => issuesApi.list(viewedOrganizationId!, { archived: true }),
+    enabled: !!viewedOrganizationId,
+    staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
+  });
+  const archivedIssues = archivedIssuesQuery.data ?? [];
+  const filteredArchivedIssues = useMemo(() => {
+    const query = archivedIssueSearch.trim().toLowerCase();
+    if (!query) return archivedIssues;
+    return archivedIssues.filter((issue) =>
+      `${issue.identifier ?? ""} ${issue.title} ${issue.status}`.toLowerCase().includes(query),
+    );
+  }, [archivedIssueSearch, archivedIssues]);
+
+  const restoreArchivedIssueMutation = useMutation({
+    mutationFn: ({ issueId }: { issueId: string; orgId: string }) => issuesApi.restore(issueId),
+    onSuccess: async (restored, variables) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.issues.archived(variables.orgId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(variables.orgId) });
+      queryClient.removeQueries({ queryKey: queryKeys.issues.detail(restored.id) });
+      if (restored.identifier) {
+        queryClient.removeQueries({ queryKey: queryKeys.issues.detail(restored.identifier) });
+      }
+      await invalidateMessengerThreadSummaryQueries(queryClient, variables.orgId);
+    },
+  });
+
+  const deleteArchivedIssueMutation = useMutation({
+    mutationFn: ({ issueId }: { issueId: string; orgId: string }) => issuesApi.remove(issueId),
+    onSuccess: async (deleted, variables) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.issues.archived(variables.orgId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(variables.orgId) });
+      queryClient.removeQueries({ queryKey: queryKeys.issues.detail(deleted.id) });
+      if (deleted.identifier) {
+        queryClient.removeQueries({ queryKey: queryKeys.issues.detail(deleted.identifier) });
+      }
+      await invalidateMessengerThreadSummaryQueries(queryClient, variables.orgId);
+    },
+  });
 
   const labelsQuery = useQuery({
     queryKey: queryKeys.issues.labels(viewedOrganizationId ?? "__none__"),
@@ -439,13 +454,9 @@ export function OrganizationSettings() {
     }));
   }
 
-  function handleSaveChatSettings() {
-    chatSettingsMutation.mutate({
-      defaultChatIssueCreationMode,
-    });
-  }
-
   async function handleDeleteArchivedChat(chatId: string, title: string) {
+    if (!viewedOrganizationId) return;
+    const orgId = viewedOrganizationId;
     const confirmed = await confirm({
       title: t("organizationSettings.chat.archived.deleteConfirmTitle"),
       description: t("organizationSettings.chat.archived.deleteConfirmDescription", { title }),
@@ -453,7 +464,7 @@ export function OrganizationSettings() {
       tone: "destructive",
     });
     if (!confirmed) return;
-    deleteArchivedChatMutation.mutate(chatId);
+    deleteArchivedChatMutation.mutate({ chatId, orgId });
   }
 
   async function handleDeleteAllArchivedChats() {
@@ -469,6 +480,22 @@ export function OrganizationSettings() {
     });
     if (!confirmed) return;
     deleteAllArchivedChatsMutation.mutate(orgId);
+  }
+
+  async function handleDeleteArchivedIssue(issueId: string, identifier: string | null) {
+    if (!viewedOrganizationId) return;
+    const orgId = viewedOrganizationId;
+    const displayIdentifier = identifier ?? issueId.slice(0, 8);
+    const confirmed = await confirm({
+      title: t("organizationSettings.issues.archived.deleteConfirmTitle"),
+      description: t("organizationSettings.issues.archived.deleteConfirmDescription", {
+        identifier: displayIdentifier,
+      }),
+      confirmLabel: t("organizationSettings.issues.archived.delete"),
+      tone: "destructive",
+    });
+    if (!confirmed) return;
+    deleteArchivedIssueMutation.mutate({ issueId, orgId });
   }
 
   async function handleArchiveOrganization() {
@@ -520,6 +547,7 @@ export function OrganizationSettings() {
     { value: "workspace", label: t("organizationSettings.section.workspace") },
     { value: "intelligence", label: t("organizationSettings.view.intelligence") },
     { value: "chat", label: t("organizationSettings.section.chat") },
+    { value: "issues", label: t("organizationSettings.section.issues") },
     { value: "access", label: t("organizationSettings.view.accessData") },
   ];
 
@@ -947,59 +975,6 @@ export function OrganizationSettings() {
         </TabsContent>
 
         <TabsContent value="chat" className="flex min-w-0 flex-col gap-6">
-          <SettingsSection title={t("organizationSettings.section.chat")}>
-            <SettingsGroup>
-              <SettingsField
-                label={t("organizationSettings.chat.issueMode.label")}
-                description={t("organizationSettings.chat.issueMode.hint")}
-              >
-                <Select
-                  value={defaultChatIssueCreationMode}
-                  onValueChange={(value) => {
-                    if (value === "manual_approval" || value === "auto_create") {
-                      setDefaultChatIssueCreationMode(value);
-                    }
-                  }}
-                >
-                  <SelectTrigger className="w-full sm:w-64" aria-label={t("organizationSettings.chat.issueMode.label")}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent position="popper" align="start">
-                    <SelectGroup>
-                      <SelectItem value="manual_approval">
-                        {t("organizationSettings.chat.issueMode.manual")}
-                      </SelectItem>
-                      <SelectItem value="auto_create">
-                        {t("organizationSettings.chat.issueMode.auto")}
-                      </SelectItem>
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </SettingsField>
-              <SettingsActions>
-                {chatSettingsMutation.isSuccess && !chatSettingsMutation.isPending ? (
-                  <span className="text-xs text-muted-foreground">{t("organizationSettings.save.saved")}</span>
-                ) : null}
-                {chatSettingsMutation.isError ? (
-                  <span className="text-xs text-destructive">
-                    {chatSettingsMutation.error instanceof Error
-                      ? chatSettingsMutation.error.message
-                      : t("organizationSettings.chat.failed")}
-                  </span>
-                ) : null}
-                <Button
-                  size="sm"
-                  onClick={handleSaveChatSettings}
-                  disabled={!chatSettingsDirty || chatSettingsMutation.isPending}
-                >
-                  {chatSettingsMutation.isPending
-                    ? t("organizationSettings.save.saving")
-                    : t("organizationSettings.chat.save")}
-                </Button>
-              </SettingsActions>
-            </SettingsGroup>
-          </SettingsSection>
-
           <SettingsSection
             title={t("organizationSettings.chat.archived.title")}
             description={t("organizationSettings.chat.archived.description")}
@@ -1055,9 +1030,9 @@ export function OrganizationSettings() {
                       >
                         {filteredArchivedChats.map((conversation) => {
                           const restoring = restoreArchivedChatMutation.isPending
-                            && restoreArchivedChatMutation.variables === conversation.id;
+                            && restoreArchivedChatMutation.variables?.chatId === conversation.id;
                           const deleting = deleteArchivedChatMutation.isPending
-                            && deleteArchivedChatMutation.variables === conversation.id;
+                            && deleteArchivedChatMutation.variables?.chatId === conversation.id;
 
                           return (
                             <div
@@ -1077,7 +1052,10 @@ export function OrganizationSettings() {
                                   size="sm"
                                   variant="outline"
                                   disabled={restoring || deleting || deleteAllArchivedChatsMutation.isPending}
-                                  onClick={() => restoreArchivedChatMutation.mutate(conversation.id)}
+                                  onClick={() => restoreArchivedChatMutation.mutate({
+                                    chatId: conversation.id,
+                                    orgId: viewedOrganizationId!,
+                                  })}
                                 >
                                   <ArchiveRestore data-icon="inline-start" />
                                   {t("organizationSettings.chat.archived.restore")}
@@ -1131,6 +1109,115 @@ export function OrganizationSettings() {
                     {restoreArchivedChatMutation.error instanceof Error
                       ? restoreArchivedChatMutation.error.message
                       : t("organizationSettings.chat.archived.restoreFailed")}
+                  </div>
+                ) : null}
+              </div>
+            </SettingsGroup>
+          </SettingsSection>
+        </TabsContent>
+
+        <TabsContent value="issues" className="flex min-w-0 flex-col gap-6">
+          <SettingsSection
+            title={t("organizationSettings.issues.archived.title")}
+            description={t("organizationSettings.issues.archived.description")}
+          >
+            <SettingsGroup>
+              <div data-slot="settings-item" className="flex min-w-0 flex-col gap-3 px-4 py-4">
+                <div className="text-xs text-muted-foreground">
+                  {t("organizationSettings.issues.archived.count", {
+                    visible: filteredArchivedIssues.length,
+                    total: archivedIssues.length,
+                  })}
+                </div>
+                {archivedIssuesQuery.isLoading ? (
+                  <div className="text-sm text-muted-foreground">
+                    {t("organizationSettings.issues.archived.loading")}
+                  </div>
+                ) : archivedIssues.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">
+                    {t("organizationSettings.issues.archived.empty")}
+                  </div>
+                ) : (
+                  <>
+                    <Input
+                      value={archivedIssueSearch}
+                      placeholder={t("organizationSettings.issues.archived.searchPlaceholder")}
+                      onChange={(event) => setArchivedIssueSearch(event.target.value)}
+                    />
+                    {filteredArchivedIssues.length === 0 ? (
+                      <div className="text-sm text-muted-foreground">
+                        {t("organizationSettings.issues.archived.noResults")}
+                      </div>
+                    ) : (
+                      <div
+                        ref={archivedIssuesScrollRef}
+                        data-testid="archived-issues-scroll-region"
+                        className="scrollbar-auto-hide max-h-80 space-y-2 overflow-y-auto pr-1"
+                      >
+                        {filteredArchivedIssues.map((issue) => {
+                          const restoring = restoreArchivedIssueMutation.isPending
+                            && restoreArchivedIssueMutation.variables?.issueId === issue.id;
+                          const deleting = deleteArchivedIssueMutation.isPending
+                            && deleteArchivedIssueMutation.variables?.issueId === issue.id;
+                          const identifier = issue.identifier ?? issue.id.slice(0, 8);
+                          return (
+                            <div
+                              key={issue.id}
+                              data-testid={`archived-issue-row-${issue.id}`}
+                              className="flex min-w-0 flex-col gap-2 rounded-md border border-border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"
+                            >
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-medium text-foreground" title={issue.title}>
+                                  {issue.title}
+                                </div>
+                                <div className="truncate text-xs text-muted-foreground">
+                                  {identifier} · {issue.status.replace(/_/g, " ")}
+                                </div>
+                              </div>
+                              <div className="flex shrink-0 items-center justify-end gap-1.5">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={restoring || deleting}
+                                  onClick={() => restoreArchivedIssueMutation.mutate({
+                                    issueId: issue.id,
+                                    orgId: viewedOrganizationId!,
+                                  })}
+                                >
+                                  <ArchiveRestore data-icon="inline-start" />
+                                  {t("organizationSettings.issues.archived.restore")}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="text-muted-foreground hover:text-destructive"
+                                  disabled={restoring || deleting}
+                                  aria-label={t("organizationSettings.issues.archived.deleteAria", { identifier })}
+                                  onClick={() => void handleDeleteArchivedIssue(issue.id, issue.identifier)}
+                                >
+                                  <Trash2 data-icon="inline-start" />
+                                  {t("organizationSettings.issues.archived.delete")}
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
+                )}
+                {restoreArchivedIssueMutation.isError ? (
+                  <div className="text-xs text-destructive" role="alert">
+                    {restoreArchivedIssueMutation.error instanceof Error
+                      ? restoreArchivedIssueMutation.error.message
+                      : t("organizationSettings.issues.archived.restoreFailed")}
+                  </div>
+                ) : null}
+                {deleteArchivedIssueMutation.isError ? (
+                  <div className="text-xs text-destructive" role="alert">
+                    {deleteArchivedIssueMutation.error instanceof Error
+                      ? deleteArchivedIssueMutation.error.message
+                      : t("organizationSettings.issues.archived.deleteFailed")}
                   </div>
                 ) : null}
               </div>

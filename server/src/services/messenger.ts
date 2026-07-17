@@ -49,6 +49,7 @@ import {
 import { and, asc, desc, eq, gt, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { badRequest, conflict, notFound } from "../errors.js";
 import { redactEventPayload } from "../redaction.js";
+import { approvalVisibleOutsideArchivedChats } from "./approval-visibility.js";
 import { budgetService } from "./budgets.js";
 import { chatService } from "./chats.js";
 import { issueLowSignalContentOnlyActivitySql } from "./issue-activity-filters.js";
@@ -1441,18 +1442,21 @@ export function messengerService(db: Db) {
         from ${issues}
         where ${issues.orgId} = ${orgId}
           and ${issues.hiddenAt} is null
+          and ${issues.archivedAt} is null
           and ${issues.assigneeUserId} = ${userId}
         union
         select ${issues.id} as id
         from ${issues}
         where ${issues.orgId} = ${orgId}
           and ${issues.hiddenAt} is null
+          and ${issues.archivedAt} is null
           and ${issues.createdByUserId} = ${userId}
         union
         select ${issues.id} as id
         from ${issues}
         where ${issues.orgId} = ${orgId}
           and ${issues.hiddenAt} is null
+          and ${issues.archivedAt} is null
           and ${issues.reviewerUserId} = ${userId}
         union
         select ${issueFollows.issueId} as id
@@ -1463,6 +1467,7 @@ export function messengerService(db: Db) {
         where ${issueFollows.orgId} = ${orgId}
           and ${issueFollows.userId} = ${userId}
           and followed_issue.hidden_at is null
+          and followed_issue.archived_at is null
         union
         select notification_issue.id as id
         from ${activityLog} automation_notification_activity
@@ -1474,6 +1479,7 @@ export function messengerService(db: Db) {
           and automation_notification_activity.action = 'automation.issue_created_notification'
           and automation_notification_activity.details->>'userId' = ${userId}
           and notification_issue.hidden_at is null
+          and notification_issue.archived_at is null
       ),
       issue_entries as (
         select
@@ -1560,6 +1566,7 @@ export function messengerService(db: Db) {
         from tracked_issue_ids
         inner join ${issues} issue_row
           on issue_row.id = tracked_issue_ids.id
+          and issue_row.archived_at is null
           and (
             issue_row.origin_kind <> 'automation_execution'
             or exists (
@@ -2010,7 +2017,7 @@ export function messengerService(db: Db) {
       db
         .select()
         .from(approvals)
-        .where(eq(approvals.orgId, orgId))
+        .where(and(eq(approvals.orgId, orgId), approvalVisibleOutsideArchivedChats()))
         .orderBy(desc(approvals.updatedAt), desc(approvals.createdAt)),
       db
         .select({
@@ -2020,7 +2027,7 @@ export function messengerService(db: Db) {
         })
         .from(approvalComments)
         .innerJoin(approvals, eq(approvalComments.approvalId, approvals.id))
-        .where(eq(approvals.orgId, orgId))
+        .where(and(eq(approvals.orgId, orgId), approvalVisibleOutsideArchivedChats()))
         .orderBy(desc(approvalComments.createdAt)),
     ]);
 
@@ -2072,7 +2079,11 @@ export function messengerService(db: Db) {
 
   async function loadApprovalThreadSummaryData(orgId: string, userId: string, threadStates?: ThreadStateSource): Promise<SystemSummaryData> {
     const lastReadAt = await lastReadAtForThread(db, orgId, userId, "approvals", threadStates);
-    const pendingApprovalPredicate = and(eq(approvals.orgId, orgId), eq(approvals.status, "pending"));
+    const pendingApprovalPredicate = and(
+      eq(approvals.orgId, orgId),
+      eq(approvals.status, "pending"),
+      approvalVisibleOutsideArchivedChats(),
+    );
 
     const [summaryRows, latestApprovalRows, latestCommentRows, unreadRows] = await Promise.all([
       db
@@ -2107,6 +2118,7 @@ export function messengerService(db: Db) {
           ) latest_comment on true
           where ${approvals.orgId} = ${orgId}
             and ${approvals.status} = 'pending'
+            and ${approvalVisibleOutsideArchivedChats()}
           order by latest_comment.created_at desc
           limit 1
         `),
@@ -2659,6 +2671,7 @@ export function messengerService(db: Db) {
       .where(and(
         eq(issues.orgId, orgId),
         eq(issues.id, issueId),
+        isNull(issues.archivedAt),
         or(
           and(
             ne(issues.originKind, "automation_execution"),

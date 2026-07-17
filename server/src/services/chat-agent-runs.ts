@@ -1,10 +1,11 @@
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
-import { chatMessages, heartbeatRuns } from "@rudderhq/db";
+import { chatConversations, chatMessages, heartbeatRuns } from "@rudderhq/db";
 import { toHeartbeatRun, type ChatConversation, type HeartbeatRun } from "@rudderhq/shared";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { AgentRuntimeInvocationMeta } from "../agent-runtimes/index.js";
+import { conflict } from "../errors.js";
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import { publishLiveEvent } from "./live-events.js";
 import { isPostgresError } from "./postgres-errors.js";
@@ -155,23 +156,38 @@ export function chatAgentRunService(db: Db) {
       ...(input.sourceMetadata ?? {}),
       ...(input.runContext ?? {}),
     };
-    const run = await db
-      .insert(heartbeatRuns)
-      .values({
-        orgId: input.conversation.orgId,
-        agentId: input.agentId,
-        invocationSource: "chat",
-        triggerDetail: input.triggerDetail,
-        status: "running",
-        startedAt: now,
-        sessionReuseScope: "none",
-        executionOwnerToken,
-        executionLeaseExpiresAt: new Date(now.getTime() + RUN_EXECUTION_LEASE_MS),
-        chatConversationId: input.conversation.id,
-        contextSnapshot,
-      })
-      .returning()
-      .then((rows) => rows[0])
+    const run = await db.transaction(async (tx) => {
+      const currentConversation = await tx
+        .select({ status: chatConversations.status })
+        .from(chatConversations)
+        .where(and(
+          eq(chatConversations.id, input.conversation.id),
+          eq(chatConversations.orgId, input.conversation.orgId),
+        ))
+        .for("key share")
+        .then((rows) => rows[0] ?? null);
+      if (!currentConversation || currentConversation.status === "archived") {
+        throw conflict("Cannot start agent work for an archived chat");
+      }
+
+      return tx
+        .insert(heartbeatRuns)
+        .values({
+          orgId: input.conversation.orgId,
+          agentId: input.agentId,
+          invocationSource: "chat",
+          triggerDetail: input.triggerDetail,
+          status: "running",
+          startedAt: now,
+          sessionReuseScope: "none",
+          executionOwnerToken,
+          executionLeaseExpiresAt: new Date(now.getTime() + RUN_EXECUTION_LEASE_MS),
+          chatConversationId: input.conversation.id,
+          contextSnapshot,
+        })
+        .returning()
+        .then((rows) => rows[0]);
+    })
       .catch((error: unknown) => {
         if (isActiveChatRunConflict(error)) {
           throw new Error("A chat assistant run is already active for this conversation");

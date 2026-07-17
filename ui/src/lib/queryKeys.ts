@@ -54,6 +54,7 @@ export const queryKeys = {
       ["agents", orgId, "adapter-availability"] as const,
   },
   issues: {
+    archived: (orgId: string) => ["issues", "archived", orgId] as const,
     list: (orgId: string) => ["issues", orgId] as const,
     listPreview: (orgId: string, limit: number) => ["issues", orgId, "preview", limit] as const,
     children: (orgId: string, parentId: string) => ["issues", orgId, "children", parentId] as const,

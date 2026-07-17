@@ -7,11 +7,12 @@
  * @see doc/product/domains/agents/identity-config.md - pending-approval agent activation
  */
 import type { Db } from "@rudderhq/db";
-import { approvalComments, approvals } from "@rudderhq/db";
+import { approvalComments, approvals, chatConversations } from "@rudderhq/db";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { notFound, unprocessable } from "../errors.js";
 import { redactCurrentUserText } from "../log-redaction.js";
 import { agentService } from "./agents.js";
+import { approvalVisibleOutsideArchivedChats } from "./approval-visibility.js";
 import { budgetService } from "./budgets.js";
 import { notifyHireApproved } from "./hire-hook.js";
 import { instanceSettingsService } from "./instance-settings.js";
@@ -36,10 +37,58 @@ export function approvalService(db: Db) {
     const existing = await db
       .select()
       .from(approvals)
-      .where(eq(approvals.id, id))
+      .where(and(eq(approvals.id, id), approvalVisibleOutsideArchivedChats()))
       .then((rows) => rows[0] ?? null);
     if (!existing) throw notFound("Approval not found");
     return existing;
+  }
+
+  function linkedChatConversationId(payload: unknown) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+    const record = payload as Record<string, unknown>;
+    const candidate = record.chatConversationId ?? record.conversationId;
+    return typeof candidate === "string" && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(candidate)
+      ? candidate
+      : null;
+  }
+
+  async function lockLinkedChatForMutation(
+    tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
+    orgId: string,
+    payload: unknown,
+  ) {
+    const conversationId = linkedChatConversationId(payload);
+    if (!conversationId) return;
+    const conversation = await tx
+      .select({ status: chatConversations.status })
+      .from(chatConversations)
+      .where(and(
+        eq(chatConversations.id, conversationId),
+        eq(chatConversations.orgId, orgId),
+      ))
+      .for("update")
+      .then((rows) => rows[0] ?? null);
+    if (!conversation || conversation.status === "archived") {
+      throw notFound("Approval not found");
+    }
+  }
+
+  async function withApprovalMutation<T>(
+    id: string,
+    mutation: (tx: Parameters<Parameters<Db["transaction"]>[0]>[0], existing: ApprovalRecord) => Promise<T>,
+  ) {
+    const candidate = await getExistingApproval(id);
+    return db.transaction(async (tx) => {
+      await lockLinkedChatForMutation(tx, candidate.orgId, candidate.payload);
+      const existing = await tx
+        .select()
+        .from(approvals)
+        .where(and(eq(approvals.id, id), approvalVisibleOutsideArchivedChats()))
+        .for("update")
+        .then((rows) => rows[0] ?? null);
+      if (!existing) throw notFound("Approval not found");
+      return mutation(tx, existing);
+    });
   }
 
   async function resolveApproval(
@@ -49,49 +98,44 @@ export function approvalService(db: Db) {
     decisionNote: string | null | undefined,
     payloadOverride?: Record<string, unknown>,
   ): Promise<ResolutionResult> {
-    const existing = await getExistingApproval(id);
-    if (!canResolveStatuses.has(existing.status)) {
-      if (existing.status === targetStatus) {
-        return { approval: existing, applied: false };
+    return withApprovalMutation(id, async (tx, existing) => {
+      if (!canResolveStatuses.has(existing.status)) {
+        if (existing.status === targetStatus) {
+          return { approval: existing, applied: false };
+        }
+        throw unprocessable(
+          `Only pending or revision requested approvals can be ${targetStatus === "approved" ? "approved" : "rejected"}`,
+        );
       }
-      throw unprocessable(
-        `Only pending or revision requested approvals can be ${targetStatus === "approved" ? "approved" : "rejected"}`,
-      );
-    }
 
-    const now = new Date();
-    const updated = await db
-      .update(approvals)
-      .set({
-        status: targetStatus,
-        ...(payloadOverride ? { payload: payloadOverride } : {}),
-        decidedByUserId,
-        decisionNote: decisionNote ?? null,
-        decidedAt: now,
-        updatedAt: now,
-      })
-      .where(and(eq(approvals.id, id), inArray(approvals.status, resolvableStatuses)))
-      .returning()
-      .then((rows) => rows[0] ?? null);
-
-    if (updated) {
+      const now = new Date();
+      const updated = await tx
+        .update(approvals)
+        .set({
+          status: targetStatus,
+          ...(payloadOverride ? { payload: payloadOverride } : {}),
+          decidedByUserId,
+          decisionNote: decisionNote ?? null,
+          decidedAt: now,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(approvals.id, id),
+          inArray(approvals.status, resolvableStatuses),
+          approvalVisibleOutsideArchivedChats(),
+        ))
+        .returning()
+        .then((rows) => rows[0] ?? null);
+      if (!updated) throw notFound("Approval not found");
       return { approval: updated, applied: true };
-    }
-
-    const latest = await getExistingApproval(id);
-    if (latest.status === targetStatus) {
-      return { approval: latest, applied: false };
-    }
-
-    throw unprocessable(
-      `Only pending or revision requested approvals can be ${targetStatus === "approved" ? "approved" : "rejected"}`,
-    );
+    });
   }
 
   return {
     list: (orgId: string, status?: string) => {
       const conditions = [eq(approvals.orgId, orgId)];
       if (status) conditions.push(eq(approvals.status, status));
+      conditions.push(approvalVisibleOutsideArchivedChats());
       return db.select().from(approvals).where(and(...conditions));
     },
 
@@ -99,15 +143,18 @@ export function approvalService(db: Db) {
       db
         .select()
         .from(approvals)
-        .where(eq(approvals.id, id))
+        .where(and(eq(approvals.id, id), approvalVisibleOutsideArchivedChats()))
         .then((rows) => rows[0] ?? null),
 
     create: (orgId: string, data: Omit<typeof approvals.$inferInsert, "orgId">) =>
-      db
+      db.transaction(async (tx) => {
+        await lockLinkedChatForMutation(tx, orgId, data.payload);
+        return tx
         .insert(approvals)
         .values({ ...data, orgId })
         .returning()
-        .then((rows) => rows[0]),
+        .then((rows) => rows[0]);
+      }),
 
     approve: async (
       id: string,
@@ -204,46 +251,48 @@ export function approvalService(db: Db) {
     },
 
     requestRevision: async (id: string, decidedByUserId: string, decisionNote?: string | null) => {
-      const existing = await getExistingApproval(id);
-      if (existing.status !== "pending") {
-        throw unprocessable("Only pending approvals can request revision");
-      }
+      return withApprovalMutation(id, async (tx, existing) => {
+        if (existing.status !== "pending") {
+          throw unprocessable("Only pending approvals can request revision");
+        }
 
-      const now = new Date();
-      return db
-        .update(approvals)
-        .set({
-          status: "revision_requested",
-          decidedByUserId,
-          decisionNote: decisionNote ?? null,
-          decidedAt: now,
-          updatedAt: now,
-        })
-        .where(eq(approvals.id, id))
-        .returning()
-        .then((rows) => rows[0]);
+        const now = new Date();
+        return tx
+          .update(approvals)
+          .set({
+            status: "revision_requested",
+            decidedByUserId,
+            decisionNote: decisionNote ?? null,
+            decidedAt: now,
+            updatedAt: now,
+          })
+          .where(and(eq(approvals.id, id), approvalVisibleOutsideArchivedChats()))
+          .returning()
+          .then((rows) => rows[0]);
+      });
     },
 
     resubmit: async (id: string, payload?: Record<string, unknown>) => {
-      const existing = await getExistingApproval(id);
-      if (existing.status !== "revision_requested") {
-        throw unprocessable("Only revision requested approvals can be resubmitted");
-      }
+      return withApprovalMutation(id, async (tx, existing) => {
+        if (existing.status !== "revision_requested") {
+          throw unprocessable("Only revision requested approvals can be resubmitted");
+        }
 
-      const now = new Date();
-      return db
-        .update(approvals)
-        .set({
-          status: "pending",
-          payload: payload ?? existing.payload,
-          decisionNote: null,
-          decidedByUserId: null,
-          decidedAt: null,
-          updatedAt: now,
-        })
-        .where(eq(approvals.id, id))
-        .returning()
-        .then((rows) => rows[0]);
+        const now = new Date();
+        return tx
+          .update(approvals)
+          .set({
+            status: "pending",
+            payload: payload ?? existing.payload,
+            decisionNote: null,
+            decidedByUserId: null,
+            decidedAt: null,
+            updatedAt: now,
+          })
+          .where(and(eq(approvals.id, id), approvalVisibleOutsideArchivedChats()))
+          .returning()
+          .then((rows) => rows[0]);
+      });
     },
 
     listComments: async (approvalId: string) => {
@@ -267,22 +316,21 @@ export function approvalService(db: Db) {
       body: string,
       actor: { agentId?: string; userId?: string },
     ) => {
-      const existing = await getExistingApproval(approvalId);
       const currentUserRedactionOptions = {
         enabled: (await instanceSettings.getGeneral()).censorUsernameInLogs,
       };
       const redactedBody = redactCurrentUserText(body, currentUserRedactionOptions);
-      return db
-        .insert(approvalComments)
-        .values({
-          orgId: existing.orgId,
-          approvalId,
-          authorAgentId: actor.agentId ?? null,
-          authorUserId: actor.userId ?? null,
-          body: redactedBody,
-        })
-        .returning()
-        .then((rows) => redactApprovalComment(rows[0], currentUserRedactionOptions.enabled));
+      return withApprovalMutation(approvalId, async (tx, existing) => tx
+          .insert(approvalComments)
+          .values({
+            orgId: existing.orgId,
+            approvalId,
+            authorAgentId: actor.agentId ?? null,
+            authorUserId: actor.userId ?? null,
+            body: redactedBody,
+          })
+          .returning()
+          .then((rows) => redactApprovalComment(rows[0], currentUserRedactionOptions.enabled)));
     },
   };
 }

@@ -3406,8 +3406,7 @@ test.describe("Messenger unified threads contract", () => {
       .where(eq(chatConversations.id, activeMenuChat.id));
     const renameChat = await createChat("Rename action chat", "Rename action stable summary");
     const archiveChat = await createChat("Archive action chat");
-    const deleteChat = await createChat("Delete action chat");
-    const sidebarDeleteChat = await createChat("Sidebar delete action chat");
+    const sidebarArchiveChat = await createChat("Sidebar archive action chat");
     const existingGroupRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
       data: { name: "Existing action group", icon: "folder" },
     });
@@ -3451,10 +3450,10 @@ test.describe("Messenger unified threads contract", () => {
       "New group",
       "Move to group",
       "Archive",
-      "Delete",
     ]) {
       await expect(page.getByRole("menuitem", { name: actionName, exact: true })).toBeVisible();
     }
+    await expect(page.getByRole("menuitem", { name: "Delete", exact: true })).toHaveCount(0);
     await page.screenshot({ path: "/tmp/rudder-active-chat-actions-menu.png", fullPage: true });
     await page.getByRole("menuitem", { name: "Copy Chat Link" }).click();
     await expect.poll(async () => page.evaluate(() => navigator.clipboard.readText())).toBe(`[Active menu parity chat](chat://${activeMenuChat.id})`);
@@ -3496,7 +3495,7 @@ test.describe("Messenger unified threads contract", () => {
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${pinChat.id}`, { waitUntil: "commit" });
     await page.getByTestId("chat-actions-trigger").click();
     await expect(page.getByRole("menuitem", { name: "Pin" })).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
     await expect(page.getByRole("menuitem", { name: "Archive" })).toBeVisible();
     await page.getByRole("menuitem", { name: "Pin" }).click();
     const pinnedRes = await page.request.get(`/api/chats/${pinChat.id}`);
@@ -3509,21 +3508,15 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page).toHaveURL(/\/messenger\/chat(?:\?[^#]*)?$/, { timeout: 15_000 });
     await expect.poll(async () => (await (await page.request.get(`/api/chats/${archiveChat.id}`)).json()).status).toBe("archived");
 
-    await page.goto(`/${organization.issuePrefix}/messenger/chat/${deleteChat.id}`, { waitUntil: "commit" });
-    await page.getByTestId("chat-actions-trigger").click();
-    await page.getByRole("menuitem", { name: "Delete" }).click();
-    await page.getByRole("dialog", { name: "Delete chat" }).getByRole("button", { name: "Delete" }).click();
-    await expect(page).toHaveURL(/\/messenger\/chat(?:\?[^#]*)?$/, { timeout: 15_000 });
-    await expect.poll(async () => (await page.request.get(`/api/chats/${deleteChat.id}`)).status()).toBe(404);
-
     await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
-    const sidebarRow = page.getByTestId(threadTestId(`chat:${sidebarDeleteChat.id}`));
-    await expect(sidebarRow).toContainText("Sidebar delete action chat");
+    const sidebarRow = page.getByTestId(threadTestId(`chat:${sidebarArchiveChat.id}`));
+    await expect(sidebarRow).toContainText("Sidebar archive action chat");
     await sidebarRow.hover();
     await sidebarRow.getByRole("button", { name: "Chat actions" }).click();
-    await page.getByRole("menuitem", { name: "Delete" }).click();
-    await page.getByRole("dialog", { name: "Delete chat" }).getByRole("button", { name: "Delete" }).click();
-    await expect.poll(async () => (await page.request.get(`/api/chats/${sidebarDeleteChat.id}`)).status()).toBe(404);
+    await expect(page.getByRole("menuitem", { name: "Delete", exact: true })).toHaveCount(0);
+    await page.getByRole("menuitem", { name: "Archive", exact: true }).click();
+    await expect.poll(async () => (await (await page.request.get(`/api/chats/${sidebarArchiveChat.id}`)).json()).status)
+      .toBe("archived");
     await expect(sidebarRow).toHaveCount(0);
   });
 });

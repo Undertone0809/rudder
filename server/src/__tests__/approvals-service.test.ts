@@ -55,7 +55,14 @@ function createApproval(status: string): ApprovalRecord {
 
 function createDbStub(selectResults: ApprovalRecord[][], updateResults: ApprovalRecord[]) {
   const pendingSelectResults = [...selectResults];
-  const selectWhere = vi.fn(async () => pendingSelectResults.shift() ?? []);
+  const selectWhere = vi.fn(() => {
+    const result = pendingSelectResults.shift() ?? [];
+    const promise = Promise.resolve(result);
+    return {
+      for: vi.fn(async () => result),
+      then: promise.then.bind(promise),
+    };
+  });
   const from = vi.fn(() => ({ where: selectWhere }));
   const select = vi.fn(() => ({ from }));
 
@@ -65,7 +72,11 @@ function createDbStub(selectResults: ApprovalRecord[][], updateResults: Approval
   const update = vi.fn(() => ({ set }));
 
   return {
-    db: { select, update },
+    db: {
+      select,
+      update,
+      transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) => callback({ select, update })),
+    },
     selectWhere,
     returning,
   };
@@ -118,7 +129,10 @@ describe("approvalService resolution idempotency", () => {
 
   it("still performs side effects when the resolution update is newly applied", async () => {
     const approved = createApproval("approved");
-    const dbStub = createDbStub([[createApproval("pending")]], [approved]);
+    const dbStub = createDbStub(
+      [[createApproval("pending")], [createApproval("pending")]],
+      [approved],
+    );
 
     const svc = approvalService(dbStub.db as any);
     const result = await svc.approve("approval-1", "board", "ship it");

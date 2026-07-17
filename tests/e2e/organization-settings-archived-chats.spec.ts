@@ -52,6 +52,18 @@ async function openArchivedChatSettings(page: Page, organization: { id: string; 
   await expect(page.getByText("Archived conversations", { exact: true })).toBeVisible({ timeout: 15_000 });
 }
 
+async function switchArchivedChatSettingsOrganization(
+  page: Page,
+  organization: { id: string; issuePrefix: string },
+) {
+  await page.evaluate(({ id, issuePrefix }) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", id);
+    window.history.pushState(null, "", `/${issuePrefix}/organization/settings`);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, organization);
+  await expect(page.getByText("Archived conversations", { exact: true })).toBeVisible({ timeout: 15_000 });
+}
+
 test.describe("Organization settings archived chats", () => {
   test("keeps archived chats bounded and deletes an archived chat from the row", async ({ page }) => {
     const organization = await createOrganization(page, `Archived-Chat-Settings-${Date.now()}`);
@@ -61,6 +73,7 @@ test.describe("Organization settings archived chats", () => {
     }
 
     await openArchivedChatSettings(page, organization);
+    await expect(page.getByText("Default issue creation mode", { exact: true })).toHaveCount(0);
 
     const scrollRegion = page.getByTestId("archived-chats-scroll-region");
     await expect(scrollRegion).toBeVisible();
@@ -84,7 +97,7 @@ test.describe("Organization settings archived chats", () => {
     await expect(page.getByRole("heading", { name: "Delete archived chat?" })).toBeVisible();
     await page.getByRole("button", { name: "Delete" }).click();
 
-    await expect.poll(async () => (await page.request.get(`/api/chats/${targetChat.id}`)).status()).toBe(404);
+    await expect.poll(async () => (await page.request.get(`/api/chats/${targetChat.id}`)).status()).toBe(410);
     await expect(targetRow).toHaveCount(0);
     await expect(page.getByText("No archived chats match this search.")).toBeVisible();
     await expect(page.getByText("Showing 0 of 8")).toBeVisible();
@@ -114,10 +127,16 @@ test.describe("Organization settings archived chats", () => {
     await expect(page.getByText("No archived conversations.")).toBeVisible();
     await expect(deleteAll).toBeDisabled();
     for (const chat of archivedChats) {
-      await expect.poll(async () => (await page.request.get(`/api/chats/${chat.id}`)).status()).toBe(404);
+      await expect.poll(async () => (await page.request.get(`/api/chats/${chat.id}`)).status()).toBe(410);
     }
     expect((await page.request.get(`/api/chats/${activeChat.id}`)).status()).toBe(200);
-    expect((await page.request.get(`/api/chats/${otherArchivedChat.id}`)).status()).toBe(200);
+    expect((await page.request.get(`/api/chats/${otherArchivedChat.id}`)).status()).toBe(404);
+    const otherArchivedList = await page.request.get(
+      `/api/orgs/${otherOrganization.id}/chats?status=archived`,
+    );
+    expect(otherArchivedList.ok()).toBe(true);
+    expect((await otherArchivedList.json()).map((chat: { id: string }) => chat.id))
+      .toContain(otherArchivedChat.id);
     const activityRes = await page.request.get(
       `/api/orgs/${organization.id}/activity?entityType=organization&entityId=${organization.id}`,
     );
@@ -148,6 +167,39 @@ test.describe("Organization settings archived chats", () => {
 
     await expect(page.getByRole("alert")).toContainText("Bulk cleanup failed");
     await expect(page.getByTestId(`archived-chat-row-${archivedChat.id}`)).toBeVisible();
-    expect((await page.request.get(`/api/chats/${archivedChat.id}`)).status()).toBe(200);
+    expect((await page.request.get(`/api/chats/${archivedChat.id}`)).status()).toBe(404);
+    const archivedList = await page.request.get(`/api/orgs/${organization.id}/chats?status=archived`);
+    expect(archivedList.ok()).toBe(true);
+    expect((await archivedList.json()).map((chat: { id: string }) => chat.id)).toContain(archivedChat.id);
+  });
+
+  test("refreshes the original organization when a restore finishes after navigation", async ({ page }) => {
+    const firstOrganization = await createOrganization(page, `Restore-Origin-${Date.now()}`);
+    const secondOrganization = await createOrganization(page, `Restore-Destination-${Date.now()}`);
+    const archivedChat = await createArchivedChat(page, firstOrganization.id, "Restore while navigating");
+    await createArchivedChat(page, secondOrganization.id, "Other organization archive");
+
+    let releaseRestore!: () => void;
+    const restoreCanFinish = new Promise<void>((resolve) => {
+      releaseRestore = resolve;
+    });
+    await page.route(`/api/chats/${archivedChat.id}`, async (route) => {
+      if (route.request().method() === "PATCH") {
+        await restoreCanFinish;
+      }
+      await route.continue();
+    });
+
+    await openArchivedChatSettings(page, firstOrganization);
+    await page.getByTestId(`archived-chat-row-${archivedChat.id}`)
+      .getByRole("button", { name: "Restore", exact: true })
+      .click();
+    await switchArchivedChatSettingsOrganization(page, secondOrganization);
+    await expect(page.getByText("Other organization archive", { exact: true })).toBeVisible();
+    releaseRestore();
+    await expect.poll(async () => (await page.request.get(`/api/chats/${archivedChat.id}`)).status()).toBe(200);
+
+    await switchArchivedChatSettingsOrganization(page, firstOrganization);
+    await expect(page.getByTestId(`archived-chat-row-${archivedChat.id}`)).toHaveCount(0);
   });
 });

@@ -10,7 +10,7 @@ import type {
   HeartbeatRecoveryTrigger,
   HeartbeatRunRecoveryContext
 } from "@rudderhq/shared";
-import { and, asc, eq, inArray, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { asBoolean, asNumber, parseObject } from "../../agent-runtimes/utils.js";
 import { conflict } from "../../errors.js";
 import { issueMaterialUpdateActivitySql } from "../issue-activity-filters.js";
@@ -150,7 +150,11 @@ export function createHeartbeatRecoveryHandlers(context: any) {
             executionAgentNameKey: issues.executionAgentNameKey,
           })
           .from(issues)
-          .where(and(eq(issues.id, issueId), eq(issues.orgId, run.orgId)))
+          .where(and(
+            eq(issues.id, issueId),
+            eq(issues.orgId, run.orgId),
+            isNull(issues.archivedAt),
+          ))
           .then((rows) => rows[0] ?? null);
       }
 

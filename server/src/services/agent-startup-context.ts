@@ -1,7 +1,7 @@
 import type { Db } from "@rudderhq/db";
 import { chatContextLinks, chatConversations, chatMessages, issues } from "@rudderhq/db";
 import type { AgentRunScene } from "@rudderhq/shared";
-import { and, desc, eq, or, sql, type SQLWrapper } from "drizzle-orm";
+import { and, desc, eq, isNull, ne, or, sql, type SQLWrapper } from "drizzle-orm";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -301,7 +301,7 @@ async function listRecentIssues(db: Db, input: BuildAgentStartupContextInput) {
     createdAt: issues.createdAt,
     updatedAt: issues.updatedAt,
   }).from(issues)
-    .where(and(eq(issues.orgId, input.orgId), or(...involvement)!))
+    .where(and(eq(issues.orgId, input.orgId), isNull(issues.archivedAt), or(...involvement)!))
     .orderBy(desc(issues.updatedAt), desc(issues.createdAt), desc(issues.id))
     .limit(11);
   return {
@@ -339,7 +339,11 @@ async function listRecentChats(db: Db, input: BuildAgentStartupContextInput) {
   if (input.chatConversationId && input.scene !== "chat") involvement.push(eq(chatConversations.id, input.chatConversationId));
   if (input.issueId) involvement.push(linkedTo("issue", input.issueId));
   if (input.projectId) involvement.push(linkedTo("project", input.projectId));
-  const filters: SQLWrapper[] = [eq(chatConversations.orgId, input.orgId), or(...involvement)!];
+  const filters: SQLWrapper[] = [
+    eq(chatConversations.orgId, input.orgId),
+    ne(chatConversations.status, "archived"),
+    or(...involvement)!,
+  ];
   if (input.scene === "chat" && input.chatConversationId) {
     filters.push(sql`${chatConversations.id} <> ${input.chatConversationId}`);
   }

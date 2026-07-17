@@ -31,6 +31,7 @@ export const issuesApi = {
       originKind?: string;
       originId?: string;
       includeAutomationExecutions?: boolean;
+      archived?: boolean;
       q?: string;
       searchFields?: IssueSearchField[];
       limit?: number;
@@ -54,6 +55,7 @@ export const issuesApi = {
     if (filters?.originKind) params.set("originKind", filters.originKind);
     if (filters?.originId) params.set("originId", filters.originId);
     if (filters?.includeAutomationExecutions) params.set("includeAutomationExecutions", "true");
+    if (filters?.archived) params.set("archived", "true");
     if (filters?.q) params.set("q", filters.q);
     if (filters?.searchFields?.length) params.set("searchFields", filters.searchFields.join(","));
     if (typeof filters?.limit === "number" && Number.isFinite(filters.limit)) {
@@ -79,6 +81,8 @@ export const issuesApi = {
   create: (orgId: string, data: Record<string, unknown>) =>
     api.post<Issue>(`/orgs/${orgId}/issues`, data),
   update: (id: string, data: Record<string, unknown>) => api.patch<Issue>(`/issues/${id}`, data),
+  archive: (id: string) => api.post<Issue>(`/issues/${id}/archive`, {}),
+  restore: (id: string) => api.post<Issue>(`/issues/${id}/restore`, {}),
   reorder: (orgId: string, data: ReorderIssue) => api.post<Issue>(`/orgs/${orgId}/issues/reorder`, data),
   remove: (id: string) => api.delete<Issue>(`/issues/${id}`),
   checkout: (id: string, agentId: string) =>

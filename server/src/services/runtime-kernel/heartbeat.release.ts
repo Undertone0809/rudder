@@ -9,7 +9,7 @@ import {
   heartbeatRuns,
   issues
 } from "@rudderhq/db";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { parseObject } from "../../agent-runtimes/utils.js";
 import { logActivity } from "../activity-log.js";
 import {
@@ -188,7 +188,11 @@ export function createHeartbeatReleaseHandlers(context: any) {
           reviewerUserId: issues.reviewerUserId,
         })
         .from(issues)
-        .where(and(eq(issues.orgId, run.orgId), eq(issues.executionRunId, run.id)))
+        .where(and(
+          eq(issues.orgId, run.orgId),
+          eq(issues.executionRunId, run.id),
+          isNull(issues.archivedAt),
+        ))
         .then((rows) => rows[0] ?? null);
 
       if (!issue) return { promotedRun: null, passiveClosure: null };

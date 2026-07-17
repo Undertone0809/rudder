@@ -67,6 +67,28 @@ describe("LiveUpdatesProvider archived chat bulk deletion invalidation", () => {
       queryKey: queryKeys.messenger.customGroups("organization-1"),
     });
   });
+
+  it("refreshes archived settings data for single-chat lifecycle events", () => {
+    const invalidations: unknown[] = [];
+    const queryClient = {
+      invalidateQueries: (input: unknown) => {
+        invalidations.push(input);
+      },
+      getQueryData: () => undefined,
+    };
+
+    __liveUpdatesTestUtils.invalidateActivityQueries(
+      queryClient as never,
+      "organization-1",
+      {
+        action: "chat.updated",
+        entityType: "chat",
+        entityId: "chat-1",
+      },
+    );
+
+    expect(invalidations).toContainEqual({ queryKey: ["chats", "organization-1"] });
+  });
 });
 
 describe("LiveUpdatesProvider visible issue toast suppression", () => {

@@ -154,7 +154,7 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
     const parentIssue = await db
       .select({ id: issues.id, orgId: issues.orgId })
       .from(issues)
-      .where(eq(issues.id, issueId))
+      .where(and(eq(issues.id, issueId), isNull(issues.archivedAt)))
       .then((rows) => rows[0] ?? null);
     if (!parentIssue) throw notFound("Parent issue not found");
     if (parentIssue.orgId !== orgId) throw unprocessable("Parent issue must belong to same organization");
@@ -954,6 +954,7 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
           inArray(issues.originId, automationIds),
           inArray(issues.status, OPEN_ISSUE_STATUSES),
           isNull(issues.hiddenAt),
+          isNull(issues.archivedAt),
         ),
       )
       .orderBy(issues.originId, desc(issues.updatedAt), desc(issues.createdAt));
@@ -992,6 +993,7 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
             inArray(issues.originId, missingAutomationIds),
             inArray(issues.status, OPEN_ISSUE_STATUSES),
             isNull(issues.hiddenAt),
+            isNull(issues.archivedAt),
           ),
         )
         .orderBy(issues.originId, desc(issues.updatedAt), desc(issues.createdAt));
@@ -1065,6 +1067,7 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
           eq(issues.originId, automation.id),
           inArray(issues.status, OPEN_ISSUE_STATUSES),
           isNull(issues.hiddenAt),
+          isNull(issues.archivedAt),
         ),
       )
       .orderBy(desc(issues.updatedAt), desc(issues.createdAt))
@@ -1090,6 +1093,7 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
           eq(issues.originId, automation.id),
           inArray(issues.status, OPEN_ISSUE_STATUSES),
           isNull(issues.hiddenAt),
+          isNull(issues.archivedAt),
         ),
       )
       .orderBy(desc(issues.updatedAt), desc(issues.createdAt))
@@ -2155,7 +2159,7 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
           originRunId: issues.originRunId,
         })
         .from(issues)
-        .where(eq(issues.id, issueId))
+        .where(and(eq(issues.id, issueId), isNull(issues.archivedAt)))
         .then((rows) => rows[0] ?? null);
       if (!issue || issue.originKind !== "automation_execution" || !issue.originRunId) return null;
       const automation = issue.originId ? await getAutomationById(issue.originId) : null;

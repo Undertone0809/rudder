@@ -12,7 +12,7 @@ import type {
   AgentSkillTelemetryEvidence,
   AgentSkillTelemetryEvidenceCounts
 } from "@rudderhq/shared";
-import { and, asc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { getServerAdapter } from "../../agent-runtimes/index.js";
 import { parseObject } from "../../agent-runtimes/utils.js";
 import { conflict, notFound } from "../../errors.js";
@@ -344,7 +344,11 @@ export function createHeartbeatMiscHandlers(context: any) {
       projectId = await db
         .select({ projectId: issues.projectId })
         .from(issues)
-        .where(and(eq(issues.id, issueId), eq(issues.orgId, agent.orgId)))
+        .where(and(
+          eq(issues.id, issueId),
+          eq(issues.orgId, agent.orgId),
+          isNull(issues.archivedAt),
+        ))
         .then((rows) => rows[0]?.projectId ?? null);
     }
 

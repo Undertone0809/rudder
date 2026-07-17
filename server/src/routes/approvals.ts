@@ -6,7 +6,7 @@ import {
   resolveApprovalSchema,
   resubmitApprovalSchema,
 } from "@rudderhq/shared";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Router, type Request } from "express";
 import { forbidden, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
@@ -135,7 +135,12 @@ export function approvalRoutes(db: Db) {
         .select({ labelId: issueLabels.labelId })
         .from(issueLabels)
         .innerJoin(issues, eq(issueLabels.issueId, issues.id))
-        .where(and(eq(issues.id, parentId), eq(issues.orgId, approval.orgId), eq(issueLabels.orgId, approval.orgId)))
+        .where(and(
+          eq(issues.id, parentId),
+          eq(issues.orgId, approval.orgId),
+          eq(issueLabels.orgId, approval.orgId),
+          isNull(issues.archivedAt),
+        ))
         .limit(1);
       if (parentLabelRows.length > 0) return;
     }

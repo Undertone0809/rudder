@@ -326,6 +326,8 @@ describe("agent startup context service", () => {
     const issueId = randomUUID();
     const currentChatId = randomUUID();
     const recentChatId = randomUUID();
+    const resolvedChatId = randomUUID();
+    const archivedChatId = randomUUID();
     const otherOrgChatId = randomUUID();
     const now = new Date("2026-06-19T03:00:00.000Z");
     memoryDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-startup-memory-"));
@@ -361,12 +363,34 @@ describe("agent startup context service", () => {
         planMode: false,
       },
       {
+        id: resolvedChatId,
+        orgId: primary.orgId,
+        title: "Resolved linked chat",
+        summary: "resolved chat content remains useful context",
+        status: "resolved",
+        preferredAgentId: primary.agentId,
+        lastMessageAt: new Date("2026-06-19T01:15:00.000Z"),
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+      {
         id: otherOrgChatId,
         orgId: other.orgId,
         title: "Other org chat",
         summary: "other org body",
         preferredAgentId: other.agentId,
         lastMessageAt: new Date("2026-06-19T00:30:00.000Z"),
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+      {
+        id: archivedChatId,
+        orgId: primary.orgId,
+        title: "Archived startup chat must stay hidden",
+        summary: "archived startup content must stay hidden",
+        status: "archived",
+        preferredAgentId: primary.agentId,
+        lastMessageAt: new Date("2026-06-19T01:30:00.000Z"),
         issueCreationMode: "manual_approval",
         planMode: false,
       },
@@ -377,6 +401,15 @@ describe("agent startup context service", () => {
       { orgId: other.orgId, conversationId: otherOrgChatId, entityType: "agent", entityId: other.agentId },
     ]);
     await db.insert(chatMessages).values([
+      {
+        id: randomUUID(),
+        orgId: primary.orgId,
+        conversationId: resolvedChatId,
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "resolved chat content remains useful context",
+      },
       {
         id: randomUUID(),
         orgId: primary.orgId,
@@ -404,6 +437,15 @@ describe("agent startup context service", () => {
         status: "completed",
         body: "other org body",
       },
+      {
+        id: randomUUID(),
+        orgId: primary.orgId,
+        conversationId: archivedChatId,
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "archived startup message must stay hidden",
+      },
     ]);
 
     const bundle = await agentStartupContextService(db).buildForRun({
@@ -420,10 +462,14 @@ describe("agent startup context service", () => {
     expect(bundle.markdown).toContain("`RD-500`");
     expect(bundle.markdown).toContain(`| \`${recentChatId}\` |`);
     expect(bundle.markdown).toContain("recent linked chat body");
+    expect(bundle.markdown).toContain(`| \`${resolvedChatId}\` |`);
+    expect(bundle.markdown).toContain("resolved chat content remains useful context");
     expect(bundle.markdown).not.toContain(currentChatId);
     expect(bundle.markdown).not.toContain("current chat body must not be duplicated");
     expect(bundle.markdown).not.toContain(otherOrgChatId);
     expect(bundle.markdown).not.toContain("other org body");
-    expect(bundle.metrics.recentChatsCount).toBe(1);
+    expect(bundle.markdown).not.toContain(archivedChatId);
+    expect(bundle.markdown).not.toContain("archived startup");
+    expect(bundle.metrics.recentChatsCount).toBe(2);
   });
 });

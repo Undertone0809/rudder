@@ -8,10 +8,15 @@
  */
 import type { Db } from "@rudderhq/db";
 import {
+  activityLog,
+  agentIntegrationOutboundMessages,
   agents,
-  assets,
+  chatContextLinks,
+  costEvents,
+  customIntegrationToolCalls,
   documents,
   executionWorkspaces,
+  financeEvents,
   goals,
   heartbeatRuns,
   issueAttachments,
@@ -22,6 +27,8 @@ import {
   issueReadStates,
   issues,
   labels,
+  messengerCustomGroupEntries,
+  messengerThreadUserStates,
   organizationIssuePrefixAliases,
   organizationMemberships,
   organizations,
@@ -33,9 +40,17 @@ import {
   type IssueSearchMatch,
   type ReorderIssue
 } from "@rudderhq/shared";
-import { and, asc, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { redactCurrentUserText } from "../log-redaction.js";
+import { logActivity, type LogActivityInput } from "./activity-log.js";
+import { enqueueEntityCleanupJobs } from "./entity-cleanup-jobs.js";
+import {
+  assertNoActiveEntityRunData,
+  deleteEntityRunData,
+  removeEntityRunLogArtifacts,
+} from "./entity-run-cleanup.js";
+import { entityTombstoneService } from "./entity-tombstones.js";
 import {
   defaultIssueExecutionWorkspaceSettingsForProject,
   parseProjectExecutionWorkspacePolicy,
@@ -44,6 +59,7 @@ import { getDefaultCompanyGoal } from "./goals.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { issueMaterialUpdateActivitySql } from "./issue-activity-filters.js";
 import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
+import { orphanedAssetService } from "./orphaned-assets.js";
 
 import { createIssueCommentAttachmentMethods } from "./issues.comments-attachments.js";
 import {
@@ -295,7 +311,7 @@ export function issueService(db: Db) {
     const parent = await dbOrTx
       .select({ id: issues.id, orgId: issues.orgId, parentId: issues.parentId, projectId: issues.projectId })
       .from(issues)
-      .where(eq(issues.id, parentId))
+      .where(and(eq(issues.id, parentId), isNull(issues.archivedAt)))
       .then(
         (rows: Array<{ id: string; orgId: string; parentId: string | null; projectId: string | null }>) =>
           rows[0] ?? null,
@@ -321,7 +337,11 @@ export function issueService(db: Db) {
       const next = await dbOrTx
         .select({ parentId: issues.parentId })
         .from(issues)
-        .where(and(eq(issues.id, currentParentId), eq(issues.orgId, orgId)))
+        .where(and(
+          eq(issues.id, currentParentId),
+          eq(issues.orgId, orgId),
+          isNull(issues.archivedAt),
+        ))
         .then((rows: Array<{ parentId: string | null }>) => rows[0] ?? null);
       currentParentId = next?.parentId ?? null;
     }
@@ -431,6 +451,50 @@ export function issueService(db: Db) {
     }));
   }
 
+  async function findByIdentifier(identifier: string, includeArchived: boolean) {
+    const normalizedIdentifier = identifier.toUpperCase();
+    let row = await db
+      .select()
+      .from(issues)
+      .where(
+        includeArchived
+          ? eq(issues.identifier, normalizedIdentifier)
+          : and(eq(issues.identifier, normalizedIdentifier), isNull(issues.archivedAt)),
+      )
+      .then((rows) => rows[0] ?? null);
+    if (!row) {
+      const match = normalizedIdentifier.match(/^([A-Z][A-Z0-9]*)-(\d+)$/);
+      if (match) {
+        const alias = await db
+          .select({ orgId: organizationIssuePrefixAliases.orgId })
+          .from(organizationIssuePrefixAliases)
+          .where(eq(organizationIssuePrefixAliases.prefix, match[1]!))
+          .then((rows) => rows[0] ?? null);
+        if (alias) {
+          row = await db
+            .select()
+            .from(issues)
+            .where(
+              includeArchived
+                ? and(
+                  eq(issues.orgId, alias.orgId),
+                  eq(issues.issueNumber, Number(match[2])),
+                )
+                : and(
+                  eq(issues.orgId, alias.orgId),
+                  eq(issues.issueNumber, Number(match[2])),
+                  isNull(issues.archivedAt),
+                ),
+            )
+            .then((rows) => rows[0] ?? null);
+        }
+      }
+    }
+    if (!row) return null;
+    const [enriched] = await withIssueLabels(db, [row]);
+    return enriched;
+  }
+
   return {
     listFollows: async (orgId: string, userId: string) => {
       const rows = await db
@@ -455,7 +519,12 @@ export function issueService(db: Db) {
         })
         .from(issueFollows)
         .innerJoin(issues, eq(issueFollows.issueId, issues.id))
-        .where(and(eq(issueFollows.orgId, orgId), eq(issueFollows.userId, userId), isNull(issues.hiddenAt)))
+        .where(and(
+          eq(issueFollows.orgId, orgId),
+          eq(issueFollows.userId, userId),
+          isNull(issues.hiddenAt),
+          isNull(issues.archivedAt),
+        ))
         .orderBy(desc(issueFollows.createdAt));
       return rows;
     },
@@ -464,7 +533,11 @@ export function issueService(db: Db) {
       const issue = await db
         .select({ id: issues.id, orgId: issues.orgId })
         .from(issues)
-        .where(and(eq(issues.id, issueId), eq(issues.orgId, orgId)))
+        .where(and(
+          eq(issues.id, issueId),
+          eq(issues.orgId, orgId),
+          isNull(issues.archivedAt),
+        ))
         .then((rows) => rows[0] ?? null);
       if (!issue) throw notFound("Issue not found");
 
@@ -626,7 +699,11 @@ export function issueService(db: Db) {
           ? automationExecutionVisibleToUserCondition(orgId, contextUserId)
           : ne(issues.originKind, "automation_execution"));
       }
-      conditions.push(isNull(issues.hiddenAt));
+      if (filters?.archivedOnly) {
+        conditions.push(isNotNull(issues.archivedAt));
+      } else {
+        conditions.push(isNull(issues.hiddenAt), isNull(issues.archivedAt));
+      }
 
       const priorityOrder = sql`CASE ${issues.priority} WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END`;
       const searchOrder = sql<number>`
@@ -720,6 +797,7 @@ export function issueService(db: Db) {
       const conditions = [
         eq(issues.orgId, orgId),
         isNull(issues.hiddenAt),
+        isNull(issues.archivedAt),
         unreadForUserCondition(orgId, userId),
         automationExecutionVisibleToUserCondition(orgId, userId),
       ];
@@ -764,6 +842,17 @@ export function issueService(db: Db) {
       const row = await db
         .select()
         .from(issues)
+        .where(and(eq(issues.id, id), isNull(issues.archivedAt)))
+        .then((rows) => rows[0] ?? null);
+      if (!row) return null;
+      const [enriched] = await withIssueLabels(db, [row]);
+      return enriched;
+    },
+
+    getByIdIncludingArchived: async (id: string) => {
+      const row = await db
+        .select()
+        .from(issues)
         .where(eq(issues.id, id))
         .then((rows) => rows[0] ?? null);
       if (!row) return null;
@@ -771,37 +860,9 @@ export function issueService(db: Db) {
       return enriched;
     },
 
-    getByIdentifier: async (identifier: string) => {
-      const normalizedIdentifier = identifier.toUpperCase();
-      let row = await db
-        .select()
-        .from(issues)
-        .where(eq(issues.identifier, normalizedIdentifier))
-        .then((rows) => rows[0] ?? null);
-      if (!row) {
-        const match = normalizedIdentifier.match(/^([A-Z][A-Z0-9]*)-(\d+)$/);
-        if (match) {
-          const alias = await db
-            .select({ orgId: organizationIssuePrefixAliases.orgId })
-            .from(organizationIssuePrefixAliases)
-            .where(eq(organizationIssuePrefixAliases.prefix, match[1]!))
-            .then((rows) => rows[0] ?? null);
-          if (alias) {
-            row = await db
-              .select()
-              .from(issues)
-              .where(and(
-                eq(issues.orgId, alias.orgId),
-                eq(issues.issueNumber, Number(match[2])),
-              ))
-              .then((rows) => rows[0] ?? null);
-          }
-        }
-      }
-      if (!row) return null;
-      const [enriched] = await withIssueLabels(db, [row]);
-      return enriched;
-    },
+    getByIdentifier: (identifier: string) => findByIdentifier(identifier, false),
+
+    getByIdentifierIncludingArchived: (identifier: string) => findByIdentifier(identifier, true),
 
     create: async (
       orgId: string,
@@ -937,7 +998,7 @@ export function issueService(db: Db) {
       const existing = await db
         .select()
         .from(issues)
-        .where(eq(issues.id, id))
+        .where(and(eq(issues.id, id), isNull(issues.archivedAt)))
         .then((rows) => rows[0] ?? null);
       if (!existing) return null;
 
@@ -1056,12 +1117,131 @@ export function issueService(db: Db) {
       });
     },
 
+    archive: async (
+      id: string,
+      activity?: Omit<LogActivityInput, "orgId" | "action" | "entityType" | "entityId" | "details">,
+    ) => {
+      const result = await db.transaction(async (tx) => {
+        const existing = await tx
+          .select()
+          .from(issues)
+          .where(eq(issues.id, id))
+          .for("update")
+          .then((rows) => rows[0] ?? null);
+        if (!existing) return null;
+        if (existing.archivedAt) {
+          const [enriched] = await withIssueLabels(tx, [existing]);
+          return { issue: enriched, publishActivity: null as (() => void) | null };
+        }
+
+        const child = await tx
+          .select({ id: issues.id })
+          .from(issues)
+          .where(and(eq(issues.parentId, id), isNull(issues.archivedAt)))
+          .for("update")
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+        if (child) {
+          throw conflict("Archive sub-issues before archiving this issue");
+        }
+
+        await assertNoActiveEntityRunData(tx as unknown as Db, {
+          orgId: existing.orgId,
+          issueId: id,
+          explicitRunIds: [existing.checkoutRunId, existing.executionRunId],
+        }, "Cannot archive an issue while agent work is active");
+        if (existing.status === "in_progress") {
+          throw conflict("Cannot archive an issue while agent work is active");
+        }
+
+        const [archived] = await tx
+          .update(issues)
+          .set({ archivedAt: new Date(), updatedAt: new Date() })
+          .where(and(eq(issues.id, id), isNull(issues.archivedAt)))
+          .returning();
+        if (!archived) return null;
+        const [enriched] = await withIssueLabels(tx, [archived]);
+        const activityResult = activity
+          ? await logActivity(tx as unknown as Db, {
+            ...activity,
+            orgId: archived.orgId,
+            action: "issue.archived",
+            entityType: "issue",
+            entityId: archived.id,
+            details: { archivedAt: archived.archivedAt },
+          }, { deferPublish: true })
+          : null;
+        return { issue: enriched, publishActivity: activityResult?.publish ?? null };
+      });
+      result?.publishActivity?.();
+      return result?.issue ?? null;
+    },
+
+    restore: async (
+      id: string,
+      activity?: Omit<LogActivityInput, "orgId" | "action" | "entityType" | "entityId" | "details">,
+    ) => {
+      const result = await db.transaction(async (tx) => {
+        const candidate = await tx
+          .select()
+          .from(issues)
+          .where(eq(issues.id, id))
+          .then((rows) => rows[0] ?? null);
+        if (!candidate?.archivedAt) return null;
+        if (candidate.parentId) {
+          const parent = await tx
+            .select({ archivedAt: issues.archivedAt })
+            .from(issues)
+            .where(eq(issues.id, candidate.parentId))
+            .for("update")
+            .then((rows) => rows[0] ?? null);
+          if (parent?.archivedAt) {
+            throw conflict("Restore the parent issue before restoring this sub-issue");
+          }
+        }
+        const existing = await tx
+          .select()
+          .from(issues)
+          .where(eq(issues.id, id))
+          .for("update")
+          .then((rows) => rows[0] ?? null);
+        if (!existing?.archivedAt) return null;
+        if (existing.parentId !== candidate.parentId) {
+          throw conflict("Issue hierarchy changed while restoring; retry the restore");
+        }
+
+        const [restored] = await tx
+          .update(issues)
+          .set({ archivedAt: null, updatedAt: new Date() })
+          .where(and(eq(issues.id, id), isNotNull(issues.archivedAt)))
+          .returning();
+        if (!restored) return null;
+        const [enriched] = await withIssueLabels(tx, [restored]);
+        const activityResult = activity
+          ? await logActivity(tx as unknown as Db, {
+            ...activity,
+            orgId: restored.orgId,
+            action: "issue.restored",
+            entityType: "issue",
+            entityId: restored.id,
+          }, { deferPublish: true })
+          : null;
+        return { issue: enriched, publishActivity: activityResult?.publish ?? null };
+      });
+      result?.publishActivity?.();
+      return result?.issue ?? null;
+    },
+
     reorder: async (orgId: string, input: ReorderIssue) =>
       db.transaction(async (tx) => {
         const existing = await tx
           .select()
           .from(issues)
-          .where(and(eq(issues.id, input.issueId), eq(issues.orgId, orgId)))
+          .where(and(
+            eq(issues.id, input.issueId),
+            eq(issues.orgId, orgId),
+            isNull(issues.archivedAt),
+          ))
           .then((rows) => rows[0] ?? null);
         if (!existing) return null;
 
@@ -1076,6 +1256,7 @@ export function issueService(db: Db) {
               eq(issues.status, input.targetStatus),
               ne(issues.id, input.issueId),
               isNull(issues.hiddenAt),
+              isNull(issues.archivedAt),
             ),
           )
           .orderBy(asc(issues.boardOrder), desc(issues.updatedAt), desc(issues.createdAt), asc(issues.id));
@@ -1161,8 +1342,39 @@ export function issueService(db: Db) {
         };
       }),
 
-    remove: (id: string) =>
-      db.transaction(async (tx) => {
+    remove: async (
+      id: string,
+      activity: Omit<LogActivityInput, "orgId" | "action" | "entityType" | "entityId" | "details">,
+    ) => {
+      const result = await db.transaction(async (tx) => {
+        const existing = await tx
+          .select()
+          .from(issues)
+          .where(eq(issues.id, id))
+          .for("update")
+          .then((rows) => rows[0] ?? null);
+        if (!existing) return null;
+        if (!existing.archivedAt) {
+          throw conflict("Archive the issue before deleting it");
+        }
+
+        const child = await tx
+          .select({ id: issues.id })
+          .from(issues)
+          .where(eq(issues.parentId, id))
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+        if (child) {
+          throw conflict("Remove or delete sub-issues before deleting this issue");
+        }
+
+        await assertNoActiveEntityRunData(tx as unknown as Db, {
+          orgId: existing.orgId,
+          issueId: id,
+          explicitRunIds: [existing.checkoutRunId, existing.executionRunId],
+        }, "Cannot delete an issue while agent work is active");
+
+        const [enrichedExisting] = await withIssueLabels(tx, [existing]);
         const attachmentAssetIds = await tx
           .select({ assetId: issueAttachments.assetId })
           .from(issueAttachments)
@@ -1172,6 +1384,56 @@ export function issueService(db: Db) {
           .from(issueDocuments)
           .where(eq(issueDocuments.issueId, id));
 
+        await entityTombstoneService(tx as unknown as Db).create({
+          orgId: existing.orgId,
+          entityType: "issue",
+          entityId: existing.id,
+          title: existing.title,
+          issueNumber: existing.issueNumber,
+          deletedByActorType: activity.actorType,
+          deletedByActorId: activity.actorId,
+        });
+
+        const runCleanupArtifacts = await deleteEntityRunData(tx as unknown as Db, {
+          orgId: existing.orgId,
+          issueId: id,
+          explicitRunIds: [existing.checkoutRunId, existing.executionRunId],
+        }, "Cannot delete an issue while agent work is active");
+        await tx.delete(activityLog).where(and(
+          eq(activityLog.orgId, existing.orgId),
+          eq(activityLog.entityType, "issue"),
+          eq(activityLog.entityId, id),
+        ));
+        await tx.delete(chatContextLinks).where(and(
+          eq(chatContextLinks.orgId, existing.orgId),
+          eq(chatContextLinks.entityType, "issue"),
+          eq(chatContextLinks.entityId, id),
+        ));
+        const threadKey = `issue:${id}`;
+        await tx.delete(messengerCustomGroupEntries).where(and(
+          eq(messengerCustomGroupEntries.orgId, existing.orgId),
+          eq(messengerCustomGroupEntries.threadKey, threadKey),
+        ));
+        await tx.delete(messengerThreadUserStates).where(and(
+          eq(messengerThreadUserStates.orgId, existing.orgId),
+          eq(messengerThreadUserStates.threadKey, threadKey),
+        ));
+        await tx.delete(customIntegrationToolCalls).where(and(
+          eq(customIntegrationToolCalls.orgId, existing.orgId),
+          eq(customIntegrationToolCalls.issueId, id),
+        ));
+        await tx.delete(agentIntegrationOutboundMessages).where(and(
+          eq(agentIntegrationOutboundMessages.orgId, existing.orgId),
+          eq(agentIntegrationOutboundMessages.issueId, id),
+        ));
+        await tx.update(costEvents).set({ issueId: null }).where(and(
+          eq(costEvents.orgId, existing.orgId),
+          eq(costEvents.issueId, id),
+        ));
+        await tx.update(financeEvents).set({ issueId: null }).where(and(
+          eq(financeEvents.orgId, existing.orgId),
+          eq(financeEvents.issueId, id),
+        ));
         await tx.delete(issueReadStates).where(eq(issueReadStates.issueId, id));
         await tx.delete(issueComments).where(eq(issueComments.issueId, id));
 
@@ -1181,12 +1443,6 @@ export function issueService(db: Db) {
           .returning()
           .then((rows) => rows[0] ?? null);
 
-        if (removedIssue && attachmentAssetIds.length > 0) {
-          await tx
-            .delete(assets)
-            .where(inArray(assets.id, attachmentAssetIds.map((row) => row.assetId)));
-        }
-
         if (removedIssue && issueDocumentIds.length > 0) {
           await tx
             .delete(documents)
@@ -1194,9 +1450,43 @@ export function issueService(db: Db) {
         }
 
         if (!removedIssue) return null;
-        const [enriched] = await withIssueLabels(tx, [removedIssue]);
-        return enriched;
-      }),
+        const attachmentIds = attachmentAssetIds.map((row) => row.assetId);
+        const orphanedAttachments = await orphanedAssetService(tx as unknown as Db)
+          .list(existing.orgId, attachmentIds);
+        await enqueueEntityCleanupJobs(
+          tx as unknown as Db,
+          existing.orgId,
+          orphanedAttachments.map((attachment) => ({
+            artifactType: "storage_object",
+            artifactRef: attachment.objectKey,
+          })),
+        );
+        const removedAttachments = await orphanedAssetService(tx as unknown as Db)
+          .remove(existing.orgId, orphanedAttachments.map((attachment) => attachment.id));
+        const removedAttachmentIds = new Set(removedAttachments.map((attachment) => attachment.id));
+        const activityResult = await logActivity(tx as unknown as Db, {
+          ...activity,
+          orgId: existing.orgId,
+          action: "issue.deleted",
+          entityType: "organization",
+          entityId: existing.orgId,
+          details: { deletedEntityType: "issue" },
+        }, { deferPublish: true });
+        return {
+          issue: enrichedExisting ?? removedIssue,
+          attachments: orphanedAttachments.filter((attachment) => removedAttachmentIds.has(attachment.id)),
+          runCleanupArtifacts,
+          publishActivity: activityResult?.publish ?? null,
+        };
+      });
+      if (!result) return null;
+      result.publishActivity?.();
+      await removeEntityRunLogArtifacts(db, result.issue.orgId, result.runCleanupArtifacts);
+      return {
+        issue: result.issue,
+        attachments: result.attachments,
+      };
+    },
 
     checkout: async (id: string, agentId: string, expectedStatuses: string[], checkoutRunId: string | null) => {
       const issueCompany = await db
@@ -1231,6 +1521,7 @@ export function issueService(db: Db) {
         .where(
           and(
             eq(issues.id, id),
+            isNull(issues.archivedAt),
             inArray(issues.status, expectedStatuses),
             or(isNull(issues.assigneeAgentId), sameRunAssigneeCondition),
             executionLockCondition,
@@ -1470,7 +1761,11 @@ export function issueService(db: Db) {
         projectId: string | null; goalId: string | null;
       }> = [];
       const visited = new Set<string>([issueId]);
-      const start = await db.select().from(issues).where(eq(issues.id, issueId)).then(r => r[0] ?? null);
+      const start = await db
+        .select()
+        .from(issues)
+        .where(and(eq(issues.id, issueId), isNull(issues.archivedAt)))
+        .then(r => r[0] ?? null);
       let currentId = start?.parentId ?? null;
       while (currentId && !visited.has(currentId) && raw.length < 50) {
         visited.add(currentId);
@@ -1481,7 +1776,10 @@ export function issueService(db: Db) {
           reviewerAgentId: issues.reviewerAgentId, reviewerUserId: issues.reviewerUserId,
           projectId: issues.projectId,
           goalId: issues.goalId, parentId: issues.parentId,
-        }).from(issues).where(eq(issues.id, currentId)).then(r => r[0] ?? null);
+        })
+          .from(issues)
+          .where(and(eq(issues.id, currentId), isNull(issues.archivedAt)))
+          .then(r => r[0] ?? null);
         if (!parent) break;
         raw.push({
           id: parent.id, identifier: parent.identifier ?? null, title: parent.title, description: parent.description ?? null,

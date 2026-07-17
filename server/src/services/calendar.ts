@@ -338,7 +338,7 @@ export function calendarService(db: Db) {
     const issue = await db
       .select({ id: issues.id, orgId: issues.orgId, hiddenAt: issues.hiddenAt })
       .from(issues)
-      .where(eq(issues.id, issueId))
+      .where(and(eq(issues.id, issueId), isNull(issues.archivedAt)))
       .then((rows) => rows[0] ?? null);
     if (!issue || issue.hiddenAt) throw notFound("Issue not found");
     if (issue.orgId !== orgId) throw unprocessable("Issue must belong to same organization");
@@ -580,6 +580,7 @@ export function calendarService(db: Db) {
           inArray(activityLog.runId, runIds),
           eq(activityLog.entityType, "issue"),
           isNull(issues.hiddenAt),
+          isNull(issues.archivedAt),
         ),
       )
       .orderBy(activityLog.runId, desc(activityLog.createdAt));
@@ -656,6 +657,7 @@ export function calendarService(db: Db) {
         and(
           eq(issueIdAsText, contextIssueId),
           isNull(issues.hiddenAt),
+          isNull(issues.archivedAt),
         ),
       )
       .leftJoin(

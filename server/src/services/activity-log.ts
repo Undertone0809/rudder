@@ -1,7 +1,8 @@
 import type { Db } from "@rudderhq/db";
-import { activityLog } from "@rudderhq/db";
+import { activityLog, chatConversations, issues } from "@rudderhq/db";
 import type { PluginEvent } from "@rudderhq/plugin-sdk";
 import { PLUGIN_EVENT_TYPES, type PluginEventType } from "@rudderhq/shared";
+import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { logger } from "../middleware/logger.js";
@@ -53,6 +54,26 @@ export async function logActivity(
   input: LogActivityInput,
   options: { deferPublish?: boolean } = {},
 ) {
+  if (UUID_RE.test(input.entityId) && (input.entityType === "issue" || input.entityType === "chat")) {
+    const entityExists = input.entityType === "issue"
+      ? await db
+        .select({ id: issues.id })
+        .from(issues)
+        .where(and(eq(issues.id, input.entityId), eq(issues.orgId, input.orgId)))
+        .for("key share")
+        .then((rows) => rows.length > 0)
+      : await db
+        .select({ id: chatConversations.id })
+        .from(chatConversations)
+        .where(and(
+          eq(chatConversations.id, input.entityId),
+          eq(chatConversations.orgId, input.orgId),
+        ))
+        .for("key share")
+        .then((rows) => rows.length > 0);
+    if (!entityExists) return null;
+  }
+
   const currentUserRedactionOptions = {
     enabled: (await instanceSettingsService(db).getGeneral()).censorUsernameInLogs,
   };

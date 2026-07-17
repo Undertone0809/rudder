@@ -395,6 +395,22 @@ export async function stopRuntimeService(serviceId: string) {
   await persistRuntimeServiceRecord(record.db, record);
 }
 
+export async function stopRuntimeServiceForDeletion(serviceId: string) {
+  const record = runtimeServicesById.get(serviceId);
+  if (!record) return;
+  clearIdleTimer(record);
+  runtimeServicesById.delete(serviceId);
+  if (record.reuseKey && runtimeServicesByReuseKey.get(record.reuseKey) === serviceId) {
+    runtimeServicesByReuseKey.delete(record.reuseKey);
+  }
+  for (const [runId, serviceIds] of runtimeServiceLeasesByRun) {
+    const remaining = serviceIds.filter((id) => id !== serviceId);
+    if (remaining.length > 0) runtimeServiceLeasesByRun.set(runId, remaining);
+    else runtimeServiceLeasesByRun.delete(runId);
+  }
+  if (record.child && record.child.pid) terminateChildProcess(record.child);
+}
+
 export async function markPersistedRuntimeServicesStoppedForExecutionWorkspace(input: {
   db: Db;
   executionWorkspaceId: string;
@@ -717,4 +733,3 @@ export async function persistAdapterManagedRuntimeServices(input: {
 
   return refs;
 }
-

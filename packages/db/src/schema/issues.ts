@@ -68,12 +68,14 @@ export const issues = pgTable(
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     hiddenAt: timestamp("hidden_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
     companyStatusIdx: index("issues_company_status_idx").on(table.orgId, table.status),
+    companyArchivedIdx: index("issues_company_archived_idx").on(table.orgId, table.archivedAt),
     companyStatusBoardOrderIdx: index("issues_company_status_board_order_idx").on(
       table.orgId,
       table.status,

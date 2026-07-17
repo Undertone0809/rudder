@@ -20,8 +20,9 @@ import {
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
-import { forbidden, HttpError, unauthorized, unprocessable } from "../errors.js";
+import { forbidden, HttpError, notFound, unauthorized, unprocessable } from "../errors.js";
 import { validate } from "../middleware/validate.js";
+import { entityDeletedResponse, entityTombstoneService } from "../services/entity-tombstones.js";
 import {
   accessService,
   agentService,
@@ -72,6 +73,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
   const issueApprovalsSvc = issueApprovalService(db);
   const executionWorkspacesSvc = runWorkspaceService(db);
   const workProductsSvc = workProductService(db);
+  const tombstones = entityTombstoneService(db);
   const automationsSvc = automationService(db);
   const workspaceBrowser = organizationWorkspaceBrowserService(db);
   const upload = multer({
@@ -293,12 +295,15 @@ export function issueRoutes(db: Db, storage: StorageService) {
 
   async function normalizeIssueIdentifier(rawId: string): Promise<string> {
     if (/^[A-Z][A-Z0-9]*-\d+$/i.test(rawId)) {
-      const issue = await svc.getByIdentifier(rawId);
+      const issue = await svc.getByIdentifierIncludingArchived(rawId);
       if (issue) {
         return issue.id;
       }
+      const tombstone = await tombstones.getIssueByIdentifier(rawId);
+      if (tombstone) return tombstone.entityId;
     }
-    return rawId;
+    if (isUuidLike(rawId)) return rawId;
+    throw notFound("Issue not found");
   }
 
   function boardUserId(req: Request) {
@@ -387,6 +392,8 @@ export function issueRoutes(db: Db, storage: StorageService) {
   router.get("/orgs/:orgId/issues", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
+    const archivedOnly = req.query.archived === "true" || req.query.archived === "1";
+    if (archivedOnly) assertBoard(req);
     const assigneeUserFilterRaw = req.query.assigneeUserId as string | undefined;
     const reviewerUserFilterRaw = req.query.reviewerUserId as string | undefined;
     const touchedByUserFilterRaw = req.query.touchedByUserId as string | undefined;
@@ -444,6 +451,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
     }
 
     const result = await svc.list(orgId, {
+      archivedOnly,
       status: req.query.status as string | undefined,
       assigneeAgentId: req.query.assigneeAgentId as string | undefined,
       participantAgentId: req.query.participantAgentId as string | undefined,
@@ -606,6 +614,12 @@ export function issueRoutes(db: Db, storage: StorageService) {
     const id = req.params.id as string;
     const issue = await svc.getById(id);
     if (!issue) {
+      const tombstone = isUuidLike(id) ? await tombstones.getByEntityId("issue", id) : null;
+      if (tombstone) {
+        assertCompanyAccess(req, tombstone.orgId);
+        res.status(410).json(entityDeletedResponse(tombstone));
+        return;
+      }
       res.status(404).json({ error: "Issue not found" });
       return;
     }

@@ -3,6 +3,7 @@ import {
   agentIntegrationChatBindings,
   agentIntegrations,
   agents,
+  agentWakeupRequests,
   applyPendingMigrations,
   approvalComments,
   approvals,
@@ -14,6 +15,9 @@ import {
   createDb,
   documents,
   ensurePostgresDatabase,
+  entityCleanupJobs,
+  entityTombstones,
+  heartbeatRunEvents,
   heartbeatRuns,
   invites,
   issueComments,
@@ -36,6 +40,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { approvalService } from "../services/approvals.ts";
 import { chatService } from "../services/chats.ts";
 import { issueService } from "../services/issues.ts";
 import { subscribeCompanyLiveEvents } from "../services/live-events.ts";
@@ -122,11 +127,13 @@ describe("messengerService and issue follows", () => {
   let chatSvc!: ReturnType<typeof chatService>;
   let issueSvc!: ReturnType<typeof issueService>;
   let messengerSvc!: ReturnType<typeof messengerService>;
+  let connectionString = "";
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";
 
   beforeAll(async () => {
     const started = await startTempDatabase();
+    connectionString = started.connectionString;
     db = createDb(started.connectionString);
     chatSvc = chatService(db);
     issueSvc = issueService(db);
@@ -136,6 +143,8 @@ describe("messengerService and issue follows", () => {
   }, 20_000);
 
   afterEach(async () => {
+    await db.delete(entityCleanupJobs);
+    await db.delete(entityTombstones);
     await db.delete(issueFollows);
     await db.delete(messengerCustomGroupEntries);
     await db.delete(messengerCustomGroups);
@@ -148,16 +157,18 @@ describe("messengerService and issue follows", () => {
     await db.delete(assets);
     await db.delete(approvalComments);
     await db.delete(approvals);
-    await db.delete(heartbeatRuns);
     await db.delete(joinRequests);
     await db.delete(invites);
     await db.delete(activityLog);
+    await db.delete(heartbeatRunEvents);
+    await db.delete(heartbeatRuns);
     await db.delete(issueComments);
     await db.delete(issueDocuments);
     await db.delete(documents);
     await db.delete(issues);
     await db.delete(projects);
     await db.delete(agentIntegrations);
+    await db.delete(agentWakeupRequests);
     await db.delete(organizationSecrets);
     await db.delete(agents);
     await db.delete(organizations);
@@ -207,6 +218,407 @@ describe("messengerService and issue follows", () => {
       .from(chatConversations)
       .where(eq(chatConversations.orgId, orgId));
     expect(remaining.map((row) => row.id).sort()).toEqual([...conversationIds].sort());
+  });
+
+  it("blocks archiving a chat while a persisted generation is active", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat Archive Generation Guard Org",
+      urlKey: deriveOrganizationUrlKey("Chat Archive Generation Guard Org"),
+      issuePrefix: `A${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Generating chat",
+      status: "active",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      orgId,
+      conversationId,
+      status: "active",
+    });
+
+    await expect(chatSvc.update(conversationId, { status: "archived" }))
+      .rejects.toThrow("Cannot archive a chat while a reply is in progress");
+    expect((await db.select({ status: chatConversations.status }).from(chatConversations)
+      .where(eq(chatConversations.id, conversationId)))[0]?.status).toBe("active");
+  });
+
+  it("blocks single and bulk deletion while a persisted heartbeat run is active", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const conversationId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat Delete Run Guard Org",
+      urlKey: deriveOrganizationUrlKey("Chat Delete Run Guard Org"),
+      issuePrefix: `R${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Run guard agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Persisted run chat",
+      status: "active",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      status: "running",
+      contextSnapshot: { chatConversationId: conversationId },
+    });
+
+    await expect(chatSvc.update(conversationId, { status: "archived" }))
+      .rejects.toThrow("Cannot archive a chat while a reply is in progress");
+    await db.update(chatConversations).set({ status: "archived" }).where(eq(chatConversations.id, conversationId));
+    await expect(chatSvc.remove(conversationId, {
+      actorType: "user",
+      actorId: "board-user",
+    })).rejects.toThrow("Cannot delete a chat while a reply is in progress");
+    await expect(chatSvc.removeArchived(orgId, [conversationId], {
+      actorType: "user",
+      actorId: "board-user",
+    })).rejects.toThrow("Cannot delete archived chats while a reply is in progress");
+    expect(await db.select().from(chatConversations).where(eq(chatConversations.id, conversationId)))
+      .toHaveLength(1);
+    expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId))).toHaveLength(1);
+  });
+
+  it("hides archived chat approvals and prevents resolving them until restore", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const approvalId = randomUUID();
+    const userId = "board-user-archived-chat-approval";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Archived Chat Approval Guard Org",
+      urlKey: deriveOrganizationUrlKey("Archived Chat Approval Guard Org"),
+      issuePrefix: `P${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Chat with sensitive approval",
+      status: "active",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(approvals).values({
+      id: approvalId,
+      orgId,
+      type: "chat_issue_creation",
+      status: "pending",
+      requestedByUserId: userId,
+      payload: {
+        chatConversationId: conversationId,
+        proposedIssue: {
+          title: "Sensitive archived proposal",
+          assigneeUnassignedReason: "Owner undecided",
+        },
+      },
+    });
+
+    expect((await messengerSvc.getApprovalsThread(orgId, userId)).detail.items.map((item) => item.id))
+      .toContain(approvalId);
+
+    await chatSvc.update(conversationId, { status: "archived" });
+
+    expect((await messengerSvc.getApprovalsThread(orgId, userId)).detail.items.map((item) => item.id))
+      .not.toContain(approvalId);
+    expect((await messengerSvc.listThreadSummaries(orgId, userId)).map((item) => item.threadKey))
+      .not.toContain("approvals");
+    expect(await approvalService(db).getById(approvalId)).toBeNull();
+    await expect(approvalService(db).approve(approvalId, userId)).rejects.toThrow("Approval not found");
+
+    await chatSvc.update(conversationId, { status: "active" });
+    expect(await approvalService(db).getById(approvalId)).toMatchObject({ id: approvalId, status: "pending" });
+  });
+
+  it("serializes approval resolution behind an in-flight chat archive", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const approvalId = randomUUID();
+    const secondConnection = createDb(connectionString);
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Approval Archive Serialization Org",
+      urlKey: deriveOrganizationUrlKey("Approval Archive Serialization Org"),
+      issuePrefix: `L${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Archive while deciding",
+      status: "active",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(approvals).values({
+      id: approvalId,
+      orgId,
+      type: "chat_issue_creation",
+      status: "pending",
+      payload: { chatConversationId: conversationId },
+    });
+
+    let signalLocked!: () => void;
+    const locked = new Promise<void>((resolve) => { signalLocked = resolve; });
+    let releaseArchive!: () => void;
+    const archiveCanCommit = new Promise<void>((resolve) => { releaseArchive = resolve; });
+    const archive = db.transaction(async (tx) => {
+      await tx
+        .select({ id: chatConversations.id })
+        .from(chatConversations)
+        .where(eq(chatConversations.id, conversationId))
+        .for("update");
+      signalLocked();
+      await archiveCanCommit;
+      await tx
+        .update(chatConversations)
+        .set({ status: "archived", updatedAt: new Date() })
+        .where(eq(chatConversations.id, conversationId));
+    });
+    await locked;
+
+    const resolution = approvalService(secondConnection).approve(approvalId, "board-user");
+    const stateBeforeCommit = await Promise.race([
+      resolution.then(() => "resolved", () => "rejected"),
+      new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 50)),
+    ]);
+    expect(stateBeforeCommit).toBe("blocked");
+
+    releaseArchive();
+    await archive;
+    await expect(resolution).rejects.toThrow("Approval not found");
+    expect((await db.select({ status: approvals.status }).from(approvals).where(eq(approvals.id, approvalId)))[0])
+      .toEqual({ status: "pending" });
+  });
+
+  it("excludes archived chats from all non-settings list modes", async () => {
+    const orgId = randomUUID();
+    const activeId = randomUUID();
+    const archivedId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat Archive Visibility Org",
+      urlKey: deriveOrganizationUrlKey("Chat Archive Visibility Org"),
+      issuePrefix: `C${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values([
+      {
+        id: activeId,
+        orgId,
+        title: "Active chat",
+        status: "active",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+      {
+        id: archivedId,
+        orgId,
+        title: "Archived chat",
+        status: "archived",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    ]);
+
+    expect((await chatSvc.list(orgId, { status: "all" })).map((chat) => chat.id)).toEqual([activeId]);
+    expect((await chatSvc.listSummaries(orgId, { status: "all" })).map((chat) => chat.id)).toEqual([activeId]);
+    expect((await chatSvc.list(orgId, { status: "archived" })).map((chat) => chat.id)).toEqual([archivedId]);
+    expect(await chatSvc.getById(archivedId)).toBeNull();
+    expect((await chatSvc.getByIdIncludingArchived(archivedId))?.id).toBe(archivedId);
+  });
+
+  it("records chat archive and restore activity in the lifecycle transactions", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat Lifecycle Activity Org",
+      urlKey: deriveOrganizationUrlKey("Chat Lifecycle Activity Org"),
+      issuePrefix: `L${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Chat lifecycle activity",
+      status: "active",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+
+    const archived = await chatSvc.update(conversationId, { status: "archived" }, {
+      actorType: "user",
+      actorId: "board-user",
+    });
+    expect(archived?.status).toBe("archived");
+    expect(await chatSvc.getById(conversationId)).toBeNull();
+
+    const restored = await chatSvc.update(conversationId, { status: "active" }, {
+      actorType: "user",
+      actorId: "board-user",
+    });
+    expect(restored?.status).toBe("active");
+    expect((await db
+      .select({ action: activityLog.action, details: activityLog.details })
+      .from(activityLog)
+      .where(eq(activityLog.entityId, conversationId)))
+      .map((row) => ({ action: row.action, status: row.details?.status })))
+      .toEqual([
+        { action: "chat.updated", status: "archived" },
+        { action: "chat.updated", status: "active" },
+      ]);
+  });
+
+  it("deletes an archived chat and leaves a content-free tombstone", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const agentId = randomUUID();
+    const wakeupId = randomUUID();
+    const runId = randomUUID();
+    const approvalId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat Tombstone Org",
+      urlKey: deriveOrganizationUrlKey("Chat Tombstone Org"),
+      issuePrefix: `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Deleted chat run agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Sensitive chat title",
+      summary: "Sensitive chat summary",
+      status: "archived",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatMessages).values({
+      orgId,
+      conversationId,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Sensitive chat body",
+    });
+    await db.insert(agentWakeupRequests).values({
+      id: wakeupId,
+      orgId,
+      agentId,
+      source: "chat",
+      status: "completed",
+      payload: { scene: "chat", conversationId },
+      finishedAt: new Date(),
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "chat",
+      status: "succeeded",
+      wakeupRequestId: wakeupId,
+      chatConversationId: conversationId,
+      contextSnapshot: { chatConversationId: conversationId },
+      resultJson: { body: "Sensitive chat result" },
+      stdoutExcerpt: "Sensitive chat stdout",
+      finishedAt: new Date(),
+    });
+    await db.insert(heartbeatRunEvents).values({
+      orgId,
+      runId,
+      agentId,
+      seq: 1,
+      eventType: "stdout",
+      stream: "stdout",
+      message: "Sensitive chat run event",
+    });
+    await db.insert(approvals).values({
+      id: approvalId,
+      orgId,
+      type: "chat_issue_creation",
+      status: "pending",
+      payload: {
+        chatConversationId: conversationId,
+        proposedIssue: { title: "Sensitive proposed issue" },
+      },
+    });
+    await db.insert(approvalComments).values({
+      orgId,
+      approvalId,
+      authorUserId: "board-user",
+      body: "Sensitive approval feedback",
+    });
+
+    const removed = await chatSvc.remove(conversationId, {
+      actorType: "user",
+      actorId: "board-user",
+    });
+    expect(removed?.conversation.id).toBe(conversationId);
+    expect(await db.select().from(chatConversations).where(eq(chatConversations.id, conversationId))).toEqual([]);
+    expect(await db.select().from(chatMessages).where(eq(chatMessages.conversationId, conversationId))).toEqual([]);
+    expect(await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, runId))).toEqual([]);
+    expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId))).toEqual([]);
+    expect(await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, wakeupId))).toEqual([]);
+    expect(await db.select().from(approvalComments).where(eq(approvalComments.approvalId, approvalId))).toEqual([]);
+    expect(await db.select().from(approvals).where(eq(approvals.id, approvalId))).toEqual([]);
+
+    const [tombstone] = await db.select().from(entityTombstones)
+      .where(eq(entityTombstones.entityId, conversationId));
+    expect(tombstone).toMatchObject({
+      orgId,
+      entityType: "chat",
+      entityId: conversationId,
+      title: "Sensitive chat title",
+      issueNumber: null,
+      deletedByActorType: "user",
+      deletedByActorId: "board-user",
+    });
+    expect(tombstone?.title).toBe("Sensitive chat title");
+    expect(Object.keys(tombstone ?? {})).not.toContain("summary");
   });
 
   it("rechecks external chat bindings inside archived bulk deletion", async () => {
@@ -274,6 +686,17 @@ describe("messengerService and issue follows", () => {
       externalChatId: "oc_archived_bulk_guard",
       externalChatType: "group",
     });
+    await db.insert(heartbeatRuns).values({
+      orgId,
+      agentId,
+      invocationSource: "chat",
+      status: "succeeded",
+      chatConversationId: localConversationId,
+      contextSnapshot: { conversationId: localConversationId },
+      logStore: "local_file",
+      logRef: "../bulk-chat-sensitive.ndjson",
+      finishedAt: new Date(),
+    });
 
     let unsubscribe = () => {};
     const remainingAtPublish = new Promise<string[]>((resolve) => {
@@ -303,6 +726,12 @@ describe("messengerService and issue follows", () => {
       .from(chatConversations)
       .where(eq(chatConversations.orgId, orgId));
     expect(remaining).toEqual([{ id: externalConversationId }]);
+    expect(await db.select({ entityId: entityTombstones.entityId }).from(entityTombstones))
+      .toEqual([{ entityId: localConversationId }]);
+    expect(await db
+      .select({ artifactType: entityCleanupJobs.artifactType, artifactRef: entityCleanupJobs.artifactRef })
+      .from(entityCleanupJobs))
+      .toContainEqual({ artifactType: "run_log", artifactRef: "../bulk-chat-sensitive.ndjson" });
   });
 
   it("keeps queue snapshots read-only when a DB active generation has no local owner", async () => {
@@ -1666,6 +2095,13 @@ describe("messengerService and issue follows", () => {
     const notifiedPinnedState = await messengerSvc.setThreadPinned(orgId, userId, `issue:${notifiedAutomationIssueId}`, true);
     expect(notifiedPinnedState).toEqual({ threadKey: `issue:${notifiedAutomationIssueId}`, pinned: true });
     await expect(messengerSvc.setThreadPinned(orgId, userId, `issue:${hiddenAutomationIssueId}`, true)).resolves.toBeNull();
+
+    await db.update(issues).set({ archivedAt: new Date() }).where(eq(issues.id, followedAutomationIssueId));
+    await db.update(issues).set({ archivedAt: new Date() }).where(eq(issues.id, notifiedAutomationIssueId));
+    const afterArchive = await messengerSvc.getIssuesThread(orgId, userId);
+    const archivedIssueIds = new Set(afterArchive.detail.items.map((item) => item.issueId));
+    expect(archivedIssueIds.has(followedAutomationIssueId)).toBe(false);
+    expect(archivedIssueIds.has(notifiedAutomationIssueId)).toBe(false);
   });
 
   it("includes issue status transitions in Messenger issue update cards", async () => {

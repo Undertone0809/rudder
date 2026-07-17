@@ -278,6 +278,52 @@ describe("chatAgentRunService", () => {
     });
   });
 
+  it("rejects new agent runs for an archived chat even with stale conversation input", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const conversationId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Archived Chat Run Guard",
+      urlKey: deriveOrganizationUrlKey("Archived Chat Run Guard"),
+      issuePrefix: `A${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Archived chat runner",
+      role: "engineer",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Already archived",
+      status: "archived",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+
+    await expect(svc.createRun({
+      conversation: {
+        id: conversationId,
+        orgId,
+        primaryIssueId: null,
+        planMode: false,
+      },
+      agentId,
+      triggerDetail: "chat_assistant_reply",
+      linkedIssueIds: [],
+      linkedProjectId: null,
+    })).rejects.toThrow("Cannot start agent work for an archived chat");
+    expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.chatConversationId, conversationId)))
+      .toEqual([]);
+  });
+
   it("stores automation run target metadata on chat-backed agent runs", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();

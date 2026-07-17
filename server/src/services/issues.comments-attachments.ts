@@ -111,7 +111,7 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
     const issue = await db
       .select({ id: issues.id, orgId: issues.orgId })
       .from(issues)
-      .where(eq(issues.id, issueId))
+      .where(and(eq(issues.id, issueId), isNull(issues.archivedAt)))
       .then((rows) => rows[0] ?? null);
     if (!issue) throw notFound("Issue not found");
 
@@ -253,7 +253,7 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
           priority: issues.priority,
         })
         .from(issues)
-        .where(eq(issues.id, issueId))
+        .where(and(eq(issues.id, issueId), isNull(issues.archivedAt)))
         .then((rows) => rows[0] ?? null);
       if (!issue) throw notFound("Issue not found");
 
@@ -346,7 +346,7 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
           description: issues.description,
         })
         .from(issues)
-        .where(eq(issues.id, issueId))
+        .where(and(eq(issues.id, issueId), isNull(issues.archivedAt)))
         .then((rows) => rows[0] ?? null);
       if (!issue) return [];
 
@@ -493,7 +493,7 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
       const issue = await db
         .select({ orgId: issues.orgId })
         .from(issues)
-        .where(eq(issues.id, issueId))
+        .where(and(eq(issues.id, issueId), isNull(issues.archivedAt)))
         .then((rows) => rows[0] ?? null);
 
       if (!issue) throw notFound("Issue not found");
@@ -582,7 +582,7 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
       const issue = await db
         .select({ id: issues.id, orgId: issues.orgId })
         .from(issues)
-        .where(eq(issues.id, input.issueId))
+        .where(and(eq(issues.id, input.issueId), isNull(issues.archivedAt)))
         .then((rows) => rows[0] ?? null);
       if (!issue) throw notFound("Issue not found");
 
@@ -693,7 +693,8 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
         })
         .from(issueAttachments)
         .innerJoin(assets, eq(issueAttachments.assetId, assets.id))
-        .where(eq(issueAttachments.id, id))
+        .innerJoin(issues, eq(issueAttachments.issueId, issues.id))
+        .where(and(eq(issueAttachments.id, id), isNull(issues.archivedAt)))
         .then((rows) => rows[0] ?? null),
 
     removeAttachment: async (id: string) =>

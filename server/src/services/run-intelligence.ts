@@ -20,7 +20,7 @@ import {
   type RunSummary,
   type RunSummaryPage,
 } from "@rudderhq/shared";
-import { and, asc, desc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { badRequest, forbidden, notFound } from "../errors.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
@@ -335,7 +335,11 @@ async function loadIssuesForRuns(db: Db, orgId: string, runRows: Array<Pick<RunR
       title: issues.title,
     })
     .from(issues)
-    .where(and(eq(issues.orgId, orgId), inArray(issues.id, issueIds)));
+    .where(and(
+      eq(issues.orgId, orgId),
+      inArray(issues.id, issueIds),
+      isNull(issues.archivedAt),
+    ));
 
   return new Map(rows.map((row) => [row.id, row]));
 }

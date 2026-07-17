@@ -280,6 +280,7 @@ export function activityService(db: Db) {
         where ${issues.orgId} = ${approvals.orgId}
           and ${issues.projectId} = ${projectId}
           and ${issues.hiddenAt} is null
+          and ${issues.archivedAt} is null
           and (
             ${issues.id}::text = ${approvals.payload}->>'issueId'
             or ${issues.id}::text = ${approvals.payload}->>'primaryIssueId'
@@ -412,6 +413,7 @@ export function activityService(db: Db) {
               eq(chatConversations.primaryIssueId, issues.id),
               eq(chatConversations.orgId, issues.orgId),
               isNull(issues.hiddenAt),
+              isNull(issues.archivedAt),
             ),
           )
           .where(and(...conditions))
@@ -474,6 +476,7 @@ export function activityService(db: Db) {
           eq(issues.orgId, filters.orgId),
           isNull(issueComments.deletedAt),
           isNull(issues.hiddenAt),
+          isNull(issues.archivedAt),
           ...timeConditions(issueComments.createdAt, filters),
         ];
         const cursorSql = userActivityCursorCondition(issueComments.createdAt, issueComments.id, "issue_comment", cursor);
@@ -686,6 +689,7 @@ export function activityService(db: Db) {
               eq(issues.orgId, activityLog.orgId),
               eq(activityLog.entityId, issueIdAsText),
               isNull(issues.hiddenAt),
+              isNull(issues.archivedAt),
             ),
           )
           .leftJoin(
@@ -804,7 +808,7 @@ export function activityService(db: Db) {
             ...conditions,
             or(
               sql`${activityLog.entityType} != 'issue'`,
-              isNull(issues.hiddenAt),
+              and(isNull(issues.hiddenAt), isNull(issues.archivedAt)),
             ),
           ),
         )
@@ -849,7 +853,7 @@ export function activityService(db: Db) {
             ...conditions,
             or(
               sql`${activityLog.entityType} != 'issue'`,
-              isNull(issues.hiddenAt),
+              and(isNull(issues.hiddenAt), isNull(issues.archivedAt)),
             ),
           ),
         )
@@ -1003,6 +1007,7 @@ export function activityService(db: Db) {
             eq(activityLog.entityType, "issue"),
             eq(issues.orgId, run.orgId),
             isNull(issues.hiddenAt),
+            isNull(issues.archivedAt),
           ),
         )
         .orderBy(issueIdAsText);
@@ -1029,6 +1034,7 @@ export function activityService(db: Db) {
             eq(issues.orgId, run.orgId),
             eq(issues.id, contextIssueId),
             isNull(issues.hiddenAt),
+            isNull(issues.archivedAt),
           ),
         )
         .then((rows) => rows[0] ?? null);

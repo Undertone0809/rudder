@@ -10,6 +10,7 @@ import { Router } from "express";
 import { forbidden, HttpError, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
+import { completeEntityCleanupJob } from "../services/entity-cleanup-jobs.js";
 import {
   logActivity
 } from "../services/index.js";
@@ -17,7 +18,7 @@ import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.
 import { buildIssueReviewWakeupOptions, queueIssueReviewWakeup } from "../services/issue-review-wakeup.js";
 import { publishLiveEvent } from "../services/live-events.js";
 import type { StorageService } from "../storage/types.js";
-import { assertCompanyAccess, getActorInfo } from "./authz.js";
+import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
 
 
@@ -688,7 +689,8 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
     res.json({ ...issue, comment });
   });
 
-  router.delete("/issues/:id", async (req, res) => {
+  router.post("/issues/:id/archive", async (req, res) => {
+    assertBoard(req);
     const id = req.params.id as string;
     const existing = await svc.getById(id);
     if (!existing) {
@@ -696,35 +698,78 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
       return;
     }
     assertCompanyAccess(req, existing.orgId);
-    const attachments = await svc.listAttachments(id);
-
-    const issue = await svc.remove(id);
-    if (!issue) {
-      res.status(404).json({ error: "Issue not found" });
-      return;
-    }
-
-    for (const attachment of attachments) {
-      try {
-        await storage.deleteObject(attachment.orgId, attachment.objectKey);
-      } catch (err) {
-        logger.warn({ err, issueId: id, attachmentId: attachment.id }, "failed to delete attachment object during issue delete");
-      }
-    }
-
     const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: issue.orgId,
+    const archived = await svc.archive(id, {
       actorType: actor.actorType,
       actorId: actor.actorId,
       agentId: actor.agentId,
       runId: actor.runId,
-      action: "issue.deleted",
-      entityType: "issue",
-      entityId: issue.id,
     });
+    if (!archived) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    res.json(archived);
+  });
 
-    res.json(issue);
+  router.post("/issues/:id/restore", async (req, res) => {
+    assertBoard(req);
+    const id = req.params.id as string;
+    const existing = await svc.getByIdIncludingArchived(id);
+    if (!existing || !existing.archivedAt) {
+      res.status(404).json({ error: "Archived issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.orgId);
+    const actor = getActorInfo(req);
+    const restored = await svc.restore(id, {
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+    });
+    if (!restored) {
+      res.status(404).json({ error: "Archived issue not found" });
+      return;
+    }
+    res.json(restored);
+  });
+
+  router.delete("/issues/:id", async (req, res) => {
+    assertBoard(req);
+    const id = req.params.id as string;
+    const existing = await svc.getByIdIncludingArchived(id);
+    if (!existing || !existing.archivedAt) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.orgId);
+
+    const actor = getActorInfo(req);
+    const result = await svc.remove(id, {
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+    });
+    if (!result) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+
+    for (const attachment of result.attachments) {
+      try {
+        await storage.deleteObject(attachment.orgId, attachment.objectKey);
+        await completeEntityCleanupJob(db, attachment.orgId, {
+          artifactType: "storage_object",
+          artifactRef: attachment.objectKey,
+        });
+      } catch (err) {
+        logger.warn({ err, issueId: id, assetId: attachment.id }, "failed to delete attachment object during issue delete");
+      }
+    }
+
+    res.json(result.issue);
   });
 
   router.post("/issues/:id/checkout", validate(checkoutIssueSchema), async (req, res) => {

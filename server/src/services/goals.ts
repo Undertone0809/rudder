@@ -153,7 +153,11 @@ export async function getGoalDependencies(db: Db, goal: GoalRow): Promise<GoalDe
     db
       .select({ id: issues.id, identifier: issues.identifier, title: issues.title, status: issues.status })
       .from(issues)
-      .where(and(eq(issues.orgId, goal.orgId), eq(issues.goalId, goal.id)))
+      .where(and(
+        eq(issues.orgId, goal.orgId),
+        eq(issues.goalId, goal.id),
+        isNull(issues.archivedAt),
+      ))
       .orderBy(asc(issues.createdAt)),
     db
       .select({ id: automations.id, title: automations.title, status: automations.status })

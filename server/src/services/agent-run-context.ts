@@ -5,7 +5,7 @@ import {
   deriveProjectUrlKey,
   type ProjectResourceAttachment,
 } from "@rudderhq/shared";
-import { and, asc, eq, inArray, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne } from "drizzle-orm";
 import fs from "node:fs/promises";
 import { parseObject } from "../agent-runtimes/utils.js";
 import {
@@ -564,7 +564,11 @@ export function agentRunContextService(
             projectWorkspaceId: issues.projectWorkspaceId,
           })
           .from(issues)
-          .where(and(eq(issues.id, issueId), eq(issues.orgId, agent.orgId)))
+          .where(and(
+            eq(issues.id, issueId),
+            eq(issues.orgId, agent.orgId),
+            isNull(issues.archivedAt),
+          ))
           .then((rows) => rows[0] ?? null)
       : null;
     const issueProjectId = issueProjectRef?.projectId ?? null;

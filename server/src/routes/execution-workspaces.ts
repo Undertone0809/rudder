@@ -1,7 +1,7 @@
 import type { Db } from "@rudderhq/db";
 import { issues, projects, projectWorkspaces } from "@rudderhq/db";
 import { updateRunWorkspaceSchema } from "@rudderhq/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { Router } from "express";
 import { validate } from "../middleware/validate.js";
 import { parseProjectExecutionWorkspacePolicy } from "../services/execution-workspace-policy.js";
@@ -65,7 +65,11 @@ export function runWorkspaceRoutes(db: Db) {
           status: issues.status,
         })
         .from(issues)
-        .where(and(eq(issues.orgId, existing.orgId), eq(issues.executionWorkspaceId, existing.id)));
+        .where(and(
+          eq(issues.orgId, existing.orgId),
+          eq(issues.executionWorkspaceId, existing.id),
+          isNull(issues.archivedAt),
+        ));
       const activeLinkedIssues = linkedIssues.filter((issue) => !TERMINAL_ISSUE_STATUSES.has(issue.status));
 
       if (activeLinkedIssues.length > 0) {

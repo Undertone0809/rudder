@@ -17,9 +17,16 @@ const mockIssueService = vi.hoisted(() => ({
   findMentionedProjectIds: vi.fn(),
   getAncestors: vi.fn(),
   getById: vi.fn(),
+  getByIdIncludingArchived: vi.fn(),
+  getByIdentifier: vi.fn(),
+  getByIdentifierIncludingArchived: vi.fn(),
   getComment: vi.fn(),
   getCommentCursor: vi.fn(),
   listComments: vi.fn(),
+  list: vi.fn(),
+  archive: vi.fn(),
+  restore: vi.fn(),
+  remove: vi.fn(),
   reorder: vi.fn(),
   resolveCommentReference: vi.fn(),
   updateComment: vi.fn(),
@@ -67,7 +74,10 @@ const mockWorkProductService = vi.hoisted(() => ({
 
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
 const mockPublishLiveEvent = vi.hoisted(() => vi.fn());
-
+const mockTombstoneService = vi.hoisted(() => ({
+  getByEntityId: vi.fn(),
+  getIssueByIdentifier: vi.fn(),
+}));
 const ASSIGNEE_AGENT_ID = "22222222-2222-4222-8222-222222222222";
 const REVIEWER_AGENT_ID = "33333333-3333-4333-8333-333333333333";
 const PEER_AGENT_ID = "44444444-4444-4444-8444-444444444444";
@@ -102,6 +112,27 @@ vi.mock("../services/index.js", () => ({
 
 vi.mock("../services/live-events.js", () => ({
   publishLiveEvent: mockPublishLiveEvent,
+}));
+
+vi.mock("../services/entity-tombstones.js", () => ({
+  entityTombstoneService: () => mockTombstoneService,
+  entityDeletedResponse: (tombstone: {
+    entityType: string;
+    entityId: string;
+    title: string;
+    issueNumber: number | null;
+    deletedAt: Date;
+  }) => ({
+    error: "Issue has been deleted",
+    code: "ENTITY_DELETED",
+    tombstone: {
+      entityType: tombstone.entityType,
+      id: tombstone.entityId,
+      title: tombstone.title,
+      issueNumber: tombstone.issueNumber,
+      deletedAt: tombstone.deletedAt,
+    },
+  }),
 }));
 
 function createBoardActor() {
@@ -156,6 +187,7 @@ function makeIssue(overrides?: Partial<{
   title: string;
   description: string | null;
   priority: string;
+  archivedAt: Date | null;
 }>) {
   return {
     id: "11111111-1111-4111-8111-111111111111",
@@ -177,6 +209,7 @@ function makeIssue(overrides?: Partial<{
     title: "Lifecycle hardening",
     description: null,
     priority: "medium",
+    archivedAt: null,
     ...overrides,
   };
 }
@@ -207,6 +240,10 @@ describe("issue lifecycle routes", () => {
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
     mockIssueService.findMentionedProjectIds.mockResolvedValue([]);
     mockIssueService.getAncestors.mockResolvedValue([]);
+    mockIssueService.getByIdentifier.mockResolvedValue(null);
+    mockIssueService.getByIdentifierIncludingArchived.mockResolvedValue(null);
+    mockTombstoneService.getByEntityId.mockResolvedValue(null);
+    mockTombstoneService.getIssueByIdentifier.mockResolvedValue(null);
     mockIssueService.getComment.mockResolvedValue(null);
     mockIssueService.getCommentCursor.mockResolvedValue({
       totalComments: 0,
@@ -325,6 +362,133 @@ describe("issue lifecycle routes", () => {
     expect(res.status).toBe(410);
     expect(res.body.error).toContain("Issue documents have been retired");
     expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("lists archived issues only for board settings", async () => {
+    const archived = makeIssue({ archivedAt: new Date("2026-07-17T00:00:00.000Z") });
+    mockIssueService.list.mockResolvedValue([archived]);
+
+    const boardRes = await request(createApp())
+      .get("/api/orgs/organization-1/issues?archived=true");
+    const agentRes = await request(createApp(createAgentActor()))
+      .get("/api/orgs/organization-1/issues?archived=true");
+
+    expect(boardRes.status).toBe(200);
+    expect(boardRes.body[0].id).toBe(archived.id);
+    expect(mockIssueService.list).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({ archivedOnly: true }),
+    );
+    expect(agentRes.status).toBe(403);
+  });
+
+  it("returns 404 for archived issue identifiers without passing the identifier to UUID queries", async () => {
+    const archived = makeIssue({
+      identifier: "ARC-1",
+      archivedAt: new Date("2026-07-17T00:00:00.000Z"),
+    });
+    mockIssueService.getByIdentifierIncludingArchived.mockResolvedValue(archived);
+    mockIssueService.getById.mockResolvedValue(null);
+
+    const detailRes = await request(createApp()).get("/api/issues/ARC-1");
+    const commentsRes = await request(createApp()).get("/api/issues/ARC-1/comments");
+
+    expect(detailRes.status).toBe(404);
+    expect(commentsRes.status).toBe(404);
+    expect(mockIssueService.getByIdentifierIncludingArchived).toHaveBeenCalledWith("ARC-1");
+    expect(mockIssueService.getById).toHaveBeenCalledWith(archived.id);
+    expect(mockIssueService.getById).not.toHaveBeenCalledWith("ARC-1");
+  });
+
+  it("returns 404 for malformed issue identifiers before any UUID query", async () => {
+    const res = await request(createApp()).get("/api/issues/not-an-issue-id");
+
+    expect(res.status).toBe(404);
+    expect(mockIssueService.getById).not.toHaveBeenCalled();
+  });
+
+  it("archives an issue instead of deleting it from issue detail", async () => {
+    const issue = makeIssue();
+    const archived = makeIssue({ archivedAt: new Date("2026-07-17T00:00:00.000Z") });
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockIssueService.archive.mockResolvedValue(archived);
+
+    const res = await request(createApp())
+      .post(`/api/issues/${issue.id}/archive`)
+      .send({});
+
+    expect(res.status).toBe(200);
+    expect(res.body.archivedAt).toBeTruthy();
+    expect(mockIssueService.archive).toHaveBeenCalledWith(
+      issue.id,
+      expect.objectContaining({ actorType: "user", actorId: "local-board" }),
+    );
+    expect(mockLogActivity).not.toHaveBeenCalled();
+    expect(mockIssueService.remove).not.toHaveBeenCalled();
+  });
+
+  it("restores an archived issue from settings", async () => {
+    const archived = makeIssue({ archivedAt: new Date("2026-07-17T00:00:00.000Z") });
+    const restored = makeIssue({ archivedAt: null });
+    mockIssueService.getByIdIncludingArchived.mockResolvedValue(archived);
+    mockIssueService.restore.mockResolvedValue(restored);
+
+    const res = await request(createApp())
+      .post(`/api/issues/${archived.id}/restore`)
+      .send({});
+
+    expect(res.status).toBe(200);
+    expect(res.body.archivedAt).toBeNull();
+    expect(mockIssueService.restore).toHaveBeenCalledWith(
+      archived.id,
+      expect.objectContaining({ actorType: "user", actorId: "local-board" }),
+    );
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("permanently deletes only archived issues through the tombstone-aware service", async () => {
+    const archived = makeIssue({ archivedAt: new Date("2026-07-17T00:00:00.000Z") });
+    mockIssueService.getByIdIncludingArchived.mockResolvedValue(archived);
+    mockIssueService.remove.mockResolvedValue({ issue: archived, attachments: [] });
+
+    const res = await request(createApp())
+      .delete(`/api/issues/${archived.id}`);
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.remove).toHaveBeenCalledWith(
+      archived.id,
+      expect.objectContaining({ actorType: "user", actorId: "local-board" }),
+    );
+    expect(mockLogActivity).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "issue.deleted" }),
+    );
+  });
+
+  it("returns a title-bearing tombstone when a deleted issue is retrieved", async () => {
+    const issueId = "11111111-1111-4111-8111-111111111111";
+    mockIssueService.getById.mockResolvedValue(null);
+    mockTombstoneService.getByEntityId.mockResolvedValue({
+      orgId: "organization-1",
+      entityType: "issue",
+      entityId: issueId,
+      title: "Deleted launch issue",
+      issueNumber: 42,
+      deletedAt: new Date("2026-07-17T00:00:00.000Z"),
+    });
+
+    const res = await request(createApp()).get(`/api/issues/${issueId}`);
+
+    expect(res.status).toBe(410);
+    expect(res.body).toMatchObject({
+      code: "ENTITY_DELETED",
+      tombstone: {
+        entityType: "issue",
+        id: issueId,
+        title: "Deleted launch issue",
+        issueNumber: 42,
+      },
+    });
   });
 
   it("omits legacy issue document payloads from heartbeat context", async () => {

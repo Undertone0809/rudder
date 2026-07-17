@@ -248,6 +248,7 @@ vi.mock("../api/issues", () => ({
     listAttachments: vi.fn(),
     markRead: vi.fn(),
     update: vi.fn(),
+    archive: vi.fn(),
     remove: vi.fn(),
     addComment: vi.fn(),
     updateComment: vi.fn(),
@@ -429,6 +430,7 @@ vi.mock("lucide-react", () => {
   }) => <span data-testid={testId} data-kind={kind} />;
   const icons = {
     Activity: Icon,
+    Archive: Icon,
     Atom: Icon,
     BadgeDollarSign: Icon,
     Bot: Icon,
@@ -754,7 +756,8 @@ describe("IssueDetail", () => {
     let html = renderToStaticMarkup(<IssueDetail />);
 
     expect(html).toContain("Pin Issue");
-    expect(html).toContain("Delete Issue");
+    expect(html).toContain("Archive Issue");
+    expect(html).not.toContain("Delete Issue");
     expect(html).not.toContain("Hide this Issue");
     expect(html).not.toContain("Unpin Issue");
 

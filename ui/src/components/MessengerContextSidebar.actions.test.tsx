@@ -3115,53 +3115,17 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(mockAssignCustomGroupEntry).toHaveBeenCalledWith("org-1", "group-1", "issues");
   });
 
-  it("deletes a chat thread from the actions menu", async () => {
+  it("keeps permanent deletion out of the active chat actions menu", () => {
     renderSidebar();
 
     const deleteButton = Array.from(document.querySelectorAll("button"))
       .find((button) => button.textContent?.includes("Delete")) as HTMLButtonElement | undefined;
+    const archiveButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Archive")) as HTMLButtonElement | undefined;
 
-    expect(deleteButton).toBeTruthy();
-    expect(deleteButton?.dataset.variant).toBe("destructive");
-    await act(async () => {
-      deleteButton?.click();
-      await Promise.resolve();
-    });
-
-    expect(mockConfirm).toHaveBeenCalledWith({
-      title: "Delete chat",
-      description: 'Delete "hi"? This cannot be undone.',
-      confirmLabel: "Delete",
-      tone: "destructive",
-    });
-    expect(mockRemove).toHaveBeenCalledWith("chat-1");
-  });
-
-  it("stops an active reply before deleting a generating chat thread", async () => {
-    activeGeneratingChatIds = new Set(["chat-1"]);
-    renderSidebar();
-
-    const deleteButton = Array.from(document.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Delete")) as HTMLButtonElement | undefined;
-
-    expect(deleteButton).toBeTruthy();
-    expect(deleteButton?.disabled).toBe(false);
-    await act(async () => {
-      deleteButton?.click();
-      await Promise.resolve();
-    });
-
-    expect(mockConfirm).toHaveBeenCalledWith({
-      title: "Delete chat",
-      description: 'Delete "hi"? This cannot be undone.',
-      confirmLabel: "Delete",
-      tone: "destructive",
-    });
-    expect(mockAbortChatStream).toHaveBeenCalledWith("chat-1");
-    expect(mockStopMessageStream).toHaveBeenCalledWith("chat-1");
-    expect(mockSetStreamDraftForChat).toHaveBeenCalledWith("chat-1", null);
-    expect(mockSetChatSendInFlight).toHaveBeenCalledWith("chat-1", false);
-    expect(mockRemove).toHaveBeenCalledWith("chat-1", { cancelActive: true });
+    expect(archiveButton).toBeTruthy();
+    expect(deleteButton).toBeUndefined();
+    expect(mockRemove).not.toHaveBeenCalled();
   });
 
   it("exposes drag and group actions without pin actions on the aggregate Issues row", async () => {

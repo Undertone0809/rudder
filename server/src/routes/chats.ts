@@ -7,6 +7,7 @@ import {
   createChatConversationSchema,
   createChatQueuedMessageSchema,
   forkChatConversationSchema,
+  isUuidLike,
   steerChatQueuedMessageSchema,
   updateChatConversationSchema,
   updateChatQueuedMessageSchema,
@@ -33,7 +34,6 @@ import {
   type ChatGeneratedAttachment,
 } from "../services/chat-assistant.js";
 import {
-  cancelAndReleaseActiveChatGeneration,
   claimChatGeneration,
   getActiveChatGeneration,
   hasActiveChatGeneration
@@ -44,6 +44,8 @@ import {
 } from "../services/chat-title-generation.js";
 import { chatWorkManifestService } from "../services/chat-work-manifest.js";
 import { validateCron } from "../services/cron.js";
+import { completeEntityCleanupJob } from "../services/entity-cleanup-jobs.js";
+import { entityDeletedResponse, entityTombstoneService } from "../services/entity-tombstones.js";
 import {
   accessService,
   agentService,
@@ -142,10 +144,19 @@ export function chatRoutes(db: Db, storage: StorageService) {
     return null;
   }
 
-  async function assertConversationAccess(req: Request, conversationId: string) {
-    const conversation = await svc.getById(conversationId);
+  const tombstones = entityTombstoneService(db);
+
+  async function assertConversationAccess(
+    req: Request,
+    conversationId: string,
+    options: { includeArchived?: boolean } = {},
+  ) {
+    const conversation = options.includeArchived
+      ? await svc.getByIdIncludingArchived(conversationId)
+      : await svc.getById(conversationId);
     if (!conversation) return null;
     assertCompanyAccess(req, conversation.orgId);
+    if (!options.includeArchived && conversation.status === "archived") return null;
     return conversation;
   }
 
@@ -1021,6 +1032,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
       statusParam === "resolved" || statusParam === "archived" || statusParam === "all"
         ? statusParam
         : "active";
+    if (status === "archived") assertBoard(req);
     const q = typeof req.query.q === "string" ? req.query.q : undefined;
     const limit = typeof req.query.limit === "string"
       ? positiveIntegerQuery(req.query.limit, 50, 500)
@@ -1052,26 +1064,19 @@ export function chatRoutes(db: Db, storage: StorageService) {
         runId: actor.runId,
       },
     );
-    const orphanedAssets = await svc.listOrphanedAssets(
-      orgId,
-      result.attachments.map((attachment) => attachment.assetId),
-    );
-    const cleanedAssetIds: string[] = [];
-    for (const asset of orphanedAssets) {
+    for (const asset of result.attachments) {
       try {
         await storage.deleteObject(asset.orgId, asset.objectKey);
-        cleanedAssetIds.push(asset.id);
+        await completeEntityCleanupJob(db, asset.orgId, {
+          artifactType: "storage_object",
+          artifactRef: asset.objectKey,
+        });
       } catch (err) {
         logger.warn(
           { err, assetId: asset.id, objectKey: asset.objectKey },
           "failed to delete chat attachment object during archived chat cleanup",
         );
       }
-    }
-    try {
-      await svc.removeOrphanedAssets(orgId, cleanedAssetIds);
-    } catch (err) {
-      logger.warn({ err, orgId, assetIds: cleanedAssetIds }, "failed to remove cleaned chat attachment metadata");
     }
 
     res.json({
@@ -1133,8 +1138,15 @@ export function chatRoutes(db: Db, storage: StorageService) {
   });
 
   router.get("/chats/:id", async (req, res) => {
-    const conversation = await assertConversationAccess(req, req.params.id as string);
+    const id = req.params.id as string;
+    const conversation = await assertConversationAccess(req, id);
     if (!conversation) {
+      const tombstone = isUuidLike(id) ? await tombstones.getByEntityId("chat", id) : null;
+      if (tombstone) {
+        assertCompanyAccess(req, tombstone.orgId);
+        res.status(410).json(entityDeletedResponse(tombstone));
+        return;
+      }
       res.status(404).json({ error: "Chat conversation not found" });
       return;
     }
@@ -1154,10 +1166,16 @@ export function chatRoutes(db: Db, storage: StorageService) {
   });
 
   router.patch("/chats/:id", validate(updateChatConversationSchema), async (req, res) => {
-    const existing = await assertConversationAccess(req, req.params.id as string);
+    const existing = await assertConversationAccess(req, req.params.id as string, { includeArchived: true });
     if (!existing) {
       res.status(404).json({ error: "Chat conversation not found" });
       return;
+    }
+    if (existing.status === "archived" && req.body.status !== "active") {
+      throw conflict("Restore the archived chat before changing it");
+    }
+    if (existing.status === "archived" && req.body.status === "active") {
+      assertBoard(req);
     }
     if ((existing as ChatConversation).mutability === "external_bound_chat" && !isTitleOnlyChatUpdate(req.body)) {
       assertChatLocalMutationAllowed(existing as ChatConversation);
@@ -1183,22 +1201,34 @@ export function chatRoutes(db: Db, storage: StorageService) {
         return;
       }
     }
-    const updated = await svc.update(existing.id, {
+    const actor = getActorInfo(req);
+    const lifecycleStatusChange = req.body.status === "archived"
+      || (existing.status === "archived" && req.body.status === "active");
+    const updatePatch = {
       ...req.body,
       resolvedAt: req.body.resolvedAt ? new Date(req.body.resolvedAt) : req.body.resolvedAt,
-    });
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: existing.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "chat.updated",
-      entityType: "chat",
-      entityId: existing.id,
-      details: req.body,
-    });
+    };
+    const updated = lifecycleStatusChange
+      ? await svc.update(existing.id, updatePatch, {
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+      })
+      : await svc.update(existing.id, updatePatch);
+    if (!lifecycleStatusChange) {
+      await logActivity(db, {
+        orgId: existing.orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "chat.updated",
+        entityType: "chat",
+        entityId: existing.id,
+        details: req.body,
+      });
+    }
     res.json(updated ? await assistantSvc.enrichConversation(updated as ChatConversation) : null);
   });
 
@@ -1284,50 +1314,40 @@ export function chatRoutes(db: Db, storage: StorageService) {
 
   router.delete("/chats/:id", async (req, res) => {
     assertBoard(req);
-    const existing = await assertConversationAccess(req, req.params.id as string);
-    if (!existing) {
+    const existing = await assertConversationAccess(req, req.params.id as string, { includeArchived: true });
+    if (!existing || existing.status !== "archived") {
       res.status(404).json({ error: "Chat conversation not found" });
       return;
     }
     assertChatLocalMutationAllowed(existing as ChatConversation);
     if (hasActiveChatGeneration(existing.id)) {
-      if (req.query.cancelActive === "true") {
-        cancelAndReleaseActiveChatGeneration(existing.id);
-      } else {
-        throw conflict("Cannot delete a chat while a reply is in progress");
-      }
+      throw conflict("Cannot delete a chat while a reply is in progress");
     }
-    const attachments = await svc.listAttachmentsForConversation(existing.id);
-    const deleted = await svc.remove(existing.id);
-    if (!deleted) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-
-    for (const attachment of attachments) {
-      try {
-        await storage.deleteObject(attachment.orgId, attachment.objectKey);
-      } catch (err) {
-        logger.warn({ err, conversationId: existing.id, attachmentId: attachment.id }, "failed to delete chat attachment object during chat delete");
-      }
-    }
-
     const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: existing.orgId,
+    const result = await svc.remove(existing.id, {
       actorType: actor.actorType,
       actorId: actor.actorId,
       agentId: actor.agentId,
       runId: actor.runId,
-      action: "chat.deleted",
-      entityType: "chat",
-      entityId: existing.id,
-      details: {
-        title: existing.title,
-      },
     });
+    if (!result) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
 
-    res.json(deleted);
+    for (const attachment of result.attachments) {
+      try {
+        await storage.deleteObject(attachment.orgId, attachment.objectKey);
+        await completeEntityCleanupJob(db, attachment.orgId, {
+          artifactType: "storage_object",
+          artifactRef: attachment.objectKey,
+        });
+      } catch (err) {
+        logger.warn({ err, conversationId: existing.id, assetId: attachment.id }, "failed to delete chat attachment object during chat delete");
+      }
+    }
+
+    res.json(result.conversation);
   });
 
   router.get("/chats/:id/queue", async (req, res) => {

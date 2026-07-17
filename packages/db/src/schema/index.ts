@@ -42,6 +42,8 @@ export {
 } from "./custom_integrations.js";
 export { documentRevisions } from "./document_revisions.js";
 export { documents } from "./documents.js";
+export { entityCleanupJobs } from "./entity_cleanup_jobs.js";
+export { entityTombstones } from "./entity_tombstones.js";
 export { executionWorkspaces } from "./execution_workspaces.js";
 export { financeEvents } from "./finance_events.js";
 export { goals } from "./goals.js";

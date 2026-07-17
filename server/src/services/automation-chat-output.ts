@@ -8,7 +8,7 @@ import {
   chatMessages,
   issues,
 } from "@rudderhq/db";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { CHAT_TRANSCRIPT_KEY } from "./chats.helpers.js";
 
 function automationRunOutputBody(input: {
@@ -57,7 +57,11 @@ export async function publishAutomationRunOutputToChat(
       .from(issues)
       .innerJoin(automationRuns, sql<boolean>`${issues.originRunId} = ${automationRuns.id}::text`)
       .innerJoin(automations, eq(automationRuns.automationId, automations.id))
-      .where(and(eq(issues.id, issueId), eq(issues.originKind, "automation_execution")))
+      .where(and(
+        eq(issues.id, issueId),
+        eq(issues.originKind, "automation_execution"),
+        isNull(issues.archivedAt),
+      ))
       .then((rows) => rows[0] ?? null);
 
     if (!row || row.automationOutputMode !== "chat_output") return null;

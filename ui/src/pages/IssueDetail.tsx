@@ -27,6 +27,7 @@ import { extractLibraryDirectoryMentionPaths, extractLibraryDocMentionIds, extra
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity as ActivityIcon,
+  Archive,
   Check,
   ChevronRight,
   Copy,
@@ -1626,21 +1627,24 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     },
   });
 
-  const deleteIssue = useMutation({
-    mutationFn: () => issuesApi.remove(issueId!),
-    onSuccess: (deleted) => {
-      queryClient.removeQueries({ queryKey: queryKeys.issues.detail(issueId!) });
-      queryClient.removeQueries({ queryKey: queryKeys.issues.detail(deleted.id) });
-      if (deleted.identifier) {
-        queryClient.removeQueries({ queryKey: queryKeys.issues.detail(deleted.identifier) });
+  const archiveIssue = useMutation({
+    mutationFn: ({ id }: { id: string; orgId: string }) => issuesApi.archive(id),
+    onSuccess: async (archived, variables) => {
+      queryClient.removeQueries({ queryKey: queryKeys.issues.detail(variables.id) });
+      queryClient.removeQueries({ queryKey: queryKeys.issues.detail(archived.id) });
+      if (archived.identifier) {
+        queryClient.removeQueries({ queryKey: queryKeys.issues.detail(archived.identifier) });
       }
+      await queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(variables.orgId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.issues.archived(variables.orgId) });
+      await invalidateMessengerThreadSummaryQueries(queryClient, variables.orgId);
       invalidateIssue();
-      pushToast({ title: "Issue deleted", tone: "success" });
+      pushToast({ title: "Issue archived", tone: "success" });
       navigate("/issues/all");
     },
     onError: (err) => {
       pushToast({
-        title: "Failed to delete issue",
+        title: "Failed to archive issue",
         body: err instanceof Error ? err.message : "Try again.",
         tone: "error",
       });
@@ -1648,18 +1652,18 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   });
   const issueDisplayId = issue?.identifier ?? (issue?.id ? issue.id.slice(0, 8) : issueId ?? "issue");
 
-  const confirmAndDeleteIssue = useCallback(async () => {
+  const confirmAndArchiveIssue = useCallback(async () => {
+    if (!issue?.id || !issue.orgId) return;
     const confirmed = await confirm({
-      title: `Delete ${issueDisplayId}?`,
-      description: "This removes the issue from Rudder.",
-      confirmLabel: "Delete",
-      tone: "destructive",
+      title: `Archive ${issueDisplayId}?`,
+      description: "This hides the issue from Rudder. You can restore or permanently delete it in Organization Settings.",
+      confirmLabel: "Archive",
     });
     if (!confirmed) return;
-    deleteIssue.mutate();
+    archiveIssue.mutate({ id: issue.id, orgId: issue.orgId });
     setHeaderMoreOpen(false);
     setSidebarMoreOpen(false);
-  }, [confirm, deleteIssue, issueDisplayId]);
+  }, [archiveIssue, confirm, issue, issueDisplayId]);
 
   const updateSubIssueStatus = useMutation({
     mutationFn: ({
@@ -2072,14 +2076,14 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           </button>
           <div className="my-1 h-px bg-border" aria-hidden="true" />
           <button
-            className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-destructive disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded text-foreground hover:bg-accent/50 disabled:cursor-not-allowed disabled:opacity-60"
             onClick={() => {
-              void confirmAndDeleteIssue();
+              void confirmAndArchiveIssue();
             }}
-            disabled={deleteIssue.isPending}
+            disabled={archiveIssue.isPending}
           >
-            {deleteIssue.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-            Delete Issue
+            {archiveIssue.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Archive className="h-3 w-3" />}
+            Archive Issue
           </button>
         </PopoverContent>
       </Popover>

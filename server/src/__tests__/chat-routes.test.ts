@@ -12,6 +12,7 @@ const mockChatService = vi.hoisted(() => ({
   list: vi.fn(),
   listArchivedDeletionCandidates: vi.fn(),
   getById: vi.fn(),
+  getByIdIncludingArchived: vi.fn(),
   create: vi.fn(),
   forkConversation: vi.fn(),
   update: vi.fn(),
@@ -121,6 +122,12 @@ const mockStorage = vi.hoisted(() => ({
   deleteObject: vi.fn(),
 }));
 
+const mockTombstoneService = vi.hoisted(() => ({
+  getByEntityId: vi.fn(),
+}));
+
+const mockCompleteEntityCleanupJob = vi.hoisted(() => vi.fn());
+
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
   agentService: () => mockAgentService,
@@ -181,6 +188,31 @@ vi.mock("../services/chat-assistant.js", () => ({
       ? candidate.partialBody
       : "";
   },
+}));
+
+vi.mock("../services/entity-tombstones.js", () => ({
+  entityTombstoneService: () => mockTombstoneService,
+  entityDeletedResponse: (tombstone: {
+    entityType: string;
+    entityId: string;
+    title: string;
+    issueNumber: number | null;
+    deletedAt: Date;
+  }) => ({
+    error: "Chat has been deleted",
+    code: "ENTITY_DELETED",
+    tombstone: {
+      entityType: tombstone.entityType,
+      id: tombstone.entityId,
+      title: tombstone.title,
+      issueNumber: tombstone.issueNumber,
+      deletedAt: tombstone.deletedAt,
+    },
+  }),
+}));
+
+vi.mock("../services/entity-cleanup-jobs.js", () => ({
+  completeEntityCleanupJob: mockCompleteEntityCleanupJob,
 }));
 
 vi.mock("../services/chat-agent-runs.js", () => ({
@@ -316,6 +348,9 @@ describe("chat routes", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     clearActiveChatGenerationsForTest();
+    mockChatService.getByIdIncludingArchived.mockImplementation(
+      (...args: unknown[]) => mockChatService.getById(...args),
+    );
     mockCompanyService.getById.mockResolvedValue({
       id: "organization-1",
       defaultChatIssueCreationMode: "manual_approval",
@@ -485,6 +520,7 @@ describe("chat routes", () => {
     mockChatService.assertQueuedMessageClaimedForDelivery.mockResolvedValue(undefined);
     mockChatService.markQueuedMessageRunning.mockResolvedValue(undefined);
     mockChatService.markQueuedMessageDeliveryTerminal.mockResolvedValue(undefined);
+    mockTombstoneService.getByEntityId.mockResolvedValue(null);
   });
 
   it("passes chat search query and status to the chat list service", async () => {
@@ -501,6 +537,20 @@ describe("chat routes", () => {
       "user-1",
     );
     expect(mockChatAssistantService.enrichConversations).toHaveBeenCalled();
+  });
+
+  it("keeps the archived chat list restricted to board settings", async () => {
+    const res = await request(createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-1",
+      runId: null,
+    }))
+      .get("/api/orgs/organization-1/chats")
+      .query({ status: "archived" });
+
+    expect(res.status).toBe(403);
+    expect(mockChatService.list).not.toHaveBeenCalled();
   });
 
   it("returns the reconciled work manifest for an accessible chat", async () => {
@@ -535,6 +585,57 @@ describe("chat routes", () => {
     expect(mockChatWorkManifest.reconcileConversation).not.toHaveBeenCalled();
   });
 
+  it("hides archived chats from direct reads", async () => {
+    mockChatService.getById.mockResolvedValue(createConversation({ status: "archived" }));
+
+    const res = await request(createApp()).get("/api/chats/chat-1");
+
+    expect(res.status).toBe(404);
+    expect(mockChatAssistantService.enrichConversation).not.toHaveBeenCalled();
+  });
+
+  it("requires board access to restore an archived chat", async () => {
+    mockChatService.getById.mockResolvedValue(createConversation({ status: "archived" }));
+
+    const res = await request(createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-1",
+      runId: null,
+    }))
+      .patch("/api/chats/chat-1")
+      .send({ status: "active" });
+
+    expect(res.status).toBe(403);
+    expect(mockChatService.update).not.toHaveBeenCalled();
+  });
+
+  it("returns a title-bearing tombstone for deleted chats", async () => {
+    mockChatService.getById.mockResolvedValue(null);
+    mockTombstoneService.getByEntityId.mockResolvedValue({
+      orgId: "organization-1",
+      entityType: "chat",
+      entityId: "11111111-1111-4111-8111-111111111111",
+      title: "Deleted planning chat",
+      issueNumber: null,
+      deletedAt: new Date("2026-07-17T00:00:00.000Z"),
+    });
+
+    const res = await request(createApp())
+      .get("/api/chats/11111111-1111-4111-8111-111111111111");
+
+    expect(res.status).toBe(410);
+    expect(res.body).toMatchObject({
+      code: "ENTITY_DELETED",
+      tombstone: {
+        entityType: "chat",
+        id: "11111111-1111-4111-8111-111111111111",
+        title: "Deleted planning chat",
+        issueNumber: null,
+      },
+    });
+  });
+
   it("updates chat unread state through the user-state endpoint", async () => {
     const conversation = createConversation();
     mockChatService.getById.mockResolvedValue(conversation);
@@ -550,36 +651,38 @@ describe("chat routes", () => {
     expect(res.body.id).toBe("chat-1");
   });
 
-  it("deletes a chat conversation and logs the activity", async () => {
-    const conversation = createConversation({ title: "Delete me" });
+  it("deletes an archived chat through the tombstone-aware service", async () => {
+    const conversation = createConversation({ status: "archived", title: "Delete me" });
     mockChatService.getById.mockResolvedValue(conversation);
-    mockChatService.listAttachmentsForConversation.mockResolvedValue([
-      {
-        id: "attachment-1",
+    mockChatService.remove.mockResolvedValue({
+      conversation,
+      attachments: [{
+        id: "asset-1",
         orgId: "organization-1",
-        assetId: "asset-1",
         objectKey: "orgs/organization-1/chats/chat-1/image.png",
-      },
-    ]);
-    mockChatService.remove.mockResolvedValue(conversation);
+      }],
+    });
 
     const res = await request(createApp())
       .delete("/api/chats/chat-1");
 
     expect(res.status).toBe(200);
-    expect(mockChatService.listAttachmentsForConversation).toHaveBeenCalledWith("chat-1");
-    expect(mockChatService.remove).toHaveBeenCalledWith("chat-1");
+    expect(mockChatService.remove).toHaveBeenCalledWith(
+      "chat-1",
+      expect.objectContaining({ actorType: "user", actorId: "user-1" }),
+    );
     expect(mockStorage.deleteObject).toHaveBeenCalledWith(
       "organization-1",
       "orgs/organization-1/chats/chat-1/image.png",
     );
-    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-      orgId: "organization-1",
-      action: "chat.deleted",
-      entityType: "chat",
-      entityId: "chat-1",
-      details: { title: "Delete me" },
-    }));
+    expect(mockCompleteEntityCleanupJob).toHaveBeenCalledWith(
+      expect.anything(),
+      "organization-1",
+      {
+        artifactType: "storage_object",
+        artifactRef: "orgs/organization-1/chats/chat-1/image.png",
+      },
+    );
   });
 
   it("bulk deletes only local archived chats for an organization", async () => {
@@ -591,19 +694,11 @@ describe("chat routes", () => {
       conversations: [first, second],
       skippedExternalCount: 1,
       attachments: [{
-        id: "attachment-1",
+        id: "asset-1",
         orgId: "organization-1",
-        assetId: "asset-1",
         objectKey: "orgs/organization-1/chats/chat-1/image.png",
-        conversationId: "chat-1",
       }],
     });
-    mockChatService.listOrphanedAssets.mockResolvedValue([{
-      id: "asset-1",
-      orgId: "organization-1",
-      objectKey: "orgs/organization-1/chats/chat-1/image.png",
-    }]);
-    mockChatService.removeOrphanedAssets.mockResolvedValue([{ id: "asset-1" }]);
 
     const res = await request(createApp())
       .delete("/api/orgs/organization-1/chats/archived");
@@ -616,18 +711,23 @@ describe("chat routes", () => {
       ["chat-1", "chat-2", "chat-3"],
       expect.objectContaining({ actorType: "user", actorId: "user-1" }),
     );
-    expect(mockChatService.listOrphanedAssets).toHaveBeenCalledWith("organization-1", ["asset-1"]);
     expect(mockStorage.deleteObject).toHaveBeenCalledWith(
       "organization-1",
       "orgs/organization-1/chats/chat-1/image.png",
     );
-    expect(mockChatService.removeOrphanedAssets).toHaveBeenCalledWith("organization-1", ["asset-1"]);
+    expect(mockCompleteEntityCleanupJob).toHaveBeenCalledWith(
+      expect.anything(),
+      "organization-1",
+      {
+        artifactType: "storage_object",
+        artifactRef: "orgs/organization-1/chats/chat-1/image.png",
+      },
+    );
   });
 
   it("bulk deleting archived chats is safe when the organization has none", async () => {
     mockChatService.listArchivedDeletionCandidates.mockResolvedValue([]);
     mockChatService.removeArchived.mockResolvedValue({ conversations: [], attachments: [], skippedExternalCount: 0 });
-    mockChatService.listOrphanedAssets.mockResolvedValue([]);
 
     const res = await request(createApp())
       .delete("/api/orgs/organization-1/chats/archived");
@@ -641,25 +741,18 @@ describe("chat routes", () => {
     );
   });
 
-  it("retains orphaned asset metadata when archived chat object cleanup fails", async () => {
+  it("removes orphaned asset metadata when archived chat object cleanup fails", async () => {
     const conversation = createConversation({ id: "chat-1", status: "archived" });
     mockChatService.listArchivedDeletionCandidates.mockResolvedValue([conversation]);
     mockChatService.removeArchived.mockResolvedValue({
       conversations: [conversation],
       skippedExternalCount: 0,
       attachments: [{
-        id: "attachment-1",
+        id: "asset-1",
         orgId: "organization-1",
-        assetId: "asset-1",
         objectKey: "orgs/organization-1/chats/chat-1/image.png",
-        conversationId: "chat-1",
       }],
     });
-    mockChatService.listOrphanedAssets.mockResolvedValue([{
-      id: "asset-1",
-      orgId: "organization-1",
-      objectKey: "orgs/organization-1/chats/chat-1/image.png",
-    }]);
     mockStorage.deleteObject.mockRejectedValue(new Error("storage unavailable"));
 
     const res = await request(createApp())
@@ -667,7 +760,7 @@ describe("chat routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ deletedCount: 1, skippedExternalCount: 0 });
-    expect(mockChatService.removeOrphanedAssets).toHaveBeenCalledWith("organization-1", []);
+    expect(mockCompleteEntityCleanupJob).not.toHaveBeenCalled();
   });
 
   it("requires board access to bulk delete archived chats", async () => {
@@ -715,7 +808,7 @@ describe("chat routes", () => {
   });
 
   it("rejects deleting a chat conversation while a reply is in progress", async () => {
-    const conversation = createConversation({ title: "Generating chat" });
+    const conversation = createConversation({ status: "archived", title: "Generating chat" });
     mockChatService.getById.mockResolvedValue(conversation);
     const release = claimChatGeneration(conversation.id);
 
@@ -725,7 +818,6 @@ describe("chat routes", () => {
 
       expect(res.status).toBe(409);
       expect(res.body.error).toBe("Cannot delete a chat while a reply is in progress");
-      expect(mockChatService.listAttachmentsForConversation).not.toHaveBeenCalled();
       expect(mockChatService.remove).not.toHaveBeenCalled();
     } finally {
       release?.();
@@ -733,14 +825,13 @@ describe("chat routes", () => {
   });
 
   it("rejects deleting Feishu-bound chat conversations", async () => {
-    mockChatService.getById.mockResolvedValue(createFeishuBackedConversation());
+    mockChatService.getById.mockResolvedValue(createFeishuBackedConversation({ status: "archived" }));
 
     const res = await request(createApp())
       .delete("/api/chats/chat-1");
 
     expect(res.status).toBe(409);
     expect(res.body.error).toBe("Fork this Feishu chat to continue in Rudder");
-    expect(mockChatService.listAttachmentsForConversation).not.toHaveBeenCalled();
     expect(mockChatService.remove).not.toHaveBeenCalled();
   });
 
@@ -883,23 +974,20 @@ describe("chat routes", () => {
     }
   });
 
-  it("cancels and deletes an active chat conversation when explicitly requested", async () => {
-    const conversation = createConversation({ title: "Generating chat" });
+  it("does not let cancelActive bypass archived chat deletion guards", async () => {
+    const conversation = createConversation({ status: "archived", title: "Generating chat" });
     const abortController = new AbortController();
     mockChatService.getById.mockResolvedValue(conversation);
-    mockChatService.listAttachmentsForConversation.mockResolvedValue([]);
-    mockChatService.remove.mockResolvedValue(conversation);
     const release = claimChatGeneration(conversation.id, abortController);
 
     try {
       const res = await request(createApp())
         .delete("/api/chats/chat-1?cancelActive=true");
 
-      expect(res.status).toBe(200);
-      expect(abortController.signal.aborted).toBe(true);
-      expect(hasActiveChatGeneration(conversation.id)).toBe(false);
-      expect(mockChatService.listAttachmentsForConversation).toHaveBeenCalledWith("chat-1");
-      expect(mockChatService.remove).toHaveBeenCalledWith("chat-1");
+      expect(res.status).toBe(409);
+      expect(abortController.signal.aborted).toBe(false);
+      expect(hasActiveChatGeneration(conversation.id)).toBe(true);
+      expect(mockChatService.remove).not.toHaveBeenCalled();
     } finally {
       release?.();
     }

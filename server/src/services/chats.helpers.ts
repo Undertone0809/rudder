@@ -10,7 +10,7 @@ import {
   projects
 } from "@rudderhq/db";
 import { formatMessengerPreview, type ChatStreamTranscriptEntry, type ChatTranscriptSummary } from "@rudderhq/shared";
-import { inArray, sql } from "drizzle-orm";
+import { and, inArray, isNull, sql } from "drizzle-orm";
 
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
@@ -266,7 +266,7 @@ export async function resolveContextEntities(db: Db, rows: ContextLinkRow[]) {
           priority: issues.priority,
         })
         .from(issues)
-        .where(inArray(issues.id, issueIds))
+        .where(and(inArray(issues.id, issueIds), isNull(issues.archivedAt)))
       : Promise.resolve([]),
     projectIds.length
       ? db
@@ -384,6 +384,6 @@ export async function listPrimaryIssues(db: Db, conversationRows: ConversationRo
       priority: issues.priority,
     })
     .from(issues)
-    .where(inArray(issues.id, primaryIssueIds));
+    .where(and(inArray(issues.id, primaryIssueIds), isNull(issues.archivedAt)));
   return new Map(rows.map((row) => [row.id, row]));
 }

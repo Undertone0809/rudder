@@ -37,6 +37,7 @@ export interface RunLogStore {
   ): Promise<void>;
   finalize(handle: RunLogHandle): Promise<RunLogFinalizeSummary>;
   read(handle: RunLogHandle, opts?: RunLogReadOptions): Promise<RunLogReadResult>;
+  remove(handle: RunLogHandle): Promise<void>;
 }
 
 function safeSegments(...segments: string[]) {
@@ -171,6 +172,12 @@ function createLocalFileRunLogStore(basePath: string): RunLogStore {
       const offset = opts?.offset ?? 0;
       const limitBytes = opts?.limitBytes ?? 256_000;
       return readFileRange(absPath, offset, limitBytes);
+    },
+
+    async remove(handle) {
+      if (handle.store !== "local_file") return;
+      const absPath = resolveWithin(basePath, handle.logRef);
+      await fs.rm(absPath, { force: true });
     },
   };
 }

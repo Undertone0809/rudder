@@ -22,7 +22,7 @@ import {
   AGENT_RUN_CONCURRENCY_MAX,
   AGENT_RUN_CONCURRENCY_MIN
 } from "@rudderhq/shared";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import type {
   AgentRuntimeExecutionResult,
   AgentRuntimeInvocationMeta
@@ -843,7 +843,11 @@ export async function resolveLedgerScopeForRun(
       projectId: issues.projectId,
     })
     .from(issues)
-    .where(and(eq(issues.id, contextIssueId), eq(issues.orgId, orgId)))
+    .where(and(
+      eq(issues.id, contextIssueId),
+      eq(issues.orgId, orgId),
+      isNull(issues.archivedAt),
+    ))
     .then((rows) => rows[0] ?? null);
 
   return {

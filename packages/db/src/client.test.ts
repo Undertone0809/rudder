@@ -482,6 +482,9 @@ describe("applyPendingMigrations", () => {
           "0055_illegal_sheva_callister.sql",
           "0102_complex_retro_girl.sql",
           "0103_cute_colonel_america.sql",
+          "0104_certain_justin_hammer.sql",
+          "0105_warm_king_bedlam.sql",
+          "0106_entity_tombstone_title_compat.sql",
         ],
         reason: "pending-migrations",
       });
@@ -539,6 +542,76 @@ describe("applyPendingMigrations", () => {
           "heartbeat_runs_active_chat_conversation_uq",
           "heartbeat_runs_status_execution_lease_created_idx",
         ]);
+      } finally {
+        await verifySql.end();
+      }
+    },
+    20_000,
+  );
+
+  it(
+    "repairs tombstones created by the early 0104 schema without titles",
+    async () => {
+      const connectionString = await createTempDatabase();
+      await applyPendingMigrations(connectionString);
+
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        const migration0106Hash = await migrationHash("0106_entity_tombstone_title_compat.sql");
+        await sql.unsafe(`DELETE FROM "drizzle"."__drizzle_migrations" WHERE hash = '${migration0106Hash}'`);
+        await sql.unsafe(`ALTER TABLE "entity_tombstones" DROP COLUMN "title"`);
+        await sql.unsafe(`
+          INSERT INTO "organizations" ("url_key", "name", "issue_prefix")
+          VALUES ('legacy-tombstone-org', 'Legacy tombstone org', 'LTO')
+        `);
+        await sql.unsafe(`
+          INSERT INTO "entity_tombstones" (
+            "org_id",
+            "entity_type",
+            "entity_id",
+            "issue_number",
+            "deleted_by_actor_type",
+            "deleted_by_actor_id"
+          )
+          SELECT
+            "id",
+            'issue',
+            '11111111-1111-4111-8111-111111111111',
+            7,
+            'user',
+            'local-board'
+          FROM "organizations"
+          WHERE "url_key" = 'legacy-tombstone-org'
+        `);
+      } finally {
+        await sql.end();
+      }
+
+      expect(await inspectMigrations(connectionString)).toMatchObject({
+        status: "needsMigrations",
+        pendingMigrations: ["0106_entity_tombstone_title_compat.sql"],
+        reason: "pending-migrations",
+      });
+      await applyPendingMigrations(connectionString);
+      expect((await inspectMigrations(connectionString)).status).toBe("upToDate");
+
+      const verifySql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        const columns = await verifySql.unsafe<{ is_nullable: string }[]>(`
+          SELECT is_nullable
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'entity_tombstones'
+            AND column_name = 'title'
+        `);
+        expect(columns).toEqual([{ is_nullable: "NO" }]);
+
+        const tombstones = await verifySql.unsafe<{ title: string }[]>(`
+          SELECT title
+          FROM "entity_tombstones"
+          WHERE "entity_id" = '11111111-1111-4111-8111-111111111111'
+        `);
+        expect(tombstones).toEqual([{ title: "Deleted issue" }]);
       } finally {
         await verifySql.end();
       }

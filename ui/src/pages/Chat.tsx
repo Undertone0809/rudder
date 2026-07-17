@@ -835,24 +835,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       pushToast({
         title: "Failed to update conversation",
         body: error instanceof Error ? error.message : "Try again.",
-        tone: "error", }); }, }); const deleteConversationMutation = useMutation({
-    mutationFn: async ({ chatId, cancelActive }: { chatId: string; cancelActive?: boolean }) => {
-      if (cancelActive) {
-        abortChatStream(chatId);
-        await chatsApi.stopMessageStream(chatId).catch(() => undefined);
-        setStreamDraftForChat(chatId, null);
-        setChatSendInFlight(chatId, false);
-      }
-      return chatsApi.remove(chatId, cancelActive ? { cancelActive: true } : {});
-    },
-    onSuccess: async (conversation) => {
-      if (conversation.id === selectedConversation?.id) {
-        navigate(chatRootPath); }
-      await refreshActiveChatActions(conversation.id); },
-    onError: (error) => {
-      pushToast({
-        title: "Failed to delete conversation",
-        body: error instanceof Error ? error.message : "Try again.",
         tone: "error", }); }, }); const forkConversationMutation = useMutation({
     mutationFn: ({ chatId, sourceMessageId }: { chatId: string; sourceMessageId?: string | null }) =>
       chatsApi.fork(chatId, { sourceMessageId: sourceMessageId ?? null }),
@@ -2278,25 +2260,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                         >
                           <Archive className="h-4 w-4" />
                           Archive
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          variant="destructive"
-                          onClick={async () => {
-                            const confirmed = await confirm({
-                              title: "Delete chat",
-                              description: `Delete "${conversationDisplayTitle(selectedConversation)}"? This cannot be undone.`,
-                              confirmLabel: "Delete",
-                              tone: "destructive",
-                            });
-                            if (!confirmed) return;
-                            deleteConversationMutation.mutate({
-                              chatId: selectedConversation.id,
-                              cancelActive: selectedConversationGenerating,
-                            });
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          Delete
                         </DropdownMenuItem>
                       </>
                     ) : null}

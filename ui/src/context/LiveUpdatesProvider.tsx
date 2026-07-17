@@ -652,6 +652,7 @@ function invalidateActivityQueries(
 
   if (entityType === "issue") {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(orgId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.archived(orgId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe(orgId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.listUnreadTouchedByMe(orgId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(orgId) });
@@ -676,7 +677,7 @@ function invalidateActivityQueries(
   }
 
   if (entityType === "chat") {
-    queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(orgId, "active") });
+    queryClient.invalidateQueries({ queryKey: ["chats", orgId] });
     if (entityId) {
       queryClient.invalidateQueries({ queryKey: queryKeys.chats.detail(orgId, entityId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.chats.messages(orgId, entityId) });

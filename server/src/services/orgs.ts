@@ -53,7 +53,7 @@ import {
   deriveOrganizationUrlKey,
   normalizeOrganizationIssueKey,
 } from "@rudderhq/shared";
-import { and, count, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, count, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { ensureOrganizationWorkspaceLayout, removeOrganizationStorage } from "../home-paths.js";
 import { logger } from "../middleware/logger.js";
@@ -508,6 +508,7 @@ export function organizationService(db: Db) {
         db
           .select({ orgId: issues.orgId, count: count() })
           .from(issues)
+          .where(isNull(issues.archivedAt))
           .groupBy(issues.orgId),
       ]).then(([agentRows, issueRows]) => {
         const result: Record<string, { agentCount: number; issueCount: number }> = {};

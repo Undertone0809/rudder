@@ -59,6 +59,7 @@ export function applyStatusSideEffects(
 }
 
 export interface IssueFilters {
+  archivedOnly?: boolean;
   status?: string;
   assigneeAgentId?: string;
   participantAgentId?: string;

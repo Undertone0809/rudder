@@ -17,7 +17,7 @@ import {
   resolveAgentRunScene,
   type HeartbeatRun,
 } from "@rudderhq/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { createLocalAgentJwt } from "../../agent-auth-jwt.js";
 import type {
   AgentRuntimeInvocationMeta,
@@ -213,7 +213,11 @@ export function createHeartbeatExecuteHandlers(context: any) {
             executionWorkspaceSettings: issues.executionWorkspaceSettings,
           })
           .from(issues)
-          .where(and(eq(issues.id, issueId), eq(issues.orgId, agent.orgId)))
+          .where(and(
+            eq(issues.id, issueId),
+            eq(issues.orgId, agent.orgId),
+            isNull(issues.archivedAt),
+          ))
           .then((rows) => rows[0] ?? null)
       : null;
     const issueAssigneeOverrides =
