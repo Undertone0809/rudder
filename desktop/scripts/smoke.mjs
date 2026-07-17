@@ -1322,20 +1322,18 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
     }
 
     try {
-      const bridgeState = await page.evaluate(async () => {
-        if (typeof window.desktopShell?.getBootState === "function") {
-          return { kind: "app", state: await window.desktopShell.getBootState() };
-        }
+      const bootState = await page.evaluate(() => {
         if (typeof window.rudderBoot?.getState === "function") {
-          return { kind: "boot", state: await window.rudderBoot.getState() };
+          return window.rudderBoot.getState();
         }
         return null;
       });
-      if (bridgeState?.kind === "app" && bridgeState.state.stage === "error") {
-        throw new Error(`desktop boot failed: ${bridgeState.state.error || bridgeState.state.message}`);
+      if (!bootState) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        continue;
       }
-      if (bridgeState?.kind === "boot" && bridgeState.state.view === "failed") {
-        throw new Error(`desktop boot failed: ${bridgeState.state.failure?.summary || bridgeState.state.stage}`);
+      if (bootState.stage === "error" || bootState.view === "failed") {
+        throw new Error(`desktop boot failed: ${bootState.failure?.summary || bootState.stage}`);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
