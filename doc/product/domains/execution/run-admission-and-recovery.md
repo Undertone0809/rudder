@@ -6,11 +6,16 @@ coverage: seed
 contract_ids:
   - RUN.ADMISSION.001
 related_code:
+  - server/src/services/entity-run-cleanup.ts
   - server/src/services/runtime-kernel/heartbeat.wakeup.ts
   - server/src/services/runtime-kernel/heartbeat.release.ts
   - server/src/services/runtime-kernel/heartbeat.recovery.ts
 related_tests:
+  - server/src/__tests__/chat-agent-runs.test.ts
   - server/src/__tests__/heartbeat-passive-issue-closeout.test.ts
+  - server/src/__tests__/heartbeat-paused-wakeups.test.ts
+  - server/src/__tests__/heartbeat-run-concurrency.test.ts
+  - server/src/__tests__/issues-service.test.ts
   - tests/e2e/issue-passive-followup.spec.ts
 edit_policy: user_confirmed_only
 ---
@@ -35,6 +40,12 @@ Behavior:
   releases and the target agent is still invokable.
 - Passive issue close-out may queue same-agent follow-up when the run ends
   without sufficient issue closure signal and timer continuity is not credible.
+- Archived Issue and Chat targets are ineligible for new wake/run admission.
+  Admission locks the referenced entity and rechecks archive state before
+  creating work, including when the reference appears only in payload/context.
+- Permanent deletion locks wake/run admission data, rejects active work or
+  pending terminal effects, and removes inactive entity-owned wake/run records
+  under `CONTROL.ENTITY.RETENTION.001`.
 
 Invariant:
 
@@ -42,6 +53,8 @@ Invariant:
   lock.
 - Deferred wakeups must not be lost when a run finishes.
 - Passive follow-up is bounded and auditable.
+- No wake or run may be admitted after its target becomes archived, and archive
+  or delete must not race a payload/context-only admission into orphaned work.
 
 Rationale:
 
@@ -54,8 +67,13 @@ Related code:
 - `server/src/services/runtime-kernel/heartbeat.wakeup.ts`
 - `server/src/services/runtime-kernel/heartbeat.release.ts`
 - `server/src/services/runtime-kernel/heartbeat.recovery.ts`
+- `server/src/services/entity-run-cleanup.ts`
 
 Related tests:
 
 - `server/src/__tests__/heartbeat-passive-issue-closeout.test.ts`
+- `server/src/__tests__/heartbeat-paused-wakeups.test.ts`
+- `server/src/__tests__/heartbeat-run-concurrency.test.ts`
+- `server/src/__tests__/chat-agent-runs.test.ts`
+- `server/src/__tests__/issues-service.test.ts`
 - `tests/e2e/issue-passive-followup.spec.ts`

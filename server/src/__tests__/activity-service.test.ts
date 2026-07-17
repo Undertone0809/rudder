@@ -290,6 +290,165 @@ describe("activityService.forIssue", () => {
     expect(result.some((event) => event.entityId === unrelatedConversationId)).toBe(false);
   });
 
+  it("hides archived chat messages and activity from every ordinary activity surface", async () => {
+    const orgId = randomUUID();
+    const issueId = randomUUID();
+    const activeConversationId = randomUUID();
+    const archivedConversationId = randomUUID();
+    const activeApprovalId = randomUUID();
+    const archivedApprovalId = randomUUID();
+    const userId = "user-activity";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder Activity Visibility",
+      urlKey: deriveOrganizationUrlKey("Rudder Activity Visibility"),
+      issuePrefix: "RAV",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Issue with chat context",
+      status: "todo",
+      priority: "medium",
+    });
+    await db.insert(chatConversations).values([
+      {
+        id: activeConversationId,
+        orgId,
+        title: "Active activity chat",
+        createdByUserId: userId,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+      {
+        id: archivedConversationId,
+        orgId,
+        status: "archived",
+        title: "Archived activity chat",
+        createdByUserId: userId,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    ]);
+    await db.insert(chatContextLinks).values([
+      { orgId, conversationId: activeConversationId, entityType: "issue", entityId: issueId },
+      { orgId, conversationId: archivedConversationId, entityType: "issue", entityId: issueId },
+    ]);
+    await db.insert(chatMessages).values([
+      {
+        orgId,
+        conversationId: activeConversationId,
+        role: "user",
+        body: "Visible active chat message",
+        createdAt: new Date("2026-07-17T01:00:00.000Z"),
+      },
+      {
+        orgId,
+        conversationId: archivedConversationId,
+        role: "user",
+        body: "Hidden archived chat message",
+        createdAt: new Date("2026-07-17T01:01:00.000Z"),
+      },
+    ]);
+    await db.insert(approvals).values([
+      {
+        id: activeApprovalId,
+        orgId,
+        type: "command",
+        status: "pending",
+        payload: { chatConversationId: activeConversationId },
+      },
+      {
+        id: archivedApprovalId,
+        orgId,
+        type: "command",
+        status: "pending",
+        payload: { chatConversationId: archivedConversationId },
+      },
+    ]);
+    await db.insert(approvalComments).values([
+      {
+        orgId,
+        approvalId: activeApprovalId,
+        authorUserId: userId,
+        body: "Visible active chat approval comment",
+        createdAt: new Date("2026-07-17T01:02:00.000Z"),
+      },
+      {
+        orgId,
+        approvalId: archivedApprovalId,
+        authorUserId: userId,
+        body: "Hidden archived chat approval comment",
+        createdAt: new Date("2026-07-17T01:03:00.000Z"),
+      },
+    ]);
+    await db.insert(activityLog).values([
+      {
+        orgId,
+        actorType: "user",
+        actorId: userId,
+        action: "chat.created",
+        entityType: "chat",
+        entityId: activeConversationId,
+        details: { title: "Active activity chat", contextLinkCount: 1 },
+        createdAt: new Date("2026-07-17T02:00:00.000Z"),
+      },
+      {
+        orgId,
+        actorType: "user",
+        actorId: userId,
+        action: "chat.created",
+        entityType: "chat",
+        entityId: archivedConversationId,
+        details: { title: "Archived activity chat", contextLinkCount: 1 },
+        createdAt: new Date("2026-07-17T02:01:00.000Z"),
+      },
+      {
+        orgId,
+        actorType: "user",
+        actorId: userId,
+        action: "approval.decided",
+        entityType: "approval",
+        entityId: activeApprovalId,
+        createdAt: new Date("2026-07-17T02:02:00.000Z"),
+      },
+      {
+        orgId,
+        actorType: "user",
+        actorId: userId,
+        action: "approval.decided",
+        entityType: "approval",
+        entityId: archivedApprovalId,
+        createdAt: new Date("2026-07-17T02:03:00.000Z"),
+      },
+    ]);
+
+    const organizationActivity = await svc.list({ orgId });
+    const organizationActivityPage = await svc.listPage({ orgId, limit: 10 });
+    const userActivity = await svc.listUserActivityLedger({
+      orgId,
+      userId,
+      include: ["chat", "activity", "approvals"],
+      limit: 10,
+    });
+    const issueActivity = await svc.forIssue(issueId);
+
+    expect(organizationActivity.map((event) => event.entityId)).toEqual([
+      activeApprovalId,
+      activeConversationId,
+    ]);
+    expect(organizationActivityPage.items.map((event) => event.entityId)).toEqual([
+      activeApprovalId,
+      activeConversationId,
+    ]);
+    expect(userActivity.items).toHaveLength(4);
+    expect(JSON.stringify(userActivity.items)).not.toContain(archivedConversationId);
+    expect(JSON.stringify(userActivity.items)).not.toContain(archivedApprovalId);
+    expect(issueActivity.map((event) => event.entityId)).toEqual([activeConversationId]);
+  });
+
   it("filters title and description-only issue updates from issue activity", async () => {
     const orgId = randomUUID();
     const issueId = randomUUID();

@@ -13,6 +13,8 @@ related_code:
   - packages/db/src/schema/approval_comments.ts
   - packages/db/src/schema/issue_approvals.ts
   - packages/db/src/schema/cost_events.ts
+  - server/src/services/approvals.ts
+  - server/src/services/approval-visibility.ts
   - server/src/services/issue-approvals.ts
   - server/src/services/budgets.ts
   - server/src/services/costs.ts
@@ -21,6 +23,7 @@ related_code:
 related_tests:
   - server/src/__tests__/approvals-service.test.ts
   - server/src/__tests__/approval-routes-chat-application.test.ts
+  - server/src/__tests__/messenger-service.test.ts
   - server/src/__tests__/budgets-service.test.ts
   - server/src/__tests__/costs-service.test.ts
   - server/src/__tests__/costs-rollups-service.test.ts
@@ -44,14 +47,21 @@ Flow:
    requester, status, and context.
 2. Comments preserve approval discussion.
 3. Approver accepts/rejects or requests changes.
-4. Approved action is applied through the owning domain service.
-5. Activity and chat/issue links preserve the decision and application result.
+4. Approval reads and mutations exclude approvals owned by archived Chats.
+   Mutations lock the linked Chat and recheck visibility so archive and approval
+   decisions have one linear order.
+5. Approved action is applied through the owning domain service.
+6. Activity and chat/issue links preserve the decision and application result.
 
 Invariants:
 
 - Approval application must be idempotent.
 - Approval state must remain organization-scoped and tied to the governed
   action it permits.
+- Archiving a Chat must remove its approvals from ordinary reads and prevent
+  later approve/reject/revision/resubmit/comment mutations until the Chat is
+  restored. An in-flight mutation must not commit against a newly archived
+  Chat.
 
 Evidence:
 
@@ -59,6 +69,8 @@ Evidence:
   behavior.
 - `server/src/__tests__/approval-routes-chat-application.test.ts` covers chat
   approval application paths.
+- `server/src/__tests__/messenger-service.test.ts` covers archived-Chat
+  approval visibility and mutation guards.
 
 ## CONTROL.BUDGETS.001
 

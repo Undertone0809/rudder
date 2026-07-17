@@ -2,6 +2,7 @@
 import {
   agents,
   agentWakeupRequests,
+  chatConversations,
   heartbeatRuns,
   issues
 } from "@rudderhq/db";
@@ -45,6 +46,15 @@ export function createHeartbeatWakeupHandlers(context: any) {
       heartbeatSessions.readSessionReuseSuppression(enrichedContextSnapshot),
     );
     let issueId = readNonEmptyString(enrichedContextSnapshot.issueId) ?? issueIdFromPayload;
+    const chatConversationCandidate =
+      readNonEmptyString(enrichedContextSnapshot.chatConversationId) ??
+      readNonEmptyString(enrichedContextSnapshot.conversationId) ??
+      readNonEmptyString(payload?.chatConversationId) ??
+      readNonEmptyString(payload?.conversationId);
+    const chatConversationId = chatConversationCandidate &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(chatConversationCandidate)
+      ? chatConversationCandidate
+      : null;
 
     const agent = await getAgent(agentId);
     if (!agent) throw notFound("Agent not found");
@@ -123,6 +133,63 @@ export function createHeartbeatWakeupHandlers(context: any) {
       }).onConflictDoNothing();
     };
 
+    const lockReferencedTarget = async (tx: any, options?: { issue?: boolean; chat?: boolean }) => {
+      if (options?.issue && issueId) {
+        const issue = await tx
+          .select({ id: issues.id })
+          .from(issues)
+          .where(and(
+            eq(issues.id, issueId),
+            eq(issues.orgId, agent.orgId),
+            isNull(issues.archivedAt),
+          ))
+          .for("key share")
+          .then((rows: Array<{ id: string }>) => rows[0] ?? null);
+        if (!issue) return "issue_execution_issue_not_found";
+      }
+      if (options?.chat && chatConversationId) {
+        const conversation = await tx
+          .select({ id: chatConversations.id })
+          .from(chatConversations)
+          .where(and(
+            eq(chatConversations.id, chatConversationId),
+            eq(chatConversations.orgId, agent.orgId),
+            sql`${chatConversations.status} <> 'archived'`,
+          ))
+          .for("key share")
+          .then((rows: Array<{ id: string }>) => rows[0] ?? null);
+        if (!conversation) return "chat_execution_conversation_not_found";
+      }
+      return null;
+    };
+
+    const writeSkippedRequestInTransaction = async (tx: any, skipReason: string) => {
+      if (existingWakeupRequestId) {
+        await updateWakeupRequestRecord(tx, existingWakeupRequestId, {
+          status: "skipped",
+          reason: skipReason,
+          runId: null,
+          claimedAt: null,
+          finishedAt: new Date(),
+          error: null,
+        });
+        return;
+      }
+      await insertWakeupRequestRecord(tx, {
+        orgId: agent.orgId,
+        agentId,
+        source,
+        triggerDetail,
+        reason: skipReason,
+        payload,
+        status: "skipped",
+        requestedByActorType: opts.requestedByActorType ?? null,
+        requestedByActorId: opts.requestedByActorId ?? null,
+        idempotencyKey: opts.idempotencyKey ?? null,
+        finishedAt: new Date(),
+      });
+    };
+
     if (agent.status === "terminated" || agent.status === "pending_approval") {
       throw conflict("Agent is not invokable in its current state", { status: agent.status });
     }
@@ -154,19 +221,24 @@ export function createHeartbeatWakeupHandlers(context: any) {
 
     if (agent.status === "paused") {
       const deferredPayload = buildDeferredWakePayload(payload, enrichedContextSnapshot, issueId);
-      if (existingWakeupRequestId) {
-        await setWakeupStatus(existingWakeupRequestId, "deferred_agent_paused", {
-          reason,
-          payload: deferredPayload,
-          runId: null,
-          claimedAt: null,
-          finishedAt: null,
-          error: null,
-        });
-        return null;
-      }
-
       await db.transaction(async (tx) => {
+        const invalidTargetReason = await lockReferencedTarget(tx, { issue: true, chat: true });
+        if (invalidTargetReason) {
+          await writeSkippedRequestInTransaction(tx, invalidTargetReason);
+          return;
+        }
+        if (existingWakeupRequestId) {
+          await updateWakeupRequestRecord(tx, existingWakeupRequestId, {
+            status: "deferred_agent_paused",
+            reason,
+            payload: deferredPayload,
+            runId: null,
+            claimedAt: null,
+            finishedAt: null,
+            error: null,
+          });
+          return;
+        }
         const deferredRows = await tx
           .select()
           .from(agentWakeupRequests)
@@ -255,6 +327,11 @@ export function createHeartbeatWakeupHandlers(context: any) {
       const agentNameKey = normalizeAgentNameKey(agent.name);
 
       const outcome = await db.transaction(async (tx) => {
+        const invalidChatReason = await lockReferencedTarget(tx, { chat: true });
+        if (invalidChatReason) {
+          await writeSkippedRequestInTransaction(tx, invalidChatReason);
+          return { kind: "skipped" as const };
+        }
         await tx.execute(
           sql`select id from issues where id = ${issueId} and org_id = ${agent.orgId} for update`,
         );
@@ -647,6 +724,11 @@ export function createHeartbeatWakeupHandlers(context: any) {
 
     if (coalescedTargetRun) {
       const coalescedOutcome = await db.transaction(async (tx) => {
+        const invalidChatReason = await lockReferencedTarget(tx, { chat: true });
+        if (invalidChatReason) {
+          await writeSkippedRequestInTransaction(tx, invalidChatReason);
+          return null;
+        }
         if (issueId) {
           const issue = await tx
             .select({ id: issues.id })
@@ -728,6 +810,11 @@ export function createHeartbeatWakeupHandlers(context: any) {
     }
 
     const queuedOutcome = await db.transaction(async (tx) => {
+      const invalidChatReason = await lockReferencedTarget(tx, { chat: true });
+      if (invalidChatReason) {
+        await writeSkippedRequestInTransaction(tx, invalidChatReason);
+        return { run: null, created: false };
+      }
       if (issueId) {
         const issue = await tx
           .select({ id: issues.id })

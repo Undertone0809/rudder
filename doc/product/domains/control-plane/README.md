@@ -5,6 +5,8 @@ status: active
 coverage: detailed
 contract_ids: []
 related_code:
+  - server/src/services/entity-tombstones.ts
+  - server/src/services/entity-cleanup-jobs.ts
   - server/src/services/activity.ts
   - server/src/services/issue-approvals.ts
   - server/src/services/budgets.ts
@@ -13,6 +15,7 @@ related_code:
   - server/src/index.ts
   - server/src/runtime/runtime-supervisor.ts
 related_tests:
+  - server/src/__tests__/issues-service.test.ts
   - server/src/__tests__/activity-service.test.ts
   - server/src/__tests__/approvals-service.test.ts
   - server/src/__tests__/budgets-service.test.ts
@@ -27,6 +30,8 @@ edit_policy: user_confirmed_only
 ## Owns
 
 - Approval records and governed action application.
+- Cross-domain archive, permanent-delete, tombstone, and physical-cleanup
+  retention semantics for Issue and Chat work.
 - Budget hard stops, cost events, and spend rollups.
 - Activity log taxonomy and audit references.
 - Dashboard and run-intelligence rollups derived from underlying domain facts.
@@ -37,6 +42,9 @@ edit_policy: user_confirmed_only
 
 - `CONTROL.APPROVALS.001`: approvals preserve governed action state and
   application evidence.
+- `CONTROL.ENTITY.RETENTION.001`: Issue and Chat removal uses reversible
+  archive, Settings-only permanent delete, minimal tombstones, and durable
+  physical-cleanup retry.
 - `CONTROL.BUDGETS.001`: budget limits stop hidden autonomy and surface spend.
 - `CONTROL.ACTIVITY.001`: mutating product actions leave auditable activity.
 - `CONTROL.RUN.INTELLIGENCE.001`: operator intelligence surfaces summarize runs

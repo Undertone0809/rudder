@@ -37,6 +37,21 @@ test.describe("Organization settings archived issues", () => {
     const otherOrganization = await createOrganization(page, `Archived-Issue-Other-${Date.now()}`);
     const issue = await createIssue(page, organization.id, "Archive lifecycle target");
     const otherIssue = await createIssue(page, otherOrganization.id, "Keep other organization issue");
+    const calendarEventRes = await page.request.post(`/api/orgs/${organization.id}/calendar/events`, {
+      data: {
+        eventKind: "human_event",
+        eventStatus: "planned",
+        ownerType: "user",
+        ownerUserId: "local-board",
+        title: "Archived issue calendar evidence",
+        startAt: "2026-07-17T08:00:00.000Z",
+        endAt: "2026-07-17T09:00:00.000Z",
+        issueId: issue.id,
+        sourceMode: "manual",
+      },
+    });
+    expect(calendarEventRes.ok()).toBe(true);
+    const calendarEvent = await calendarEventRes.json();
 
     await page.goto(`/${organization.issuePrefix}/issues/${issue.identifier}`);
     await page.getByRole("button", { name: "More issue actions" }).click();
@@ -47,6 +62,14 @@ test.describe("Organization settings archived issues", () => {
 
     expect((await page.request.get(`/api/issues/${issue.id}`)).status()).toBe(404);
     expect((await page.request.get(`/api/issues/${issue.identifier}`)).status()).toBe(404);
+    expect((await page.request.get(
+      `/api/orgs/${organization.id}/calendar/events/${calendarEvent.id}`,
+    )).status()).toBe(404);
+    const calendarList = await page.request.get(
+      `/api/orgs/${organization.id}/calendar/events?start=2026-07-17T00:00:00.000Z&end=2026-07-18T00:00:00.000Z`,
+    );
+    expect(calendarList.ok()).toBe(true);
+    expect(JSON.stringify(await calendarList.json())).not.toContain(issue.id);
     const activeList = await page.request.get(`/api/orgs/${organization.id}/issues`);
     expect(activeList.ok()).toBe(true);
     expect((await activeList.json()).map((row: { id: string }) => row.id)).not.toContain(issue.id);

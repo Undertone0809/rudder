@@ -17,6 +17,7 @@ related_code:
   - ui/src/index.css
   - ui/src/pages/IssueDetail.tsx
   - ui/src/pages/Issues.tsx
+  - ui/src/pages/OrganizationSettings.tsx
 related_tests:
   - ui/src/components/InlineEditor.test.tsx
   - ui/src/components/MilkdownMarkdownEditor.test.ts
@@ -25,6 +26,7 @@ related_tests:
   - tests/e2e/codex-model-order.spec.ts
   - tests/e2e/issue-detail-toolbar-actions.spec.ts
   - tests/e2e/issue-board-display-properties.spec.ts
+  - tests/e2e/organization-settings-archived-issues.spec.ts
 edit_policy: user_confirmed_only
 ---
 
@@ -55,6 +57,11 @@ Behavior:
   durable default runtime configuration on the agent.
 - Failed issue mutations must surface an error; they must not silently discard
   the user's action.
+- Active Issue Detail exposes `Archive Issue`, not permanent Delete.
+  Organization Settings owns the searchable archived-Issue list plus Restore
+  and confirmed permanent Delete actions.
+- Archived Issues must not remain visible in normal Issue lists, detail routes,
+  search, Messenger, or agent-facing context.
 
 Invariant:
 
@@ -67,6 +74,9 @@ Invariant:
   issue surface must not present them as organization defaults or silently
   write them back to the agent. Execution precedence and reassignment handling
   are owned by `RUN.EXECUTION.001`.
+- Permanent Issue Delete must not appear on active work surfaces. The Settings
+  action must operate only on archived Issues and preserve the explanatory
+  tombstone contract in `CONTROL.ENTITY.RETENTION.001`.
 
 Rationale:
 
@@ -88,15 +98,18 @@ Related code:
 - `ui/src/index.css`
 - `ui/src/pages/IssueDetail.tsx`
 - `ui/src/pages/Issues.tsx`
+- `ui/src/pages/OrganizationSettings.tsx`
 
 Related tests:
 
 - `ui/src/components/InlineEditor.test.tsx`
 - `ui/src/components/MilkdownMarkdownEditor.test.ts`
 - `ui/src/pages/IssueDetail.test.tsx`
+- `server/src/__tests__/issue-lifecycle-routes.test.ts`
 - `tests/e2e/codex-model-order.spec.ts`
 - `tests/e2e/issue-detail-toolbar-actions.spec.ts`
 - `tests/e2e/issue-board-display-properties.spec.ts`
+- `tests/e2e/organization-settings-archived-issues.spec.ts`
 
 ## ISSUE.DESCRIPTION.001
 

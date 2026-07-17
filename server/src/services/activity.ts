@@ -21,6 +21,7 @@ import {
 } from "@rudderhq/shared";
 import { and, asc, desc, eq, gte, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import { badRequest } from "../errors.js";
+import { approvalVisibleOutsideArchivedChats } from "./approval-visibility.js";
 import { issueLowSignalContentOnlyActivitySql } from "./issue-activity-filters.js";
 
 export interface ActivityFilters {
@@ -227,6 +228,14 @@ export function activityService(db: Db) {
   const issueIdAsText = sql<string>`${issues.id}::text`;
   const approvalIdAsText = sql<string>`${approvals.id}::text`;
   const conversationIdAsText = sql<string>`${chatConversations.id}::text`;
+  const chatActivityVisibleCondition = or(
+    ne(activityLog.entityType, "chat"),
+    ne(chatConversations.status, "archived"),
+  );
+  const approvalActivityVisibleCondition = or(
+    ne(activityLog.entityType, "approval"),
+    and(isNotNull(approvals.id), approvalVisibleOutsideArchivedChats()),
+  );
   const organizationActivityVisibleCondition = and(
     ne(activityLog.action, "issue.read_marked"),
     sql`not (${issueLowSignalContentOnlyActivitySql("activity_log")})`,
@@ -368,6 +377,7 @@ export function activityService(db: Db) {
           eq(chatMessages.role, "user"),
           eq(chatConversations.orgId, filters.orgId),
           eq(chatConversations.createdByUserId, filters.userId),
+          ne(chatConversations.status, "archived"),
           isNull(chatMessages.supersededAt),
           ...timeConditions(chatMessages.createdAt, filters),
         ];
@@ -560,6 +570,7 @@ export function activityService(db: Db) {
           eq(approvalComments.orgId, filters.orgId),
           eq(approvalComments.authorUserId, filters.userId),
           eq(approvals.orgId, filters.orgId),
+          approvalVisibleOutsideArchivedChats(),
           ...timeConditions(approvalComments.createdAt, filters),
         ];
         const cursorSql = userActivityCursorCondition(
@@ -701,13 +712,21 @@ export function activityService(db: Db) {
             ),
           )
           .leftJoin(
+            chatConversations,
+            and(
+              eq(activityLog.entityType, sql`'chat'`),
+              eq(chatConversations.orgId, activityLog.orgId),
+              eq(activityLog.entityId, conversationIdAsText),
+            ),
+          )
+          .leftJoin(
             agents,
             and(
               eq(activityLog.agentId, agents.id),
               eq(activityLog.orgId, agents.orgId),
             ),
           )
-          .where(and(...conditions))
+          .where(and(...conditions, chatActivityVisibleCondition, approvalActivityVisibleCondition))
           .orderBy(desc(activityLog.createdAt), asc(activityLog.id))
           .limit(perSourceLimit);
 
@@ -803,6 +822,22 @@ export function activityService(db: Db) {
             eq(activityLog.entityId, issueIdAsText),
           ),
         )
+        .leftJoin(
+          chatConversations,
+          and(
+            eq(activityLog.entityType, sql`'chat'`),
+            eq(chatConversations.orgId, activityLog.orgId),
+            eq(activityLog.entityId, conversationIdAsText),
+          ),
+        )
+        .leftJoin(
+          approvals,
+          and(
+            eq(activityLog.entityType, sql`'approval'`),
+            eq(approvals.orgId, activityLog.orgId),
+            eq(activityLog.entityId, approvalIdAsText),
+          ),
+        )
         .where(
           and(
             ...conditions,
@@ -810,6 +845,8 @@ export function activityService(db: Db) {
               sql`${activityLog.entityType} != 'issue'`,
               and(isNull(issues.hiddenAt), isNull(issues.archivedAt)),
             ),
+            chatActivityVisibleCondition,
+            approvalActivityVisibleCondition,
           ),
         )
         .orderBy(desc(activityLog.createdAt), desc(activityLog.id))
@@ -848,6 +885,22 @@ export function activityService(db: Db) {
             eq(activityLog.entityId, issueIdAsText),
           ),
         )
+        .leftJoin(
+          chatConversations,
+          and(
+            eq(activityLog.entityType, sql`'chat'`),
+            eq(chatConversations.orgId, activityLog.orgId),
+            eq(activityLog.entityId, conversationIdAsText),
+          ),
+        )
+        .leftJoin(
+          approvals,
+          and(
+            eq(activityLog.entityType, sql`'approval'`),
+            eq(approvals.orgId, activityLog.orgId),
+            eq(activityLog.entityId, approvalIdAsText),
+          ),
+        )
         .where(
           and(
             ...conditions,
@@ -855,6 +908,8 @@ export function activityService(db: Db) {
               sql`${activityLog.entityType} != 'issue'`,
               and(isNull(issues.hiddenAt), isNull(issues.archivedAt)),
             ),
+            chatActivityVisibleCondition,
+            approvalActivityVisibleCondition,
           ),
         )
         .orderBy(desc(activityLog.createdAt), desc(activityLog.id))
@@ -893,6 +948,7 @@ export function activityService(db: Db) {
             and(
               eq(activityLog.entityType, "chat"),
               eq(activityLog.entityId, conversationIdAsText),
+              ne(chatConversations.status, "archived"),
             ),
           )
           .leftJoin(

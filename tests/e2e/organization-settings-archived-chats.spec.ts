@@ -72,6 +72,13 @@ test.describe("Organization settings archived chats", () => {
       await createArchivedChat(page, organization.id, `Archived backlog ${index + 1}`);
     }
 
+    const activityRes = await page.request.get(`/api/orgs/${organization.id}/activity`);
+    expect(activityRes.ok()).toBe(true);
+    expect(JSON.stringify(await activityRes.json())).not.toContain(targetChat.id);
+    expect(JSON.stringify(await (await page.request.get(
+      `/api/orgs/${organization.id}/activity?limit=100`,
+    )).json())).not.toContain(targetChat.id);
+
     await openArchivedChatSettings(page, organization);
     await expect(page.getByText("Default issue creation mode", { exact: true })).toHaveCount(0);
 

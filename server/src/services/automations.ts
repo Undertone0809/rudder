@@ -853,8 +853,8 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
         triggeredAt: automationRuns.triggeredAt,
         idempotencyKey: automationRuns.idempotencyKey,
         triggerPayload: automationRuns.triggerPayload,
-        linkedIssueId: automationRuns.linkedIssueId,
-        linkedChatConversationId: automationRuns.linkedChatConversationId,
+        linkedIssueId: issues.id,
+        linkedChatConversationId: chatConversations.id,
         startedChatMessageId: automationRuns.startedChatMessageId,
         terminalChatMessageId: automationRuns.terminalChatMessageId,
         lastChatMessageId: automationRuns.lastChatMessageId,
@@ -877,8 +877,17 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
       })
       .from(automationRuns)
       .leftJoin(automationTriggers, eq(automationRuns.triggerId, automationTriggers.id))
-      .leftJoin(issues, eq(automationRuns.linkedIssueId, issues.id))
-      .leftJoin(chatConversations, eq(automationRuns.linkedChatConversationId, chatConversations.id))
+      .leftJoin(
+        issues,
+        and(eq(automationRuns.linkedIssueId, issues.id), isNull(issues.archivedAt)),
+      )
+      .leftJoin(
+        chatConversations,
+        and(
+          eq(automationRuns.linkedChatConversationId, chatConversations.id),
+          ne(chatConversations.status, "archived"),
+        ),
+      )
       .where(and(eq(automationRuns.orgId, orgId), inArray(automationRuns.automationId, automationIds)))
       .orderBy(automationRuns.automationId, desc(automationRuns.createdAt), desc(automationRuns.id));
 
@@ -1584,8 +1593,8 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
             triggeredAt: automationRuns.triggeredAt,
             idempotencyKey: automationRuns.idempotencyKey,
             triggerPayload: automationRuns.triggerPayload,
-            linkedIssueId: automationRuns.linkedIssueId,
-            linkedChatConversationId: automationRuns.linkedChatConversationId,
+            linkedIssueId: issues.id,
+            linkedChatConversationId: chatConversations.id,
             startedChatMessageId: automationRuns.startedChatMessageId,
             terminalChatMessageId: automationRuns.terminalChatMessageId,
             lastChatMessageId: automationRuns.lastChatMessageId,
@@ -1608,8 +1617,17 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
           })
           .from(automationRuns)
           .leftJoin(automationTriggers, eq(automationRuns.triggerId, automationTriggers.id))
-          .leftJoin(issues, eq(automationRuns.linkedIssueId, issues.id))
-          .leftJoin(chatConversations, eq(automationRuns.linkedChatConversationId, chatConversations.id))
+          .leftJoin(
+            issues,
+            and(eq(automationRuns.linkedIssueId, issues.id), isNull(issues.archivedAt)),
+          )
+          .leftJoin(
+            chatConversations,
+            and(
+              eq(automationRuns.linkedChatConversationId, chatConversations.id),
+              ne(chatConversations.status, "archived"),
+            ),
+          )
           .where(eq(automationRuns.automationId, row.id))
           .orderBy(desc(automationRuns.createdAt))
           .limit(25)

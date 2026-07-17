@@ -20,6 +20,8 @@ edit_policy: user_confirmed_only
 
 - Issue identity and hierarchy.
 - Issue status lifecycle.
+- Issue archive, restore, permanent-delete eligibility, and hierarchy ordering;
+  shared retention/tombstone semantics remain in control-plane.
 - Issue-local workflows such as create, update, reopen, checkout entry, and
   issue-visible close-out state.
 - Issue-visible slots for comments, runs, reviewers, activity, and artifacts.
@@ -37,6 +39,8 @@ edit_policy: user_confirmed_only
 - `ISSUE.IDENTITY.001`: readable issue identifiers use an explicit organization
   Issue Key while UUIDs and historical aliases preserve durable identity.
 - `ISSUE.STATE.001`: issue status lifecycle remains explicit and review-aware.
+  Archive remains a separate reversible visibility marker and permanent delete
+  follows `CONTROL.ENTITY.RETENTION.001`.
 - `ISSUE.HIERARCHY.001`: parent and sub-issue relationships preserve work
   context without crossing organization or cycle boundaries.
 - `ISSUE.COMMENTS.001`: comments preserve local collaboration evidence before
@@ -55,3 +59,5 @@ edit_policy: user_confirmed_only
 - `ROUTING.REVIEWER.001` wakes reviewers when issue state enters review.
 - `RUN.ADMISSION.001` locks issue-backed execution and releases/promotes queued
   wakes after a run finishes.
+- `CONTROL.ENTITY.RETENTION.001` owns the shared tombstone, deleted-lookup, and
+  durable physical-cleanup contract for archived Issues and Chats.

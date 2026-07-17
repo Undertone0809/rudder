@@ -324,6 +324,54 @@ describe("automation service live-execution coalescing", () => {
     };
   }
 
+  it("omits archived issue and chat targets from automation run summaries", async () => {
+    const { orgId, issueSvc, automation, svc } = await seedFixture();
+    const issue = await issueSvc.create(orgId, {
+      projectId: automation.projectId,
+      title: "Archived automation issue",
+      status: "todo",
+      priority: "medium",
+    });
+    const conversationId = randomUUID();
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      status: "archived",
+      title: "Archived automation chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.update(issues).set({ archivedAt: new Date() }).where(eq(issues.id, issue.id));
+    await db.insert(automationRuns).values({
+      orgId,
+      automationId: automation.id,
+      source: "manual",
+      status: "succeeded",
+      triggeredAt: new Date(),
+      linkedIssueId: issue.id,
+      linkedChatConversationId: conversationId,
+      completedAt: new Date(),
+    });
+
+    const list = await svc.list(orgId);
+    const detail = await svc.getDetail(automation.id);
+
+    expect(list[0]?.lastRun).toMatchObject({
+      linkedIssueId: null,
+      linkedChatConversationId: null,
+      linkedIssue: null,
+      linkedChatConversation: null,
+    });
+    expect(detail?.recentRuns[0]).toMatchObject({
+      linkedIssueId: null,
+      linkedChatConversationId: null,
+      linkedIssue: null,
+      linkedChatConversation: null,
+    });
+    expect(JSON.stringify({ list, detail })).not.toContain(issue.id);
+    expect(JSON.stringify({ list, detail })).not.toContain(conversationId);
+  });
+
   it("creates a fresh execution issue when the previous automation issue is open but idle", async () => {
     const { orgId, issueSvc, automation, svc } = await seedFixture();
     const previousRunId = randomUUID();

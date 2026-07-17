@@ -2774,14 +2774,14 @@ describe("issueService.list participantAgentId", () => {
       issuePrefix: `Q${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
-    await enqueueEntityCleanupJobs(db, orgId, [{
+    const [queuedJob] = await enqueueEntityCleanupJobs(db, orgId, [{
       artifactType: "storage_object",
       artifactRef,
     }]);
 
     const deleteObject = vi.fn().mockRejectedValueOnce(new Error("storage unavailable"));
     const storage = { deleteObject } as Parameters<typeof processEntityCleanupJobs>[1];
-    const firstAttemptAt = new Date("2026-07-17T00:00:00.000Z");
+    const firstAttemptAt = new Date(queuedJob!.nextAttemptAt.getTime() + 1);
     await expect(processEntityCleanupJobs(db, storage, { now: firstAttemptAt }))
       .resolves.toEqual({ processed: 0, failed: 1 });
     const [pending] = await db.select().from(entityCleanupJobs);

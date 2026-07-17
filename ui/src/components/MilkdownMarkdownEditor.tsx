@@ -44,8 +44,8 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { useResolvedIssueMentions } from "../hooks/useResolvedIssueMention";
+import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { normalizeRelaxedMarkdownSyntax } from "../lib/markdown-normalize";
 import {
   applyMentionChipDecoration,

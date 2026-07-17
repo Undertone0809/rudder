@@ -437,6 +437,32 @@ describe("heartbeat paused wakeups", () => {
     });
   });
 
+  it("skips paused-agent wakes that reference an archived issue", async () => {
+    const { orgId, agentId, issuePrefix } = await seedAgentFixture("paused");
+    const issueId = await seedIssue({ orgId, issuePrefix, assigneeAgentId: agentId });
+    await db.update(issues).set({ archivedAt: new Date() }).where(eq(issues.id, issueId));
+
+    const result = await heartbeatService(db).wakeup(agentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      reason: "issue_assigned",
+      payload: { issueId },
+      contextSnapshot: { issueId, taskId: issueId },
+    });
+
+    expect(result).toBeNull();
+    const wakeup = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.agentId, agentId))
+      .then((rows) => rows[0] ?? null);
+    expect(wakeup).toMatchObject({
+      status: "skipped",
+      reason: "issue_execution_issue_not_found",
+      runId: null,
+    });
+  });
+
   it("replays paused on-demand wakes on resume", async () => {
     const { orgId, agentId } = await seedAgentFixture("paused");
     const heartbeat = heartbeatService(db);

@@ -5,6 +5,7 @@ import {
   agentWakeupRequests,
   agents,
   applyPendingMigrations,
+  chatConversations,
   createDb,
   ensurePostgresDatabase,
   heartbeatRuns,
@@ -244,6 +245,43 @@ describe("heartbeat run concurrency", () => {
 
     return { orgId, agentId };
   }
+
+  it("does not admit a generic wake that references an archived chat", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const conversationId = randomUUID();
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      status: "archived",
+      title: "Archived wake target",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+
+    const run = await heartbeatService(db).wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "chat_followup",
+      payload: { conversationId },
+      contextSnapshot: { conversationId, taskKey: `chat:${conversationId}` },
+      startImmediately: false,
+    });
+
+    expect(run).toBeNull();
+    const wakeup = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(and(
+        eq(agentWakeupRequests.orgId, orgId),
+        eq(agentWakeupRequests.agentId, agentId),
+      ))
+      .then((rows) => rows[0] ?? null);
+    expect(wakeup).toMatchObject({
+      status: "skipped",
+      reason: "chat_execution_conversation_not_found",
+      runId: null,
+    });
+  });
 
   async function disableExistingTimerAgents() {
     await db.update(agents).set({

@@ -63,6 +63,7 @@ related_code:
   - ui/src/pages/Chat.work-manifest.tsx
   - ui/src/pages/Chat.tsx
   - ui/src/pages/Chat.messages.tsx
+  - ui/src/pages/OrganizationSettings.tsx
   - ui/src/pages/Messenger.tsx
   - ui/src/pages/AgentDetail.runs.tsx
   - server/src/routes/website-metadata.ts
@@ -111,6 +112,7 @@ related_tests:
   - tests/e2e/chat-fork.spec.ts
   - tests/e2e/chat-project-empty-heading.spec.ts
   - tests/e2e/chat-rich-references.spec.ts
+  - tests/e2e/organization-settings-archived-chats.spec.ts
   - tests/e2e/chat-side-panel.spec.ts
   - tests/e2e/chat-work-manifest.spec.ts
   - tests/e2e/agent-detail-feishu-integration.spec.ts
@@ -173,6 +175,11 @@ Product model:
 - Chat-native work remains inspectable through the conversation, Agent Runs,
   Work manifest, and linked outputs. Creating or linking an issue is optional
   structured coordination, not a prerequisite for real or durable work.
+- A locally mutable Chat can be archived without deleting its transcript.
+  Archived conversations are excluded from normal Chat/Messenger reads and are
+  discoverable to board operators only in Organization Settings.
+- Restore and permanent delete are Settings lifecycle actions. Permanent delete
+  is allowed only after archive and follows `CONTROL.ENTITY.RETENTION.001`.
 
 Flow:
 
@@ -208,6 +215,13 @@ Flow:
 11. If the current reply is stopped, fails, or is otherwise not completed,
    queued follow-ups stay parked. The operator can edit/delete them, but Rudder
    does not auto-deliver them as if the interrupted reply had completed.
+12. The operator may archive a locally mutable Chat when no reply or linked
+    agent work is active. Normal Chat and Messenger surfaces stop returning it.
+13. Organization Settings can restore the archived Chat or permanently delete
+    it after destructive confirmation. `Delete all` applies only to eligible
+    archived Chats in the viewed organization.
+14. Deleted Chat lookups return the minimal tombstone response defined by
+    `CONTROL.ENTITY.RETENTION.001`; the full transcript is not recoverable.
 
 Invariants:
 
@@ -265,6 +279,13 @@ Invariants:
 - Agent attribution is visible enough to navigate from message to run/agent.
 - Work-manifest reconciliation must not read hidden reasoning, transcript tool
   payloads, stdout, or stderr as user-visible Sources or References.
+- The organization-facing UI must not expose `Default issue creation mode` or
+  let users mutate that internal compatibility setting. Issue proposals remain
+  governed by explicit operator intent in the current request.
+- Ordinary Chat and Messenger menus expose Archive but not permanent Delete.
+  Archived Chat listing, restore, and delete remain board Settings operations.
+- Archived Chats must not enter assistant context, approval mutation, search,
+  Messenger summaries, or new run admission.
 
 Evidence:
 
@@ -287,6 +308,10 @@ Evidence:
 - Chat route and UI tests cover queue snapshots, active-generation reporting,
   queued follow-up editing/cancellation/claiming, hidden delivered rows,
   retained parked rows, and Feishu-bound queue mutation rejection.
+- Chat lifecycle route, Messenger component, and Organization Settings E2E
+  cover archive visibility, board-only restore/delete, organization-scoped bulk
+  delete, minimal tombstones, and the absence of permanent Delete on active
+  Chat surfaces.
 
 ## CHAT.TITLE.GENERATION.001
 
@@ -1299,8 +1324,9 @@ Product model:
 
 - Messenger thread directory includes chat threads and domain-derived attention
   threads such as issue, approval, failed run, and automation-created work.
-- Threads support read/unread state, previews, pin/archive/delete where the
-  underlying thread type supports it, custom groups, and stable navigation.
+- Threads support read/unread state, previews, pin/archive where the underlying
+  thread type supports it, custom groups, and stable navigation. Permanent
+  Issue/Chat deletion is not a Messenger action.
 - When the directory is organized by project, each real project section header
   reuses that project's current icon and color from `ORG.PROJECT.001` alongside
   the project name. Synthetic fixed sections such as `System` and `No project`
@@ -1318,7 +1344,9 @@ Flow:
 3. Onboarding seed may create issue threads and write read markers at seed time
    so starter work does not appear as new unread attention.
 4. Opening a thread clears relevant read markers when appropriate.
-5. Actions such as pin/archive/delete route to the owning chat/thread behavior.
+5. Actions such as pin/archive route to the owning chat/thread behavior.
+   Archived threads disappear from Messenger; restore and permanent delete are
+   owned by Organization Settings under `CONTROL.ENTITY.RETENTION.001`.
 
 Invariants:
 
@@ -1335,7 +1363,8 @@ Invariants:
 Evidence:
 
 - Messenger contract E2E covers ordering, previews, read state, groups,
-  redirects, empty state, pin/archive/delete, issue notifications, approvals,
+  redirects, empty state, pin/archive without active-thread permanent delete,
+  issue notifications, approvals,
   automation-created issue attention, and real project icon/color rendering in
   project-organized section headers.
 - Messenger context sidebar component tests cover project-list lookup, icon and

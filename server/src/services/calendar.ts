@@ -26,7 +26,7 @@ import type {
   UpdateGoogleCalendarOAuthConfig,
 } from "@rudderhq/shared";
 import { SECRET_PROVIDERS, type SecretProvider } from "@rudderhq/shared";
-import { and, asc, desc, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { asBoolean, asNumber, parseObject } from "../agent-runtimes/utils.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { secretService } from "./secrets.js";
@@ -531,7 +531,10 @@ export function calendarService(db: Db) {
       .from(calendarEvents)
       .leftJoin(calendarSources, eq(calendarEvents.sourceId, calendarSources.id))
       .leftJoin(agents, eq(calendarEvents.ownerAgentId, agents.id))
-      .leftJoin(issues, eq(calendarEvents.issueId, issues.id))
+      .leftJoin(
+        issues,
+        and(eq(calendarEvents.issueId, issues.id), eq(calendarEvents.orgId, issues.orgId)),
+      )
       .leftJoin(
         automations,
         and(
@@ -540,7 +543,10 @@ export function calendarService(db: Db) {
           eq(automations.orgId, issues.orgId),
         ),
       )
-      .where(and(...conditions))
+      .where(and(
+        ...conditions,
+        or(isNull(calendarEvents.issueId), isNull(issues.archivedAt)),
+      ))
       .orderBy(asc(calendarEvents.startAt), asc(calendarEvents.title));
 
     return rows.map(mapPersistedEvent);
@@ -871,7 +877,10 @@ export function calendarService(db: Db) {
       .from(calendarEvents)
       .leftJoin(calendarSources, eq(calendarEvents.sourceId, calendarSources.id))
       .leftJoin(agents, eq(calendarEvents.ownerAgentId, agents.id))
-      .leftJoin(issues, eq(calendarEvents.issueId, issues.id))
+      .leftJoin(
+        issues,
+        and(eq(calendarEvents.issueId, issues.id), eq(calendarEvents.orgId, issues.orgId)),
+      )
       .leftJoin(
         automations,
         and(
@@ -880,7 +889,12 @@ export function calendarService(db: Db) {
           eq(automations.orgId, issues.orgId),
         ),
       )
-      .where(and(eq(calendarEvents.id, id), eq(calendarEvents.orgId, orgId), isNull(calendarEvents.deletedAt)));
+      .where(and(
+        eq(calendarEvents.id, id),
+        eq(calendarEvents.orgId, orgId),
+        isNull(calendarEvents.deletedAt),
+        or(isNull(calendarEvents.issueId), isNull(issues.archivedAt)),
+      ));
     return rows[0] ? mapPersistedEvent(rows[0]) : null;
   }
 
