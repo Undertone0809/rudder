@@ -3,8 +3,8 @@ import {
   RUDDER_BROWSER_MCP_CONTRACT_HASH,
   RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_MCP_CONTRACT_VERSION,
+  type AgentRuntimeControlHandle,
 } from "@rudderhq/agent-runtime-utils";
-import type { AgentRuntimeControlHandle } from "@rudderhq/agent-runtime-utils";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
