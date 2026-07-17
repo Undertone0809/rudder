@@ -15,6 +15,11 @@ import type { PluginHostRuntime } from "./plugin-host-runtime.js";
 import { registerApiRoutes } from "./register-api-routes.js";
 import type { RudderAppOptions } from "./types.js";
 
+export interface HttpAppHandle {
+  app: express.Express;
+  close(): Promise<void>;
+}
+
 export function resolveViteHmrPort(serverPort: number): number {
   if (serverPort <= 55_535) {
     return serverPort + 10_000;
@@ -26,13 +31,24 @@ export async function createHttpApp(
   db: Db,
   opts: RudderAppOptions,
   pluginRuntime: PluginHostRuntime,
-) {
+): Promise<HttpAppHandle> {
   const app = express();
   const previewOrigin = opts.workspacePreviewOrigin ?? `http://preview.localhost:${opts.serverPort}`;
   const workspacePreview = workspaceWebPreviewRuntime(db, {
     previewOrigin,
     requireLoopbackParent: !opts.workspacePreviewOrigin,
   });
+  let closeVite: (() => Promise<void>) | null = null;
+  let closeInFlight: Promise<void> | null = null;
+  const close = () => {
+    if (closeInFlight) return closeInFlight;
+    closeInFlight = Promise.resolve().then(async () => {
+      const disposeVite = closeVite;
+      closeVite = null;
+      await disposeVite?.();
+    });
+    return closeInFlight;
+  };
   const privateHostnameGateEnabled =
     opts.deploymentMode === "authenticated" && opts.deploymentExposure === "private";
   const privateHostnameAllowSet = resolvePrivateHostnameAllowSet({
@@ -135,20 +151,31 @@ export async function createHttpApp(
         allowedHosts: privateHostnameGateEnabled ? Array.from(privateHostnameAllowSet) : undefined,
       },
     });
+    closeVite = () => vite.close();
 
-    app.use(vite.middlewares);
-    app.get(/.*/, async (req, res, next) => {
-      try {
-        const templatePath = path.resolve(uiRoot, "index.html");
-        const template = fs.readFileSync(templatePath, "utf-8");
-        const html = applyUiBranding(await vite.transformIndexHtml(req.originalUrl, template));
-        res.status(200).set({ "Content-Type": "text/html" }).end(html);
-      } catch (err) {
-        next(err);
-      }
-    });
+    try {
+      app.use(vite.middlewares);
+      app.get(/.*/, async (req, res, next) => {
+        try {
+          const templatePath = path.resolve(uiRoot, "index.html");
+          const template = fs.readFileSync(templatePath, "utf-8");
+          const html = applyUiBranding(await vite.transformIndexHtml(req.originalUrl, template));
+          res.status(200).set({ "Content-Type": "text/html" }).end(html);
+        } catch (err) {
+          next(err);
+        }
+      });
+    } catch (error) {
+      await close();
+      throw error;
+    }
   }
 
-  app.use(errorHandler);
-  return app;
+  try {
+    app.use(errorHandler);
+    return { app, close };
+  } catch (error) {
+    await close();
+    throw error;
+  }
 }

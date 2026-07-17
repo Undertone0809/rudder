@@ -15,6 +15,7 @@ const invalidateQueries = vi.fn();
 let messengerModel: any;
 let messengerRoute: any;
 let chatList: any[];
+let customGroupList: any[];
 let activeGeneratingChatIds: Set<string>;
 let cleanupFn: (() => void) | null = null;
 let intersectionCallback: ((entries: Array<{ isIntersecting: boolean }>) => void) | null = null;
@@ -24,7 +25,11 @@ let localStorageValues: Record<string, string>;
 vi.mock("@tanstack/react-query", () => ({
   useMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useQueryClient: () => ({ invalidateQueries }),
-  useQuery: () => ({ data: chatList }),
+  useQuery: ({ queryKey }: { queryKey?: unknown }) => {
+    const key = Array.isArray(queryKey) ? queryKey : [];
+    if (key[0] === "messenger" && key[2] === "groups") return { data: { groups: customGroupList } };
+    return { data: chatList };
+  },
 }));
 
 vi.mock("@/lib/router", () => ({
@@ -161,6 +166,7 @@ describe("MessengerContextSidebar unread scroll requests", () => {
     window.localStorage.clear();
     activeGeneratingChatIds = new Set();
     chatList = [];
+    customGroupList = [];
     messengerRoute = { kind: "root" };
     messengerModel = {
       selectedOrganizationId: "org-1",
@@ -549,6 +555,115 @@ describe("MessengerContextSidebar unread scroll requests", () => {
     });
 
     expect(loadMoreThreadSummaries).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts and scrolls unread threads nested inside the pinned custom section", async () => {
+    window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ "org-1": "custom" }));
+    const loadMoreThreadSummaries = vi.fn().mockResolvedValue(undefined);
+    const pinnedThreads = Array.from({ length: 160 }, (_, index) => ({
+      ...baseThread(`chat:pinned-${index}`, `Pinned ${index}`, index === 0 ? 1 : 0),
+      isPinned: true,
+    }));
+    chatList = pinnedThreads.map((thread, index) => baseConversation({
+      id: `pinned-${index}`,
+      title: thread.title,
+      isPinned: true,
+      isUnread: index === 0,
+      unreadCount: index === 0 ? 1 : 0,
+      needsAttention: index === 0,
+    }));
+    customGroupList = [{
+      id: "pinned-group",
+      orgId: "org-1",
+      userId: "local-board",
+      name: "Pinned work",
+      icon: "folder",
+      sortOrder: 0,
+      collapsed: false,
+      pinnedAt: "2026-04-11T09:40:00.000Z",
+      entries: pinnedThreads.map((thread, index) => ({
+        id: `entry-${index}`,
+        groupId: "pinned-group",
+        threadKey: thread.threadKey,
+        sortOrder: index,
+        thread,
+      })),
+    }];
+    messengerModel = {
+      ...messengerModel,
+      threadSummaries: pinnedThreads,
+      hasMoreThreadSummaries: true,
+      loadMoreThreadSummaries,
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+    });
+
+    const unreadRow = document.querySelector('[data-messenger-thread-key="chat:pinned-0"]') as HTMLElement | null;
+    expect(unreadRow).not.toBeNull();
+    await act(async () => {
+      intersectionCallback?.([{ isIntersecting: true }]);
+      requestMessengerUnreadScroll();
+      await Promise.resolve();
+    });
+
+    expect(loadMoreThreadSummaries).not.toHaveBeenCalled();
+    expect(unreadRow?.scrollIntoView).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
+  });
+
+  it("reveals an active pinned custom-group row beyond the initial group limit", async () => {
+    window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ "org-1": "custom" }));
+    const pinnedThreads = Array.from({ length: 7 }, (_, index) => ({
+      ...baseThread(`chat:pinned-${index}`, `Pinned ${index}`),
+      isPinned: true,
+    }));
+    chatList = pinnedThreads.map((thread, index) => baseConversation({
+      id: `pinned-${index}`,
+      title: thread.title,
+      isPinned: true,
+    }));
+    customGroupList = [{
+      id: "pinned-group",
+      orgId: "org-1",
+      userId: "local-board",
+      name: "Pinned work",
+      icon: "folder",
+      sortOrder: 0,
+      collapsed: false,
+      pinnedAt: "2026-04-11T09:40:00.000Z",
+      entries: pinnedThreads.map((thread, index) => ({
+        id: `entry-${index}`,
+        groupId: "pinned-group",
+        threadKey: thread.threadKey,
+        sortOrder: index,
+        thread,
+      })),
+    }];
+    messengerRoute = { kind: "chat", conversationId: "pinned-6" };
+    messengerModel = { ...messengerModel, threadSummaries: pinnedThreads };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector('[data-messenger-thread-key="chat:pinned-6"]')).not.toBeNull();
   });
 
   it("starts loading the next Messenger thread page before the user reaches the sentinel", async () => {

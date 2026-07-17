@@ -28,8 +28,6 @@ import { useNavigate, useSearchParams } from "@/lib/router";
 import { cn } from "@/lib/utils";
 import {
   buildAgentMentionHref,
-  buildLibraryEntryMentionMarkdown,
-  buildLibraryFileMentionMarkdown,
   parseAgentMentionHref,
   type OrganizationSkillFileDetail,
   type OrganizationSkillListItem,
@@ -45,7 +43,6 @@ import {
   Boxes,
   ChevronDown,
   ChevronRight,
-  Code2,
   Copy,
   ExternalLink,
   FileCode2,
@@ -64,11 +61,10 @@ import {
   PanelLeft,
   Pencil,
   Plus,
-  Terminal,
   Trash2,
   Unlink,
   UserRound,
-  X,
+  X
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -88,12 +84,16 @@ import { ResourceLocatorField } from "../components/ResourceLocatorField";
 import { getWorkspaceCodeLanguageLabel, isWorkspaceCodeFilePath, WorkspaceCodeEditor } from "../components/WorkspaceCodeEditor";
 import { WorkspaceHtmlPreview, WorkspaceHtmlPreviewToolbar } from "../components/WorkspaceHtmlPreview";
 import { WorkspacePdfPreview } from "../components/WorkspacePdfPreview";
+import {
+  WorkspaceLaunchMenu,
+  WorkspaceLaunchTargetIcon,
+} from "../components/workspaces/WorkspaceLaunchControls";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useI18n } from "../context/I18nContext";
 import { useToast } from "../context/ToastContext";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "../hooks/useViewedOrganization";
-import { readDesktopShell, type DesktopFileLaunchTargetId, type DesktopIdeTarget, type DesktopWorkspaceLaunchTarget } from "../lib/desktop-shell";
+import { readDesktopShell, type DesktopIdeTarget, type DesktopWorkspaceLaunchTarget } from "../lib/desktop-shell";
 import { extractDocumentOutline, type DocumentOutlineItem } from "../lib/document-outline";
 import type { AtomicInlineTokenElement } from "../lib/inline-token-dom";
 import { libraryCopy } from "../lib/library-copy";
@@ -106,32 +106,87 @@ import {
 } from "../lib/resource-options";
 import { normalizeWorkspaceCsvRows, parseWorkspaceCsvContent, serializeWorkspaceCsvRows } from "../lib/workspace-csv";
 import {
+  containsEmbeddedImageDataUrl,
+  countWorkspaceDocumentWords,
+  displayWorkspaceDocumentKind,
+  EMBEDDED_IMAGE_DATA_URL_ERROR,
+  formatWorkspaceWordCount,
+  isWorkspaceCsvContentType,
+  isWorkspaceCsvFilePath,
+  isWorkspaceImageFilePath,
+  isWorkspaceMarkdownFilePath,
+  isWorkspaceTextDocumentFilePath,
+  joinYamlFrontmatter,
+  splitYamlFrontmatter,
+  workspaceImageAssetNamespace
+} from "../lib/workspace-document-policy";
+import {
   isWorkspaceHtmlContentType,
   isWorkspaceHtmlFilePath,
 } from "../lib/workspace-html-preview";
+import {
+  directoryAndParentDirectories,
+  normalizeRequestedPath,
+  parentDirectories,
+} from "../lib/workspace-path-policy";
+import {
+  appendWorkspaceOpenFilePath,
+  isWorkspaceCloseCurrentTabShortcut,
+  isWorkspaceFileOpenTarget,
+  normalizeWorkspaceOpenFilePaths,
+  readStoredWorkspaceLaunchTargetId,
+  readStoredWorkspaceOpenFileTabState,
+  workspaceFileOpenTargets,
+  workspaceLaunchMenuOpeningId,
+  writeStoredWorkspaceLaunchTargetId,
+  writeStoredWorkspaceOpenFileTabState,
+  type WorkspaceFileOpenTarget,
+  type WorkspaceOpenTargetId
+} from "../lib/workspace-preferences";
+import {
+  applyMovedWorkspacePath,
+  applyOrganizationSkillBreadcrumbLabels,
+  buildProjectResourceTreeGroups,
+  buildWorkspaceEntryLinkMarkdown,
+  buildWorkspaceFileLinkMarkdown,
+  canCopyWorkspaceEntry,
+  canCreateInsideWorkspaceDirectory,
+  canDeleteWorkspaceEntry,
+  canDropWorkspaceEntryIntoDirectory,
+  canMoveWorkspaceEntry,
+  canRenameWorkspaceEntry,
+  displayWorkspaceEntryLabel,
+  displayWorkspaceFileTabLabel,
+  findProjectResourceSelection,
+  getWorkspaceImportDropFiles,
+  hasExternalFileDragPayload,
+  hasWorkspaceDragPayload,
+  isDraggingOverWorkspaceTreeEntry,
+  isLegacyAgentHeartbeatInstructionPath,
+  isLibrarySkillPackageFolderPath,
+  isLibrarySkillsRootPath,
+  isProjectLibraryFolderPath,
+  isProtectedAgentWorkspaceContainerPath,
+  isValidWorkspaceEntryName,
+  isWorkspaceBackedOrganizationSkill,
+  joinWorkspaceEntryPath,
+  joinWorkspacePath,
+  mergeWorkspaceAndVirtualSkillEntries,
+  organizationSkillFileTreePath,
+  parentWorkspaceDirectoryPath,
+  projectResourceEntryPath,
+  projectResourceFolderPath,
+  WORKSPACE_ENTRY_DND_MIME,
+  workspacePathBreadcrumb,
+  type ProjectResourceTreeGroup,
+  type WorkspaceTreeEntry,
+} from "../lib/workspace-tree-policy";
 
-const WORKSPACE_LAUNCH_TARGET_STORAGE_KEY = "rudder.workspace.launchTargetId";
-const WORKSPACE_OPEN_FILE_TABS_STORAGE_PREFIX = "rudder.workspace.openFileTabs";
-const WORKSPACE_OPEN_FILE_TABS_LIMIT = 24;
+export { WorkspaceLaunchTargetIcon };
+
 const MOBILE_BREAKPOINT = 768;
 const WORKSPACE_FLUSH_DRAFT_EVENT = "rudder:workspace-flush-draft";
 const WORKSPACE_TREE_ENTRY_SELECTOR = "[data-workspace-entry-path]";
-const WORKSPACE_LAUNCH_TARGET_IDS = [
-  "cursor",
-  "vscode",
-  "windsurf",
-  "zed",
-  "webstorm",
-  "intellij",
-  "xcode",
-  "terminal",
-  "warp",
-  "commandPrompt",
-  "powershell",
-  "finder",
-] as const satisfies readonly DesktopWorkspaceLaunchTarget["id"][];
-const WORKSPACE_IMAGE_FILE_EXTENSIONS = new Set([".avif", ".bmp", ".gif", ".ico", ".jpeg", ".jpg", ".png", ".svg", ".webp"]);
-const WORKSPACE_CSV_FILE_EXTENSIONS = new Set([".csv"]);
 const WORKSPACE_TAB_CONTEXT_MENU_WIDTH = 220;
 const WORKSPACE_TAB_CONTEXT_MENU_MAX_HEIGHT = 256;
 const SKILL_INSTALL_CHAT_PREFILL = [
@@ -142,128 +197,8 @@ const SKILL_INSTALL_CHAT_PREFILL = [
   "",
   "After importing, verify it appears in Library / skills and explain whether it is editable or read-only.",
 ].join("\n");
-const WORKSPACE_MARKDOWN_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mdx"]);
-const WORKSPACE_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mdx", ".txt", ".text"]);
-const WORKSPACE_TEXT_IMPORT_FILE_EXTENSIONS = new Set([
-  ...WORKSPACE_TEXT_DOCUMENT_FILE_EXTENSIONS,
-  ".css",
-  ".csv",
-  ".html",
-  ".htm",
-  ".js",
-  ".json",
-  ".jsonl",
-  ".jsx",
-  ".log",
-  ".py",
-  ".toml",
-  ".ts",
-  ".tsx",
-  ".xml",
-  ".yaml",
-  ".yml",
-]);
-const WORKSPACE_TEXT_IMPORT_CONTENT_TYPES = new Set([
-  "application/json",
-  "application/javascript",
-  "application/typescript",
-  "application/xml",
-  "application/x-yaml",
-  "text/csv",
-  "text/html",
-  "text/javascript",
-  "text/markdown",
-  "text/plain",
-  "text/xml",
-  "text/yaml",
-]);
-const PROTECTED_AGENT_INSTRUCTIONS_FILE_NAMES = new Set(["HEARTBEAT.MD", "MEMORY.MD", "SOUL.MD", "TOOLS.MD"]);
-const PROTECTED_AGENT_MANAGED_DIRECTORY_NAMES = new Set(["memory", "skills"]);
 const AGENT_MENTION_MARKDOWN_LINK_RE = /\[([^\]]*)]\((agent:\/\/[^)\s]+)\)/g;
-const WORKSPACE_ENTRY_DND_MIME = "application/x-rudder-workspace-entry";
 const WORKSPACE_TAB_DND_MIME = "application/x-rudder-workspace-tab";
-const EMBEDDED_IMAGE_DATA_URL_RE = /data:image\/[a-z0-9.+-]+(?:;[a-z0-9.+_-]+(?:=[a-z0-9.+_-]+)?)*,/i;
-const EMBEDDED_IMAGE_DATA_URL_ERROR =
-  "Embedded image data URLs are not allowed in Library files. Upload the image and reference the asset URL instead.";
-const WORKSPACE_LAUNCH_TARGET_BRAND_FALLBACKS: Partial<Record<DesktopWorkspaceLaunchTarget["id"], {
-  src: string;
-}>> = {
-  cursor: { src: "/brands/cursor-app-icon.svg" },
-};
-const WORKSPACE_LAUNCH_TARGET_FALLBACKS: Partial<Record<DesktopWorkspaceLaunchTarget["id"], {
-  label: string;
-  className: string;
-}>> = {
-  vscode: { label: "VS", className: "bg-[#0078d4] text-white" },
-  windsurf: { label: "W", className: "bg-[#14b8a6] text-white" },
-  zed: { label: "Z", className: "bg-[#171717] text-white" },
-  webstorm: { label: "WS", className: "bg-[#ec4899] text-white" },
-  intellij: { label: "IJ", className: "bg-[#f97316] text-white" },
-  xcode: { label: "XC", className: "bg-[#147efb] text-white" },
-  commandPrompt: { label: "CMD", className: "bg-[#111827] text-white" },
-  powershell: { label: "PS", className: "bg-[#2563eb] text-white" },
-};
-
-type WorkspaceFileOpenTarget = {
-  fileTarget: true;
-  id: DesktopFileLaunchTargetId;
-  label: string;
-  kind: "app" | "ide";
-  workspaceTarget?: DesktopWorkspaceLaunchTarget;
-};
-
-type WorkspaceOpenTargetId = DesktopWorkspaceLaunchTarget["id"] | WorkspaceFileOpenTarget["id"];
-
-const DEFAULT_FILE_OPEN_TARGET: WorkspaceFileOpenTarget = {
-  fileTarget: true,
-  id: "defaultApp",
-  label: "Default app",
-  kind: "app",
-};
-
-function isWorkspaceLaunchTargetId(value: string | null): value is DesktopWorkspaceLaunchTarget["id"] {
-  return WORKSPACE_LAUNCH_TARGET_IDS.includes(value as DesktopWorkspaceLaunchTarget["id"]);
-}
-
-function isWorkspaceIdeLaunchTarget(
-  target: DesktopWorkspaceLaunchTarget,
-): target is DesktopWorkspaceLaunchTarget & { id: DesktopIdeTarget["id"]; kind: "ide" } {
-  return target.kind === "ide" && target.id !== "xcode";
-}
-
-function isWorkspaceFileOpenTarget(
-  target: DesktopWorkspaceLaunchTarget | WorkspaceFileOpenTarget,
-): target is WorkspaceFileOpenTarget {
-  return "fileTarget" in target;
-}
-
-function workspaceFileOpenTargets(targets: DesktopWorkspaceLaunchTarget[]): WorkspaceFileOpenTarget[] {
-  return [
-    DEFAULT_FILE_OPEN_TARGET,
-    ...targets.filter(isWorkspaceIdeLaunchTarget).map((target) => ({
-      fileTarget: true as const,
-      id: target.id,
-      label: target.label,
-      kind: "ide" as const,
-      workspaceTarget: target,
-    })),
-  ];
-}
-
-function readStoredWorkspaceLaunchTargetId() {
-  if (typeof window === "undefined") return null;
-  const value = window.localStorage.getItem(WORKSPACE_LAUNCH_TARGET_STORAGE_KEY);
-  return isWorkspaceLaunchTargetId(value) ? value : null;
-}
-
-function writeStoredWorkspaceLaunchTargetId(targetId: DesktopWorkspaceLaunchTarget["id"]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(WORKSPACE_LAUNCH_TARGET_STORAGE_KEY, targetId);
-}
-
-function workspaceLaunchMenuOpeningId(targetId: WorkspaceOpenTargetId | null) {
-  return targetId && isWorkspaceLaunchTargetId(targetId) ? targetId : null;
-}
 
 function clampWorkspaceTabContextMenuPosition(left: number, top: number) {
   if (typeof window === "undefined") return { left, top };
@@ -277,531 +212,6 @@ function requestWorkspaceDraftFlush() {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new Event(WORKSPACE_FLUSH_DRAFT_EVENT));
 }
-
-function containsEmbeddedImageDataUrl(content: string) {
-  return EMBEDDED_IMAGE_DATA_URL_RE.test(content);
-}
-
-function workspaceImageAssetNamespace(filePath: string | null) {
-  const withoutExtension = (filePath ?? "untitled")
-    .replace(/\.[^/.]+$/, "")
-    .split("/")
-    .map((segment) => {
-      const cleaned = segment
-        .replace(/[^a-zA-Z0-9_-]+/g, "_")
-        .replace(/_{2,}/g, "_")
-        .replace(/^_+|_+$/g, "");
-      return (cleaned || "file").slice(0, 40);
-    })
-    .join("/");
-  return `library/${withoutExtension}`.slice(0, 120).replace(/\/+$/g, "") || "library";
-}
-
-export function WorkspaceLaunchTargetIcon({
-  target,
-  className,
-}: {
-  target: DesktopWorkspaceLaunchTarget | WorkspaceFileOpenTarget;
-  className?: string;
-}) {
-  const [nativeImageFailed, setNativeImageFailed] = useState(false);
-  const [brandImageFailed, setBrandImageFailed] = useState(false);
-  const workspaceTarget = isWorkspaceFileOpenTarget(target) ? target.workspaceTarget : target;
-  const slotClassName = cn(
-    "inline-flex h-5 w-5 shrink-0 items-center justify-center",
-    className,
-  );
-
-  if (workspaceTarget?.iconDataUrl && !nativeImageFailed) {
-    return (
-      <span
-        aria-hidden="true"
-        className={slotClassName}
-        data-workspace-launch-target-icon={target.id}
-      >
-        <img
-          src={workspaceTarget.iconDataUrl}
-          alt=""
-          className="h-full w-full object-contain"
-          onError={() => setNativeImageFailed(true)}
-        />
-      </span>
-    );
-  }
-
-  const brandFallback = workspaceTarget ? WORKSPACE_LAUNCH_TARGET_BRAND_FALLBACKS[workspaceTarget.id] : null;
-  if (brandFallback && !brandImageFailed) {
-    return (
-      <span
-        aria-hidden="true"
-        className={slotClassName}
-        data-workspace-launch-target-icon={target.id}
-        data-fallback-icon="true"
-        data-brand-fallback="true"
-      >
-        <img
-          src={brandFallback.src}
-          alt=""
-          className="h-full w-full object-contain"
-          onError={() => setBrandImageFailed(true)}
-        />
-      </span>
-    );
-  }
-
-  const appSpecificFallback = workspaceTarget ? WORKSPACE_LAUNCH_TARGET_FALLBACKS[workspaceTarget.id] : null;
-  if (appSpecificFallback) {
-    return (
-      <span
-        aria-hidden="true"
-        className={cn(
-          "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] border border-[color:var(--border-base)] text-[9px] font-semibold leading-none",
-          appSpecificFallback.className,
-          className,
-        )}
-        data-workspace-launch-target-icon={target.id}
-        data-fallback-icon="true"
-        data-app-specific-fallback="true"
-      >
-        {appSpecificFallback.label}
-      </span>
-    );
-  }
-
-  const Icon = target.kind === "terminal" ? Terminal : target.kind === "folder" ? FolderOpen : target.kind === "app" ? ExternalLink : Code2;
-  return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] border border-[color:var(--border-base)] bg-[color:var(--surface-page)] text-foreground",
-        className,
-      )}
-      data-workspace-launch-target-icon={target.id}
-      data-fallback-icon="true"
-    >
-      <Icon className="h-[72%] w-[72%]" />
-    </span>
-  );
-}
-
-function WorkspaceLaunchMenu({
-  rootPath,
-  targets,
-  openingTargetId,
-  onOpenTarget,
-  className,
-  contentAlign = "end",
-  testId = "org-workspaces-launcher",
-  targetTestIdPrefix = "org-workspaces-launch-target",
-}: {
-  rootPath: string;
-  targets: DesktopWorkspaceLaunchTarget[];
-  openingTargetId: DesktopWorkspaceLaunchTarget["id"] | null;
-  onOpenTarget: (rootPath: string, target: DesktopWorkspaceLaunchTarget, toastLabel?: string) => void;
-  className?: string;
-  contentAlign?: "start" | "center" | "end";
-  testId?: string;
-  targetTestIdPrefix?: string;
-}) {
-  if (targets.length === 0) return null;
-
-  return (
-    <DropdownMenu>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className={cn(
-                "h-7 w-7 rounded-md text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground",
-                className,
-              )}
-              aria-label="Open Library menu"
-              disabled={openingTargetId !== null}
-              data-testid={testId}
-            >
-              {openingTargetId ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <ExternalLink className="h-3.5 w-3.5" />
-              )}
-            </Button>
-          </DropdownMenuTrigger>
-        </TooltipTrigger>
-        <TooltipContent>Open Library</TooltipContent>
-      </Tooltip>
-      <DropdownMenuContent
-        align={contentAlign}
-        sideOffset={8}
-        className="w-60 whitespace-nowrap p-1"
-      >
-        {targets.map((target) => (
-          <DropdownMenuItem
-            key={target.id}
-            className="h-9 gap-2 rounded-[6px]"
-            disabled={openingTargetId !== null}
-            data-testid={`${targetTestIdPrefix}-${target.id}`}
-            onSelect={() => {
-              onOpenTarget(rootPath, target, "workspace");
-            }}
-          >
-            {openingTargetId === target.id ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <WorkspaceLaunchTargetIcon target={target} />
-            )}
-            <span className="min-w-0 flex-1 truncate">{target.label}</span>
-            <span className="text-[11px] capitalize text-muted-foreground">{target.kind}</span>
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function parentDirectories(filePath: string) {
-  const segments = filePath.split("/").filter(Boolean);
-  const parents: string[] = [];
-  for (let index = 0; index < segments.length - 1; index += 1) {
-    parents.push(segments.slice(0, index + 1).join("/"));
-  }
-  return new Set(parents);
-}
-
-function directoryAndParentDirectories(directoryPath: string) {
-  const segments = directoryPath.split("/").filter(Boolean);
-  const directories: string[] = [];
-  for (let index = 0; index < segments.length; index += 1) {
-    directories.push(segments.slice(0, index + 1).join("/"));
-  }
-  return new Set(directories);
-}
-
-function normalizeRequestedPath(value: string | null) {
-  const trimmed = value?.trim() ?? "";
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function isWorkspaceCloseCurrentTabShortcut(event: KeyboardEvent) {
-  if (event.defaultPrevented) return false;
-  if (event.altKey || event.shiftKey) return false;
-  if (!event.metaKey && !event.ctrlKey) return false;
-  return event.key.toLowerCase() === "w";
-}
-
-function normalizeWorkspaceOpenFilePaths(paths: Array<string | null | undefined>) {
-  const seen = new Set<string>();
-  const normalized: string[] = [];
-  for (const path of paths) {
-    const filePath = normalizeRequestedPath(path ?? null);
-    if (!filePath || seen.has(filePath)) continue;
-    seen.add(filePath);
-    normalized.push(filePath);
-  }
-  return normalized.slice(-WORKSPACE_OPEN_FILE_TABS_LIMIT);
-}
-
-function workspaceOpenFileTabsStorageKey(orgId: string) {
-  return `${WORKSPACE_OPEN_FILE_TABS_STORAGE_PREFIX}:${orgId}`;
-}
-
-function normalizeWorkspaceOpenFileTabState(
-  openFilePaths: Array<string | null | undefined>,
-  selectedFilePath: string | null | undefined,
-) {
-  const normalizedOpenFilePaths = normalizeWorkspaceOpenFilePaths([...openFilePaths, selectedFilePath]);
-  const normalizedSelectedFilePath = normalizeRequestedPath(selectedFilePath ?? null);
-  return {
-    openFilePaths: normalizedOpenFilePaths,
-    selectedFilePath: normalizedSelectedFilePath && normalizedOpenFilePaths.includes(normalizedSelectedFilePath)
-      ? normalizedSelectedFilePath
-      : normalizedOpenFilePaths[0] ?? null,
-  };
-}
-
-function readStoredWorkspaceOpenFileTabState(orgId: string | null | undefined) {
-  if (!orgId || typeof window === "undefined") {
-    return normalizeWorkspaceOpenFileTabState([], null);
-  }
-  try {
-    const raw = window.sessionStorage?.getItem(workspaceOpenFileTabsStorageKey(orgId));
-    const parsed = raw ? JSON.parse(raw) : null;
-    if (Array.isArray(parsed)) {
-      return normalizeWorkspaceOpenFileTabState(parsed, parsed[0]);
-    }
-    if (parsed && typeof parsed === "object") {
-      const stored = parsed as { openFilePaths?: unknown; selectedFilePath?: unknown };
-      return normalizeWorkspaceOpenFileTabState(
-        Array.isArray(stored.openFilePaths) ? stored.openFilePaths as Array<string | null | undefined> : [],
-        typeof stored.selectedFilePath === "string" ? stored.selectedFilePath : null,
-      );
-    }
-  } catch {
-    return normalizeWorkspaceOpenFileTabState([], null);
-  }
-  return normalizeWorkspaceOpenFileTabState([], null);
-}
-
-function writeStoredWorkspaceOpenFileTabState(
-  orgId: string | null | undefined,
-  filePaths: string[],
-  selectedFilePath: string | null,
-) {
-  if (!orgId || typeof window === "undefined") return;
-  try {
-    const state = normalizeWorkspaceOpenFileTabState(filePaths, selectedFilePath);
-    window.sessionStorage?.setItem(
-      workspaceOpenFileTabsStorageKey(orgId),
-      JSON.stringify(state),
-    );
-  } catch {
-    // Session restoration is a convenience; tab state still works in memory.
-  }
-}
-
-function appendWorkspaceOpenFilePath(current: string[], filePath: string) {
-  return current.includes(filePath)
-    ? current
-    : normalizeWorkspaceOpenFilePaths([...current, filePath]);
-}
-
-function getWorkspaceFileExtension(filePath: string | null) {
-  if (!filePath) return null;
-  const basename = filePath.split("/").at(-1) ?? filePath;
-  const extensionIndex = basename.lastIndexOf(".");
-  return extensionIndex === -1 ? null : basename.slice(extensionIndex).toLowerCase();
-}
-
-function isWorkspaceImageFilePath(filePath: string | null) {
-  const extension = getWorkspaceFileExtension(filePath);
-  return extension !== null && WORKSPACE_IMAGE_FILE_EXTENSIONS.has(extension);
-}
-
-function isWorkspaceMarkdownFilePath(filePath: string | null) {
-  const extension = getWorkspaceFileExtension(filePath);
-  return extension !== null && WORKSPACE_MARKDOWN_FILE_EXTENSIONS.has(extension);
-}
-
-function isWorkspaceCsvFilePath(filePath: string | null) {
-  const extension = getWorkspaceFileExtension(filePath);
-  return extension !== null && WORKSPACE_CSV_FILE_EXTENSIONS.has(extension);
-}
-
-function isWorkspaceCsvContentType(contentType: string | null | undefined) {
-  return typeof contentType === "string" && contentType.toLowerCase().split(";")[0]?.trim() === "text/csv";
-}
-
-function isWorkspaceTextDocumentFilePath(filePath: string | null) {
-  const extension = getWorkspaceFileExtension(filePath);
-  return extension !== null && WORKSPACE_TEXT_DOCUMENT_FILE_EXTENSIONS.has(extension);
-}
-
-function displayWorkspaceDocumentKind(filePath: string | null) {
-  const extension = getWorkspaceFileExtension(filePath);
-  if (!extension) return "Document";
-  switch (extension) {
-    case ".md":
-    case ".markdown":
-    case ".mdown":
-      return "Markdown";
-    case ".mdx":
-      return "MDX";
-    case ".json":
-      return "JSON";
-    case ".jsonl":
-      return "JSONL";
-    case ".csv":
-      return "CSV";
-    case ".html":
-      return "HTML";
-    case ".txt":
-    case ".text":
-      return "Text";
-    default:
-      return extension.slice(1).toUpperCase();
-  }
-}
-
-function countWorkspaceDocumentWords(content: string) {
-  const matches = content.match(/[\p{L}\p{N}]+(?:[-'][\p{L}\p{N}]+)*/gu);
-  return matches?.length ?? 0;
-}
-
-function formatWorkspaceWordCount(count: number) {
-  return `${count.toLocaleString()} ${count === 1 ? "word" : "words"}`;
-}
-
-function splitYamlFrontmatter(content: string) {
-  const match = content.match(/^(---\r?\n[\s\S]*?\r?\n---)(\r?\n|$)/);
-  if (!match) {
-    return {
-      frontmatter: null,
-      frontmatterSeparator: "",
-      body: content,
-    };
-  }
-
-  return {
-    frontmatter: match[1] ?? "",
-    frontmatterSeparator: match[2] ?? "\n",
-    body: content.slice(match[0].length),
-  };
-}
-
-function joinYamlFrontmatter(
-  frontmatter: string | null,
-  frontmatterSeparator: string,
-  body: string,
-) {
-  return frontmatter === null ? body : `${frontmatter}${frontmatterSeparator || "\n"}${body}`;
-}
-
-type WorkspaceTreeEntry = OrganizationWorkspaceFileEntry & {
-  virtualSkillId?: string;
-  virtualSkillFilePath?: string | null;
-  virtualSkillReadOnlyReason?: string | null;
-  virtualSkillSourceLabel?: string | null;
-};
-
-function displayWorkspaceEntryLabel(entry: OrganizationWorkspaceFileEntry) {
-  return entry.displayLabel?.trim() || entry.name;
-}
-
-function organizationSkillRootTreePath(skill: Pick<OrganizationSkillListItem, "slug">) {
-  return `skills/${skill.slug}`;
-}
-
-function organizationSkillFileTreePath(skill: Pick<OrganizationSkillListItem, "slug">, filePath: string) {
-  return `${organizationSkillRootTreePath(skill)}/${filePath.split("/").filter(Boolean).join("/")}`;
-}
-
-function isLibrarySkillPackageFolderPath(path: string) {
-  const segments = path.split("/").filter(Boolean);
-  return (segments.length === 2 && segments[0] === "skills")
-    || (segments.length === 4 && segments[0] === "agents" && segments[2] === "skills");
-}
-
-function isLibrarySkillsRootPath(path: string) {
-  const segments = path.split("/").filter(Boolean);
-  return path === "skills"
-    || (segments.length === 3 && segments[0] === "agents" && segments[2] === "skills");
-}
-
-function isWorkspaceBackedOrganizationSkill(skill: Pick<OrganizationSkillListItem, "workspaceEditPath" | "slug">) {
-  const editPath = normalizeRequestedPath(skill.workspaceEditPath);
-  return Boolean(editPath && editPath.startsWith(`${organizationSkillRootTreePath(skill)}/`));
-}
-
-function organizationSkillInventoryPaths(skill: OrganizationSkillListItem) {
-  const paths = skill.fileInventory
-    .map((entry) => normalizeRequestedPath(entry.path))
-    .filter((path): path is string => Boolean(path));
-  return paths.length > 0 ? paths : ["SKILL.md"];
-}
-
-function buildVirtualOrganizationSkillEntries(
-  directoryPath: string,
-  workspaceEntries: OrganizationWorkspaceFileEntry[],
-  organizationSkills: OrganizationSkillListItem[] | undefined,
-): WorkspaceTreeEntry[] {
-  const safeOrganizationSkills = organizationSkills ?? [];
-  const normalizedDirectoryPath = normalizeRequestedPath(directoryPath) ?? "";
-  if (normalizedDirectoryPath === "skills") {
-    const workspacePaths = new Set(workspaceEntries.map((entry) => entry.path));
-    return safeOrganizationSkills
-      .filter((skill) => !isWorkspaceBackedOrganizationSkill(skill))
-      .map((skill): WorkspaceTreeEntry => ({
-        name: skill.slug,
-        displayLabel: skill.name?.trim() || skill.slug,
-        path: organizationSkillRootTreePath(skill),
-        isDirectory: true,
-        virtualSkillId: skill.id,
-        virtualSkillReadOnlyReason: skill.editableReason,
-        virtualSkillSourceLabel: skill.sourceLabel,
-      }))
-      .filter((entry) => !workspacePaths.has(entry.path));
-  }
-
-  const skill = safeOrganizationSkills.find((candidate) => {
-    if (isWorkspaceBackedOrganizationSkill(candidate)) return false;
-    const rootPath = organizationSkillRootTreePath(candidate);
-    return normalizedDirectoryPath === rootPath || normalizedDirectoryPath.startsWith(`${rootPath}/`);
-  });
-  if (!skill) return [];
-
-  const rootPath = organizationSkillRootTreePath(skill);
-  const currentRelativeDirectory = normalizedDirectoryPath === rootPath
-    ? ""
-    : normalizedDirectoryPath.slice(rootPath.length + 1);
-  const entriesByPath = new Map<string, WorkspaceTreeEntry>();
-  for (const filePath of organizationSkillInventoryPaths(skill)) {
-    if (currentRelativeDirectory && filePath !== currentRelativeDirectory && !filePath.startsWith(`${currentRelativeDirectory}/`)) {
-      continue;
-    }
-    const remaining = currentRelativeDirectory ? filePath.slice(currentRelativeDirectory.length + 1) : filePath;
-    const [name] = remaining.split("/");
-    if (!name) continue;
-    const childRelativePath = currentRelativeDirectory ? `${currentRelativeDirectory}/${name}` : name;
-    const isDirectory = remaining.includes("/");
-    const childTreePath = `${rootPath}/${childRelativePath}`;
-    entriesByPath.set(childTreePath, {
-      name,
-      displayLabel: name,
-      path: childTreePath,
-      isDirectory,
-      virtualSkillId: skill.id,
-      virtualSkillFilePath: isDirectory ? null : childRelativePath,
-      virtualSkillReadOnlyReason: skill.editableReason,
-      virtualSkillSourceLabel: skill.sourceLabel,
-    });
-  }
-  return [...entriesByPath.values()].sort((left, right) =>
-    Number(right.isDirectory) - Number(left.isDirectory)
-    || displayWorkspaceEntryLabel(left).localeCompare(displayWorkspaceEntryLabel(right)),
-  );
-}
-
-function mergeWorkspaceAndVirtualSkillEntries(
-  directoryPath: string,
-  workspaceEntries: OrganizationWorkspaceFileEntry[],
-  organizationSkills: OrganizationSkillListItem[] | undefined,
-): WorkspaceTreeEntry[] {
-  const normalizedDirectoryPath = normalizeRequestedPath(directoryPath) ?? "";
-  if (normalizedDirectoryPath === "") {
-    const hasVisibleSkill = (organizationSkills ?? []).some((skill) => !isWorkspaceBackedOrganizationSkill(skill));
-    if (!hasVisibleSkill || workspaceEntries.some((entry) => entry.path === "skills")) return workspaceEntries;
-    return [...workspaceEntries, {
-      name: "skills",
-      displayLabel: "skills",
-      path: "skills",
-      isDirectory: true,
-    }].sort((left, right) =>
-      Number(right.isDirectory) - Number(left.isDirectory)
-      || displayWorkspaceEntryLabel(left).localeCompare(displayWorkspaceEntryLabel(right)),
-    );
-  }
-  const virtualEntries = buildVirtualOrganizationSkillEntries(directoryPath, workspaceEntries, organizationSkills);
-  if (virtualEntries.length === 0) return workspaceEntries;
-  return [...workspaceEntries, ...virtualEntries].sort((left, right) =>
-    Number(right.isDirectory) - Number(left.isDirectory)
-    || displayWorkspaceEntryLabel(left).localeCompare(displayWorkspaceEntryLabel(right)),
-  );
-}
-
-function projectLibraryPath(project: Pick<Project, "urlKey" | "id">) {
-  return `projects/${project.urlKey || project.id}`;
-}
-
-function projectResourceFolderPath(project: Pick<Project, "urlKey" | "id">) {
-  return `${projectLibraryPath(project)}/resources`;
-}
-
-function projectResourceEntryPath(project: Pick<Project, "urlKey" | "id">, attachment: Pick<ProjectResourceAttachment, "id">) {
-  return `${projectResourceFolderPath(project)}/${attachment.id}`;
-}
-
 function projectResourceKindIcon(kind: ProjectResourceAttachment["resource"]["kind"]) {
   switch (kind) {
     case "directory":
@@ -814,24 +224,6 @@ function projectResourceKindIcon(kind: ProjectResourceAttachment["resource"]["ki
     default:
       return Link2;
   }
-}
-
-type ProjectResourceTreeGroup = {
-  project: Project;
-  resources: ProjectResourceAttachment[];
-};
-
-function buildProjectResourceTreeGroups(projects: Project[] | undefined) {
-  const groups = new Map<string, ProjectResourceTreeGroup>();
-  for (const project of projects ?? []) {
-    groups.set(projectLibraryPath(project), {
-      project,
-      resources: [...project.resources].sort((left, right) =>
-        left.sortOrder - right.sortOrder || left.resource.name.localeCompare(right.resource.name),
-      ),
-    });
-  }
-  return groups;
 }
 
 function useProjectResourceTreeGroups(orgId: string | null | undefined) {
@@ -852,158 +244,6 @@ function useProjectResourceTreeGroups(orgId: string | null | undefined) {
   };
 }
 
-function findProjectResourceSelection(projects: Project[], attachmentId: string | null) {
-  if (!attachmentId) return null;
-  for (const project of projects) {
-    const attachment = project.resources.find((candidate) => candidate.id === attachmentId);
-    if (attachment) {
-      return {
-        project,
-        attachment,
-        path: projectResourceEntryPath(project, attachment),
-      };
-    }
-  }
-  return null;
-}
-
-function isProtectedAgentWorkspaceContainerPath(filePath: string) {
-  if (filePath === "agents") return true;
-  const segments = filePath.split("/").filter(Boolean);
-  return segments.length === 2 && segments[0] === "agents";
-}
-
-function isProtectedAgentInstructionsEntryPath(filePath: string) {
-  const segments = filePath.split("/").filter(Boolean);
-  if (segments.length === 3) {
-    return segments[0] === "agents" && segments[2] === "instructions";
-  }
-  if (segments.length === 4 && segments[0] === "agents" && segments[2] === "instructions") {
-    return PROTECTED_AGENT_INSTRUCTIONS_FILE_NAMES.has(segments[3]?.toUpperCase() ?? "");
-  }
-  return false;
-}
-
-function isLegacyAgentHeartbeatInstructionPath(filePath: string | null | undefined) {
-  const segments = (filePath ?? "").split("/").filter(Boolean);
-  return segments.length === 4
-    && segments[0] === "agents"
-    && segments[2] === "instructions"
-    && segments[3]?.toUpperCase() === "HEARTBEAT.MD";
-}
-
-function isProtectedAgentManagedEntryPath(filePath: string) {
-  const segments = filePath.split("/").filter(Boolean);
-  return segments.length >= 3
-    && segments[0] === "agents"
-    && PROTECTED_AGENT_MANAGED_DIRECTORY_NAMES.has(segments[2]?.toLowerCase() ?? "");
-}
-
-function isProtectedOrganizationSkillsEntryPath(filePath: string) {
-  return filePath.split("/").filter(Boolean)[0]?.toLowerCase() === "skills";
-}
-
-function isOrganizationSkillFolderPath(filePath: string) {
-  const segments = filePath.split("/").filter(Boolean);
-  return segments.length === 2 && segments[0]?.toLowerCase() === "skills";
-}
-
-function canCreateInsideWorkspaceDirectory(directoryPath: string) {
-  return !isProtectedAgentWorkspaceContainerPath(directoryPath)
-    && !isProtectedOrganizationSkillsEntryPath(directoryPath);
-}
-
-function canMoveWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "path">) {
-  return !isProtectedAgentWorkspaceContainerPath(entry.path)
-    && !isProtectedAgentInstructionsEntryPath(entry.path)
-    && !isProtectedAgentManagedEntryPath(entry.path)
-    && !isProtectedOrganizationSkillsEntryPath(entry.path);
-}
-
-function canCopyWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "path">) {
-  return canMoveWorkspaceEntry(entry);
-}
-
-function canRenameWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "path">) {
-  return !isProtectedAgentWorkspaceContainerPath(entry.path)
-    && !isProtectedAgentInstructionsEntryPath(entry.path)
-    && !isProtectedAgentManagedEntryPath(entry.path)
-    && !isProtectedOrganizationSkillsEntryPath(entry.path);
-}
-
-function canDeleteWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "path" | "entityType">) {
-  if (
-    entry.entityType === "orphaned_agent_workspace"
-    && isProtectedAgentWorkspaceContainerPath(entry.path)
-    && entry.path !== "agents"
-  ) {
-    return true;
-  }
-  return !isProtectedAgentWorkspaceContainerPath(entry.path)
-    && !isProtectedAgentInstructionsEntryPath(entry.path)
-    && !isProtectedAgentManagedEntryPath(entry.path)
-    && !isProtectedOrganizationSkillsEntryPath(entry.path)
-    && !isProjectLibraryFolderPath(entry.path);
-}
-
-function isProjectLibraryFolderPath(filePath: string) {
-  const segments = filePath.split("/").filter(Boolean);
-  return segments.length === 2 && segments[0] === "projects";
-}
-
-function parentWorkspaceDirectoryPath(entryPath: string) {
-  const segments = entryPath.split("/").filter(Boolean);
-  segments.pop();
-  return segments.join("/");
-}
-
-function applyMovedWorkspacePath(currentPath: string, previousPath: string, nextPath: string) {
-  if (currentPath === previousPath) return nextPath;
-  if (currentPath.startsWith(`${previousPath}/`)) {
-    return `${nextPath}${currentPath.slice(previousPath.length)}`;
-  }
-  return currentPath;
-}
-
-function canDropWorkspaceEntryIntoDirectory(
-  source: Pick<OrganizationWorkspaceFileEntry, "path" | "isDirectory">,
-  destinationDirectoryPath: string,
-) {
-  if (!canMoveWorkspaceEntry(source)) return false;
-  if (!canCreateInsideWorkspaceDirectory(destinationDirectoryPath)) return false;
-  if (source.path === destinationDirectoryPath) return false;
-  if (source.isDirectory && destinationDirectoryPath.startsWith(`${source.path}/`)) return false;
-  return parentWorkspaceDirectoryPath(source.path) !== destinationDirectoryPath;
-}
-
-function hasWorkspaceDragPayload(dataTransfer: DataTransfer) {
-  return Array.from(dataTransfer.types).includes(WORKSPACE_ENTRY_DND_MIME);
-}
-
-function hasExternalFileDragPayload(dataTransfer: DataTransfer) {
-  return Array.from(dataTransfer.types).includes("Files") || dataTransfer.files.length > 0;
-}
-
-function isWorkspaceTextImportFile(file: File) {
-  const contentType = file.type.toLowerCase().split(";")[0]?.trim() ?? "";
-  if (contentType.startsWith("text/") || WORKSPACE_TEXT_IMPORT_CONTENT_TYPES.has(contentType)) return true;
-  const extension = getWorkspaceFileExtension(file.name);
-  return extension !== null && WORKSPACE_TEXT_IMPORT_FILE_EXTENSIONS.has(extension);
-}
-
-function getWorkspaceImportDropFiles(dataTransfer: DataTransfer) {
-  const files = Array.from(dataTransfer.files);
-  const supported = files.filter((file) => isValidWorkspaceEntryName(file.name) && isWorkspaceTextImportFile(file));
-  return {
-    supported,
-    unsupportedCount: files.length - supported.length,
-  };
-}
-
-function isDraggingOverWorkspaceTreeEntry(event: DragEvent<HTMLElement>) {
-  return event.target instanceof HTMLElement && Boolean(event.target.closest(WORKSPACE_TREE_ENTRY_SELECTOR));
-}
-
 function enrichAgentMentionMarkdown(markdown: string, mentionOptions: MentionOption[]) {
   if (!markdown || mentionOptions.length === 0) return markdown;
   const iconByAgentId = new Map(
@@ -1020,6 +260,42 @@ function enrichAgentMentionMarkdown(markdown: string, mentionOptions: MentionOpt
     if (!icon || parsed.icon === icon) return match;
     return `[${label}](${buildAgentMentionHref(parsed.agentId, icon)})`;
   });
+}
+
+async function createWorkspaceFilesFromDroppedFiles(
+  orgId: string,
+  destinationDirectoryPath: string,
+  files: File[],
+) {
+  const imported: OrganizationWorkspaceFileDetail[] = [];
+  const failed: Array<{ fileName: string; filePath: string; message: string }> = [];
+  for (const file of files) {
+    const filePath = joinWorkspaceEntryPath(destinationDirectoryPath, file.name);
+    try {
+      imported.push(await organizationsApi.createWorkspaceFile(orgId, {
+        filePath,
+        content: await file.text(),
+      }));
+    } catch (error) {
+      failed.push({
+        fileName: file.name,
+        filePath,
+        message: error instanceof Error ? error.message : "Failed to import file",
+      });
+    }
+  }
+  return { imported, failed };
+}
+
+async function copyWorkspaceText(copyValue: string) {
+  const desktopShell = readDesktopShell();
+  if (desktopShell?.copyText) {
+    await desktopShell.copyText(copyValue);
+  } else if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(copyValue);
+  } else {
+    throw new Error("Clipboard is not available in this environment.");
+  }
 }
 
 function serializeWorkspaceDragEntry(entry: OrganizationWorkspaceFileEntry) {
@@ -1074,140 +350,6 @@ function parseWorkspaceDragEntry(event: DragEvent<HTMLElement>) {
 function didDragLeaveCurrentTarget(event: DragEvent<HTMLElement>) {
   const relatedTarget = event.relatedTarget;
   return !(relatedTarget instanceof Node) || !event.currentTarget.contains(relatedTarget);
-}
-
-function isValidWorkspaceEntryName(name: string) {
-  const trimmed = name.trim();
-  return Boolean(trimmed)
-    && trimmed !== "."
-    && trimmed !== ".."
-    && !trimmed.includes("/")
-    && !trimmed.includes("\\");
-}
-
-function joinWorkspaceEntryPath(parentPath: string, name: string) {
-  return parentPath ? `${parentPath}/${name}` : name;
-}
-
-async function createWorkspaceFilesFromDroppedFiles(
-  orgId: string,
-  destinationDirectoryPath: string,
-  files: File[],
-) {
-  const imported: OrganizationWorkspaceFileDetail[] = [];
-  const failed: Array<{ fileName: string; filePath: string; message: string }> = [];
-  for (const file of files) {
-    const filePath = joinWorkspaceEntryPath(destinationDirectoryPath, file.name);
-    try {
-      imported.push(await organizationsApi.createWorkspaceFile(orgId, {
-        filePath,
-        content: await file.text(),
-      }));
-    } catch (error) {
-      failed.push({
-        fileName: file.name,
-        filePath,
-        message: error instanceof Error ? error.message : "Failed to import file",
-      });
-    }
-  }
-  return { imported, failed };
-}
-
-function joinWorkspacePath(rootPath: string | null, entryPath: string) {
-  if (!rootPath) return entryPath;
-  return `${rootPath.replace(/\/+$/, "")}/${entryPath}`;
-}
-
-function buildWorkspaceFileLinkMarkdown(filePath: string, label: string, libraryEntryId?: string | null) {
-  return libraryEntryId
-    ? buildLibraryEntryMentionMarkdown(libraryEntryId, label, filePath)
-    : buildLibraryFileMentionMarkdown(filePath, label);
-}
-
-function buildWorkspaceDirectoryLinkMarkdown(directoryPath: string, label: string) {
-  return `[${label.replace(/([\\[\]])/g, "\\$1")}](/library?directory=${encodeURIComponent(directoryPath)})`;
-}
-
-function buildWorkspaceEntryLinkMarkdown(entry: OrganizationWorkspaceFileEntry) {
-  const label = displayWorkspaceEntryLabel(entry);
-  return entry.isDirectory
-    ? buildWorkspaceDirectoryLinkMarkdown(entry.path, label)
-    : buildWorkspaceFileLinkMarkdown(entry.path, label, entry.libraryEntryId);
-}
-
-async function copyWorkspaceText(copyValue: string) {
-  const desktopShell = readDesktopShell();
-  if (desktopShell?.copyText) {
-    await desktopShell.copyText(copyValue);
-  } else if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(copyValue);
-  } else {
-    throw new Error("Clipboard is not available in this environment.");
-  }
-}
-
-function displayWorkspaceFileTabLabel(filePath: string) {
-  return filePath.split("/").filter(Boolean).at(-1) ?? filePath;
-}
-
-interface WorkspacePathBreadcrumbPart {
-  label: string;
-  path: string;
-  isFile: boolean;
-  kind: "folder" | "file" | "agents_root" | "agent_workspace";
-  agentIcon?: string | null;
-  agentRole?: OrganizationWorkspaceFileEntry["agentRole"];
-}
-
-function workspacePathBreadcrumb(
-  entryPath: string,
-  agentWorkspaceEntryByName: Map<string, OrganizationWorkspaceFileEntry>,
-  entryKind: "file" | "directory",
-  rootLabel: string,
-): WorkspacePathBreadcrumbPart[] {
-  const segments = entryPath.split("/").filter(Boolean);
-  const rootPart: WorkspacePathBreadcrumbPart = {
-    label: rootLabel,
-    path: "",
-    isFile: false,
-    kind: "folder",
-  };
-  if (segments.length === 0) return [rootPart];
-  return [rootPart, ...segments.map((segment, index): WorkspacePathBreadcrumbPart => {
-    const path = segments.slice(0, index + 1).join("/");
-    const isFile = entryKind === "file" && index === segments.length - 1;
-    if (segments[0] === "agents" && index === 1) {
-      const agentWorkspaceEntry = agentWorkspaceEntryByName.get(segment);
-      return {
-        label: agentWorkspaceEntry ? displayWorkspaceEntryLabel(agentWorkspaceEntry) : segment,
-        path,
-        isFile,
-        kind: "agent_workspace",
-        agentIcon: agentWorkspaceEntry?.agentIcon ?? null,
-        agentRole: agentWorkspaceEntry?.agentRole ?? null,
-      };
-    }
-    return {
-      label: segment,
-      path,
-      isFile,
-      kind: segment === "agents" && index === 0 ? "agents_root" : isFile ? "file" : "folder",
-    };
-  })];
-}
-
-function applyOrganizationSkillBreadcrumbLabels(
-  parts: WorkspacePathBreadcrumbPart[],
-  skill: OrganizationSkillListItem | null,
-) {
-  if (!skill) return parts;
-  const skillRootPath = organizationSkillRootTreePath(skill);
-  return parts.map((part) => (
-    part.path === skillRootPath
-      ? { ...part, label: skill.name?.trim() || skill.slug }
-      : part
-  ));
 }
 
 function focusWorkspaceTreeEntry(entryPath: string | null) {

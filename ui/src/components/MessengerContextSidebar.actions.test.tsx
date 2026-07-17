@@ -969,6 +969,28 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(mockUpdateConversation).toHaveBeenCalledWith("chat-1", { title: "Renamed from sidebar" });
   });
 
+  it("cancels a chat rename on Escape without persisting the draft", async () => {
+    renderSidebar();
+
+    const rename = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Rename") as HTMLButtonElement | undefined;
+    await act(async () => {
+      rename?.click();
+    });
+
+    const input = document.querySelector<HTMLInputElement>("input");
+    expect(input).toBeTruthy();
+    await act(async () => {
+      setInputValue(input!, "Draft that should not persist");
+      input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector<HTMLInputElement>("input")).toBeNull();
+    expect(document.body.textContent).toContain("hi");
+    expect(mockUpdateConversation).not.toHaveBeenCalled();
+  });
+
   it("keeps a pending rename visible when stale thread data renders before the update resolves", async () => {
     installLocalStorage({
       "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "project" }),

@@ -5,9 +5,30 @@ import { ApiError } from "@/api/client";
 import { messengerApi } from "@/api/messenger";
 import { organizationsApi } from "@/api/orgs";
 import { projectsApi } from "@/api/projects";
-import { AgentIcon } from "@/components/AgentAvatar";
+import {
+  composeCustomGroupIconValue,
+  CUSTOM_GROUP_COLOR_OPTIONS,
+  CUSTOM_GROUP_TONES,
+  customGroupColorFor,
+  CustomGroupEditor,
+  CustomGroupIcon,
+  CustomGroupIconPicker,
+  customGroupProjectColorCssVars,
+  CustomGroupRenameForm,
+  customGroupStyle,
+  splitCustomGroupIconValue,
+  type CustomGroupColor,
+} from "@/components/messenger/MessengerCustomGroupVisuals";
+import {
+  ChatThreadRow,
+  conversationDisplayTitle,
+  MessengerDragHandle,
+  nonEmptyString,
+  sanitizeThreadKey,
+  ThreadRow,
+  type SortableDragHandleProps
+} from "@/components/messenger/MessengerThreadListViews";
 import { ProjectIcon } from "@/components/ProjectIdentity";
-import { StatusIcon } from "@/components/StatusIcon";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -23,16 +44,38 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useChatGenerations } from "@/context/ChatGenerationContext";
 import { useDialog } from "@/context/DialogContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useSidebar } from "@/context/SidebarContext";
-import { messengerThreadKindLabel, resolveMessengerRoute, useMessengerModel } from "@/hooks/useMessenger";
+import { resolveMessengerRoute, useMessengerModel } from "@/hooks/useMessenger";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { isFeishuBackedConversation } from "@/lib/chat-source";
-import { displayChatTitle, isDefaultChatTitle } from "@/lib/chat-title";
+import { displayChatTitle } from "@/lib/chat-title";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
+import {
+  DEFAULT_THREAD_ORGANIZATION_RULE,
+  getHiddenIssueThreadsStorageKey,
+  getMessengerDefaultThreadOrderStorageKey,
+  getMessengerThreadGroupOrderStorageKey,
+  isLocallyCollapsedThreadGroupRule,
+  isLocalManagedThreadGroupRule,
+  isManagedThreadGroupRule,
+  readCollapsedThreadGroups,
+  readHiddenIssueThreadWatermarks,
+  readSplitIssueNotifications,
+  readStringList,
+  readThreadDensity,
+  readThreadOrganizationRule,
+  writeCollapsedThreadGroups,
+  writeHiddenIssueThreadWatermarks,
+  writeSplitIssueNotifications,
+  writeStringList,
+  writeThreadDensity,
+  writeThreadOrganizationRule,
+  type MessengerThreadDensity,
+  type ThreadOrganizationRule
+} from "@/lib/messenger-preferences";
 import {
   archiveMessengerChatInCache,
   cancelMessengerChatRenameQueries,
@@ -42,14 +85,34 @@ import {
   markMessengerThreadReadInCache,
   renameMessengerChatInCache,
 } from "@/lib/messenger-query-cache";
+import { messengerThreadKindLabel } from "@/lib/messenger-thread-labels";
+import {
+  customGroupIdFromSectionKey,
+  customGroupSectionKey,
+  dedupeThreadSummariesByKey,
+  flattenThreadSectionEntries,
+  flattenThreadSections,
+  locallyReadThreadSummary,
+  nextDefaultThreadOrderKeysAfterMove,
+  organizeCustomThreadDirectory,
+  organizeThreadEntries,
+  projectIdFromSectionKey,
+  resolveChatAgentId,
+  sectionAttentionCount,
+  sortManagedThreadSections,
+  splitIssueThreadWatermark,
+  storedThreadSectionIdToKey,
+  threadMatchesMessengerIssueRoute,
+  threadSectionKeyToStoredId,
+  type OrganizedThreadEntry,
+  type OrganizedThreadSection
+} from "@/lib/messenger-thread-organization";
 import {
   getUnhandledMessengerUnreadScrollRequestId,
   markMessengerUnreadScrollRequestHandled,
   MESSENGER_SCROLL_TO_UNREAD_EVENT,
 } from "@/lib/messenger-unread-scroll";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
-import { projectColorCssVars } from "@/lib/project-colors";
-import { getProjectIconComponent } from "@/lib/project-icons";
 import {
   getProjectOrderStorageKey,
   PROJECT_ORDER_UPDATED_EVENT,
@@ -58,8 +121,8 @@ import {
 } from "@/lib/project-order";
 import { queryKeys } from "@/lib/queryKeys";
 import { Link, useLocation, useNavigate } from "@/lib/router";
-import { resolveSourceBadge, type SourceBadge } from "@/lib/source-badge";
-import { cn, relativeTime } from "@/lib/utils";
+import { resolveSourceBadge } from "@/lib/source-badge";
+import { cn } from "@/lib/utils";
 import {
   closestCenter,
   DndContext,
@@ -76,27 +139,16 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { buildChatMentionHref, DEFAULT_PROJECT_ICON, formatMessengerPreview, formatMessengerTitle, MESSENGER_CUSTOM_GROUP_EMOJI_ICONS, PROJECT_ICONS, type Agent, type ChatConversation, type MessengerCustomGroupWithEntries, type Project, type ProjectIconName } from "@rudderhq/shared";
+import { buildChatMentionHref, type Agent, type ChatConversation, type MessengerCustomGroupWithEntries, type Project } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle,
-  Archive,
   ChevronDown,
   ChevronRight,
-  CircleCheckBig,
-  Copy,
-  DollarSign,
-  EyeOff,
   Folder,
   FolderInput,
   FolderPlus,
-  GitFork,
-  GripVertical,
   ListFilter,
   Loader2,
-  Mail,
-  MailOpen,
-  MessageSquare,
   MoreHorizontal,
   Palette,
   PanelLeft,
@@ -104,68 +156,20 @@ import {
   Pin,
   PinOff,
   Plus,
-  RefreshCw,
-  ShieldCheck,
-  Trash2,
-  UserPlus,
-  XCircle,
+  RefreshCw
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-type ThreadOrganizationRule = "latest" | "project" | "agent" | "kind" | "attention" | "custom";
-type MessengerThreadDensity = "comfortable" | "compact";
-type SortableDragHandleProps = Pick<ReturnType<typeof useSortable>, "attributes" | "listeners">;
 type CustomGroupEditorState = { mode: "create"; threadKey?: string };
 type CustomGroupRenameState = { group: MessengerCustomGroupWithEntries; name: string };
 type MessengerDragIntent = "move-into-group" | "move-out-of-group" | "reorder-group" | "reorder-entry" | null;
 type MessengerInsertionPlacement = "before" | "after" | null;
 
-const THREAD_ORGANIZATION_STORAGE_KEY = "rudder.messengerThreadOrganizationByOrg";
-const THREAD_DENSITY_STORAGE_KEY = "rudder.messengerThreadDensityByOrg";
-const SPLIT_ISSUE_NOTIFICATIONS_STORAGE_KEY = "rudder.messengerSplitIssueNotificationsByOrg";
-const COLLAPSED_PROJECT_GROUPS_STORAGE_KEY = "rudder.messengerCollapsedProjectGroupsByOrg";
-const COLLAPSED_THREAD_GROUPS_STORAGE_KEY = "rudder.messengerCollapsedThreadGroupsByOrg";
-const MESSENGER_PROJECT_GROUP_ORDER_STORAGE_PREFIX = "rudder.messengerProjectGroupOrder";
-const MESSENGER_THREAD_GROUP_ORDER_STORAGE_PREFIX = "rudder.messengerThreadGroupOrder";
-// Legacy storage name retained so existing local tab layouts survive; the value now stores Arc-style top-level layout order.
-const MESSENGER_DEFAULT_THREAD_ORDER_STORAGE_PREFIX = "rudder.messengerDefaultThreadOrder";
-const HIDDEN_ISSUE_THREADS_STORAGE_PREFIX = "rudder.messengerHiddenIssueThreads";
-const DEFAULT_THREAD_ORGANIZATION_RULE: ThreadOrganizationRule = "latest";
-const DEFAULT_THREAD_DENSITY: MessengerThreadDensity = "compact";
-const DEFAULT_SPLIT_ISSUE_NOTIFICATIONS = true;
 const MANAGED_GROUP_INITIAL_VISIBLE_COUNT = 6;
 const MANAGED_GROUP_VISIBLE_INCREMENT = 10;
 const MESSENGER_AUTO_LOAD_RENDERED_THREAD_LIMIT = 160;
 const SELECTED_READ_EMPHASIS_HOLD_MS = 1200;
 const DELETE_AFTER_STOP_RETRY_DELAYS_MS = [120, 300, 700] as const;
-const MESSENGER_THREAD_PREVIEW_HOVER_DELAY_MS = 1_000;
-const MESSENGER_THREAD_PREVIEW_CLOSE_DELAY_MS = 120;
-const CUSTOM_GROUP_COLOR_OPTIONS = ["slate", "teal", "sky", "indigo", "amber", "rose", "red", "orange"] as const;
-type CustomGroupColor = (typeof CUSTOM_GROUP_COLOR_OPTIONS)[number];
-const CUSTOM_GROUP_ICON_SEPARATOR = "::";
-const PROJECT_ICON_VALUES = new Set<string>(PROJECT_ICONS);
-const CUSTOM_GROUP_TONES: Record<CustomGroupColor, {
-  bg: string;
-  bgDark: string;
-  bgHover: string;
-  bgHoverDark: string;
-  border: string;
-  borderDark: string;
-  text: string;
-  textDark: string;
-  entryText: string;
-  entryTextDark: string;
-  swatch: string;
-}> = {
-  slate: { bg: "#eef1ef", bgDark: "#313633", bgHover: "#e0e5e2", bgHoverDark: "#3b423e", border: "#d1d8d3", borderDark: "#545d58", text: "#26302a", textDark: "#f0f4f1", entryText: "#26302a", entryTextDark: "#eef2ef", swatch: "#242827" },
-  teal: { bg: "#dff4ed", bgDark: "#143f36", bgHover: "#ccebe2", bgHoverDark: "#185247", border: "#a9d9cc", borderDark: "#2a7668", text: "#126454", textDark: "#d9fff5", entryText: "#173c35", entryTextDark: "#effffb", swatch: "#08a88a" },
-  sky: { bg: "#dff1fb", bgDark: "#13394c", bgHover: "#c9e8f8", bgHoverDark: "#174b64", border: "#a9d7ee", borderDark: "#28708f", text: "#096287", textDark: "#dff7ff", entryText: "#153747", entryTextDark: "#f0fbff", swatch: "#0c8fca" },
-  indigo: { bg: "#e6e5f8", bgDark: "#2d2c58", bgHover: "#d8d6f1", bgHoverDark: "#393873", border: "#c1bee6", borderDark: "#5b58a8", text: "#4c4695", textDark: "#f0efff", entryText: "#302e56", entryTextDark: "#f4f3ff", swatch: "#6259b5" },
-  amber: { bg: "#f7edc2", bgDark: "#4a3914", bgHover: "#eee0a8", bgHoverDark: "#604a18", border: "#deca80", borderDark: "#9b7b2c", text: "#885900", textDark: "#ffeec2", entryText: "#4b3812", entryTextDark: "#fff8e5", swatch: "#f2a900" },
-  rose: { bg: "#f3d5da", bgDark: "#4d252d", bgHover: "#eac3ca", bgHoverDark: "#63303a", border: "#dba8b2", borderDark: "#9b5664", text: "#7f2634", textDark: "#ffe9ee", entryText: "#51242c", entryTextDark: "#fff4f6", swatch: "#df6f83" },
-  red: { bg: "#f0cdd1", bgDark: "#542126", bgHover: "#e7bac0", bgHoverDark: "#6a2a30", border: "#d59aa3", borderDark: "#a34d58", text: "#84242e", textDark: "#ffe8eb", entryText: "#552126", entryTextDark: "#fff1f2", swatch: "#d24b58" },
-  orange: { bg: "#f4ddce", bgDark: "#552e1d", bgHover: "#edcbb7", bgHoverDark: "#6d3b25", border: "#dda98c", borderDark: "#a8623d", text: "#793816", textDark: "#ffeadf", entryText: "#512b1c", entryTextDark: "#fff4ee", swatch: "#ec6c3b" },
-};
 const THREAD_ORGANIZATION_OPTIONS: Array<{ value: ThreadOrganizationRule; label: string }> = [
   { value: "latest", label: "Latest activity" },
   { value: "project", label: "Project" },
@@ -173,18 +177,6 @@ const THREAD_ORGANIZATION_OPTIONS: Array<{ value: ThreadOrganizationRule; label:
   { value: "kind", label: "Thread type" },
   { value: "attention", label: "Needs attention" },
 ];
-
-function isLocalManagedThreadGroupRule(rule: ThreadOrganizationRule): rule is "project" | "agent" | "kind" {
-  return rule === "project" || rule === "agent" || rule === "kind";
-}
-
-function isLocallyCollapsedThreadGroupRule(rule: ThreadOrganizationRule): rule is "project" | "agent" | "kind" | "custom" {
-  return isLocalManagedThreadGroupRule(rule) || rule === "custom";
-}
-
-function isManagedThreadGroupRule(rule: ThreadOrganizationRule): rule is "project" | "agent" | "kind" | "custom" {
-  return isLocalManagedThreadGroupRule(rule) || rule === "custom";
-}
 
 function sleep(ms: number) {
   return new Promise((resolve) => {
@@ -211,33 +203,6 @@ const MESSENGER_THREAD_DND_MEASURING = {
     frequency: MeasuringFrequency.Optimized,
   },
 } as const;
-
-function MessengerDragHandle({
-  dragHandleProps,
-  label,
-  compact = false,
-}: {
-  dragHandleProps?: SortableDragHandleProps;
-  label: string;
-  compact?: boolean;
-}) {
-  if (!dragHandleProps) return null;
-  return (
-    <button
-      type="button"
-      {...dragHandleProps.attributes}
-      {...dragHandleProps.listeners}
-      aria-label={label}
-      title={label}
-      className={cn(
-        "shrink-0 cursor-grab touch-none rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground/55 opacity-0 transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25 active:cursor-grabbing group-hover:opacity-100 group-focus-within:opacity-100",
-        compact ? "mt-0 flex h-5 w-4 items-center justify-center" : "mt-0.5 flex h-6 w-4 items-center justify-center",
-      )}
-    >
-      <GripVertical className="h-3.5 w-3.5" aria-hidden />
-    </button>
-  );
-}
 
 function MessengerInsertionLine({
   placement,
@@ -303,743 +268,17 @@ function ContextColumnHeader({
   );
 }
 
-function threadIcon(kind: string) {
-  switch (kind) {
-    case "chat":
-      return MessageSquare;
-    case "issues":
-      return CircleCheckBig;
-    case "approvals":
-      return ShieldCheck;
-    case "failed-runs":
-      return XCircle;
-    case "budget-alerts":
-      return DollarSign;
-    case "join-requests":
-      return UserPlus;
-    default:
-      return AlertTriangle;
-  }
-}
-
 function isMessengerSystemThreadKind(kind: string): kind is "failed-runs" | "budget-alerts" | "join-requests" {
   return kind === "failed-runs" || kind === "budget-alerts" || kind === "join-requests";
-}
-
-function sanitizeThreadKey(threadKey: string) {
-  return threadKey.replace(/[^a-zA-Z0-9_-]/g, "-");
 }
 
 function threadConversationId(threadKey: string) {
   return threadKey.startsWith("chat:") ? threadKey.slice("chat:".length) : null;
 }
 
-function readThreadOrganizationRule(orgId: string | null | undefined): ThreadOrganizationRule {
-  if (!orgId || typeof window === "undefined") return DEFAULT_THREAD_ORGANIZATION_RULE;
-  try {
-    const raw = window.localStorage.getItem(THREAD_ORGANIZATION_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
-    const value = parsed[orgId];
-    if (value === "latest" || value === "project" || value === "agent" || value === "kind" || value === "attention" || value === "custom") return value;
-  } catch {
-    // Ignore storage failures; the default latest-activity list remains usable.
-  }
-  return DEFAULT_THREAD_ORGANIZATION_RULE;
-}
-
-function readThreadDensity(orgId: string | null | undefined): MessengerThreadDensity {
-  if (!orgId || typeof window === "undefined") return DEFAULT_THREAD_DENSITY;
-  try {
-    const raw = window.localStorage.getItem(THREAD_DENSITY_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
-    const value = parsed[orgId];
-    if (value === "comfortable" || value === "compact") return value;
-  } catch {
-    // Ignore storage failures; the default comfortable list remains usable.
-  }
-  return DEFAULT_THREAD_DENSITY;
-}
-
-function readSplitIssueNotifications(orgId: string | null | undefined): boolean {
-  if (!orgId || typeof window === "undefined") return DEFAULT_SPLIT_ISSUE_NOTIFICATIONS;
-  try {
-    const raw = window.localStorage.getItem(SPLIT_ISSUE_NOTIFICATIONS_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
-    const value = parsed[orgId];
-    if (typeof value === "boolean") return value;
-  } catch {
-    // Ignore storage failures; split issue notifications remain the default.
-  }
-  return DEFAULT_SPLIT_ISSUE_NOTIFICATIONS;
-}
-
-function readCollapsedProjectGroups(orgId: string | null | undefined): Set<string> {
-  if (!orgId || typeof window === "undefined") return new Set();
-  try {
-    const raw = window.localStorage.getItem(COLLAPSED_PROJECT_GROUPS_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
-    const values = parsed[orgId];
-    if (Array.isArray(values)) {
-      return new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0));
-    }
-  } catch {
-    // Ignore storage failures; project sections stay expanded.
-  }
-  return new Set();
-}
-
-function readCollapsedThreadGroups(orgId: string | null | undefined, rule: ThreadOrganizationRule): Set<string> {
-  if (!isLocallyCollapsedThreadGroupRule(rule)) return new Set();
-  if (rule === "project") return readCollapsedProjectGroups(orgId);
-  if (!orgId || typeof window === "undefined") return new Set();
-  try {
-    const raw = window.localStorage.getItem(COLLAPSED_THREAD_GROUPS_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
-    const orgValue = parsed[orgId];
-    const values = orgValue && typeof orgValue === "object" && !Array.isArray(orgValue)
-      ? (orgValue as Record<string, unknown>)[rule]
-      : undefined;
-    if (Array.isArray(values)) {
-      return new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0));
-    }
-  } catch {
-    // Ignore storage failures; managed sections stay expanded.
-  }
-  return new Set();
-}
-
-function normalizeStringList(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is string => typeof item === "string" && item.length > 0);
-}
-
-function messengerUserStorageId(userId: string | null | undefined) {
-  const trimmed = userId?.trim();
-  return trimmed || "anonymous";
-}
-
-function getMessengerProjectGroupOrderStorageKey(orgId: string, userId: string | null | undefined) {
-  return `${MESSENGER_PROJECT_GROUP_ORDER_STORAGE_PREFIX}:${orgId}:${messengerUserStorageId(userId)}`;
-}
-
-function getMessengerThreadGroupOrderStorageKey(orgId: string, userId: string | null | undefined, rule: ThreadOrganizationRule) {
-  if (rule === "project") return getMessengerProjectGroupOrderStorageKey(orgId, userId);
-  return `${MESSENGER_THREAD_GROUP_ORDER_STORAGE_PREFIX}:${rule}:${orgId}:${messengerUserStorageId(userId)}`;
-}
-
-function getMessengerDefaultThreadOrderStorageKey(orgId: string, userId: string | null | undefined) {
-  return `${MESSENGER_DEFAULT_THREAD_ORDER_STORAGE_PREFIX}:${orgId}:${messengerUserStorageId(userId)}`;
-}
-
-function getHiddenIssueThreadsStorageKey(orgId: string, userId: string | null | undefined) {
-  return `${HIDDEN_ISSUE_THREADS_STORAGE_PREFIX}:${orgId}:${messengerUserStorageId(userId)}`;
-}
-
-function readStringList(storageKey: string): string[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(storageKey);
-    return raw ? normalizeStringList(JSON.parse(raw)) : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeStringList(storageKey: string, values: string[]) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(storageKey, JSON.stringify(normalizeStringList(values)));
-  } catch {
-    // Ignore storage failures; the in-memory order still applies for this view.
-  }
-}
-
-function readHiddenIssueThreadWatermarks(storageKey: string): Record<string, string> {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = window.localStorage.getItem(storageKey);
-    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
-    return Object.fromEntries(
-      Object.entries(parsed)
-        .filter((entry): entry is [string, string] =>
-          typeof entry[0] === "string" && entry[0].length > 0 && typeof entry[1] === "string",
-        ),
-    );
-  } catch {
-    return {};
-  }
-}
-
-function writeHiddenIssueThreadWatermarks(storageKey: string, watermarks: Record<string, string>) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(storageKey, JSON.stringify(watermarks));
-  } catch {
-    // Ignore storage failures; the in-memory hidden state still applies.
-  }
-}
-
-function writeThreadOrganizationRule(orgId: string, rule: ThreadOrganizationRule) {
-  if (typeof window === "undefined") return;
-  try {
-    const raw = window.localStorage.getItem(THREAD_ORGANIZATION_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
-    window.localStorage.setItem(THREAD_ORGANIZATION_STORAGE_KEY, JSON.stringify({ ...parsed, [orgId]: rule }));
-  } catch {
-    // Ignore storage failures; the in-memory selection still applies for this view.
-  }
-}
-
-function writeThreadDensity(orgId: string, density: MessengerThreadDensity) {
-  if (typeof window === "undefined") return;
-  try {
-    const raw = window.localStorage.getItem(THREAD_DENSITY_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
-    window.localStorage.setItem(THREAD_DENSITY_STORAGE_KEY, JSON.stringify({ ...parsed, [orgId]: density }));
-  } catch {
-    // Ignore storage failures; the in-memory density still applies for this view.
-  }
-}
-
-function writeSplitIssueNotifications(orgId: string, enabled: boolean) {
-  if (typeof window === "undefined") return;
-  try {
-    const raw = window.localStorage.getItem(SPLIT_ISSUE_NOTIFICATIONS_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
-    window.localStorage.setItem(SPLIT_ISSUE_NOTIFICATIONS_STORAGE_KEY, JSON.stringify({ ...parsed, [orgId]: enabled }));
-  } catch {
-    // Ignore storage failures; the in-memory toggle still applies for this view.
-  }
-}
-
-function writeCollapsedProjectGroups(orgId: string, groups: Set<string>) {
-  if (typeof window === "undefined") return;
-  try {
-    const raw = window.localStorage.getItem(COLLAPSED_PROJECT_GROUPS_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
-    window.localStorage.setItem(COLLAPSED_PROJECT_GROUPS_STORAGE_KEY, JSON.stringify({
-      ...parsed,
-      [orgId]: Array.from(groups),
-    }));
-  } catch {
-    // Ignore storage failures; the in-memory section state still applies.
-  }
-}
-
-function writeCollapsedThreadGroups(orgId: string, rule: ThreadOrganizationRule, groups: Set<string>) {
-  if (!isLocallyCollapsedThreadGroupRule(rule)) return;
-  if (rule === "project") {
-    writeCollapsedProjectGroups(orgId, groups);
-    return;
-  }
-  if (typeof window === "undefined") return;
-  try {
-    const raw = window.localStorage.getItem(COLLAPSED_THREAD_GROUPS_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
-    const orgValue = parsed[orgId];
-    const orgGroups = orgValue && typeof orgValue === "object" && !Array.isArray(orgValue)
-      ? orgValue as Record<string, unknown>
-      : {};
-    window.localStorage.setItem(COLLAPSED_THREAD_GROUPS_STORAGE_KEY, JSON.stringify({
-      ...parsed,
-      [orgId]: {
-        ...orgGroups,
-        [rule]: Array.from(groups),
-      },
-    }));
-  } catch {
-    // Ignore storage failures; the in-memory section state still applies.
-  }
-}
-
 function threadOrganizationLabel(rule: ThreadOrganizationRule) {
   if (rule === "custom") return "Latest activity";
   return THREAD_ORGANIZATION_OPTIONS.find((option) => option.value === rule)?.label ?? "Latest activity";
-}
-
-function isCustomGroupColor(value: string | null | undefined): value is CustomGroupColor {
-  return CUSTOM_GROUP_COLOR_OPTIONS.includes(value as CustomGroupColor);
-}
-
-function splitCustomGroupIconValue(value: string | null | undefined): { glyph: string; color: CustomGroupColor | null } {
-  const trimmed = value?.trim();
-  if (!trimmed) return { glyph: "folder", color: null };
-  const [rawGlyph, rawColor] = trimmed.split(CUSTOM_GROUP_ICON_SEPARATOR);
-  return {
-    glyph: rawGlyph?.trim() || "folder",
-    color: isCustomGroupColor(rawColor) ? rawColor : null,
-  };
-}
-
-function composeCustomGroupIconValue(glyph: string, color: CustomGroupColor | null) {
-  const normalizedGlyph = glyph.trim() || "folder";
-  return color ? `${normalizedGlyph}${CUSTOM_GROUP_ICON_SEPARATOR}${color}` : normalizedGlyph;
-}
-
-function customGroupColorFor(group: Pick<MessengerCustomGroupWithEntries, "id" | "icon" | "sortOrder">): CustomGroupColor {
-  const parsed = splitCustomGroupIconValue(group.icon);
-  if (parsed.color) return parsed.color;
-  return CUSTOM_GROUP_COLOR_OPTIONS[Math.abs(group.sortOrder ?? group.id.length) % CUSTOM_GROUP_COLOR_OPTIONS.length] ?? "slate";
-}
-
-function customGroupStyle(group: Pick<MessengerCustomGroupWithEntries, "id" | "icon" | "sortOrder">): CSSProperties {
-  const tone = CUSTOM_GROUP_TONES[customGroupColorFor(group)];
-  return {
-    "--messenger-group-bg": tone.bg,
-    "--messenger-group-bg-dark": tone.bgDark,
-    "--messenger-group-bg-hover": tone.bgHover,
-    "--messenger-group-bg-hover-dark": tone.bgHoverDark,
-    "--messenger-group-border": tone.border,
-    "--messenger-group-border-dark": tone.borderDark,
-    "--messenger-group-text": tone.text,
-    "--messenger-group-text-dark": tone.textDark,
-    "--messenger-group-entry-text": tone.entryText,
-    "--messenger-group-entry-text-dark": tone.entryTextDark,
-  } as CSSProperties;
-}
-
-function customGroupIconLabel(icon: string | null | undefined) {
-  const { glyph } = splitCustomGroupIconValue(icon);
-  const trimmed = glyph.trim();
-  return trimmed || null;
-}
-
-function isProjectIconName(value: string | null | undefined): value is ProjectIconName {
-  return PROJECT_ICON_VALUES.has((value ?? "").trim().toLowerCase());
-}
-
-function customGroupProjectIconName(icon: string | null | undefined): ProjectIconName {
-  const label = customGroupIconLabel(icon)?.toLowerCase();
-  return isProjectIconName(label) ? label : DEFAULT_PROJECT_ICON;
-}
-
-function customGroupProjectColorCssVars(color: CustomGroupColor | null | undefined): CSSProperties {
-  return projectColorCssVars(CUSTOM_GROUP_TONES[color ?? "slate"].swatch);
-}
-
-function isCustomGroupEmojiGlyph(value: string) {
-  return !isProjectIconName(value) && /[^\x00-\x7F]/.test(value);
-}
-
-function CustomGroupIcon({ icon }: { icon?: string | null }) {
-  const label = customGroupIconLabel(icon);
-  if (!label || isProjectIconName(label)) {
-    return (
-      <ProjectIcon
-        color={CUSTOM_GROUP_TONES[customGroupColorFor({ id: label ?? DEFAULT_PROJECT_ICON, icon: icon ?? null, sortOrder: 0 })].swatch}
-        icon={customGroupProjectIconName(icon)}
-        size="xs"
-        className="h-4 w-4"
-        iconClassName="h-4 w-4"
-      />
-    );
-  }
-  if (isCustomGroupEmojiGlyph(label)) {
-    return (
-      <span
-        aria-hidden
-        className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center text-[14px] leading-none"
-      >
-        {label}
-      </span>
-    );
-  }
-  return (
-    <span
-      aria-hidden
-      className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] bg-[color:color-mix(in_oklab,var(--surface-active)_72%,transparent)] px-0.5 text-[10px] font-semibold leading-none text-muted-foreground"
-    >
-      {label.slice(0, 2)}
-    </span>
-  );
-}
-
-function CustomGroupIconPicker({
-  icon,
-  ariaLabel,
-  onIconChange,
-}: {
-  icon: string | null | undefined;
-  ariaLabel: string;
-  onIconChange: (icon: string) => void;
-}) {
-  const currentIcon = customGroupIconLabel(icon);
-  return (
-    <div className="space-y-1.5" aria-label={ariaLabel}>
-      <div className="grid grid-cols-6 gap-1.5" aria-label={`${ariaLabel} options`}>
-        {PROJECT_ICONS.map((candidate) => {
-          const Icon = getProjectIconComponent(candidate);
-          const selected = currentIcon && isProjectIconName(currentIcon) ? candidate === currentIcon : false;
-          return (
-            <button
-              key={candidate}
-              type="button"
-              className={cn(
-                "relative inline-flex h-9 w-9 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] border text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
-                selected
-                  ? "border-[color:color-mix(in_oklab,var(--project-accent-color)_54%,var(--border-base))] bg-muted/55 text-[color:var(--project-accent-color)]"
-                  : "border-border/70 bg-transparent",
-              )}
-              aria-label={`Select ${candidate} project icon`}
-              aria-pressed={selected}
-              onClick={() => onIconChange(candidate)}
-            >
-              <Icon className="h-5 w-5" strokeWidth={2.2} />
-            </button>
-          );
-        })}
-        {MESSENGER_CUSTOM_GROUP_EMOJI_ICONS.map((candidate) => {
-          const selected = candidate === currentIcon;
-          return (
-            <button
-              key={candidate}
-              type="button"
-              className={cn(
-                "relative inline-flex h-9 w-9 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] border text-[18px] leading-none outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
-                selected
-                  ? "border-[color:color-mix(in_oklab,var(--project-accent-color)_54%,var(--border-base))] bg-muted/55"
-                  : "border-border/70 bg-transparent",
-              )}
-              aria-label={`Select ${candidate} group emoji`}
-              aria-pressed={selected}
-              onClick={() => onIconChange(candidate)}
-            >
-              <span aria-hidden>{candidate}</span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function CustomGroupEditor({
-  name,
-  icon,
-  color,
-  pending,
-  onNameChange,
-  onIconChange,
-  onColorChange,
-  onCancel,
-  onSubmit,
-}: {
-  name: string;
-  icon: string;
-  color: CustomGroupColor | null;
-  pending: boolean;
-  onNameChange: (value: string) => void;
-  onIconChange: (value: string) => void;
-  onColorChange: (value: CustomGroupColor | null) => void;
-  onCancel: () => void;
-  onSubmit: () => void;
-}) {
-  return (
-    <form
-      data-testid="messenger-custom-group-editor"
-      className="p-2.5"
-      onSubmit={(event) => {
-        event.preventDefault();
-        onSubmit();
-      }}
-    >
-      <div className="mb-2 flex items-center gap-2">
-        <CustomGroupIcon icon={icon} />
-        <div className="min-w-0 flex-1 text-[12px] font-semibold text-foreground">New group</div>
-      </div>
-      <input
-        autoFocus
-        aria-label="Group name"
-        value={name}
-        onChange={(event) => onNameChange(event.currentTarget.value)}
-        className="h-8 w-full rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-base)] bg-[color:var(--surface-page)] px-2.5 text-[13px] outline-none transition-[border-color,box-shadow] focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
-      />
-      <div
-        className="mt-1.5 rounded-[calc(var(--radius-sm)-1px)] border border-[color:color-mix(in_oklab,var(--border-soft)_74%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-page)_72%,transparent)] p-1.5"
-        style={customGroupProjectColorCssVars(color)}
-      >
-        <CustomGroupIconPicker
-          icon={icon}
-          ariaLabel="Group icons"
-          onIconChange={onIconChange}
-        />
-      </div>
-      <div className="mt-2 flex items-center gap-1.5" aria-label="Group color">
-        {CUSTOM_GROUP_COLOR_OPTIONS.map((option) => {
-          const tone = CUSTOM_GROUP_TONES[option];
-          return (
-            <button
-              key={option}
-              type="button"
-              aria-label={`Use ${option} group color`}
-              aria-pressed={color === option}
-              className={cn(
-                "inline-flex h-6 w-6 items-center justify-center rounded-full border transition-[border-color,box-shadow,transform] hover:scale-105",
-                color === option
-                  ? "border-[color:var(--border-strong)] shadow-[0_0_0_2px_var(--surface-elevated),0_0_0_4px_color-mix(in_oklab,var(--border-strong)_70%,transparent)]"
-                  : "border-transparent",
-              )}
-              style={{ backgroundColor: tone.swatch }}
-              onClick={() => onColorChange(option)}
-            />
-          );
-        })}
-      </div>
-      <div className="mt-2.5 flex justify-end gap-1.5">
-        <button
-          type="button"
-          className="inline-flex h-7 items-center rounded-[calc(var(--radius-sm)-1px)] px-2 text-[12px] font-medium text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground"
-          onClick={onCancel}
-        >
-          Cancel
-        </button>
-        <button
-          type="submit"
-          disabled={pending || !name.trim()}
-          className="inline-flex h-7 items-center rounded-[calc(var(--radius-sm)-1px)] bg-[color:var(--accent-strong)] px-2.5 text-[12px] font-semibold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Create
-        </button>
-      </div>
-    </form>
-  );
-}
-
-function CustomGroupRenameForm({
-  name,
-  pending,
-  onNameChange,
-  onCancel,
-  onSubmit,
-}: {
-  name: string;
-  pending: boolean;
-  onNameChange: (value: string) => void;
-  onCancel: () => void;
-  onSubmit: () => void;
-}) {
-  return (
-    <form
-      data-testid="messenger-custom-group-rename"
-      className="mx-3 mt-2 rounded-md border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_96%,transparent)] p-2.5 shadow-sm"
-      onSubmit={(event) => {
-        event.preventDefault();
-        onSubmit();
-      }}
-    >
-      <div className="mb-2 flex items-center gap-2">
-        <PencilLine className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-        <div className="min-w-0 flex-1 text-[12px] font-semibold text-foreground">Rename group</div>
-      </div>
-      <input
-        autoFocus
-        aria-label="Group name"
-        value={name}
-        onChange={(event) => onNameChange(event.currentTarget.value)}
-        className="h-8 w-full rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-base)] bg-[color:var(--surface-page)] px-2.5 text-[13px] outline-none transition-[border-color,box-shadow] focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
-      />
-      <div className="mt-2.5 flex justify-end gap-1.5">
-        <button
-          type="button"
-          className="inline-flex h-7 items-center rounded-[calc(var(--radius-sm)-1px)] px-2 text-[12px] font-medium text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground"
-          onClick={onCancel}
-        >
-          Cancel
-        </button>
-        <button
-          type="submit"
-          disabled={pending || !name.trim()}
-          className="inline-flex h-7 items-center rounded-[calc(var(--radius-sm)-1px)] bg-[color:var(--accent-strong)] px-2.5 text-[12px] font-semibold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Save
-        </button>
-      </div>
-    </form>
-  );
-}
-
-function conversationSubtitle(conversation: ChatConversation) {
-  return (
-    formatMessengerPreview(conversation.latestReplyPreview) ||
-    formatMessengerPreview(conversation.summary) ||
-    (conversation.primaryIssue
-      ? `${conversation.primaryIssue.identifier ?? conversation.primaryIssue.id} · ${conversation.primaryIssue.title}`
-      : null) ||
-    "Start the conversation"
-  );
-}
-
-function conversationDisplayTitle(conversation: Pick<ChatConversation, "title" | "summary" | "latestUserMessagePreview" | "latestReplyPreview">) {
-  return displayChatTitle(conversation);
-}
-
-function nonEmptyString(value: unknown) {
-  return typeof value === "string" && value.trim() ? value : null;
-}
-
-function resolveChatAgentId(conversation: Pick<ChatConversation, "preferredAgentId" | "routedAgentId" | "chatRuntime">) {
-  return (
-    conversation.chatRuntime?.runtimeAgentId
-    ?? conversation.routedAgentId
-    ?? conversation.preferredAgentId
-    ?? null
-  );
-}
-
-function threadDisplayTitle(title: string) {
-  return formatMessengerTitle(title, { max: 80 }) ?? title;
-}
-
-function MessengerThreadPreview({
-  threadKey,
-  eyebrow,
-  title,
-  description,
-  metadata,
-  suppressed = false,
-  children,
-}: {
-  threadKey: string;
-  eyebrow: string;
-  title: string;
-  description: string | null;
-  metadata?: Array<string | null | undefined>;
-  suppressed?: boolean;
-  children: ReactElement;
-}) {
-  const [open, setOpen] = useState(false);
-  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const suppressedRef = useRef(suppressed);
-  const reentryRequiredRef = useRef(false);
-  const pointerLeftRef = useRef(false);
-  const pointerMovedDuringSuppressionRef = useRef(false);
-  const keyboardBlurredRef = useRef(false);
-  const detailLines = metadata?.filter((value): value is string => Boolean(value?.trim())) ?? [];
-
-  suppressedRef.current = suppressed;
-
-  const clearTimer = (ref: typeof hoverTimerRef) => {
-    if (ref.current) clearTimeout(ref.current);
-    ref.current = null;
-  };
-  const showNow = () => {
-    clearTimer(hoverTimerRef);
-    clearTimer(closeTimerRef);
-    if (suppressedRef.current || reentryRequiredRef.current) return;
-    setOpen(true);
-  };
-  const scheduleOpen = () => {
-    clearTimer(hoverTimerRef);
-    clearTimer(closeTimerRef);
-    if (suppressedRef.current || reentryRequiredRef.current) return;
-    hoverTimerRef.current = setTimeout(showNow, MESSENGER_THREAD_PREVIEW_HOVER_DELAY_MS);
-  };
-  const handleMouseEnter = () => {
-    scheduleOpen();
-  };
-  const handleMouseMove = () => {
-    if (suppressedRef.current) {
-      pointerMovedDuringSuppressionRef.current = true;
-      return;
-    }
-    if (!reentryRequiredRef.current || !pointerLeftRef.current) return;
-    reentryRequiredRef.current = false;
-    pointerLeftRef.current = false;
-    scheduleOpen();
-  };
-  const scheduleClose = () => {
-    clearTimer(hoverTimerRef);
-    clearTimer(closeTimerRef);
-    closeTimerRef.current = setTimeout(() => setOpen(false), MESSENGER_THREAD_PREVIEW_CLOSE_DELAY_MS);
-  };
-
-  const handleMouseLeave = () => {
-    if (
-      reentryRequiredRef.current
-      && (!suppressedRef.current || pointerMovedDuringSuppressionRef.current)
-    ) {
-      pointerLeftRef.current = true;
-    }
-    scheduleClose();
-  };
-
-  const handleBlur = () => {
-    if (!suppressedRef.current && reentryRequiredRef.current) keyboardBlurredRef.current = true;
-    scheduleClose();
-  };
-
-  const handleFocus = () => {
-    if (!suppressedRef.current && keyboardBlurredRef.current) {
-      reentryRequiredRef.current = false;
-      keyboardBlurredRef.current = false;
-    }
-    showNow();
-  };
-
-  useEffect(() => {
-    if (!suppressed) return;
-    reentryRequiredRef.current = true;
-    pointerLeftRef.current = false;
-    pointerMovedDuringSuppressionRef.current = false;
-    keyboardBlurredRef.current = false;
-    clearTimer(hoverTimerRef);
-    clearTimer(closeTimerRef);
-    setOpen(false);
-  }, [suppressed]);
-
-  useEffect(() => () => {
-    clearTimer(hoverTimerRef);
-    clearTimer(closeTimerRef);
-  }, []);
-
-  return (
-    <TooltipProvider delayDuration={MESSENGER_THREAD_PREVIEW_HOVER_DELAY_MS} skipDelayDuration={0}>
-      <Tooltip open={open && !suppressed}>
-        <TooltipTrigger
-          asChild
-          onMouseEnter={handleMouseEnter}
-          onMouseMove={handleMouseMove}
-          onMouseLeave={handleMouseLeave}
-          onFocusCapture={handleFocus}
-          onBlurCapture={handleBlur}
-        >
-          {children}
-        </TooltipTrigger>
-        <TooltipContent
-          side="right"
-          align="start"
-          sideOffset={8}
-          collisionPadding={16}
-          data-testid={`messenger-thread-preview-${sanitizeThreadKey(threadKey)}`}
-          className="motion-entity-preview-pop z-[70] w-[min(22rem,calc(100vw-2rem))] space-y-2 rounded-[var(--radius-md)] border border-border/80 bg-[color:var(--surface-overlay)] px-3.5 py-3 text-left text-foreground shadow-[var(--shadow-lg)]"
-          onMouseEnter={showNow}
-          onMouseLeave={scheduleClose}
-        >
-          <div className="text-[11px] font-medium text-muted-foreground">{eyebrow}</div>
-          <div className="break-words text-[13px] font-semibold leading-5 text-foreground">{title}</div>
-          {description ? (
-            <div className="line-clamp-6 whitespace-pre-wrap break-words text-[12px] leading-5 text-foreground/78">
-              {description}
-            </div>
-          ) : null}
-          {detailLines.length > 0 ? (
-            <div className="flex flex-wrap gap-x-3 gap-y-1 border-t border-border/60 pt-2 text-[11px] text-muted-foreground">
-              {detailLines.map((line) => <span key={line}>{line}</span>)}
-            </div>
-          ) : null}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  );
-}
-
-interface ThreadGroup {
-  key: string;
-  label: string;
-  sortLabel?: string;
-  projectIcon?: string | null;
-  projectColor?: string | null;
 }
 
 interface UnreadThreadTarget {
@@ -1048,347 +287,10 @@ interface UnreadThreadTarget {
   entryIndex: number | null;
 }
 
-function flattenThreadSectionEntries(sections: OrganizedThreadSection[] | undefined): OrganizedThreadEntry[] {
-  if (!sections?.length) return [];
-  return sections.flatMap((section) => [
-    ...section.entries,
-    ...flattenThreadSectionEntries(section.childSections),
-  ]);
-}
-
 type ProjectOrderUpdatedDetail = {
   storageKey: string;
   orderedIds: string[];
 };
-
-function projectIdFromSectionKey(sectionKey: string) {
-  return sectionKey.startsWith("project:") && sectionKey !== "project:none"
-    ? sectionKey.slice("project:".length)
-    : null;
-}
-
-function syntheticProjectSectionIdFromKey(sectionKey: string) {
-  return projectIdFromSectionKey(sectionKey) ? null : `messenger-section:${sectionKey}`;
-}
-
-function projectSectionKeyToStoredId(sectionKey: string) {
-  return projectIdFromSectionKey(sectionKey) ?? syntheticProjectSectionIdFromKey(sectionKey) ?? sectionKey;
-}
-
-function storedProjectSectionIdToKey(storedId: string) {
-  if (storedId.startsWith("messenger-section:")) return storedId.slice("messenger-section:".length);
-  if (storedId.startsWith("project:")) return storedId;
-  return `project:${storedId}`;
-}
-
-function threadSectionKeyToStoredId(rule: ThreadOrganizationRule, sectionKey: string) {
-  return rule === "project" ? projectSectionKeyToStoredId(sectionKey) : sectionKey;
-}
-
-function storedThreadSectionIdToKey(rule: ThreadOrganizationRule, storedId: string) {
-  return rule === "project" ? storedProjectSectionIdToKey(storedId) : storedId;
-}
-
-function customGroupSectionKey(groupId: string) {
-  return `custom-group:${groupId}`;
-}
-
-function customGroupIdFromSectionKey(sectionKey: string) {
-  return sectionKey.startsWith("custom-group:") ? sectionKey.slice("custom-group:".length) : null;
-}
-
-function sortProjectThreadSections(
-  sections: OrganizedThreadSection[],
-  orderedProjectIds: string[],
-  orderedSectionIds: string[] = [],
-) {
-  if (sections.length === 0) return sections;
-  const orderIndex = new Map(orderedProjectIds.map((id, index) => [id, index]));
-  const realProjectSections: OrganizedThreadSection[] = [];
-  const fixedSections: OrganizedThreadSection[] = [];
-
-  for (const section of sections) {
-    if (projectIdFromSectionKey(section.key)) {
-      realProjectSections.push(section);
-    } else {
-      fixedSections.push(section);
-    }
-  }
-
-  realProjectSections.sort((a, b) => {
-    const aProjectId = projectIdFromSectionKey(a.key);
-    const bProjectId = projectIdFromSectionKey(b.key);
-    const aIndex = aProjectId ? orderIndex.get(aProjectId) : undefined;
-    const bIndex = bProjectId ? orderIndex.get(bProjectId) : undefined;
-    if (aIndex !== undefined || bIndex !== undefined) {
-      return (aIndex ?? Number.MAX_SAFE_INTEGER) - (bIndex ?? Number.MAX_SAFE_INTEGER);
-    }
-    return (a.label ?? "").localeCompare(b.label ?? "");
-  });
-
-  const projectSortedSections = [...realProjectSections, ...fixedSections];
-  if (orderedSectionIds.length === 0) return projectSortedSections;
-
-  const sectionOrderIndex = new Map(
-    orderedSectionIds.map((id, index) => [storedProjectSectionIdToKey(id), index]),
-  );
-  const baseIndex = new Map(projectSortedSections.map((section, index) => [section.key, index]));
-  return [...projectSortedSections].sort((a, b) => {
-    const aIndex = sectionOrderIndex.get(a.key);
-    const bIndex = sectionOrderIndex.get(b.key);
-    if (aIndex !== undefined || bIndex !== undefined) {
-      return (aIndex ?? Number.MAX_SAFE_INTEGER) - (bIndex ?? Number.MAX_SAFE_INTEGER);
-    }
-    return (baseIndex.get(a.key) ?? 0) - (baseIndex.get(b.key) ?? 0);
-  });
-}
-
-function sortManagedThreadSections(
-  sections: OrganizedThreadSection[],
-  rule: ThreadOrganizationRule,
-  orderedProjectIds: string[],
-  orderedSectionIds: string[] = [],
-) {
-  if (!isLocalManagedThreadGroupRule(rule)) return sections;
-  if (rule === "project") return sortProjectThreadSections(sections, orderedProjectIds, orderedSectionIds);
-  if (orderedSectionIds.length === 0) return sections;
-
-  const sectionOrderIndex = new Map(
-    orderedSectionIds.map((id, index) => [storedThreadSectionIdToKey(rule, id), index]),
-  );
-  const baseIndex = new Map(sections.map((section, index) => [section.key, index]));
-  return [...sections].sort((a, b) => {
-    const aIndex = sectionOrderIndex.get(a.key);
-    const bIndex = sectionOrderIndex.get(b.key);
-    if (aIndex !== undefined || bIndex !== undefined) {
-      return (aIndex ?? Number.MAX_SAFE_INTEGER) - (bIndex ?? Number.MAX_SAFE_INTEGER);
-    }
-    return (baseIndex.get(a.key) ?? 0) - (baseIndex.get(b.key) ?? 0);
-  });
-}
-
-function projectIdentityForGroup(projectId: string | null, projectsById: ReadonlyMap<string, Project>) {
-  return projectId ? projectsById.get(projectId) ?? null : null;
-}
-
-function chatProjectGroup(
-  conversation: ChatConversation | null,
-  projectsById: ReadonlyMap<string, Project>,
-): ThreadGroup {
-  const projectLink = conversation?.contextLinks?.find((link) => link.entityType === "project") ?? null;
-  const projectId = typeof projectLink?.entityId === "string" && projectLink.entityId.trim()
-    ? projectLink.entityId.trim()
-    : null;
-  const project = projectIdentityForGroup(projectId, projectsById);
-  const label = project?.name
-    || projectLink?.entity?.label
-    || projectLink?.entity?.identifier
-    || (projectLink ? "Unknown project" : "No project");
-  return projectId
-    ? {
-        key: `project:${projectId}`,
-        label,
-        sortLabel: label,
-        projectIcon: project?.icon,
-        projectColor: project?.color,
-      }
-    : { key: "project:none", label };
-}
-
-function splitIssueProjectGroup(
-  thread: MessengerThreadSummaryItem,
-  projectsById: ReadonlyMap<string, Project>,
-): ThreadGroup | null {
-  if (thread.metadata?.splitIssue !== true) return null;
-  const metadata = thread.metadata as Record<string, unknown>;
-  const projectId = metadataString(metadata, "projectId");
-  const project = projectIdentityForGroup(projectId, projectsById);
-  const label = project?.name ?? metadataString(metadata, "projectName") ?? (projectId ? "Unknown project" : "No project");
-  return projectId
-    ? {
-        key: `project:${projectId}`,
-        label,
-        sortLabel: label,
-        projectIcon: project?.icon,
-        projectColor: project?.color,
-      }
-    : { key: "project:none", label };
-}
-
-function metadataString(metadata: Record<string, unknown> | undefined, key: string) {
-  const value = metadata?.[key];
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function entryAgentGroup(entry: OrganizedThreadEntry, agentsById: Map<string, Agent>): ThreadGroup {
-  if (entry.thread.kind === "chat") {
-    const agentId = entry.conversation ? resolveChatAgentId(entry.conversation) : null;
-    if (!agentId) return { key: "agent:none", label: "No agent" };
-    const label = agentsById.get(agentId)?.name ?? "Unknown agent";
-    return { key: `agent:${agentId}`, label, sortLabel: label };
-  }
-
-  if (entry.thread.metadata?.splitIssue === true) {
-    const metadata = entry.thread.metadata as Record<string, unknown>;
-    const agentId =
-      metadataString(metadata, "assigneeAgentId")
-      ?? metadataString(metadata, "agentId")
-      ?? metadataString(metadata, "runtimeAgentId")
-      ?? metadataString(metadata, "preferredAgentId");
-    if (!agentId) return { key: "agent:none", label: "No agent" };
-    const label =
-      agentsById.get(agentId)?.name
-      ?? metadataString(metadata, "assigneeAgentName")
-      ?? metadataString(metadata, "agentName")
-      ?? "Unknown agent";
-    return { key: `agent:${agentId}`, label, sortLabel: label };
-  }
-
-  return { key: "system", label: "System" };
-}
-
-function ThreadAvatar({
-  icon: Icon,
-  unreadCount,
-  needsAttention,
-  density = "comfortable",
-  shape = "circle",
-  testId,
-}: {
-  icon: typeof MessageSquare;
-  unreadCount: number;
-  needsAttention: boolean;
-  density?: MessengerThreadDensity;
-  shape?: "circle" | "rounded";
-  testId?: string;
-}) {
-  const compact = density === "compact";
-  return (
-    <span
-      className={cn(
-        "relative flex shrink-0 items-center justify-center border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-active)_78%,transparent)] text-[color:var(--accent-strong)]",
-        compact ? "h-7 w-7" : "mt-0.5 h-10 w-10",
-        shape === "rounded" ? "rounded-[calc(var(--radius-sm)+1px)]" : "rounded-full",
-      )}
-    >
-      <Icon className={cn(compact ? "h-3.5 w-3.5" : "h-4.5 w-4.5")} />
-      {unreadCount > 0 ? (
-        <span
-          data-testid={testId}
-          className="absolute -right-1.5 -top-1.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full border border-[color:var(--surface-elevated)] bg-red-500 px-1 text-[10px] font-semibold leading-none text-white shadow-[0_4px_12px_-6px_rgba(220,38,38,0.85)]"
-        >
-          {unreadCount > 99 ? "99+" : unreadCount}
-        </span>
-      ) : needsAttention ? (
-        <span
-          data-testid={testId}
-          className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full border-2 border-[color:var(--surface-elevated)] bg-red-500"
-        />
-      ) : null}
-    </span>
-  );
-}
-
-function ChatAgentThreadAvatar({
-  agent,
-  agentId,
-  unreadCount,
-  needsAttention,
-  density,
-  testId,
-}: {
-  agent: Agent | null;
-  agentId: string | null;
-  unreadCount: number;
-  needsAttention: boolean;
-  density: MessengerThreadDensity;
-  testId: string;
-}) {
-  if (!agent && !agentId) {
-    return (
-      <ThreadAvatar
-        icon={MessageSquare}
-        unreadCount={unreadCount}
-        needsAttention={needsAttention}
-        density={density}
-        shape="rounded"
-        testId={`${testId}-unread-badge`}
-      />
-    );
-  }
-
-  const compact = density === "compact";
-  return (
-    <span
-      data-testid={testId}
-      title={agent?.name ? `Chat agent: ${agent.name}` : "Chat agent"}
-      className={cn(
-        "relative flex shrink-0 items-center justify-center overflow-visible rounded-full border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-active)_78%,transparent)]",
-        compact ? "h-7 w-7" : "mt-0.5 h-10 w-10",
-      )}
-    >
-      <AgentIcon
-        icon={agent?.icon}
-        role={agent?.role}
-        fallbackSeed={agent?.id ?? agentId}
-        className="h-full w-full rounded-full"
-      />
-      {unreadCount > 0 ? (
-        <span
-          data-testid={`${testId}-unread-badge`}
-          className="absolute -right-1.5 -top-1.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full border border-[color:var(--surface-elevated)] bg-red-500 px-1 text-[10px] font-semibold leading-none text-white shadow-[0_4px_12px_-6px_rgba(220,38,38,0.85)]"
-        >
-          {unreadCount > 99 ? "99+" : unreadCount}
-        </span>
-      ) : needsAttention ? (
-        <span
-          data-testid={`${testId}-unread-badge`}
-          className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full border-2 border-[color:var(--surface-elevated)] bg-red-500"
-        />
-      ) : null}
-    </span>
-  );
-}
-
-function IssueStatusThreadAvatar({
-  status,
-  unreadCount,
-  needsAttention,
-  density = "comfortable",
-  testId,
-}: {
-  status: string;
-  unreadCount: number;
-  needsAttention: boolean;
-  density?: MessengerThreadDensity;
-  testId?: string;
-}) {
-  const compact = density === "compact";
-  return (
-    <span
-      title={`Issue status: ${status.replace(/_/g, " ")}`}
-      className={cn(
-        "relative flex shrink-0 items-center justify-center rounded-full border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-active)_78%,transparent)]",
-        compact ? "h-7 w-7" : "mt-0.5 h-10 w-10",
-      )}
-    >
-      <StatusIcon status={status} className={cn(compact ? "h-3.5 w-3.5" : "h-4.5 w-4.5")} />
-      {unreadCount > 0 ? (
-        <span
-          data-testid={testId}
-          className="absolute -right-1.5 -top-1.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full border border-[color:var(--surface-elevated)] bg-red-500 px-1 text-[10px] font-semibold leading-none text-white shadow-[0_4px_12px_-6px_rgba(220,38,38,0.85)]"
-        >
-          {unreadCount > 99 ? "99+" : unreadCount}
-        </span>
-      ) : needsAttention ? (
-        <span
-          data-testid={testId}
-          className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full border-2 border-[color:var(--surface-elevated)] bg-red-500"
-        />
-      ) : null}
-    </span>
-  );
-}
 
 function MessengerThreadSectionHeader({
   rule,
@@ -1482,678 +384,6 @@ function MessengerThreadSectionHeader({
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
-  );
-}
-
-function ChatThreadRow({
-  conversation,
-  agent,
-  agentId,
-  sourceBadge,
-  href,
-  active,
-  generating,
-  density,
-  renaming,
-  renameDraft,
-  onRenameDraftChange,
-  onCommitRename,
-  onStartRename,
-  onRegenerateTitle,
-  titleGenerating = false,
-  onFork,
-  onArchive,
-  onDelete,
-  archiveDeleteAllowed = true,
-  onTogglePin,
-  onToggleUnread,
-  onCopyConversationLink,
-  customGroups,
-  customGroupId,
-  customGroupPending,
-  onMoveToCustomGroup,
-  onRemoveFromCustomGroup,
-  onCreateCustomGroup,
-  dragHandleProps,
-  dragging,
-  onSelect,
-}: {
-  conversation: ChatConversation;
-  agent: Agent | null;
-  agentId: string | null;
-  sourceBadge?: SourceBadge | null;
-  href: string;
-  active: boolean;
-  generating: boolean;
-  density: MessengerThreadDensity;
-  renaming: boolean;
-  renameDraft: string;
-  onRenameDraftChange: (value: string) => void;
-  onCommitRename: () => void;
-  onStartRename?: () => void;
-  onRegenerateTitle?: () => void;
-  titleGenerating?: boolean;
-  onFork: () => void;
-  onArchive: () => void;
-  onDelete: () => void;
-  archiveDeleteAllowed?: boolean;
-  onTogglePin: () => void;
-  onToggleUnread: () => void;
-  onCopyConversationLink: () => void;
-  customGroups?: MessengerCustomGroupWithEntries[];
-  customGroupId?: string | null;
-  customGroupPending?: boolean;
-  onMoveToCustomGroup?: (groupId: string) => void;
-  onRemoveFromCustomGroup?: () => void;
-  onCreateCustomGroup?: (anchor: HTMLElement, invoker: HTMLButtonElement) => void;
-  dragHandleProps?: SortableDragHandleProps;
-  dragging?: boolean;
-  onSelect: (href: string) => void;
-}) {
-  const timeLabel = relativeTime(conversation.lastMessageAt ?? conversation.updatedAt, { compactDate: true });
-  const [actionsOpen, setActionsOpen] = useState(false);
-  const rowRef = useRef<HTMLDivElement | null>(null);
-  const actionsTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const customGroupHandoffRef = useRef(false);
-  const compact = density === "compact";
-  const rightActionClass = compact ? "right-1.5" : "right-2";
-  const secondaryActionClass = compact ? "right-7" : "right-8";
-
-  useEffect(() => {
-    if (generating || titleGenerating) setActionsOpen(false);
-  }, [generating, titleGenerating]);
-
-  return (
-    <MessengerThreadPreview
-      threadKey={`chat:${conversation.id}`}
-      eyebrow="Chat"
-      title={isDefaultChatTitle(conversation.title) ? conversationDisplayTitle(conversation) : conversation.title}
-      description={conversationSubtitle(conversation)}
-      metadata={[
-        agent?.name ? `Agent: ${agent.name}` : null,
-        timeLabel,
-      ]}
-      suppressed={actionsOpen}
-    >
-    <div
-      ref={rowRef}
-      data-testid={`messenger-thread-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
-      data-messenger-thread-key={`chat:${conversation.id}`}
-      className={cn(
-        "group relative flex [contain-intrinsic-size:auto_44px] [content-visibility:auto] rounded-[calc(var(--radius-md)-2px)] border transition-[background-color,border-color,color]",
-        customGroupId ? "mx-0" : "mx-1.5",
-        compact
-          ? cn("items-center gap-2 py-1.5", customGroupId ? "px-1.5" : "px-2")
-          : cn("items-start gap-3 py-2.5", customGroupId ? "px-2" : "px-3"),
-        active
-          ? "chat-conversation-active border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-active)_90%,var(--surface-elevated))]"
-          : "border-transparent hover:border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)]",
-        customGroupId && "text-[color:var(--messenger-group-entry-text)] dark:text-[color:var(--messenger-group-entry-text-dark)]",
-        dragging && "shadow-sm ring-1 ring-border/70",
-      )}
-    >
-      <MessengerDragHandle
-        dragHandleProps={dragHandleProps}
-        label={`Drag ${conversationDisplayTitle(conversation)}`}
-        compact={compact}
-      />
-      <ChatAgentThreadAvatar
-        agent={agent}
-        agentId={agentId}
-        unreadCount={conversation.unreadCount}
-        needsAttention={conversation.needsAttention}
-        density={density}
-        testId={`messenger-thread-${sanitizeThreadKey(`chat:${conversation.id}`)}-agent-avatar`}
-      />
-      {renaming ? (
-        <div className="min-w-0 flex-1">
-          <input
-            autoFocus
-            value={renameDraft}
-            onChange={(event) => onRenameDraftChange(event.target.value)}
-            onBlur={onCommitRename}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                onCommitRename();
-              }
-              if (event.key === "Escape") {
-                event.preventDefault();
-                onRenameDraftChange(conversation.title);
-                onCommitRename();
-              }
-            }}
-            className="min-h-0 w-full rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] px-3 py-2 text-sm outline-none"
-          />
-        </div>
-      ) : (
-        <>
-          <Link to={href} onClick={() => onSelect(href)} className="block min-w-0 flex-1">
-            <div className={cn(
-              "grid min-w-0 gap-x-2",
-              compact ? "grid-cols-[minmax(0,1fr)_2.75rem] items-center" : "grid-cols-[minmax(0,1fr)_3rem] items-start",
-            )}>
-              <div className="min-w-0">
-                <div
-                  className={cn(
-                    "flex items-center gap-2 text-[13px] leading-tight",
-                    customGroupId
-                      ? conversation.isUnread ? "font-semibold text-current" : "font-medium text-current/88"
-                      : conversation.isUnread ? "font-semibold text-foreground" : "font-medium text-foreground/92",
-                  )}
-                >
-                  <span className="truncate">{conversationDisplayTitle(conversation)}</span>
-                  {sourceBadge ? (
-                    <span
-                      data-testid={`messenger-source-badge-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
-                      className="inline-flex shrink-0 items-center rounded-[calc(var(--radius-sm)-2px)] border border-sky-500/35 bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-sky-700 dark:text-sky-300"
-                    >
-                      {sourceBadge.label}
-                    </span>
-                  ) : null}
-                  {titleGenerating ? (
-                    <span
-                      data-testid={`messenger-title-generating-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
-                      className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[color:color-mix(in_oklab,var(--surface-active)_76%,transparent)] px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground"
-                      aria-label="Generating chat title"
-                    >
-                      <Loader2 className="h-2.5 w-2.5 animate-spin" aria-hidden />
-                      Naming
-                    </span>
-                  ) : null}
-                </div>
-                {!compact ? (
-                  <div
-                    className={cn(
-                      "mt-0.5 truncate text-[12px]",
-                      customGroupId
-                        ? conversation.isUnread ? "text-current/78" : "text-current/62"
-                        : conversation.isUnread ? "text-foreground/76" : "text-muted-foreground",
-                    )}
-                  >
-                    {conversationSubtitle(conversation)}
-                  </div>
-                ) : null}
-              </div>
-              <span
-                data-testid={`messenger-time-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
-                className={cn(
-                  "block shrink-0 whitespace-nowrap text-right text-[10px] leading-none tabular-nums text-muted-foreground transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0",
-                  compact ? "w-11" : "mt-0.5 w-12",
-                  (actionsOpen || generating || titleGenerating) && "opacity-0",
-                )}
-              >
-                {timeLabel}
-              </span>
-            </div>
-          </Link>
-
-          {generating ? (
-            <span
-              data-testid={`messenger-generating-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
-              aria-label="Chat reply in progress"
-              className={cn(
-                "pointer-events-none absolute top-1/2 z-10 inline-flex -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0",
-                compact ? "right-1.5 h-5 w-5" : "right-2 h-6 w-6",
-                actionsOpen && "opacity-0",
-              )}
-            >
-              <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2.25} aria-hidden />
-            </span>
-          ) : null}
-
-          {titleGenerating ? (
-            <span
-              data-testid={`messenger-title-spinner-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
-              aria-label="Generating chat title"
-              className={cn(
-                "pointer-events-none absolute top-1/2 z-10 inline-flex -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-opacity duration-150",
-                compact ? "right-1.5 h-5 w-5" : "right-2 h-6 w-6",
-              )}
-            >
-              <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2.25} aria-hidden />
-            </span>
-          ) : null}
-
-          {conversation.isPinned ? (
-            <button
-              type="button"
-              data-testid={`messenger-pin-toggle-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
-              className={cn(
-                "absolute top-1/2 z-10 -translate-y-1/2 rounded-md p-1 text-[color:var(--accent-strong)] opacity-0 transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-page)] hover:text-[color:var(--accent-strong)] focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
-                rightActionClass,
-                (actionsOpen || generating || titleGenerating) && "pointer-events-none opacity-0",
-              )}
-              aria-label="Unpin chat"
-              title="Unpin chat"
-              onClick={onTogglePin}
-            >
-              <Pin className="h-3.5 w-3.5" strokeWidth={2.25} />
-            </button>
-          ) : null}
-
-          <DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
-            <DropdownMenuTrigger asChild>
-              <button
-                ref={actionsTriggerRef}
-                type="button"
-                className={cn(
-                  "absolute top-1/2 z-10 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-page)] hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
-                  conversation.isPinned ? secondaryActionClass : rightActionClass,
-                  actionsOpen ? "opacity-100" : "opacity-0",
-                  titleGenerating && "pointer-events-none opacity-0",
-                )}
-                aria-label="Chat actions"
-              >
-                <MoreHorizontal className="h-3.5 w-3.5" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="messenger-thread-actions-menu morph-popover morph-popover--from-right surface-overlay text-foreground"
-              onCloseAutoFocus={(event) => {
-                if (!customGroupHandoffRef.current) return;
-                event.preventDefault();
-                customGroupHandoffRef.current = false;
-              }}
-            >
-              {onStartRename ? (
-                <DropdownMenuItem onClick={onStartRename}>
-                  <PencilLine className="h-4 w-4" />
-                  Rename
-                </DropdownMenuItem>
-              ) : null}
-              {onRegenerateTitle ? (
-                <DropdownMenuItem disabled={titleGenerating} onClick={onRegenerateTitle}>
-                  {titleGenerating ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-4 w-4" />
-                  )}
-                  Regenerate title
-                </DropdownMenuItem>
-              ) : null}
-              <DropdownMenuItem onClick={onTogglePin}>
-                {conversation.isPinned ? (
-                  <>
-                    <PinOff className="h-4 w-4" />
-                    Unpin
-                  </>
-                ) : (
-                  <>
-                    <Pin className="h-4 w-4" />
-                    Pin
-                  </>
-                )}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={onToggleUnread}>
-                {conversation.isUnread ? (
-                  <>
-                    <MailOpen className="h-4 w-4" />
-                    Mark as Read
-                  </>
-                ) : (
-                  <>
-                    <Mail className="h-4 w-4" />
-                    Mark as Unread
-                  </>
-                )}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={onCopyConversationLink}>
-                <Copy className="h-4 w-4" />
-                Copy Chat Link
-              </DropdownMenuItem>
-              <DropdownMenuItem disabled={generating} onClick={onFork}>
-                <GitFork className="h-4 w-4" />
-                Fork
-              </DropdownMenuItem>
-              {customGroups && !customGroupPending ? (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => {
-                    if (!rowRef.current || !actionsTriggerRef.current) return;
-                    customGroupHandoffRef.current = true;
-                    onCreateCustomGroup?.(rowRef.current, actionsTriggerRef.current);
-                  }}>
-                    <FolderPlus className="h-4 w-4" />
-                    New group
-                  </DropdownMenuItem>
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger>
-                      <FolderInput className="h-4 w-4" />
-                      Move to group
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent className="morph-popover morph-popover--from-left surface-overlay text-foreground">
-                      {customGroupId ? (
-                        <DropdownMenuItem onClick={onRemoveFromCustomGroup}>
-                          <Folder className="h-4 w-4" />
-                          Move out of group
-                        </DropdownMenuItem>
-                      ) : null}
-                      {customGroups.length > 0 ? (
-                        customGroups.map((group) => (
-                          <DropdownMenuItem
-                            key={group.id}
-                            disabled={group.id === customGroupId}
-                            onClick={() => onMoveToCustomGroup?.(group.id)}
-                          >
-                            <CustomGroupIcon icon={group.icon} />
-                            {group.name}
-                          </DropdownMenuItem>
-                        ))
-                      ) : (
-                        <DropdownMenuItem disabled>No groups</DropdownMenuItem>
-                      )}
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
-                </>
-              ) : null}
-              {archiveDeleteAllowed ? (
-                <>
-                  <DropdownMenuItem onClick={onArchive}>
-                    <Archive className="h-4 w-4" />
-                    Archive
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    variant="destructive"
-                    onClick={onDelete}
-                    title={generating ? "Stops the active reply before deleting this chat." : undefined}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    Delete
-                  </DropdownMenuItem>
-                </>
-              ) : null}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </>
-      )}
-    </div>
-    </MessengerThreadPreview>
-  );
-}
-
-function ThreadRow({
-  thread,
-  active,
-  density,
-  preserveUnreadEmphasis = false,
-  onTogglePin,
-  onHideIssue,
-  customGroups,
-  customGroupId,
-  customGroupPending,
-  onMoveToCustomGroup,
-  onRemoveFromCustomGroup,
-  onCreateCustomGroup,
-  dragHandleProps,
-  dragging,
-  onSelect,
-}: {
-  thread: ReturnType<typeof useMessengerModel>["threadSummaries"][number];
-  active: boolean;
-  density: MessengerThreadDensity;
-  preserveUnreadEmphasis?: boolean;
-  onTogglePin: () => void;
-  onHideIssue?: () => void;
-  customGroups?: MessengerCustomGroupWithEntries[];
-  customGroupId?: string | null;
-  customGroupPending?: boolean;
-  onMoveToCustomGroup?: (groupId: string) => void;
-  onRemoveFromCustomGroup?: () => void;
-  onCreateCustomGroup?: (anchor: HTMLElement, invoker: HTMLButtonElement) => void;
-  dragHandleProps?: SortableDragHandleProps;
-  dragging?: boolean;
-  onSelect: (thread: ReturnType<typeof useMessengerModel>["threadSummaries"][number]) => void;
-}) {
-  const Icon = threadIcon(thread.kind);
-  const preview = formatMessengerPreview(thread.preview) || formatMessengerPreview(thread.subtitle) || messengerThreadKindLabel(thread.kind);
-  const compact = density === "compact";
-  const [actionsOpen, setActionsOpen] = useState(false);
-  const rowRef = useRef<HTMLDivElement | null>(null);
-  const actionsTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const customGroupHandoffRef = useRef(false);
-  const rightActionClass = compact ? "right-1.5" : "right-2";
-  const secondaryActionClass = compact ? "right-7" : "right-8";
-  const canTogglePin = thread.metadata?.splitIssue === true;
-  const canHideIssue = thread.metadata?.splitIssue === true && Boolean(onHideIssue);
-  const showActions = canTogglePin || canHideIssue || Boolean(customGroups);
-  const issueStatus =
-    thread.metadata?.splitIssue === true && typeof thread.metadata.status === "string"
-      ? thread.metadata.status
-      : null;
-  const emphasizeUnread = active || preserveUnreadEmphasis || thread.unreadCount > 0;
-  const activeExecutionRunId =
-    thread.metadata?.splitIssue === true && typeof thread.metadata.activeExecutionRunId === "string"
-      ? thread.metadata.activeExecutionRunId
-      : null;
-
-  useEffect(() => {
-    if (activeExecutionRunId) setActionsOpen(false);
-  }, [activeExecutionRunId]);
-
-  return (
-    <MessengerThreadPreview
-      threadKey={thread.threadKey}
-      eyebrow={thread.metadata?.splitIssue === true
-        ? typeof thread.metadata.issueIdentifier === "string" ? thread.metadata.issueIdentifier : "Issue"
-        : messengerThreadKindLabel(thread.kind)}
-      title={thread.title}
-      description={thread.metadata?.splitIssue === true && typeof thread.metadata.description === "string"
-        ? thread.metadata.description
-        : preview}
-      metadata={thread.metadata?.splitIssue === true ? [
-        issueStatus ? `Status: ${issueStatus.replace(/_/g, " ")}` : null,
-        typeof thread.metadata.priority === "string" ? `Priority: ${thread.metadata.priority}` : null,
-        thread.latestActivityAt ? relativeTime(new Date(thread.latestActivityAt), { compactDate: true }) : null,
-      ] : [thread.latestActivityAt ? relativeTime(new Date(thread.latestActivityAt), { compactDate: true }) : null]}
-      suppressed={actionsOpen}
-    >
-    <div
-      ref={rowRef}
-      data-testid={`messenger-thread-${sanitizeThreadKey(thread.threadKey)}`}
-      data-messenger-thread-key={thread.threadKey}
-      className={cn(
-        "group relative flex [contain-intrinsic-size:auto_44px] [content-visibility:auto] rounded-[calc(var(--radius-md)-2px)] border transition-[background-color,border-color,color]",
-        customGroupId ? "mx-0" : "mx-1.5",
-        compact
-          ? cn("items-center gap-2 py-1.5", customGroupId ? "px-1.5" : "px-2")
-          : cn("items-start gap-3 py-2.5", customGroupId ? "px-2" : "px-3"),
-        active
-          ? "chat-conversation-active border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-active)_90%,var(--surface-elevated))]"
-          : "border-transparent hover:border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)]",
-        customGroupId && "text-[color:var(--messenger-group-entry-text)] dark:text-[color:var(--messenger-group-entry-text-dark)]",
-        dragging && "opacity-80 shadow-sm ring-1 ring-border/70",
-      )}
-    >
-      <MessengerDragHandle
-        dragHandleProps={dragHandleProps}
-        label={`Drag ${threadDisplayTitle(thread.title)}`}
-        compact={compact}
-      />
-      <Link
-        to={thread.href}
-        onClick={() => onSelect(thread)}
-        className={cn("flex min-w-0 flex-1", compact ? "items-center gap-2" : "items-start gap-3")}
-      >
-        {issueStatus ? (
-          <IssueStatusThreadAvatar
-            status={issueStatus}
-            unreadCount={thread.unreadCount}
-            needsAttention={thread.needsAttention}
-            density={density}
-            testId={`${sanitizeThreadKey(thread.threadKey)}-unread-badge`}
-          />
-        ) : (
-          <ThreadAvatar
-            icon={Icon}
-            unreadCount={thread.unreadCount}
-            needsAttention={thread.needsAttention}
-            density={density}
-            testId={`${sanitizeThreadKey(thread.threadKey)}-unread-badge`}
-          />
-        )}
-        <span className="min-w-0 flex-1">
-          <span className={cn(
-            "grid min-w-0 gap-x-2",
-            compact ? "grid-cols-[minmax(0,1fr)_2.75rem] items-center" : "grid-cols-[minmax(0,1fr)_3rem] items-start",
-          )}>
-            <span
-              className={cn(
-                "flex min-w-0 items-center gap-2 text-[13px] leading-tight",
-                emphasizeUnread ? "font-semibold text-foreground" : "font-medium text-foreground/92",
-              )}
-            >
-              <span className="truncate">{threadDisplayTitle(thread.title)}</span>
-            </span>
-            <span
-              data-testid={`messenger-time-${sanitizeThreadKey(thread.threadKey)}`}
-              className={cn(
-                "block shrink-0 whitespace-nowrap text-right text-[10px] leading-none tabular-nums text-muted-foreground transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0",
-                compact ? "w-11" : "mt-0.5 w-12",
-                (actionsOpen || activeExecutionRunId) && "opacity-0",
-              )}
-            >
-              {thread.latestActivityAt ? relativeTime(new Date(thread.latestActivityAt), { compactDate: true }) : "No activity"}
-            </span>
-          </span>
-          {!compact ? (
-            <span
-              className={cn(
-                "mt-0.5 block truncate text-[12px]",
-                emphasizeUnread ? "text-foreground/76" : "text-muted-foreground",
-              )}
-            >
-              {preview}
-            </span>
-          ) : null}
-        </span>
-      </Link>
-
-      {activeExecutionRunId ? (
-        <span
-          data-testid={`messenger-active-run-${sanitizeThreadKey(thread.threadKey)}`}
-          aria-label="Issue run in progress"
-          title="Issue run in progress"
-          className={cn(
-            "pointer-events-none absolute top-1/2 z-10 inline-flex -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0",
-            compact ? "right-1.5 h-5 w-5" : "right-2 h-6 w-6",
-            actionsOpen && "opacity-0",
-          )}
-        >
-          <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2.25} aria-hidden />
-        </span>
-      ) : null}
-
-      {canTogglePin && thread.isPinned ? (
-        <button
-          type="button"
-          data-testid={`messenger-pin-toggle-${sanitizeThreadKey(thread.threadKey)}`}
-          className={cn(
-            "absolute top-1/2 z-10 -translate-y-1/2 rounded-md p-1 text-[color:var(--accent-strong)] opacity-0 transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-page)] hover:text-[color:var(--accent-strong)] focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
-            rightActionClass,
-            (actionsOpen || activeExecutionRunId) && "pointer-events-none opacity-0",
-          )}
-          aria-label="Unpin thread"
-          title="Unpin thread"
-          onClick={onTogglePin}
-        >
-          <Pin className="h-3.5 w-3.5" strokeWidth={2.25} />
-        </button>
-      ) : null}
-
-      {showActions ? (
-        <DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
-          <DropdownMenuTrigger asChild>
-            <button
-              ref={actionsTriggerRef}
-              type="button"
-              className={cn(
-                "absolute top-1/2 z-10 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-page)] hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
-                canTogglePin && thread.isPinned ? secondaryActionClass : rightActionClass,
-                actionsOpen ? "opacity-100" : "opacity-0",
-              )}
-              aria-label="Thread actions"
-            >
-              <MoreHorizontal className="h-3.5 w-3.5" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="end"
-            className="messenger-thread-actions-menu morph-popover morph-popover--from-right surface-overlay text-foreground"
-            onCloseAutoFocus={(event) => {
-              if (!customGroupHandoffRef.current) return;
-              event.preventDefault();
-              customGroupHandoffRef.current = false;
-            }}
-          >
-            {canTogglePin ? (
-              <DropdownMenuItem onClick={onTogglePin}>
-                {thread.isPinned ? (
-                  <>
-                    <PinOff className="h-4 w-4" />
-                    Unpin
-                  </>
-                ) : (
-                  <>
-                    <Pin className="h-4 w-4" />
-                    Pin
-                  </>
-                )}
-              </DropdownMenuItem>
-            ) : null}
-            {canHideIssue ? (
-              <DropdownMenuItem onClick={onHideIssue}>
-                <EyeOff className="h-4 w-4" />
-                Hide
-              </DropdownMenuItem>
-            ) : null}
-            {customGroups && !customGroupPending ? (
-              <>
-                {(canTogglePin || canHideIssue) ? <DropdownMenuSeparator /> : null}
-                <DropdownMenuItem onClick={() => {
-                  if (!rowRef.current || !actionsTriggerRef.current) return;
-                  customGroupHandoffRef.current = true;
-                  onCreateCustomGroup?.(rowRef.current, actionsTriggerRef.current);
-                }}>
-                  <FolderPlus className="h-4 w-4" />
-                  New group
-                </DropdownMenuItem>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>
-                    <FolderInput className="h-4 w-4" />
-                    Move to group
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="morph-popover morph-popover--from-left surface-overlay text-foreground">
-                    {customGroupId ? (
-                      <DropdownMenuItem onClick={onRemoveFromCustomGroup}>
-                        <Folder className="h-4 w-4" />
-                        Move out of group
-                      </DropdownMenuItem>
-                    ) : null}
-                    {customGroups.length > 0 ? (
-                      customGroups.map((group) => (
-                        <DropdownMenuItem
-                          key={group.id}
-                          disabled={group.id === customGroupId}
-                          onClick={() => onMoveToCustomGroup?.(group.id)}
-                        >
-                          <CustomGroupIcon icon={group.icon} />
-                          {group.name}
-                        </DropdownMenuItem>
-                      ))
-                    ) : (
-                      <DropdownMenuItem disabled>No groups</DropdownMenuItem>
-                    )}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-              </>
-            ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ) : null}
-    </div>
-    </MessengerThreadPreview>
   );
 }
 
@@ -2362,260 +592,6 @@ function chatConversationForThreadSummary(
     sourceMetadata,
     createdAt: activityAt,
     updatedAt: activityAt,
-  };
-}
-
-interface OrganizedThreadEntry {
-  thread: MessengerThreadSummaryItem;
-  conversation: ChatConversation | null;
-  customGroupId?: string | null;
-}
-
-interface OrganizedThreadSection {
-  key: string;
-  label: string | null;
-  icon?: string | null;
-  projectIcon?: string | null;
-  projectColor?: string | null;
-  isPinned?: boolean;
-  pending?: boolean;
-  entries: OrganizedThreadEntry[];
-  childSections?: OrganizedThreadSection[];
-}
-
-function isPinnedEntry(entry: OrganizedThreadEntry) {
-  return typeof entry.thread.isPinned === "boolean" ? entry.thread.isPinned : Boolean(entry.conversation?.isPinned);
-}
-
-function dedupeThreadSummariesByKey(threadSummaries: MessengerThreadSummaryItem[]) {
-  const seen = new Set<string>();
-  return threadSummaries.filter((thread) => {
-    if (seen.has(thread.threadKey)) return false;
-    seen.add(thread.threadKey);
-    return true;
-  });
-}
-
-function dedupeOrganizedThreadEntriesByKey(entries: OrganizedThreadEntry[]) {
-  const seen = new Set<string>();
-  return entries.filter((entry) => {
-    if (seen.has(entry.thread.threadKey)) return false;
-    seen.add(entry.thread.threadKey);
-    return true;
-  });
-}
-
-function splitIssueThreadWatermark(thread: MessengerThreadSummaryItem) {
-  if (thread.metadata?.splitIssue !== true) return null;
-  const metadata = thread.metadata as Record<string, unknown>;
-  return [
-    thread.latestActivityAt ? new Date(thread.latestActivityAt).toISOString() : "none",
-    metadataString(metadata, "status") ?? "unknown",
-    metadataString(metadata, "activeExecutionRunId") ?? "idle",
-    String(thread.unreadCount),
-    thread.needsAttention ? "attention" : "settled",
-  ].join("|");
-}
-
-function threadMatchesMessengerIssueRoute(thread: MessengerThreadSummaryItem, issueRef: string) {
-  if (thread.metadata?.splitIssue !== true) return false;
-  const metadata = thread.metadata as Record<string, unknown>;
-  if (metadata.issueId === issueRef || metadata.issueIdentifier === issueRef) return true;
-  const normalizedHref = thread.href.split("?")[0]?.split("#")[0] ?? thread.href;
-  return normalizedHref === `/messenger/issues/${issueRef}`;
-}
-
-function entryActivityTime(entry: OrganizedThreadEntry) {
-  const value = entry.thread.latestActivityAt ?? (entry.conversation?.lastMessageAt ?? entry.conversation?.updatedAt ?? null);
-  return value ? new Date(value).getTime() : Number.NEGATIVE_INFINITY;
-}
-
-function compareThreadEntries(a: OrganizedThreadEntry, b: OrganizedThreadEntry) {
-  if (isPinnedEntry(a) !== isPinnedEntry(b)) return isPinnedEntry(a) ? -1 : 1;
-  const timeDiff = entryActivityTime(b) - entryActivityTime(a);
-  if (timeDiff !== 0) return timeDiff;
-  return a.thread.title.localeCompare(b.thread.title);
-}
-
-function sectionActivityTime(section: OrganizedThreadSection) {
-  return section.entries.reduce((latest, entry) => Math.max(latest, entryActivityTime(entry)), Number.NEGATIVE_INFINITY);
-}
-
-function compareCustomLayoutSections(a: OrganizedThreadSection, b: OrganizedThreadSection) {
-  if (Boolean(a.isPinned) !== Boolean(b.isPinned)) return a.isPinned ? -1 : 1;
-  const timeDiff = sectionActivityTime(b) - sectionActivityTime(a);
-  if (timeDiff !== 0) return timeDiff;
-  return (a.label ?? a.entries[0]?.thread.title ?? a.key).localeCompare(b.label ?? b.entries[0]?.thread.title ?? b.key);
-}
-
-function applyManualCustomLayoutOrder(sections: OrganizedThreadSection[], orderedSectionKeys: string[]) {
-  const sectionByKey = new Map(sections.map((section) => [section.key, section]));
-  const manualSections = orderedSectionKeys
-    .map((sectionKey) => sectionByKey.get(sectionKey) ?? null)
-    .filter((section): section is OrganizedThreadSection => Boolean(section));
-  if (manualSections.length === 0) return sections;
-
-  const manualSectionKeys = new Set(manualSections.map((section) => section.key));
-  const firstManualBaseIndex = sections.findIndex((section) => manualSectionKeys.has(section.key));
-  if (firstManualBaseIndex === -1) return sections;
-  return [
-    ...sections.slice(0, firstManualBaseIndex).filter((section) => !manualSectionKeys.has(section.key)),
-    ...manualSections,
-    ...sections.slice(firstManualBaseIndex).filter((section) => !manualSectionKeys.has(section.key)),
-  ];
-}
-
-function sortCustomLayoutSections(sections: OrganizedThreadSection[], orderedSectionKeys: string[]) {
-  if (orderedSectionKeys.length === 0) return sections;
-  const pinnedSections = sections.filter((section) => section.isPinned);
-  const unpinnedSections = sections.filter((section) => !section.isPinned);
-  return [
-    ...applyManualCustomLayoutOrder(pinnedSections, orderedSectionKeys),
-    ...applyManualCustomLayoutOrder(unpinnedSections, orderedSectionKeys),
-  ];
-}
-
-function applyManualCustomEntryOrder(entries: OrganizedThreadEntry[], orderedThreadKeys: string[]) {
-  if (orderedThreadKeys.length === 0) return entries;
-  const entryByKey = new Map(entries.map((entry) => [entry.thread.threadKey, entry]));
-  const manualEntries = orderedThreadKeys
-    .map((threadKey) => entryByKey.get(threadKey) ?? null)
-    .filter((entry): entry is OrganizedThreadEntry => Boolean(entry));
-  if (manualEntries.length === 0) return entries;
-
-  const manualThreadKeys = new Set(manualEntries.map((entry) => entry.thread.threadKey));
-  const firstManualBaseIndex = entries.findIndex((entry) => manualThreadKeys.has(entry.thread.threadKey));
-  if (firstManualBaseIndex === -1) return entries;
-  return [
-    ...entries.slice(0, firstManualBaseIndex).filter((entry) => !manualThreadKeys.has(entry.thread.threadKey)),
-    ...manualEntries,
-    ...entries.slice(firstManualBaseIndex).filter((entry) => !manualThreadKeys.has(entry.thread.threadKey)),
-  ];
-}
-
-function nextDefaultThreadOrderKeysAfterMove(
-  sectionKeys: string[],
-  currentOrderKeys: string[],
-  oldIndex: number,
-  newIndex: number,
-) {
-  const movedThreadKeys = arrayMove(sectionKeys, oldIndex, newIndex);
-  const start = Math.min(oldIndex, newIndex);
-  const end = Math.max(oldIndex, newIndex);
-  const affectedThreadKeys = new Set(movedThreadKeys.slice(start, end + 1));
-  const visibleThreadKeys = new Set(sectionKeys);
-  const currentOrderKeySet = new Set(currentOrderKeys);
-  return [
-    ...currentOrderKeys.filter((threadKey) => !visibleThreadKeys.has(threadKey)),
-    ...movedThreadKeys.filter((threadKey) => affectedThreadKeys.has(threadKey) || currentOrderKeySet.has(threadKey)),
-  ];
-}
-
-function entryActivityIsToday(entry: OrganizedThreadEntry, now = new Date()) {
-  const activityTime = entryActivityTime(entry);
-  if (!Number.isFinite(activityTime)) return false;
-  const activityDate = new Date(activityTime);
-  return (
-    activityDate.getFullYear() === now.getFullYear()
-    && activityDate.getMonth() === now.getMonth()
-    && activityDate.getDate() === now.getDate()
-  );
-}
-
-function groupEntries(
-  entries: OrganizedThreadEntry[],
-  groupForEntry: (entry: OrganizedThreadEntry) => ThreadGroup,
-) {
-  const sections = new Map<string, { group: ThreadGroup; entries: OrganizedThreadEntry[] }>();
-  for (const entry of entries) {
-    const group = groupForEntry(entry);
-    const existing = sections.get(group.key);
-    if (existing) {
-      existing.entries.push(entry);
-    } else {
-      sections.set(group.key, { group, entries: [entry] });
-    }
-  }
-  return Array.from(sections.values())
-    .sort((a, b) => {
-      if (a.group.key === "attention:needs") return -1;
-      if (b.group.key === "attention:needs") return 1;
-      if (a.group.key === "project:none") return 1;
-      if (b.group.key === "project:none") return -1;
-      if (a.group.key === "agent:none") return 1;
-      if (b.group.key === "agent:none") return -1;
-      if (a.group.key === "system") return 1;
-      if (b.group.key === "system") return -1;
-      return (a.group.sortLabel ?? a.group.label).localeCompare(b.group.sortLabel ?? b.group.label);
-    })
-    .map(({ group, entries: sectionEntries }) => ({
-      key: group.key,
-      label: group.label,
-      projectIcon: group.projectIcon,
-      projectColor: group.projectColor,
-      entries: [...sectionEntries].sort(compareThreadEntries),
-    }));
-}
-
-function organizeThreadEntries(
-  entries: OrganizedThreadEntry[],
-  rule: ThreadOrganizationRule,
-  agentsById: Map<string, Agent>,
-  projectsById: ReadonlyMap<string, Project>,
-): OrganizedThreadSection[] {
-  const sorted = [...entries].sort(compareThreadEntries);
-  if (rule === "latest") {
-    const pinned = sorted.filter(isPinnedEntry);
-    const unpinned = sorted.filter((entry) => !isPinnedEntry(entry));
-    const now = new Date();
-    const today = unpinned.filter((entry) => entryActivityIsToday(entry, now));
-    const recent = unpinned.filter((entry) => !entryActivityIsToday(entry, now));
-    const sections = [
-      { key: "pinned", label: "Pinned", entries: pinned },
-      { key: "today", label: "Today", entries: today },
-      { key: "recent", label: "Recent", entries: recent },
-    ].filter((section) => section.entries.length > 0);
-    if (sections.length === 1 && sections[0]?.key === "recent") return [{ ...sections[0], key: "latest", label: null }];
-    return sections;
-  }
-  if (rule === "project") {
-    return groupEntries(sorted, (entry) => {
-      const splitIssueProject = splitIssueProjectGroup(entry.thread, projectsById);
-      if (splitIssueProject) return splitIssueProject;
-      if (entry.thread.kind !== "chat") return { key: "system", label: "System" };
-      return chatProjectGroup(entry.conversation, projectsById);
-    });
-  }
-  if (rule === "agent") {
-    return groupEntries(sorted, (entry) => entryAgentGroup(entry, agentsById));
-  }
-  if (rule === "kind") {
-    return groupEntries(sorted, (entry) => ({
-      key: `kind:${entry.thread.kind}`,
-      label: messengerThreadKindLabel(entry.thread.kind),
-    }));
-  }
-  return groupEntries(sorted, (entry) => entry.thread.unreadCount > 0 || entry.thread.needsAttention
-    ? { key: "attention:needs", label: "Needs attention" }
-    : { key: "attention:other", label: "Other threads" });
-}
-
-function sectionAttentionCount(section: OrganizedThreadSection) {
-  return section.entries.filter((entry) => entry.thread.unreadCount > 0 || entry.thread.needsAttention).length;
-}
-
-function locallyReadThreadSummary(
-  thread: MessengerThreadSummaryItem,
-  locallyReadThreadWatermarks: ReadonlyMap<string, string>,
-): MessengerThreadSummaryItem {
-  const locallyReadWatermark = locallyReadThreadWatermarks.get(thread.threadKey);
-  if (!locallyReadWatermark) return thread;
-  if (locallyReadWatermark !== (thread.latestActivityAt ?? "none")) return thread;
-  if (thread.unreadCount === 0 && !thread.needsAttention) return thread;
-  return {
-    ...thread,
-    unreadCount: 0,
-    needsAttention: false,
   };
 }
 
@@ -2991,49 +967,31 @@ export function MessengerContextSidebar() {
     });
   }, [customGroups, locallyReadThreadWatermarks.size, model.threadSummaries]);
 
-  const customGroupedThreadKeys = useMemo(() => {
-    const keys = new Set<string>();
-    for (const group of customGroups) {
-      for (const entry of group.entries) {
-        keys.add(entry.threadKey);
-      }
-    }
-    return keys;
-  }, [customGroups]);
-
   const organizedThreadSections = useMemo(() => {
     const threadSummaries = splitIssueNotifications
       ? visibleThreadSummaries.filter((thread) => thread.threadKey !== "issues")
       : visibleThreadSummaries;
     if (effectiveThreadOrganizationRule === "custom") {
-      const customEntriesByThreadKey = new Map<string, OrganizedThreadEntry>();
-      const groupSections = customGroups.map((group) => {
-        const entries = group.entries.map((entry) => {
+      const groupInputs = customGroups.map((group) => ({
+        id: group.id,
+        name: group.name,
+        icon: group.icon,
+        pinned: Boolean(group.pinnedAt),
+        entries: group.entries.map((entry) => {
           const conversationId = threadConversationId(entry.threadKey);
           const pendingTitle = conversationId ? pendingChatRenameTitles[conversationId] : undefined;
           const readThread = locallyReadThreadSummary(entry.thread, locallyReadThreadWatermarks);
           const displayThread = pendingTitle ? { ...readThread, title: pendingTitle } : readThread;
-          const organizedEntry = {
+          return {
             thread: displayThread,
             conversation: model.selectedOrganizationId
               ? chatConversationForThreadSummary(displayThread, model.selectedOrganizationId, conversationsById.get(conversationId ?? "") ?? null)
               : null,
             customGroupId: group.id,
           } satisfies OrganizedThreadEntry;
-          customEntriesByThreadKey.set(entry.threadKey, organizedEntry);
-          return organizedEntry;
-        });
-        return {
-          key: customGroupSectionKey(group.id),
-          label: group.name,
-          icon: group.icon,
-          isPinned: Boolean(group.pinnedAt),
-          entries,
-        } satisfies OrganizedThreadSection;
-      });
-      const ungroupedEntries = threadSummaries
-        .filter((thread) => !customGroupedThreadKeys.has(thread.threadKey))
-        .map((thread) => {
+        }),
+      }));
+      const looseEntries = threadSummaries.map((thread) => {
           const conversationId = threadConversationId(thread.threadKey);
           const loadedConversation = conversationId ? conversationsById.get(conversationId) ?? null : null;
           const pendingTitle = conversationId ? pendingChatRenameTitles[conversationId] : undefined;
@@ -3045,53 +1003,8 @@ export function MessengerContextSidebar() {
               : null,
             customGroupId: null,
           } satisfies OrganizedThreadEntry;
-        })
-        .sort(compareThreadEntries);
-      const allCustomEntries = dedupeOrganizedThreadEntriesByKey([
-        ...customEntriesByThreadKey.values(),
-        ...ungroupedEntries,
-      ]);
-      const pinnedEntries = allCustomEntries
-        .filter((entry) => isPinnedEntry(entry) && entry.customGroupId === null)
-        .sort(compareThreadEntries);
-      const orderedPinnedEntries = applyManualCustomEntryOrder(pinnedEntries, defaultThreadOrderKeys);
-      const ungroupedSections = ungroupedEntries
-        .filter((entry) => !isPinnedEntry(entry))
-        .map((entry) => ({
-          key: entry.thread.threadKey,
-          label: null,
-          entries: [entry],
-        }) satisfies OrganizedThreadSection);
-      const topLevelSections = sortCustomLayoutSections(
-        [...groupSections, ...ungroupedSections].sort(compareCustomLayoutSections),
-        defaultThreadOrderKeys.length > 0
-          ? defaultThreadOrderKeys
-          : groupSections.map((section) => section.key),
-      );
-      const pinnedGroupSections = topLevelSections.filter((section) => section.isPinned);
-      const remainingTopLevelSections = topLevelSections.filter((section) => !section.isPinned);
-      const pinnedChildSections = [
-        ...pinnedGroupSections,
-        ...(orderedPinnedEntries.length > 0
-          ? [{
-            key: "custom:pinned:loose",
-            label: null,
-            entries: orderedPinnedEntries,
-          } satisfies OrganizedThreadSection]
-          : []),
-      ];
-      const pinnedSection = pinnedChildSections.length > 0
-        ? [{
-          key: "custom:pinned",
-          label: "Pinned",
-          entries: [],
-          childSections: pinnedChildSections,
-        } satisfies OrganizedThreadSection]
-        : [];
-      return [
-        ...pinnedSection,
-        ...remainingTopLevelSections,
-      ];
+        });
+      return organizeCustomThreadDirectory(looseEntries, groupInputs, defaultThreadOrderKeys);
     }
     const entries = threadSummaries.map((thread) => {
       const conversationId = threadConversationId(thread.threadKey);
@@ -3105,11 +1018,17 @@ export function MessengerContextSidebar() {
           : null,
       };
     });
-    const sections = organizeThreadEntries(entries, effectiveThreadOrganizationRule, agentsById, projectsById);
+    const sections = organizeThreadEntries(
+      entries,
+      effectiveThreadOrganizationRule,
+      agentsById,
+      projectsById,
+      messengerThreadKindLabel,
+    );
     return isManagedThreadGroupRule(effectiveThreadOrganizationRule)
       ? sortManagedThreadSections(sections, effectiveThreadOrganizationRule, projectOrderIds, threadSectionOrderIds)
       : sections;
-  }, [agentsById, conversationsById, customGroupedThreadKeys, customGroups, defaultThreadOrderKeys, effectiveThreadOrganizationRule, locallyReadThreadWatermarks, model.selectedOrganizationId, pendingChatRenameTitles, projectOrderIds, projectsById, threadSectionOrderIds, splitIssueNotifications, visibleThreadSummaries]);
+  }, [agentsById, conversationsById, customGroups, defaultThreadOrderKeys, effectiveThreadOrganizationRule, locallyReadThreadWatermarks, model.selectedOrganizationId, pendingChatRenameTitles, projectOrderIds, projectsById, threadSectionOrderIds, splitIssueNotifications, visibleThreadSummaries]);
   const customEntryGroupByThreadKey = useMemo(() => {
     const map = new Map<string, string | null>();
     for (const group of customGroups) {
@@ -3127,7 +1046,7 @@ export function MessengerContextSidebar() {
     return map;
   }, [customGroups, effectiveThreadOrganizationRule, organizedThreadSections]);
   const renderedThreadCount = useMemo(() => (
-    organizedThreadSections.reduce((count, section) => count + section.entries.length, 0)
+    flattenThreadSectionEntries(organizedThreadSections).length
   ), [organizedThreadSections]);
   const shouldAutoLoadMoreThreadSummaries = renderedThreadCount < MESSENGER_AUTO_LOAD_RENDERED_THREAD_LIMIT;
   const resolveCustomDragIntent = useCallback((activeId: string, overId: string | null): MessengerDragIntent => {
@@ -3151,7 +1070,7 @@ export function MessengerContextSidebar() {
   }, [customEntryGroupByThreadKey, effectiveThreadOrganizationRule]);
   const unreadThreadTargets = useMemo<UnreadThreadTarget[]>(() => {
     const targets: UnreadThreadTarget[] = [];
-    for (const section of organizedThreadSections) {
+    for (const section of flattenThreadSections(organizedThreadSections)) {
       for (const [index, entry] of section.entries.entries()) {
         if (entry.thread.unreadCount > 0) {
           targets.push({
@@ -3211,7 +1130,7 @@ export function MessengerContextSidebar() {
   const threadSectionRequiredVisibleCounts = useMemo(() => {
     if (!isManagedThreadGroupRule(effectiveThreadOrganizationRule) || !activeThreadKey) return new Map<string, number>();
     const required = new Map<string, number>();
-    for (const section of organizedThreadSections) {
+    for (const section of flattenThreadSections(organizedThreadSections)) {
       const index = section.entries.findIndex((entry) => entry.thread.threadKey === activeThreadKey);
       if (index !== -1) required.set(section.key, index + 1);
     }
@@ -3858,6 +1777,10 @@ export function MessengerContextSidebar() {
           renameDraft={renameDraft}
           onRenameDraftChange={setRenameDraft}
           onCommitRename={submitRename}
+          onCancelRename={() => {
+            setRenameDraft("");
+            setRenamingConversationId(null);
+          }}
           onStartRename={() => {
             setRenamingConversationId(conversation.id);
             setRenameDraft(conversation.title);
