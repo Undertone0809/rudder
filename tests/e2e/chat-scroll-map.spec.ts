@@ -110,8 +110,8 @@ test.describe("Chat message scroll map", () => {
     expect(compactRailGeometry).not.toBeNull();
     expect(compactRailGeometry?.railWidth).toBeLessThanOrEqual(20);
     expect(compactRailGeometry?.railHeight).toBeLessThanOrEqual(100);
-    expect(compactRailGeometry?.railLeftOffset).toBeGreaterThanOrEqual(8);
-    expect(compactRailGeometry?.railLeftOffset).toBeLessThanOrEqual(18);
+    expect(compactRailGeometry?.railLeftOffset).toBeGreaterThanOrEqual(-1);
+    expect(compactRailGeometry?.railLeftOffset).toBeLessThanOrEqual(1);
     expect(compactRailGeometry?.railToUserBubbleGap).toBeGreaterThan(80);
 
     const targetMessage = messages[10];

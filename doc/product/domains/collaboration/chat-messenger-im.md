@@ -199,6 +199,10 @@ Product model:
   page of four complete editable prompt suggestions. Selecting a suggestion
   replaces the trigger with the full prompt but does not create a conversation
   or submit work until the operator sends it.
+- Conversations with more than five visible user messages show a compact
+  message map for jumping to earlier user turns. The map samples at most 64
+  markers and previews the user turn plus the following assistant reply without
+  loading or rendering additional transcript evidence.
 
 Flow:
 
@@ -305,11 +309,17 @@ Invariants:
   transition is running; reduced-motion mode moves directly to the same usable
   state. Hidden prompt pages remain mounted so focus, dimensions, and exit
   animation do not depend on remounting the list.
+- The message map excludes superseded, empty, assistant, system, and proposal
+  rows from its user-turn count. Preview excerpts remain bounded and must not
+  cut through a Markdown link or inline-code token.
 
 Evidence:
 
 - Chat E2E covers rich references, skill picker, attachments, draft
   persistence, and attribution navigation.
+- Chat scroll-map focused tests cover the visible-message filter, the 64-marker
+  production-sized ceiling, Markdown-safe bounded previews, assistant context,
+  and jump delegation.
 - Chat assistant tests cover runtime-backed turns.
 - Chat assistant tests cover stopped runtime turns that keep reasoning out of
   partial assistant bodies.
@@ -1569,6 +1579,12 @@ Why:
 
 Product model:
 
+- The default `Latest activity` directory uses the Arc-style custom-group
+  layout. Custom groups and loose thread rows share one activity-ordered
+  directory; the UI does not expose a separate custom-groups mode.
+- Pinned custom groups and loose pinned threads share one visible `Pinned`
+  domain above unpinned groups and loose rows. The section may be absent when
+  no visible thread or group is pinned.
 - A custom group is an organization-scoped, operator-scoped Messenger directory
   section over thread summaries. It is a `threadKey` membership overlay, not
   owning-domain state.
@@ -1597,29 +1613,32 @@ Product model:
 
 Flow:
 
-1. The operator creates a custom group, moves a Messenger item into a group, or
+1. Messenger maps the persisted `Latest activity` preference to the Arc-style
+   custom-group directory while keeping the preference value compatible with
+   existing local state.
+2. The operator creates a custom group, moves a Messenger item into a group, or
    drags an item between groups. Onboarding seed may also create the
    `Getting Started` group for starter work.
-2. Rudder writes the operator-scoped membership using the item's Messenger
+3. Rudder writes the operator-scoped membership using the item's Messenger
    thread key.
-3. When drag/drop merges loose members into a new group, Rudder sends the
+4. When drag/drop merges loose members into a new group, Rudder sends the
    member titles to Fast Intelligence with `feature: "messenger_group_title"`.
    If Fast Intelligence returns a usable title, Rudder stores that title; if it
    fails or returns unusable output, Rudder stores the deterministic fallback
    title from the drop target so grouping still succeeds.
-4. Messenger hydrates the group's members from the same source summaries used
+5. Messenger hydrates the group's members from the same source summaries used
    for loose Messenger rows.
-5. Selecting a grouped member opens the same destination as selecting the loose
+6. Selecting a grouped member opens the same destination as selecting the loose
    row and applies the same read-marker behavior.
-6. The operator may choose `Regenerate title` from the group actions menu.
+7. The operator may choose `Regenerate title` from the group actions menu.
    Rudder rebuilds title-generation context from current group member titles,
    calls Fast Intelligence, and updates only the group name when generation
    succeeds.
-7. Actions that change a member's visible summary, including mark read/unread,
+8. Actions that change a member's visible summary, including mark read/unread,
    pin/unpin, archive/delete where supported, and preview-changing source
    events, update or refetch the group's hydrated rows so grouped badges do not
    diverge from loose rows.
-8. The operator may reorder custom groups within the pinned or unpinned domain.
+9. The operator may reorder custom groups within the pinned or unpinned domain.
    Rudder persists that domain-local order and restores it on reload without
    moving the group across the pin boundary.
 
@@ -1627,6 +1646,9 @@ Invariants:
 
 - Custom groups must not redefine chat, issue, approval, run, budget, or
   join-request state. They only organize and hydrate Messenger summaries.
+- `Latest activity` must not render the superseded `Pinned`, `Today`, and
+  `Recent` managed-section layout. It keeps the activity ordering while custom
+  groups remain first-class directory sections.
 - Grouped issue rows must clear the same issue read markers as loose issue
   rows when opened. Split issue rows and aggregate issue rows must not require a
   different user gesture to become read.
@@ -1674,7 +1696,9 @@ Evidence:
 - Messenger E2E covers aggregate issue grouping, split issue grouping,
   synthetic membership, drag/drop grouping, row-action group creation, and
   custom group pin/order behavior, including pinned-domain group reordering and
-  pinned groups rendering above loose pinned threads after reload.
+  pinned groups rendering above loose pinned threads after reload. It also
+  covers the default Arc-style layout and the absence of the superseded
+  `Pinned`, `Today`, and `Recent` managed sections.
 
 ## IM.FEISHU.001
 

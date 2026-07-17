@@ -71,6 +71,11 @@ import {
 } from "../services/title-generation.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import {
+  createChatBackgroundRuntime,
+  type ChatBackgroundRuntime,
+  type ChatBackgroundTimer,
+} from "./chat-background-runtime.js";
 import { wakeIssueAssigneeAfterChatConversion } from "./chat-issue-assignment-wakeup.js";
 import { registerChatStreamRoutes } from "./chats.stream-routes.js";
 
@@ -80,7 +85,11 @@ function chatVisibleOutputAdmissionClosed(error: unknown) {
     && error.message === "Chat-visible output admission is closed for this generation";
 }
 
-export function chatRoutes(db: Db, storage: StorageService) {
+export function chatRoutes(
+  db: Db,
+  storage: StorageService,
+  backgroundRuntime: ChatBackgroundRuntime = createChatBackgroundRuntime(),
+) {
   const router = Router();
   const svc = chatService(db);
   const organizationsSvc = organizationService(db);
@@ -1150,33 +1159,26 @@ export function chatRoutes(db: Db, storage: StorageService) {
   const queueWorkerConcurrency = 4;
   const queueWorkerEnabled = process.env.NODE_ENV !== "test"
     || process.env.RUDDER_CHAT_QUEUE_WORKER_TEST === "true";
-  let queueDrainPromise: Promise<void> | null = null;
-  let queueWakeScheduled = false;
-  let queueWakeRequested = false;
   const runningServerQueueTasks = new Set<Promise<void>>();
   const terminalProjectorId = `chat-terminal:${process.pid}:${randomUUID()}`;
-  let terminalProjectionPromise: Promise<void> | null = null;
-  let terminalProjectionScheduled = false;
-  let terminalProjectionRequested = false;
-  let terminalProjectionRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  let terminalProjectionRetryTimer: ChatBackgroundTimer | null = null;
   let terminalProjectionRetryAt = Number.POSITIVE_INFINITY;
 
   function scheduleTerminalProjectorAt(wakeAt: Date) {
-    if (!queueWorkerEnabled) return;
+    if (!queueWorkerEnabled || !backgroundRuntime.acceptingWork) return;
     const wakeAtMs = Math.max(Date.now(), wakeAt.getTime());
     if (terminalProjectionRetryTimer && terminalProjectionRetryAt <= wakeAtMs) return;
-    if (terminalProjectionRetryTimer) clearTimeout(terminalProjectionRetryTimer);
+    if (terminalProjectionRetryTimer) backgroundRuntime.clearTimer(terminalProjectionRetryTimer);
     terminalProjectionRetryAt = wakeAtMs;
-    terminalProjectionRetryTimer = setTimeout(() => {
+    terminalProjectionRetryTimer = backgroundRuntime.setTimeout(() => {
       terminalProjectionRetryTimer = null;
       terminalProjectionRetryAt = Number.POSITIVE_INFINITY;
       wakeTerminalProjector();
     }, Math.max(0, wakeAtMs - Date.now()));
-    terminalProjectionRetryTimer.unref?.();
   }
 
   async function drainTerminalProjections() {
-    while (true) {
+    while (backgroundRuntime.acceptingWork) {
       const claim = await svc.generationProtocol.claimTerminalProjection({
         workerId: terminalProjectorId,
         leaseMs: 30_000,
@@ -1186,6 +1188,9 @@ export function chatRoutes(db: Db, storage: StorageService) {
         if (nextWakeAt) scheduleTerminalProjectorAt(nextWakeAt);
         return;
       }
+      // A claim requested before close may resolve after admission shuts. The
+      // terminal protocol has no release operation, so this tracked drain must
+      // finish that claim while close waits instead of leaking its lease.
       try {
         const finalStatus = typeof claim.payload.finalStatus === "string"
           ? claim.payload.finalStatus
@@ -1226,31 +1231,19 @@ export function chatRoutes(db: Db, storage: StorageService) {
     }
   }
 
+  const terminalProjector = backgroundRuntime.createCoalescingTask(
+    drainTerminalProjections,
+    (error) => logger.warn({ err: error }, "chat terminal projection drain failed"),
+  );
+
   function wakeTerminalProjector() {
-    if (!queueWorkerEnabled) return;
+    if (!queueWorkerEnabled || !backgroundRuntime.acceptingWork) return;
     if (terminalProjectionRetryTimer) {
-      clearTimeout(terminalProjectionRetryTimer);
+      backgroundRuntime.clearTimer(terminalProjectionRetryTimer);
       terminalProjectionRetryTimer = null;
       terminalProjectionRetryAt = Number.POSITIVE_INFINITY;
     }
-    if (terminalProjectionPromise || terminalProjectionScheduled) {
-      terminalProjectionRequested = true;
-      return;
-    }
-    terminalProjectionScheduled = true;
-    setTimeout(() => {
-      terminalProjectionScheduled = false;
-      if (terminalProjectionPromise) return;
-      terminalProjectionPromise = drainTerminalProjections()
-        .catch((error) => logger.warn({ err: error }, "chat terminal projection drain failed"))
-        .finally(() => {
-          terminalProjectionPromise = null;
-          if (terminalProjectionRequested) {
-            terminalProjectionRequested = false;
-            wakeTerminalProjector();
-          }
-        });
-    }, 0).unref?.();
+    terminalProjector.wake();
   }
 
   async function runServerQueuedMessage(
@@ -1284,13 +1277,15 @@ export function chatRoutes(db: Db, storage: StorageService) {
     }
 
     const actor = getActorInfo(request);
-    const abortController = new AbortController();
+    const managedAbort = backgroundRuntime.manageAbortController();
+    const abortController = managedAbort.controller;
     const releaseGeneration = claimChatGeneration(
       conversation.id,
       abortController,
       claim.generationId,
     );
     if (!releaseGeneration) {
+      managedAbort.release();
       await svc.releaseServerQueuedMessageClaim({
         itemId: claim.item.id,
         generationId: claim.generationId,
@@ -1322,13 +1317,12 @@ export function chatRoutes(db: Db, storage: StorageService) {
         leaseRenewing = false;
       }
     };
-    const leaseTimer = setInterval(() => {
-      void renewLease().catch((error) => {
+    const leaseTimer = backgroundRuntime.setInterval(() => {
+      return renewLease().catch((error) => {
         leaseLost = true;
         abortController.abort(error);
       });
     }, Math.floor(queueLeaseMs / 3));
-    leaseTimer.unref?.();
 
     let terminalStatus: "completed" | "failed" | "stopped" | "aborted" = "failed";
     let terminalReason: string | null = null;
@@ -1529,7 +1523,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
         }
       }
     } finally {
-      clearInterval(leaseTimer);
+      backgroundRuntime.clearTimer(leaseTimer);
       if (!leaseLost) {
         const latestGeneration = await svc.getLatestGeneration(conversation.id).catch(() => null);
         const terminalEvidence = latestGeneration?.id === claim.generationId
@@ -1572,67 +1566,66 @@ export function chatRoutes(db: Db, storage: StorageService) {
         }).catch(() => null);
       }
       releaseGeneration();
+      managedAbort.release();
     }
   }
 
   async function drainServerQueue() {
     await svc.recoverExpiredServerQueueClaims();
-    while (runningServerQueueTasks.size < queueWorkerConcurrency) {
+    while (
+      backgroundRuntime.acceptingWork
+      && runningServerQueueTasks.size < queueWorkerConcurrency
+    ) {
       const claim = await svc.claimNextServerQueuedMessage({
         workerId: queueWorkerId,
         leaseMs: queueLeaseMs,
       });
       if (!claim) return;
+      if (!backgroundRuntime.acceptingWork) {
+        await svc.releaseServerQueuedMessageClaim({
+          itemId: claim.item.id,
+          generationId: claim.generationId,
+          leaseToken: claim.leaseToken,
+          leaseEpoch: claim.leaseEpoch,
+          reason: "chat_background_runtime_closing",
+        });
+        return;
+      }
       let task!: Promise<void>;
-      task = runServerQueuedMessage(claim)
+      task = backgroundRuntime.track(runServerQueuedMessage(claim)
         .catch((error) => {
           logger.warn({ err: error, queuedMessageId: claim.item.id }, "server-owned chat continuation crashed");
         })
         .finally(() => {
           runningServerQueueTasks.delete(task);
           wakeServerQueue();
-        });
+        }));
       runningServerQueueTasks.add(task);
     }
   }
 
+  const serverQueueDrain = backgroundRuntime.createCoalescingTask(
+    drainServerQueue,
+    (error) => logger.warn({ err: error }, "server-owned chat queue drain failed"),
+  );
+
   function wakeServerQueue() {
-    if (!queueWorkerEnabled) return;
-    if (queueDrainPromise || queueWakeScheduled) {
-      queueWakeRequested = true;
-      return;
-    }
-    queueWakeScheduled = true;
-    setTimeout(() => {
-      queueWakeScheduled = false;
-      if (queueDrainPromise) return;
-      queueDrainPromise = drainServerQueue()
-        .catch((error) => {
-          logger.warn({ err: error }, "server-owned chat queue drain failed");
-        })
-        .finally(() => {
-          queueDrainPromise = null;
-          if (queueWakeRequested) {
-            queueWakeRequested = false;
-            wakeServerQueue();
-          }
-        });
-    }, 0).unref?.();
+    if (!queueWorkerEnabled || !backgroundRuntime.acceptingWork) return;
+    serverQueueDrain.wake();
   }
 
   if (queueWorkerEnabled) {
     const recoverChatControlOwners = () => {
-      void svc.generationProtocol.recoverStaleControlOwners({})
+      if (!backgroundRuntime.acceptingWork) return;
+      return svc.generationProtocol.recoverStaleControlOwners({})
         .then(() => {
           wakeTerminalProjector();
           wakeServerQueue();
         })
         .catch((error) => logger.warn({ err: error }, "chat control recovery failed"));
     };
-    setTimeout(() => {
-      recoverChatControlOwners();
-    }, 0).unref?.();
-    setInterval(recoverChatControlOwners, 10_000).unref?.();
+    backgroundRuntime.setTimeout(recoverChatControlOwners, 0);
+    backgroundRuntime.setInterval(recoverChatControlOwners, 10_000);
   }
 
   router.get("/orgs/:orgId/chats", async (req, res) => {

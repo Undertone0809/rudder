@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "scope": "declared-only",
+  "productionRoots": ["server/src", "ui/src", "desktop/src", "cli/src", "packages"],
+  "aliases": {
+    "@/": "ui/src/"
+  },
+  "domains": [
+    {
+      "id": "collaboration-messenger-models",
+      "area": "collaboration",
+      "include": [
+        "ui/src/lib/messenger-preferences.ts",
+        "ui/src/lib/messenger-thread-labels.ts",
+        "ui/src/lib/messenger-thread-organization.ts"
+      ],
+      "publicEntrypoints": [
+        "ui/src/lib/messenger-preferences.ts",
+        "ui/src/lib/messenger-thread-labels.ts",
+        "ui/src/lib/messenger-thread-organization.ts"
+      ],
+      "entrypoints": {}
+    },
+    {
+      "id": "execution-runtime-contracts",
+      "area": "execution",
+      "include": ["packages/agent-runtime-utils/src/**/*.ts"],
+      "publicEntrypoints": [
+        "packages/agent-runtime-utils/src/index.ts",
+        "packages/agent-runtime-utils/src/git-identity.ts",
+        "packages/agent-runtime-utils/src/rudder-mcp-fingerprint.ts",
+        "packages/agent-runtime-utils/src/rudder-mcp-preflight.ts",
+        "packages/agent-runtime-utils/src/rudder-mcp-server.ts",
+        "packages/agent-runtime-utils/src/server-utils.ts"
+      ],
+      "specifierRoot": {
+        "prefix": "@rudderhq/agent-runtime-utils",
+        "path": "packages/agent-runtime-utils/src"
+      },
+      "entrypoints": {
+        "@rudderhq/agent-runtime-utils": "packages/agent-runtime-utils/src/index.ts",
+        "@rudderhq/agent-runtime-utils/git-identity": "packages/agent-runtime-utils/src/git-identity.ts",
+        "@rudderhq/agent-runtime-utils/rudder-mcp-fingerprint": "packages/agent-runtime-utils/src/rudder-mcp-fingerprint.ts",
+        "@rudderhq/agent-runtime-utils/rudder-mcp-preflight": "packages/agent-runtime-utils/src/rudder-mcp-preflight.ts",
+        "@rudderhq/agent-runtime-utils/rudder-mcp-server": "packages/agent-runtime-utils/src/rudder-mcp-server.ts",
+        "@rudderhq/agent-runtime-utils/server-utils": "packages/agent-runtime-utils/src/server-utils.ts"
+      }
+    },
+    {
+      "id": "control-plane-run-intelligence",
+      "area": "control-plane",
+      "include": ["packages/run-intelligence-core/src/**/*.ts"],
+      "publicEntrypoints": ["packages/run-intelligence-core/src/index.ts"],
+      "specifierRoot": {
+        "prefix": "@rudderhq/run-intelligence-core",
+        "path": "packages/run-intelligence-core/src"
+      },
+      "entrypoints": {
+        "@rudderhq/run-intelligence-core": "packages/run-intelligence-core/src/index.ts"
+      }
+    }
+  ],
+  "observed": [
+    {
+      "area": "collaboration",
+      "paths": ["server/src/routes/chats*.ts", "server/src/services/chats*.ts", "server/src/services/messenger*.ts", "ui/src/components/messenger/**/*.tsx"],
+      "reason": "Chat transport, orchestration, and Messenger views are still migrating toward stable facades."
+    },
+    {
+      "area": "execution",
+      "paths": ["packages/agent-runtimes/**", "server/src/agent-runtimes/**", "ui/src/agent-runtimes/**"],
+      "reason": "Runtime adapters expose several intentional environment-specific entrypoints and are not yet one enforceable domain."
+    },
+    {
+      "area": "control-plane",
+      "paths": ["server/src/services/runtime-kernel/**", "server/src/bootstrap/**", "desktop/src/**"],
+      "reason": "Lifecycle ownership is under active extraction; declaring a single facade now would misrepresent current dependencies."
+    }
+  ]
+}

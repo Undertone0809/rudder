@@ -4,7 +4,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __clearLibraryEntryMetadataCacheForTests, __setLibraryEntryMetadataCacheForTests } from "../lib/library-entry-cache";
-import { OrganizationWorkspaceFilesSidebar, OrganizationWorkspaces, WorkspaceLaunchTargetIcon } from "./OrganizationWorkspaces";
+import { OrganizationWorkspaces, WorkspaceLaunchTargetIcon } from "./OrganizationWorkspaces";
+import { OrganizationWorkspaceFilesSidebar } from "./organization-workspaces/OrganizationWorkspaceFilesSidebar";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }

@@ -3960,7 +3960,7 @@ describe("Chat message scroll map", () => {
         message({
           id: "token-assistant",
           role: "assistant",
-          body: `The agent reply mentions [Heidi](${buildAgentMentionHref("agent-123", "code")}) and keeps \`agent://\` as code only.`,
+          body: `The agent reply tracks [ZST-789](${buildIssueMentionHref("issue-789", "ZST-789", null, "in_progress")}) and keeps \`agent://\` as code only.`,
           replyingAgentId: "agent-1",
           createdAt: new Date("2026-05-12T10:14:00.000Z"),
           updatedAt: new Date("2026-05-12T10:14:00.000Z"),

@@ -40,11 +40,20 @@ function runAudit(root, args = []) {
   });
 }
 
-function writeBaseline(repo, oversizedFiles) {
+function writeBaseline(repo, oversizedFiles, { addMetadata = true } = {}) {
   const baselinePath = path.join(repo, "architecture-audit-baseline.json");
+  const entries = addMetadata
+    ? oversizedFiles.map((entry) => ({
+        owner: "fixture-owner",
+        rationale: "fixture debt retained for ratchet coverage",
+        target: "reduce below the fixture threshold",
+        expiry: "2999-12-31",
+        ...entry,
+      }))
+    : oversizedFiles;
   fs.writeFileSync(
     baselinePath,
-    `${JSON.stringify({ maxLines: 5, oversizedFiles }, null, 2)}\n`,
+    `${JSON.stringify({ maxLines: 5, oversizedFiles: entries }, null, 2)}\n`,
   );
   return baselinePath;
 }
@@ -170,6 +179,69 @@ test("architecture audit accepts oversized files that stay at or below baseline"
   }
 });
 
+test("architecture audit rejects missing and expired debt exception metadata", () => {
+  const repo = makeFixtureRepo();
+
+  try {
+    const baselinePath = writeBaseline(
+      repo,
+      [
+        {
+          path: "ui/src/pages/HugePage.tsx",
+          lines: 8,
+          owner: "",
+          rationale: "",
+          target: "",
+          expiry: "2000-01-01",
+        },
+      ],
+      { addMetadata: false },
+    );
+
+    const result = runAudit(repo, ["--baseline", baselinePath, "--fail-on-regression"]);
+    assert.equal(result.status, 1);
+    const output = JSON.parse(result.stdout);
+    assert.deepEqual(output.governanceViolations, [
+      {
+        path: "ui/src/pages/HugePage.tsx",
+        reason: "oversized debt exception expired on 2000-01-01",
+      },
+      {
+        path: "ui/src/pages/HugePage.tsx",
+        reason: "oversized debt exception is missing owner",
+      },
+      {
+        path: "ui/src/pages/HugePage.tsx",
+        reason: "oversized debt exception is missing rationale",
+      },
+      {
+        path: "ui/src/pages/HugePage.tsx",
+        reason: "oversized debt exception is missing target",
+      },
+    ]);
+  } finally {
+    fs.rmSync(repo, { force: true, recursive: true });
+  }
+});
+
+test("architecture audit requires an exception for every current oversized file", () => {
+  const repo = makeFixtureRepo();
+
+  try {
+    const baselinePath = writeBaseline(repo, []);
+    const result = runAudit(repo, ["--baseline", baselinePath, "--fail-on-regression"]);
+    assert.equal(result.status, 1);
+    assert.deepEqual(JSON.parse(result.stdout).governanceViolations, [
+      {
+        path: "ui/src/pages/HugePage.tsx",
+        reason: "oversized production file is missing a debt exception",
+      },
+    ]);
+  } finally {
+    fs.rmSync(repo, { force: true, recursive: true });
+  }
+});
+
 test("comparison mode reports historical baseline debt without blocking unchanged oversized files", () => {
   const repo = makeFixtureRepo();
 
@@ -200,6 +272,90 @@ test("comparison mode reports historical baseline debt without blocking unchange
     ]);
     assert.equal(output.comparisonRef, baseRef);
     assert.equal(output.comparisonBase, baseRef);
+  } finally {
+    fs.rmSync(repo, { force: true, recursive: true });
+  }
+});
+
+test("comparison mode requires sentinel allowances for newly inventoried debt", () => {
+  const repo = makeFixtureRepo();
+
+  try {
+    const baselinePath = writeBaseline(repo, []);
+    const baseRef = initializeGitFixture(repo);
+    writeBaseline(repo, [{ path: "ui/src/pages/HugePage.tsx", lines: 8 }]);
+
+    const result = runAudit(repo, [
+      "--baseline",
+      baselinePath,
+      "--compare-ref",
+      baseRef,
+      "--fail-on-regression",
+    ]);
+    assert.equal(result.status, 1);
+    assert.deepEqual(JSON.parse(result.stdout).governanceViolations, [
+      {
+        path: "ui/src/pages/HugePage.tsx",
+        reason: "newly inventoried debt must use the 6-line sentinel allowance",
+      },
+    ]);
+  } finally {
+    fs.rmSync(repo, { force: true, recursive: true });
+  }
+});
+
+test("comparison mode accepts metadata-only enrichment of a clean baseline entry", () => {
+  const repo = makeFixtureRepo();
+
+  try {
+    const baselinePath = writeBaseline(
+      repo,
+      [{ path: "ui/src/pages/HugePage.tsx", lines: 8 }],
+      { addMetadata: false },
+    );
+    const baseRef = initializeGitFixture(repo);
+    writeBaseline(repo, [{ path: "ui/src/pages/HugePage.tsx", lines: 8 }]);
+
+    const result = runAudit(repo, [
+      "--baseline",
+      baselinePath,
+      "--compare-ref",
+      baseRef,
+      "--fail-on-regression",
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout).governanceViolations, []);
+  } finally {
+    fs.rmSync(repo, { force: true, recursive: true });
+  }
+});
+
+test("comparison mode rejects a per-path baseline allowance increase", () => {
+  const repo = makeFixtureRepo();
+
+  try {
+    const baselinePath = writeBaseline(
+      repo,
+      [{ path: "ui/src/pages/HugePage.tsx", lines: 7 }],
+      { addMetadata: false },
+    );
+    const baseRef = initializeGitFixture(repo);
+    writeBaseline(repo, [{ path: "ui/src/pages/HugePage.tsx", lines: 8 }]);
+
+    const result = runAudit(repo, [
+      "--baseline",
+      baselinePath,
+      "--compare-ref",
+      baseRef,
+      "--fail-on-regression",
+    ]);
+    assert.equal(result.status, 1);
+    assert.deepEqual(JSON.parse(result.stdout).governanceViolations, [
+      {
+        path: "ui/src/pages/HugePage.tsx",
+        reason: "exception allowance increased from 7 to 8",
+      },
+    ]);
   } finally {
     fs.rmSync(repo, { force: true, recursive: true });
   }

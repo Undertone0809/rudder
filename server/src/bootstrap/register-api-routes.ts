@@ -9,6 +9,7 @@ import { assetRoutes } from "../routes/assets.js";
 import { automationRoutes } from "../routes/automations.js";
 import { browserRoutes } from "../routes/browser.js";
 import { calendarRoutes } from "../routes/calendar.js";
+import type { ChatBackgroundRuntime } from "../routes/chat-background-runtime.js";
 import { chatRoutes } from "../routes/chats.js";
 import { costRoutes } from "../routes/costs.js";
 import { dashboardRoutes } from "../routes/dashboard.js";
@@ -37,6 +38,7 @@ export function registerApiRoutes(
   opts: RudderAppOptions,
   pluginRuntime: PluginHostRuntime,
   workspacePreview?: WorkspaceWebPreviewRuntime,
+  chatBackgroundRuntime?: ChatBackgroundRuntime,
 ) {
   const api = Router();
 
@@ -61,7 +63,7 @@ export function registerApiRoutes(
   api.use(onboardingRoutes(db));
   api.use(issueRoutes(db, opts.storageService));
   api.use(messengerRoutes(db));
-  api.use(chatRoutes(db, opts.storageService));
+  api.use(chatRoutes(db, opts.storageService, chatBackgroundRuntime));
   api.use(automationRoutes(db));
   api.use(calendarRoutes(db));
   api.use(runWorkspaceRoutes(db));

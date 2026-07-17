@@ -107,10 +107,11 @@ fixture when the real workflow depends on long lists.
 
 ## Architecture Ratchet
 
-CI runs the architecture audit in a separate Ubuntu job without installing
-workspace dependencies. The job fetches full Git history, runs the audit's
-fixture tests, and rejects production files that newly cross or grow beyond the
-line-count ceiling relative to an event-specific commit:
+CI runs the architecture checks in a separate Ubuntu job without installing
+workspace dependencies. The job fetches full Git history, runs zero-dependency
+fixture tests, validates the oversized-debt inventory, checks declared domain
+cycles and facade bypasses, and rejects production files that newly cross or
+grow beyond the line-count ceiling relative to an event-specific commit:
 
 - pull requests compare to the pull request base SHA;
 - pushes to `main` compare to the event's `before` SHA;
@@ -123,13 +124,36 @@ locally, use a concrete commit SHA or another ref that resolves to the intended
 clean base:
 
 ```sh
-node --test scripts/architecture-audit.test.mjs
-node scripts/architecture-audit.mjs --compare-ref <base-commit> --fail-on-regression
+pnpm architecture:audit:test
+pnpm architecture:boundaries
+node scripts/architecture-audit.mjs \
+  --baseline scripts/architecture-audit-baseline.json \
+  --compare-ref <base-commit> \
+  --fail-on-regression
 ```
 
-The static baseline remains useful for debt inventory. Required CI acceptance
-uses the clean comparison ref so unchanged historical debt stays visible
-without blocking unrelated work.
+`pnpm architecture:audit:check` is the convenience form for branches whose
+clean target is `origin/main`. Use the explicit command above for stacked
+branches or another target.
+
+The static baseline is the complete oversized-debt exception inventory. Every
+current production file over the ceiling needs `owner`, `rationale`, `target`,
+and `expiry` metadata. Missing, duplicate, stale, or expired entries fail the
+check. In comparison mode an exception allowance cannot increase above the
+same path's clean-baseline allowance, so editing the inventory upward cannot
+hide debt introduced by the proposed change. A newly discovered historical oversized path uses the
+`maxLines + 1` sentinel allowance instead of copying its current size. The clean
+comparison ref, rather than old inventory line counts, decides whether
+unchanged historical debt blocks CI; baseline regressions remain visible in the
+report as burn-down inventory.
+
+`scripts/architecture-boundaries.json` intentionally uses
+`scope: declared-only`. Declared Collaboration, Execution, and Control Plane
+modules have enforced cycle and public-facade rules. Paths listed under
+`observed` are migration inventory only; a green check does not claim that
+those undeclared areas or the whole repository have zero bypasses. Add a domain
+to enforced scope only after its public entrypoints are stable, and include a
+fixture when changing checker behavior.
 
 ## Plan Docs
 

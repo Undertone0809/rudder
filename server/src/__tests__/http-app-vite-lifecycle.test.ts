@@ -26,6 +26,10 @@ vi.mock("../bootstrap/register-api-routes.js", () => ({
 }));
 
 import { createHttpApp, resolveViteHmrPort } from "../bootstrap/create-http-app.js";
+import { registerApiRoutes } from "../bootstrap/register-api-routes.js";
+import { logger } from "../middleware/logger.js";
+import type { ChatBackgroundRuntime } from "../routes/chat-background-runtime.js";
+import { pluginUiStaticRoutes } from "../routes/plugin-ui-static.js";
 
 async function reserveEphemeralPort(): Promise<number> {
   const server = createServer();
@@ -63,6 +67,59 @@ const baseOpts = {
 } as const;
 
 describe("createHttpApp Vite lifecycle", () => {
+  it("closes the Chat runtime when API route registration fails", async () => {
+    vi.mocked(registerApiRoutes).mockImplementationOnce((_db, _opts, _plugins, _preview, runtime) => {
+      expect(runtime?.acceptingWork).toBe(true);
+      throw new Error("route registration failed");
+    });
+
+    await expect(createHttpApp(
+      {} as never,
+      { ...baseOpts, uiMode: "none", serverPort: 3100 } as never,
+      {} as never,
+    )).rejects.toThrow("route registration failed");
+
+    const runtime = vi.mocked(registerApiRoutes).mock.calls.at(-1)?.[4] as ChatBackgroundRuntime;
+    expect(runtime.acceptingWork).toBe(false);
+  });
+
+  it("closes the Chat runtime when post-registration route setup fails", async () => {
+    vi.mocked(pluginUiStaticRoutes).mockImplementationOnce(() => {
+      throw new Error("plugin UI setup failed");
+    });
+
+    await expect(createHttpApp(
+      {} as never,
+      { ...baseOpts, uiMode: "none", serverPort: 3100 } as never,
+      {} as never,
+    )).rejects.toThrow("plugin UI setup failed");
+
+    const runtime = vi.mocked(registerApiRoutes).mock.calls.at(-1)?.[4] as ChatBackgroundRuntime;
+    expect(runtime.acceptingWork).toBe(false);
+  });
+
+  it("preserves the startup error when post-registration cleanup also fails", async () => {
+    const startupError = new Error("plugin UI setup failed");
+    const cleanupError = new Error("Chat runtime close failed");
+    const logError = vi.spyOn(logger, "error").mockImplementation(() => undefined);
+    vi.mocked(pluginUiStaticRoutes).mockImplementationOnce(() => {
+      const runtime = vi.mocked(registerApiRoutes).mock.calls.at(-1)?.[4] as ChatBackgroundRuntime;
+      runtime.close = vi.fn().mockRejectedValue(cleanupError);
+      throw startupError;
+    });
+
+    await expect(createHttpApp(
+      {} as never,
+      { ...baseOpts, uiMode: "none", serverPort: 3100 } as never,
+      {} as never,
+    )).rejects.toBe(startupError);
+    expect(logError).toHaveBeenCalledWith(
+      { err: cleanupError, startupError },
+      "HTTP app startup rollback failed",
+    );
+    logError.mockRestore();
+  });
+
   it("closes the owned HMR listener idempotently so the same port can be rebound", async () => {
     const hmrPort = await reserveEphemeralPort();
     expect(hmrPort).toBeGreaterThan(11_023);
@@ -74,12 +131,16 @@ describe("createHttpApp Vite lifecycle", () => {
       { ...baseOpts, serverPort } as never,
       {} as never,
     );
+    const firstChatRuntime = vi.mocked(registerApiRoutes).mock.calls.at(-1)?.[4] as ChatBackgroundRuntime;
+    expect(firstChatRuntime.acceptingWork).toBe(true);
     expect(await canBind(hmrPort)).toBe(false);
 
     const firstClose = first.close();
     const duplicateClose = first.close();
     expect(duplicateClose).toBe(firstClose);
     await firstClose;
+    expect(firstChatRuntime.acceptingWork).toBe(false);
+    expect(firstChatRuntime.setTimeout(vi.fn(), 0)).toBeNull();
     expect(await canBind(hmrPort)).toBe(true);
 
     const second = await createHttpApp(
@@ -87,8 +148,31 @@ describe("createHttpApp Vite lifecycle", () => {
       { ...baseOpts, serverPort } as never,
       {} as never,
     );
+    const secondChatRuntime = vi.mocked(registerApiRoutes).mock.calls.at(-1)?.[4] as ChatBackgroundRuntime;
+    expect(secondChatRuntime).not.toBe(firstChatRuntime);
+    expect(secondChatRuntime.acceptingWork).toBe(true);
     expect(await canBind(hmrPort)).toBe(false);
     await second.close();
+    expect(secondChatRuntime.acceptingWork).toBe(false);
+    expect(await canBind(hmrPort)).toBe(true);
+  });
+
+  it("closes Vite even when the Chat runtime disposer fails", async () => {
+    const hmrPort = await reserveEphemeralPort();
+    const serverPort = hmrPort - 10_000;
+    const cleanupError = new Error("Chat runtime close failed");
+    const handle = await createHttpApp(
+      {} as never,
+      { ...baseOpts, serverPort } as never,
+      {} as never,
+    );
+    const runtime = vi.mocked(registerApiRoutes).mock.calls.at(-1)?.[4] as ChatBackgroundRuntime;
+    runtime.close = vi.fn().mockImplementation(() => {
+      throw cleanupError;
+    });
+
+    expect(await canBind(hmrPort)).toBe(false);
+    await expect(handle.close()).rejects.toBe(cleanupError);
     expect(await canBind(hmrPort)).toBe(true);
   });
 });

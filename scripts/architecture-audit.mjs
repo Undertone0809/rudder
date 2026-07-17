@@ -119,6 +119,16 @@ function auditArchitecture(options) {
     ? compareOversizedFilesToRef(root, oversizedFiles, options.compareRef, options.maxLines)
     : null;
   const regressions = comparison?.regressions ?? baselineRegressions;
+  const governanceViolations = baseline
+    ? validateDebtInventory({
+        baseline,
+        baselinePath: options.baseline,
+        comparisonBase: comparison?.baseRef ?? null,
+        maxLines: options.maxLines,
+        oversizedFiles,
+        root,
+      })
+    : [];
 
   return {
     advisoryListLikeFiles,
@@ -126,6 +136,7 @@ function auditArchitecture(options) {
     baselinePath: options.baseline,
     comparisonBase: comparison?.baseRef ?? null,
     comparisonRef: options.compareRef,
+    governanceViolations,
     maxLines: options.maxLines,
     oversizedFiles,
     regressions,
@@ -281,7 +292,108 @@ function readBaseline(filePath) {
     oversizedFileLines.set(entry.path, entry.lines);
   }
 
-  return { oversizedFileLines };
+  return { entries, maxLines: parsed?.maxLines, oversizedFileLines };
+}
+
+function validateDebtInventory({ baseline, baselinePath, comparisonBase, maxLines, oversizedFiles, root }) {
+  const violations = [];
+  const entriesByPath = new Map();
+  const today = new Date().toISOString().slice(0, 10);
+
+  if (baseline.maxLines !== maxLines) {
+    violations.push({
+      path: null,
+      reason: `baseline maxLines must equal the enforced ${maxLines}-line threshold`,
+    });
+  }
+
+  for (const entry of baseline.entries) {
+    const entryPath = typeof entry?.path === "string" ? entry.path : null;
+    if (!entryPath) {
+      violations.push({ path: null, reason: "oversized debt exception is missing path" });
+      continue;
+    }
+    if (entriesByPath.has(entryPath)) {
+      violations.push({ path: entryPath, reason: "duplicate oversized debt exception" });
+      continue;
+    }
+    entriesByPath.set(entryPath, entry);
+
+    if (!Number.isInteger(entry.lines) || entry.lines <= maxLines) {
+      violations.push({ path: entryPath, reason: `lines must be an integer above ${maxLines}` });
+    }
+    for (const field of ["owner", "rationale", "target"]) {
+      if (typeof entry[field] !== "string" || entry[field].trim().length === 0) {
+        violations.push({ path: entryPath, reason: `oversized debt exception is missing ${field}` });
+      }
+    }
+    const expiryTimestamp = typeof entry.expiry === "string" ? Date.parse(`${entry.expiry}T00:00:00Z`) : Number.NaN;
+    const normalizedExpiry = Number.isNaN(expiryTimestamp)
+      ? null
+      : new Date(expiryTimestamp).toISOString().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.expiry ?? "") || normalizedExpiry !== entry.expiry) {
+      violations.push({ path: entryPath, reason: "expiry must use YYYY-MM-DD" });
+    } else if (entry.expiry < today) {
+      violations.push({ path: entryPath, reason: `oversized debt exception expired on ${entry.expiry}` });
+    }
+
+  }
+
+  const oversizedPaths = new Set(oversizedFiles.map((entry) => entry.path));
+  for (const entry of oversizedFiles) {
+    if (!entriesByPath.has(entry.path)) {
+      violations.push({ path: entry.path, reason: "oversized production file is missing a debt exception" });
+    }
+  }
+  for (const entryPath of entriesByPath.keys()) {
+    if (!oversizedPaths.has(entryPath)) {
+      violations.push({ path: entryPath, reason: "stale debt exception for a file at or below the threshold" });
+    }
+  }
+
+  if (comparisonBase) {
+    const relativeBaselinePath = toPosix(path.relative(root, baselinePath));
+    if (!relativeBaselinePath.startsWith("../") && relativeBaselinePath !== "..") {
+      const cleanBaselineContent = readGitFile(root, comparisonBase, relativeBaselinePath);
+      if (cleanBaselineContent !== null) {
+        try {
+          const cleanBaseline = JSON.parse(cleanBaselineContent);
+          if (Number.isInteger(cleanBaseline?.maxLines) && baseline.maxLines > cleanBaseline.maxLines) {
+            violations.push({
+              path: null,
+              reason: `baseline maxLines increased from ${cleanBaseline.maxLines} to ${baseline.maxLines}`,
+            });
+          }
+          const cleanEntryLines = new Map(
+            (Array.isArray(cleanBaseline?.oversizedFiles) ? cleanBaseline.oversizedFiles : [])
+              .filter((entry) => typeof entry?.path === "string" && Number.isInteger(entry.lines))
+              .map((entry) => [entry.path, entry.lines]),
+          );
+          for (const entry of baseline.entries) {
+            if (typeof entry?.path !== "string" || !Number.isInteger(entry.lines)) continue;
+            const cleanAllowance = cleanEntryLines.get(entry.path);
+            if (cleanAllowance !== undefined && entry.lines > cleanAllowance) {
+              violations.push({
+                path: entry.path,
+                reason: `exception allowance increased from ${cleanAllowance} to ${entry.lines}`,
+              });
+            } else if (cleanAllowance === undefined && entry.lines !== maxLines + 1) {
+              violations.push({
+                path: entry.path,
+                reason: `newly inventoried debt must use the ${maxLines + 1}-line sentinel allowance`,
+              });
+            }
+          }
+        } catch {
+          violations.push({ path: null, reason: "clean comparison ref contains invalid baseline JSON" });
+        }
+      }
+    }
+  }
+
+  return violations.sort(
+    (left, right) => (left.path ?? "").localeCompare(right.path ?? "") || left.reason.localeCompare(right.reason),
+  );
 }
 
 function findRegressions(oversizedFiles, baseline) {
@@ -477,7 +589,19 @@ function printTextReport(result) {
     console.log("");
   }
 
-  if (result.regressions.length > 0) {
+  if (result.baselinePath) {
+    if (result.governanceViolations.length === 0) {
+      console.log("Debt exception governance: valid");
+    } else {
+      console.log("Debt exception governance violations:");
+      for (const entry of result.governanceViolations) {
+        console.log(`- ${entry.path ?? "baseline"}: ${entry.reason}`);
+      }
+    }
+    console.log("");
+  }
+
+  if (result.regressions.length > 0 || result.governanceViolations.length > 0) {
     console.log("Exit status: 1 with --fail-on-regression, otherwise 0 (advisory only)");
   } else {
     console.log("Exit status: 0 (advisory only)");
@@ -497,7 +621,7 @@ try {
   } else {
     printTextReport(result);
   }
-  if (options.failOnRegression && result.regressions.length > 0) {
+  if (options.failOnRegression && (result.regressions.length > 0 || result.governanceViolations.length > 0)) {
     process.exit(1);
   }
 } catch (error) {

@@ -2,6 +2,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const indexCss = readFileSync(new URL("../index.css", import.meta.url), "utf8");
+const organizationWorkspaceSidebarSource = readFileSync(
+  new URL("../pages/organization-workspaces/OrganizationWorkspaceFilesSidebar.tsx", import.meta.url),
+  "utf8",
+);
 const organizationWorkspacesSource = readFileSync(new URL("../pages/OrganizationWorkspaces.tsx", import.meta.url), "utf8");
 
 function cssBlock(selector: string) {
@@ -610,11 +614,11 @@ describe("index.css motion rules", () => {
 
     expect(organizationWorkspacesSource).toContain("rudder-doc-editor-surface flex min-h-[420px]");
     expect(organizationWorkspacesSource).toContain("h-[var(--rudder-doc-editor-tab-strip-height)]");
-    expect(organizationWorkspacesSource).toContain("workspace-context-header rudder-doc-editor-sidebar-header desktop-chrome flex shrink-0");
-    expect(organizationWorkspacesSource).toContain("sidebarHasTabStrip && !sidebarHasBreadcrumb && \"rudder-doc-editor-sidebar-header--tabs-only\"");
-    expect(organizationWorkspacesSource).toContain("!sidebarHasTabStrip && sidebarHasBreadcrumb && \"rudder-doc-editor-sidebar-header--breadcrumb-only\"");
-    expect(organizationWorkspacesSource).toContain("sidebarHasTabStrip && sidebarHasBreadcrumb && \"rudder-doc-editor-sidebar-header--tabs-and-breadcrumb\"");
-    expect(organizationWorkspacesSource).toContain("flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border transition-colors");
+    expect(organizationWorkspaceSidebarSource).toContain("workspace-context-header rudder-doc-editor-sidebar-header desktop-chrome flex shrink-0");
+    expect(organizationWorkspaceSidebarSource).toContain("sidebarHasTabStrip && !sidebarHasBreadcrumb && \"rudder-doc-editor-sidebar-header--tabs-only\"");
+    expect(organizationWorkspaceSidebarSource).toContain("!sidebarHasTabStrip && sidebarHasBreadcrumb && \"rudder-doc-editor-sidebar-header--breadcrumb-only\"");
+    expect(organizationWorkspaceSidebarSource).toContain("sidebarHasTabStrip && sidebarHasBreadcrumb && \"rudder-doc-editor-sidebar-header--tabs-and-breadcrumb\"");
+    expect(organizationWorkspaceSidebarSource).toContain("flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border transition-colors");
     expect(tabStripClassTokens).toContain("rounded-tr-[var(--radius-lg)]");
     expect(tabStripClassTokens).toContain("border-r");
     expect(tabStripClassTokens).toContain("border-[color:var(--border-base)]");

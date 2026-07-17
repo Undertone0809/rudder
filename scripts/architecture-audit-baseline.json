@@ -3,83 +3,227 @@
   "oversizedFiles": [
     {
       "path": "ui/src/pages/OrganizationWorkspaces.tsx",
-      "lines": 6008
-    },
-    {
-      "path": "ui/src/components/MessengerContextSidebar.tsx",
-      "lines": 3547
-    },
-    {
-      "path": "ui/src/pages/AgentDetail.tsx",
-      "lines": 3389
-    },
-    {
-      "path": "ui/src/pages/IssueDetail.tsx",
-      "lines": 2629
-    },
-    {
-      "path": "ui/src/pages/Chat.messages.tsx",
-      "lines": 2561
-    },
-    {
-      "path": "server/src/services/messenger.ts",
-      "lines": 2505
-    },
-    {
-      "path": "ui/src/components/MarkdownEditor.tsx",
-      "lines": 2412
-    },
-    {
-      "path": "server/src/services/automations.ts",
-      "lines": 2214
-    },
-    {
-      "path": "ui/src/pages/UiLab.tsx",
-      "lines": 2123
+      "lines": 6008,
+      "owner": "workspace-ui",
+      "rationale": "The workspace page still composes several editors and resource adapters while their controllers are extracted.",
+      "target": "Reduce the page composer below 3000 lines in Phase 2, then below 1500 lines.",
+      "expiry": "2026-12-31"
     },
     {
       "path": "server/src/services/chats.ts",
-      "lines": 1908
+      "lines": 1908,
+      "owner": "collaboration-server",
+      "rationale": "Chat persistence, orchestration, and compatibility paths remain concentrated during the collaboration migration.",
+      "target": "Move named Chat use cases behind stable collaboration facades and reduce this service below 1500 lines.",
+      "expiry": "2026-12-31"
     },
     {
-      "path": "ui/src/components/ThreeColumnContextSidebar.tsx",
-      "lines": 1891
+      "path": "ui/src/pages/Chat.tsx",
+      "lines": 1501,
+      "owner": "collaboration-ui",
+      "rationale": "The Chat route still owns composer, evidence, navigation, and realtime coordination responsibilities.",
+      "target": "Extract route controllers and coherent views, first reducing below 3000 lines and then below 1500 lines.",
+      "expiry": "2026-12-31"
     },
     {
-      "path": "cli/src/commands/start.ts",
-      "lines": 1848
+      "path": "ui/src/components/MessengerContextSidebar.tsx",
+      "lines": 3547,
+      "owner": "collaboration-ui",
+      "rationale": "The first Messenger extraction moved models and views, but mutations and drag state remain in the composer.",
+      "target": "Complete the Messenger controller extraction and reduce the composer below 1500 lines.",
+      "expiry": "2026-10-31"
     },
     {
-      "path": "ui/src/components/NewIssueDialog.tsx",
-      "lines": 1832
+      "path": "ui/src/pages/Chat.messages.tsx",
+      "lines": 2561,
+      "owner": "collaboration-ui",
+      "rationale": "Message rendering still combines multiple content types and evidence presentations in one module.",
+      "target": "Split message-type views behind a stable rendering contract and reduce below 1500 lines.",
+      "expiry": "2026-12-31"
+    },
+    {
+      "path": "server/src/services/messenger.ts",
+      "lines": 2505,
+      "owner": "collaboration-server",
+      "rationale": "Messenger aggregation and thread projection remain in one service pending bounded facade extraction.",
+      "target": "Separate thread queries, projections, and mutations and reduce below 1500 lines.",
+      "expiry": "2026-12-31"
+    },
+    {
+      "path": "ui/src/pages/IssueDetail.tsx",
+      "lines": 2629,
+      "owner": "issues-ui",
+      "rationale": "Issue detail still coordinates lifecycle actions, run evidence, approvals, and presentation.",
+      "target": "Extract lifecycle controllers and evidence views and reduce below 1500 lines in Phase 4.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "ui/src/pages/AgentDetail.tsx",
+      "lines": 3389,
+      "owner": "agents-ui",
+      "rationale": "Agent configuration, runtime status, skills, budgets, and history remain concentrated in one route.",
+      "target": "Separate agent capability controllers and reduce the route below 1500 lines in Phase 4.",
+      "expiry": "2027-03-31"
     },
     {
       "path": "server/src/routes/chats.ts",
-      "lines": 1792
+      "lines": 1792,
+      "owner": "collaboration-server",
+      "rationale": "Chat transport mapping still includes several streaming and compatibility branches.",
+      "target": "Move use-case logic behind Chat facades and reduce route transport below 1500 lines.",
+      "expiry": "2026-12-31"
     },
     {
-      "path": "ui/src/components/MilkdownMarkdownEditor.tsx",
-      "lines": 1782
+      "path": "ui/src/pages/Chat.side-panel.tsx",
+      "lines": 1501,
+      "owner": "collaboration-ui",
+      "rationale": "The side-panel module contains multiple context and evidence modes while the side-task contract stabilizes.",
+      "target": "Extract mode-owned panels and reduce the side-panel composer below 1500 lines.",
+      "expiry": "2026-12-31"
     },
     {
-      "path": "ui/src/pages/Costs.tsx",
-      "lines": 1669
-    },
-    {
-      "path": "server/src/services/runtime-kernel/heartbeat.ts",
-      "lines": 1687
+      "path": "ui/src/components/MarkdownEditor.tsx",
+      "lines": 2412,
+      "owner": "editor-ui",
+      "rationale": "Editor commands, dialogs, persistence integration, and rendering remain combined.",
+      "target": "Separate editor controller and extension surfaces and reduce below 1500 lines.",
+      "expiry": "2027-03-31"
     },
     {
       "path": "desktop/src/main.ts",
-      "lines": 1562
+      "lines": 1562,
+      "owner": "desktop-runtime",
+      "rationale": "Desktop bootstrap still coordinates packaging compatibility, profile routing, IPC, and lifecycle adapters.",
+      "target": "Move lifecycle and IPC capabilities behind explicit adapters and reduce main below 1500 lines.",
+      "expiry": "2026-12-31"
+    },
+    {
+      "path": "server/src/services/automations.ts",
+      "lines": 2214,
+      "owner": "automation-server",
+      "rationale": "Automation scheduling, persistence, execution, and activity evidence remain in one service.",
+      "target": "Separate scheduling and execution use cases and reduce below 1500 lines in Phase 4.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "ui/src/pages/UiLab.tsx",
+      "lines": 2123,
+      "owner": "design-system",
+      "rationale": "The UI lab intentionally aggregates component examples but has outgrown a single catalog module.",
+      "target": "Split examples into catalog sections and reduce the page below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "cli/src/commands/start.ts",
+      "lines": 1848,
+      "owner": "cli-runtime",
+      "rationale": "Local startup still combines compatibility detection, embedded database setup, and process lifecycle.",
+      "target": "Extract startup capabilities behind shared lifecycle adapters and reduce below 1500 lines.",
+      "expiry": "2026-12-31"
+    },
+    {
+      "path": "server/src/routes/agents.ts",
+      "lines": 1501,
+      "owner": "agents-server",
+      "rationale": "Agent route transport still spans configuration, runtime, skills, and governance endpoints.",
+      "target": "Split route groups around stable agent use cases and reduce each transport module below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/services/chat-generation-protocol.ts",
+      "lines": 1501,
+      "owner": "collaboration-server",
+      "rationale": "Generation protocol compatibility and event normalization remain centralized during Chat migration.",
+      "target": "Separate protocol adapters from Chat orchestration and reduce below 1500 lines.",
+      "expiry": "2026-12-31"
+    },
+    {
+      "path": "server/src/services/runtime-kernel/heartbeat.ts",
+      "lines": 1687,
+      "owner": "control-plane-runtime",
+      "rationale": "The runtime kernel facade still owns legacy execution branches while admission and recovery are extracted.",
+      "target": "Complete named runtime use-case extraction and reduce the facade below 1500 lines.",
+      "expiry": "2026-12-31"
+    },
+    {
+      "path": "ui/src/components/MilkdownMarkdownEditor.tsx",
+      "lines": 1782,
+      "owner": "editor-ui",
+      "rationale": "Milkdown integration still combines plugin setup, commands, and React lifecycle ownership.",
+      "target": "Extract editor extensions and lifecycle controller and reduce below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "ui/src/components/ThreeColumnContextSidebar.tsx",
+      "lines": 1891,
+      "owner": "shell-ui",
+      "rationale": "Shared context sidebar modes and shell coordination remain concentrated in one component.",
+      "target": "Separate mode controllers from shell layout and reduce below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "ui/src/components/NewIssueDialog.tsx",
+      "lines": 1832,
+      "owner": "issues-ui",
+      "rationale": "Issue creation still combines form policy, agent routing, skills, and project selection.",
+      "target": "Extract issue-creation policy and focused form sections and reduce below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "ui/src/pages/Costs.tsx",
+      "lines": 1669,
+      "owner": "costs-ui",
+      "rationale": "Cost query state, aggregation controls, and visualization remain in a single route.",
+      "target": "Extract cost report controller and views and reduce below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "ui/src/components/Layout.tsx",
+      "lines": 1501,
+      "owner": "shell-ui",
+      "rationale": "Application shell navigation and responsive state remain coupled during Desktop shell convergence.",
+      "target": "Extract navigation controllers and reduce the layout composer below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/routes/agents.management-routes.ts",
+      "lines": 1501,
+      "owner": "agents-server",
+      "rationale": "Agent management transport remains slightly above the ceiling after initial route extraction.",
+      "target": "Move remaining use-case logic to agent facades and reduce below 1500 lines.",
+      "expiry": "2026-12-31"
     },
     {
       "path": "server/src/services/issues.ts",
-      "lines": 1530
+      "lines": 1530,
+      "owner": "issues-server",
+      "rationale": "Issue service retains compatibility paths around atomic checkout and lifecycle transitions.",
+      "target": "Extract named lifecycle use cases while preserving atomic checkout and reduce below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "ui/src/components/CommentThread.tsx",
+      "lines": 1501,
+      "owner": "collaboration-ui",
+      "rationale": "Comment rendering, composition, and attachment interactions remain slightly above the ceiling.",
+      "target": "Separate comment composer state and reduce below 1500 lines.",
+      "expiry": "2026-12-31"
+    },
+    {
+      "path": "ui/src/pages/AutomationDetail.tsx",
+      "lines": 1501,
+      "owner": "automation-ui",
+      "rationale": "Automation editor and run history remain combined in one route just above the ceiling.",
+      "target": "Extract editor and history views and reduce below 1500 lines.",
+      "expiry": "2027-03-31"
     },
     {
       "path": "server/src/services/knowledge-portability/organization-skills.ts",
-      "lines": 1510
+      "lines": 1510,
+      "owner": "knowledge-server",
+      "rationale": "Organization skill portability still combines catalog, filesystem, and synchronization compatibility paths.",
+      "target": "Move catalog and sync use cases behind stable knowledge facades and reduce below 1500 lines.",
+      "expiry": "2027-03-31"
     }
   ]
 }

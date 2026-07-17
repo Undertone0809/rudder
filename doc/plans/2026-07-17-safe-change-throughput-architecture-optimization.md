@@ -22,14 +22,21 @@ related_code:
   - scripts/architecture-audit.mjs
   - scripts/architecture-audit.test.mjs
   - scripts/architecture-audit-baseline.json
+  - scripts/architecture-boundaries.mjs
+  - scripts/architecture-boundaries.json
   - ui/src/components/MessengerContextSidebar.tsx
   - ui/src/pages/OrganizationWorkspaces.tsx
+  - ui/src/pages/organization-workspaces/OrganizationWorkspaceFilesSidebar.tsx
+  - ui/src/pages/Chat.scroll-map.tsx
   - server/src/services/chats.ts
   - server/src/services/messenger.ts
+  - server/src/routes/chat-background-runtime.ts
   - server/src/services/runtime-kernel/heartbeat.ts
   - desktop/src/main.ts
-commit_refs: []
-updated_at: 2026-07-17
+commit_refs:
+  - 4abd738d1
+  - d9091cddc
+updated_at: 2026-07-18
 ---
 
 # Safe Change Throughput Architecture Optimization
@@ -378,6 +385,78 @@ weakening product invariants.
 Implementation evidence will be appended after each phase. A phase is not
 complete until writer validation, an independent black-box verifier, and an
 independent reviewer all pass on the same target SHA or task-scoped diff.
+
+## Implementation Evidence: 2026-07-18
+
+The program remains `in_progress`. This batch establishes the governance and
+ownership mechanics needed for later burn-down, but it does not redefine
+program completion around the Messenger first slice.
+
+### Delivered In This Batch
+
+- Phase 0 clean-reference governance now rejects new or growing oversized
+  files while preserving historical debt as visible inventory. Every debt
+  exception requires owner, rationale, target, and expiry metadata, and an
+  existing path's allowance cannot increase.
+- The declared-only boundary checker reports cross-domain cycles and facade
+  bypasses, including static template-literal `import()` and `require()` forms.
+  Unmigrated areas remain explicitly observed rather than falsely certified.
+- The HTTP application now owns Chat background timers, tracked work, queue
+  abort controllers, and coalesced drains. Startup rollback and normal close
+  are idempotent and failure-isolated across Chat and Vite disposers.
+- `OrganizationWorkspaces.tsx` moved file-tree, Sidebar, skill-dialog, and
+  capability ownership into direct modules. `Layout` now imports the Sidebar
+  owner directly instead of evaluating the route aggregation module.
+- Chat moved its message map into a directly tested component. It caps the map
+  at 64 markers, bounds Markdown preview work by visible text and source scan,
+  preserves complete mention/link/code tokens, and hides the rail when content
+  or preview clearance is insufficient.
+- Messenger Product Logic evidence now reflects the existing Arc-style default
+  directory instead of the superseded `Pinned` / `Today` / `Recent` E2E model.
+
+### Measured Result
+
+- `OrganizationWorkspaces.tsx`: 5,994 to 3,700 lines in this extraction stage;
+- `Chat.tsx`: 3,112 to 2,836 lines;
+- `server/src/routes/chats.ts`: 2,565 to 2,558 lines relative to `origin/main`;
+- new Workspace production modules: 1,090, 1,054, 168, and 156 lines;
+- `Chat.scroll-map.tsx`: 325 lines before final formatting changes;
+- current audit: 28 production files above 1,500 lines, with two still above
+  3,000 (`server/src/services/chats.ts` at 4,585 and
+  `OrganizationWorkspaces.tsx` at 3,700).
+
+### Verification Evidence
+
+- architecture governance: 18 fixture tests pass; clean-ref comparison reports
+  no task regression; declared boundaries report zero cycles and zero bypasses;
+- Product Logic Registry: 74 contracts valid;
+- focused Chat, Workspace, Messenger, and lifecycle suites pass, including 146
+  combined Chat/Workspace tests and failure-isolated Vite port reuse;
+- repository lint, all workspace typechecks, and full build pass;
+- single-worker full Vitest run reached 541/543 files and 4,483/4,487 tests.
+  The extraction-owned static-source failure was corrected and passed on
+  rerun. The sole remaining deterministic failure is the unchanged
+  `agent-integration-feishu-db-dispatcher` active-generation fixture, which also
+  fails alone against unchanged `origin/main` code and is not accepted as final
+  program evidence;
+- independent review reports no remaining actionable findings;
+- isolated Playwright verification passed Messenger custom-pin cases, Workspace
+  tree drag/keyboard and launcher paths, and the complete Chat scroll-map path.
+  The final scroll-map run passed at 1/1 in 15.2 seconds with wide-screen
+  preview/jump proof and narrow-screen visibility proof.
+
+### Remaining Program Gates
+
+- reduce production files above 3,000 from two to zero, then reduce files above
+  1,500 to at most 15 and finally at most five;
+- complete Workspace, Chat, and Messenger controller/facade ownership rather
+  than stopping at the current extraction boundaries;
+- expand declared boundary enforcement beyond the three initial domains;
+- record representative feature replays that prove at least 80% change locality;
+- bound every external list/search API and add explicit summary projections;
+- add production-shaped query-count, response-byte, latency, and RSS fixtures;
+- close remaining runtime lifecycle gaps and make the full repository test gate
+  green on one final target SHA before changing this proposal to `completed`.
 
 ## Documentation Changes
 

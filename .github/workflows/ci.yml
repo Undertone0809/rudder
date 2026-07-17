@@ -29,7 +29,10 @@ jobs:
           fetch-depth: 0
 
       - name: Architecture audit tests
-        run: node --test scripts/architecture-audit.test.mjs
+        run: node --test scripts/architecture-audit.test.mjs scripts/architecture-boundaries.test.mjs
+
+      - name: Declared architecture boundaries
+        run: node scripts/architecture-boundaries.mjs
 
       - name: Select architecture comparison ref
         id: comparison
@@ -58,7 +61,7 @@ jobs:
 
       - name: Reject new architecture debt
         if: steps.comparison.outputs.ref != ''
-        run: node scripts/architecture-audit.mjs --compare-ref "${{ steps.comparison.outputs.ref }}" --fail-on-regression
+        run: node scripts/architecture-audit.mjs --baseline scripts/architecture-audit-baseline.json --compare-ref "${{ steps.comparison.outputs.ref }}" --fail-on-regression
 
       - name: Report missing initial comparison ref
         if: steps.comparison.outputs.ref == ''

@@ -5,7 +5,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { actorMiddleware } from "../middleware/auth.js";
 import { errorHandler, httpLogger } from "../middleware/index.js";
+import { logger } from "../middleware/logger.js";
 import { privateHostnameGuard, resolvePrivateHostnameAllowSet } from "../middleware/private-hostname-guard.js";
+import { createChatBackgroundRuntime } from "../routes/chat-background-runtime.js";
 import { llmRoutes } from "../routes/llms.js";
 import { pluginUiStaticRoutes } from "../routes/plugin-ui-static.js";
 import { DEFAULT_LOCAL_PLUGIN_DIR } from "../services/plugin-loader.js";
@@ -38,6 +40,7 @@ export async function createHttpApp(
     previewOrigin,
     requireLoopbackParent: !opts.workspacePreviewOrigin,
   });
+  const chatBackgroundRuntime = createChatBackgroundRuntime();
   let closeVite: (() => Promise<void>) | null = null;
   let closeInFlight: Promise<void> | null = null;
   const close = () => {
@@ -45,9 +48,25 @@ export async function createHttpApp(
     closeInFlight = Promise.resolve().then(async () => {
       const disposeVite = closeVite;
       closeVite = null;
-      await disposeVite?.();
+      const results = await Promise.allSettled([
+        Promise.resolve().then(() => chatBackgroundRuntime.close()),
+        Promise.resolve().then(() => disposeVite?.()),
+      ]);
+      const failures = results
+        .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+        .map((result) => result.reason);
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) throw new AggregateError(failures, "HTTP app cleanup failed");
     });
     return closeInFlight;
+  };
+  const rollbackStartup = async (startupError: unknown): Promise<never> => {
+    try {
+      await close();
+    } catch (cleanupError) {
+      logger.error({ err: cleanupError, startupError }, "HTTP app startup rollback failed");
+    }
+    throw startupError;
   };
   const privateHostnameGateEnabled =
     opts.deploymentMode === "authenticated" && opts.deploymentExposure === "private";
@@ -108,52 +127,67 @@ export async function createHttpApp(
     app.all("/api/auth/*authPath", opts.betterAuthHandler);
   }
   app.use(llmRoutes(db));
-  app.use("/api", registerApiRoutes(db, opts, pluginRuntime, workspacePreview));
+  try {
+    app.use(
+      "/api",
+      registerApiRoutes(db, opts, pluginRuntime, workspacePreview, chatBackgroundRuntime),
+    );
+  } catch (error) {
+    return rollbackStartup(error);
+  }
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "API route not found" });
   });
-  app.use(pluginUiStaticRoutes(db, {
-    localPluginDir: opts.localPluginDir ?? DEFAULT_LOCAL_PLUGIN_DIR,
-  }));
+  try {
+    app.use(pluginUiStaticRoutes(db, {
+      localPluginDir: opts.localPluginDir ?? DEFAULT_LOCAL_PLUGIN_DIR,
+    }));
+  } catch (error) {
+    return rollbackStartup(error);
+  }
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   if (opts.uiMode === "static") {
-    const candidates = [
-      path.resolve(__dirname, "../../ui-dist"),
-      path.resolve(__dirname, "../../../ui/dist"),
-    ];
-    const uiDist = candidates.find((candidate) => fs.existsSync(path.join(candidate, "index.html")));
-    if (uiDist) {
-      const indexHtml = applyUiBranding(fs.readFileSync(path.join(uiDist, "index.html"), "utf-8"));
-      app.use(express.static(uiDist));
-      app.get(/.*/, (_req, res) => {
-        res.status(200).set("Content-Type", "text/html").end(indexHtml);
-      });
-    } else {
-      console.warn("[rudder] UI dist not found; running in API-only mode");
+    try {
+      const candidates = [
+        path.resolve(__dirname, "../../ui-dist"),
+        path.resolve(__dirname, "../../../ui/dist"),
+      ];
+      const uiDist = candidates.find((candidate) => fs.existsSync(path.join(candidate, "index.html")));
+      if (uiDist) {
+        const indexHtml = applyUiBranding(fs.readFileSync(path.join(uiDist, "index.html"), "utf-8"));
+        app.use(express.static(uiDist));
+        app.get(/.*/, (_req, res) => {
+          res.status(200).set("Content-Type", "text/html").end(indexHtml);
+        });
+      } else {
+        console.warn("[rudder] UI dist not found; running in API-only mode");
+      }
+    } catch (error) {
+      return rollbackStartup(error);
     }
   }
 
   if (opts.uiMode === "vite-dev") {
-    const uiRoot = path.resolve(__dirname, "../../../ui");
-    const hmrPort = resolveViteHmrPort(opts.serverPort);
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      root: uiRoot,
-      appType: "custom",
-      server: {
-        middlewareMode: true,
-        hmr: {
-          host: opts.bindHost,
-          port: hmrPort,
-          clientPort: hmrPort,
-        },
-        allowedHosts: privateHostnameGateEnabled ? Array.from(privateHostnameAllowSet) : undefined,
-      },
-    });
-    closeVite = () => vite.close();
-
     try {
+      const uiRoot = path.resolve(__dirname, "../../../ui");
+      const hmrPort = resolveViteHmrPort(opts.serverPort);
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({
+        root: uiRoot,
+        appType: "custom",
+        server: {
+          middlewareMode: true,
+          hmr: {
+            host: opts.bindHost,
+            port: hmrPort,
+            clientPort: hmrPort,
+          },
+          allowedHosts: privateHostnameGateEnabled ? Array.from(privateHostnameAllowSet) : undefined,
+        },
+      });
+      closeVite = () => vite.close();
+
       app.use(vite.middlewares);
       app.get(/.*/, async (req, res, next) => {
         try {
@@ -166,8 +200,7 @@ export async function createHttpApp(
         }
       });
     } catch (error) {
-      await close();
-      throw error;
+      return rollbackStartup(error);
     }
   }
 
@@ -175,7 +208,6 @@ export async function createHttpApp(
     app.use(errorHandler);
     return { app, close };
   } catch (error) {
-    await close();
-    throw error;
+    return rollbackStartup(error);
   }
 }

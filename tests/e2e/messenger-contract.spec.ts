@@ -1691,7 +1691,7 @@ test.describe("Messenger unified threads contract", () => {
     await olderRow.getByRole("button", { name: "Chat actions" }).click();
     await page.getByRole("menuitem", { name: "Pin" }).click();
 
-    await expect(page.getByTestId("messenger-thread-section-pinned")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("messenger-thread-section-custom-pinned")).toBeVisible({ timeout: 15_000 });
     const chatRows = page.locator(
       `[data-testid="${threadTestId(`chat:${olderChat.id}`)}"], [data-testid="${threadTestId(`chat:${newerChat.id}`)}"]`,
     );
@@ -1744,7 +1744,7 @@ test.describe("Messenger unified threads contract", () => {
     const shortPin = page.getByTestId(`messenger-pin-toggle-chat-${shortChat.id}`);
     const longPin = page.getByTestId(`messenger-pin-toggle-chat-${longChat.id}`);
 
-    await expect(page.getByTestId("messenger-thread-section-pinned")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("messenger-thread-section-custom-pinned")).toBeVisible({ timeout: 15_000 });
     await expect(shortRow).toBeVisible({ timeout: 15_000 });
     await expect(longRow).toBeVisible({ timeout: 15_000 });
     await expect(shortPin).toHaveCSS("opacity", "0");
@@ -1823,7 +1823,7 @@ test.describe("Messenger unified threads contract", () => {
 
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${newerChat.id}`, { waitUntil: "commit" });
 
-    await expect(page.getByTestId("messenger-thread-section-pinned")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("messenger-thread-section-custom-pinned")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId(threadTestId(`chat:${olderChat.id}`))).toContainText("Pinned summary chat");
     await expect(page.getByTestId(threadTestId(`chat:${newerChat.id}`))).toContainText("Recent unpinned summary chat");
 
@@ -2215,7 +2215,7 @@ test.describe("Messenger unified threads contract", () => {
     await splitIssueRow.hover();
     await splitIssueRow.getByRole("button", { name: "Thread actions" }).click();
     await page.getByRole("menuitem", { name: "Pin" }).click();
-    await expect(page.getByTestId("messenger-thread-section-pinned")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("messenger-thread-section-custom-pinned")).toBeVisible({ timeout: 15_000 });
     await expect.poll(async () => {
       return await sidebarThreads.evaluateAll((nodes) =>
         nodes.map((node) => node.getAttribute("data-testid")),
@@ -2236,7 +2236,7 @@ test.describe("Messenger unified threads contract", () => {
     await splitIssueRow.hover();
     await splitIssueRow.getByRole("button", { name: "Thread actions" }).click();
     await page.getByRole("menuitem", { name: "Unpin" }).click();
-    await expect(page.getByTestId("messenger-thread-section-pinned")).toHaveCount(0);
+    await expect(page.getByTestId("messenger-thread-section-custom-pinned")).toHaveCount(0);
     await expect.poll(async () => {
       return await sidebarThreads.evaluateAll((nodes) =>
         nodes.map((node) => node.getAttribute("data-testid")),

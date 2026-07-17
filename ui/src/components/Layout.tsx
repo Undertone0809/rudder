@@ -44,7 +44,7 @@ import { scheduleSettingsPrefetchQueries } from "../lib/settings-prefetch";
 import { cn } from "../lib/utils";
 import { ChatSidePanel } from "../pages/Chat.side-panel";
 import { NotFoundPage } from "../pages/NotFound";
-import { OrganizationWorkspaceFilesSidebar } from "../pages/OrganizationWorkspaces";
+import { OrganizationWorkspaceFilesSidebar } from "../pages/organization-workspaces/OrganizationWorkspaceFilesSidebar";
 import { BreadcrumbBar } from "./BreadcrumbBar";
 import { CommandPalette } from "./CommandPalette";
 import { DevRestartBanner } from "./DevRestartBanner";

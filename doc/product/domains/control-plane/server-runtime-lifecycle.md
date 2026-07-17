@@ -11,11 +11,13 @@ related_code:
   - server/src/app.ts
   - server/src/bootstrap/create-http-app.ts
   - server/src/bootstrap/plugin-host-runtime.ts
+  - server/src/routes/chat-background-runtime.ts
   - server/src/services/plugin-dev-watcher.ts
   - server/src/runtime/runtime-supervisor.ts
   - server/src/realtime/live-events-ws.ts
 related_tests:
   - server/src/__tests__/app-lifecycle.test.ts
+  - server/src/__tests__/chat-background-runtime.test.ts
   - server/src/__tests__/http-app-vite-lifecycle.test.ts
   - server/src/__tests__/plugin-dev-watcher.test.ts
   - server/src/__tests__/plugin-host-runtime-lifecycle.test.ts
@@ -69,8 +71,9 @@ startup error with a secondary cleanup error.
 - Actors: local operator, Desktop host, process signal handler, and test or
   embedding code that starts and stops the server programmatically.
 - Lifecycle-owned runtime objects: HTTP listener, Vite middleware/HMR runtime,
-  Live Events WebSocket runtime, scheduler intervals, integration and plugin
-  host runtimes, application handle, database client pool, optional embedded
+  Live Events WebSocket runtime, Chat recovery/projector/queue timers and
+  tracked queue work, scheduler intervals, integration and plugin host
+  runtimes, application handle, database client pool, optional embedded
   PostgreSQL instance, runtime descriptor, and process signal listeners.
 - Ownership state: whether the current process acquired a resource and, for
   embedded PostgreSQL, whether this process started that database instance.
@@ -98,15 +101,20 @@ startup error with a secondary cleanup error.
    removes its process listeners, stops new scheduler and watcher work, awaits
    tracked startup work, and then completes dispatcher and plugin teardown
    exactly once.
-4. After the HTTP listener starts, shutdown first stops new HTTP ingress.
-5. Scheduler and integration activity is detached, active and pending Live
+4. The HTTP application owns one Chat background runtime. It schedules Chat
+   control recovery, terminal projection, queue drains, queue lease renewal,
+   and claimed queue execution. Application close rejects new scheduled work,
+   clears owned timers, aborts owned queue execution, and awaits tracked work
+   before releasing the runtime.
+5. After the HTTP listener starts, shutdown first stops new HTTP ingress.
+6. Scheduler and integration activity is detached, active and pending Live
    Events WebSocket work is closed, and the HTTP server is allowed to drain.
-6. The application handle, including an owned Vite runtime, and database client
+7. The application handle, including owned Chat and Vite runtimes, and database client
    pool close after network work no longer depends on them.
-7. Embedded PostgreSQL stops only when the current process started it; an
+8. Embedded PostgreSQL stops only when the current process started it; an
    externally managed or already-running PostgreSQL service remains running.
-8. The current process removes only the runtime descriptor it owns.
-9. Startup failure follows the same cleanup path and then rethrows the original
+9. The current process removes only the runtime descriptor it owns.
+10. Startup failure follows the same cleanup path and then rethrows the original
    startup error.
 
 Cleanup of registered resources is awaited, idempotent, and failure-isolated:
@@ -121,6 +129,7 @@ one resource failure is reported but does not skip later cleanup work.
 | Startup failure | Startup throws after acquiring and registering one or more resources | Registered resources are released and the original startup error is returned to the caller | Registered cleanup is skipped, or a cleanup error replaces the startup failure | `runtime-supervisor.test.ts` |
 | Application startup failure | HTTP app construction or prompt plugin-host startup fails after the plugin runtime is owned | The app-local supervisor closes acquired resources once in reverse order and returns the original error | Plugin process listeners or an acquired Vite runtime survive the failed app creation | `app-lifecycle.test.ts` |
 | Deferred plugin warm-up | Plugin discovery or tool-dispatcher initialization remains in flight after the HTTP app is ready | Readiness is not delayed; close stops new scheduler, watcher, and listener work, then waits for tracked startup work before final dispatcher and worker teardown | Shutdown races startup work or accumulates process listeners across same-process restarts | `plugin-host-runtime-lifecycle.test.ts` |
+| Chat background work | Chat recovery, terminal projection, queue drain, lease renewal, or a claimed server-owned continuation is scheduled or running | HTTP application close stops new claims and timers, aborts owned queue execution, and waits for tracked work before completing | A stopped application leaves an old Chat worker claiming work beside a same-process replacement | `chat-background-runtime.test.ts` and `http-app-vite-lifecycle.test.ts` |
 | Active or pending WebSocket work | Live Events clients are connected or authenticated upgrade authorization is pending | Subscriptions, heartbeat work, clients, pending upgrade sockets, and the owned upgrade listener close without blocking HTTP shutdown | A pending upgrade keeps the HTTP listener or process alive | `live-events-ws.test.ts` |
 | Shared PostgreSQL | The server uses an external or previously running PostgreSQL instance | Rudder closes its client pool but leaves the shared database service running | The current server process stops a database service it does not own | Ownership guard in `server/src/index.ts`; lifecycle smoke proves the owned embedded case |
 | Cleanup failure | One resource disposer throws or its error reporter fails | Remaining resources still close; startup rollback preserves its original error | One failure aborts the rest of cleanup | `runtime-supervisor.test.ts` |
@@ -207,9 +216,12 @@ real child-process restart smoke.
 - An owned Vite middleware/HMR runtime and plugin-host process listeners must be
   closed during normal shutdown and application-start rollback so same-process
   restart can reuse the same ports and listener baseline.
+- Chat background scheduling must have one owner per HTTP application. Close
+  must reject new work before clearing timers, aborting owned queue execution,
+  and awaiting already tracked work; repeated close calls share one promise.
 - This contract does not promise cancellation or draining of already-started
-  agent runs, asynchronous recovery tasks, in-flight plugin tool calls or
-  scheduled job executions, backups, or workspace operations beyond the
+  agent runs, non-Chat asynchronous recovery tasks, in-flight plugin tool calls
+  or scheduled job executions, backups, or workspace operations beyond the
   resources explicitly owned by the server lifecycle.
 - This contract does not change API, persistence, organization scoping, runtime
   provider, or UI business logic.
@@ -238,6 +250,7 @@ Related code:
 - `server/src/app.ts`
 - `server/src/bootstrap/create-http-app.ts`
 - `server/src/bootstrap/plugin-host-runtime.ts`
+- `server/src/routes/chat-background-runtime.ts`
 - `server/src/services/plugin-dev-watcher.ts`
 - `server/src/runtime/runtime-supervisor.ts`
 - `server/src/realtime/live-events-ws.ts`
@@ -245,6 +258,7 @@ Related code:
 Related tests:
 
 - `server/src/__tests__/app-lifecycle.test.ts`
+- `server/src/__tests__/chat-background-runtime.test.ts`
 - `server/src/__tests__/http-app-vite-lifecycle.test.ts`
 - `server/src/__tests__/plugin-dev-watcher.test.ts`
 - `server/src/__tests__/plugin-host-runtime-lifecycle.test.ts`
@@ -255,9 +269,9 @@ Related tests:
 
 Known gaps:
 
-- Fire-and-forget recovery, in-flight scheduler ticks or backup work, in-flight
-  plugin tool calls or job executions, Feishu startup work, and workspace
-  runtime cancellation remain outside this lifecycle owner.
+- Non-Chat fire-and-forget recovery, in-flight scheduler ticks or backup work,
+  in-flight plugin tool calls or job executions, Feishu startup work, and
+  workspace runtime cancellation remain outside this lifecycle owner.
 - Active HTTP requests are drained without a timeout or forced cancellation, so
   a non-terminating request can delay later resource cleanup and restart.
 - External/shared PostgreSQL exclusion is enforced by the server ownership
