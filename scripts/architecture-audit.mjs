@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -13,6 +14,7 @@ const LIST_LIKE_ROUTE_MARKERS =
 function parseArgs(argv) {
   const options = {
     baseline: null,
+    compareRef: null,
     failOnRegression: false,
     json: false,
     maxLines: DEFAULT_MAX_LINES,
@@ -40,6 +42,11 @@ function parseArgs(argv) {
     }
     if (arg === "--baseline") {
       options.baseline = path.resolve(readValue(argv, index, arg));
+      index += 1;
+      continue;
+    }
+    if (arg === "--compare-ref") {
+      options.compareRef = readValue(argv, index, arg);
       index += 1;
       continue;
     }
@@ -73,6 +80,7 @@ Options:
   --root <path>        Repository root to scan. Defaults to cwd.
   --max-lines <count>  Oversized file threshold. Defaults to ${DEFAULT_MAX_LINES}.
   --baseline <path>    JSON baseline with oversizedFiles [{ path, lines }].
+  --compare-ref <ref>  Block only files that newly cross or grow past the limit since Git merge-base(ref, HEAD).
   --fail-on-regression Exit 1 when oversized files are new or grow past baseline.
   --json               Print machine-readable JSON.
   -h, --help           Show this help.
@@ -106,17 +114,160 @@ function auditArchitecture(options) {
   oversizedFiles.sort((left, right) => right.lines - left.lines || left.path.localeCompare(right.path));
   advisoryListLikeFiles.sort((left, right) => left.path.localeCompare(right.path));
   const baseline = options.baseline ? readBaseline(options.baseline) : null;
-  const regressions = baseline ? findRegressions(oversizedFiles, baseline) : [];
+  const baselineRegressions = baseline ? findRegressions(oversizedFiles, baseline) : [];
+  const comparison = options.compareRef
+    ? compareOversizedFilesToRef(root, oversizedFiles, options.compareRef, options.maxLines)
+    : null;
+  const regressions = comparison?.regressions ?? baselineRegressions;
 
   return {
     advisoryListLikeFiles,
+    baselineRegressions,
     baselinePath: options.baseline,
+    comparisonBase: comparison?.baseRef ?? null,
+    comparisonRef: options.compareRef,
     maxLines: options.maxLines,
     oversizedFiles,
     regressions,
     root,
     scannedFiles: files.length,
   };
+}
+
+function compareOversizedFilesToRef(root, oversizedFiles, comparisonRef, maxLines) {
+  let baseRef;
+  try {
+    baseRef = execFileSync("git", ["-C", root, "merge-base", comparisonRef, "HEAD"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch (error) {
+    const detail = error?.stderr?.toString().trim();
+    throw new Error(`Unable to resolve Git merge-base for ${comparisonRef}${detail ? `: ${detail}` : ""}`);
+  }
+
+  if (!baseRef) {
+    throw new Error(`Unable to resolve Git merge-base for ${comparisonRef}`);
+  }
+
+  const renamedPaths = readRenamedPaths(root, baseRef);
+  const workingTreeRenames = readWorkingTreePureRenames(root, baseRef, oversizedFiles, renamedPaths);
+  for (const [newPath, oldPath] of workingTreeRenames) {
+    renamedPaths.set(newPath, oldPath);
+  }
+  const regressions = [];
+  for (const entry of oversizedFiles) {
+    const baselinePath = renamedPaths.get(entry.path) ?? entry.path;
+    const baselineLines = readGitFileLineCount(root, baseRef, baselinePath);
+    if (baselineLines === null) {
+      regressions.push({
+        path: entry.path,
+        lines: entry.lines,
+        baselineLines,
+        reason: "new oversized file",
+      });
+      continue;
+    }
+    if (baselineLines <= maxLines) {
+      regressions.push({
+        path: entry.path,
+        lines: entry.lines,
+        baselineLines,
+        reason: "file crossed oversized threshold",
+      });
+      continue;
+    }
+    if (entry.lines > baselineLines) {
+      regressions.push({
+        path: entry.path,
+        lines: entry.lines,
+        baselineLines,
+        reason: "oversized file grew past comparison ref",
+      });
+    }
+  }
+
+  return { baseRef, regressions };
+}
+
+function readRenamedPaths(root, baseRef) {
+  let output;
+  try {
+    output = execFileSync(
+      "git",
+      ["-C", root, "diff", "--find-renames=50%", "--name-status", baseRef, "HEAD", "--"],
+      {
+        encoding: "utf8",
+        maxBuffer: 16 * 1024 * 1024,
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
+  } catch {
+    return new Map();
+  }
+
+  const renamedPaths = new Map();
+  for (const line of output.split("\n")) {
+    const [status, oldPath, newPath] = line.split("\t");
+    if (!status?.startsWith("R") || !oldPath || !newPath) continue;
+    renamedPaths.set(newPath, oldPath);
+  }
+  return renamedPaths;
+}
+
+function readWorkingTreePureRenames(root, baseRef, oversizedFiles, knownRenames) {
+  let deletedOutput;
+  try {
+    deletedOutput = execFileSync(
+      "git",
+      ["-C", root, "diff", "--name-only", "--diff-filter=D", baseRef, "--"],
+      {
+        encoding: "utf8",
+        maxBuffer: 16 * 1024 * 1024,
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
+  } catch {
+    return new Map();
+  }
+
+  const deletedPathsByContent = new Map();
+  for (const deletedPath of deletedOutput.split("\n").filter(Boolean)) {
+    const content = readGitFile(root, baseRef, deletedPath);
+    if (content !== null && !deletedPathsByContent.has(content)) {
+      deletedPathsByContent.set(content, deletedPath);
+    }
+  }
+
+  const pureRenames = new Map();
+  for (const entry of oversizedFiles) {
+    if (knownRenames.has(entry.path) || readGitFileLineCount(root, baseRef, entry.path) !== null) continue;
+    try {
+      const content = fs.readFileSync(path.join(root, entry.path), "utf8");
+      const oldPath = deletedPathsByContent.get(content);
+      if (oldPath) pureRenames.set(entry.path, oldPath);
+    } catch {
+      // A file that disappears during the scan cannot be a stable pure rename.
+    }
+  }
+  return pureRenames;
+}
+
+function readGitFileLineCount(root, ref, relativePath) {
+  const content = readGitFile(root, ref, relativePath);
+  return content === null ? null : countLines(content);
+}
+
+function readGitFile(root, ref, relativePath) {
+  try {
+    return execFileSync("git", ["-C", root, "show", `${ref}:${relativePath}`], {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return null;
+  }
 }
 
 function readBaseline(filePath) {
@@ -299,13 +450,28 @@ function printTextReport(result) {
 
   console.log("");
   if (result.baselinePath) {
-    if (result.regressions.length === 0) {
+    if (result.baselineRegressions.length === 0) {
       console.log("Baseline regressions: none");
     } else {
       console.log("Baseline regressions:");
-      for (const entry of result.regressions) {
+      for (const entry of result.baselineRegressions) {
         const baseline = entry.baselineLines === null ? "none" : `${entry.baselineLines} lines`;
         console.log(`- ${entry.path}: ${entry.lines} lines, baseline ${baseline} (${entry.reason})`);
+      }
+    }
+    console.log("");
+  }
+
+  if (result.comparisonRef) {
+    console.log(`Comparison ref: ${result.comparisonRef}`);
+    console.log(`Comparison merge-base: ${result.comparisonBase}`);
+    if (result.regressions.length === 0) {
+      console.log("Comparison regressions: none");
+    } else {
+      console.log("Comparison regressions:");
+      for (const entry of result.regressions) {
+        const baseline = entry.baselineLines === null ? "none" : `${entry.baselineLines} lines`;
+        console.log(`- ${entry.path}: ${entry.lines} lines, comparison ${baseline} (${entry.reason})`);
       }
     }
     console.log("");

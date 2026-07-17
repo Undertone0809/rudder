@@ -49,6 +49,31 @@ function writeBaseline(repo, oversizedFiles) {
   return baselinePath;
 }
 
+function runGit(repo, args) {
+  const result = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
+}
+
+function commitFixture(repo, message) {
+  runGit(repo, ["add", "."]);
+  runGit(repo, [
+    "-c",
+    "user.name=Architecture Audit",
+    "-c",
+    "user.email=architecture-audit@example.test",
+    "commit",
+    "-m",
+    message,
+  ]);
+  return runGit(repo, ["rev-parse", "HEAD"]);
+}
+
+function initializeGitFixture(repo) {
+  runGit(repo, ["init", "--quiet"]);
+  return commitFixture(repo, "fixture baseline");
+}
+
 test("architecture audit reports oversized production files and excludes non-production files", () => {
   const repo = makeFixtureRepo();
 
@@ -140,6 +165,158 @@ test("architecture audit accepts oversized files that stay at or below baseline"
 
     const output = JSON.parse(result.stdout);
     assert.deepEqual(output.regressions, []);
+  } finally {
+    fs.rmSync(repo, { force: true, recursive: true });
+  }
+});
+
+test("comparison mode reports historical baseline debt without blocking unchanged oversized files", () => {
+  const repo = makeFixtureRepo();
+
+  try {
+    const baseRef = initializeGitFixture(repo);
+    const baselinePath = writeBaseline(repo, [
+      { path: "ui/src/pages/HugePage.tsx", lines: 7 },
+    ]);
+
+    const result = runAudit(repo, [
+      "--baseline",
+      baselinePath,
+      "--compare-ref",
+      baseRef,
+      "--fail-on-regression",
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+
+    const output = JSON.parse(result.stdout);
+    assert.deepEqual(output.regressions, []);
+    assert.deepEqual(output.baselineRegressions, [
+      {
+        path: "ui/src/pages/HugePage.tsx",
+        lines: 8,
+        baselineLines: 7,
+        reason: "oversized file grew past baseline",
+      },
+    ]);
+    assert.equal(output.comparisonRef, baseRef);
+    assert.equal(output.comparisonBase, baseRef);
+  } finally {
+    fs.rmSync(repo, { force: true, recursive: true });
+  }
+});
+
+test("comparison mode fails when an existing oversized file grows", () => {
+  const repo = makeFixtureRepo();
+
+  try {
+    const baseRef = initializeGitFixture(repo);
+    writeLines(path.join(repo, "ui", "src", "pages", "HugePage.tsx"), 9);
+
+    const result = runAudit(repo, ["--compare-ref", baseRef, "--fail-on-regression"]);
+    assert.equal(result.status, 1);
+    const output = JSON.parse(result.stdout);
+    assert.deepEqual(output.regressions, [
+      {
+        path: "ui/src/pages/HugePage.tsx",
+        lines: 9,
+        baselineLines: 8,
+        reason: "oversized file grew past comparison ref",
+      },
+    ]);
+  } finally {
+    fs.rmSync(repo, { force: true, recursive: true });
+  }
+});
+
+test("comparison mode allows oversized files to shrink and rejects new threshold crossings", () => {
+  const repo = makeFixtureRepo();
+
+  try {
+    writeLines(path.join(repo, "server", "src", "routes", "GrowingRoute.ts"), 5);
+    const baseRef = initializeGitFixture(repo);
+    writeLines(path.join(repo, "ui", "src", "pages", "HugePage.tsx"), 7);
+    writeLines(path.join(repo, "server", "src", "routes", "GrowingRoute.ts"), 6);
+
+    const result = runAudit(repo, ["--compare-ref", baseRef, "--fail-on-regression"]);
+    assert.equal(result.status, 1);
+    const output = JSON.parse(result.stdout);
+    assert.deepEqual(output.regressions, [
+      {
+        path: "server/src/routes/GrowingRoute.ts",
+        lines: 6,
+        baselineLines: 5,
+        reason: "file crossed oversized threshold",
+      },
+    ]);
+    assert.equal(
+      output.regressions.some((entry) => entry.path === "ui/src/pages/HugePage.tsx"),
+      false,
+    );
+  } finally {
+    fs.rmSync(repo, { force: true, recursive: true });
+  }
+});
+
+test("comparison mode rejects a new oversized production file", () => {
+  const repo = makeFixtureRepo();
+
+  try {
+    const baseRef = initializeGitFixture(repo);
+    writeLines(path.join(repo, "server", "src", "routes", "NewHugeRoute.ts"), 7);
+
+    const result = runAudit(repo, ["--compare-ref", baseRef, "--fail-on-regression"]);
+    assert.equal(result.status, 1);
+    const output = JSON.parse(result.stdout);
+    assert.deepEqual(output.regressions, [
+      {
+        path: "server/src/routes/NewHugeRoute.ts",
+        lines: 7,
+        baselineLines: null,
+        reason: "new oversized file",
+      },
+    ]);
+  } finally {
+    fs.rmSync(repo, { force: true, recursive: true });
+  }
+});
+
+test("comparison mode allows pure renames and deletions but rejects growth after a rename", () => {
+  const repo = makeFixtureRepo();
+
+  try {
+    const baseRef = initializeGitFixture(repo);
+    const originalPath = path.join(repo, "ui", "src", "pages", "HugePage.tsx");
+    const renamedPath = path.join(repo, "ui", "src", "pages", "RenamedHugePage.tsx");
+    fs.renameSync(originalPath, renamedPath);
+
+    const workingTreeRenameResult = runAudit(repo, ["--compare-ref", baseRef, "--fail-on-regression"]);
+    assert.equal(workingTreeRenameResult.status, 0, workingTreeRenameResult.stderr);
+    assert.deepEqual(JSON.parse(workingTreeRenameResult.stdout).regressions, []);
+
+    commitFixture(repo, "rename oversized file");
+
+    const renameResult = runAudit(repo, ["--compare-ref", baseRef, "--fail-on-regression"]);
+    assert.equal(renameResult.status, 0, renameResult.stderr);
+    assert.deepEqual(JSON.parse(renameResult.stdout).regressions, []);
+
+    writeLines(renamedPath, 9);
+    commitFixture(repo, "grow renamed oversized file");
+    const growthResult = runAudit(repo, ["--compare-ref", baseRef, "--fail-on-regression"]);
+    assert.equal(growthResult.status, 1);
+    assert.deepEqual(JSON.parse(growthResult.stdout).regressions, [
+      {
+        path: "ui/src/pages/RenamedHugePage.tsx",
+        lines: 9,
+        baselineLines: 8,
+        reason: "oversized file grew past comparison ref",
+      },
+    ]);
+
+    fs.unlinkSync(renamedPath);
+    commitFixture(repo, "delete oversized file");
+    const deletionResult = runAudit(repo, ["--compare-ref", baseRef, "--fail-on-regression"]);
+    assert.equal(deletionResult.status, 0, deletionResult.stderr);
+    assert.deepEqual(JSON.parse(deletionResult.stdout).regressions, []);
   } finally {
     fs.rmSync(repo, { force: true, recursive: true });
   }

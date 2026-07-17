@@ -19,6 +19,51 @@ defaults:
     shell: bash
 
 jobs:
+  architecture:
+    name: Architecture ratchet
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Architecture audit tests
+        run: node --test scripts/architecture-audit.test.mjs
+
+      - name: Select architecture comparison ref
+        id: comparison
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          compare_ref=""
+          case "$EVENT_NAME" in
+            pull_request)
+              compare_ref="$PR_BASE_SHA"
+              ;;
+            push)
+              if [[ -n "$PUSH_BEFORE_SHA" && ! "$PUSH_BEFORE_SHA" =~ ^0+$ ]]; then
+                compare_ref="$PUSH_BEFORE_SHA"
+              fi
+              ;;
+            workflow_dispatch)
+              if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+                compare_ref="$(git rev-parse HEAD^)"
+              fi
+              ;;
+          esac
+          echo "ref=$compare_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Reject new architecture debt
+        if: steps.comparison.outputs.ref != ''
+        run: node scripts/architecture-audit.mjs --compare-ref "${{ steps.comparison.outputs.ref }}" --fail-on-regression
+
+      - name: Report missing initial comparison ref
+        if: steps.comparison.outputs.ref == ''
+        run: echo "Architecture ratchet skipped because this is an initial push with no parent comparison commit."
+
   verify:
     name: Verify ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

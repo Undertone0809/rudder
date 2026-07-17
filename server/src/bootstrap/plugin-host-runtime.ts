@@ -72,19 +72,54 @@ export function createPluginHostRuntime(db: Db, opts: RudderAppOptions) {
   );
 
   let devWatcher: ReturnType<typeof createPluginDevWatcher> | null = null;
+  let started = false;
+  let startupWork: Promise<void> | null = null;
+  let closeInFlight: Promise<void> | null = null;
 
-  const disposeHostRuntime = () => {
-    devWatcher?.close();
-    hostServiceCleanup.disposeAll();
-    hostServiceCleanup.teardown();
+  const reportDisposeFailure = (name: string, error: unknown) => {
+    logger.warn({ err: error, resource: name }, "Failed to close plugin host resource");
+  };
+  const disposeResource = async (
+    name: string,
+    dispose: () => void | Promise<void>,
+  ): Promise<void> => {
+    try {
+      await dispose();
+    } catch (error) {
+      reportDisposeFailure(name, error);
+    }
+  };
+  const disposeResourceSync = (name: string, dispose: () => void): void => {
+    try {
+      dispose();
+    } catch (error) {
+      reportDisposeFailure(name, error);
+    }
   };
 
-  process.once("exit", () => {
+  const disposeHostRuntime = () => {
+    void devWatcher?.close().catch((error) => reportDisposeFailure("plugin-dev-watcher", error));
+    devWatcher = null;
+    disposeResourceSync("plugin-job-coordinator", () => jobCoordinator.stop());
+    disposeResourceSync("plugin-job-scheduler", () => scheduler.stop());
+    disposeResourceSync("plugin-tool-dispatcher", () => toolDispatcher.teardown());
+    disposeResourceSync("plugin-host-services", () => hostServiceCleanup.disposeAll());
+    disposeResourceSync("plugin-host-service-listeners", () => hostServiceCleanup.teardown());
+  };
+
+  const onProcessExit = () => {
     disposeHostRuntime();
-  });
-  process.once("beforeExit", () => {
+  };
+  const onProcessBeforeExit = () => {
     void flushPluginLogBuffer();
-  });
+  };
+  const removeProcessListeners = () => {
+    process.removeListener("exit", onProcessExit);
+    process.removeListener("beforeExit", onProcessBeforeExit);
+  };
+
+  process.once("exit", onProcessExit);
+  process.once("beforeExit", onProcessBeforeExit);
 
   return {
     loader,
@@ -93,39 +128,70 @@ export function createPluginHostRuntime(db: Db, opts: RudderAppOptions) {
     workerManager,
     toolDispatcher,
     async start() {
-      jobCoordinator.start();
-      scheduler.start();
-      void toolDispatcher.initialize().catch((err) => {
-        logger.error({ err }, "Failed to initialize plugin tool dispatcher");
-      });
-      devWatcher = opts.uiMode === "vite-dev"
-        ? createPluginDevWatcher(
-          lifecycle,
-          async (pluginId) => (await pluginRegistry.getById(pluginId))?.packagePath ?? null,
-        )
-        : null;
-      void loader.loadAll().then((result) => {
-        if (!result) return;
-        for (const loaded of result.results) {
+      if (closeInFlight) {
+        throw new Error("Cannot start plugin host runtime after close has started");
+      }
+      if (started) return;
+      started = true;
+
+      try {
+        jobCoordinator.start();
+        scheduler.start();
+        devWatcher = opts.uiMode === "vite-dev"
+          ? createPluginDevWatcher(
+            lifecycle,
+            async (pluginId) => (await pluginRegistry.getById(pluginId))?.packagePath ?? null,
+          )
+          : null;
+      } catch (error) {
+        started = false;
+        throw error;
+      }
+
+      startupWork = Promise.resolve().then(async () => {
+        const [dispatcherResult, loadResult] = await Promise.allSettled([
+          toolDispatcher.initialize(),
+          loader.loadAll(),
+        ]);
+        if (dispatcherResult.status === "rejected") {
+          logger.error(
+            { err: dispatcherResult.reason },
+            "Failed to initialize plugin tool dispatcher",
+          );
+        }
+        if (loadResult.status === "rejected") {
+          logger.error({ err: loadResult.reason }, "Failed to load ready plugins on startup");
+          return;
+        }
+        if (!loadResult.value) return;
+        for (const loaded of loadResult.value.results) {
           if (devWatcher && loaded.success && loaded.plugin.packagePath) {
             devWatcher.watch(loaded.plugin.id, loaded.plugin.packagePath);
           }
         }
       }).catch((err) => {
-        logger.error({ err }, "Failed to load ready plugins on startup");
+        logger.error({ err }, "Failed to finish plugin host startup work");
       });
     },
-    async close() {
-      devWatcher?.close();
-      jobCoordinator.stop();
-      try {
-        await loader.shutdownAll();
-      } catch (err) {
-        logger.warn({ err }, "Failed to shutdown plugins cleanly");
-      }
-      hostServiceCleanup.disposeAll();
-      hostServiceCleanup.teardown();
-      await flushPluginLogBuffer();
+    close() {
+      if (closeInFlight) return closeInFlight;
+      removeProcessListeners();
+      closeInFlight = Promise.resolve().then(async () => {
+        const watcher = devWatcher;
+        devWatcher = null;
+        await disposeResource("plugin-dev-watcher", () => watcher?.close() ?? Promise.resolve());
+        await disposeResource("plugin-job-coordinator", () => jobCoordinator.stop());
+        await disposeResource("plugin-job-scheduler", () => scheduler.stop());
+
+        await disposeResource("plugin-startup-work", () => startupWork ?? Promise.resolve());
+
+        await disposeResource("plugin-loader", () => loader.shutdownAll());
+        await disposeResource("plugin-tool-dispatcher", () => toolDispatcher.teardown());
+        await disposeResource("plugin-host-services", () => hostServiceCleanup.disposeAll());
+        await disposeResource("plugin-host-service-listeners", () => hostServiceCleanup.teardown());
+        await disposeResource("plugin-log-buffer", () => flushPluginLogBuffer());
+      });
+      return closeInFlight;
     },
   };
 }
