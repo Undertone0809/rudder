@@ -487,8 +487,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   );
   const billingType = resolveCodexBillingType(effectiveEnv);
   const runtimeEnv = ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, effectiveEnv));
+  const rudderMcpCommand = await resolveRudderMcpCliCommand(__moduleDir);
   const rudderMcpPreflight = await preflightRudderMcpServer({
-    command: await resolveRudderMcpCliCommand(__moduleDir),
+    command: rudderMcpCommand,
     runtimeEnv,
     managedEnv: pickRudderMcpManagedEnv(env),
     browserEnabled,
@@ -525,6 +526,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     { disabledSkillPaths: externalCodexSkillPaths },
     __moduleDir,
     pickRudderMcpManagedEnv(env),
+    rudderMcpCommand,
   );
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
@@ -689,7 +691,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         promptMetrics,
         loadedSkills,
         realizedSkills: loadedSkills,
-        rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled }),
+        rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled, preflight: rudderMcpPreflight }),
         context,
       });
     }

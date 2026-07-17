@@ -81,7 +81,7 @@ for await (const line of lines) {
   if (request.id == null) continue;
   if (mode === "exit") process.exit(2);
   if (request.method === "initialize") {
-    const version = mode === "version" ? "0.4.5" : "0.4.6";
+    const version = mode.startsWith("version") ? "0.4.5" : "0.4.6";
     const hash = mode === "contract" ? "stale-contract" : ${JSON.stringify(RUDDER_BROWSER_MCP_CONTRACT_HASH)};
     console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {
       protocolVersion: "2024-11-05",
@@ -111,7 +111,7 @@ for await (const line of lines) {
               : mode === "no-core"
                 ? []
                 : coreTools;
-    const selectedBrowserTools = process.env.RUDDER_BROWSER_ENABLED === "true"
+    const selectedBrowserTools = process.env.RUDDER_BROWSER_ENABLED === "true" || mode === "version-ignore-browser-env"
       ? (mode === "tools" ? browserTools.slice(0, -1) : browserTools)
       : [];
     const tools = [...selectedCoreTools, ...selectedBrowserTools];
@@ -181,6 +181,22 @@ describe("preflightRudderMcpServer", () => {
 
     expect(result.browserAvailable).toBe(false);
     expect(result.diagnosticCode).toBe(diagnosticCode);
+  });
+
+  it("fails closed when Browser downgrade cannot establish an exact core-only provider surface", async () => {
+    const result = await preflightRudderMcpServer({
+      command: await fixtureCommand("version-ignore-browser-env"),
+      runtimeEnv: {},
+      browserEnabled: true,
+    });
+
+    expect(result).toMatchObject({
+      available: false,
+      browserAvailable: false,
+      diagnosticCode: "browser_bundle_handshake_failed",
+    });
+    expect(result.diagnostic).toContain("exact core-only provider surface");
+    expect(() => assertRudderMcpCoreAvailable(result)).toThrow(/Rudder MCP/u);
   });
 
   it("does not expose the private Desktop CLI entry to the preflight child", async () => {

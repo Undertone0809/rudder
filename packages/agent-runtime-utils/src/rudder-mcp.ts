@@ -120,8 +120,15 @@ export function filterRudderMcpToolsForBrowserCapability<T extends { name: strin
   tools: readonly T[],
   browserEnabled: boolean,
 ): T[] {
-  if (browserEnabled) return [...tools];
-  return tools.filter((tool) => !tool.name.startsWith("rudder_browser_"));
+  const allowedNames = new Set<string>([
+    ...RUDDER_CORE_MCP_TOOL_NAMES,
+    ...(browserEnabled ? RUDDER_BROWSER_MCP_TOOL_NAMES : []),
+  ]);
+  return tools.filter((tool) => allowedNames.has(tool.name));
+}
+
+export function isRudderBrowserMcpToolCandidate(name: string): boolean {
+  return name.trim().startsWith("rudder_browser_");
 }
 
 export function rudderMcpCliCommand(): RudderMcpCliCommand {

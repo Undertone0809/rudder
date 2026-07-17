@@ -80,11 +80,17 @@ describe("Rudder MCP Browser capability", () => {
       { name: "rudder_issue_get" },
       { name: "rudder_browser_open" },
       { name: "rudder_browser_close" },
+      { name: " rudder_browser_read " },
+      { name: "rudder_unknown_tool" },
     ];
 
     expect(filterRudderMcpToolsForBrowserCapability(tools, false)).toEqual([
       { name: "rudder_issue_get" },
     ]);
-    expect(filterRudderMcpToolsForBrowserCapability(tools, true)).toEqual(tools);
+    expect(filterRudderMcpToolsForBrowserCapability(tools, true)).toEqual([
+      { name: "rudder_issue_get" },
+      { name: "rudder_browser_open" },
+      { name: "rudder_browser_close" },
+    ]);
   });
 });

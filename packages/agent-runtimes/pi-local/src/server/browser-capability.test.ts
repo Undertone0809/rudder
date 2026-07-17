@@ -20,4 +20,14 @@ describe("Pi Browser capability", () => {
       { name: "rudder_issue_get" },
     ]);
   });
+
+  it("rejects non-canonical whitespace names instead of registering a residual Browser tool", () => {
+    expect(resolvePiRudderMcpToolEntries([
+      { name: "rudder_agent_me" },
+      { name: " rudder_browser_open " },
+      { name: "rudder_browser_read" },
+    ], false)).toEqual([
+      { name: "rudder_agent_me" },
+    ]);
+  });
 });

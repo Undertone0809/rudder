@@ -1,4 +1,5 @@
 import { execute, runClaudeLogin } from "@rudderhq/agent-runtime-claude-local/server";
+import { RUDDER_CORE_MCP_TOOL_NAMES } from "@rudderhq/agent-runtime-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   createRuntimeSkillFixture,
   installVersionMismatchedDesktopMcp,
+  readMcpToolNames,
 } from "./local-runtime-browser-mismatch-helpers";
 import {
   clearInheritedGitIdentityEnv,
@@ -1193,7 +1195,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
       await writeFakeClaudeCommand(commandPath);
       const browserSkill = await createRuntimeSkillFixture(root, "browser", "BROWSER_SKILL_PROMISE");
       const keepSkill = await createRuntimeSkillFixture(root, "keep-skill", "KEEP_SKILL_AVAILABLE");
-      const restoreDesktopMcp = await installVersionMismatchedDesktopMcp(root);
+      const installedDesktopMcp = await installVersionMismatchedDesktopMcp(root);
       const previousHome = process.env.HOME;
       const previousRudderHome = process.env.RUDDER_HOME;
       const previousInstanceId = process.env.RUDDER_INSTANCE_ID;
@@ -1252,13 +1254,28 @@ describe("claude execute", { timeout: 20_000 }, () => {
           diagnosticCode: "browser_bundle_version_mismatch",
           toolCount: 69,
         });
-        expect(JSON.parse(capture.managedClaudeMcpConfig)).toMatchObject({
+        const managedConfig = JSON.parse(capture.managedClaudeMcpConfig) as {
+          mcpServers: Record<string, {
+            command: string;
+            args: string[];
+            env?: Record<string, string>;
+          }>;
+        };
+        expect(managedConfig).toMatchObject({
           mcpServers: {
             "rudder-control-plane": { env: { RUDDER_BROWSER_ENABLED: "false" } },
           },
         });
+        const generatedMcpConfig = managedConfig.mcpServers["rudder-control-plane"];
+        expect(generatedMcpConfig.command).toBe(installedDesktopMcp.command);
+        expect(generatedMcpConfig.args).toEqual(installedDesktopMcp.args);
+        expect(await readMcpToolNames({
+          command: generatedMcpConfig.command,
+          args: generatedMcpConfig.args,
+          env: generatedMcpConfig.env,
+        })).toEqual([...RUDDER_CORE_MCP_TOOL_NAMES]);
       } finally {
-        restoreDesktopMcp();
+        installedDesktopMcp.restore();
         if (previousHome === undefined) delete process.env.HOME;
         else process.env.HOME = previousHome;
         if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;

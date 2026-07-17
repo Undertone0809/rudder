@@ -7,6 +7,7 @@ import {
   rudderMcpRuntimeMetadata,
   type AgentRuntimeExecutionContext,
   type AgentRuntimeExecutionResult,
+  type RudderMcpCliCommand,
   type RudderMcpManagedEnv,
   type RudderMcpPreflightResult,
 } from "@rudderhq/agent-runtime-utils";
@@ -171,8 +172,11 @@ async function writePrivateJsonFile(filePath: string, value: unknown): Promise<v
   await fs.chmod(filePath, 0o600);
 }
 
-export async function resolveRudderMcpServerConfig(managedEnv: RudderMcpManagedEnv = {}): Promise<Record<string, unknown>> {
-  const rudderMcp = await resolveRudderMcpCliCommand(__moduleDir);
+export async function resolveRudderMcpServerConfig(
+  managedEnv: RudderMcpManagedEnv = {},
+  verifiedCommand?: RudderMcpCliCommand,
+): Promise<Record<string, unknown>> {
+  const rudderMcp = verifiedCommand ?? await resolveRudderMcpCliCommand(__moduleDir);
   const env = {
     ...(rudderMcp.env ?? {}),
     ...managedEnv,
@@ -207,9 +211,13 @@ async function writeSanitizedClaudeSettings(sourceHome: string, targetHome: stri
   return targetSettingsPath;
 }
 
-async function writeManagedClaudeMcpConfig(targetHome: string, managedEnv: RudderMcpManagedEnv = {}): Promise<string> {
+async function writeManagedClaudeMcpConfig(
+  targetHome: string,
+  managedEnv: RudderMcpManagedEnv = {},
+  verifiedCommand?: RudderMcpCliCommand,
+): Promise<string> {
   const configPath = path.join(targetHome, ".claude", "rudder-mcp.json");
-  const rudderMcp = await resolveRudderMcpServerConfig(managedEnv);
+  const rudderMcp = await resolveRudderMcpServerConfig(managedEnv, verifiedCommand);
   await writePrivateJsonFile(configPath, {
     mcpServers: {
       [RUDDER_MCP_SERVER_NAME]: rudderMcp,
@@ -522,8 +530,9 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   applyGitCredentialHelperPolicyEnv(env);
 
   const runtimeEnv = ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, { ...process.env, ...env }));
+  const rudderMcpCommand = await resolveRudderMcpCliCommand(__moduleDir);
   const rudderMcpPreflight = await preflightRudderMcpServer({
-    command: await resolveRudderMcpCliCommand(__moduleDir),
+    command: rudderMcpCommand,
     runtimeEnv,
     managedEnv: pickRudderMcpManagedEnv(env),
     browserEnabled,
@@ -535,7 +544,11 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     runtimeEnv.RUDDER_BROWSER_ENABLED = "false";
     await (input.onLog ?? (async () => {}))("stderr", `[rudder] ${rudderMcpPreflight?.diagnostic}\n`);
   }
-  await writeManagedClaudeMcpConfig(managedHome, pickRudderMcpManagedEnv(env));
+  await writeManagedClaudeMcpConfig(
+    managedHome,
+    pickRudderMcpManagedEnv(env),
+    rudderMcpCommand,
+  );
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
   await ensureCommandResolvable(command, cwd, runtimeEnv);

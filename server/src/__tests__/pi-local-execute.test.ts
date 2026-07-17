@@ -5,6 +5,7 @@ import {
 import {
   RUDDER_BROWSER_MCP_CONTRACT_HASH,
   RUDDER_CORE_MCP_CONTRACT_HASH,
+  RUDDER_CORE_MCP_TOOL_NAMES,
   RUDDER_MCP_CONTRACT_VERSION,
 } from "@rudderhq/agent-runtime-utils";
 import fs from "node:fs/promises";
@@ -14,6 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createRuntimeSkillFixture,
   installVersionMismatchedDesktopMcp,
+  readMcpToolNames,
 } from "./local-runtime-browser-mismatch-helpers";
 import {
   clearInheritedGitIdentityEnv,
@@ -214,6 +216,18 @@ type CapturePayload = {
   rudderManagedEnv: Record<string, string | null>;
   gitIdentity: GitIdentityCapture;
 };
+
+function parseGeneratedPiJsonConstant<T>(
+  source: string,
+  name: string,
+  suffix: string,
+): T {
+  const prefix = `const ${name} = `;
+  const start = source.indexOf(prefix);
+  const end = start < 0 ? -1 : source.indexOf(suffix, start + prefix.length);
+  if (start < 0 || end < 0) throw new Error(`Generated Pi extension omitted ${name}`);
+  return JSON.parse(source.slice(start + prefix.length, end)) as T;
+}
 
 afterEach(() => {
   resetPiModelsCacheForTests();
@@ -882,7 +896,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
       await writeFakePiCommand(commandPath);
       const browserSkill = await createRuntimeSkillFixture(root, "browser", "BROWSER_SKILL_PROMISE");
       const keepSkill = await createRuntimeSkillFixture(root, "keep-skill", "KEEP_SKILL_AVAILABLE");
-      const restoreDesktopMcp = await installVersionMismatchedDesktopMcp(root);
+      const installedDesktopMcp = await installVersionMismatchedDesktopMcp(root);
       const previousHome = process.env.HOME;
       const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
       const previousRudderHome = process.env.RUDDER_HOME;
@@ -932,12 +946,40 @@ describe("pi execute", { timeout: 20_000 }, () => {
         expect(capture.argv[appendSystemPromptIndex + 1]).not.toContain("browser");
         const toolsIndex = capture.argv.indexOf("--tools");
         const toolNames = capture.argv[toolsIndex + 1].split(",");
-        expect(toolNames).toContain("rudder_agent_me");
-        expect(toolNames.some((name) => name.startsWith("rudder_browser_"))).toBe(false);
+        expect(toolNames.filter((name) => name.startsWith("rudder_"))).toEqual([
+          ...RUDDER_CORE_MCP_TOOL_NAMES,
+        ]);
         const extensionIndex = capture.argv.indexOf("--extension");
         const extensionSource = await fs.readFile(capture.argv[extensionIndex + 1], "utf8");
         expect(extensionSource).toContain("rudder_agent_me");
         expect(extensionSource).not.toContain("rudder_browser_");
+        const extensionCommand = parseGeneratedPiJsonConstant<string>(
+          extensionSource,
+          "RUDDER_MCP_COMMAND",
+          ";\n",
+        );
+        const extensionArgs = parseGeneratedPiJsonConstant<string[]>(
+          extensionSource,
+          "RUDDER_MCP_ARGS",
+          " as string[];",
+        );
+        const extensionEnv = parseGeneratedPiJsonConstant<Record<string, string>>(
+          extensionSource,
+          "RUDDER_MCP_ENV",
+          " as Record<string, string>;",
+        );
+        const managedEnv = Object.fromEntries(
+          Object.entries(capture.rudderManagedEnv).filter(
+            (entry): entry is [string, string] => typeof entry[1] === "string",
+          ),
+        );
+        expect(extensionCommand).toBe(installedDesktopMcp.command);
+        expect(extensionArgs).toEqual(installedDesktopMcp.args);
+        expect(await readMcpToolNames({
+          command: extensionCommand,
+          args: extensionArgs,
+          env: { ...extensionEnv, ...managedEnv },
+        })).toEqual([...RUDDER_CORE_MCP_TOOL_NAMES]);
         expect(meta.loadedSkills).toEqual([expect.objectContaining({ runtimeName: "keep-skill" })]);
         expect(meta.realizedSkills).toEqual(meta.loadedSkills);
         expect(meta.rudderMcp).toMatchObject({
@@ -946,12 +988,12 @@ describe("pi execute", { timeout: 20_000 }, () => {
           toolCount: 69,
         });
         expect(meta.rudderNativeTools).toMatchObject({ toolCount: 69 });
-        expect((meta.rudderNativeTools as { toolNames: string[] }).toolNames.some(
-          (name) => name.startsWith("rudder_browser_"),
-        )).toBe(false);
+        expect((meta.rudderNativeTools as { toolNames: string[] }).toolNames).toEqual([
+          ...RUDDER_CORE_MCP_TOOL_NAMES,
+        ]);
         expect(await fs.readdir(path.join(capture.piCodingAgentDir!, "skills"))).toEqual(["keep-skill"]);
       } finally {
-        restoreDesktopMcp();
+        installedDesktopMcp.restore();
         if (previousHome === undefined) delete process.env.HOME;
         else process.env.HOME = previousHome;
         if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;

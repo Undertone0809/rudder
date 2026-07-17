@@ -7,6 +7,7 @@ import {
   RUDDER_CORE_MCP_TOOL_NAMES,
   RUDDER_MCP_CONTRACT_VERSION,
   RUDDER_MCP_SERVER_NAME,
+  isRudderBrowserMcpToolCandidate,
   type RudderMcpCliCommand,
   type RudderMcpPreflightDiagnosticCode,
   type RudderMcpPreflightResult,
@@ -138,10 +139,6 @@ function semanticManifestHash(
   }>);
 }
 
-function isBrowserToolCandidate(name: string): boolean {
-  return name.trim().startsWith("rudder_browser_");
-}
-
 function failed(
   command: RudderMcpCliCommand,
   code: RudderMcpPreflightDiagnosticCode,
@@ -243,13 +240,25 @@ async function exchange(
   });
 }
 
-export async function preflightRudderMcpServer(input: {
+type RudderMcpPreflightInput = {
   command: RudderMcpCliCommand;
   runtimeEnv: NodeJS.ProcessEnv | Record<string, string | undefined>;
   managedEnv?: Record<string, string>;
   browserEnabled: boolean;
   timeoutMs?: number;
-}): Promise<RudderMcpPreflightResult> {
+};
+
+function hasExactProviderSurface(result: RudderMcpPreflightResult, browserEnabled: boolean): boolean {
+  const expectedNames = [
+    ...RUDDER_CORE_MCP_TOOL_NAMES,
+    ...(browserEnabled ? RUDDER_BROWSER_MCP_TOOL_NAMES : []),
+  ];
+  return result.available && hasExactNames(result.tools.map((tool) => tool.name), expectedNames);
+}
+
+async function preflightRudderMcpServerOnce(
+  input: RudderMcpPreflightInput,
+): Promise<RudderMcpPreflightResult> {
   const env = Object.fromEntries(
     Object.entries({ ...input.runtimeEnv, ...(input.command.env ?? {}), ...(input.managedEnv ?? {}) })
       .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
@@ -321,7 +330,7 @@ export async function preflightRudderMcpServer(input: {
       partial,
     );
   }
-  const coreTools = parsedTools.filter((tool) => tool && !isBrowserToolCandidate(tool.name));
+  const coreTools = parsedTools.filter((tool) => tool && !isRudderBrowserMcpToolCandidate(tool.name));
   const coreToolNames = coreTools.map((tool) => tool!.name);
   const observedCoreContractHash = semanticManifestHash(coreTools.filter((tool) => tool !== null));
   if (
@@ -355,7 +364,7 @@ export async function preflightRudderMcpServer(input: {
     );
   }
 
-  const browserTools = parsedTools.filter((tool) => tool && isBrowserToolCandidate(tool.name));
+  const browserTools = parsedTools.filter((tool) => tool && isRudderBrowserMcpToolCandidate(tool.name));
   const browserToolNames = browserTools.map((tool) => tool!.name);
   const expectedBrowserTools = input.browserEnabled ? [...RUDDER_BROWSER_MCP_TOOL_NAMES] : [];
   const observedBrowserContractHash = semanticManifestHash(browserTools.filter((tool) => tool !== null));
@@ -383,5 +392,37 @@ export async function preflightRudderMcpServer(input: {
     diagnosticCode: null,
     diagnostic: null,
     tools,
+  };
+}
+
+export async function preflightRudderMcpServer(
+  input: RudderMcpPreflightInput,
+): Promise<RudderMcpPreflightResult> {
+  const requested = await preflightRudderMcpServerOnce(input);
+  if (!requested.available || (input.browserEnabled && requested.browserAvailable)) return requested;
+
+  if (!input.browserEnabled) {
+    if (hasExactProviderSurface(requested, false)) return requested;
+    return failed(
+      input.command,
+      "browser_bundle_handshake_failed",
+      "Rudder MCP core-only tools/list did not expose the exact canonical core manifest; core MCP is unavailable.",
+      { ...requested, available: false },
+    );
+  }
+
+  const coreOnly = await preflightRudderMcpServerOnce({ ...input, browserEnabled: false });
+  if (!hasExactProviderSurface(coreOnly, false)) {
+    return failed(
+      input.command,
+      "browser_bundle_handshake_failed",
+      "Rudder MCP Browser downgrade did not produce an exact core-only provider surface; core MCP is unavailable.",
+      { ...coreOnly, available: false },
+    );
+  }
+
+  return {
+    ...requested,
+    tools: coreOnly.tools,
   };
 }

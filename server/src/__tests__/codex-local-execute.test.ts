@@ -2,6 +2,7 @@ import { execute } from "@rudderhq/agent-runtime-codex-local/server";
 import {
   RUDDER_BROWSER_MCP_CONTRACT_HASH,
   RUDDER_CORE_MCP_CONTRACT_HASH,
+  RUDDER_CORE_MCP_TOOL_NAMES,
   RUDDER_MCP_CONTRACT_VERSION,
   type AgentRuntimeControlHandle,
 } from "@rudderhq/agent-runtime-utils";
@@ -14,9 +15,47 @@ import { describe, expect, it } from "vitest";
 import {
   createRuntimeSkillFixture,
   installVersionMismatchedDesktopMcp,
+  readMcpToolNames,
 } from "./local-runtime-browser-mismatch-helpers";
 
 const execFileAsync = promisify(execFile);
+
+function parseCodexRudderMcpConfig(content: string): {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+} {
+  let section = "";
+  let command = "";
+  let args: string[] = [];
+  const env: Record<string, string> = {};
+  for (const rawLine of content.split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    if (line.startsWith("[") && line.endsWith("]")) {
+      section = line;
+      continue;
+    }
+    const separator = line.indexOf("=");
+    if (separator < 0) continue;
+    const key = line.slice(0, separator).trim();
+    const value = JSON.parse(line.slice(separator + 1).trim()) as unknown;
+    if (section === "[mcp_servers.rudder-control-plane]") {
+      if (key === "command" && typeof value === "string") command = value;
+      if (key === "args" && Array.isArray(value) && value.every((entry) => typeof entry === "string")) {
+        args = value as string[];
+      }
+    }
+    if (
+      section === "[mcp_servers.rudder-control-plane.env]"
+      && typeof value === "string"
+    ) {
+      env[key] = value;
+    }
+  }
+  if (!command) throw new Error("Managed Codex config omitted the Rudder MCP command");
+  return { command, args, env };
+}
 
 const GIT_IDENTITY_TEST_ENV_KEYS = [
   "GIT_AUTHOR_NAME",
@@ -575,6 +614,93 @@ describe("codex execute", { timeout: 20_000 }, () => {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.platform === "win32")(
+    "preserves bundle mismatch metadata on the default Codex App Server path",
+    async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-app-server-mismatch-"));
+      const workspace = path.join(root, "workspace");
+      const binDir = path.join(root, "bin");
+      const commandPath = path.join(binDir, "codex");
+      const capturePath = path.join(root, "capture.json");
+      const rudderHome = path.join(root, ".rudder");
+      await fs.mkdir(workspace, { recursive: true });
+      await fs.mkdir(binDir, { recursive: true });
+      await writeFakeCodexAppServerCommand(commandPath);
+      const installedDesktopMcp = await installVersionMismatchedDesktopMcp(root);
+      const previousHome = process.env.HOME;
+      const previousRudderHome = process.env.RUDDER_HOME;
+      const previousInstanceId = process.env.RUDDER_INSTANCE_ID;
+      process.env.HOME = root;
+      process.env.RUDDER_HOME = rudderHome;
+      delete process.env.RUDDER_INSTANCE_ID;
+      let meta: Record<string, unknown> = {};
+
+      try {
+        const result = await execute({
+          runId: "run-chat-app-server-mismatch",
+          agent: {
+            id: "agent-1",
+            orgId: "organization-1",
+            name: "Codex Coder",
+            agentRuntimeType: "codex_local",
+            agentRuntimeConfig: {},
+          },
+          runtime: {
+            sessionId: null,
+            sessionParams: null,
+            sessionDisplayId: null,
+            taskKey: null,
+          },
+          config: {
+            command: "codex",
+            cwd: workspace,
+            rudderBrowserEnabled: true,
+            env: {
+              PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+              RUDDER_TEST_CAPTURE_PATH: capturePath,
+            },
+            promptTemplate: "Reply in chat.",
+          },
+          context: { rudderScene: "chat", chatMode: true },
+          onLog: async () => undefined,
+          onMeta: async (value) => { meta = value as Record<string, unknown>; },
+        });
+
+        expect(result).toMatchObject({
+          exitCode: 0,
+          resultJson: { transport: "codex_app_server" },
+        });
+        const argv = JSON.parse(await fs.readFile(capturePath, "utf8")) as string[];
+        expect(argv).toContain("app-server");
+        expect(argv).not.toContain("exec");
+        expect(meta.rudderMcp).toMatchObject({
+          available: true,
+          browserAvailable: false,
+          contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
+          contractVersion: RUDDER_MCP_CONTRACT_VERSION,
+          coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
+          diagnosticCode: "browser_bundle_version_mismatch",
+          provenance: "desktop_bundle",
+          serverName: "rudder-control-plane",
+          toolCount: 69,
+          version: "0.4.5",
+        });
+        expect((meta.rudderMcp as { fallbackReason?: string }).fallbackReason).toContain(
+          "bundle version mismatch",
+        );
+      } finally {
+        installedDesktopMcp.restore();
+        if (previousHome === undefined) delete process.env.HOME;
+        else process.env.HOME = previousHome;
+        if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
+        else process.env.RUDDER_HOME = previousRudderHome;
+        if (previousInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
+        else process.env.RUDDER_INSTANCE_ID = previousInstanceId;
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("publishes an interrupt-and-continue handle for Codex exec chat fallback", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-exec-control-"));
@@ -3442,7 +3568,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
       await writeFakeCodexCommand(commandPath);
       const browserSkill = await createRuntimeSkillFixture(root, "browser", "BROWSER_SKILL_PROMISE");
       const keepSkill = await createRuntimeSkillFixture(root, "keep-skill", "KEEP_SKILL_AVAILABLE");
-      const restoreDesktopMcp = await installVersionMismatchedDesktopMcp(root);
+      const installedDesktopMcp = await installVersionMismatchedDesktopMcp(root);
       const previousHome = process.env.HOME;
       const previousRudderHome = process.env.RUDDER_HOME;
       const previousInstanceId = process.env.RUDDER_INSTANCE_ID;
@@ -3499,8 +3625,14 @@ describe("codex execute", { timeout: 20_000 }, () => {
           "utf8",
         );
         expect(managedConfig).toContain('RUDDER_BROWSER_ENABLED = "false"');
+        const generatedMcpConfig = parseCodexRudderMcpConfig(managedConfig);
+        expect(generatedMcpConfig.command).toBe(installedDesktopMcp.command);
+        expect(generatedMcpConfig.args).toEqual(installedDesktopMcp.args);
+        expect(await readMcpToolNames(generatedMcpConfig)).toEqual([
+          ...RUDDER_CORE_MCP_TOOL_NAMES,
+        ]);
       } finally {
-        restoreDesktopMcp();
+        installedDesktopMcp.restore();
         if (previousHome === undefined) delete process.env.HOME;
         else process.env.HOME = previousHome;
         if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;

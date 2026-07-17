@@ -7,6 +7,7 @@ import {
   rudderMcpRuntimeMetadata,
   type AgentRuntimeExecutionContext,
   type AgentRuntimeExecutionResult,
+  type RudderMcpCliCommand,
   type RudderMcpManagedEnv,
 } from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
@@ -224,8 +225,9 @@ async function readOpenCodeConfigFile(sourceHome: string): Promise<Record<string
 
 export async function resolveRudderOpenCodeMcpConfig(
   managedEnv: RudderMcpManagedEnv = {},
+  verifiedCommand?: RudderMcpCliCommand,
 ): Promise<Record<string, unknown>> {
-  const rudderMcp = await resolveRudderMcpCliCommand(__moduleDir);
+  const rudderMcp = verifiedCommand ?? await resolveRudderMcpCliCommand(__moduleDir);
   const env = {
     ...(rudderMcp.env ?? {}),
     ...managedEnv,
@@ -242,6 +244,7 @@ async function ensureManagedOpenCodeConfig(input: {
   sourceHome: string;
   targetHome: string;
   managedEnv?: RudderMcpManagedEnv;
+  verifiedCommand?: RudderMcpCliCommand;
   onLog: AgentRuntimeExecutionContext["onLog"];
 }) {
   const configDir = path.join(input.targetHome, ".config", "opencode");
@@ -255,7 +258,10 @@ async function ensureManagedOpenCodeConfig(input: {
 
   const config = await readOpenCodeConfigFile(input.sourceHome);
   config.mcp = {
-    [RUDDER_MCP_SERVER_NAME]: await resolveRudderOpenCodeMcpConfig(input.managedEnv ?? {}),
+    [RUDDER_MCP_SERVER_NAME]: await resolveRudderOpenCodeMcpConfig(
+      input.managedEnv ?? {},
+      input.verifiedCommand,
+    ),
   };
   await fs.writeFile(
     path.join(configDir, MANAGED_OPENCODE_CONFIG_FILE),
@@ -511,8 +517,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (typeof value === "string" && value.trim().length > 0) runtimeEnv[key] = value;
     else delete runtimeEnv[key];
   }
+  const rudderMcpCommand = await resolveRudderMcpCliCommand(__moduleDir);
   const rudderMcpPreflight = await preflightRudderMcpServer({
-    command: await resolveRudderMcpCliCommand(__moduleDir),
+    command: rudderMcpCommand,
     runtimeEnv,
     managedEnv: pickRudderMcpManagedEnv(env),
     browserEnabled,
@@ -557,6 +564,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     sourceHome: operatorHome,
     targetHome: managedHome,
     managedEnv: pickRudderMcpManagedEnv(env),
+    verifiedCommand: rudderMcpCommand,
     onLog,
   });
   await ensureCommandResolvable(command, cwd, runtimeEnv);
