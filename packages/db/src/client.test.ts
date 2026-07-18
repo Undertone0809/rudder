@@ -534,6 +534,7 @@ describe("applyPendingMigrations", () => {
           "0103_cute_colonel_america.sql",
           "0104_unusual_mister_fear.sql",
           "0105_chat_queue_actor_reconciliation.sql",
+          "0106_damp_amphibian.sql",
         ],
         reason: "pending-migrations",
       });
@@ -659,6 +660,7 @@ describe("applyPendingMigrations", () => {
           "0102_complex_retro_girl.sql",
           "0103_cute_colonel_america.sql",
           "0105_chat_queue_actor_reconciliation.sql",
+          "0106_damp_amphibian.sql",
         ],
         reason: "pending-migrations",
       });

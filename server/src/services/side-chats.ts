@@ -57,6 +57,7 @@ export function sideChatService(db: Db) {
       status: conversation.status as ChatConversation["status"],
       conversationKind: conversation.conversationKind as ChatConversation["conversationKind"],
       sideChatState: conversation.sideChatState as ChatConversation["sideChatState"],
+      issueCreationMode: conversation.issueCreationMode as ChatConversation["issueCreationMode"],
       latestReplyPreview: null,
       latestUserMessagePreview: null,
       userMessageCount: 0,

@@ -97,6 +97,12 @@ test("Side Chat preserves the main draft, becomes read-only on Done, and disappe
   const listBeforeDone = await page.request.get(`/api/orgs/${source.organization.id}/chats?status=all`);
   expect(listBeforeDone.ok()).toBe(true);
   expect((await listBeforeDone.json() as Array<{ id: string }>).some((chat) => chat.id === sideChat.id)).toBe(false);
+  const messengerBeforeDone = await page.request.get(
+    `/api/orgs/${source.organization.id}/messenger/threads?limit=40&splitIssues=true`,
+  );
+  expect(messengerBeforeDone.ok()).toBe(true);
+  expect((await messengerBeforeDone.json() as { items: Array<{ threadKey: string }> }).items
+    .some((thread) => thread.threadKey === `chat:${sideChat.id}`)).toBe(false);
 
   await page.screenshot({ path: testInfo.outputPath("side-chat-active.png"), fullPage: true });
   await panel.getByRole("button", { name: "Done & return" }).click();
@@ -105,7 +111,9 @@ test("Side Chat preserves the main draft, becomes read-only on Done, and disappe
   await expect(panel.getByTestId("side-chat-composer")).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("side-chat-read-only.png"), fullPage: true });
 
-  await panel.getByRole("button", { name: "Close Side Chat tab" }).click();
+  const sideChatTab = panel.locator('[data-side-panel-tab-key^="side-chat:"]');
+  await sideChatTab.hover();
+  await sideChatTab.getByRole("button", { name: "Close Side Chat tab" }).click();
   await expect(panel).toBeHidden();
   const auditRecordRes = await page.request.get(`/api/chats/${sideChat.id}`);
   expect(auditRecordRes.ok()).toBe(true);

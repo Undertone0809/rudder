@@ -1912,6 +1912,11 @@ export function chatRoutes(
 
   router.post("/chats/:id/side-chat/complete", async (req, res) => {
     assertBoard(req);
+    const existing = await assertConversationAccess(req, req.params.id as string);
+    if (!existing || existing.conversationKind !== "side_chat") {
+      res.status(404).json({ error: "Side Chat not found" });
+      return;
+    }
     const userId = boardUserId(req);
     const sideChat = await sideChats.complete({
       conversationId: req.params.id as string,
@@ -1937,6 +1942,11 @@ export function chatRoutes(
 
   router.post("/chats/:id/side-chat/keep", async (req, res) => {
     assertBoard(req);
+    const existing = await assertConversationAccess(req, req.params.id as string);
+    if (!existing || existing.conversationKind !== "side_chat") {
+      res.status(404).json({ error: "Side Chat not found" });
+      return;
+    }
     const userId = boardUserId(req);
     const sideChat = await sideChats.keepInMessenger({
       conversationId: req.params.id as string,

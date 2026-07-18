@@ -871,6 +871,7 @@ describe("chat routes", () => {
       sideChatState: "completed",
       sideChatCompletedAt: new Date("2026-03-26T08:30:00.000Z"),
     });
+    mockChatService.getById.mockResolvedValue(sideConversation);
     mockSideChatService.complete.mockResolvedValue(sideConversation);
 
     const res = await request(createApp())
@@ -893,6 +894,7 @@ describe("chat routes", () => {
       sideChatState: "kept",
       sideChatKeptAt: new Date("2026-03-26T08:30:00.000Z"),
     });
+    mockChatService.getById.mockResolvedValue(sideConversation);
     mockSideChatService.keepInMessenger.mockResolvedValue(sideConversation);
 
     const res = await request(createApp())
