@@ -254,6 +254,17 @@ test.describe("Chat Work Manifest", () => {
     await expect(shelf.getByRole("button", { name: /source\.example https:\/\/source\.example\/research/ }))
       .toHaveCount(1);
 
+    const [shelfBox, widestUserMessageBox, composerContentBox] = await Promise.all([
+      shelf.boundingBox(),
+      page.getByTestId("chat-user-message-bubble").first().boundingBox(),
+      page.getByTestId("chat-composer-content").boundingBox(),
+    ]);
+    expect(shelfBox).not.toBeNull();
+    expect(widestUserMessageBox).not.toBeNull();
+    expect(composerContentBox).not.toBeNull();
+    expect(shelfBox!.x - (widestUserMessageBox!.x + widestUserMessageBox!.width)).toBeGreaterThanOrEqual(12);
+    expect(shelfBox!.x - (composerContentBox!.x + composerContentBox!.width)).toBeGreaterThanOrEqual(12);
+
     const sources = shelf.getByRole("region", { name: "Sources" });
     const expandSources = sources.getByRole("button", { name: /View all/ });
     await expect(expandSources).toHaveAttribute("aria-expanded", "false");
