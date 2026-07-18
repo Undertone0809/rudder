@@ -70,6 +70,50 @@ rl.on("line", (line) => {
   if (message.method === "turn/start") {
     send({ id: message.id, result: { turn: { id: turnId } } });
     send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+    if (process.env.RUDDER_TEST_DUAL_REASONING_STREAM === "1") {
+      for (const delta of ["I will use ", "visualize once."]) {
+        send({ method: "item/reasoning/summaryTextDelta", params: {
+          threadId, turnId, itemId: "reason-1", summaryIndex: 0, delta,
+        } });
+        send({ method: "item/reasoning/textDelta", params: {
+          threadId, turnId, itemId: "reason-1", contentIndex: 0, delta,
+        } });
+      }
+      send({ method: "item/completed", params: {
+        threadId,
+        turnId,
+        item: { type: "reasoning", id: "reason-1", summary: ["I will use visualize once."], content: [] },
+      } });
+      finish("completed");
+    }
+    if (process.env.RUDDER_TEST_RAW_REASONING_STREAM === "1") {
+      for (const delta of ["Raw-only ", "reasoning."]) {
+        send({ method: "item/reasoning/textDelta", params: {
+          threadId, turnId, itemId: "reason-raw", contentIndex: 0, delta,
+        } });
+      }
+      finish("interrupted");
+    }
+    if (process.env.RUDDER_TEST_MULTIPART_REASONING_STREAM === "1") {
+      send({ method: "item/reasoning/summaryPartAdded", params: {
+        threadId, turnId, itemId: "reason-multipart", summaryIndex: 0,
+      } });
+      send({ method: "item/reasoning/summaryTextDelta", params: {
+        threadId, turnId, itemId: "reason-multipart", summaryIndex: 0, delta: "Inspect the state.",
+      } });
+      send({ method: "item/reasoning/summaryPartAdded", params: {
+        threadId, turnId, itemId: "reason-multipart", summaryIndex: 1,
+      } });
+      send({ method: "item/reasoning/summaryTextDelta", params: {
+        threadId, turnId, itemId: "reason-multipart", summaryIndex: 1, delta: "Apply the fix.",
+      } });
+      send({ method: "item/completed", params: {
+        threadId,
+        turnId,
+        item: { type: "reasoning", id: "reason-multipart", summary: ["Inspect the state.", "Apply the fix."], content: [] },
+      } });
+      finish("completed");
+    }
     return;
   }
   if (message.method === "turn/steer") {
@@ -213,6 +257,108 @@ describe("executeCodexAppServerChat", () => {
       expect.objectContaining({ kind: "assistant", text: "reply", delta: true }),
     ]);
     expect(stdoutLines.filter((line) => line.includes('"text":"Steered reply"'))).toEqual([]);
+  });
+
+  it("projects one readable reasoning stream when Codex emits summary and raw deltas", async () => {
+    const stdoutLines: string[] = [];
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_DUAL_REASONING_STREAM: "1",
+      } as Record<string, string>,
+      prompt: "Explain your next step",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async (stream, chunk) => {
+        if (stream === "stdout") stdoutLines.push(chunk.trim());
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const thinkingEntries = stdoutLines
+      .filter((line) => line.includes('"type":"item.completed"'))
+      .flatMap((line) => parseCodexStdoutLine(line, "2026-07-16T00:00:00.000Z"))
+      .filter((entry) => entry.kind === "thinking");
+
+    expect(thinkingEntries).toEqual([
+      expect.objectContaining({ kind: "thinking", text: "I will use ", delta: true }),
+      expect.objectContaining({ kind: "thinking", text: "visualize once.", delta: true }),
+    ]);
+    expect(thinkingEntries.map((entry) => entry.text).join("")).toBe("I will use visualize once.");
+  });
+
+  it("keeps raw-only reasoning visible when no readable summary stream exists", async () => {
+    const stdoutLines: string[] = [];
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_RAW_REASONING_STREAM: "1",
+      } as Record<string, string>,
+      prompt: "Explain with a raw-only model",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async (stream, chunk) => {
+        if (stream === "stdout") stdoutLines.push(chunk.trim());
+      }),
+    });
+
+    expect(result.errorMessage).toBe("Codex turn interrupted");
+    const thinkingText = stdoutLines
+      .filter((line) => line.includes('"type":"item.completed"'))
+      .flatMap((line) => parseCodexStdoutLine(line, "2026-07-16T00:00:00.000Z"))
+      .filter((entry) => entry.kind === "thinking")
+      .map((entry) => entry.text)
+      .join("");
+    expect(thinkingText).toBe("Raw-only reasoning.");
+  });
+
+  it("preserves readable boundaries between multiple reasoning summary parts", async () => {
+    const stdoutLines: string[] = [];
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_MULTIPART_REASONING_STREAM: "1",
+      } as Record<string, string>,
+      prompt: "Explain two steps",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async (stream, chunk) => {
+        if (stream === "stdout") stdoutLines.push(chunk.trim());
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const thinkingText = stdoutLines
+      .filter((line) => line.includes('"type":"item.completed"'))
+      .flatMap((line) => parseCodexStdoutLine(line, "2026-07-16T00:00:00.000Z"))
+      .filter((entry) => entry.kind === "thinking")
+      .map((entry) => entry.text)
+      .join("");
+    expect(thinkingText).toBe("Inspect the state.\nApply the fix.");
   });
 
   it("uses native interrupt before process termination when Stop aborts the turn", async () => {

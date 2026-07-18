@@ -227,6 +227,8 @@ export async function executeCodexAppServerChat(
   let finalAgentText = "";
   const agentDeltaItemIds = new Set<string>();
   const reasoningDeltaItemIds = new Set<string>();
+  const reasoningStreamByItemId = new Map<string, "summary" | "raw">();
+  const reasoningSummaryIndexByItemId = new Map<string, number>();
   let threadId: string | null = null;
   let turnId: string | null = null;
   let turnCompleted = false;
@@ -250,6 +252,15 @@ export async function executeCodexAppServerChat(
     const line = `${JSON.stringify(event)}\n`;
     stdout = appendBounded(stdout, line);
     await options.onLog("stdout", line);
+  };
+
+  const emitReasoningDelta = async (itemId: string, text: string) => {
+    if (!text) return;
+    if (itemId) reasoningDeltaItemIds.add(itemId);
+    await emit({
+      type: "item.completed",
+      item: { id: itemId || undefined, type: "reasoning", text, delta: true },
+    });
   };
 
   const client = new CodexAppServerClient({
@@ -284,16 +295,42 @@ export async function executeCodexAppServerChat(
         }
         return;
       }
-      if (notification.method === "item/reasoning/summaryTextDelta" || notification.method === "item/reasoning/textDelta") {
-        const delta = asString(params.delta);
+      if (notification.method === "item/reasoning/summaryPartAdded") {
         const itemId = asString(params.itemId);
-        if (itemId) reasoningDeltaItemIds.add(itemId);
-        if (delta) {
-          await emit({
-            type: "item.completed",
-            item: { id: itemId || undefined, type: "reasoning", text: delta, delta: true },
-          });
+        const itemKey = itemId || "__anonymous_reasoning_item__";
+        const selectedStream = reasoningStreamByItemId.get(itemKey);
+        if (selectedStream && selectedStream !== "summary") return;
+        reasoningStreamByItemId.set(itemKey, "summary");
+        const summaryIndex = typeof params.summaryIndex === "number" ? params.summaryIndex : 0;
+        const previousSummaryIndex = reasoningSummaryIndexByItemId.get(itemKey);
+        if (previousSummaryIndex !== undefined && previousSummaryIndex !== summaryIndex) {
+          await emitReasoningDelta(itemId, "\n");
         }
+        reasoningSummaryIndexByItemId.set(itemKey, summaryIndex);
+        return;
+      }
+      if (notification.method === "item/reasoning/summaryTextDelta") {
+        const itemId = asString(params.itemId);
+        const itemKey = itemId || "__anonymous_reasoning_item__";
+        const selectedStream = reasoningStreamByItemId.get(itemKey);
+        if (selectedStream && selectedStream !== "summary") return;
+        reasoningStreamByItemId.set(itemKey, "summary");
+        const summaryIndex = typeof params.summaryIndex === "number" ? params.summaryIndex : 0;
+        const previousSummaryIndex = reasoningSummaryIndexByItemId.get(itemKey);
+        if (previousSummaryIndex !== undefined && previousSummaryIndex !== summaryIndex) {
+          await emitReasoningDelta(itemId, "\n");
+        }
+        reasoningSummaryIndexByItemId.set(itemKey, summaryIndex);
+        await emitReasoningDelta(itemId, asString(params.delta));
+        return;
+      }
+      if (notification.method === "item/reasoning/textDelta") {
+        const itemId = asString(params.itemId);
+        const itemKey = itemId || "__anonymous_reasoning_item__";
+        const selectedStream = reasoningStreamByItemId.get(itemKey);
+        if (selectedStream && selectedStream !== "raw") return;
+        reasoningStreamByItemId.set(itemKey, "raw");
+        await emitReasoningDelta(itemId, asString(params.delta));
         return;
       }
       if (notification.method === "item/started" || notification.method === "item/completed") {

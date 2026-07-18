@@ -100,7 +100,33 @@ rl.on("line", (line) => {
     prompt = message.params?.input?.find((item) => item?.type === "text")?.text ?? "";
     send({ id: message.id, result: { turn: { id: turnId } } });
     send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
-    fallbackTimer = setTimeout(() => finish("Initial App Server reply"), 10_000);
+    if (prompt.includes("Render dual reasoning streams")) {
+      setTimeout(() => {
+        for (const delta of ["I will use ", "visualize once."]) {
+          send({
+            method: "item/reasoning/summaryTextDelta",
+            params: { threadId, turnId, itemId: "reason-e2e", summaryIndex: 0, delta },
+          });
+          // Emit both protocol streams to verify Rudder selects one per item.
+          send({
+            method: "item/reasoning/textDelta",
+            params: { threadId, turnId, itemId: "reason-e2e", contentIndex: 0, delta },
+          });
+        }
+        send({
+          method: "item/completed",
+          params: {
+            threadId,
+            turnId,
+            item: { type: "reasoning", id: "reason-e2e", summary: ["I will use visualize once."], content: [] },
+          },
+        });
+      }, 500);
+    }
+    fallbackTimer = setTimeout(
+      () => finish("Initial App Server reply"),
+      prompt.includes("Render dual reasoning streams") ? 1_000 : 10_000,
+    );
     return;
   }
   if (message.method === "turn/steer") {

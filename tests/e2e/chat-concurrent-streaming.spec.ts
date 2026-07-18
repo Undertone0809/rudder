@@ -225,6 +225,44 @@ test("delivers native Codex Steer into the active App Server turn", async ({ pag
   expect((await queueRes.json()).items).toHaveLength(0);
 });
 
+test("renders one readable reasoning stream when App Server emits summary and raw deltas", async ({ page }) => {
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Reasoning-Stream-${Date.now()}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json();
+  const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+    name: "Reasoning Stream Agent",
+    agentRuntimeConfig: {
+      model: "gpt-5.4",
+      command: E2E_CODEX_APP_SERVER_STUB,
+      chatAppServerEnabled: true,
+    },
+  });
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${chatAgent.id}`);
+
+  const composer = page.locator(".rudder-mdxeditor-content").first();
+  await composer.fill("Render dual reasoning streams");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByTestId("chat-assistant-message").last()).toContainText(
+    "Initial App Server reply",
+    { timeout: 20_000 },
+  );
+
+  const transcriptToggle = page.getByRole("button", { name: /Worked for/ }).last();
+  await expect(transcriptToggle).toBeVisible({ timeout: 15_000 });
+  await transcriptToggle.click();
+  const transcriptItem = page.getByTestId("chat-transcript-item").last();
+  await expect(transcriptItem.getByText("I will use visualize once.", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(transcriptItem).not.toContainText("I will use I will use");
+  await expect(transcriptItem).not.toContainText("visualize once.visualize once.");
+});
+
 test("runs Stop-then-Steer feedback as a server-owned continuation", async ({ page }) => {
   const organization = await createStreamingOrg(page, `Running-Queue-Stop-${Date.now()}`);
 
