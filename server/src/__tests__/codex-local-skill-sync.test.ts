@@ -72,7 +72,9 @@ describe("codex local skill sync", () => {
     expect(before.mode).toBe("persistent");
     expect(before.desiredSkills).toContain(rudderSkillKey);
     expect(before.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("missing");
-    expect(before.entries.find((entry) => entry.key === rudderSkillKey)?.description).toContain("CLI-backed references");
+    expect(before.entries.find((entry) => entry.key === rudderSkillKey)?.description).toContain(
+      "Do not use for greetings",
+    );
     expect(before.entries.find((entry) => entry.key === rudderSkillKey)?.originLabel).toBeUndefined();
     expect(before.entries.find((entry) => entry.key === rudderSkillKey)?.detail).toContain(
       "managed Codex skills home",

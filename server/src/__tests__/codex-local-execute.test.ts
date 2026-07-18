@@ -1363,7 +1363,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(capture.agentHome).toBe(path.join(paperclipHome, "instances", "default", "organizations", "organization-1", "workspaces", "agents", "agent-1"));
       expect(capture.rudderOperatorHome).toBe(operatorHome);
       expect(capture.pathEnv?.split(":")[0]).not.toBe(path.join(managedCodexHome, "home", ".rudder", "local-cli-shims"));
-      expect(capture.codexSkillEntries).toEqual(["rudder"]);
+      expect(capture.codexSkillEntries).toEqual(["rudder-docs"]);
       expect(capture.argv).toEqual(expect.arrayContaining([
         "exec",
         "--json",
@@ -1378,7 +1378,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
       const managedConfig = path.join(managedCodexHome, "config.toml");
       const managedGh = path.join(managedCodexHome, "home", ".config", "gh");
       const managedGhShim = path.join(managedCodexHome, "home", ".rudder", "local-cli-shims", "gh");
-      const managedSkillLink = path.join(managedCodexHome, "skills", "rudder");
+      const managedSkillLink = path.join(managedCodexHome, "skills", "rudder-docs");
       expect((await fs.lstat(managedAuth)).isSymbolicLink()).toBe(true);
       expect(await fs.realpath(managedAuth)).toBe(await fs.realpath(path.join(sharedCodexHome, "auth.json")));
       expect((await fs.lstat(managedConfig)).isFile()).toBe(true);
@@ -1402,7 +1402,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
       await expect(fs.lstat(managedGhShim)).rejects.toThrow();
       expect((await fs.lstat(managedSkillLink)).isSymbolicLink()).toBe(true);
       expect(await fs.realpath(managedSkillLink)).toBe(
-        await fs.realpath(path.join(process.cwd(), "server", "resources", "bundled-skills", "rudder")),
+        await fs.realpath(path.join(process.cwd(), "server", "resources", "bundled-skills", "rudder-docs")),
       );
       await expect(fs.lstat(path.join(sharedCodexHome, "organizations", "organization-1"))).rejects.toThrow();
       expect(logs).toContainEqual(
@@ -1804,7 +1804,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(managedConfig).toContain(`path = ${JSON.stringify(path.join(root, ".agents", "skills"))}`);
       expect(managedConfig).toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills"))}`);
       expect(managedConfig).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills"))}`);
-      expect((await fs.lstat(path.join(managedCodexHome, "skills", "rudder"))).isSymbolicLink()).toBe(true);
+      expect((await fs.lstat(path.join(managedCodexHome, "skills", "rudder-docs"))).isSymbolicLink()).toBe(true);
       expect(logs).toContainEqual(
         expect.objectContaining({
           stream: "stdout",
@@ -2298,8 +2298,8 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(promptMetrics.instructionEntryChars).toBeGreaterThan(0);
       expect(loadedSkills).toEqual([
         expect.objectContaining({
-          key: "rudder/rudder",
-          runtimeName: "rudder",
+          key: "rudder/rudder-docs",
+          runtimeName: "rudder-docs",
         }),
       ]);
     } finally {
@@ -2824,7 +2824,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(isolatedConfigContents).toContain(`path = ${JSON.stringify(path.join(root, ".agents", "skills"))}`);
       expect(isolatedConfigContents).toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills"))}`);
       expect(isolatedConfigContents).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills"))}`);
-      expect((await fs.lstat(path.join(isolatedCodexHome, "skills", "rudder"))).isSymbolicLink()).toBe(true);
+      expect((await fs.lstat(path.join(isolatedCodexHome, "skills", "rudder-docs"))).isSymbolicLink()).toBe(true);
       await expect(fs.lstat(workspaceSkill)).rejects.toMatchObject({ code: "ENOENT" });
       expect(logs).toContainEqual(
         expect.objectContaining({
@@ -3339,10 +3339,10 @@ describe("codex execute", { timeout: 20_000 }, () => {
         rudderHome: paperclipHome,
         instanceId: "worktree-1",
       }));
-      await expect(fs.lstat(path.join(workspace, ".agents", "skills", "rudder"))).rejects.toMatchObject({
+      await expect(fs.lstat(path.join(workspace, ".agents", "skills", "rudder-docs"))).rejects.toMatchObject({
         code: "ENOENT",
       });
-      await expect(fs.lstat(path.join(explicitCodexHome, "skills", "rudder"))).rejects.toThrow();
+      await expect(fs.lstat(path.join(explicitCodexHome, "skills", "rudder-docs"))).rejects.toThrow();
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
@@ -3441,7 +3441,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(root, ".agents", "skills"))}`);
       expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills"))}`);
       expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills"))}`);
-      expect((await fs.lstat(path.join(managedCodexHome, "skills", "rudder"))).isSymbolicLink()).toBe(true);
+      expect((await fs.lstat(path.join(managedCodexHome, "skills", "rudder-docs"))).isSymbolicLink()).toBe(true);
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
@@ -3533,14 +3533,14 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(capture.home).toBe(root);
       expect(capture.userProfile).toBe(process.env.USERPROFILE ?? root);
       expect(capture.agentHome).toBe(agentHome);
-      expect(capture.codexSkillEntries).toEqual(["rudder"]);
+      expect(capture.codexSkillEntries).toEqual(["rudder-docs"]);
       await expect(fs.lstat(path.join(managedCodexHome, "skills", "stale-skill"))).rejects.toMatchObject({
         code: "ENOENT",
       });
       await expect(fs.lstat(path.join(managedCodexHome, "skills", ".system"))).rejects.toMatchObject({
         code: "ENOENT",
       });
-      expect((await fs.lstat(path.join(managedCodexHome, "skills", "rudder"))).isSymbolicLink()).toBe(true);
+      expect((await fs.lstat(path.join(managedCodexHome, "skills", "rudder-docs"))).isSymbolicLink()).toBe(true);
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
