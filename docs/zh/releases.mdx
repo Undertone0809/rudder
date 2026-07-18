@@ -26,10 +26,15 @@ npx @rudderhq/cli@latest start
 
 ### New Features
 
+- 增加内置 Visualize 技能，可以直接在 Rudder Chat 中把 agent 分析转换为安全、响应式的 inline charts、timelines、comparisons 和 decision dashboards。
 - 增加内置 Desktop 浏览器，支持安全的本地 profile、浏览器设置、Chromium Cookie 导入、local runtime capability projection，以及面向 agent workflow 的浏览器快捷键。
-- 扩展 Chat 工作界面，增加持久化 Work manifest、inline visual artifacts、website previews、forked chat 命名和改进后的 prompt starters。
+- 扩展 Chat 工作界面，增加持久化 Work manifest、website previews、forked chat 命名和改进后的 prompt starters。
 - 增加 Library PDF 预览、Markdown 编辑、默认应用打开操作，以及从 Side Panel 访问 organization files 的能力。
 - 增加 Automation templates，并扩展 Desktop 启动恢复、诊断和更新处理能力。
+
+![Visualize 技能生成的八周 agent 运营看板](../images/visualize-skill-agent-operations.png)
+
+这个看板由真实的 Codex run 在 Rudder Chat 中调用内置 Visualize 技能生成。
 
 ### Improvements
 
@@ -39,6 +44,7 @@ npx @rudderhq/cli@latest start
 
 ### Bug Fixes
 
+- 修复默认 Codex App Server Chat 路径，使 Visualize artifacts 能被捕获并持久化为 message-owned attachments。
 - 修复 Chat steering、停止、滚动、output finalization、reference rendering、project visibility 和 organization switch recovery 回归。
 - 修复 Desktop packaged startup、browser bundle handshakes、MCP stdio attachment、update blockers 和跨平台快捷键行为。
 - 修复 issue workflow context、Messenger layout、Library controls、website preview isolation，以及多项 CI 和文档部署回归。

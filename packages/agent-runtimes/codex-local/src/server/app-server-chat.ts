@@ -4,6 +4,7 @@ import type {
   UsageSummary,
 } from "@rudderhq/agent-runtime-utils";
 import { spawn, type ChildProcess } from "node:child_process";
+import { createRequire } from "node:module";
 import {
   CodexAppServerClient,
   CodexAppServerClosedError,
@@ -15,6 +16,12 @@ import {
 const APP_SERVER_INTERRUPT_TIMEOUT_MS = 1_000;
 const APP_SERVER_PROCESS_HARD_DEADLINE_MS = 2_000;
 const APP_SERVER_CAPTURE_LIMIT = 8 * 1024 * 1024;
+
+type PackageJson = { version?: string };
+
+const require = createRequire(import.meta.url);
+const packageJson = require("../../package.json") as PackageJson;
+const APP_SERVER_CLIENT_VERSION = packageJson.version ?? "0.0.0";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -265,7 +272,7 @@ export async function executeCodexAppServerChat(
 
   const client = new CodexAppServerClient({
     transport: createCodexAppServerStdioTransport(child),
-    clientInfo: { name: "rudder", title: "Rudder", version: "0.4.6" },
+    clientInfo: { name: "rudder", title: "Rudder", version: APP_SERVER_CLIENT_VERSION },
     capabilities: { experimentalApi: true },
     requestTimeoutMs: 30_000,
     serverRequestTimeoutMs: 30_000,

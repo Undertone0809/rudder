@@ -696,6 +696,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       });
     }
     try {
+      const appStartedAt = new Date();
       const appResult = await executeCodexAppServerChat({
         command,
         cwd,
@@ -717,6 +718,21 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         abortSignal: ctx.abortSignal,
         controlAttempt: ctx.controlAttempt,
       });
+      const appEndedAt = new Date();
+      const inlineVisuals = appResult.sessionId
+        && appResult.exitCode === 0
+        && appResult.signal === null
+        ? await captureCodexInlineVisuals({
+          body: codexInlineVisualDirectiveBody(appResult.summary),
+          codexHome: effectiveCodexHome,
+          threadId: appResult.sessionId,
+          startedAt: appStartedAt,
+          endedAt: appEndedAt,
+        }).catch(async () => {
+          await onLog("stderr", "[rudder] Codex inline visual capture failed; the visual will be unavailable.\n").catch(() => {});
+          return [];
+        })
+        : [];
       const estimatedCostUsd =
         billingType === "subscription" && countSubscriptionUsageAsCost
           ? estimateCodexCostUsd(model, appResult.usage)
@@ -754,6 +770,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
           providerThreadId: appResult.sessionId,
           providerTurnId: appResult.providerTurnId,
           transport: "codex_app_server",
+          ...(inlineVisuals.length > 0 ? { inlineVisuals } : {}),
         },
         summary: appResult.summary,
         clearSession: appResult.clearSession,
