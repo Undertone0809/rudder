@@ -57,7 +57,7 @@ The two fundamental heartbeat modes are:
 
 Supported local runtimes receive Rudder-managed tools for working with issues, runs, Chat, automations, Library files, approvals, skills, and agents. In Rudder Desktop `local_trusted` deployments, supported Codex, Claude Code, OpenCode, and Pi runs can also receive the [Built-in Browser](/concepts/built-in-browser) capability when it is enabled.
 
-These tools are automatic runtime infrastructure, not custom integrations. Rudder prepares their configuration and run identity; operators do not manually connect or configure them. The bundled `rudder` CLI skill remains the fallback when a runtime cannot use the managed tool surface.
+These tools are automatic runtime infrastructure, not custom integrations. Rudder prepares their configuration and run identity; operators do not manually connect or configure them. When a runtime cannot use the managed tool surface and needs exact fallback commands, it can consult the bundled `rudder-docs` skill for the CLI compatibility path.
 
 Tool visibility does not bypass product authority. Calls remain scoped to the
 current organization and run and continue through the normal permissions,
