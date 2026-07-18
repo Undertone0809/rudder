@@ -952,6 +952,7 @@ contracts:
       - ui/src/pages/Chat.parts.tsx
       - ui/src/pages/Chat.scroll-map.tsx
       - ui/src/pages/Chat.tsx
+      - ui/src/components/MarkdownEditor.tsx
       - ui/src/lib/chat-client-checkpoints.ts
       - ui/src/lib/chat-stop-recovery.ts
       - ui/src/pages/Chat.messages.tsx
@@ -969,7 +970,9 @@ contracts:
       - ui/src/lib/chat-client-checkpoints.test.ts
       - ui/src/lib/chat-stop-recovery.test.ts
       - ui/src/lib/motion-css.test.ts
+      - ui/src/components/MarkdownEditor.test.tsx
       - tests/e2e/chat-error-toast.spec.ts
+      - tests/e2e/chat-composer-at-mentions.spec.ts
       - tests/e2e/chat-concurrent-streaming.spec.ts
       - tests/e2e/chat-edit-stream-layout.spec.ts
       - tests/e2e/chat-options-menu.spec.ts

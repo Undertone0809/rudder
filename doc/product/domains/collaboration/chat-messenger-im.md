@@ -69,6 +69,7 @@ related_code:
   - ui/src/pages/Chat.work-manifest.tsx
   - ui/src/pages/Chat.tsx
   - ui/src/pages/Chat.messages.tsx
+  - ui/src/components/MarkdownEditor.tsx
   - ui/src/pages/Messenger.tsx
   - ui/src/pages/AgentDetail.runs.tsx
   - server/src/routes/website-metadata.ts
@@ -112,6 +113,7 @@ related_tests:
   - ui/src/lib/chat-stream-state.test.ts
   - ui/src/pages/Chat.attachment-preview.test.tsx
   - ui/src/pages/Chat.messages.test.tsx
+  - ui/src/components/MarkdownEditor.test.tsx
   - server/src/__tests__/website-metadata.test.ts
   - server/src/__tests__/website-metadata-routes.test.ts
   - packages/shared/src/website-icons.test.ts
@@ -127,6 +129,7 @@ related_tests:
   - tests/e2e/chat-side-panel.spec.ts
   - tests/e2e/built-in-browser.spec.ts
   - tests/e2e/chat-work-manifest.spec.ts
+  - tests/e2e/chat-composer-at-mentions.spec.ts
   - tests/e2e/agent-detail-feishu-integration.spec.ts
   - tests/e2e/feishu-source-badges.spec.ts
   - desktop/scripts/smoke.mjs
@@ -312,6 +315,10 @@ Invariants:
   queued follow-up mutations through the same fork-to-continue boundary as
   normal local chat mutation APIs.
 - Agent attribution is visible enough to navigate from message to run/agent.
+- When Chat merges organization-wide mention candidates with the selected
+  agent's enabled skill candidates, one canonical skill target appears only
+  once. The selected-agent candidate wins so the composer preserves the
+  agent-specific enabled-skill boundary and metadata.
 - Work-manifest reconciliation must not read hidden reasoning, transcript tool
   payloads, stdout, or stderr as user-visible Sources or References.
 - Project-scoped recent-conversation rows must remain visually scan-friendly at
@@ -327,8 +334,8 @@ Invariants:
 
 Evidence:
 
-- Chat E2E covers rich references, skill picker, attachments, draft
-  persistence, and attribution navigation.
+- Chat E2E covers rich references, skill picker, duplicate-free agent-enabled
+  skill mentions, attachments, draft persistence, and attribution navigation.
 - Chat scroll-map focused tests cover the visible-message filter, the 64-marker
   production-sized ceiling, Markdown-safe bounded previews, assistant context,
   and jump delegation.
