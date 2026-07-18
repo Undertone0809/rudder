@@ -2,7 +2,10 @@
 
 Use this reference when a board user or authorized agent asks you to discover, import, inspect, or enable organization skills.
 
-This workflow is now **CLI-first** for the bundled `rudder` skill.
+This is the organization and agent-skill administration reference for the
+bundled `rudder-docs` package. Use the typed Rudder tool when exposed and the
+documented CLI as its compatibility fallback. General control-plane ownership,
+authentication, and workspace rules remain in `control-plane-practices.md`.
 
 For a skill that belongs only to the running agent, do not use organization import or scan commands. Use:
 

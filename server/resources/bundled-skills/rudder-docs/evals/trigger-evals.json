@@ -1,0 +1,82 @@
+[
+  {
+    "query": "Rudder 里 Chat 和 issue 的职责边界到底是什么？我们团队正在设计交接流程，请给我当前官方文档链接，并说明什么时候应该保留在 Chat。",
+    "should_trigger": true
+  },
+  {
+    "query": "Before I write this integration, verify which Rudder MCP tools this agent can actually call in the current run. Please use live capability evidence instead of memory.",
+    "should_trigger": true
+  },
+  {
+    "query": "我 checkout 一个已分配的 Rudder issue 时返回了 409。为什么不能直接重试？请对照当前产品契约、源码和测试解释冲突语义。",
+    "should_trigger": true
+  },
+  {
+    "query": "How do I configure Codex as a Rudder runtime on the latest released version? I need the supported fields and exact official setup page, not an example from the development branch.",
+    "should_trigger": true
+  },
+  {
+    "query": "Where in the official Rudder source are bundled skills materialized for local runtime adapters, and which tests protect stale managed-skill cleanup?",
+    "should_trigger": true
+  },
+  {
+    "query": "Rudder 显示这个 skill 已 enabled，但刚才的 run 没有使用它。这是 selected、loaded 和 used 语义不同，还是运行时出了 bug？请核对当前契约。",
+    "should_trigger": true
+  },
+  {
+    "query": "我把交付文档写进 Rudder Library 后，为什么评论里必须使用返回的 markdownLink，不能手写 library-entry URL？请给出准确规则。",
+    "should_trigger": true
+  },
+  {
+    "query": "Which Rudder API endpoint is the compatibility fallback behind the CLI issue checkout command, and under what failure conditions is direct API fallback allowed?",
+    "should_trigger": true
+  },
+  {
+    "query": "RUD-248 已分配给我，但标记 done 失败了。请先查清当前 Rudder 对完成评论和验证证据的精确要求，再告诉我应该用哪个受支持的操作。",
+    "should_trigger": true
+  },
+  {
+    "query": "我需要给 agent 添加 agent-browser。Rudder 的 skills enable 和 skills sync 到底哪个是增量、哪个会替换完整集合？请核对精确策略后回答。",
+    "should_trigger": true
+  },
+  {
+    "query": "hi",
+    "should_trigger": false
+  },
+  {
+    "query": "这个 React 组件在当前 Rudder run 里渲染成空白了，帮我修复状态更新逻辑并补一个组件测试。",
+    "should_trigger": false
+  },
+  {
+    "query": "RUD-248 这个 issue 已经分配给我，检查结果也都在上下文里；直接用当前 typed tool 把它标成 done。",
+    "should_trigger": false
+  },
+  {
+    "query": "Use the exposed Rudder skill tool to enable agent-browser for this agent; the exact selection and target agent are already present in the active context.",
+    "should_trigger": false
+  },
+  {
+    "query": "把下面这段提到 rudder control 的英文产品文案总结成三条中文要点；这里的 rudder 是船舵控制，不是软件产品。",
+    "should_trigger": false
+  },
+  {
+    "query": "在这个 Rudder run 里分析附件中的三家竞品定价表，算出年付折扣并推荐我们的套餐价格。",
+    "should_trigger": false
+  },
+  {
+    "query": "Write a short email to the design team saying the issue is complete and that the new screenshots are ready for review.",
+    "should_trigger": false
+  },
+  {
+    "query": "Please fix the spelling mistakes on the docs page in this repository, preserve its existing tone, and run the markdown linter afterward.",
+    "should_trigger": false
+  },
+  {
+    "query": "帮我设计一个名叫 Rudder 的船舵图标：深蓝色、圆形徽章、透明背景，输出 1024px PNG。",
+    "should_trigger": false
+  },
+  {
+    "query": "用当前已经暴露的 Library 文件读取工具打开季度计划，把第二节复制到这条聊天里；路径和权限都已在上下文中。",
+    "should_trigger": false
+  }
+]

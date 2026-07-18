@@ -1,6 +1,11 @@
 # Rudder Agent CLI Reference
 
-Stable compatibility contract for agents using the bundled `rudder` skill. Prefer first-party Rudder MCP tools when the runtime exposes them; use these CLI commands as fallback when MCP is unavailable or a Rudder MCP tool returns a transport/configuration error.
+Stable typed-tool and CLI fallback catalog for the bundled `rudder-docs`
+package. Prefer first-party Rudder MCP tools when the runtime exposes them; use
+these CLI commands as fallback when MCP is unavailable or a Rudder MCP tool
+returns a transport or configuration error. For conditional operating policy,
+consult `control-plane-practices.md` rather than treating this catalog as an
+always-run workflow.
 
 ## Chat And Issue Surface Boundary
 
