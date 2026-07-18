@@ -694,7 +694,7 @@ describe("IssueDetail", () => {
     expect(html).toContain('href="/library?path=docs%2Fproduct-brief.md"');
   });
 
-  it("keeps the desktop issue detail in one page-level scroll flow", () => {
+  it("keeps the desktop issue detail in one page-level scroll flow with a sticky sidebar", () => {
     const html = renderToStaticMarkup(<IssueDetail />);
 
     expect(html).toContain('data-testid="issue-detail-main-scroll"');
@@ -709,7 +709,7 @@ describe("IssueDetail", () => {
     });
     expect(html).not.toContain('data-testid="issue-detail-primary-scroll"');
     expect(html).not.toContain('data-testid="comment-thread-timeline-scroll"');
-    expect(html).toContain('<aside class="mt-6 xl:mt-0 xl:min-h-0">');
+    expect(html).toContain('class="mt-6 xl:sticky xl:top-4 xl:mt-0 xl:min-h-0 xl:self-start" data-testid="issue-detail-sidebar"');
     expect(html).not.toContain('xl:overflow-y-auto');
     expect(html).not.toContain('class="space-y-3 xl:sticky xl:top-4"');
   });

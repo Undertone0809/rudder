@@ -188,8 +188,9 @@ test("issue detail body and activity move through one scroll flow", async ({ pag
     const timelineFlow = document.querySelector<HTMLElement>("[data-testid='comment-thread-timeline-flow']");
     const composer = Array.from(document.querySelectorAll<HTMLElement>(".chat-composer")).at(-1);
     const activity = document.querySelector<HTMLElement>("section[aria-label='Activity']");
+    const sidebar = document.querySelector<HTMLElement>("[data-testid='issue-detail-sidebar']");
     const workspaceMain = document.querySelector<HTMLElement>("#main-content");
-    if (!mainScroll || !timelineFlow || !composer || !activity || !workspaceMain) return null;
+    if (!mainScroll || !timelineFlow || !composer || !activity || !sidebar || !workspaceMain) return null;
 
     const before = {
       activityTop: activity.getBoundingClientRect().top,
@@ -202,6 +203,7 @@ test("issue detail body and activity move through one scroll flow", async ({ pag
       activityTop: activity.getBoundingClientRect().top,
       composerTop: composer.getBoundingClientRect().top,
       firstCommentTop: timelineFlow.querySelector<HTMLElement>("[id^='comment-']")?.getBoundingClientRect().top ?? null,
+      sidebarTop: sidebar.getBoundingClientRect().top,
     };
     mainScroll.scrollTop = Math.floor(mainScroll.scrollHeight / 2);
     await new Promise((resolve) => requestAnimationFrame(resolve));
@@ -209,6 +211,7 @@ test("issue detail body and activity move through one scroll flow", async ({ pag
       activityTop: activity.getBoundingClientRect().top,
       composerBox: composer.getBoundingClientRect(),
       firstCommentTop: timelineFlow.querySelector<HTMLElement>("[id^='comment-']")?.getBoundingClientRect().top ?? null,
+      sidebarTop: sidebar.getBoundingClientRect().top,
     };
     const mainScrollRect = mainScroll.getBoundingClientRect();
     const timelineFlowRect = timelineFlow.getBoundingClientRect();
@@ -220,6 +223,7 @@ test("issue detail body and activity move through one scroll flow", async ({ pag
         ? null
         : Math.round(afterTopScroll.firstCommentTop - afterMiddleScroll.firstCommentTop),
       stickyComposerDelta: Math.round(Math.abs(afterTopScroll.composerTop - afterMiddleScroll.composerBox.top)),
+      stickySidebarDelta: Math.round(Math.abs(afterTopScroll.sidebarTop - afterMiddleScroll.sidebarTop)),
       stickyBottomGap: Math.round(mainScrollRect.bottom - afterMiddleScroll.composerBox.bottom),
       timelineFlowTop: Math.round(timelineFlowRect.top),
       timelineFlowBottom: Math.round(timelineFlowRect.bottom),
@@ -239,6 +243,7 @@ test("issue detail body and activity move through one scroll flow", async ({ pag
   expect(metrics!.firstCommentMovesWithMainScroll).not.toBeNull();
   expect(metrics!.firstCommentMovesWithMainScroll!).toBeGreaterThan(120);
   expect(metrics!.stickyComposerDelta).toBeLessThanOrEqual(2);
+  expect(metrics!.stickySidebarDelta).toBeLessThanOrEqual(2);
   expect(metrics!.stickyBottomGap).toBeGreaterThanOrEqual(0);
   expect(metrics!.stickyBottomGap).toBeLessThanOrEqual(28);
   expect(metrics!.timelineFlowTop).toBeLessThan(metrics!.composerTop);

@@ -2648,7 +2648,10 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
       </Sheet>
       <ScrollToBottom />
       </div>
-      <aside className="mt-6 xl:mt-0 xl:min-h-0">
+      <aside
+        className="mt-6 xl:sticky xl:top-4 xl:mt-0 xl:min-h-0 xl:self-start"
+        data-testid="issue-detail-sidebar"
+      >
         <div className="space-y-3">
           <div className="hidden xl:flex justify-end">
             {renderDesktopIssueActions({
