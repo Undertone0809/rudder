@@ -32,6 +32,12 @@ function fixturePage(markdownHref, footer = "") {
 
 test("postprocesses paired English and Simplified Chinese export pages", () => {
   const exportDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-docs-export-"));
+  const runtimeChunkPath = path.join(exportDir, "_next/static/chunks/runtime.js");
+  fs.mkdirSync(path.dirname(runtimeChunkPath), { recursive: true });
+  fs.writeFileSync(
+    runtimeChunkPath,
+    'const runtime={ENV:"cli"};let o=false;o||(console.warn("Connected to Socket.io"),connect());let i=false;i||(console.warn("Connected to Socket.io"),connect());',
+  );
   const footer = [
     '<a href="/get-started/installation">Quick Start</a>',
     '<a href="/concepts/calendar">Calendar</a>',
@@ -63,6 +69,7 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
   const englishGuide = fs.readFileSync(englishGuidePath, "utf8");
   const chineseGuide = fs.readFileSync(chineseGuidePath, "utf8");
   const unpaired = fs.readFileSync(unpairedPath, "utf8");
+  const runtimeChunk = fs.readFileSync(runtimeChunkPath, "utf8");
 
   for (const html of [english, chinese, englishGuide, chineseGuide, unpaired]) {
     assert.doesNotMatch(html, /<link\b[^>]*type="text\/markdown"/);
@@ -108,6 +115,24 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
   assert.match(chinese, /\\"href\\":\\"\/zh\/get-started\/installation\\"/);
   assert.match(chinese, /\\"href\\":\\"\/zh\/concepts\/calendar\\"/);
   assert.match(chinese, /\\"href\\":\\"\/about\\"/);
+  assert.match(runtimeChunk, /ENV:"production"/);
+  assert.doesNotMatch(runtimeChunk, /ENV:"cli"/);
+  assert.match(runtimeChunk, /o\|\|true\|\|\(console\.warn\("Connected to Socket\.io"\)/);
+  assert.match(runtimeChunk, /i\|\|true\|\|\(console\.warn\("Connected to Socket\.io"\)/);
+  assert.doesNotMatch(
+    runtimeChunk,
+    /(?<![\w$|])[A-Za-z_$][\w$]*\|\|\(console\.warn\("Connected to Socket\.io"\)/,
+  );
+});
+
+test("Simplified Chinese reference pages use localized titles", () => {
+  const referenceDir = path.join(REPO_ROOT, "docs/zh/reference");
+  for (const filename of fs.readdirSync(referenceDir).filter((name) => name.endsWith(".mdx"))) {
+    const source = fs.readFileSync(path.join(referenceDir, filename), "utf8");
+    const title = source.match(/^title:\s*["']?([^"'\n]+)["']?$/m)?.[1];
+    assert.ok(title, `${filename} must declare a title`);
+    assert.match(title, /[\u3400-\u9fff]/, `${filename} title must be localized`);
+  }
 });
 
 test("docs config declares the shared social preview image", () => {

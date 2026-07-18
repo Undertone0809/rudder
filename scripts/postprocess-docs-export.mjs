@@ -49,6 +49,28 @@ function collectPageFiles(exportDir) {
   return files.sort();
 }
 
+function normalizeStaticRuntimeEnvironment(exportDir) {
+  const chunksDir = path.join(exportDir, "_next/static/chunks");
+  if (!fs.existsSync(chunksDir)) return 0;
+
+  let changedFiles = 0;
+  for (const filename of fs.readdirSync(chunksDir)) {
+    if (!filename.endsWith(".js")) continue;
+    const filePath = path.join(chunksDir, filename);
+    const source = fs.readFileSync(filePath, "utf8");
+    const normalized = source
+      .replaceAll('ENV:"cli"', 'ENV:"production"')
+      .replace(
+        /(?<![\w$|])([A-Za-z_$][\w$]*)\|\|\(console\.warn\("Connected to Socket\.io"\)/g,
+        '$1||true||(console.warn("Connected to Socket.io")',
+      );
+    if (normalized === source) continue;
+    fs.writeFileSync(filePath, normalized);
+    changedFiles += 1;
+  }
+  return changedFiles;
+}
+
 function routeForFile(exportDir, filePath) {
   const relativePath = path.relative(exportDir, filePath).split(path.sep).join("/");
   if (relativePath === "index.html") return "/";
@@ -165,6 +187,7 @@ function localizeSerializedFooter(html) {
 }
 
 function postprocessExport(exportDir) {
+  const normalizedRuntimeChunks = normalizeStaticRuntimeEnvironment(exportDir);
   const pageFiles = collectPageFiles(exportDir);
   if (pageFiles.length === 0) throw new Error(`No exported docs pages found in ${exportDir}`);
 
@@ -200,7 +223,7 @@ function postprocessExport(exportDir) {
   }
 
   console.log(
-    `Postprocessed ${pageFiles.length} docs pages (${chinesePages} Chinese, ${pairedPages} with language alternates).`,
+    `Postprocessed ${pageFiles.length} docs pages (${chinesePages} Chinese, ${pairedPages} with language alternates, ${normalizedRuntimeChunks} runtime chunks normalized).`,
   );
 }
 
