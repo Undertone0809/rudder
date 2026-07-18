@@ -1126,8 +1126,13 @@ function mergeMentionOptions(globalMentions: MentionOption[], localMentions: Men
   if (!localMentions || localMentions.length === 0) return globalMentions;
   if (globalMentions.length === 0) return localMentions;
   const merged = new Map<string, MentionOption>();
-  for (const mention of globalMentions) merged.set(mention.id, mention);
-  for (const mention of localMentions) merged.set(mention.id, mention);
+  const identity = (mention: MentionOption) => (
+    mention.kind === "skill" && mention.skillMarkdownTarget
+      ? `skill-target:${mention.skillMarkdownTarget}`
+      : `id:${mention.id}`
+  );
+  for (const mention of globalMentions) merged.set(identity(mention), mention);
+  for (const mention of localMentions) merged.set(identity(mention), mention);
   return Array.from(merged.values());
 }
 

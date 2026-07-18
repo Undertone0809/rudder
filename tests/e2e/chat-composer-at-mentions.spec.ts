@@ -222,6 +222,11 @@ test("chat composer inserts every @ reference type with Tab and keeps typing aft
     await page.keyboard.type(`@${mentionCase.query}`);
     const option = page.getByTestId(mentionCase.optionTestId);
     await expect(option).toContainText(mentionCase.optionText ?? mentionCase.tokenText, { timeout: 15_000 });
+    if (mentionCase.kind === "skill") {
+      await expect(
+        page.locator('[data-testid^="markdown-mention-option-skill:"]').filter({ hasText: mentionCase.tokenText }),
+      ).toHaveCount(1);
+    }
     if (mentionCase.kind === "library_directory") {
       await expect(option).toContainText(libraryDirectoryPath);
     }

@@ -25,6 +25,11 @@ const mdxEditorMocks = vi.hoisted(() => ({
   navigate: vi.fn(),
 }));
 
+const markdownMentionsMocks = vi.hoisted(() => ({
+  mentions: [] as Array<Record<string, unknown>>,
+  onMentionQueryChange: vi.fn(),
+}));
+
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
@@ -39,6 +44,10 @@ vi.mock("@/context/I18nContext", () => ({
 vi.mock("@/lib/router", () => ({
   useLocation: () => ({ pathname: "/test", search: "", hash: "" }),
   useNavigate: () => mdxEditorMocks.navigate,
+}));
+
+vi.mock("../context/MarkdownMentionsContext", () => ({
+  useMarkdownMentions: () => markdownMentionsMocks,
 }));
 
 vi.mock("@/components/ui/dialog", () => ({
@@ -311,10 +320,68 @@ afterEach(() => {
   mdxEditorMocks.lastEditorProps = null;
   mdxEditorMocks.focusCalls = [];
   mdxEditorMocks.navigate.mockReset();
+  markdownMentionsMocks.mentions = [];
+  markdownMentionsMocks.onMentionQueryChange.mockReset();
   document.body.innerHTML = "";
 });
 
 describe("MarkdownEditor", () => {
+  it("keeps one local skill option when the global catalog points to the same skill", async () => {
+    const restoreCaretRect = stubCaretRect();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const skillTarget = "/workspace/skills/visualize/SKILL.md";
+    markdownMentionsMocks.mentions = [
+      {
+        id: "skill:org:visualize-id",
+        name: "visualize",
+        kind: "skill",
+        skillRefLabel: "visualize",
+        skillMarkdownTarget: skillTarget,
+        skillDisplayName: "visualize",
+        skillDescription: "Organization catalog entry",
+        skillCategoryLabel: "Org skill",
+      },
+    ];
+
+    cleanupFn = () => {
+      restoreCaretRect();
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="@vi"
+          onChange={() => undefined}
+          mentions={[
+            {
+              id: "skill:org:organization/org-1/visualize",
+              name: "visualize",
+              kind: "skill",
+              skillRefLabel: "visualize",
+              skillMarkdownTarget: skillTarget,
+              skillDisplayName: "visualize",
+              skillDescription: "Agent-enabled entry",
+            },
+          ]}
+        />,
+      );
+    });
+
+    const editable = container.querySelector('[contenteditable="true"]');
+    expect(editable).toBeTruthy();
+    await placeCaretAndOpenMentionMenu(editable!, "@vi".length);
+
+    expect(document.body.querySelectorAll('[data-testid^="markdown-mention-option-skill:"]')).toHaveLength(1);
+    expect(document.body.querySelector('[data-testid="markdown-mention-option-skill:org:organization/org-1/visualize"]')).toBeTruthy();
+    expect(document.body.querySelector('[data-testid="markdown-mention-option-skill:org:visualize-id"]')).toBeNull();
+  });
+
   it("keeps Rudder mention tokens inside plain-text list markdown", () => {
     const href = "agent://1f3882fb-d535-4ac9-a9ad-b3f404865fd6?i=dicebear%3Anotionists%3A220939ed-91d3-454a-8a34-4abf4cf62162%3Fbg%3Dmist";
 
