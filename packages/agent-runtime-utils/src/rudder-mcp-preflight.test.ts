@@ -80,6 +80,11 @@ for await (const line of lines) {
   const request = JSON.parse(line);
   if (request.id == null) continue;
   if (mode === "exit") process.exit(2);
+  if (mode === "exit-stderr") {
+    console.error("ignorable warning");
+    console.error("actionable root cause");
+    process.exit(3);
+  }
   if (request.method === "initialize") {
     const version = mode.startsWith("version") ? "0.4.5" : "0.4.6";
     const hash = mode === "contract" ? "stale-contract" : ${JSON.stringify(RUDDER_BROWSER_MCP_CONTRACT_HASH)};
@@ -218,6 +223,17 @@ describe("preflightRudderMcpServer", () => {
 
     expect(result.available).toBe(false);
     expect(() => assertRudderMcpCoreAvailable(result)).toThrow(/Rudder MCP/u);
+  });
+
+  it("reports the exit context and trailing stderr detail", async () => {
+    const result = await preflightRudderMcpServer({
+      command: await fixtureCommand("exit-stderr"),
+      runtimeEnv: {},
+      browserEnabled: true,
+    });
+
+    expect(result.diagnostic).toContain("code=3");
+    expect(result.diagnostic).toContain("ignorable warning | actionable root cause");
   });
 
   it.each([
