@@ -193,6 +193,30 @@ describe("bundled rudder docs skill", () => {
     expect(contents).toMatch(/skills enable[\s\S]*additive[\s\S]*skills sync[\s\S]*replace/i);
   });
 
+  it("uses canonical renderable entity links instead of legacy prefix paths", async () => {
+    const practices = await fs.readFile(
+      path.join(root, "references", "control-plane-practices.md"),
+      "utf8",
+    );
+
+    for (const scheme of [
+      "issue://",
+      "agent://",
+      "automation://",
+      "project://",
+      "chat://",
+      "skill://",
+    ]) {
+      expect(practices).toContain(scheme);
+    }
+    expect(practices).toContain("?c=<comment-id>");
+    expect(practices).toContain("?intent=wake");
+    expect(practices).toMatch(/Library[\s\S]*returned `markdownLink`/);
+    expect(practices).toMatch(/external[\s\S]*descriptive[\s\S]*https/i);
+    expect(practices).not.toMatch(/organization prefix/i);
+    expect(practices).not.toContain("/<prefix>/issues");
+  });
+
   it("bounds remote evidence and forbids docs-only mutations or credential disclosure", async () => {
     const contents = await readSkill();
 

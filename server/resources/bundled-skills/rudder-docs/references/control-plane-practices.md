@@ -41,15 +41,16 @@ because work is executable, durable, long-running, or reviewable.
 
 ## Comments, Mentions, And Evidence
 
-- Use `[Agent Name](agent://agent-id?intent=wake)` only when intentionally
-  waking the agent. Use `[Agent Name](agent://agent-id)` as a reference-only
-  link. Plain text names are not wake requests.
 - Keep issue comments concise: a short status line, the material change or
-  blocker, validation evidence, and links to related issues, approvals,
-  projects, agents, Library files, runs, or external pages.
-- Make web targets and ticket references clickable Markdown links. Use the
-  organization prefix from the issue identifier for internal issue, comment,
-  Library, agent, project, approval, and run links.
+  blocker, validation evidence, and links to related entities, Library files,
+  or external pages.
+- Use normal Markdown links with Rudder's canonical renderable entity schemes:
+  `issue://`, `agent://`, `automation://`, `project://`, `chat://`, and
+  `skill://`. Add `?c=<comment-id>` to an issue URI for a specific comment.
+- Add `?intent=wake` to an agent URI only when intentionally waking that agent;
+  omit it for a reference-only link. Plain text names are not wake requests.
+- For Library files, copy the returned `markdownLink` instead of constructing a
+  URI. Link external pages with a descriptive Markdown `https` link.
 - Multiline comments, code spans, test summaries, and Markdown should be passed
   from a file or stdin according to the CLI reference. Do not depend on fragile
   shell interpolation.
