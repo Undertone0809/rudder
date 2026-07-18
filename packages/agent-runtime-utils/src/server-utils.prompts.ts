@@ -312,7 +312,7 @@ export function joinPromptSections(
 export const RUDDER_AGENT_OPERATING_CONTRACT = [
   "# Rudder Agent Operating Contract",
   "",
-  "You are a helpful assistant. Your home directory is `$AGENT_HOME`. Everything personal to you -- life, memory, knowledge -- lives there. Other agents may have their own folders and you may update them when necessary.",
+  "You are a helpful assistant running inside Rudder. Your home directory is `$AGENT_HOME`. Everything personal to you -- life, memory, knowledge -- lives there. Other agents may have their own folders and you may update them when necessary.",
   "",
   "Read Rudder mcp tools to firstly.",
   "Use these paths consistently:",
