@@ -54,8 +54,8 @@ Product model:
 - Skill sources include bundled skills, organization skill library, agent home,
   global/user skill roots, and adapter-native skill directories when supported.
 - The current always-enabled bundled Rudder baseline is `para-memory-files`,
-  `rudder-docs`, `rudder-create-agent`, `rudder-create-plugin`,
-  `skill-creator`, and `visualize`. Other repo-owned skill packages, including
+  `rudder-docs`, `rudder-create-agent`, `rudder-create-plugin`, and
+  `skill-creator`. Other repo-owned skill packages, including
   `conversation-to-skill` and `skill-optimizer`, are not part of the default
   Rudder-resolved set unless they are introduced through a non-bundled
   selection path.
@@ -97,17 +97,22 @@ Flow:
    from the Rudder-resolved selected, always-bundled, and active
    capability-bundled set only.
 6. Instruction loading exposes desired/realized skill facts to the adapter.
-7. The runtime exposes the skill description as routing metadata; the agent
-   decides whether the current task satisfies that skill's self-gate before
-   reading its body or references.
+7. Metadata-first/native hosts expose the skill description for intent matching
+   before the agent reads the body or references. Prompt-injected hosts may put
+   the compact `SKILL.md` body in the prompt before model judgment; on those
+   hosts the body's self-gate prevents unnecessary docs lookup or skill-directed
+   action.
 
 Invariants:
 
 - Bundled Rudder skills are not disabled by normal optional-skill toggles.
 - Always-enabled or materialized means available for discovery, not selected by
   the model for every turn and not evidence that the skill was used.
-- `rudder-docs` must not activate for greetings, casual conversation, unrelated
-  coding tasks, or questions fully answered by current run context.
+- Greetings, casual conversation, unrelated coding tasks, and questions fully
+  answered by current run context must not cause `rudder-docs` source lookup or
+  skill-directed action. Native read state remains unknown when a provider emits
+  no direct activation/read evidence; prompt injection is not reported as model
+  intent matching or use.
 - `Browser` must be read-only and available to existing and future organizations
   only while the `local_trusted` Built-in Browser capability is instance-
   eligible. A run must also use a supported local adapter. A stale organization

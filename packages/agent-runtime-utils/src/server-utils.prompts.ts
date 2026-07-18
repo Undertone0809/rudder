@@ -147,6 +147,38 @@ export const ISSUE_REVIEW_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent
 
 Inspect the issue state, evidence, comments, and outputs before deciding. Record the requested review outcome instead of treating this as a fresh implementation assignment.`;
 
+export const ISSUE_REVIEW_RECOVERY_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). This is a reviewer recovery run, not a fresh implementation assignment.
+
+{{context.rudderWorkspace.orgResourcesPrompt}}
+
+## Recovery Context
+
+- Original Run ID: {{context.recovery.originalRunId}}
+- Failure Kind: {{context.recovery.failureKind}}
+- Failure Summary: {{context.recovery.failureSummary}}
+- Recovery Trigger: {{context.recovery.recoveryTrigger}}
+- Recovery Mode: {{context.recovery.recoveryMode}}
+
+## Current Review Context
+
+- Issue: {{issue.title}}
+- ID: {{issue.id}}
+- Status: {{issue.status}}
+- Priority: {{issue.priority}}
+- Assignee: {{issue.assigneeLabel}}
+- Reviewer: {{issue.reviewerLabel}}
+- Created At: {{issue.createdAt}}
+- Updated At: {{issue.updatedAt}}
+
+- Description:
+{{issue.description}}
+
+
+**Review Instructions:**
+{{context.reviewInstructions}}
+
+Inspect what the previous reviewer run already completed, then continue the review from the current state. Record the requested structured reviewer decision; do not take over the assignee's implementation.`;
+
 export const ISSUE_RECOVERY_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). This is a recovery run, not a fresh task.
 
 {{context.rudderWorkspace.orgResourcesPrompt}}
@@ -266,25 +298,46 @@ export function selectPromptTemplate(
   configuredTemplate: string | undefined,
   context: Record<string, unknown>,
 ): string {
-  // If user configured a custom template, use it
-  if (configuredTemplate?.trim()) {
-    return configuredTemplate;
-  }
-
   // Select based on wake source/reason
   const wakeSource = String(context.wakeSource ?? "");
   const wakeReason = String(context.wakeReason ?? "");
+  const reviewerContext =
+    String(context.role ?? "") === "reviewer" ||
+    String(context.relationship ?? "") === "reviewer" ||
+    wakeSource === "review";
   const recovery = context.recovery;
   const hasRecoveryContext =
     typeof recovery === "object" &&
     recovery !== null &&
     !Array.isArray(recovery) &&
     typeof (recovery as Record<string, unknown>).originalRunId === "string";
+  const hasIssueContext =
+    typeof context.issue === "object" && context.issue !== null && !Array.isArray(context.issue);
+  const isRecovery =
+    hasRecoveryContext || wakeReason === "process_lost_retry" || wakeReason === "retry_failed_run";
+  const isAssigneeCapableIssueScene =
+    (isRecovery && hasIssueContext && !reviewerContext) ||
+    wakeReason === "issue_passive_followup" ||
+    wakeReason === "issue_changes_requested" ||
+    (!reviewerContext && (wakeSource === "assignment" || wakeReason === "issue_assigned")) ||
+    wakeSource === "comment.mention" ||
+    wakeReason === "issue_comment_mentioned" ||
+    isCommentTriggeredIssueWakeReason(wakeReason);
 
-  if (hasRecoveryContext || wakeReason === "process_lost_retry" || wakeReason === "retry_failed_run") {
-    return typeof context.issue === "object" && context.issue !== null && !Array.isArray(context.issue)
-      ? ISSUE_RECOVERY_PROMPT_TEMPLATE
-      : RECOVERY_PROMPT_TEMPLATE;
+  // Custom prompt bodies still win, but platform-owned issue execution rails do not.
+  if (configuredTemplate?.trim()) {
+    if (
+      isAssigneeCapableIssueScene &&
+      !configuredTemplate.includes(ISSUE_ASSIGNEE_EXECUTION_RAIL)
+    ) {
+      return `${configuredTemplate}\n\n${ISSUE_ASSIGNEE_EXECUTION_RAIL}`;
+    }
+    return configuredTemplate;
+  }
+
+  if (isRecovery) {
+    if (!hasIssueContext) return RECOVERY_PROMPT_TEMPLATE;
+    return reviewerContext ? ISSUE_REVIEW_RECOVERY_PROMPT_TEMPLATE : ISSUE_RECOVERY_PROMPT_TEMPLATE;
   }
   if (wakeReason === "issue_passive_followup") {
     return ISSUE_PASSIVE_FOLLOWUP_PROMPT_TEMPLATE;
