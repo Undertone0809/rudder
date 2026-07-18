@@ -22,6 +22,8 @@ related_code:
   - desktop/src/browser-shortcuts.ts
   - desktop/src/side-panel-close-shortcut.ts
   - desktop/src/preload.ts
+  - packages/agent-runtimes/codex-local/src/server/app-server-chat.ts
+  - packages/agent-runtimes/codex-local/src/ui/parse-stdout.ts
   - packages/db/src/schema/chat_conversations.ts
   - packages/db/src/schema/chat_messages.ts
   - packages/db/src/schema/chat_generations.ts
@@ -78,6 +80,7 @@ related_tests:
   - desktop/src/browser-webview-policy.test.ts
   - desktop/src/browser-shortcuts.test.ts
   - desktop/src/side-panel-close-shortcut.test.ts
+  - packages/agent-runtimes/codex-local/src/server/app-server-chat.test.ts
   - ui/src/lib/browser-side-panel.test.ts
   - ui/src/lib/desktop-browser-link-router.test.ts
   - server/src/__tests__/chat-routes.test.ts
@@ -116,6 +119,7 @@ related_tests:
   - tests/e2e/messenger-contract.spec.ts
   - tests/e2e/messenger-hover-preview.spec.ts
   - tests/e2e/chat-edit-stream-layout.spec.ts
+  - tests/e2e/chat-concurrent-streaming.spec.ts
   - tests/e2e/chat-options-menu.spec.ts
   - tests/e2e/chat-prompt-starters.spec.ts
   - tests/e2e/chat-fork.spec.ts
@@ -168,6 +172,10 @@ Product model:
   transcript evidence such as thinking/reasoning entries, scratchpad text, tool
   logs, and incomplete adapter summaries remain run evidence, not chat bubble
   body content.
+- The process transcript presents each provider reasoning item once. Readable
+  summary and raw streams for the same item are alternative representations,
+  not separate progress events; streamed fragments coalesce and multiple
+  summary parts keep readable boundaries.
 - When a user sends a local chat follow-up while that conversation already has
   an active assistant generation, Rudder parks the follow-up in a visible
   running queue instead of starting a second concurrent reply in the same chat.
@@ -258,6 +266,10 @@ Invariants:
   already streamed user-visible assistant text as a partial reply. It must not
   fill the bubble from provider reasoning/thinking events or incomplete runtime
   summaries.
+- Reasoning evidence must remain inspectable without repeated words or rows when
+  a provider emits parallel summary and raw streams. Providers that emit only
+  raw reasoning must retain that evidence through stopped, interrupted, or
+  failed turns.
 - Accepting Stop establishes a durable output cutoff for the active generation.
   The visible assistant reply is the accepted prefix at that cutoff; provider
   deltas, final messages, reasoning, and summary data arriving afterward must
@@ -323,6 +335,9 @@ Evidence:
 - Chat assistant tests cover runtime-backed turns.
 - Chat assistant tests cover stopped runtime turns that keep reasoning out of
   partial assistant bodies.
+- Codex App Server adapter tests and concurrent-streaming E2E cover dual-stream
+  reasoning deduplication, raw-only interrupted turns, multipart summary
+  boundaries, and the completed Messenger process transcript.
 - Chat refresh E2E covers refreshing a completed assistant answer as a second
   turn variant and navigating back to the first variant.
 - Chat edit streaming E2E covers switching between prior and active turn

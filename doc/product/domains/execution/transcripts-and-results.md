@@ -6,12 +6,15 @@ coverage: seed
 contract_ids:
   - RUN.RESULT.001
 related_code:
+  - packages/agent-runtimes/codex-local/src/server/app-server-chat.ts
+  - packages/agent-runtimes/codex-local/src/ui/parse-stdout.ts
   - server/src/services/runtime-kernel/heartbeat.execute.ts
   - server/src/services/heartbeat-run-summary.ts
   - server/src/services/heartbeat-run-reference.ts
   - server/src/routes/chats.stream-routes.ts
   - server/src/services/chat-generation-protocol.ts
 related_tests:
+  - packages/agent-runtimes/codex-local/src/server/app-server-chat.test.ts
   - server/src/__tests__/heartbeat-run-summary.test.ts
   - server/src/__tests__/chat-routes.test.ts
   - server/src/services/chat-generation-protocol.test.ts
@@ -31,6 +34,11 @@ Behavior:
 - Stdout and stderr excerpts are persisted on the run.
 - Adapter transcript parsing builds structured transcript entries when the
   adapter supplies a parser.
+- When a provider exposes readable summary and raw streams for the same
+  reasoning item, the adapter projects at most one representation for that
+  item. Streaming fragments retain delta semantics, raw-only reasoning remains
+  inspectable when no summary stream exists, and multiple summary parts retain
+  readable boundaries.
 - Adapter result summary, result JSON, usage, cost, provider/model, session
   IDs, exit code, signal, log digest, and terminal error fields are persisted.
 - Adapter result summary is user-visible assistant output from a completed
@@ -56,6 +64,10 @@ Invariant:
 - Transcript evidence and chat-visible assistant content are separate surfaces:
   reasoning/thinking evidence may be inspectable as transcript entries, but it
   must not become assistant message body text or a completed result summary.
+- A single provider reasoning item must not be duplicated merely because the
+  provider emits both summary and raw notification streams. Stream selection
+  remains item-scoped and deterministic across live and persisted transcript
+  projection.
 - Result projection must be monotonic with the accepted visible-output cutoff.
   Retries and recovery may fill missing terminal metadata, but cannot replace a
   stopped prefix with a later provider result.
@@ -72,6 +84,8 @@ Related code:
 - `server/src/services/heartbeat-run-reference.ts`
 - `server/src/routes/chats.stream-routes.ts`
 - `server/src/services/chat-generation-protocol.ts`
+- `packages/agent-runtimes/codex-local/src/server/app-server-chat.ts`
+- `packages/agent-runtimes/codex-local/src/ui/parse-stdout.ts`
 - `packages/agent-runtimes/codex-local/src/server/parse.ts`
 - `packages/agent-runtimes/claude-local/src/server/parse.ts`
 
@@ -80,6 +94,7 @@ Related tests:
 - `server/src/__tests__/heartbeat-run-summary.test.ts`
 - `server/src/__tests__/chat-routes.test.ts`
 - `server/src/services/chat-generation-protocol.test.ts`
+- `packages/agent-runtimes/codex-local/src/server/app-server-chat.test.ts`
 - `packages/agent-runtimes/codex-local/src/server/parse.test.ts`
 - `packages/agent-runtimes/claude-local/src/server/parse.test.ts`
 - `tests/e2e/run-transcript-detail.spec.ts`
