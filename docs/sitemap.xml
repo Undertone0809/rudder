@@ -58,10 +58,10 @@
   <url><loc>https://docs.rudderhq.dev/zh/how-to/manage-plugins</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/how-to/configure-feishu-integration</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/how-to/configure-agent-runtime</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/reference/issue-statuses</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/reference/runtime-types</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/reference/workspace-boundaries</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/reference/automation-output-routing</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://docs.rudderhq.dev/zh/reference/permissions-and-platforms</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/reference/issue-statuses</loc><lastmod>2026-07-19</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/reference/runtime-types</loc><lastmod>2026-07-19</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/reference/workspace-boundaries</loc><lastmod>2026-07-19</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/reference/automation-output-routing</loc><lastmod>2026-07-19</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/reference/permissions-and-platforms</loc><lastmod>2026-07-19</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/releases</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
 </urlset>
