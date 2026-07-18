@@ -104,8 +104,13 @@ export async function verifyBrowserBundle(options) {
       if (!(await exists(packagedExecutable))) {
         throw new Error(`packaged Desktop executable is missing: ${packagedExecutable}`);
       }
+      const packagedCommand = {
+        ...command,
+        command: packagedExecutable,
+        args: process.platform === "linux" ? ["--no-sandbox", ...command.args] : command.args,
+      };
       const result = await preflightModule.preflightRudderMcpServer({
-        command: { ...command, command: packagedExecutable },
+        command: packagedCommand,
         runtimeEnv: {
           ...process.env,
           HOME: tempRoot,
