@@ -1,4 +1,4 @@
-import { type AnyPgColumn, boolean, index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { type AnyPgColumn, boolean, index, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
 import { chatMessages } from "./chat_messages.js";
 import { issues } from "./issues.js";
@@ -10,6 +10,13 @@ export const chatConversations = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
     status: text("status").notNull().default("active"),
+    conversationKind: text("conversation_kind").notNull().default("chat"),
+    messengerVisible: boolean("messenger_visible").notNull().default(true),
+    sideChatState: text("side_chat_state"),
+    sideChatExpiresAt: timestamp("side_chat_expires_at", { withTimezone: true }),
+    sideChatCompletedAt: timestamp("side_chat_completed_at", { withTimezone: true }),
+    sideChatKeptAt: timestamp("side_chat_kept_at", { withTimezone: true }),
+    sideChatClientMutationId: text("side_chat_client_mutation_id"),
     title: text("title").notNull().default("New chat"),
     summary: text("summary"),
     preferredAgentId: uuid("preferred_agent_id").references(() => agents.id, { onDelete: "set null" }),
@@ -32,6 +39,17 @@ export const chatConversations = pgTable(
       table.orgId,
       table.status,
       table.updatedAt,
+    ),
+    orgMessengerVisibilityIdx: index("chat_conversations_org_messenger_visibility_idx").on(
+      table.orgId,
+      table.messengerVisible,
+      table.status,
+      table.updatedAt,
+    ),
+    sideChatOwnerMutationUnique: uniqueIndex("chat_conversations_side_chat_owner_mutation_idx").on(
+      table.orgId,
+      table.createdByUserId,
+      table.sideChatClientMutationId,
     ),
     primaryIssueIdx: index("chat_conversations_primary_issue_idx").on(table.primaryIssueId),
     forkedFromConversationIdx: index("chat_conversations_forked_from_conversation_idx").on(table.forkedFromConversationId),

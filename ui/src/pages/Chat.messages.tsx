@@ -2134,6 +2134,7 @@ export function ChatMessageItem({
   onConvertToIssue,
   actionPending,
   onCopyMessageText,
+  onOpenSideChat,
   onForkMessage,
   onEditUserMessage,
   onContinueInterruptedMessage,
@@ -2166,6 +2167,7 @@ export function ChatMessageItem({
   onConvertToIssue: (message: ChatMessage) => void;
   actionPending: boolean;
   onCopyMessageText: (text: string) => void | Promise<void>;
+  onOpenSideChat?: (message: ChatMessage) => void;
   onForkMessage?: (message: ChatMessage) => void;
   onEditUserMessage?: (message: ChatMessage) => void;
   onContinueInterruptedMessage?: (message: ChatMessage) => void;
@@ -2375,6 +2377,17 @@ export function ChatMessageItem({
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
+              ) : null}
+              {canShowAssistantMessageActions && onOpenSideChat && message.status !== "streaming" ? (
+                <button
+                  type="button"
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
+                  aria-label="Open Side Chat"
+                  title="Open Side Chat"
+                  onClick={() => onOpenSideChat(message)}
+                >
+                  <Sparkles className="h-4 w-4" />
+                </button>
               ) : null}
               {canShowAssistantMessageActions && onForkMessage && message.status !== "streaming" ? (
                 <button

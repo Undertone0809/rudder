@@ -359,6 +359,13 @@ export interface ChatConversation {
   id: string;
   orgId: string;
   status: "active" | "resolved" | "archived";
+  conversationKind?: "chat" | "side_chat";
+  messengerVisible?: boolean;
+  sideChatState?: "active" | "completed" | "expired" | "kept" | null;
+  sideChatExpiresAt?: Date | null;
+  sideChatCompletedAt?: Date | null;
+  sideChatKeptAt?: Date | null;
+  sideChatClientMutationId?: string | null;
   mutability: ChatConversationMutability;
   title: string;
   summary: string | null;

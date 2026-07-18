@@ -39,6 +39,7 @@ export { productIntelligenceService } from "./product-intelligence.js";
 export { projectService } from "./projects.js";
 export { resourceCatalogService } from "./resource-catalog.js";
 export { secretService } from "./secrets.js";
+export { SIDE_CHAT_TTL_MS, sideChatService } from "./side-chats.js";
 export { sidebarBadgeService } from "./sidebar-badges.js";
 export { workProductService } from "./work-products.js";
 export {

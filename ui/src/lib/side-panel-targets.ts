@@ -20,6 +20,15 @@ export type SidePanelTarget =
       label: string;
     }
   | {
+      kind: "side_chat";
+      sourceConversationId: string;
+      sourceMessageId: string | null;
+      sourcePreview: string | null;
+      conversationId: string | null;
+      clientMutationId: string;
+      label: string;
+    }
+  | {
       kind: "library_document";
       documentId: string;
       label: string;
@@ -82,6 +91,9 @@ export function sidePanelTargetKey(target: SidePanelTarget) {
   if (target.kind === "issue") return `issue:${target.issueId}:${target.commentId ?? ""}`;
   if (target.kind === "automation") return `automation:${target.automationId}`;
   if (target.kind === "chat") return `chat:${target.conversationId}:${target.messageId ?? ""}`;
+  if (target.kind === "side_chat") return target.conversationId
+    ? `side-chat:${target.conversationId}`
+    : `side-chat:draft:${target.clientMutationId}`;
   if (target.kind === "library_document") return `library-document:${target.documentId}`;
   if (target.kind === "library_entry") return `library-entry:${target.entryId}:${target.path ?? ""}`;
   if (target.kind === "library_file") return `library-file:${target.filePath}`;
@@ -99,6 +111,11 @@ export function sidePanelFullPageHref(target: SidePanelTarget) {
   if (target.kind === "chat") {
     const base = `/messenger/chat/${target.conversationId}`;
     return target.messageId ? `${base}?messageId=${encodeURIComponent(target.messageId)}` : base;
+  }
+  if (target.kind === "side_chat") {
+    if (target.conversationId) return `/messenger/chat/${target.conversationId}`;
+    const base = `/messenger/chat/${target.sourceConversationId}`;
+    return target.sourceMessageId ? `${base}?messageId=${encodeURIComponent(target.sourceMessageId)}` : base;
   }
   if (target.kind === "library_document") return `/library?document=${encodeURIComponent(target.documentId)}`;
   if (target.kind === "library_file") return `/library?path=${encodeURIComponent(target.filePath)}`;

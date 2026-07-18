@@ -17,6 +17,7 @@ import {
   WorkspaceFilePreview,
   type WorkspaceFilePreviewMode,
 } from "@/components/WorkspaceFilePreview";
+import { SideChatPanelView } from "@/components/side-panel/SideChatPanelView";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -81,6 +82,7 @@ import {
   Plus,
   Redo2,
   RotateCw,
+  Sparkles,
   Table2,
   Terminal,
   Undo2,
@@ -338,9 +340,11 @@ function humanizeSidePanelToken(value: string | null | undefined, fallback = "-"
 
 function SidePanelEmptyState({
   browserAvailable,
+  sourceConversationId,
   onOpenTarget,
 }: {
   browserAvailable: boolean;
+  sourceConversationId: string | null;
   onOpenTarget: (target: SidePanelTarget) => void;
 }) {
   const targets: Array<{
@@ -349,6 +353,20 @@ function SidePanelEmptyState({
     icon: typeof Compass;
     target: SidePanelTarget;
   }> = [
+    ...(sourceConversationId ? [{
+      label: "Side Chat",
+      description: "Ask a focused follow-up without leaving the main chat.",
+      icon: Sparkles,
+      target: {
+        kind: "side_chat" as const,
+        sourceConversationId,
+        sourceMessageId: null,
+        sourcePreview: null,
+        conversationId: null,
+        clientMutationId: crypto.randomUUID(),
+        label: "Side Chat",
+      },
+    }] : []),
     ...(browserAvailable ? [{
       label: "Browser",
       description: "Keep a browser tab beside the current workspace.",
@@ -2068,6 +2086,7 @@ export function ChatSidePanel({
 
   const issueTarget = activeTarget?.kind === "issue" ? activeTarget : null;
   const chatTarget = activeTarget?.kind === "chat" ? activeTarget : null;
+  const sideChatTarget = activeTarget?.kind === "side_chat" ? activeTarget : null;
   const automationTarget = activeTarget?.kind === "automation" ? activeTarget : null;
   const libraryFileTarget = activeTarget?.kind === "library_file" ? activeTarget : null;
   const libraryDirectoryTarget = activeTarget?.kind === "library_directory" ? activeTarget : null;
@@ -2076,6 +2095,9 @@ export function ChatSidePanel({
   const activeBrowserTargetKey = browserTarget ? sidePanelTargetKey(browserTarget) : null;
   const placeholderTarget = activeTarget?.kind === "placeholder" ? activeTarget : null;
   const targetQueriesEnabled = sidePanel.open || exiting;
+  const sourceConversationId = sidePanel.contextKey.startsWith("chat:")
+    ? sidePanel.contextKey.slice("chat:".length) || null
+    : null;
 
   useEffect(() => {
     const desktopShell = readDesktopShell();
@@ -2404,7 +2426,11 @@ export function ChatSidePanel({
             );
           })}
           {browserTarget ? null : !activeTarget ? (
-            <SidePanelEmptyState browserAvailable={browserAvailable} onOpenTarget={openSidePanelTarget} />
+            <SidePanelEmptyState
+              browserAvailable={browserAvailable}
+              sourceConversationId={sourceConversationId}
+              onOpenTarget={openSidePanelTarget}
+            />
           ) : loading ? (
             <div className={cn(libraryFilePreviewPath && "px-4 py-4")}>
               <LoadingPanelBody />
@@ -2450,6 +2476,12 @@ export function ChatSidePanel({
             </div>
           ) : placeholderTarget ? (
             <SidePanelPlaceholderView browserAvailable={browserAvailable} target={placeholderTarget} onOpenTarget={openSidePanelTarget} />
+          ) : sideChatTarget && selectedOrganizationId ? (
+            <SideChatPanelView
+              organizationId={selectedOrganizationId}
+              target={sideChatTarget}
+              onReplaceTarget={replaceSidePanelTarget}
+            />
           ) : chatTarget ? (
             <div className="space-y-4" data-testid="chat-side-panel-chat-view">
               <div className="rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3">

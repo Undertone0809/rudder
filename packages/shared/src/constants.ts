@@ -321,6 +321,12 @@ export type CalendarSourceMode = (typeof CALENDAR_SOURCE_MODES)[number];
 export const CHAT_CONVERSATION_STATUSES = ["active", "resolved", "archived"] as const;
 export type ChatConversationStatus = (typeof CHAT_CONVERSATION_STATUSES)[number];
 
+export const CHAT_CONVERSATION_KINDS = ["chat", "side_chat"] as const;
+export type ChatConversationKind = (typeof CHAT_CONVERSATION_KINDS)[number];
+
+export const SIDE_CHAT_STATES = ["active", "completed", "expired", "kept"] as const;
+export type SideChatState = (typeof SIDE_CHAT_STATES)[number];
+
 export const CHAT_CONVERSATION_MUTABILITIES = ["native_chat", "external_bound_chat", "native_fork_from_external"] as const;
 export type ChatConversationMutability = (typeof CHAT_CONVERSATION_MUTABILITIES)[number];
 

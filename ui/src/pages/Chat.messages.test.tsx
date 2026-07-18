@@ -155,6 +155,13 @@ function renderChatMessageItem(messageToRender: ChatMessage) {
           id: "chat-1",
           orgId: "org-1",
           status: "active",
+          conversationKind: "chat",
+          messengerVisible: true,
+          sideChatState: null,
+          sideChatExpiresAt: null,
+          sideChatCompletedAt: null,
+          sideChatKeptAt: null,
+          sideChatClientMutationId: null,
           mutability: "native_chat",
           title: "Plain text chat",
           summary: null,
@@ -203,6 +210,7 @@ function renderChatMessageItem(messageToRender: ChatMessage) {
         onConvertToIssue={vi.fn()}
         actionPending={false}
         onCopyMessageText={vi.fn()}
+        onOpenSideChat={vi.fn()}
         onForkMessage={onForkMessage}
         onEditUserMessage={vi.fn()}
         onContinueInterruptedMessage={vi.fn()}
@@ -488,6 +496,7 @@ describe("assistant chat message rendering", () => {
     }));
 
     expect(container.querySelector('button[aria-label="Fork from here"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Open Side Chat"]')).not.toBeNull();
   });
 
   it("renders a persisted message-owned inline visual and hides its directive", async () => {

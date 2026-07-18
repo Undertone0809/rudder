@@ -106,6 +106,8 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     heartbeat,
     assertConversationAccess,
     assertChatLocalMutationAllowed,
+    assertSideChatMutationAllowed,
+    touchSideChat,
     boardUserId,
     assertCanAssignTasks,
     runSingleFileUpload,
@@ -168,6 +170,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       return;
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
 
     const actor = getActorInfo(req);
     if (actor.actorType === "agent") {
@@ -390,6 +393,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         actor,
         parsedBody.data.editUserMessageId ?? null,
       );
+      await touchSideChat(req, conversation as ChatConversation);
       if (queuedMessageId) {
         await svc.markQueuedMessageRunning({
           conversationId: conversation.id,

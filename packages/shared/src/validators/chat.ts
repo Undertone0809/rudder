@@ -149,6 +149,11 @@ export const forkChatConversationSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
 });
 
+export const createSideChatSchema = z.object({
+  sourceMessageId: z.string().uuid(),
+  clientMutationId: z.string().trim().min(1).max(120),
+});
+
 export const addChatMessageSchema = z.object({
   body: z.string().trim().min(1).max(20000),
   editUserMessageId: z.string().uuid().optional().nullable(),
@@ -520,6 +525,7 @@ export type ChatContextEntityType = z.infer<typeof chatContextEntityTypeSchema>;
 export type CreateChatContextLink = z.infer<typeof createChatContextLinkSchema>;
 export type CreateChatConversation = z.infer<typeof createChatConversationSchema>;
 export type ForkChatConversation = z.infer<typeof forkChatConversationSchema>;
+export type CreateSideChat = z.infer<typeof createSideChatSchema>;
 export type SetChatProjectContext = z.infer<typeof setChatProjectContextSchema>;
 export type UpdateChatConversation = z.infer<typeof updateChatConversationSchema>;
 export type AddChatMessage = z.infer<typeof addChatMessageSchema>;

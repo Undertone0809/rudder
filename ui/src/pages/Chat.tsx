@@ -102,6 +102,7 @@ import {
 } from "@/lib/organization-skill-picker";
 import { queryKeys } from "@/lib/queryKeys";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "@/lib/router";
+import { latestSideChatAnchor } from "@/lib/side-chat";
 import { cn } from "@/lib/utils";
 import {
   buildChatMentionHref,
@@ -138,6 +139,7 @@ import {
   PinOff,
   Plus,
   RefreshCw,
+  Sparkles,
   Square,
   Trash2,
   X
@@ -241,6 +243,17 @@ function chatMessageJumpTargetFromHref(href: string) {
   } catch {
     return null;
   }
+}
+function sideChatTargetFromMessage(conversation: ChatConversation, message: ChatMessage) {
+  return {
+    kind: "side_chat" as const,
+    sourceConversationId: conversation.id,
+    sourceMessageId: message.id,
+    sourcePreview: message.body,
+    conversationId: null,
+    clientMutationId: crypto.randomUUID(),
+    label: "Side Chat",
+  };
 }
 function findChatMessageElement(root: HTMLElement, messageId: string) {
   const candidates = root.querySelectorAll<HTMLElement>("[data-message-id]");
@@ -1756,6 +1769,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const selectedStopRequestPending = Boolean(selectedConversation && stoppingChatIds.has(selectedConversation.id));
   const sendButtonMode: SendButtonMode = newConversationSendInFlight || (activeSendInFlight && !activeStream) ? "sending" : selectedStopRequestPending || activeStreamStopState ? "stopping" : canQueueDraft ? "queue" : activeSendInFlight ? "stop" : "send";
   const selectedConversationExternalBound = isExternalBoundConversation(selectedConversation);
+  const sideChatSlashAnchor = selectedConversation ? latestSideChatAnchor(visibleMessages) : null;
+  const showSideChatSlashCommand = Boolean(
+    selectedConversation
+    && !selectedConversationExternalBound
+    && /^\/(?:s(?:i(?:d(?:e)?)?)?)?$/.test(draft.trim().toLowerCase()),
+  );
   const sendButtonDisabled = selectedConversationExternalBound || composerUnavailable || sendButtonMode === "sending" || sendButtonMode === "stopping" || ((sendButtonMode === "send" || sendButtonMode === "queue") && draft.trim().length === 0);
   const canSteerQueuedFollowUps = Boolean(
     (
@@ -2219,6 +2238,32 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             if (!controlsDisabled) {
               void sendMessage(); }
           }} /> </div>
+      {showSideChatSlashCommand ? (
+        <div className="mt-2 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] p-1.5 shadow-[var(--shadow-sm)]" data-testid="chat-slash-command-menu">
+          <button
+            type="button"
+            className="flex w-full items-center gap-3 rounded-[var(--radius-sm)] px-3 py-2.5 text-left transition-colors hover:bg-[color:var(--surface-active)] disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!sideChatSlashAnchor}
+            data-testid="chat-slash-side-chat"
+            onClick={() => {
+              if (!selectedConversation || !sideChatSlashAnchor) return;
+              openSidePanelTargetForContext(
+                resolveCurrentSidePanelChatContextKey(),
+                sideChatTargetFromMessage(selectedConversation, sideChatSlashAnchor),
+              );
+              setDraft("");
+            }}
+          >
+            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[color:var(--surface-active)] text-[color:var(--accent-base)]">
+              <Sparkles className="h-4 w-4" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-medium text-foreground">Side Chat</span>
+              <span className="block truncate text-xs text-muted-foreground">{sideChatSlashAnchor ? "Ask from the latest assistant answer" : "Wait for an assistant answer first"}</span>
+            </span>
+          </button>
+        </div>
+      ) : null}
       {composerUnavailable ? (
         <div className="chat-warning mt-2.5 rounded-[var(--radius-md)] px-3 py-2.5 text-sm">
           {composerUnavailableMessage}{" "}
@@ -2706,7 +2751,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                       chatId: selectedConversation.id,
                                       message: messageToConvert,
                                       proposalOverride: issueProposalOverridesByMessageId[messageToConvert.id], })
-                                  } onCopyMessageText={copyChatMessageText} onEditUserMessage={selectedConversationExternalBound ? undefined : beginEditUserMessage} onContinueInterruptedMessage={selectedConversationExternalBound ? undefined : () => {
+                                  } onCopyMessageText={copyChatMessageText} onOpenSideChat={selectedConversationExternalBound ? undefined : (messageForSideChat) => {
+                                    openSidePanelTargetForContext(
+                                      resolveCurrentSidePanelChatContextKey(),
+                                      sideChatTargetFromMessage(selectedConversation, messageForSideChat),
+                                    );
+                                  }} onEditUserMessage={selectedConversationExternalBound ? undefined : beginEditUserMessage} onContinueInterruptedMessage={selectedConversationExternalBound ? undefined : () => {
                                     void sendMessage({
                                       bodyOverride: INTERRUPTED_CHAT_CONTINUATION_PROMPT,
                                       filesOverride: [], conversationOverride: selectedConversation, });

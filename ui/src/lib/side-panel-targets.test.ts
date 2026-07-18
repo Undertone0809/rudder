@@ -111,6 +111,22 @@ describe("side panel targets", () => {
     const chatPlaceholder = { kind: "placeholder", targetKind: "chat", label: "Chat" } as const;
     expect(sidePanelTargetKey(chatPlaceholder)).toBe("placeholder:chat");
     expect(sidePanelFullPageHref(chatPlaceholder)).toBe("/messenger/chat");
+
+    const provisionalSideChat = {
+      kind: "side_chat",
+      sourceConversationId: "chat-1",
+      sourceMessageId: "message-1",
+      sourcePreview: "Anchored answer",
+      conversationId: null,
+      clientMutationId: "mutation-1",
+      label: "Side Chat",
+    } as const;
+    expect(sidePanelTargetKey(provisionalSideChat)).toBe("side-chat:draft:mutation-1");
+    expect(sidePanelFullPageHref(provisionalSideChat)).toBe("/messenger/chat/chat-1?messageId=message-1");
+
+    const persistedSideChat = { ...provisionalSideChat, conversationId: "side-chat-1" };
+    expect(sidePanelTargetKey(persistedSideChat)).toBe("side-chat:side-chat-1");
+    expect(sidePanelFullPageHref(persistedSideChat)).toBe("/messenger/chat/side-chat-1");
   });
 
   it("ignores unsupported or external hrefs unless they are browser targets", () => {

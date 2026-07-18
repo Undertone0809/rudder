@@ -1107,7 +1107,7 @@ export function messengerService(db: Db) {
     if (conversationId) {
       const conversations = await chatsSvc.listSummariesByIds(orgId, [conversationId], userId);
       const conversation = conversations[0];
-      return conversation ? chatSummary(conversation) : null;
+      return conversation?.messengerVisible !== false ? chatSummary(conversation) : null;
     }
 
     const issueId = issueIdFromThreadKey(threadKey);
@@ -1171,7 +1171,7 @@ export function messengerService(db: Db) {
       .map((threadKey) => chatConversationIdFromThreadKey(threadKey))
       .filter((id): id is string => Boolean(id));
     const conversations = await chatsSvc.listSummariesByIds(orgId, conversationIds, userId);
-    const summaryByThreadKey = new Map(conversations.map((conversation) => {
+    const summaryByThreadKey = new Map(conversations.filter((conversation) => conversation.messengerVisible !== false).map((conversation) => {
       const summary = chatSummary(conversation);
       return [summary.threadKey, summary] as const;
     }));
@@ -2445,7 +2445,7 @@ export function messengerService(db: Db) {
     if (joinRequestData.itemCount > 0) syntheticSummaries.push(joinRequestData.summary);
 
     const threadSummaries: MessengerThreadSummary[] = [
-      ...chats.map(chatSummary),
+      ...chats.filter((chat) => chat.messengerVisible !== false).map(chatSummary),
       ...syntheticSummaries,
     ].sort(comparePinnedThenLatest);
 
@@ -2511,7 +2511,7 @@ export function messengerService(db: Db) {
     const chatSummaries = [
       ...pinnedChats,
       ...chats,
-    ].reduce<MessengerThreadSummary[]>((summaries, chat) => {
+    ].filter((chat) => chat.messengerVisible !== false).reduce<MessengerThreadSummary[]>((summaries, chat) => {
       const summary = chatSummary(chat);
       if (!summaries.some((item) => item.threadKey === summary.threadKey)) {
         summaries.push(summary);

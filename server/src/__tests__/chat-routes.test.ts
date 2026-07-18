@@ -83,6 +83,15 @@ const mockChatService = vi.hoisted(() => ({
   markQueuedMessageDeliveryTerminal: vi.fn(),
 }));
 
+const mockSideChatService = vi.hoisted(() => ({
+  create: vi.fn(),
+  complete: vi.fn(),
+  keepInMessenger: vi.fn(),
+  assertAccessible: vi.fn(),
+  assertMutable: vi.fn(),
+  touch: vi.fn(),
+}));
+
 const mockCompanyService = vi.hoisted(() => ({
   getById: vi.fn(),
 }));
@@ -166,6 +175,7 @@ vi.mock("../services/index.js", () => ({
   }),
   organizationIntelligenceRuntimeChainService: () => ({ assertUsable: vi.fn() }),
   productIntelligenceService: () => mockProductIntelligenceService,
+  sideChatService: () => mockSideChatService,
   logActivity: mockLogActivity,
   operatorProfileService: () => mockOperatorProfileService,
   projectService: () => mockProjectService,
@@ -225,6 +235,13 @@ function createConversation(overrides: Partial<Record<string, unknown>> = {}) {
     id: "chat-1",
     orgId: "organization-1",
     status: "active",
+    conversationKind: "chat",
+    messengerVisible: true,
+    sideChatState: null,
+    sideChatExpiresAt: null,
+    sideChatCompletedAt: null,
+    sideChatKeptAt: null,
+    sideChatClientMutationId: null,
     title: "New chat",
     summary: null,
     latestReplyPreview: null,
@@ -370,6 +387,9 @@ describe("chat routes", () => {
       error: null,
     });
     mockLogActivity.mockResolvedValue(undefined);
+    mockSideChatService.assertAccessible.mockImplementation(async (conversation) => conversation);
+    mockSideChatService.assertMutable.mockImplementation(async (conversation) => conversation);
+    mockSideChatService.touch.mockImplementation(async (conversation) => conversation);
     mockHeartbeatService.wakeup.mockResolvedValue({ id: "wake-1" });
     mockAccessService.canUser.mockResolvedValue(true);
     mockAccessService.hasPermission.mockResolvedValue(true);
@@ -797,6 +817,115 @@ describe("chat routes", () => {
 
     expect(res.status).toBe(200);
     expect(mockChatService.setPinned).toHaveBeenCalledWith("chat-1", "organization-1", "user-1", true);
+  });
+
+  it("creates an owner-scoped hidden Side Chat from an assistant message", async () => {
+    const sourceMessageId = "10000000-0000-4000-8000-000000000010";
+    const clientMutationId = "side-chat-create-1";
+    const sourceConversation = createConversation({ id: "chat-source", title: "Original topic" });
+    const sideConversation = createConversation({
+      id: "chat-side",
+      title: "Side Chat",
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      sideChatExpiresAt: new Date("2026-03-26T10:00:00.000Z"),
+      sideChatClientMutationId: clientMutationId,
+      forkedFromConversationId: "chat-source",
+      forkedFromMessageId: sourceMessageId,
+      forkRootConversationId: "chat-source",
+    });
+    mockChatService.getById.mockResolvedValue(sourceConversation);
+    mockSideChatService.create.mockResolvedValue(sideConversation);
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-source/side-chats")
+      .send({ sourceMessageId, clientMutationId });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      id: "chat-side",
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+    });
+    expect(mockSideChatService.create).toHaveBeenCalledWith({
+      sourceConversationId: "chat-source",
+      sourceMessageId,
+      clientMutationId,
+      orgId: "organization-1",
+      userId: "user-1",
+    });
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "chat.side_chat_created",
+      entityId: "chat-side",
+      orgId: "organization-1",
+    }));
+  });
+
+  it("completes a Side Chat into an immediate read-only state", async () => {
+    const sideConversation = createConversation({
+      id: "chat-side",
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "completed",
+      sideChatCompletedAt: new Date("2026-03-26T08:30:00.000Z"),
+    });
+    mockSideChatService.complete.mockResolvedValue(sideConversation);
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-side/side-chat/complete")
+      .send({});
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: "chat-side", sideChatState: "completed" });
+    expect(mockSideChatService.complete).toHaveBeenCalledWith({
+      conversationId: "chat-side",
+      userId: "user-1",
+    });
+  });
+
+  it("keeps a Side Chat in Messenger without changing its conversation id", async () => {
+    const sideConversation = createConversation({
+      id: "chat-side",
+      conversationKind: "side_chat",
+      messengerVisible: true,
+      sideChatState: "kept",
+      sideChatKeptAt: new Date("2026-03-26T08:30:00.000Z"),
+    });
+    mockSideChatService.keepInMessenger.mockResolvedValue(sideConversation);
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-side/side-chat/keep")
+      .send({});
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      id: "chat-side",
+      messengerVisible: true,
+      sideChatState: "kept",
+    });
+    expect(mockSideChatService.keepInMessenger).toHaveBeenCalledWith({
+      conversationId: "chat-side",
+      userId: "user-1",
+    });
+  });
+
+  it("omits hidden Side Chats from the ordinary organization chat list", async () => {
+    mockChatService.list.mockResolvedValue([
+      createConversation({ id: "chat-visible" }),
+      createConversation({
+        id: "chat-side",
+        conversationKind: "side_chat",
+        messengerVisible: false,
+        sideChatState: "active",
+      }),
+    ]);
+
+    const res = await request(createApp()).get("/api/orgs/organization-1/chats");
+
+    expect(res.status).toBe(200);
+    expect(res.body.map((conversation: { id: string }) => conversation.id)).toEqual(["chat-visible"]);
   });
 
   it("forks a chat conversation from a selected message and logs the activity", async () => {

@@ -72,6 +72,14 @@ export const chatsApi = {
     api.get<ChatWorkManifestResponse>(`/chats/${chatId}/work-manifest`),
   fork: (chatId: string, data: ForkChatConversation = {}) =>
     api.post<ChatConversation>(`/chats/${chatId}/fork`, data),
+  createSideChat: (
+    chatId: string,
+    data: { sourceMessageId: string; clientMutationId: string },
+  ) => api.post<ChatConversation>(`/chats/${chatId}/side-chats`, data),
+  completeSideChat: (chatId: string) =>
+    api.post<ChatConversation>(`/chats/${chatId}/side-chat/complete`, {}),
+  keepSideChat: (chatId: string) =>
+    api.post<ChatConversation>(`/chats/${chatId}/side-chat/keep`, {}),
   update: (
     chatId: string,
     data: Partial<{

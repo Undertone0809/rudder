@@ -6,6 +6,7 @@ import {
   chatAutomationCreateFromStructuredPayload,
   createChatConversationSchema,
   createChatQueuedMessageSchema,
+  createSideChatSchema,
   forkChatConversationSchema,
   parseCodexInlineVisualDirectives,
   steerChatQueuedMessageSchema,
@@ -64,6 +65,7 @@ import {
   organizationService,
   productIntelligenceService,
   projectService,
+  sideChatService,
 } from "../services/index.js";
 import {
   runtimeResultText,
@@ -106,6 +108,7 @@ export function chatRoutes(
   const heartbeat = heartbeatService(db);
   const productIntelligence = productIntelligenceService(db);
   const chatTitles = chatTitleGenerationService({ chats: svc, productIntelligence });
+  const sideChats = sideChatService(db);
 
   const CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE =
     "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.";
@@ -168,6 +171,10 @@ export function chatRoutes(
     const conversation = await svc.getById(conversationId);
     if (!conversation) return null;
     assertCompanyAccess(req, conversation.orgId);
+    await sideChats.assertAccessible(
+      conversation as ChatConversation,
+      req.actor.type === "board" ? (req.actor.userId ?? "local-board") : null,
+    );
     return conversation;
   }
 
@@ -190,6 +197,20 @@ export function chatRoutes(
     if (conversation.mutability === "external_bound_chat") {
       throw conflict("Fork this Feishu chat to continue in Rudder");
     }
+  }
+
+  async function assertSideChatMutationAllowed(req: Request, conversation: ChatConversation) {
+    await sideChats.assertMutable(
+      conversation,
+      req.actor.type === "board" ? boardUserId(req) : null,
+    );
+  }
+
+  async function touchSideChat(req: Request, conversation: ChatConversation) {
+    await sideChats.touch(
+      conversation,
+      req.actor.type === "board" ? boardUserId(req) : null,
+    );
   }
 
   function isTitleOnlyChatUpdate(body: Record<string, unknown>) {
@@ -1650,7 +1671,8 @@ export function chatRoutes(
       limit,
       ...(projectId ? { projectId } : {}),
     }, userId);
-    res.json(await assistantSvc.enrichConversations(conversations as ChatConversation[]));
+    const visibleConversations = (conversations as ChatConversation[]).filter((conversation) => conversation.messengerVisible !== false);
+    res.json(await assistantSvc.enrichConversations(visibleConversations));
   });
 
   router.post("/orgs/:orgId/chats", validate(createChatConversationSchema), async (req, res) => {
@@ -1853,6 +1875,89 @@ export function chatRoutes(
     });
 
     res.status(201).json(await assistantSvc.enrichConversation(forked as ChatConversation));
+  });
+
+  router.post("/chats/:id/side-chats", validate(createSideChatSchema), async (req, res) => {
+    assertBoard(req);
+    const existing = await assertConversationAccess(req, req.params.id as string);
+    if (!existing) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    const userId = boardUserId(req);
+    const sideChat = await sideChats.create({
+      sourceConversationId: existing.id,
+      sourceMessageId: req.body.sourceMessageId,
+      clientMutationId: req.body.clientMutationId,
+      orgId: existing.orgId,
+      userId,
+    });
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId: existing.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "chat.side_chat_created",
+      entityType: "chat",
+      entityId: sideChat.id,
+      details: {
+        sourceConversationId: existing.id,
+        sourceMessageId: req.body.sourceMessageId,
+      },
+    });
+    res.status(201).json(await assistantSvc.enrichConversation(sideChat));
+  });
+
+  router.post("/chats/:id/side-chat/complete", async (req, res) => {
+    assertBoard(req);
+    const userId = boardUserId(req);
+    const sideChat = await sideChats.complete({
+      conversationId: req.params.id as string,
+      userId,
+    });
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId: sideChat.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "chat.side_chat_completed",
+      entityType: "chat",
+      entityId: sideChat.id,
+      details: {
+        sourceConversationId: sideChat.forkedFromConversationId,
+        sourceMessageId: sideChat.forkedFromMessageId,
+      },
+    });
+    res.json(await assistantSvc.enrichConversation(sideChat));
+  });
+
+  router.post("/chats/:id/side-chat/keep", async (req, res) => {
+    assertBoard(req);
+    const userId = boardUserId(req);
+    const sideChat = await sideChats.keepInMessenger({
+      conversationId: req.params.id as string,
+      userId,
+    });
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId: sideChat.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "chat.side_chat_kept",
+      entityType: "chat",
+      entityId: sideChat.id,
+      details: {
+        sourceConversationId: sideChat.forkedFromConversationId,
+        sourceMessageId: sideChat.forkedFromMessageId,
+      },
+    });
+    res.json(await assistantSvc.enrichConversation(sideChat));
   });
 
   router.delete("/chats/:id", async (req, res) => {
@@ -2372,6 +2477,7 @@ export function chatRoutes(
 
     const actor = getActorInfo(req);
     assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
     if (actor.actorType === "agent") {
       if (req.body.editUserMessageId) {
         res.status(422).json({ error: "Agent-authored chat messages cannot edit operator messages" });
@@ -2421,6 +2527,7 @@ export function chatRoutes(
         actor,
         req.body.editUserMessageId ?? null,
       );
+      await touchSideChat(req, conversation as ChatConversation);
       if (!req.body.editUserMessageId) {
         startChatTitleGeneration(conversation as ChatConversation, userMessage);
       }
@@ -2527,6 +2634,8 @@ export function chatRoutes(
     heartbeat,
     assertConversationAccess,
     assertChatLocalMutationAllowed,
+    assertSideChatMutationAllowed,
+    touchSideChat,
     boardUserId,
     assertCanAssignTasks,
     runSingleFileUpload,
