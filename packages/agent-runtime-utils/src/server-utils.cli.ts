@@ -525,8 +525,11 @@ export function canonicalizeDesiredRudderSkillReference(
   reference: string,
   availableEntries: Array<{ key: string; runtimeName?: string | null }>,
 ): string {
-  const normalizedReference = reference.trim().toLowerCase().replace(/^rudder\/rudder\//, "rudder/");
+  const normalizedReference = reference.trim().toLowerCase();
   if (!normalizedReference) return "";
+
+  const exactKey = availableEntries.find((entry) => entry.key.trim().toLowerCase() === normalizedReference);
+  if (exactKey) return exactKey.key;
 
   if (
     normalizedReference === "rudder"
@@ -541,20 +544,21 @@ export function canonicalizeDesiredRudderSkillReference(
     return canonicalRudderDocsEntry?.key ?? "rudder/rudder-docs";
   }
 
-  const exactKey = availableEntries.find((entry) => entry.key.trim().toLowerCase() === normalizedReference);
-  if (exactKey) return exactKey.key;
+  const lookupReference = normalizedReference.replace(/^rudder\/rudder\//, "rudder/");
+  const legacyNestedKey = availableEntries.find((entry) => entry.key.trim().toLowerCase() === lookupReference);
+  if (legacyNestedKey) return legacyNestedKey.key;
 
   const byRuntimeName = availableEntries.filter((entry) =>
-    typeof entry.runtimeName === "string" && entry.runtimeName.trim().toLowerCase() === normalizedReference,
+    typeof entry.runtimeName === "string" && entry.runtimeName.trim().toLowerCase() === lookupReference,
   );
   if (byRuntimeName.length === 1) return byRuntimeName[0]!.key;
 
   const slugMatches = availableEntries.filter((entry) =>
-    entry.key.trim().toLowerCase().split("/").pop() === normalizedReference,
+    entry.key.trim().toLowerCase().split("/").pop() === lookupReference,
   );
   if (slugMatches.length === 1) return slugMatches[0]!.key;
 
-  return normalizedReference;
+  return lookupReference;
 }
 
 export function resolveRudderDesiredSkillNames(

@@ -69,6 +69,19 @@ describe("filterRudderDesiredSkillsForBrowserCapability", () => {
 });
 
 describe("resolveRudderDesiredSkillNames", () => {
+  it("preserves an exact nested Rudder repository skill key", () => {
+    const nestedRepositorySkill = {
+      key: "rudder/rudder/community-helper",
+      runtimeName: "community-helper",
+    };
+
+    expect(resolveRudderDesiredSkillNames({
+      rudderSkillSync: {
+        desiredSkills: [nestedRepositorySkill.key],
+      },
+    }, [nestedRepositorySkill])).toEqual([nestedRepositorySkill.key]);
+  });
+
   it("normalizes legacy Rudder Docs inputs and emits one canonical runtime key", () => {
     const available = [
       { key: "bundled:rudder/rudder-docs", runtimeName: "rudder-docs" },
