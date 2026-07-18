@@ -1186,9 +1186,9 @@ export function heartbeatService(
           ...(claimedRun.processPid ? { processPid: claimedRun.processPid } : {}),
         },
       });
-
-      await completeTerminalControlEffects(finalizedRun);
+      const completed = await completeTerminalControlEffects(finalizedRun);
       runningProcesses.delete(claimedRun.id);
+      if (!completed) continue;
       reaped.push(claimedRun.id);
     }
 

@@ -97,19 +97,30 @@ export async function verifyBrowserBundle(options) {
       const command = await resolver.resolveRudderMcpCliCommand(runtimeModuleDir);
       assertEqual(command.provenance, "desktop_bundle", "resolver provenance");
       assertEqual(command.expectedVersion, expectedVersion, "resolver expected version");
-      assertEqual(JSON.stringify(command.args), JSON.stringify(["--desktop-cli", "mcp-server"]), "resolver arguments");
+      const expectedArgs = process.platform === "win32"
+        ? [path.join(path.dirname(cliEntry), "desktop-cli-runner.js"), "mcp-server"]
+        : ["--desktop-cli", "mcp-server"];
+      assertEqual(JSON.stringify(command.args), JSON.stringify(expectedArgs), "resolver arguments");
+      if (process.platform === "win32") {
+        assertEqual(command.env?.ELECTRON_RUN_AS_NODE, "1", "resolver Electron Node mode");
+      }
       const packagedExecutable = options.desktopExecutable
         ? path.resolve(options.desktopExecutable)
         : packagedExecutableForServerPackage(path.dirname(cliEntry));
       if (!(await exists(packagedExecutable))) {
         throw new Error(`packaged Desktop executable is missing: ${packagedExecutable}`);
       }
+      const packagedCommand = {
+        ...command,
+        command: packagedExecutable,
+        args: process.platform === "linux" ? ["--no-sandbox", ...command.args] : command.args,
+      };
       const result = await preflightModule.preflightRudderMcpServer({
-        command: { ...command, command: packagedExecutable },
+        command: packagedCommand,
         runtimeEnv: {
           ...process.env,
           HOME: tempRoot,
-          PATH: staleBinDir,
+          PATH: [staleBinDir, process.env.PATH].filter(Boolean).join(path.delimiter),
           RUDDER_BROWSER_ENABLED: "true",
           RUDDER_DESKTOP_DISABLE_CLI_LINK: "1",
         },
@@ -117,7 +128,9 @@ export async function verifyBrowserBundle(options) {
         timeoutMs: 15_000,
       });
       if (!result.available || !result.browserAvailable) {
-        throw new Error(`packaged Browser MCP preflight failed: ${result.diagnosticCode ?? "unknown"}`);
+        throw new Error(
+          `packaged Browser MCP preflight failed: ${result.diagnosticCode ?? "unknown"}: ${result.diagnostic ?? "no diagnostic"}`,
+        );
       }
       assertEqual(result.version, expectedVersion, "handshake CLI version");
       assertEqual(result.contractVersion, contractModule.RUDDER_MCP_CONTRACT_VERSION, "handshake contract version");

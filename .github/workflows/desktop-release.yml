@@ -69,7 +69,7 @@ jobs:
         run: |
           if [ "${MATRIX_PLATFORM}" = "linux" ]; then
             sudo apt-get update
-            sudo apt-get install -y curl ca-certificates
+            sudo apt-get install -y curl ca-certificates xvfb xauth
             sudo install -d /usr/share/postgresql-common/pgdg
             sudo curl --fail --location --output /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
               https://www.postgresql.org/media/keys/ACCC4CF8.asc
@@ -101,7 +101,11 @@ jobs:
             echo "macOS open file limit: $(ulimit -n)"
           fi
 
-          pnpm desktop:dist
+          if [ "$(uname -s)" = "Linux" ]; then
+            xvfb-run --auto-servernum pnpm desktop:dist
+          else
+            pnpm desktop:dist
+          fi
 
       - name: Collect release asset
         id: collect

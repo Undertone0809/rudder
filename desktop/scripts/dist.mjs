@@ -13,7 +13,12 @@ const hiddenPackagingNodeModulesDir = path.join(desktopRoot, ".node_modules.pack
 const requireFromScript = createRequire(import.meta.url);
 const electronBuilderCliPath = requireFromScript.resolve("electron-builder/cli.js");
 const targetArch = process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch;
-const desktopCliKeepFiles = new Set(["desktop-cli.js", "rudder-cli-package.json", "package.json"]);
+const desktopCliKeepFiles = new Set([
+  "desktop-cli-runner.js",
+  "desktop-cli.js",
+  "rudder-cli-package.json",
+  "package.json",
+]);
 
 function archFlagFor(arch) {
   if (arch === "arm64") return "--arm64";
@@ -164,27 +169,26 @@ async function pruneShellServerPackage(serverPackageDir) {
 async function verifyShellDesktopCli(serverPackageDir) {
   const { version } = await readPackageInfo();
   const cliEntry = path.join(serverPackageDir, "desktop-cli.js");
+  const cliRunner = path.join(serverPackageDir, "desktop-cli-runner.js");
   if (!(await exists(cliEntry))) {
     throw new Error(`shell server-package is missing desktop-cli.js: ${serverPackageDir}`);
   }
-
-  const script = [
-    "const m = await import('./desktop-cli.js');",
-    "if (typeof m.runCli !== 'function') throw new Error('desktop-cli.js does not export runCli');",
-    "const code = await m.runCli([process.execPath, 'rudder', 'start', '--no-cli', '--no-runtime', '--target-version',",
-    JSON.stringify(version),
-    ", '--dry-run', '--no-open', '--no-version-check']);",
-    "if (code !== 0) process.exit(code);",
-  ].join(" ");
-  const verifyScriptPath = path.join(serverPackageDir, ".rudder-shell-cli-verify.mjs");
-  await fs.writeFile(verifyScriptPath, script, "utf8");
-  try {
-    await run(process.execPath, [verifyScriptPath], {
-      cwd: serverPackageDir,
-    });
-  } finally {
-    await fs.rm(verifyScriptPath, { force: true });
+  if (!(await exists(cliRunner))) {
+    throw new Error(`shell server-package is missing desktop-cli-runner.js: ${serverPackageDir}`);
   }
+  await run(process.execPath, [
+    cliRunner,
+    "start",
+    "--no-cli",
+    "--no-runtime",
+    "--target-version",
+    version,
+    "--dry-run",
+    "--no-open",
+    "--no-version-check",
+  ], {
+    cwd: serverPackageDir,
+  });
 }
 
 async function createShellAppCopy(platform, arch, productName) {

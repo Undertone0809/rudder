@@ -40,6 +40,7 @@ function operatorInterruptHardDeadlineMs(reason: unknown): number | null {
 }
 
 type RudderCliSpawnTarget = SpawnTarget & {
+  env?: Record<string, string>;
   provenance: "desktop_bundle" | "external_runtime" | "repo";
   version: string | null;
 };
@@ -157,12 +158,38 @@ async function resolveDesktopExecutableBesideCliEntry(cliEntry: string): Promise
   return await fileExists(executable) ? executable : null;
 }
 
+export function resolveDesktopCliSpawnTarget(
+  cliEntry: string,
+  executable: string,
+  platform: NodeJS.Platform = process.platform,
+  nodeRunner: string | null = null,
+): Pick<RudderCliSpawnTarget, "command" | "args" | "env"> {
+  if (platform === "win32" && nodeRunner) {
+    return {
+      command: executable,
+      args: [nodeRunner],
+      env: { ELECTRON_RUN_AS_NODE: "1" },
+    };
+  }
+
+  return {
+    command: executable,
+    args: ["--desktop-cli"],
+  };
+}
+
 export async function resolveRudderCliShimTarget(moduleDir: string): Promise<RudderCliSpawnTarget | null> {
   const explicitDesktopCli = await resolveExplicitDesktopCliEntry();
   if (explicitDesktopCli) {
+    const executable = await resolveDesktopExecutableBesideCliEntry(explicitDesktopCli) ?? process.execPath;
+    const nodeRunner = path.join(path.dirname(explicitDesktopCli), "desktop-cli-runner.js");
     return {
-      command: await resolveDesktopExecutableBesideCliEntry(explicitDesktopCli) ?? process.execPath,
-      args: ["--desktop-cli"],
+      ...resolveDesktopCliSpawnTarget(
+        explicitDesktopCli,
+        executable,
+        process.platform,
+        await fileExists(nodeRunner) ? nodeRunner : null,
+      ),
       provenance: "desktop_bundle",
       version: await cliVersionBesideEntry(explicitDesktopCli),
     };
@@ -206,9 +233,11 @@ export async function resolveRudderCliShimTarget(moduleDir: string): Promise<Rud
   return null;
 }
 
-export async function materializeRudderCliShim(target: SpawnTarget): Promise<string> {
+export async function materializeRudderCliShim(
+  target: SpawnTarget & { env?: Record<string, string> },
+): Promise<string> {
   const hash = createHash("sha1")
-    .update(JSON.stringify({ command: target.command, args: target.args, platform: process.platform }))
+    .update(JSON.stringify({ command: target.command, args: target.args, env: target.env, platform: process.platform }))
     .digest("hex")
     .slice(0, 12);
   const shimDir = path.join(os.tmpdir(), "rudder-cli-shims", hash);
@@ -217,7 +246,12 @@ export async function materializeRudderCliShim(target: SpawnTarget): Promise<str
   if (process.platform === "win32") {
     const shimPath = path.join(shimDir, "rudder.cmd");
     const commandLine = [quoteForCmd(target.command), ...target.args.map(quoteForCmd), "%*"].join(" ");
-    await fs.writeFile(shimPath, `@echo off\r\n${commandLine}\r\n`, "utf8");
+    const electronNodeMode = target.env?.ELECTRON_RUN_AS_NODE === "1";
+    await fs.writeFile(
+      shimPath,
+      `@echo off\r\n${electronNodeMode ? "set \"ELECTRON_RUN_AS_NODE=1\"\r\n" : ""}${commandLine}\r\n`,
+      "utf8",
+    );
     return shimPath;
   }
 

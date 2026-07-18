@@ -38,6 +38,13 @@ type JsonRpcResponse = {
   result?: unknown;
 };
 
+function boundedStderrDetail(stderr: string): string | null {
+  const lines = stderr.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) return null;
+  const detail = lines.slice(-5).join(" | ");
+  return detail.length <= 2_000 ? detail : `…${detail.slice(-1_999)}`;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -205,17 +212,16 @@ async function exchange(
       if (responses.has("initialize") && responses.has("tools-list")) finish();
     };
     const timer = setTimeout(() => {
-      const detail = stderr.split(/\r?\n/u).map((line) => line.trim()).find(Boolean);
+      const detail = boundedStderrDetail(stderr);
       finish(new Error(detail ? `MCP handshake timed out: ${detail}` : "MCP handshake timed out"));
     }, timeoutMs);
 
     child.on("error", (error) => finish(error));
-    child.on("exit", (code, signal) => {
+    child.on("close", (code, signal) => {
       if (settled) return;
-      const detail = stderr.split(/\r?\n/u).map((line) => line.trim()).find(Boolean);
-      finish(new Error(
-        detail ?? `MCP server exited before handshake completed (code=${code ?? "null"}, signal=${signal ?? "none"})`,
-      ));
+      const exitDetail = `MCP server exited before handshake completed (code=${code ?? "null"}, signal=${signal ?? "none"})`;
+      const detail = boundedStderrDetail(stderr);
+      finish(new Error(detail ? `${exitDetail}: ${detail}` : exitDetail));
     });
     child.stderr.on("data", (chunk) => {
       stderr += chunk.toString();
@@ -269,11 +275,12 @@ async function preflightRudderMcpServerOnce(
   let responses: Map<string | number, JsonRpcResponse>;
   try {
     responses = await exchange(input.command, env, input.timeoutMs ?? PREFLIGHT_TIMEOUT_MS);
-  } catch {
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
     return failed(
       input.command,
       "browser_bundle_handshake_failed",
-      "Rudder MCP initialize/tools-list handshake failed; core control-plane tools are unavailable.",
+      `Rudder MCP initialize/tools-list handshake failed: ${detail}; core control-plane tools are unavailable.`,
     );
   }
 
