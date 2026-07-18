@@ -269,11 +269,12 @@ async function preflightRudderMcpServerOnce(
   let responses: Map<string | number, JsonRpcResponse>;
   try {
     responses = await exchange(input.command, env, input.timeoutMs ?? PREFLIGHT_TIMEOUT_MS);
-  } catch {
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
     return failed(
       input.command,
       "browser_bundle_handshake_failed",
-      "Rudder MCP initialize/tools-list handshake failed; core control-plane tools are unavailable.",
+      `Rudder MCP initialize/tools-list handshake failed: ${detail}; core control-plane tools are unavailable.`,
     );
   }
 

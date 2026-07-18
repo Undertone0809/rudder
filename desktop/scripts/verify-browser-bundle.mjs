@@ -117,7 +117,9 @@ export async function verifyBrowserBundle(options) {
         timeoutMs: 15_000,
       });
       if (!result.available || !result.browserAvailable) {
-        throw new Error(`packaged Browser MCP preflight failed: ${result.diagnosticCode ?? "unknown"}`);
+        throw new Error(
+          `packaged Browser MCP preflight failed: ${result.diagnosticCode ?? "unknown"}: ${result.diagnostic ?? "no diagnostic"}`,
+        );
       }
       assertEqual(result.version, expectedVersion, "handshake CLI version");
       assertEqual(result.contractVersion, contractModule.RUDDER_MCP_CONTRACT_VERSION, "handshake contract version");
