@@ -23,3 +23,6 @@ Files:
 - `results.json`: machine-readable loop output
 - `trigger-report.html`: description-optimization report
 - `review.html`: static `eval-viewer` review surface
+- `host-verification.md`: real Rudder Codex, prompt-injected OpenCode,
+  OpenClaw discovery, and official-source verification, with availability and
+  use reported separately

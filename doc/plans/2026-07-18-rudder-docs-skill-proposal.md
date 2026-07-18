@@ -2,7 +2,7 @@
 title: Reframe the bundled Rudder skill as Rudder Docs
 date: 2026-07-18
 kind: proposal
-status: proposed
+status: implemented
 area: skills
 entities:
   - rudder_docs
@@ -18,11 +18,12 @@ related_plans:
 supersedes:
   - 2026-06-14-rudder-operating-skill-reframe.md
 related_code:
-  - server/resources/bundled-skills/rudder/SKILL.md
-  - server/resources/bundled-skills/rudder/references/api-reference.md
-  - server/resources/bundled-skills/rudder/references/cli-reference.md
-  - server/resources/bundled-skills/rudder/references/organization-skills.md
   - server/resources/bundled-skills/rudder-docs/SKILL.md
+  - server/resources/bundled-skills/rudder-docs/references/api-reference.md
+  - server/resources/bundled-skills/rudder-docs/references/cli-reference.md
+  - server/resources/bundled-skills/rudder-docs/references/control-plane-practices.md
+  - server/resources/bundled-skills/rudder-docs/references/organization-skills.md
+  - server/resources/bundled-skills/rudder-docs/references/source-map.md
   - packages/shared/src/organization-skill-reference.ts
   - packages/agent-runtime-utils/src/server-utils.prompts.ts
   - packages/agent-runtime-utils/src/server-utils.cli.ts
@@ -36,7 +37,26 @@ related_code:
   - server/src/__tests__/bundled-rudder-skill-docs.test.ts
   - server/src/__tests__/invite-onboarding-text.test.ts
   - tests/e2e/organization-agent-skills.spec.ts
-commit_refs: []
+  - doc/product/domains/agents/skills-and-inbox.md
+  - doc/product/domains/agents/instruction-loading.md
+  - doc/product/domains/agents/control-tools.md
+  - doc/product/domains/work-routing/reviewer-routing.md
+  - doc/product/registry.yml
+commit_refs:
+  - 0d607790a52ad632879e8e8366d50891bd95923c
+  - 15cd8f88f225df41facd711093fae6d19c3b1248
+  - bfccaee2b990429a970a3502d50c4365ceded94d
+  - 1869158d2bca74f5b02a5c89ccf475bd9f9408e3
+  - 2206b4e7821828cbcef3b7a80a7d4689ae322c3a
+  - 8428519b9eaa0b2ce5bda8d3b48e8afd2a7198c9
+  - 2b354bc0003c797f7c97ecde697678cec21fb951
+  - 900ab8f072fb5f1729fdc72b279a80bee53a9070
+  - d00d7c15b
+  - 78150d3c0
+  - 612b3b76f2461ca1f8bb4da5ab6e67742f9107b6
+  - 343ebf6e2
+  - d372b17d1
+  - 6eb15e5a4
 updated_at: 2026-07-18
 ---
 
@@ -1228,39 +1248,46 @@ skill-attributable action occurs.
 
 ### Pass / Fail
 
-Status: proposal only. No implementation or skill eval has been run for this
-change.
+Status: implemented and accepted with three unrelated full-suite baseline
+failures recorded below.
 
-Proposal-document verification must pass before handoff:
+Implementation evidence:
 
-- frontmatter fields use the standard plan vocabulary;
-- the file is English and date-prefixed under `doc/plans/`;
-- `git diff --check` passes;
-- there are no unfinished placeholder markers, contradictory canonical names,
-  or unauthorized edits under `doc/product/**`; and
-- an independent reviewer finds no unresolved scope, compatibility, source
-  authority, or verification blocker.
+- focused bundled-skill, alias, adapter-sync, prompt, and runtime tests pass;
+- the trigger evaluation passed 60 of 60 judged runs: 36 training and 24
+  held-out, including all positive cases and all negative near misses;
+- a real Rudder Codex greeting kept `rudder-docs` available without reading the
+  skill or consulting a docs source;
+- a real Rudder Codex docs question read the canonical skill and routed first
+  to the official docs and then to the official source repository;
+- an OpenCode prompt-injected greeting returned only a greeting, while a docs
+  question routed to the official docs and source;
+- an isolated OpenClaw installation exposed the canonical name and exact
+  description as eligible, model-visible, and user-invocable; its behavioral
+  model run was bounded by provider authentication returning HTTP 401, so this
+  evidence is discovery-only and is not described as Rudder adapter parity;
+- the relevant Agent Skills E2E path, Codex external-skill path, and stale
+  managed Codex reconciliation path pass with the canonical identity;
+- `pnpm product-logic:check` passes with 74 valid contracts;
+- `pnpm lint`, `pnpm -r typecheck`, `pnpm build`, `pnpm docs:validate`, and
+  `git diff --check` pass;
+  and
+- the second full `pnpm test:run` completed with 4,526 passing and two skipped
+  tests. Its three remaining failures are outside this change: a five-second
+  release-canary test timeout, an existing Feishu active-generation uniqueness
+  collision, and issue-lifecycle route-status fixture drift. The release test
+  passes 3 of 3 when rerun with a 15-second timeout. All task-scoped failures
+  from the first run were corrected and the affected 118 focused tests pass.
 
-Implementation acceptance later requires:
+The trigger report, static viewer, and host-verification notes are preserved in
+`doc/plans/artifacts/2026-07-18-rudder-docs-trigger-eval/`.
 
-- focused unit and integration tests;
-- updated automated E2E coverage;
-- skill trigger and retrieval eval evidence;
-- a real Rudder Codex run, direct OpenClaw router verification when available,
-  and one prompt-injected Rudder runtime check;
-- `pnpm product-logic:check` after the separately authorized contract update;
-- `pnpm lint`;
-- `pnpm -r typecheck`;
-- `pnpm test:run`;
-- `pnpm build`; and
-- commit and push of only the scoped changes.
+## Implemented Product Logic Contract Delta
 
-## Proposed Product Logic Contract Delta
-
-This proposal changes agent-visible skill identity, host-activation
+This implementation changes agent-visible skill identity, host-activation
 expectations, an always-injected instruction, issue-scene safety ownership, and
-contract traceability. Implementation therefore requires explicit authorization
-to update these guarded contracts:
+contract traceability. The user explicitly authorized synchronizing the
+following guarded contracts:
 
 ### `AGENT.SKILLS.001`
 
@@ -1311,11 +1338,10 @@ to update these guarded contracts:
 - Add this proposal to the affected contracts' `related_plans` entries,
   including the traceability-only `ROUTING.REVIEWER.001` update.
 
-No `doc/product/**` file may be edited until the user explicitly approves this
-concrete delta or an agreed revision. Approval of skill implementation alone
-does not silently authorize broader Product Logic changes.
+The registry and all four contract records were updated in the same branch and
+validated with `pnpm product-logic:check`.
 
-## Documentation Changes If Approved
+## Documentation Changes Implemented
 
 - Rename and rewrite
   `server/resources/bundled-skills/rudder/SKILL.md` as
@@ -1456,6 +1482,14 @@ Round one requested six changes before approval:
 The proposal was revised to address all six. Round two found no remaining
 P0/P1/P2 issue and approved the proposal for user discussion. This review does
 not approve implementation or authorize guarded Product Logic edits.
+
+Implementation then received independent specification, content-quality, and
+prompt-routing reviews. Findings about nested legacy-key precedence, destructive
+cleanup proof, reference ownership, long-reference navigation, and stale mixed
+reviewer wake context were resolved in dedicated follow-up commits. The final
+focused reviews reported no remaining P0/P1/P2 finding and marked the change
+ready. Product Logic authorization and synchronization were supplied separately
+by the user before the guarded files were edited.
 
 ## Approval Boundary
 
