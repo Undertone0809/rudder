@@ -109,7 +109,7 @@ export async function verifyBrowserBundle(options) {
         runtimeEnv: {
           ...process.env,
           HOME: tempRoot,
-          PATH: staleBinDir,
+          PATH: [staleBinDir, process.env.PATH].filter(Boolean).join(path.delimiter),
           RUDDER_BROWSER_ENABLED: "true",
           RUDDER_DESKTOP_DISABLE_CLI_LINK: "1",
         },
