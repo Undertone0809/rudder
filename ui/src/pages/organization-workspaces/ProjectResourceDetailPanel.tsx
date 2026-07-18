@@ -14,8 +14,8 @@ import { useToast } from "../../context/ToastContext";
 import { readDesktopShell, type DesktopWorkspaceLaunchTarget } from "../../lib/desktop-shell";
 import { queryKeys } from "../../lib/queryKeys";
 import { organizationResourceKindLabel, organizationResourceSourceTypeLabel } from "../../lib/resource-options";
-import type { WorkspaceOpenTargetId } from "../../lib/workspace-preferences";
 import { cn } from "../../lib/utils";
+import type { WorkspaceOpenTargetId } from "../../lib/workspace-preferences";
 import { isHttpUrl, resolveResourceOpenPath } from "./organizationWorkspaceCapabilities";
 
 function ResourceMetadataRow({ label, children, mono = false }: { label: string; children: ReactNode; mono?: boolean }) {

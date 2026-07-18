@@ -1583,6 +1583,12 @@ describe("Feishu inbound dispatcher DB deps", () => {
     );
     expect(first.status).toBe("accepted");
     if (first.status !== "accepted") throw new Error("Expected accepted result");
+    await waitUntil(async () => {
+      expect(sent).toEqual([{ chatId: "oc_runtime_active", text: "first runtime reply" }]);
+      await expect(
+        db.select().from(chatGenerations).where(eq(chatGenerations.status, "active")),
+      ).resolves.toHaveLength(0);
+    });
     await db
       .update(chatConversations)
       .set({ createdAt: sql`'2026-06-18T08:00:00.000Z'::timestamptz` })
