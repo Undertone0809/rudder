@@ -21,8 +21,8 @@ related_code:
   - server/src/routes/browser.ts
   - server/src/services/browser-broker.ts
   - server/resources/bundled-skills/browser/SKILL.md
-  - server/resources/bundled-skills/rudder/SKILL.md
-  - server/resources/bundled-skills/rudder/references/cli-reference.md
+  - server/resources/bundled-skills/rudder-docs/SKILL.md
+  - server/resources/bundled-skills/rudder-docs/references/cli-reference.md
 related_tests:
   - cli/src/__tests__/browser-command.test.ts
   - cli/src/__tests__/agent-v1-registry.test.ts
@@ -37,6 +37,7 @@ related_tests:
 related_plans:
   - doc/plans/2026-06-30-agent-v1-mcp-tools.md
   - doc/plans/2026-07-12-built-in-browser.md
+  - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
 edit_policy: user_confirmed_only
 ---
 
@@ -65,11 +66,12 @@ of relying on model-invented shell commands or user/home MCP configuration.
 
 ### Why / Design Reasoning
 
-The bundled `rudder` CLI skill remains the compatibility fallback and human
-reference, but agent runtimes that support MCP should prefer first-party
-Rudder tools. MCP gives the model a typed schema, stable tool names, and a
-clear transport boundary while preserving CLI compatibility for capabilities
-that have not moved to direct runtime API dispatch.
+The bundled `rudder-docs` skill remains the compatibility reference for exact
+CLI command details, but agent runtimes that support MCP should prefer
+first-party Rudder tools. The skill is always discoverable; that does not mean
+an agent must read it on every run. MCP gives the model a typed schema, stable
+tool names, and a clear transport boundary while preserving CLI compatibility
+for capabilities that have not moved to direct runtime API dispatch.
 
 The control-plane server is runtime infrastructure, not a custom integration.
 The operator does not configure its URL, credentials, binding, or allowlist from
@@ -140,8 +142,8 @@ current run.
 10. Success returns structured JSON content. Failure returns an MCP error result
    with a stable Rudder MCP error code and safe diagnostic details.
 11. When MCP/native tool exposure is unavailable or a transport/configuration
-   error blocks the tool, the bundled CLI reference remains the agent fallback
-   path.
+   error blocks the tool, the agent may consult `rudder-docs` for the exact CLI
+   reference and use that compatibility path.
 12. Browser calls additionally verify the live setting, active run, safe web
     URL, and run-owned tab before forwarding an allowed action to the in-memory
     Desktop Broker. A stale manifest cannot bypass live disablement.
@@ -152,7 +154,7 @@ current run.
 | --- | --- |
 | Supported runtime has managed MCP config | Runtime receives `rudder-control-plane` with runtime-owned env and `rudder mcp-server` command. |
 | Runtime supports first-party native tool bridging instead of managed MCP config | Runtime receives an adapter-managed native bridge exposing the same `rudder_<capability_id>` tool names with runtime-owned env. |
-| Runtime does not support managed MCP config | Agent uses the bundled `rudder` CLI skill/reference fallback. |
+| Runtime does not support managed MCP config and exact command guidance is needed | Agent consults the bundled `rudder-docs` skill/reference and uses the CLI compatibility path. |
 | Model supplies `orgId`, `agentId`, `runId`, `apiKey`, `apiBase`, or authorization fields | Tool call is rejected with `rudder_mcp_reserved_identity_argument`. |
 | Required runtime context is missing | Tool call is rejected with `rudder_mcp_missing_runtime_context`. |
 | Direct runtime API dispatch succeeds | MCP/native tool result returns structured JSON content without shelling out to the Rudder CLI. |

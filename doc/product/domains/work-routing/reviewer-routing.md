@@ -8,10 +8,12 @@ contract_ids:
 related_code:
   - server/src/routes/issues.mutations.ts
   - server/src/services/issue-review-wakeup.ts
-  - server/resources/bundled-skills/rudder/references/cli-reference.md
+  - server/resources/bundled-skills/rudder-docs/references/cli-reference.md
 related_tests:
   - tests/e2e/issues-reviewer-routing.spec.ts
   - server/src/__tests__/agent-inbox-reviewer.test.ts
+related_plans:
+  - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
 edit_policy: user_confirmed_only
 ---
 
@@ -48,7 +50,7 @@ Related code:
 
 - `server/src/routes/issues.mutations.ts`
 - `server/src/services/issue-review-wakeup.ts`
-- `server/resources/bundled-skills/rudder/references/cli-reference.md`
+- `server/resources/bundled-skills/rudder-docs/references/cli-reference.md`
 
 Related tests:
 

@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  COMMENT_MENTION_PROMPT_TEMPLATE,
+  DEFAULT_AGENT_PROMPT_TEMPLATE,
+  ISSUE_ASSIGNEE_EXECUTION_RAIL,
+  ISSUE_ASSIGN_PROMPT_TEMPLATE,
+  ISSUE_CHANGES_REQUESTED_PROMPT_TEMPLATE,
+  ISSUE_COMMENTED_PROMPT_TEMPLATE,
+  ISSUE_PASSIVE_FOLLOWUP_PROMPT_TEMPLATE,
+  ISSUE_RECOVERY_PROMPT_TEMPLATE,
+  ISSUE_REVIEW_PROMPT_TEMPLATE,
+  RECOVERY_PROMPT_TEMPLATE,
   renderTemplate,
   RUDDER_AGENT_HEARTBEAT_INSTRUCTION,
   RUDDER_AGENT_OPERATING_CONTRACT,
@@ -203,5 +213,36 @@ describe("server-utils prompt contracts", () => {
     expect(rendered).toContain("From: Zeeland (user)");
     expect(rendered).toContain("This still needs the reopen path covered.");
     expect(rendered).not.toContain("Continue your Rudder work.");
+  });
+
+  it("injects the checkout conflict rail only into assignee-capable issue scenes", () => {
+    const assigneeCapableTemplates = [
+      ISSUE_ASSIGN_PROMPT_TEMPLATE,
+      COMMENT_MENTION_PROMPT_TEMPLATE,
+      ISSUE_COMMENTED_PROMPT_TEMPLATE,
+      ISSUE_CHANGES_REQUESTED_PROMPT_TEMPLATE,
+      ISSUE_RECOVERY_PROMPT_TEMPLATE,
+      ISSUE_PASSIVE_FOLLOWUP_PROMPT_TEMPLATE,
+    ];
+
+    for (const template of assigneeCapableTemplates) {
+      expect(template).toContain(ISSUE_ASSIGNEE_EXECUTION_RAIL);
+      expect(template).toContain("If checkout returns `409`, do not retry");
+    }
+
+    expect(ISSUE_REVIEW_PROMPT_TEMPLATE).not.toContain(ISSUE_ASSIGNEE_EXECUTION_RAIL);
+    expect(RECOVERY_PROMPT_TEMPLATE).not.toContain(ISSUE_ASSIGNEE_EXECUTION_RAIL);
+    expect(DEFAULT_AGENT_PROMPT_TEMPLATE).not.toContain(ISSUE_ASSIGNEE_EXECUTION_RAIL);
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).not.toContain(ISSUE_ASSIGNEE_EXECUTION_RAIL);
+  });
+
+  it("keeps Rudder Docs usage conditional and out of the global operating contract", () => {
+    expect(RUDDER_AGENT_OPERATING_CONTRACT).not.toContain("You can use `rudder` skill");
+    expect(RUDDER_AGENT_OPERATING_CONTRACT).not.toContain("`rudder-docs`");
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).toContain("may consult the bundled `rudder-docs` skill");
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).toContain(
+      "Do not load it merely because this is a heartbeat",
+    );
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).not.toContain("bundled `rudder` skill");
   });
 });
