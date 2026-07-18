@@ -549,34 +549,82 @@ export function trimTrailingWhitespace(value: string) {
 function isInternalChatLifecycleEntry(entry: TranscriptEntry) {
   if (entry.kind !== "system") return false;
   const text = compactWhitespace(entry.text).toLowerCase();
-  return text === "turn started"
-    || text === "reasoning started"
+  return text === "reasoning started"
     || text === "reasoning completed"
     || /^item (?:started|completed): reasoning(?:\s+\([^)]*\))?$/.test(text);
 }
 
-function assistantEntryGroupText(entries: Array<Extract<TranscriptEntry, { kind: "assistant" }>>) {
-  return entries.reduce((text, entry) => {
-    if (!text || entry.delta === true) return `${text}${entry.text}`;
-    return `${text}\n${entry.text}`;
-  }, "");
+const INTERNAL_RESULT_MARKER_PATTERN = /RUDDER_RESULT_(?:BEGIN|END)|__RUDDER_RESULT_[a-f0-9-]+__/i;
+const INTERNAL_RESULT_MARKER_PREFIXES = ["RUDDER_RESULT_BEGIN", "RUDDER_RESULT_END"];
+const DYNAMIC_RESULT_MARKER_STEM = "__RUDDER_RESULT_";
+
+function trailingInternalResultMarkerPrefixIndex(text: string, entryStarts: Set<number>) {
+  const isBoundary = (index: number) => index === 0
+    || entryStarts.has(index)
+    || text[index - 1] === "\n"
+    || text[index - 1] === "\r";
+  const upper = text.toUpperCase();
+
+  for (const marker of [...INTERNAL_RESULT_MARKER_PREFIXES, DYNAMIC_RESULT_MARKER_STEM]) {
+    const maxPrefixLength = Math.min(marker.length, upper.length);
+    for (let length = maxPrefixLength; length >= 1; length -= 1) {
+      const index = upper.length - length;
+      if (isBoundary(index) && marker.startsWith(upper.slice(index))) return index;
+    }
+  }
+
+  const dynamicMarkerIndex = upper.lastIndexOf(DYNAMIC_RESULT_MARKER_STEM);
+  if (dynamicMarkerIndex >= 0 && isBoundary(dynamicMarkerIndex)) {
+    const markerSuffix = upper.slice(dynamicMarkerIndex + DYNAMIC_RESULT_MARKER_STEM.length);
+    if (/^[A-F0-9-]+_?$/.test(markerSuffix)) return dynamicMarkerIndex;
+  }
+
+  return -1;
 }
 
-function stripInternalResultProtocolFromChatTranscript(entries: TranscriptEntry[]) {
+function assistantEntriesBeforeTextIndex(
+  entries: Array<Extract<TranscriptEntry, { kind: "assistant" }>>,
+  endIndex: number,
+) {
+  const visible: TranscriptEntry[] = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const entryEnd = offset + entry.text.length;
+    if (entryEnd <= endIndex) {
+      visible.push(entry);
+    } else if (offset < endIndex) {
+      const text = trimTrailingWhitespace(entry.text.slice(0, endIndex - offset));
+      if (text) visible.push({ ...entry, text });
+      break;
+    } else {
+      break;
+    }
+    offset = entryEnd;
+  }
+  return visible;
+}
+
+function stripInternalResultProtocolFromChatTranscript(entries: TranscriptEntry[], streaming: boolean) {
   const filtered: TranscriptEntry[] = [];
   let assistantGroup: Array<Extract<TranscriptEntry, { kind: "assistant" }>> = [];
 
   const flushAssistantGroup = () => {
     if (assistantGroup.length === 0) return;
-    const text = assistantEntryGroupText(assistantGroup);
-    const markerIndex = text.search(/RUDDER_RESULT_(?:BEGIN|END)|__RUDDER_RESULT_[a-f0-9-]+__/i);
+    const entryStarts = new Set<number>();
+    let text = "";
+    for (const entry of assistantGroup) {
+      entryStarts.add(text.length);
+      text += entry.text;
+    }
+    const completeMarkerIndex = text.search(INTERNAL_RESULT_MARKER_PATTERN);
+    const partialMarkerIndex = completeMarkerIndex < 0 && streaming
+      ? trailingInternalResultMarkerPrefixIndex(text, entryStarts)
+      : -1;
+    const markerIndex = completeMarkerIndex >= 0 ? completeMarkerIndex : partialMarkerIndex;
     if (markerIndex < 0) {
       filtered.push(...assistantGroup);
     } else {
-      const visiblePrefix = trimTrailingWhitespace(text.slice(0, markerIndex));
-      if (visiblePrefix) {
-        filtered.push({ ...assistantGroup[0]!, text: visiblePrefix, delta: false });
-      }
+      filtered.push(...assistantEntriesBeforeTextIndex(assistantGroup, markerIndex));
     }
     assistantGroup = [];
   };
@@ -641,6 +689,7 @@ export function filterChatAssistantTranscriptEntries(
   options: {
     hideAssistantMessages: boolean;
     hiddenAssistantMessageText?: string | null;
+    streaming?: boolean;
   },
 ) {
   if (options.hideAssistantMessages) {
@@ -648,7 +697,7 @@ export function filterChatAssistantTranscriptEntries(
   }
   const withoutFinalAnswer = redactAssistantSuffixFromChatTranscript(entries, options.hiddenAssistantMessageText);
   const withoutLifecycle = withoutFinalAnswer.filter((entry) => !isInternalChatLifecycleEntry(entry));
-  return stripInternalResultProtocolFromChatTranscript(withoutLifecycle);
+  return stripInternalResultProtocolFromChatTranscript(withoutLifecycle, options.streaming === true);
 }
 
 export function TranscriptChatTimeline({
@@ -676,8 +725,9 @@ export function TranscriptChatTimeline({
     () => filterChatAssistantTranscriptEntries(entries, {
       hideAssistantMessages,
       hiddenAssistantMessageText,
+      streaming,
     }),
-    [entries, hideAssistantMessages, hiddenAssistantMessageText],
+    [entries, hideAssistantMessages, hiddenAssistantMessageText, streaming],
   );
   const { preludeBlocks, turns } = useMemo(
     () => normalizeChatTranscriptTurns(timelineEntries, streaming, { showDeveloperDiagnostics }),

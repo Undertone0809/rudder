@@ -4,8 +4,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { ThemeProvider } from "../../context/ThemeContext";
-import { RunTranscriptView, normalizeTranscript, resolveTranscriptLocalFileTarget } from "./RunTranscriptView";
-import { TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
+import { normalizeTranscript, resolveTranscriptLocalFileTarget, RunTranscriptView } from "./RunTranscriptView";
+import { filterChatAssistantTranscriptEntries, TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
+import { normalizeChatTranscriptTurns } from "./RunTranscriptView.normalize";
 
 function countOccurrences(value: string, needle: string) {
   return value.split(needle).length - 1;
@@ -508,6 +509,68 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("reasoning completed");
     expect(html).not.toContain("RUDDER_RESULT");
     expect(html).not.toContain("Final answer shown in the assistant message.");
+  });
+
+  it("buffers fragmented result markers while streaming and preserves normal progress", () => {
+    const progress: TranscriptEntry = {
+      kind: "assistant",
+      ts: "2026-07-19T00:00:00.000Z",
+      text: "Checked the source.",
+    };
+    const fragments = ["R", "UD", "DER_RESULT_BEGIN\nFinal answer"];
+
+    for (let count = 1; count <= fragments.length; count += 1) {
+      const filtered = filterChatAssistantTranscriptEntries([
+        progress,
+        ...fragments.slice(0, count).map((text, index) => ({
+          kind: "assistant" as const,
+          ts: `2026-07-19T00:00:0${index + 1}.000Z`,
+          text,
+        })),
+      ], {
+        hideAssistantMessages: false,
+        streaming: true,
+      });
+
+      expect(filtered).toEqual([progress]);
+    }
+
+    const disambiguated = filterChatAssistantTranscriptEntries([
+      progress,
+      { kind: "assistant", ts: "2026-07-19T00:00:01.000Z", text: "R" },
+      { kind: "assistant", ts: "2026-07-19T00:00:02.000Z", text: "eady to continue." },
+    ], {
+      hideAssistantMessages: false,
+      streaming: true,
+    });
+    expect(disambiguated
+      .filter((entry): entry is Extract<TranscriptEntry, { kind: "assistant" }> => entry.kind === "assistant")
+      .map((entry) => entry.text)).toEqual([
+      "Checked the source.",
+      "R",
+      "eady to continue.",
+    ]);
+  });
+
+  it("keeps turn markers for multi-turn process segmentation while hiding lifecycle rows", () => {
+    const filtered = filterChatAssistantTranscriptEntries([
+      { kind: "system", ts: "2026-07-19T00:00:00.000Z", text: "turn started" },
+      { kind: "assistant", ts: "2026-07-19T00:00:01.000Z", text: "First turn progress." },
+      { kind: "system", ts: "2026-07-19T00:00:02.000Z", text: "reasoning completed" },
+      { kind: "system", ts: "2026-07-19T00:00:03.000Z", text: "turn started" },
+      { kind: "assistant", ts: "2026-07-19T00:00:04.000Z", text: "Second turn progress." },
+    ], {
+      hideAssistantMessages: false,
+      streaming: false,
+    });
+
+    expect(filtered.filter((entry) => entry.kind === "system")).toHaveLength(2);
+    const normalized = normalizeChatTranscriptTurns(filtered, false);
+    expect(normalized.turns).toHaveLength(2);
+    expect(normalized.turns.map((turn) => turn.preview)).toEqual([
+      "First turn progress.",
+      "Second turn progress.",
+    ]);
   });
 
   it("uses orphan tool result content as the chat action summary", () => {
