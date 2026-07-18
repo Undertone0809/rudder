@@ -546,6 +546,53 @@ export function trimTrailingWhitespace(value: string) {
   return value.replace(/\s+$/g, "");
 }
 
+function isInternalChatLifecycleEntry(entry: TranscriptEntry) {
+  if (entry.kind !== "system") return false;
+  const text = compactWhitespace(entry.text).toLowerCase();
+  return text === "turn started"
+    || text === "reasoning started"
+    || text === "reasoning completed"
+    || /^item (?:started|completed): reasoning(?:\s+\([^)]*\))?$/.test(text);
+}
+
+function assistantEntryGroupText(entries: Array<Extract<TranscriptEntry, { kind: "assistant" }>>) {
+  return entries.reduce((text, entry) => {
+    if (!text || entry.delta === true) return `${text}${entry.text}`;
+    return `${text}\n${entry.text}`;
+  }, "");
+}
+
+function stripInternalResultProtocolFromChatTranscript(entries: TranscriptEntry[]) {
+  const filtered: TranscriptEntry[] = [];
+  let assistantGroup: Array<Extract<TranscriptEntry, { kind: "assistant" }>> = [];
+
+  const flushAssistantGroup = () => {
+    if (assistantGroup.length === 0) return;
+    const text = assistantEntryGroupText(assistantGroup);
+    const markerIndex = text.search(/RUDDER_RESULT_(?:BEGIN|END)|__RUDDER_RESULT_[a-f0-9-]+__/i);
+    if (markerIndex < 0) {
+      filtered.push(...assistantGroup);
+    } else {
+      const visiblePrefix = trimTrailingWhitespace(text.slice(0, markerIndex));
+      if (visiblePrefix) {
+        filtered.push({ ...assistantGroup[0]!, text: visiblePrefix, delta: false });
+      }
+    }
+    assistantGroup = [];
+  };
+
+  for (const entry of entries) {
+    if (entry.kind === "assistant") {
+      assistantGroup.push(entry);
+      continue;
+    }
+    flushAssistantGroup();
+    filtered.push(entry);
+  }
+  flushAssistantGroup();
+  return filtered;
+}
+
 export function redactAssistantSuffixFromChatTranscript(
   entries: TranscriptEntry[],
   hiddenAssistantMessageText: string | null | undefined,
@@ -597,9 +644,11 @@ export function filterChatAssistantTranscriptEntries(
   },
 ) {
   if (options.hideAssistantMessages) {
-    return entries.filter((entry) => entry.kind !== "assistant");
+    return entries.filter((entry) => entry.kind !== "assistant" && !isInternalChatLifecycleEntry(entry));
   }
-  return redactAssistantSuffixFromChatTranscript(entries, options.hiddenAssistantMessageText);
+  const withoutFinalAnswer = redactAssistantSuffixFromChatTranscript(entries, options.hiddenAssistantMessageText);
+  const withoutLifecycle = withoutFinalAnswer.filter((entry) => !isInternalChatLifecycleEntry(entry));
+  return stripInternalResultProtocolFromChatTranscript(withoutLifecycle);
 }
 
 export function TranscriptChatTimeline({

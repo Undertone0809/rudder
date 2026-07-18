@@ -169,12 +169,15 @@ contracts:
       - server/src/services/heartbeat-run-reference.ts
       - server/src/routes/chats.stream-routes.ts
       - server/src/services/chat-generation-protocol.ts
+      - ui/src/components/transcript/RunTranscriptView.chat.tsx
     related_tests:
       - server/src/__tests__/heartbeat-run-summary.test.ts
       - server/src/__tests__/chat-routes.test.ts
       - server/src/services/chat-generation-protocol.test.ts
       - tests/e2e/run-transcript-detail.spec.ts
       - tests/e2e/chat-concurrent-streaming.spec.ts
+      - ui/src/components/transcript/RunTranscriptView.test.tsx
+      - tests/e2e/chat-transcript-internal-events.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-07-15-chat-steer-and-immediate-stop.md
@@ -949,6 +952,7 @@ contracts:
       - ui/src/lib/chat-client-checkpoints.ts
       - ui/src/lib/chat-stop-recovery.ts
       - ui/src/pages/Chat.messages.tsx
+      - ui/src/components/transcript/RunTranscriptView.chat.tsx
     related_tests:
       - server/src/__tests__/chat-routes.test.ts
       - server/src/services/chat-generation-locks.test.ts
@@ -970,6 +974,7 @@ contracts:
       - tests/e2e/chat-prompt-starters.spec.ts
       - tests/e2e/chat-rich-references.spec.ts
       - tests/e2e/chat-streaming.spec.ts
+      - tests/e2e/chat-transcript-internal-events.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-07-15-chat-steer-and-immediate-stop.md
