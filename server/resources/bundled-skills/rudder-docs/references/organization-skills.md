@@ -15,6 +15,17 @@ rudder agent skills create "$RUDDER_AGENT_ID" --name "<name>" --description "<de
 
 Agent-private skill creation writes under `AGENT_HOME/skills` and does not require organization skill mutation permission.
 
+## Section Map
+
+- [Canonical model](#canonical-model)
+- [Core CLI surface](#core-cli-surface)
+- [Source types](#source-types)
+- [Import examples](#import-examples)
+- [Inspect imported skills](#inspect-imported-skills)
+- [Enable skills on an existing agent](#enable-skills-on-an-existing-agent)
+- [Permission model](#permission-model)
+- [Notes](#notes)
+
 ## Canonical Model
 
 1. import or scan the skill into the organization library

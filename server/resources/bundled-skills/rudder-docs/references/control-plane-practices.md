@@ -5,6 +5,21 @@ behavior. It is conditional documentation, not a trigger and not an always-run
 workflow. For exact tool and CLI syntax, pair the relevant rule with
 `cli-reference.md` instead of recreating its command table here.
 
+## Section Map
+
+- [Interface and scope](#interface-and-scope)
+- [Ownership, checkout, and wake scope](#ownership-checkout-and-wake-scope)
+- [Comments, mentions, and evidence](#comments-mentions-and-evidence)
+- [Review and close-out](#review-and-close-out)
+- [Approvals](#approvals)
+- [Delegation, escalation, and budget](#delegation-escalation-and-budget)
+- [Git identity and attribution](#git-identity-and-attribution)
+- [Workspaces, projects, and resources](#workspaces-projects-and-resources)
+- [Durable Library artifacts](#durable-library-artifacts)
+- [Organization and agent skills](#organization-and-agent-skills)
+- [Authentication and runtime environment](#authentication-and-runtime-environment)
+- [User activity context](#user-activity-context)
+
 ## Interface And Scope
 
 - Prefer exposed first-party Rudder typed tools for normal control-plane work.

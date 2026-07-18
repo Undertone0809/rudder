@@ -140,14 +140,80 @@ describe("bundled rudder docs skill", () => {
     }
   });
 
-  it("gives long references a searchable section map", async () => {
+  it("gives references over 100 lines a linked section map", async () => {
     for (const referencePath of referencePaths) {
       const contents = await fs.readFile(referencePath, "utf8");
-      if (contents.split("\n").length > 300) {
-        expect(contents, path.basename(referencePath)).toMatch(
-          /^## (?:Section Map|Table Of Contents)$/m,
+      if (contents.split("\n").length > 100) {
+        const sectionMap = contents.match(
+          /(?:^|\n)## Section Map\n([\s\S]*?)(?=\n## |\s*$)/,
         );
+        expect(sectionMap, path.basename(referencePath)).not.toBeNull();
+
+        const anchors = Array.from(
+          sectionMap?.[1].matchAll(/\]\(#([^)]+)\)/g) ?? [],
+          (match) => match[1],
+        );
+        expect(anchors.length, path.basename(referencePath)).toBeGreaterThan(1);
+        const headingAnchors = new Set(
+          Array.from(contents.matchAll(/^## (.+)$/gm), (match) =>
+            match[1]
+              .toLowerCase()
+              .replace(/[^\p{L}\p{N} -]/gu, "")
+              .trim()
+              .replace(/ +/g, "-"),
+          ),
+        );
+        for (const anchor of anchors) {
+          expect(headingAnchors, `${path.basename(referencePath)}#${anchor}`).toContain(
+            anchor,
+          );
+        }
       }
+    }
+  });
+
+  it("keeps operating policy in control practices instead of the CLI catalog", async () => {
+    const cli = await fs.readFile(
+      path.join(root, "references", "cli-reference.md"),
+      "utf8",
+    );
+
+    for (const anchor of [
+      "interface-and-scope",
+      "ownership-checkout-and-wake-scope",
+      "comments-mentions-and-evidence",
+      "review-and-close-out",
+      "durable-library-artifacts",
+      "git-identity-and-attribution",
+    ]) {
+      expect(cli).toContain(`control-plane-practices.md#${anchor}`);
+    }
+
+    for (const duplicatedPolicy of [
+      "Chat and issues are parallel ways",
+      "If a comment wakes you on an issue not assigned to you",
+      "RUDDER_WAKE_REASON=issue_passive_followup",
+      "Do not rely on a free-form reject or accept comment",
+      "Codex local runs preserve the operator `HOME`",
+      "$RUDDER_PROJECT_LIBRARY_ROOT",
+      "Do not hand-write `library-entry://",
+    ]) {
+      expect(cli).not.toContain(duplicatedPolicy);
+    }
+
+    expect(cli).toContain("## Agent V1 Commands");
+    expect(cli).toContain("must write valid JSON to stdout on success");
+    expect(cli).toContain("exit nonzero and write a diagnostic error to stderr");
+    expect(cli).toContain("exit-0 command with empty stdout is a CLI/runtime defect");
+    expect(cli).toContain("--body-file <path>");
+    expect(cli).toContain("--comment-file <path>");
+    expect(cli).toContain("cmt_<uuid-prefix>");
+    expect(cli).toContain("`--image` may be repeated");
+    expect(cli).toContain("`libraryEntryId`");
+    expect(cli).toContain("`mentionHref`");
+    expect(cli).toContain("`markdownLink`");
+    for (const decision of ["approve", "request_changes", "needs_followup", "blocked"]) {
+      expect(cli).toContain(`--decision ${decision}`);
     }
   });
 

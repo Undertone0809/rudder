@@ -4,6 +4,16 @@ Use this map to choose a narrow evidence route. It describes stable domains and
 directories rather than an exhaustive page list. Follow the current checkout's
 `AGENTS.md` before repository inspection.
 
+## Section Map
+
+- [Official public documentation](#official-public-documentation)
+- [Product Logic Registry](#product-logic-registry)
+- [Contributor and engineering documentation](#contributor-and-engineering-documentation)
+- [Implementation and tests](#implementation-and-tests)
+- [Official remote source and version history](#official-remote-source-and-version-history)
+- [Bundled offline references](#bundled-offline-references)
+- [Targeted search patterns](#targeted-search-patterns)
+
 ## Official Public Documentation
 
 - Index: `https://docs.rudderhq.dev/llms.txt`
