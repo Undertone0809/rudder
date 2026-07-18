@@ -306,7 +306,7 @@ function parseCodexItem(
 
   if (itemType === "reasoning") {
     const text = asString(item.text);
-    if (text) return [{ kind: "thinking", ts, text }];
+    if (text) return [{ kind: "thinking", ts, text, ...(item.delta === true ? { delta: true } : {}) }];
     return [{ kind: "system", ts, text: phase === "started" ? "reasoning started" : "reasoning completed" }];
   }
 
