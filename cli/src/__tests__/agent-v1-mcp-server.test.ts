@@ -19,8 +19,8 @@ import { buildAgentV1McpToolsManifest } from "../agent-v1-registry.js";
 const SAMPLE_INPUT_BY_TOOL: Record<string, Record<string, unknown>> = {
   rudder_agent_update: { title: "Runtime Agent" },
   rudder_agent_skills_create: { name: "local-helper", description: "Local helper" },
-  rudder_agent_skills_enable: { selectionRefs: ["rudder/rudder"] },
-  rudder_agent_skills_sync: { desiredSkills: "rudder/rudder" },
+  rudder_agent_skills_enable: { selectionRefs: ["rudder/rudder-docs"] },
+  rudder_agent_skills_sync: { desiredSkills: "rudder/rudder-docs" },
   rudder_issue_get: { issue: "ZST-123" },
   rudder_issue_search: { query: "checkout" },
   rudder_issue_context: { issue: "ZST-123", wakeCommentId: "cmt_abc123" },
@@ -165,7 +165,7 @@ describe("agent-v1 MCP server", () => {
     const plan = buildAgentV1ToolCallPlan(
       "rudder_agent_skills_enable",
       {
-        selectionRefs: ["rudder/rudder"],
+        selectionRefs: ["rudder/rudder-docs"],
       },
       {
         RUDDER_API_URL: "http://127.0.0.1:3100",
@@ -180,7 +180,7 @@ describe("agent-v1 MCP server", () => {
       "skills",
       "enable",
       "runtime-agent",
-      "rudder/rudder",
+      "rudder/rudder-docs",
       "--json",
     ]);
     expect(plan.args).not.toContain("wrong-agent");

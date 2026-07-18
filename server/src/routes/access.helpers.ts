@@ -62,9 +62,10 @@ export function buildCliAuthApprovalPath(challengeId: string, token: string) {
 }
 
 export function readSkillMarkdown(skillName: string): string | null {
-  const normalized = skillName.trim().toLowerCase();
+  const requested = skillName.trim().toLowerCase();
+  const normalized = requested === "rudder" ? "rudder-docs" : requested;
   if (
-    normalized !== "rudder" &&
+    normalized !== "rudder-docs" &&
     normalized !== "rudder-create-agent" &&
     // TODO 2026-04-12 15:42:09: disabled: not used yet; will be re-enabled when plugin scaffold is ready
     // normalized !== "rudder-create-plugin" &&
@@ -572,4 +573,3 @@ export function summarizeOpenClawGatewayDefaultsForLog(defaultsPayload: unknown)
     gatewayToken: summarizeSecretForLog(gatewayTokenValue)
   };
 }
-

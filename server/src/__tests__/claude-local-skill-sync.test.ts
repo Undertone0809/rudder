@@ -19,7 +19,7 @@ async function createSkillDir(root: string, name: string, description = `${name}
 }
 
 describe("claude local skill sync", () => {
-  const rudderSkillKey = "rudder/rudder";
+  const rudderSkillKey = "rudder/rudder-docs";
   const createAgentKey = "rudder/rudder-create-agent";
   const cleanupDirs = new Set<string>();
 
@@ -40,7 +40,9 @@ describe("claude local skill sync", () => {
     expect(snapshot.supported).toBe(true);
     expect(snapshot.desiredSkills).toEqual([]);
     expect(snapshot.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("available");
-    expect(snapshot.entries.find((entry) => entry.key === rudderSkillKey)?.description).toContain("CLI-backed references");
+    expect(snapshot.entries.find((entry) => entry.key === rudderSkillKey)?.description).toContain(
+      "Do not use for greetings",
+    );
     expect(snapshot.entries.find((entry) => entry.key === rudderSkillKey)?.originLabel).toBeUndefined();
   });
 

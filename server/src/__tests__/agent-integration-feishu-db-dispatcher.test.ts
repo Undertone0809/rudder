@@ -889,9 +889,9 @@ describe("Feishu inbound dispatcher DB deps", () => {
       source: "/tmp/browser",
     };
     const rudderSkill = {
-      key: "bundled:rudder/rudder",
-      runtimeName: "rudder",
-      source: "/tmp/rudder",
+      key: "bundled:rudder/rudder-docs",
+      runtimeName: "rudder-docs",
+      source: "/tmp/rudder-docs",
     };
     await seedIntegration({
       agentRuntimeType: "pi_local",

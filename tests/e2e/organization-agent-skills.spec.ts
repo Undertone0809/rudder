@@ -118,6 +118,7 @@ test.describe("Organization and agent skills", () => {
     const organization = await orgRes.json() as {
       id: string;
       issuePrefix: string;
+      urlKey: string;
     };
 
     const customSkillRes = await page.request.post(`/api/orgs/${organization.id}/skills`, {
@@ -134,7 +135,7 @@ test.describe("Organization and agent skills", () => {
     const skills = await skillsRes.json() as Array<{ key: string }>;
     expect(skills.map((skill) => skill.key)).toEqual(expect.arrayContaining([
       "rudder/para-memory-files",
-      "rudder/rudder",
+      "rudder/rudder-docs",
       "rudder/rudder-create-agent",
       "rudder/rudder-create-plugin",
       "rudder/visualize",
@@ -167,9 +168,9 @@ test.describe("Organization and agent skills", () => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
-    await page.goto(`/${organization.issuePrefix}/skills`);
+    await page.goto(`/${organization.urlKey}/skills`);
     const skillsMain = page.locator("#main-content");
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?directory=skills$`));
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/library\\?directory=skills$`));
     const libraryFiles = page.getByTestId("org-workspaces-files-scroll");
     await expect(libraryFiles).toContainText("para-memory-files");
     await expect(libraryFiles).toContainText("rudder-create-agent");
@@ -178,7 +179,7 @@ test.describe("Organization and agent skills", () => {
     await expect(skillsMain.getByText("skill-optimizer")).toHaveCount(0);
     await expect(libraryFiles).toContainText("deep-research");
 
-    await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/skills`);
+    await page.goto(`/${organization.urlKey}/agents/${agent.id}/skills`);
     const agentMain = page.locator("#main-content");
     await expect(agentMain.getByPlaceholder("Search skills")).toBeVisible();
     await expect(agentMain.getByText("Rudder always loads the bundled Rudder skills. Agent, organization, global, and adapter skills load only when enabled on this page.")).toBeVisible();
@@ -193,6 +194,8 @@ test.describe("Organization and agent skills", () => {
     await expect(agentMain.getByText("Will be mounted into the ephemeral Claude skill directory on the next run.")).toHaveCount(0);
     await expect(agentMain.getByRole("switch", { name: "para-memory-files" })).toBeDisabled();
     await expect(agentMain.getByRole("switch", { name: "para-memory-files" })).toHaveAttribute("aria-checked", "true");
+    await expect(agentMain.getByRole("switch", { name: "rudder-docs" })).toBeDisabled();
+    await expect(agentMain.getByRole("switch", { name: "rudder-docs" })).toHaveAttribute("aria-checked", "true");
     await expect(agentMain.getByRole("switch", { name: "visualize" })).toBeDisabled();
     await expect(agentMain.getByRole("switch", { name: "visualize" })).toHaveAttribute("aria-checked", "true");
 
@@ -674,7 +677,7 @@ test.describe("Organization and agent skills", () => {
 
     await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/skills`);
     const agentMain = page.locator("#main-content");
-    await expect(agentMain.getByRole("switch", { name: "rudder", exact: true })).toHaveAttribute("aria-checked", "true");
+    await expect(agentMain.getByRole("switch", { name: "rudder-docs", exact: true })).toHaveAttribute("aria-checked", "true");
     await expect(agentMain.getByRole("button", { name: /External skills/ })).toBeVisible();
     await agentMain.getByRole("button", { name: /External skills/ }).click();
     await expect(agentMain.getByText("Global and adapter skills are discovered from ~/.agents/skills and the current runtime adapter home. Discovery does not enable them; only the selections on this page determine runtime loading.")).toBeVisible();
@@ -748,7 +751,7 @@ test.describe("Organization and agent skills", () => {
 
     await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/skills`);
     const agentMain = page.locator("#main-content");
-    await expect(agentMain.getByRole("switch", { name: "rudder", exact: true })).toHaveAttribute("aria-checked", "true");
+    await expect(agentMain.getByRole("switch", { name: "rudder-docs", exact: true })).toHaveAttribute("aria-checked", "true");
     await expect(agentMain.getByRole("button", { name: /External skills/ })).toBeVisible();
     await agentMain.getByRole("button", { name: /External skills/ }).click();
     await expect(agentMain.getByText("Adapter skills", { exact: true })).toBeVisible();
@@ -798,7 +801,7 @@ test.describe("Organization and agent skills", () => {
           command: captureCommandPath,
           model: "gpt-5.4",
           rudderSkillSync: {
-            desiredSkills: ["rudder/rudder"],
+            desiredSkills: ["rudder/rudder-docs"],
           },
         },
       },
@@ -840,10 +843,11 @@ test.describe("Organization and agent skills", () => {
         rootEntries: [
           "browser",
           "para-memory-files",
-          "rudder",
           "rudder-create-agent",
           "rudder-create-plugin",
+          "rudder-docs",
           "skill-creator",
+          "visualize",
         ],
         systemEntries: [],
       });

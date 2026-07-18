@@ -15,6 +15,9 @@ export function isCommentTriggeredIssueWakeReason(wakeReason: unknown): boolean 
   return typeof wakeReason === "string" && COMMENT_TRIGGERED_ISSUE_WAKE_REASONS.has(wakeReason.trim());
 }
 
+export const ISSUE_ASSIGNEE_EXECUTION_RAIL =
+  "Before doing issue-scoped execution as the assignee, check out the assigned issue. If checkout returns `409`, do not retry; stop and report the ownership conflict.";
+
 export const ISSUE_ASSIGN_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). You have been assigned to work on an issue.
 
 {{context.rudderWorkspace.orgResourcesPrompt}}
@@ -36,7 +39,8 @@ export const ISSUE_ASSIGN_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent
 
 Your task is to review this issue, understand what kind of work it asks for, and take the appropriate next action.
 
-Do not assume every issue is a codebase task. If the issue is a question, screenshot check, review, planning request, coordination task, or another non-code request, answer or handle that request directly. Inspect the codebase and implement a change only when the issue actually asks for engineering work or when the relevant project resources make code changes necessary.`;
+Do not assume every issue is a codebase task. If the issue is a question, screenshot check, review, planning request, coordination task, or another non-code request, answer or handle that request directly. Inspect the codebase and implement a change only when the issue actually asks for engineering work or when the relevant project resources make code changes necessary.
+${ISSUE_ASSIGNEE_EXECUTION_RAIL}`;
 
 export const COMMENT_MENTION_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). You were mentioned in a comment and your attention is needed.
 
@@ -64,6 +68,7 @@ From: {{comment.authorLabel}} ({{comment.authorKind}})
 Please review the comment above and respond or take action as appropriate.
 A mention-triggered comment wake is a request for attention or collaboration, not an automatic transfer of issue ownership. Plain structured agent links such as \`agent://agent-id\` are reference-only. Only checkout or self-assign when the comment explicitly asks you to take ownership and the normal issue workflow allows it.
 If the issue is not assigned to you, including user-owned or unassigned issues, and the comment does not explicitly ask you to implement, modify files, close the issue, or take ownership, strictly respond to the comment's content instead of broadening the wake into issue execution. For example, answer questions, acknowledge corrections, explain status, or handle only the narrow action explicitly requested by the comment.
+${ISSUE_ASSIGNEE_EXECUTION_RAIL}
 If the issue has related attachments, such as images or articles, please ensure you have thoroughly researched and read these resources before proceeding with the next action. It's important to read all the attachments before taking any action.`;
 
 export const ISSUE_COMMENTED_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). There is a new comment on an issue you own.
@@ -89,7 +94,8 @@ From: {{comment.authorLabel}} ({{comment.authorKind}})
 
 {{comment.body}}
 
-Review the new comment and continue the issue from the current state. Respond or take action as needed.`;
+Review the new comment and continue the issue from the current state. Respond or take action as needed.
+${ISSUE_ASSIGNEE_EXECUTION_RAIL}`;
 
 export const ISSUE_CHANGES_REQUESTED_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). A reviewer requested changes on an issue you own.
 
@@ -114,7 +120,8 @@ From: {{comment.authorLabel}} ({{comment.authorKind}})
 
 {{comment.body}}
 
-Review the requested changes and continue the issue from the current state. Address the reviewer feedback before handing it back for review.`;
+Review the requested changes and continue the issue from the current state. Address the reviewer feedback before handing it back for review.
+${ISSUE_ASSIGNEE_EXECUTION_RAIL}`;
 
 export const ISSUE_REVIEW_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). You have been asked to review an issue.
 
@@ -139,6 +146,38 @@ export const ISSUE_REVIEW_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent
 {{context.reviewInstructions}}
 
 Inspect the issue state, evidence, comments, and outputs before deciding. Record the requested review outcome instead of treating this as a fresh implementation assignment.`;
+
+export const ISSUE_REVIEW_RECOVERY_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). This is a reviewer recovery run, not a fresh implementation assignment.
+
+{{context.rudderWorkspace.orgResourcesPrompt}}
+
+## Recovery Context
+
+- Original Run ID: {{context.recovery.originalRunId}}
+- Failure Kind: {{context.recovery.failureKind}}
+- Failure Summary: {{context.recovery.failureSummary}}
+- Recovery Trigger: {{context.recovery.recoveryTrigger}}
+- Recovery Mode: {{context.recovery.recoveryMode}}
+
+## Current Review Context
+
+- Issue: {{issue.title}}
+- ID: {{issue.id}}
+- Status: {{issue.status}}
+- Priority: {{issue.priority}}
+- Assignee: {{issue.assigneeLabel}}
+- Reviewer: {{issue.reviewerLabel}}
+- Created At: {{issue.createdAt}}
+- Updated At: {{issue.updatedAt}}
+
+- Description:
+{{issue.description}}
+
+
+**Review Instructions:**
+{{context.reviewInstructions}}
+
+Inspect what the previous reviewer run already completed, then continue the review from the current state. Record the requested structured reviewer decision; do not take over the assignee's implementation.`;
 
 export const ISSUE_RECOVERY_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). This is a recovery run, not a fresh task.
 
@@ -167,7 +206,8 @@ export const ISSUE_RECOVERY_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{age
 {{issue.description}}
 
 
-Before doing anything else, inspect what the previous run already completed and any side effects it may have caused. Continue the remaining work from the current state. Avoid blindly re-running the whole task.`;
+Before doing anything else, inspect what the previous run already completed and any side effects it may have caused. Continue the remaining work from the current state. Avoid blindly re-running the whole task.
+${ISSUE_ASSIGNEE_EXECUTION_RAIL}`;
 
 export const RECOVERY_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). This is a recovery run, not a fresh task.
 
@@ -211,7 +251,8 @@ Reason: {{context.passiveFollowup.reason}}
 {{issue.description}}
 
 
-Before changing the issue, inspect the current issue state and any side effects from the previous run. Then do exactly one close-out action: add a progress comment, mark the issue done, block it with a reason, or hand it off explicitly with explanation.`;
+Before changing the issue, inspect the current issue state and any side effects from the previous run. Then do exactly one close-out action: add a progress comment, mark the issue done, block it with a reason, or hand it off explicitly with explanation.
+${ISSUE_ASSIGNEE_EXECUTION_RAIL}`;
 
 /**
  * Selects the base heartbeat prompt template used by runtimes before final prompt assembly.
@@ -257,34 +298,56 @@ export function selectPromptTemplate(
   configuredTemplate: string | undefined,
   context: Record<string, unknown>,
 ): string {
-  // If user configured a custom template, use it
-  if (configuredTemplate?.trim()) {
-    return configuredTemplate;
-  }
-
   // Select based on wake source/reason
   const wakeSource = String(context.wakeSource ?? "");
   const wakeReason = String(context.wakeReason ?? "");
+  const reviewerContext =
+    String(context.role ?? "") === "reviewer" ||
+    String(context.relationship ?? "") === "reviewer" ||
+    wakeSource === "review";
   const recovery = context.recovery;
   const hasRecoveryContext =
     typeof recovery === "object" &&
     recovery !== null &&
     !Array.isArray(recovery) &&
     typeof (recovery as Record<string, unknown>).originalRunId === "string";
+  const hasIssueContext =
+    typeof context.issue === "object" && context.issue !== null && !Array.isArray(context.issue);
+  const isRecovery =
+    hasRecoveryContext || wakeReason === "process_lost_retry" || wakeReason === "retry_failed_run";
+  const isAssigneeCapableIssueScene =
+    (isRecovery && hasIssueContext && !reviewerContext) ||
+    (!reviewerContext && wakeReason === "issue_passive_followup") ||
+    (!reviewerContext && wakeReason === "issue_changes_requested") ||
+    (!reviewerContext && (wakeSource === "assignment" || wakeReason === "issue_assigned")) ||
+    (!reviewerContext &&
+      (wakeSource === "comment.mention" ||
+        wakeReason === "issue_comment_mentioned" ||
+        isCommentTriggeredIssueWakeReason(wakeReason)));
 
-  if (hasRecoveryContext || wakeReason === "process_lost_retry" || wakeReason === "retry_failed_run") {
-    return typeof context.issue === "object" && context.issue !== null && !Array.isArray(context.issue)
-      ? ISSUE_RECOVERY_PROMPT_TEMPLATE
-      : RECOVERY_PROMPT_TEMPLATE;
+  // Custom prompt bodies still win, but platform-owned issue execution rails do not.
+  if (configuredTemplate?.trim()) {
+    if (
+      isAssigneeCapableIssueScene &&
+      !configuredTemplate.includes(ISSUE_ASSIGNEE_EXECUTION_RAIL)
+    ) {
+      return `${configuredTemplate}\n\n${ISSUE_ASSIGNEE_EXECUTION_RAIL}`;
+    }
+    return configuredTemplate;
+  }
+
+  if (isRecovery) {
+    if (!hasIssueContext) return RECOVERY_PROMPT_TEMPLATE;
+    return reviewerContext ? ISSUE_REVIEW_RECOVERY_PROMPT_TEMPLATE : ISSUE_RECOVERY_PROMPT_TEMPLATE;
+  }
+  if (reviewerContext) {
+    return ISSUE_REVIEW_PROMPT_TEMPLATE;
   }
   if (wakeReason === "issue_passive_followup") {
     return ISSUE_PASSIVE_FOLLOWUP_PROMPT_TEMPLATE;
   }
   if (wakeReason === "issue_changes_requested") {
     return ISSUE_CHANGES_REQUESTED_PROMPT_TEMPLATE;
-  }
-  if (wakeSource === "review") {
-    return ISSUE_REVIEW_PROMPT_TEMPLATE;
   }
   if (wakeSource === "assignment" || wakeReason === "issue_assigned") {
     return ISSUE_ASSIGN_PROMPT_TEMPLATE;
@@ -367,7 +430,6 @@ export const RUDDER_AGENT_OPERATING_CONTRACT = [
   "Invoke it whenever you need to remember, retrieve, or organize anything.",
   "",
   "## Other",
-  "- You can use `rudder` skill to see Agent best practise in Rudder. eg: update Agent profile, crud automation, manage library, project, org, curd agent run, chat, issue.",
   "- Before taking action, deeply analyze and research the existing information to ensure you have comprehensive context information before proceeding with the next action. You have your own goal, memory, skills, automation, library, project, org, use these resources to make better decisions.",
   "- When the user explicitly mentions previously handled issue, tasks or conversations, you need to retrieve the relevant tasks first before proceeding with the next action."
 ].join("\n");
@@ -389,11 +451,10 @@ export const RUDDER_AGENT_HEARTBEAT_INSTRUCTION = [
   "3.Then handle approval follow-up: read the approval and linked issues, then close resolved work or comment on what remains.",
   "4. Inspect your Rudder inbox. Prioritize reviewer rows in `in_review` or `blocked`, then assignee `in_progress`, then assignee `todo`. Do not look for unassigned work.",
   "5. For mention wakes, read the wake comment before acting. Mentions request attention; they do not transfer ownership unless the comment explicitly says so. If the issue is not assigned to you, including user-owned or unassigned issues, and the comment does not explicitly ask you to implement, modify files, close the issue, or take ownership, respond to the comment itself instead of executing the whole issue.",
-  "6. Checkout before doing assignee task work. A `409` means another agent owns the task; do not retry it.",
-  "7. Load compact issue context, do one bounded useful chunk, and preserve evidence.",
-  "8. Before exiting active work, leave exactly one durable signal: progress, done, blocked, explicit handoff, or structured review decision.",
-  "9. Treat passive follow-up as issue follow-up, not a fresh assignment.",
-  "10. Treat review close-out follow-up as review follow-up; free-form accept/reject text is not a durable decision.",
+  "6. Load compact issue context, do one bounded useful chunk, and preserve evidence.",
+  "7. Before exiting active work, leave exactly one durable signal: progress, done, blocked, explicit handoff, or structured review decision.",
+  "8. Treat passive follow-up as issue follow-up, not a fresh assignment.",
+  "9. Treat review close-out follow-up as review follow-up; free-form accept/reject text is not a durable decision.",
   "",
-  "Use the Rudder control-plane interface available in this runtime. CLI-capable runtimes should use the bundled `rudder` skill for command details, Library handoff rules, organization-skill workflow, and control-plane best practices. HTTP compatibility runtimes should follow the explicit HTTP workflow in their wake text; that workflow overrides CLI command guidance.",
+  "Use the Rudder control-plane interface available in this runtime. When exact Rudder command, Library handoff, organization-skill, or control-plane details are needed, CLI-capable runtimes may consult the bundled `rudder-docs` skill. Do not load it merely because this is a heartbeat. HTTP compatibility runtimes should follow the explicit HTTP workflow in their wake text; that workflow overrides CLI command guidance.",
 ].join("\n");

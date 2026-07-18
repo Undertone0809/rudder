@@ -2,7 +2,10 @@
 
 Use this reference when a board user or authorized agent asks you to discover, import, inspect, or enable organization skills.
 
-This workflow is now **CLI-first** for the bundled `rudder` skill.
+This is the organization and agent-skill administration reference for the
+bundled `rudder-docs` package. Use the typed Rudder tool when exposed and the
+documented CLI as its compatibility fallback. General control-plane ownership,
+authentication, and workspace rules remain in `control-plane-practices.md`.
 
 For a skill that belongs only to the running agent, do not use organization import or scan commands. Use:
 
@@ -11,6 +14,17 @@ rudder agent skills create "$RUDDER_AGENT_ID" --name "<name>" --description "<de
 ```
 
 Agent-private skill creation writes under `AGENT_HOME/skills` and does not require organization skill mutation permission.
+
+## Section Map
+
+- [Canonical model](#canonical-model)
+- [Core CLI surface](#core-cli-surface)
+- [Source types](#source-types)
+- [Import examples](#import-examples)
+- [Inspect imported skills](#inspect-imported-skills)
+- [Enable skills on an existing agent](#enable-skills-on-an-existing-agent)
+- [Permission model](#permission-model)
+- [Notes](#notes)
 
 ## Canonical Model
 

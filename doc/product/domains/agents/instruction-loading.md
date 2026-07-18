@@ -21,6 +21,7 @@ related_code:
   - server/src/services/runtime-kernel/heartbeat.execute.ts
   - server/src/services/workspace-runtime.helpers.ts
 related_tests:
+  - packages/agent-runtime-utils/src/server-utils.prompts.test.ts
   - packages/agent-runtime-utils/src/server-utils.test.ts
   - server/src/__tests__/agent-instructions-service.test.ts
   - server/src/__tests__/agent-run-context.test.ts
@@ -31,6 +32,8 @@ related_tests:
   - server/src/__tests__/gemini-local-execute.test.ts
   - server/src/__tests__/opencode-local-execute.test.ts
   - server/src/__tests__/pi-local-execute.test.ts
+related_plans:
+  - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
 edit_policy: user_confirmed_only
 ---
 
@@ -90,6 +93,13 @@ review, chat, and automation runs are excluded so task assignment, review,
 comment mention, chat, and automation work are not framed as a generic
 autonomous heartbeat loop.
 
+The universal operating contract does not tell every run to consult product
+documentation. The always-enabled `rudder-docs` skill advertises a self-gating
+description to supported runtimes, and the heartbeat instruction mentions it
+only as an optional source when exact Rudder details are needed. Assignee-capable
+issue wake templates own the checkout/409 safety rail because that rule applies
+at the issue execution boundary, not to generic chat, review, or heartbeat work.
+
 ## Actors / Objects / State
 
 - Runtime agent: the assignee agent process invoked through a local runtime
@@ -133,6 +143,10 @@ autonomous heartbeat loop.
   section.
 - `rudderScene` decides whether runtime heartbeat instructions are included:
   only `rudderScene = heartbeat` may include them.
+- Assignee-capable issue prompt templates include the issue checkout conflict
+  rail. Custom prompt bodies still win, but Rudder appends the platform-owned
+  rail for assignee-capable issue scenes. Reviewer and reviewer-recovery,
+  generic chat, generic recovery, and default templates do not receive it.
 - Saved task session parameters and execution workspace settings affect the cwd
   and session handoff context that the adapter sees.
 
@@ -190,14 +204,27 @@ autonomous heartbeat loop.
    entry file named `HEARTBEAT.md` is treated as legacy heartbeat instructions,
    ignored as an entry file, and recorded as ignored.
 
-8. Each adapter combines the loaded prefix with its runtime-specific prompt
+8. Rudder selects the scene prompt. Assignment, assignee comment/follow-up,
+   changes-requested, and assignee issue recovery tell an assignee to check out
+   the issue before execution and to stop and report an ownership conflict when
+   checkout returns `409`. Every mention prompt carries the same conditional
+   rail, but it becomes actionable only when an explicit handoff makes the agent
+   the assignee. Reviewer and reviewer-recovery, default, generic recovery, chat,
+   and automation prompts do not receive that rail. A configured custom prompt
+   keeps its body, with the platform rail appended only for those assignee-
+   capable issue scenes.
+   Reviewer context has precedence over stale or mixed assignee wake reasons, so
+   it cannot acquire the assignee rail through `issue_passive_followup`,
+   `issue_changes_requested`, assignment, or comment branches.
+
+9. Each adapter combines the loaded prefix with its runtime-specific prompt
    delivery mechanism. Codex-style stdin prompts append bootstrap prompt,
    session handoff markdown, and the selected heartbeat/chat prompt after the
    instruction prefix. Claude writes the loaded prefix to an appended system
    prompt file. Cursor, Gemini, OpenCode, and Pi use the shared loaded prefix
    while preserving their adapter-specific command invocation.
 
-9. The adapter reports metadata before provider execution. Rudder persists or
+10. The adapter reports metadata before provider execution. Rudder persists or
    emits command notes, prompt metrics, loaded/realized skills, the sanitized
    prompt/model input, cwd, command, and selected runtime metadata through the
    adapter invocation event and run intelligence metadata.
@@ -206,10 +233,10 @@ autonomous heartbeat loop.
 
 | Case | Conditions | Product result | Must not happen | Evidence |
 | --- | --- | --- | --- | --- |
-| Heartbeat Run | `rudderScene = heartbeat`; timer/self-check or operator `Run heartbeat` manual trigger | Runtime operating contract, agent files, resources/startup context, current time, runtime heartbeat instruction, then heartbeat prompt are available to the agent | Heartbeat instruction must not appear before current time or before durable agent files | Prompt order tests, command notes, `runtimePromptMetrics.runtimeHeartbeatChars > 0`, adapter invocation event |
-| Issue Run | `rudderScene = issue`; assignment, checkout, issue follow-up, issue comment mention, or comment reopen wake | Agent gets operating contract, agent files, resources/startup context, current time, and issue/comment wake prompt; runtime heartbeat instruction is excluded | Task assignment or comment work must not be framed as generic heartbeat/self-check work | `shouldIncludeRuntimeHeartbeatInstructions` tests, `runtimeHeartbeatChars = 0`, assignment execute tests, comment wake tests |
-| Review Run | `rudderScene = review`; reviewer routing, changes-requested review work, or review follow-up after missing decision while issue remains `in_review` | Agent gets operating contract, agent files, resources/startup context, current time, and review-scene prompt; runtime heartbeat instruction is excluded | Review follow-up must stay reviewer-scoped and must not become assignee implementation | Scene derivation tests and prompt metrics show no runtime heartbeat section |
-| Chat Run | `rudderScene = chat` | Agent gets the same operating contract and configured agent files plus chat-scene context; runtime heartbeat instruction is excluded | Chat prompts must not be framed as autonomous heartbeat work | Adapter metadata and prompt metrics show no runtime heartbeat section |
+| Heartbeat Run | `rudderScene = heartbeat`; timer/self-check or operator `Run heartbeat` manual trigger | Runtime operating contract, agent files, resources/startup context, current time, runtime heartbeat instruction, then heartbeat prompt are available to the agent; the instruction may point to `rudder-docs` only when exact product details are needed | Heartbeat instruction must not appear before current time or before durable agent files, force `rudder-docs` loading, or carry the issue checkout rail | Prompt order and prompt contract tests, command notes, `runtimePromptMetrics.runtimeHeartbeatChars > 0`, adapter invocation event |
+| Issue Run | `rudderScene = issue`; assignment, assignee follow-up, changes-requested, assignee recovery, or comment wake | Agent gets operating contract, agent files, resources/startup context, current time, and issue/comment wake prompt; default or custom assignee-capable execution receives the checkout/409 rail and runtime heartbeat instruction is excluded | Task work must not omit the ownership-conflict stop; a conditional mention rail must not authorize checkout without explicit handoff | `server-utils.prompts.test.ts`, `shouldIncludeRuntimeHeartbeatInstructions` tests, `runtimeHeartbeatChars = 0`, assignment, custom-template, recovery, and comment wake tests |
+| Review Run | `rudderScene = review`; reviewer routing, reviewer recovery, or review follow-up after missing decision while issue remains `in_review` | Agent gets operating contract, agent files, resources/startup context, current time, and review-scene prompt; reviewer recovery preserves review wording; runtime heartbeat instruction and assignee checkout rail are excluded | Review or reviewer recovery must stay reviewer-scoped and must not become assignee implementation | Prompt contract tests, scene derivation tests, and prompt metrics show reviewer recovery plus no assignee rail or runtime heartbeat section |
+| Chat Run | `rudderScene = chat` | Agent gets the same operating contract and configured agent files plus chat-scene context; runtime heartbeat instruction is excluded and there is no global instruction to consult `rudder-docs` | Chat prompts must not be framed as autonomous heartbeat work or force documentation lookup | Adapter metadata and prompt metrics show no runtime heartbeat section; prompt contract tests show no global docs pointer |
 | Automation Run | `rudderScene = automation` | Agent gets operating contract, agent files, resources/startup context, current time, and automation context; runtime heartbeat instruction is excluded | Automation dispatch must not inherit heartbeat/self-check close-out instructions unless it explicitly creates a heartbeat scene run | Scene derivation tests and prompt metrics show no runtime heartbeat section |
 | No configured entry file | `instructionsFilePath` is empty | Prefix still contains runtime operating contract, prepared runtime context, current time, and heartbeat instruction only for heartbeat scene runs | A missing entry path must not drop the runtime operating contract | `commandNotes` include operating contract note; prompt metrics include operating contract chars |
 | Configured entry file missing | `instructionsFilePath` points to unreadable file | Run continues without that file, logs a warning, and records the missing-file command note | Runtime invocation must not fail solely because an operator removed an optional entry file | Runtime log warning and command note |
@@ -238,7 +265,8 @@ stack must preserve this semantic order:
    Rudder's desired selection.
 10. Adapter-specific bootstrap prompt, session handoff markdown, and wake/chat
     prompt after the instruction prefix or system prompt when the adapter uses
-    stdin-style prompt assembly.
+    stdin-style prompt assembly. Assignee-capable issue prompts include the
+    checkout/409 rail at this scene-specific layer.
 
 The agent does not see duplicated resource aliases after the selected resource
 prompt is moved into the instruction prefix. The agent does not see sibling
@@ -309,7 +337,9 @@ The contract is evidenced by:
    - Trigger: an issue assignment wakes the assignee agent in issue scene.
    - Expected state/action: Rudder resolves config, workspace, runtime skills,
      scene context, agent files, resources, and current time before the
-     assignment wake prompt. Runtime heartbeat instruction is not loaded.
+     assignment wake prompt. The issue prompt tells the assignee to check out
+     before execution and to stop and report a `409` ownership conflict. Runtime
+     heartbeat instruction is not loaded.
    - Visible output: command notes list the operating contract, entry file,
      and sibling files that exist; prompt metrics show
      `runtimeHeartbeatChars = 0`.
@@ -321,7 +351,9 @@ The contract is evidenced by:
      `rudderScene=heartbeat` with manual trigger detail.
    - Expected state/action: Rudder resolves config, workspace, runtime skills,
      scene context, agent files, resources, current time, and runtime heartbeat
-     instruction before the heartbeat prompt.
+     instruction before the heartbeat prompt. `rudder-docs` remains
+     discoverable and is consulted only if the heartbeat needs exact Rudder
+     command, Library, organization-skill, or control-plane detail.
    - Visible output: command notes list the heartbeat instruction; prompt
      metrics show non-zero runtime heartbeat chars.
    - Evidence: scene derivation and prompt-order tests.
@@ -330,7 +362,9 @@ The contract is evidenced by:
    - Trigger: an operator mentions an agent in an issue comment, producing
      `issue_comment_mentioned`.
    - Expected state/action: the agent receives the issue/comment prompt and
-     normal instruction stack, but not runtime heartbeat instructions.
+     normal instruction stack, but not runtime heartbeat instructions. A plain
+     mention stays attention-scoped; only an explicit handoff can make the
+     checkout/409 assignee rail actionable.
    - Visible output: run command notes omit the heartbeat instruction note;
      prompt metrics record `runtimeHeartbeatChars = 0`.
    - Evidence: `shouldIncludeRuntimeHeartbeatInstructions` and adapter tests
@@ -361,6 +395,8 @@ The contract is evidenced by:
 ## Invariants / Non-Goals
 
 - Runtime operating contract is always injected from runtime code.
+- Runtime operating contract does not contain a broad instruction to consult
+  `rudder-docs`; skill availability and skill use remain separate.
 - Stable agent instruction files and dynamic run context remain separate input
   layers.
 - Runtime skill loading is scoped to the agent, organization, runtime type, and
@@ -374,8 +410,14 @@ The contract is evidenced by:
 - `## Current Time` stays after durable instructions and runtime context.
 - Runtime heartbeat instruction, when present, stays at the end of the
   instruction prefix.
+- The heartbeat docs pointer is conditional and must not require
+  `rudder-docs` loading merely because the run is a heartbeat.
 - Issue, review, chat, and automation runs do not receive runtime heartbeat
   instruction.
+- Assignee-capable issue prompts carry the checkout/409 ownership-conflict rail.
+  Custom prompt bodies cannot suppress it. Mention prompts carry it conditionally
+  and do not authorize ownership transfer. Reviewer, reviewer-recovery, generic
+  recovery, default, chat, and automation prompts do not receive it.
 - Missing optional sibling files do not fail the run.
 - This contract does not specify the full natural-language body of every
   prompt template. Prompt wording can change when the semantic layers, order,
@@ -393,6 +435,8 @@ Update this contract when changing:
 - heartbeat instruction inclusion/exclusion rules
 - adapter metadata, command notes, or prompt metrics used as review evidence
 - runtime skill injection surfaces
+- the global-versus-scene placement of documentation routing or issue checkout
+  safety rails
 - persisted context fields that explain what the agent saw
 - provider adapter prompt assembly in a way that changes the agent-visible
   order
@@ -412,6 +456,7 @@ This contract does not need updates for:
 Related plans:
 
 - `doc/plans/2026-06-21-product-logic-registry.md`
+- `doc/plans/2026-07-18-rudder-docs-skill-proposal.md`
 
 Loaded sections:
 
@@ -455,6 +500,7 @@ Related code:
 
 Related tests:
 
+- `packages/agent-runtime-utils/src/server-utils.prompts.test.ts`
 - `packages/agent-runtime-utils/src/server-utils.test.ts`
 - `server/src/__tests__/agent-instructions-service.test.ts`
 - `server/src/__tests__/agent-run-context.test.ts`

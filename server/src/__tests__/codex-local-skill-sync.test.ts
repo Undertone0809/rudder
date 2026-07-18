@@ -12,7 +12,7 @@ async function makeTempDir(prefix: string): Promise<string> {
 }
 
 describe("codex local skill sync", () => {
-  const rudderSkillKey = "rudder/rudder";
+  const rudderSkillKey = "rudder/rudder-docs";
   const cleanupDirs = new Set<string>();
   const originalRudderHome = process.env.RUDDER_HOME;
   const originalHome = process.env.HOME;
@@ -72,7 +72,9 @@ describe("codex local skill sync", () => {
     expect(before.mode).toBe("persistent");
     expect(before.desiredSkills).toContain(rudderSkillKey);
     expect(before.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("missing");
-    expect(before.entries.find((entry) => entry.key === rudderSkillKey)?.description).toContain("CLI-backed references");
+    expect(before.entries.find((entry) => entry.key === rudderSkillKey)?.description).toContain(
+      "Do not use for greetings",
+    );
     expect(before.entries.find((entry) => entry.key === rudderSkillKey)?.originLabel).toBeUndefined();
     expect(before.entries.find((entry) => entry.key === rudderSkillKey)?.detail).toContain(
       "managed Codex skills home",
@@ -114,8 +116,8 @@ describe("codex local skill sync", () => {
     const after = await syncCodexSkills(configuredCtx, [rudderSkillKey]);
     expect(after.mode).toBe("persistent");
     expect(after.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("installed");
-    expect((await fs.lstat(path.join(managedCodexHome, "skills", "rudder"))).isSymbolicLink()).toBe(true);
-    await expect(fs.lstat(path.join(codexHome, "skills", "rudder"))).rejects.toThrow();
+    expect((await fs.lstat(path.join(managedCodexHome, "skills", "rudder-docs"))).isSymbolicLink()).toBe(true);
+    await expect(fs.lstat(path.join(codexHome, "skills", "rudder-docs"))).rejects.toThrow();
     const configToml = await fs.readFile(path.join(managedCodexHome, "config.toml"), "utf8");
     expect(configToml).toContain("[skills.bundled]");
     expect(configToml).toContain("enabled = false");

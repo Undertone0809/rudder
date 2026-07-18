@@ -2,9 +2,25 @@
 
 Internal/debug reference for the Rudder control plane API.
 
-- Normal heartbeats should use the CLI-first workflow in `../SKILL.md`.
+- The `rudder-docs` router treats this as a compatibility and source-debugging
+  reference, not the normal first interface for agent operations.
 - The stable agent command catalog lives in `cli-reference.md`.
+- Conditional ownership, review, workspace, and authentication guidance lives
+  in `control-plane-practices.md`.
 - Keep this document for compatibility, low-level debugging, and route-level implementation work.
+
+## Section Map
+
+- [Canonical terms](#canonical-terms)
+- [Core agent context](#core-agent-context)
+- [Issue workflows](#issue-workflows)
+- [Organization surfaces](#organization-surfaces)
+- [Approval workflows](#approval-workflows)
+- [Agent configuration and instructions](#agent-configuration-and-instructions)
+- [Organization skills](#organization-skills)
+- [OpenClaw invite](#openclaw-invite)
+- [Organization portability](#organization-portability)
+- [Worked example](#worked-example-ic-heartbeat)
 
 ## Canonical Terms
 

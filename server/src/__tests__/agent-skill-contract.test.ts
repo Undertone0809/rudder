@@ -59,9 +59,9 @@ describe("agent skill contract", () => {
       mode: "ephemeral",
       desiredSkills: [],
       entries: [{
-        key: "rudder/rudder",
-        selectionKey: "bundled:rudder/rudder",
-        runtimeName: "rudder",
+        key: "rudder-docs",
+        selectionKey: "bundled:rudder/rudder-docs",
+        runtimeName: "rudder-docs",
         desired: true,
         configurable: false,
         alwaysEnabled: true,
@@ -73,8 +73,8 @@ describe("agent skill contract", () => {
     })).toMatchObject({
       agentRuntimeType: "claude_local",
       entries: [{
-        key: "rudder/rudder",
-        selectionKey: "bundled:rudder/rudder",
+        key: "rudder-docs",
+        selectionKey: "bundled:rudder/rudder-docs",
         state: "configured",
         sourceClass: "bundled",
       }],

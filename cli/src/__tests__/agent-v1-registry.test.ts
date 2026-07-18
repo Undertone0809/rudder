@@ -21,7 +21,7 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLI_REFERENCE_PATH = path.resolve(
   __dirname,
-  "../../../server/resources/bundled-skills/rudder/references/cli-reference.md",
+  "../../../server/resources/bundled-skills/rudder-docs/references/cli-reference.md",
 );
 
 describe("agent-v1 registry", () => {

@@ -525,23 +525,40 @@ export function canonicalizeDesiredRudderSkillReference(
   reference: string,
   availableEntries: Array<{ key: string; runtimeName?: string | null }>,
 ): string {
-  const normalizedReference = reference.trim().toLowerCase().replace(/^rudder\/rudder\//, "rudder/");
+  const normalizedReference = reference.trim().toLowerCase();
   if (!normalizedReference) return "";
 
   const exactKey = availableEntries.find((entry) => entry.key.trim().toLowerCase() === normalizedReference);
   if (exactKey) return exactKey.key;
 
+  if (
+    normalizedReference === "rudder"
+    || normalizedReference === "rudder/rudder"
+    || normalizedReference === "bundled:rudder/rudder"
+  ) {
+    const canonicalRudderDocsEntry = availableEntries.find((entry) =>
+      entry.key.trim().toLowerCase() === "rudder/rudder-docs"
+      || entry.key.trim().toLowerCase() === "bundled:rudder/rudder-docs"
+      || entry.runtimeName?.trim().toLowerCase() === "rudder-docs"
+    );
+    return canonicalRudderDocsEntry?.key ?? "rudder/rudder-docs";
+  }
+
+  const lookupReference = normalizedReference.replace(/^rudder\/rudder\//, "rudder/");
+  const legacyNestedKey = availableEntries.find((entry) => entry.key.trim().toLowerCase() === lookupReference);
+  if (legacyNestedKey) return legacyNestedKey.key;
+
   const byRuntimeName = availableEntries.filter((entry) =>
-    typeof entry.runtimeName === "string" && entry.runtimeName.trim().toLowerCase() === normalizedReference,
+    typeof entry.runtimeName === "string" && entry.runtimeName.trim().toLowerCase() === lookupReference,
   );
   if (byRuntimeName.length === 1) return byRuntimeName[0]!.key;
 
   const slugMatches = availableEntries.filter((entry) =>
-    entry.key.trim().toLowerCase().split("/").pop() === normalizedReference,
+    entry.key.trim().toLowerCase().split("/").pop() === lookupReference,
   );
   if (slugMatches.length === 1) return slugMatches[0]!.key;
 
-  return normalizedReference;
+  return lookupReference;
 }
 
 export function resolveRudderDesiredSkillNames(
@@ -944,6 +961,149 @@ export async function removeMaintainerOnlySkillSymlinks(
   allowedSkillNames: Iterable<string>,
 ): Promise<string[]> {
   return removeUnselectedRudderSkillSymlinks(skillsHome, allowedSkillNames);
+}
+
+type LegacyRudderDocsManagedEntryCleanupResultBase = {
+  targetPath: string;
+  legacySourcePath: string | null;
+  kind: "symlink" | "directory" | "file" | "other" | null;
+};
+
+export type LegacyRudderDocsManagedEntryCleanupResult =
+  | (LegacyRudderDocsManagedEntryCleanupResultBase & {
+      state: "not_applicable" | "absent" | "removed" | "collision";
+      detail?: never;
+    })
+  | (LegacyRudderDocsManagedEntryCleanupResultBase & {
+      state: "failed";
+      detail: string;
+    });
+
+function isFileSystemErrorCode(error: unknown, code: string): boolean {
+  return error instanceof Error && "code" in error && error.code === code;
+}
+
+function sameFileSystemEntry(
+  left: { dev: number | bigint; ino: number | bigint },
+  right: { dev: number | bigint; ino: number | bigint },
+): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+export async function cleanupLegacyRudderDocsManagedEntry(
+  skillsHome: string,
+  selectedEntries: Iterable<{ key: string; runtimeName: string; source: string }>,
+): Promise<LegacyRudderDocsManagedEntryCleanupResult> {
+  const targetPath = path.join(path.resolve(skillsHome), "rudder");
+  const canonicalEntry = Array.from(selectedEntries).find((entry) =>
+    (entry.key === "rudder/rudder-docs" || entry.key === "bundled:rudder/rudder-docs")
+    && entry.runtimeName === "rudder-docs"
+  );
+  if (!canonicalEntry) {
+    return { state: "not_applicable", targetPath, legacySourcePath: null, kind: null };
+  }
+
+  const legacySourcePath = path.join(path.dirname(path.resolve(canonicalEntry.source)), "rudder");
+  let existing: Awaited<ReturnType<typeof fs.lstat>>;
+  try {
+    existing = await fs.lstat(targetPath);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return { state: "absent", targetPath, legacySourcePath, kind: null };
+    }
+    return { state: "collision", targetPath, legacySourcePath, kind: "other" };
+  }
+
+  if (existing.isSymbolicLink()) {
+    const linkedPath = await fs.readlink(targetPath).catch(() => null);
+    if (linkedPath === null) {
+      return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+    }
+    const resolvedLinkedPath = path.resolve(path.dirname(targetPath), linkedPath);
+    if (resolvedLinkedPath !== legacySourcePath) {
+      return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+    }
+    try {
+      await fs.stat(resolvedLinkedPath);
+      return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+    } catch (error) {
+      if (!isFileSystemErrorCode(error, "ENOENT")) {
+        return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+      }
+    }
+
+    // Ownership evidence is path-based, so revalidate inode, type, and target immediately before deletion.
+    const revalidated = await fs.lstat(targetPath).catch(() => null);
+    if (!revalidated?.isSymbolicLink() || !sameFileSystemEntry(existing, revalidated)) {
+      return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+    }
+    const revalidatedLink = await fs.readlink(targetPath).catch(() => null);
+    if (
+      revalidatedLink === null
+      || path.resolve(path.dirname(targetPath), revalidatedLink) !== legacySourcePath
+    ) {
+      return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+    }
+    const finalEntry = await fs.lstat(targetPath).catch(() => null);
+    if (!finalEntry?.isSymbolicLink() || !sameFileSystemEntry(existing, finalEntry)) {
+      return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+    }
+    try {
+      await fs.stat(legacySourcePath);
+      return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+    } catch (error) {
+      if (!isFileSystemErrorCode(error, "ENOENT")) {
+        return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+      }
+    }
+    try {
+      await fs.unlink(targetPath);
+    } catch (error) {
+      return {
+        state: "failed",
+        targetPath,
+        legacySourcePath,
+        kind: "symlink",
+        detail: `unlink failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    return { state: "removed", targetPath, legacySourcePath, kind: "symlink" };
+  }
+
+  if (existing.isDirectory()) {
+    const materializedSource = await readRudderMaterializedSkillSource(targetPath);
+    if (materializedSource === legacySourcePath) {
+      // A matching manifest can move with a replacement; inode and provenance must both remain stable.
+      const revalidated = await fs.lstat(targetPath).catch(() => null);
+      if (!revalidated?.isDirectory() || !sameFileSystemEntry(existing, revalidated)) {
+        return { state: "collision", targetPath, legacySourcePath, kind: "directory" };
+      }
+      const revalidatedSource = await readRudderMaterializedSkillSource(targetPath);
+      if (revalidatedSource !== legacySourcePath) {
+        return { state: "collision", targetPath, legacySourcePath, kind: "directory" };
+      }
+      const finalEntry = await fs.lstat(targetPath).catch(() => null);
+      if (!finalEntry?.isDirectory() || !sameFileSystemEntry(existing, finalEntry)) {
+        return { state: "collision", targetPath, legacySourcePath, kind: "directory" };
+      }
+      try {
+        await fs.rm(targetPath, { recursive: true, force: true });
+      } catch (error) {
+        return {
+          state: "failed",
+          targetPath,
+          legacySourcePath,
+          kind: "directory",
+          detail: `recursive removal failed: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+      return { state: "removed", targetPath, legacySourcePath, kind: "directory" };
+    }
+    return { state: "collision", targetPath, legacySourcePath, kind: "directory" };
+  }
+
+  const kind = existing.isFile() ? "file" : "other";
+  return { state: "collision", targetPath, legacySourcePath, kind };
 }
 
 async function readRudderMaterializedSkillSource(target: string): Promise<string | null> {

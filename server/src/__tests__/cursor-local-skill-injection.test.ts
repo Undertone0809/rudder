@@ -2,7 +2,7 @@ import { ensureCursorSkillsInjected } from "@rudderhq/agent-runtime-cursor-local
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 async function makeTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -68,6 +68,116 @@ describe("cursor local adapter skill injection", () => {
     expect((await fs.lstat(existingTarget)).isDirectory()).toBe(true);
     expect(await fs.readFile(path.join(existingTarget, "keep.txt"), "utf8")).toBe("keep");
     expect((await fs.lstat(path.join(skillsHome, "rudder-create-agent"))).isSymbolicLink()).toBe(true);
+  });
+
+  it("logs and preserves an unproven legacy-name collision before injecting Rudder Docs", async () => {
+    const root = await makeTempDir("rudder-cursor-legacy-collision-");
+    cleanupDirs.add(root);
+    const skillsHome = path.join(root, "managed-skills");
+    const canonicalSource = path.join(root, "server", "resources", "bundled-skills", "rudder-docs");
+    const unrecognizedSource = path.join(root, "server", "resources", "bundled-skills", "other");
+    const legacyTarget = path.join(skillsHome, "rudder");
+    await fs.mkdir(canonicalSource, { recursive: true });
+    await fs.mkdir(skillsHome, { recursive: true });
+    await fs.symlink(unrecognizedSource, legacyTarget);
+
+    const logs: string[] = [];
+    await ensureCursorSkillsInjected(
+      async (_stream, chunk) => {
+        logs.push(chunk);
+      },
+      {
+        skillsHome,
+        skillsEntries: [{
+          key: "rudder/rudder-docs",
+          runtimeName: "rudder-docs",
+          source: canonicalSource,
+        }],
+        desiredSkillNames: ["rudder/rudder-docs"],
+      },
+    );
+
+    expect(await fs.readlink(legacyTarget)).toBe(unrecognizedSource);
+    expect((await fs.lstat(path.join(skillsHome, "rudder-docs"))).isSymbolicLink()).toBe(true);
+    expect(logs).toContain(
+      `[rudder] Preserved existing "rudder" path at ${legacyTarget} because Rudder ownership could not be proven.\n`,
+    );
+  });
+
+  it("removes a dangling legacy entry for the configured bundled selection key before injection", async () => {
+    const root = await makeTempDir("rudder-cursor-bundled-legacy-");
+    cleanupDirs.add(root);
+    const skillsHome = path.join(root, "managed-skills");
+    const canonicalSource = path.join(root, "server", "resources", "bundled-skills", "rudder-docs");
+    const legacySource = path.join(root, "server", "resources", "bundled-skills", "rudder");
+    const legacyTarget = path.join(skillsHome, "rudder");
+    const canonicalTarget = path.join(skillsHome, "rudder-docs");
+    await fs.mkdir(canonicalSource, { recursive: true });
+    await fs.mkdir(skillsHome, { recursive: true });
+    await fs.symlink(legacySource, legacyTarget);
+
+    const logs: string[] = [];
+    await ensureCursorSkillsInjected(
+      async (_stream, chunk) => {
+        logs.push(chunk);
+      },
+      {
+        skillsHome,
+        skillsEntries: [{
+          key: "bundled:rudder/rudder-docs",
+          runtimeName: "rudder-docs",
+          source: canonicalSource,
+        }],
+        desiredSkillNames: ["bundled:rudder/rudder-docs"],
+      },
+    );
+
+    await expect(fs.lstat(legacyTarget)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await fs.lstat(canonicalTarget)).isSymbolicLink()).toBe(true);
+    expect(await fs.realpath(canonicalTarget)).toBe(await fs.realpath(canonicalSource));
+    expect(logs).toContain(
+      `[rudder] Removed legacy Rudder-managed skill entry "rudder" from ${skillsHome}.\n`,
+    );
+  });
+
+  it("continues canonical injection when legacy symlink deletion fails", async () => {
+    const root = await makeTempDir("rudder-cursor-legacy-delete-failure-");
+    cleanupDirs.add(root);
+    const skillsHome = path.join(root, "managed-skills");
+    const canonicalSource = path.join(root, "server", "resources", "bundled-skills", "rudder-docs");
+    const legacySource = path.join(root, "server", "resources", "bundled-skills", "rudder");
+    const legacyTarget = path.join(skillsHome, "rudder");
+    const canonicalTarget = path.join(skillsHome, "rudder-docs");
+    await fs.mkdir(canonicalSource, { recursive: true });
+    await fs.mkdir(skillsHome, { recursive: true });
+    await fs.symlink(legacySource, legacyTarget);
+    const unlinkSpy = vi.spyOn(fs, "unlink").mockRejectedValueOnce(new Error("simulated unlink failure"));
+
+    const logs: string[] = [];
+    try {
+      await ensureCursorSkillsInjected(
+        async (_stream, chunk) => {
+          logs.push(chunk);
+        },
+        {
+          skillsHome,
+          skillsEntries: [{
+            key: "bundled:rudder/rudder-docs",
+            runtimeName: "rudder-docs",
+            source: canonicalSource,
+          }],
+          desiredSkillNames: ["bundled:rudder/rudder-docs"],
+        },
+      );
+    } finally {
+      unlinkSpy.mockRestore();
+    }
+
+    expect((await fs.lstat(legacyTarget)).isSymbolicLink()).toBe(true);
+    expect((await fs.lstat(canonicalTarget)).isSymbolicLink()).toBe(true);
+    expect(logs).toContain(
+      `[rudder] Failed to remove legacy Rudder-managed skill entry "rudder" at ${legacyTarget}; unlink failed: simulated unlink failure.\n`,
+    );
   });
 
   it("logs per-skill link failures and continues without throwing", async () => {

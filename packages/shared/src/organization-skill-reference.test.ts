@@ -81,7 +81,7 @@ describe("organization-skill-reference", () => {
     expect(getActiveRudderBundledSkillSlugs(false)).toContain("visualize");
     expect(getActiveRudderBundledSkillSlugs(true)).toEqual([
       "para-memory-files",
-      "rudder",
+      "rudder-docs",
       "rudder-create-agent",
       "rudder-create-plugin",
       "skill-creator",
@@ -129,6 +129,22 @@ describe("organization-skill-reference", () => {
     );
     expect(toBundledRudderSkillKey("build-advisor")).toBe("rudder/build-advisor");
     expect(getBundledRudderSkillSlug("rudder/rudder/build-advisor")).toBe("build-advisor");
+  });
+
+  it("normalizes every legacy Rudder Docs identity to the canonical slug", () => {
+    for (const reference of [
+      "rudder",
+      "rudder/rudder",
+      "bundled:rudder/rudder",
+      "rudder/rudder-docs",
+      "bundled:rudder/rudder-docs",
+    ]) {
+      expect(getBundledRudderSkillSlug(reference), reference).toBe("rudder-docs");
+    }
+
+    expect(toBundledRudderSkillKey(getBundledRudderSkillSlug("rudder"))).toBe(
+      "rudder/rudder-docs",
+    );
   });
 
   it("builds searchable text from the public ref and source metadata", () => {

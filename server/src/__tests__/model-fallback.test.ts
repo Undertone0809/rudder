@@ -153,18 +153,18 @@ describe("executeAdapterWithModelFallbacks", () => {
         ],
       },
       rudderSkillSync: {
-        desiredSkills: ["bundled:rudder/browser", "bundled:rudder/rudder"],
+        desiredSkills: ["bundled:rudder/browser", "bundled:rudder/rudder-docs"],
       },
       paperclipSkillSync: {
-        desiredSkills: ["bundled:rudder/browser", "bundled:rudder/rudder"],
+        desiredSkills: ["bundled:rudder/browser", "bundled:rudder/rudder-docs"],
       },
       rudderRuntimeSkills: [
         { key: "bundled:rudder/browser", runtimeName: "browser", source: "/tmp/browser" },
-        { key: "bundled:rudder/rudder", runtimeName: "rudder", source: "/tmp/rudder" },
+        { key: "bundled:rudder/rudder-docs", runtimeName: "rudder-docs", source: "/tmp/rudder-docs" },
       ],
       paperclipRuntimeSkills: [
         { key: "bundled:rudder/browser", runtimeName: "browser", source: "/tmp/browser" },
-        { key: "bundled:rudder/rudder", runtimeName: "rudder", source: "/tmp/rudder" },
+        { key: "bundled:rudder/rudder-docs", runtimeName: "rudder-docs", source: "/tmp/rudder-docs" },
       ],
       modelFallbacks: [
         {
@@ -224,9 +224,9 @@ describe("executeAdapterWithModelFallbacks", () => {
       source: "/tmp/browser",
     };
     const rudderSkill = {
-      key: "bundled:rudder/rudder",
-      runtimeName: "rudder",
-      source: "/tmp/rudder",
+      key: "bundled:rudder/rudder-docs",
+      runtimeName: "rudder-docs",
+      source: "/tmp/rudder-docs",
     };
     const ctx = baseContext({
       model: "gpt-primary",
@@ -267,9 +267,9 @@ describe("executeAdapterWithModelFallbacks", () => {
       source: "/tmp/browser",
     };
     const rudderSkill = {
-      key: "bundled:rudder/rudder",
-      runtimeName: "rudder",
-      source: "/tmp/rudder",
+      key: "bundled:rudder/rudder-docs",
+      runtimeName: "rudder-docs",
+      source: "/tmp/rudder-docs",
     };
     const ctx = baseContext({
       model: "gpt-primary",
@@ -326,9 +326,9 @@ describe("executeAdapterWithModelFallbacks", () => {
       source: "/tmp/browser",
     };
     const rudderSkill = {
-      key: "bundled:rudder/rudder",
-      runtimeName: "rudder",
-      source: "/tmp/rudder",
+      key: "bundled:rudder/rudder-docs",
+      runtimeName: "rudder-docs",
+      source: "/tmp/rudder-docs",
     };
     const ctx = baseContext({
       model: "gemini-primary",
@@ -391,18 +391,18 @@ describe("executeAdapterWithModelFallbacks", () => {
         ],
       },
       rudderSkillSync: {
-        desiredSkills: ["bundled:rudder/browser", "bundled:rudder/rudder"],
+        desiredSkills: ["bundled:rudder/browser", "bundled:rudder/rudder-docs"],
       },
       paperclipSkillSync: {
-        desiredSkills: ["bundled:rudder/browser", "bundled:rudder/rudder"],
+        desiredSkills: ["bundled:rudder/browser", "bundled:rudder/rudder-docs"],
       },
       rudderRuntimeSkills: [
         { key: "bundled:rudder/browser", runtimeName: "browser", source: "/tmp/browser" },
-        { key: "bundled:rudder/rudder", runtimeName: "rudder", source: "/tmp/rudder" },
+        { key: "bundled:rudder/rudder-docs", runtimeName: "rudder-docs", source: "/tmp/rudder-docs" },
       ],
       paperclipRuntimeSkills: [
         { key: "bundled:rudder/browser", runtimeName: "browser", source: "/tmp/browser" },
-        { key: "bundled:rudder/rudder", runtimeName: "rudder", source: "/tmp/rudder" },
+        { key: "bundled:rudder/rudder-docs", runtimeName: "rudder-docs", source: "/tmp/rudder-docs" },
       ],
       modelFallbacks: [{ agentRuntimeType: "gemini_local", model: "gemini-backup" }],
     });
@@ -415,14 +415,14 @@ describe("executeAdapterWithModelFallbacks", () => {
     const fallbackConfig = vi.mocked(fallbackAdapter.execute).mock.calls[0]?.[0].config;
     expect(fallbackConfig).toMatchObject({
       rudderBrowserEnabled: false,
-      rudderSkillSync: { desiredSkills: ["bundled:rudder/rudder"] },
-      paperclipSkillSync: { desiredSkills: ["bundled:rudder/rudder"] },
+      rudderSkillSync: { desiredSkills: ["bundled:rudder/rudder-docs"] },
+      paperclipSkillSync: { desiredSkills: ["bundled:rudder/rudder-docs"] },
     });
     expect(fallbackConfig?.rudderRuntimeSkills).toEqual([
-      expect.objectContaining({ key: "bundled:rudder/rudder" }),
+      expect.objectContaining({ key: "bundled:rudder/rudder-docs" }),
     ]);
     expect(fallbackConfig?.paperclipRuntimeSkills).toEqual([
-      expect.objectContaining({ key: "bundled:rudder/rudder" }),
+      expect.objectContaining({ key: "bundled:rudder/rudder-docs" }),
     ]);
   });
 

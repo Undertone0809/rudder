@@ -10,6 +10,7 @@ contract_ids:
 related_code:
   - packages/shared/src/organization-skill-reference.ts
   - server/resources/bundled-skills/browser/SKILL.md
+  - server/resources/bundled-skills/rudder-docs/SKILL.md
   - server/src/routes/agents.ts
   - server/src/services/agent-run-context.ts
   - server/src/services/agent-enabled-skills.ts
@@ -26,6 +27,8 @@ related_tests:
   - server/src/__tests__/heartbeat-skill-analytics.test.ts
   - server/src/__tests__/agent-inbox-reviewer.test.ts
   - tests/e2e/organization-agent-skills.spec.ts
+related_plans:
+  - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
 edit_policy: user_confirmed_only
 ---
 
@@ -40,7 +43,8 @@ Why:
 - Global/user and adapter-native skill sources may be discovered so the Agent
   Skills page can show candidates, but discovery is not runtime enablement.
 - Bundled Rudder skills define core control-plane operations and must remain
-  available even when optional skills are disabled.
+  discoverable and available even when optional skills are disabled. Availability
+  does not instruct the agent to load or use a skill on every run.
 - Capability-bundled skills are distinct from that always-enabled baseline:
   they are Rudder-managed and read-only, but appear only while their owning
   instance capability is enabled.
@@ -50,11 +54,17 @@ Product model:
 - Skill sources include bundled skills, organization skill library, agent home,
   global/user skill roots, and adapter-native skill directories when supported.
 - The current always-enabled bundled Rudder baseline is `para-memory-files`,
-  `rudder`, `rudder-create-agent`, `rudder-create-plugin`, and
-  `skill-creator`. Other repo-owned skill packages, including
+  `rudder-docs`, `rudder-create-agent`, `rudder-create-plugin`, and
+  `skill-creator`, and `visualize`. Other repo-owned skill packages, including
   `conversation-to-skill` and `skill-optimizer`, are not part of the default
   Rudder-resolved set unless they are introduced through a non-bundled
   selection path.
+- `rudder-docs` is a self-gating documentation router. It is always enabled so
+  supported runtimes can discover it, but the agent should consult it only when
+  the task needs Rudder product behavior, exact CLI/API details, official docs,
+  or source-level verification. Its canonical selection ref is
+  `bundled:rudder/rudder-docs`; legacy `rudder` refs are accepted only as input
+  aliases and new output uses the canonical identity.
 - `Browser` is a capability-bundled skill, not part of the always-enabled
   baseline. In `local_trusted` mode it is projected for every organization when
   the instance-level Built-in Browser is enabled. It is materialized for a run
@@ -87,10 +97,22 @@ Flow:
    from the Rudder-resolved selected, always-bundled, and active
    capability-bundled set only.
 6. Instruction loading exposes desired/realized skill facts to the adapter.
+7. Metadata-first/native hosts expose the skill description for intent matching
+   before the agent reads the body or references. Prompt-injected hosts may put
+   the compact `SKILL.md` body in the prompt before model judgment; on those
+   hosts the body's self-gate prevents unnecessary docs lookup or skill-directed
+   action.
 
 Invariants:
 
 - Bundled Rudder skills are not disabled by normal optional-skill toggles.
+- Always-enabled or materialized means available for discovery, not selected by
+  the model for every turn and not evidence that the skill was used.
+- Greetings, casual conversation, unrelated coding tasks, and questions fully
+  answered by current run context must not cause `rudder-docs` source lookup or
+  skill-directed action. Native read state remains unknown when a provider emits
+  no direct activation/read evidence; prompt injection is not reported as model
+  intent matching or use.
 - `Browser` must be read-only and available to existing and future organizations
   only while the `local_trusted` Built-in Browser capability is instance-
   eligible. A run must also use a supported local adapter. A stale organization

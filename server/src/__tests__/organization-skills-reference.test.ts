@@ -193,7 +193,7 @@ describe("organization skill references", () => {
 
     expect(skills.slice(0, 7).map((skill) => skill.key)).toEqual([
       "rudder/para-memory-files",
-      "rudder/rudder",
+      "rudder/rudder-docs",
       "rudder/rudder-create-agent",
       "rudder/rudder-create-plugin",
       "rudder/skill-creator",
@@ -202,7 +202,7 @@ describe("organization skill references", () => {
     ]);
 
     expect(skills.map((skill) => skill.key)).toEqual(expect.arrayContaining([
-      "rudder/rudder",
+      "rudder/rudder-docs",
       "rudder/rudder-create-agent",
       "rudder/skill-creator",
       "rudder/visualize",
@@ -235,6 +235,95 @@ describe("organization skill references", () => {
     });
   });
 
+  it("normalizes legacy desired inputs without duplicating the canonical bundled row or snapshot entry", { timeout: 30000 }, async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Legacy Rudder Docs Org",
+      urlKey: "legacy-rudder-docs-org",
+      issuePrefix: "LRD",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(organizationSkills).values({
+      id: randomUUID(),
+      orgId,
+      key: "rudder/rudder",
+      slug: "rudder",
+      name: "rudder",
+      description: "Legacy bundled row",
+      markdown: "---\nname: rudder\n---\n\n# Rudder\n",
+      sourceType: "local_path",
+      sourceLocator: "/tmp/legacy-rudder-skill",
+      sourceRef: null,
+      trustLevel: "markdown_only",
+      compatibility: "compatible",
+      fileInventory: [{ path: "SKILL.md", kind: "skill" }],
+      metadata: { sourceKind: "rudder_bundled", skillKey: "rudder/rudder" },
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Legacy Agent",
+      workspaceKey: "legacy-agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "claude_local",
+      agentRuntimeConfig: {
+        rudderSkillSync: {
+          desiredSkills: ["rudder", "rudder/rudder", "bundled:rudder/rudder"],
+        },
+      },
+    });
+
+    const agent = {
+      id: agentId,
+      orgId,
+      agentRuntimeType: "claude_local",
+      agentRuntimeConfig: {
+        rudderSkillSync: {
+          desiredSkills: ["rudder", "rudder/rudder", "bundled:rudder/rudder"],
+        },
+      },
+    };
+    await expect(skillSvc.resolveDesiredSkillSelectionForAgent(
+      agent,
+      {},
+      ["rudder", "rudder/rudder", "bundled:rudder/rudder"],
+    )).resolves.toEqual({ desiredSkills: [], warnings: [] });
+
+    const snapshot = await skillSvc.buildAgentSkillSnapshot(agent, {});
+    const rows = await skillSvc.list(orgId);
+    const docsRows = rows.filter((skill) =>
+      skill.key === "rudder/rudder" || skill.key === "rudder/rudder-docs");
+    const docsEntries = snapshot.entries.filter((entry) =>
+      entry.selectionKey === "bundled:rudder/rudder"
+      || entry.selectionKey === "bundled:rudder/rudder-docs");
+
+    expect(docsRows).toHaveLength(1);
+    expect(docsRows[0]).toMatchObject({
+      key: "rudder/rudder-docs",
+      slug: "rudder-docs",
+      name: "rudder-docs",
+      editable: false,
+    });
+    expect(docsEntries).toEqual([
+      expect.objectContaining({
+        key: "rudder-docs",
+        selectionKey: "bundled:rudder/rudder-docs",
+        runtimeName: "rudder-docs",
+        desired: true,
+        configurable: false,
+        alwaysEnabled: true,
+        managed: true,
+        readOnly: true,
+      }),
+    ]);
+    expect(snapshot.desiredSkills).not.toContain("bundled:rudder/rudder");
+  });
+
   it("removes the Browser bundled projection when the instance capability is disabled", { timeout: 30000 }, async () => {
     const orgId = randomUUID();
     await db.insert(organizations).values({
@@ -258,7 +347,7 @@ describe("organization skill references", () => {
 
     const skills = await skillSvc.list(orgId);
     expect(skills.map((skill) => skill.key)).not.toContain("rudder/browser");
-    expect(skills.map((skill) => skill.key)).toContain("rudder/rudder");
+    expect(skills.map((skill) => skill.key)).toContain("rudder/rudder-docs");
   });
 
   it("does not expose the Browser bundled projection in authenticated deployments", { timeout: 30000 }, async () => {
@@ -278,7 +367,7 @@ describe("organization skill references", () => {
     const skills = await authenticatedSkillSvc.list(orgId);
 
     expect(skills.map((skill) => skill.key)).not.toContain("rudder/browser");
-    expect(skills.map((skill) => skill.key)).toContain("rudder/rudder");
+    expect(skills.map((skill) => skill.key)).toContain("rudder/rudder-docs");
   });
 
   it("keeps external adapter skills visible and loadable across runtime switches", { timeout: 30000 }, async () => {

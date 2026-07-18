@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  COMMENT_MENTION_PROMPT_TEMPLATE,
+  DEFAULT_AGENT_PROMPT_TEMPLATE,
+  ISSUE_ASSIGN_PROMPT_TEMPLATE,
+  ISSUE_ASSIGNEE_EXECUTION_RAIL,
+  ISSUE_CHANGES_REQUESTED_PROMPT_TEMPLATE,
+  ISSUE_COMMENTED_PROMPT_TEMPLATE,
+  ISSUE_PASSIVE_FOLLOWUP_PROMPT_TEMPLATE,
+  ISSUE_RECOVERY_PROMPT_TEMPLATE,
+  ISSUE_REVIEW_PROMPT_TEMPLATE,
+  ISSUE_REVIEW_RECOVERY_PROMPT_TEMPLATE,
+  RECOVERY_PROMPT_TEMPLATE,
   renderTemplate,
   RUDDER_AGENT_HEARTBEAT_INSTRUCTION,
   RUDDER_AGENT_OPERATING_CONTRACT,
@@ -159,6 +170,10 @@ describe("server-utils prompt contracts", () => {
     expect(rendered).toContain("strictly respond to the comment's content");
     expect(rendered).toContain("instead of broadening the wake into issue execution");
     expect(rendered).toContain("handle only the narrow action explicitly requested by the comment");
+    expect(rendered).toContain(
+      "Only checkout or self-assign when the comment explicitly asks you to take ownership",
+    );
+    expect(rendered).toContain("Before doing issue-scoped execution as the assignee");
   });
 
   it("injects the non-assignee comment wake boundary into shared runtime instructions", () => {
@@ -203,5 +218,116 @@ describe("server-utils prompt contracts", () => {
     expect(rendered).toContain("From: Zeeland (user)");
     expect(rendered).toContain("This still needs the reopen path covered.");
     expect(rendered).not.toContain("Continue your Rudder work.");
+  });
+
+  it("injects the checkout conflict rail only into assignee-capable issue scenes", () => {
+    const assigneeCapableTemplates = [
+      ISSUE_ASSIGN_PROMPT_TEMPLATE,
+      COMMENT_MENTION_PROMPT_TEMPLATE,
+      ISSUE_COMMENTED_PROMPT_TEMPLATE,
+      ISSUE_CHANGES_REQUESTED_PROMPT_TEMPLATE,
+      ISSUE_RECOVERY_PROMPT_TEMPLATE,
+      ISSUE_PASSIVE_FOLLOWUP_PROMPT_TEMPLATE,
+    ];
+
+    for (const template of assigneeCapableTemplates) {
+      expect(template).toContain(ISSUE_ASSIGNEE_EXECUTION_RAIL);
+      expect(template).toContain("If checkout returns `409`, do not retry");
+    }
+
+    expect(ISSUE_REVIEW_PROMPT_TEMPLATE).not.toContain(ISSUE_ASSIGNEE_EXECUTION_RAIL);
+    expect(ISSUE_REVIEW_RECOVERY_PROMPT_TEMPLATE).not.toContain(ISSUE_ASSIGNEE_EXECUTION_RAIL);
+    expect(RECOVERY_PROMPT_TEMPLATE).not.toContain(ISSUE_ASSIGNEE_EXECUTION_RAIL);
+    expect(DEFAULT_AGENT_PROMPT_TEMPLATE).not.toContain(ISSUE_ASSIGNEE_EXECUTION_RAIL);
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).not.toContain(ISSUE_ASSIGNEE_EXECUTION_RAIL);
+  });
+
+  it("keeps Rudder Docs usage conditional and out of the global operating contract", () => {
+    expect(RUDDER_AGENT_OPERATING_CONTRACT).not.toContain("You can use `rudder` skill");
+    expect(RUDDER_AGENT_OPERATING_CONTRACT).not.toContain("`rudder-docs`");
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).toContain("may consult the bundled `rudder-docs` skill");
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).toContain(
+      "Do not load it merely because this is a heartbeat",
+    );
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).not.toContain("bundled `rudder` skill");
+  });
+
+  it("keeps reviewer recovery scoped to review without the assignee rail", () => {
+    const context = {
+      wakeSource: "recovery.manual",
+      wakeReason: "retry_failed_run",
+      role: "reviewer",
+      recovery: {
+        originalRunId: "run-review-failed",
+        failureKind: "process_exit",
+        failureSummary: "The reviewer process exited before recording a decision.",
+        recoveryTrigger: "manual",
+        recoveryMode: "continue",
+      },
+      issue: {
+        id: "issue-review-retry",
+        title: "Retry reviewer work",
+        status: "in_review",
+      },
+    };
+
+    const template = selectPromptTemplate(undefined, context);
+
+    expect(template).toBe(ISSUE_REVIEW_RECOVERY_PROMPT_TEMPLATE);
+    expect(template).toContain("This is a reviewer recovery run");
+    expect(template).toContain("Record the requested structured reviewer decision");
+    expect(template).toContain("do not take over the assignee's implementation");
+    expect(template).not.toContain(ISSUE_ASSIGNEE_EXECUTION_RAIL);
+  });
+
+  it("composes the issue execution rail after custom assignee templates", () => {
+    const custom = "Follow the operator's custom assignment workflow.";
+
+    const assignment = selectPromptTemplate(custom, {
+      wakeSource: "assignment",
+      wakeReason: "issue_assigned",
+      issue: { id: "issue-custom" },
+    });
+    const reviewer = selectPromptTemplate(custom, {
+      wakeSource: "review",
+      wakeReason: "issue_review_requested",
+      role: "reviewer",
+      issue: { id: "issue-review" },
+    });
+    const reviewerRecovery = selectPromptTemplate(custom, {
+      wakeSource: "recovery.manual",
+      wakeReason: "retry_failed_run",
+      role: "reviewer",
+      recovery: { originalRunId: "run-review" },
+      issue: { id: "issue-review" },
+    });
+    const generic = selectPromptTemplate(custom, { wakeSource: "chat" });
+
+    expect(assignment).toBe(`${custom}\n\n${ISSUE_ASSIGNEE_EXECUTION_RAIL}`);
+    expect(reviewer).toBe(custom);
+    expect(reviewerRecovery).toBe(custom);
+    expect(generic).toBe(custom);
+  });
+
+  it("gives reviewer context precedence over stale assignee wake reasons", () => {
+    const mixedReviewerContexts = [
+      { wakeReason: "issue_passive_followup" },
+      { wakeReason: "issue_changes_requested" },
+      { wakeSource: "assignment", wakeReason: "issue_assigned" },
+      { wakeSource: "comment.mention", wakeReason: "issue_comment_mentioned" },
+    ];
+
+    for (const mixedContext of mixedReviewerContexts) {
+      const context = {
+        ...mixedContext,
+        role: "reviewer",
+        issue: { id: "issue-mixed-reviewer" },
+      };
+
+      expect(selectPromptTemplate(undefined, context)).toBe(ISSUE_REVIEW_PROMPT_TEMPLATE);
+      expect(selectPromptTemplate("Custom reviewer workflow.", context)).toBe(
+        "Custom reviewer workflow.",
+      );
+    }
   });
 });

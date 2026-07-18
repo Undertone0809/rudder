@@ -1,0 +1,291 @@
+{
+  "backend": "codex",
+  "exit_reason": "all_passed (iteration 1)",
+  "original_description": "Use when the user asks how Rudder works or how to use, configure, extend, operate, or troubleshoot Rudder; needs current guidance for Rudder agents, issues, Chat, runs, reviews, approvals, automations, Library, projects, skills, workspaces, CLI, MCP tools, APIs, or source behavior; or needs an exact supported command or product contract. Do not use for greetings, ordinary work merely running inside Rudder, routine actions already clear from the active context and typed tools, or general coding and research tasks that do not ask about Rudder.",
+  "best_description": "Use when the user asks how Rudder works or how to use, configure, extend, operate, or troubleshoot Rudder; needs current guidance for Rudder agents, issues, Chat, runs, reviews, approvals, automations, Library, projects, skills, workspaces, CLI, MCP tools, APIs, or source behavior; or needs an exact supported command or product contract. Do not use for greetings, ordinary work merely running inside Rudder, routine actions already clear from the active context and typed tools, or general coding and research tasks that do not ask about Rudder.",
+  "best_score": "8/8",
+  "best_train_score": "12/12",
+  "best_test_score": "8/8",
+  "final_description": "Use when the user asks how Rudder works or how to use, configure, extend, operate, or troubleshoot Rudder; needs current guidance for Rudder agents, issues, Chat, runs, reviews, approvals, automations, Library, projects, skills, workspaces, CLI, MCP tools, APIs, or source behavior; or needs an exact supported command or product contract. Do not use for greetings, ordinary work merely running inside Rudder, routine actions already clear from the active context and typed tools, or general coding and research tasks that do not ask about Rudder.",
+  "iterations_run": 1,
+  "holdout": 0.4,
+  "train_size": 12,
+  "test_size": 8,
+  "history": [
+    {
+      "iteration": 1,
+      "description": "Use when the user asks how Rudder works or how to use, configure, extend, operate, or troubleshoot Rudder; needs current guidance for Rudder agents, issues, Chat, runs, reviews, approvals, automations, Library, projects, skills, workspaces, CLI, MCP tools, APIs, or source behavior; or needs an exact supported command or product contract. Do not use for greetings, ordinary work merely running inside Rudder, routine actions already clear from the active context and typed tools, or general coding and research tasks that do not ask about Rudder.",
+      "train_passed": 12,
+      "train_failed": 0,
+      "train_total": 12,
+      "train_results": [
+        {
+          "query": "Rudder \u663e\u793a\u8fd9\u4e2a skill \u5df2 enabled\uff0c\u4f46\u521a\u624d\u7684 run \u6ca1\u6709\u4f7f\u7528\u5b83\u3002\u8fd9\u662f selected\u3001loaded \u548c used \u8bed\u4e49\u4e0d\u540c\uff0c\u8fd8\u662f\u8fd0\u884c\u65f6\u51fa\u4e86 bug\uff1f\u8bf7\u6838\u5bf9\u5f53\u524d\u5951\u7ea6\u3002",
+          "should_trigger": true,
+          "trigger_rate": 1.0,
+          "triggers": 3,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "\u6211\u628a\u4ea4\u4ed8\u6587\u6863\u5199\u8fdb Rudder Library \u540e\uff0c\u4e3a\u4ec0\u4e48\u8bc4\u8bba\u91cc\u5fc5\u987b\u4f7f\u7528\u8fd4\u56de\u7684 markdownLink\uff0c\u4e0d\u80fd\u624b\u5199 library-entry URL\uff1f\u8bf7\u7ed9\u51fa\u51c6\u786e\u89c4\u5219\u3002",
+          "should_trigger": true,
+          "trigger_rate": 1.0,
+          "triggers": 3,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "\u6211\u9700\u8981\u7ed9 agent \u6dfb\u52a0 agent-browser\u3002Rudder \u7684 skills enable \u548c skills sync \u5230\u5e95\u54ea\u4e2a\u662f\u589e\u91cf\u3001\u54ea\u4e2a\u4f1a\u66ff\u6362\u5b8c\u6574\u96c6\u5408\uff1f\u8bf7\u6838\u5bf9\u7cbe\u786e\u7b56\u7565\u540e\u56de\u7b54\u3002",
+          "should_trigger": true,
+          "trigger_rate": 1.0,
+          "triggers": 3,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "Where in the official Rudder source are bundled skills materialized for local runtime adapters, and which tests protect stale managed-skill cleanup?",
+          "should_trigger": true,
+          "trigger_rate": 1.0,
+          "triggers": 3,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "Rudder \u91cc Chat \u548c issue \u7684\u804c\u8d23\u8fb9\u754c\u5230\u5e95\u662f\u4ec0\u4e48\uff1f\u6211\u4eec\u56e2\u961f\u6b63\u5728\u8bbe\u8ba1\u4ea4\u63a5\u6d41\u7a0b\uff0c\u8bf7\u7ed9\u6211\u5f53\u524d\u5b98\u65b9\u6587\u6863\u94fe\u63a5\uff0c\u5e76\u8bf4\u660e\u4ec0\u4e48\u65f6\u5019\u5e94\u8be5\u4fdd\u7559\u5728 Chat\u3002",
+          "should_trigger": true,
+          "trigger_rate": 1.0,
+          "triggers": 3,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "Before I write this integration, verify which Rudder MCP tools this agent can actually call in the current run. Please use live capability evidence instead of memory.",
+          "should_trigger": true,
+          "trigger_rate": 1.0,
+          "triggers": 3,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "\u8fd9\u4e2a React \u7ec4\u4ef6\u5728\u5f53\u524d Rudder run \u91cc\u6e32\u67d3\u6210\u7a7a\u767d\u4e86\uff0c\u5e2e\u6211\u4fee\u590d\u72b6\u6001\u66f4\u65b0\u903b\u8f91\u5e76\u8865\u4e00\u4e2a\u7ec4\u4ef6\u6d4b\u8bd5\u3002",
+          "should_trigger": false,
+          "trigger_rate": 0.0,
+          "triggers": 0,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "\u5e2e\u6211\u8bbe\u8ba1\u4e00\u4e2a\u540d\u53eb Rudder \u7684\u8239\u8235\u56fe\u6807\uff1a\u6df1\u84dd\u8272\u3001\u5706\u5f62\u5fbd\u7ae0\u3001\u900f\u660e\u80cc\u666f\uff0c\u8f93\u51fa 1024px PNG\u3002",
+          "should_trigger": false,
+          "trigger_rate": 0.0,
+          "triggers": 0,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "Please fix the spelling mistakes on the docs page in this repository, preserve its existing tone, and run the markdown linter afterward.",
+          "should_trigger": false,
+          "trigger_rate": 0.0,
+          "triggers": 0,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "hi",
+          "should_trigger": false,
+          "trigger_rate": 0.0,
+          "triggers": 0,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "Write a short email to the design team saying the issue is complete and that the new screenshots are ready for review.",
+          "should_trigger": false,
+          "trigger_rate": 0.0,
+          "triggers": 0,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "\u7528\u5f53\u524d\u5df2\u7ecf\u66b4\u9732\u7684 Library \u6587\u4ef6\u8bfb\u53d6\u5de5\u5177\u6253\u5f00\u5b63\u5ea6\u8ba1\u5212\uff0c\u628a\u7b2c\u4e8c\u8282\u590d\u5236\u5230\u8fd9\u6761\u804a\u5929\u91cc\uff1b\u8def\u5f84\u548c\u6743\u9650\u90fd\u5df2\u5728\u4e0a\u4e0b\u6587\u4e2d\u3002",
+          "should_trigger": false,
+          "trigger_rate": 0.0,
+          "triggers": 0,
+          "runs": 3,
+          "pass": true
+        }
+      ],
+      "test_passed": 8,
+      "test_failed": 0,
+      "test_total": 8,
+      "test_results": [
+        {
+          "query": "Which Rudder API endpoint is the compatibility fallback behind the CLI issue checkout command, and under what failure conditions is direct API fallback allowed?",
+          "should_trigger": true,
+          "trigger_rate": 1.0,
+          "triggers": 3,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "How do I configure Codex as a Rudder runtime on the latest released version? I need the supported fields and exact official setup page, not an example from the development branch.",
+          "should_trigger": true,
+          "trigger_rate": 1.0,
+          "triggers": 3,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "\u6211 checkout \u4e00\u4e2a\u5df2\u5206\u914d\u7684 Rudder issue \u65f6\u8fd4\u56de\u4e86 409\u3002\u4e3a\u4ec0\u4e48\u4e0d\u80fd\u76f4\u63a5\u91cd\u8bd5\uff1f\u8bf7\u5bf9\u7167\u5f53\u524d\u4ea7\u54c1\u5951\u7ea6\u3001\u6e90\u7801\u548c\u6d4b\u8bd5\u89e3\u91ca\u51b2\u7a81\u8bed\u4e49\u3002",
+          "should_trigger": true,
+          "trigger_rate": 1.0,
+          "triggers": 3,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "RUD-248 \u5df2\u5206\u914d\u7ed9\u6211\uff0c\u4f46\u6807\u8bb0 done \u5931\u8d25\u4e86\u3002\u8bf7\u5148\u67e5\u6e05\u5f53\u524d Rudder \u5bf9\u5b8c\u6210\u8bc4\u8bba\u548c\u9a8c\u8bc1\u8bc1\u636e\u7684\u7cbe\u786e\u8981\u6c42\uff0c\u518d\u544a\u8bc9\u6211\u5e94\u8be5\u7528\u54ea\u4e2a\u53d7\u652f\u6301\u7684\u64cd\u4f5c\u3002",
+          "should_trigger": true,
+          "trigger_rate": 1.0,
+          "triggers": 3,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "Use the exposed Rudder skill tool to enable agent-browser for this agent; the exact selection and target agent are already present in the active context.",
+          "should_trigger": false,
+          "trigger_rate": 0.0,
+          "triggers": 0,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "\u5728\u8fd9\u4e2a Rudder run \u91cc\u5206\u6790\u9644\u4ef6\u4e2d\u7684\u4e09\u5bb6\u7ade\u54c1\u5b9a\u4ef7\u8868\uff0c\u7b97\u51fa\u5e74\u4ed8\u6298\u6263\u5e76\u63a8\u8350\u6211\u4eec\u7684\u5957\u9910\u4ef7\u683c\u3002",
+          "should_trigger": false,
+          "trigger_rate": 0.0,
+          "triggers": 0,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "RUD-248 \u8fd9\u4e2a issue \u5df2\u7ecf\u5206\u914d\u7ed9\u6211\uff0c\u68c0\u67e5\u7ed3\u679c\u4e5f\u90fd\u5728\u4e0a\u4e0b\u6587\u91cc\uff1b\u76f4\u63a5\u7528\u5f53\u524d typed tool \u628a\u5b83\u6807\u6210 done\u3002",
+          "should_trigger": false,
+          "trigger_rate": 0.0,
+          "triggers": 0,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "\u628a\u4e0b\u9762\u8fd9\u6bb5\u63d0\u5230 rudder control \u7684\u82f1\u6587\u4ea7\u54c1\u6587\u6848\u603b\u7ed3\u6210\u4e09\u6761\u4e2d\u6587\u8981\u70b9\uff1b\u8fd9\u91cc\u7684 rudder \u662f\u8239\u8235\u63a7\u5236\uff0c\u4e0d\u662f\u8f6f\u4ef6\u4ea7\u54c1\u3002",
+          "should_trigger": false,
+          "trigger_rate": 0.0,
+          "triggers": 0,
+          "runs": 3,
+          "pass": true
+        }
+      ],
+      "passed": 12,
+      "failed": 0,
+      "total": 12,
+      "results": [
+        {
+          "query": "Rudder \u663e\u793a\u8fd9\u4e2a skill \u5df2 enabled\uff0c\u4f46\u521a\u624d\u7684 run \u6ca1\u6709\u4f7f\u7528\u5b83\u3002\u8fd9\u662f selected\u3001loaded \u548c used \u8bed\u4e49\u4e0d\u540c\uff0c\u8fd8\u662f\u8fd0\u884c\u65f6\u51fa\u4e86 bug\uff1f\u8bf7\u6838\u5bf9\u5f53\u524d\u5951\u7ea6\u3002",
+          "should_trigger": true,
+          "trigger_rate": 1.0,
+          "triggers": 3,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "\u6211\u628a\u4ea4\u4ed8\u6587\u6863\u5199\u8fdb Rudder Library \u540e\uff0c\u4e3a\u4ec0\u4e48\u8bc4\u8bba\u91cc\u5fc5\u987b\u4f7f\u7528\u8fd4\u56de\u7684 markdownLink\uff0c\u4e0d\u80fd\u624b\u5199 library-entry URL\uff1f\u8bf7\u7ed9\u51fa\u51c6\u786e\u89c4\u5219\u3002",
+          "should_trigger": true,
+          "trigger_rate": 1.0,
+          "triggers": 3,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "\u6211\u9700\u8981\u7ed9 agent \u6dfb\u52a0 agent-browser\u3002Rudder \u7684 skills enable \u548c skills sync \u5230\u5e95\u54ea\u4e2a\u662f\u589e\u91cf\u3001\u54ea\u4e2a\u4f1a\u66ff\u6362\u5b8c\u6574\u96c6\u5408\uff1f\u8bf7\u6838\u5bf9\u7cbe\u786e\u7b56\u7565\u540e\u56de\u7b54\u3002",
+          "should_trigger": true,
+          "trigger_rate": 1.0,
+          "triggers": 3,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "Where in the official Rudder source are bundled skills materialized for local runtime adapters, and which tests protect stale managed-skill cleanup?",
+          "should_trigger": true,
+          "trigger_rate": 1.0,
+          "triggers": 3,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "Rudder \u91cc Chat \u548c issue \u7684\u804c\u8d23\u8fb9\u754c\u5230\u5e95\u662f\u4ec0\u4e48\uff1f\u6211\u4eec\u56e2\u961f\u6b63\u5728\u8bbe\u8ba1\u4ea4\u63a5\u6d41\u7a0b\uff0c\u8bf7\u7ed9\u6211\u5f53\u524d\u5b98\u65b9\u6587\u6863\u94fe\u63a5\uff0c\u5e76\u8bf4\u660e\u4ec0\u4e48\u65f6\u5019\u5e94\u8be5\u4fdd\u7559\u5728 Chat\u3002",
+          "should_trigger": true,
+          "trigger_rate": 1.0,
+          "triggers": 3,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "Before I write this integration, verify which Rudder MCP tools this agent can actually call in the current run. Please use live capability evidence instead of memory.",
+          "should_trigger": true,
+          "trigger_rate": 1.0,
+          "triggers": 3,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "\u8fd9\u4e2a React \u7ec4\u4ef6\u5728\u5f53\u524d Rudder run \u91cc\u6e32\u67d3\u6210\u7a7a\u767d\u4e86\uff0c\u5e2e\u6211\u4fee\u590d\u72b6\u6001\u66f4\u65b0\u903b\u8f91\u5e76\u8865\u4e00\u4e2a\u7ec4\u4ef6\u6d4b\u8bd5\u3002",
+          "should_trigger": false,
+          "trigger_rate": 0.0,
+          "triggers": 0,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "\u5e2e\u6211\u8bbe\u8ba1\u4e00\u4e2a\u540d\u53eb Rudder \u7684\u8239\u8235\u56fe\u6807\uff1a\u6df1\u84dd\u8272\u3001\u5706\u5f62\u5fbd\u7ae0\u3001\u900f\u660e\u80cc\u666f\uff0c\u8f93\u51fa 1024px PNG\u3002",
+          "should_trigger": false,
+          "trigger_rate": 0.0,
+          "triggers": 0,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "Please fix the spelling mistakes on the docs page in this repository, preserve its existing tone, and run the markdown linter afterward.",
+          "should_trigger": false,
+          "trigger_rate": 0.0,
+          "triggers": 0,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "hi",
+          "should_trigger": false,
+          "trigger_rate": 0.0,
+          "triggers": 0,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "Write a short email to the design team saying the issue is complete and that the new screenshots are ready for review.",
+          "should_trigger": false,
+          "trigger_rate": 0.0,
+          "triggers": 0,
+          "runs": 3,
+          "pass": true
+        },
+        {
+          "query": "\u7528\u5f53\u524d\u5df2\u7ecf\u66b4\u9732\u7684 Library \u6587\u4ef6\u8bfb\u53d6\u5de5\u5177\u6253\u5f00\u5b63\u5ea6\u8ba1\u5212\uff0c\u628a\u7b2c\u4e8c\u8282\u590d\u5236\u5230\u8fd9\u6761\u804a\u5929\u91cc\uff1b\u8def\u5f84\u548c\u6743\u9650\u90fd\u5df2\u5728\u4e0a\u4e0b\u6587\u4e2d\u3002",
+          "should_trigger": false,
+          "trigger_rate": 0.0,
+          "triggers": 0,
+          "runs": 3,
+          "pass": true
+        }
+      ]
+    }
+  ]
+}

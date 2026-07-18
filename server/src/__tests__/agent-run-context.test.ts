@@ -90,10 +90,10 @@ const browserSkillEntry = {
 };
 
 const rudderSkillEntry = {
-  key: "bundled:rudder/rudder",
-  runtimeName: "rudder",
-  source: "/tmp/rudder-skill",
-  name: "Rudder",
+  key: "bundled:rudder/rudder-docs",
+  runtimeName: "rudder-docs",
+  source: "/tmp/rudder-docs-skill",
+  name: "rudder-docs",
   description: "Operate Rudder.",
 };
 
