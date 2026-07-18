@@ -70,7 +70,7 @@ afterEach(() => {
   queryState.deploymentMode = "local_trusted";
 });
 
-function renderSidebar() {
+function renderSidebar(variant: "panel" | "modal" = "panel") {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -80,13 +80,30 @@ function renderSidebar() {
   };
 
   act(() => {
-    root.render(<SettingsSidebar showOrganizationSwitcher={false} showBackButton={false} />);
+    root.render(
+      <SettingsSidebar
+        showOrganizationSwitcher={false}
+        showBackButton={false}
+        variant={variant}
+      />,
+    );
   });
 
   return container;
 }
 
 describe("SettingsSidebar Browser entry", () => {
+  it("constrains modal navigation so its inner nav becomes the scroll container", () => {
+    const container = renderSidebar("modal");
+
+    const sidebar = container.querySelector('[data-testid="workspace-sidebar"]');
+    const navigation = sidebar?.querySelector("nav");
+
+    expect(sidebar?.classList.contains("h-full")).toBe(true);
+    expect(navigation?.classList.contains("min-h-0")).toBe(true);
+    expect(navigation?.classList.contains("overflow-y-auto")).toBe(true);
+  });
+
   it("shows Browser under Desktop app for instance admins", () => {
     const container = renderSidebar();
 

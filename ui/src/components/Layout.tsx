@@ -284,7 +284,7 @@ export function DesktopSettingsModalFrame({
           aria-hidden={isMobile && !settingsNavigationOpen}
           inert={isMobile && !settingsNavigationOpen ? true : undefined}
           className={cn(
-            "z-20 shrink-0",
+            "z-20 flex h-full min-h-0 shrink-0",
             isMobile
               ? "absolute inset-y-0 left-0 transition-transform duration-200 ease-out motion-reduce:transition-none"
               : "relative",

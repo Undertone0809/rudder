@@ -131,6 +131,46 @@ test.describe("Settings sidebar", () => {
     ).toBe(organization.id);
   });
 
+  test("scrolls a long organization list inside the settings modal sidebar", async ({ page }) => {
+    const organizationNames = Array.from(
+      { length: 14 },
+      (_, index) => `Scrollable Settings ${Date.now()} ${index.toString().padStart(2, "0")}`,
+    );
+    const organizations: Array<{ issuePrefix: string }> = [];
+
+    for (const name of organizationNames) {
+      const response = await page.request.post("/api/orgs", {
+        data: {
+          name,
+          issuePrefix: uniqueIssuePrefix(),
+        },
+      });
+      expect(response.ok()).toBe(true);
+      organizations.push(await response.json() as { issuePrefix: string });
+    }
+
+    await page.goto(`/${organizations[0]!.issuePrefix}/dashboard`);
+    await page.getByRole("button", { name: "System settings" }).click();
+
+    const modal = page.getByTestId("settings-modal-shell");
+    const navigation = modal.getByTestId("workspace-sidebar").locator("nav");
+    const lastOrganization = modal.getByRole("button", {
+      name: organizationNames.at(-1)!,
+    });
+
+    await expect(lastOrganization).toBeAttached();
+    await expect.poll(
+      () => navigation.evaluate((element) => element.scrollHeight > element.clientHeight),
+    ).toBe(true);
+    expect(await navigation.evaluate((element) => element.scrollTop)).toBe(0);
+
+    await navigation.hover();
+    await page.mouse.wheel(0, 10_000);
+
+    await expect.poll(() => navigation.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    await expect(lastOrganization).toBeVisible();
+  });
+
   test("uses a compact modal with sentence-case labels and closes on outside click", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
