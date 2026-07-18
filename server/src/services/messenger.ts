@@ -2567,7 +2567,7 @@ export function messengerService(db: Db) {
 
   async function getChatThread(conversationId: string, userId: string) {
     const conversation = await chatsSvc.getById(conversationId, userId);
-    if (!conversation) return null;
+    if (!conversation || conversation.messengerVisible === false) return null;
     const messages = await chatsSvc.listMessages(conversationId);
     return {
       conversation: conversation as ChatConversationRow,
@@ -2587,7 +2587,7 @@ export function messengerService(db: Db) {
     if (threadKey.startsWith("chat:")) {
       const conversationId = threadKey.slice("chat:".length);
       const conversation = await chatsSvc.getById(conversationId, userId);
-      if (!conversation || conversation.orgId !== orgId) {
+      if (!conversation || conversation.orgId !== orgId || conversation.messengerVisible === false) {
         return null;
       }
       const state = await chatsSvc.markRead(conversationId, orgId, userId, readAt);

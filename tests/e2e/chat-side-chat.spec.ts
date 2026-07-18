@@ -103,12 +103,23 @@ test("Side Chat preserves the main draft, becomes read-only on Done, and disappe
   expect(messengerBeforeDone.ok()).toBe(true);
   expect((await messengerBeforeDone.json() as { items: Array<{ threadKey: string }> }).items
     .some((thread) => thread.threadKey === `chat:${sideChat.id}`)).toBe(false);
+  const hiddenMessengerThread = await page.request.get(
+    `/api/orgs/${source.organization.id}/messenger/chat/${sideChat.id}`,
+  );
+  expect(hiddenMessengerThread.status()).toBe(404);
 
   await page.screenshot({ path: testInfo.outputPath("side-chat-active.png"), fullPage: true });
   await panel.getByRole("button", { name: "Done & return" }).click();
   await expect(panel.getByTestId("side-chat-read-only")).toBeVisible({ timeout: 15_000 });
   await expect(panel.getByTestId("side-chat-state")).toContainText("Completed · read-only");
   await expect(panel.getByTestId("side-chat-composer")).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: "Keep in Messenger" })).toHaveCount(0);
+  const renameAfterDone = await page.request.patch(`/api/chats/${sideChat.id}`, {
+    data: { title: "This must remain immutable" },
+  });
+  expect(renameAfterDone.status()).toBe(409);
+  const deleteAuditRecord = await page.request.delete(`/api/chats/${sideChat.id}`);
+  expect(deleteAuditRecord.status()).toBe(409);
   await page.screenshot({ path: testInfo.outputPath("side-chat-read-only.png"), fullPage: true });
 
   const sideChatTab = panel.locator('[data-side-panel-tab-key^="side-chat:"]');
@@ -149,4 +160,11 @@ test("the /side entry can keep the same Side Chat in Messenger", async ({ page }
   const listAfterKeep = await page.request.get(`/api/orgs/${source.organization.id}/chats?status=active`);
   expect(listAfterKeep.ok()).toBe(true);
   expect((await listAfterKeep.json() as Array<{ id: string }>).some((chat) => chat.id === sideChat.id)).toBe(true);
+  const visibleMessengerThread = await page.request.get(
+    `/api/orgs/${source.organization.id}/messenger/chat/${sideChat.id}`,
+  );
+  expect(visibleMessengerThread.ok(), await visibleMessengerThread.text()).toBe(true);
+  expect(await visibleMessengerThread.json()).toMatchObject({
+    conversation: { id: sideChat.id, messengerVisible: true, sideChatState: "kept" },
+  });
 });

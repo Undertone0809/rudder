@@ -499,6 +499,17 @@ describe("assistant chat message rendering", () => {
     expect(container.querySelector('button[aria-label="Open Side Chat"]')).not.toBeNull();
   });
 
+  it("does not expose Side Chat for an incomplete assistant response", () => {
+    const container = renderChatMessageItem(message({
+      role: "assistant",
+      kind: "message",
+      status: "interrupted",
+      body: "Partial answer",
+    }));
+
+    expect(container.querySelector('button[aria-label="Open Side Chat"]')).toBeNull();
+  });
+
   it("renders a persisted message-owned inline visual and hides its directive", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(
       '<div id="widget"><input class="form-range" type="range"><button class="btn">Run</button></div>',

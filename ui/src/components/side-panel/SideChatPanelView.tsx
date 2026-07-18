@@ -75,6 +75,7 @@ export function SideChatPanelView({
   const messages = sideChatConversationMessages(messagesQuery.data ?? []);
   const readOnly = sideChatIsReadOnly(conversation);
   const kept = conversation?.sideChatState === "kept";
+  const canKeep = conversation?.sideChatState === "active" && !readOnly;
   const stateLabel = readOnly
     ? conversation?.sideChatState === "expired" ? "Expired · read-only" : "Completed · read-only"
     : kept ? "Kept in Messenger" : expiryLabel(conversation?.sideChatExpiresAt);
@@ -250,7 +251,7 @@ export function SideChatPanelView({
 
       {target.conversationId ? (
         <div className="flex flex-wrap justify-end gap-2 border-t border-[color:var(--border-soft)] pt-3">
-          {!kept ? (
+          {canKeep ? (
             <Button type="button" variant="outline" size="sm" disabled={sending || keepMutation.isPending} onClick={() => keepMutation.mutate()}>
               {keepMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
               Keep in Messenger

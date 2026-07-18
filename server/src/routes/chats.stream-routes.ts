@@ -800,6 +800,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       return;
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
     const checkpoint = await svc.generationProtocol.recordClientCheckpoint({
       orgId: conversation.orgId,
       conversationId: conversation.id,
@@ -827,6 +828,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       return;
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
 
     const controlActionId = parsed.data.controlActionId ?? randomUUID();
     const startupGate = startingChatGenerationGates.get(conversation.id) ?? null;
@@ -1005,7 +1007,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     const chatId = req.params.chatId as string;
     assertCompanyAccess(req, orgId);
 
-    const conversation = await svc.getById(chatId);
+    const conversation = await assertConversationAccess(req, chatId);
     if (!conversation) {
       res.status(404).json({ error: "Chat conversation not found" });
       return;
@@ -1015,6 +1017,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       return;
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
 
     try {
       await runSingleFileUpload(req, res);
@@ -1101,6 +1104,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       return;
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
     await assertContextLinksBelongToCompany(conversation.orgId, [req.body]);
     const linked = await svc.addContextLink(conversation.id, conversation.orgId, req.body);
     const actor = getActorInfo(req);
@@ -1125,6 +1129,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       return;
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
     const projectId = req.body.projectId ?? null;
     if (projectId) {
       await assertContextLinksBelongToCompany(conversation.orgId, [{
@@ -1165,6 +1170,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       return;
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
     const actor = getActorInfo(req);
     if (req.body.proposal?.goalId) {
       const goal = await goalsSvc.getById(req.body.proposal.goalId);
@@ -1232,6 +1238,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         return;
       }
       assertChatLocalMutationAllowed(conversation as ChatConversation);
+      await assertSideChatMutationAllowed(req, conversation as ChatConversation);
 
       const actor = getActorInfo(req);
       const messageId = req.params.messageId as string;
@@ -1251,6 +1258,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       return;
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
     const resolved = await svc.resolve(conversation.id);
     const actor = getActorInfo(req);
     await logActivity(db, {

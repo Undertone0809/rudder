@@ -2378,7 +2378,7 @@ export function ChatMessageItem({
                   </Tooltip>
                 </TooltipProvider>
               ) : null}
-              {canShowAssistantMessageActions && onOpenSideChat && message.status !== "streaming" ? (
+              {canShowAssistantMessageActions && onOpenSideChat && message.status === "completed" ? (
                 <button
                   type="button"
                   className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"

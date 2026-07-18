@@ -218,6 +218,10 @@ describe("sideChatService", () => {
     expect(completed.sideChatState).toBe("completed");
     expect(completed.sideChatExpiresAt).toBeNull();
     await expect(service.assertMutable(completed, source.userId)).rejects.toMatchObject({ status: 409 });
+    await expect(service.keepInMessenger({
+      conversationId: completed.id,
+      userId: source.userId,
+    })).rejects.toMatchObject({ status: 409 });
 
     const other = await service.create({
       ...source,
@@ -230,6 +234,21 @@ describe("sideChatService", () => {
     await expect(service.assertMutable(stale, source.userId, new Date(expiredAt.getTime() + 1))).rejects.toMatchObject({ status: 409 });
     const [expired] = await db.select().from(chatConversations).where(eq(chatConversations.id, other.id));
     expect(expired?.sideChatState).toBe("expired");
+  });
+
+  it("rejects an assistant anchor that has not completed", async () => {
+    const source = await createSource();
+    await db.update(chatMessages)
+      .set({ status: "interrupted" })
+      .where(eq(chatMessages.id, source.anchorMessageId));
+
+    await expect(service.create({
+      orgId: source.orgId,
+      userId: source.userId,
+      sourceConversationId: source.sourceConversationId,
+      sourceMessageId: source.anchorMessageId,
+      clientMutationId: "side-chat-incomplete-anchor",
+    })).rejects.toMatchObject({ status: 422 });
   });
 
   it("hides a Side Chat from every user except its owner", async () => {

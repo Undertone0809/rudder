@@ -1757,6 +1757,7 @@ export function chatRoutes(
     if ((existing as ChatConversation).mutability === "external_bound_chat" && !isTitleOnlyChatUpdate(req.body)) {
       assertChatLocalMutationAllowed(existing as ChatConversation);
     }
+    await assertSideChatMutationAllowed(req, existing as ChatConversation);
     if (req.body.primaryIssueId) {
       const issue = await issuesSvc.getById(req.body.primaryIssueId);
       if (!issue || issue.orgId !== existing.orgId) {
@@ -1804,6 +1805,7 @@ export function chatRoutes(
       res.status(404).json({ error: "Chat conversation not found" });
       return;
     }
+    await assertSideChatMutationAllowed(req, existing as ChatConversation);
     const messages = await svc.listMessages(existing.id, { includeTranscript: false });
     const prompt = buildChatTitlePromptFromMessages(messages as ChatMessage[]);
     if (!prompt) {
@@ -1978,6 +1980,9 @@ export function chatRoutes(
       return;
     }
     assertChatLocalMutationAllowed(existing as ChatConversation);
+    if ((existing as ChatConversation).conversationKind === "side_chat") {
+      throw conflict("Side Chat audit records cannot be deleted");
+    }
     if (hasActiveChatGeneration(existing.id)) {
       if (req.query.cancelActive === "true") {
         cancelAndReleaseActiveChatGeneration(existing.id);
@@ -2037,6 +2042,7 @@ export function chatRoutes(
       return;
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
     const requestActor = queueRequestActor(req);
     const item = await svc.createQueuedMessage({
       orgId: conversation.orgId,
@@ -2072,6 +2078,7 @@ export function chatRoutes(
       return;
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
     if (hasActiveChatGeneration(conversation.id)) {
       throw conflict("Cannot dequeue the next message while a reply is in progress");
     }
@@ -2107,6 +2114,7 @@ export function chatRoutes(
       return;
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
     const item = await svc.releaseQueuedMessageClaim({
       conversationId: conversation.id,
       itemId: req.params.itemId as string,
@@ -2122,6 +2130,7 @@ export function chatRoutes(
       return;
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
     const item = await svc.updateQueuedMessage({
       conversationId: conversation.id,
       itemId: req.params.itemId as string,
@@ -2138,6 +2147,7 @@ export function chatRoutes(
       return;
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
     const parsed = cancelChatQueuedMessageSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       res.status(400).json({ error: "Invalid queued message cancel request", details: parsed.error.issues });
@@ -2158,6 +2168,7 @@ export function chatRoutes(
       return;
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
     const active = getActiveChatGeneration(conversation.id);
     const requestActor = queueRequestActor(req);
     const controlActionId = req.body.controlActionId ?? randomUUID();

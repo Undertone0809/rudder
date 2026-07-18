@@ -184,7 +184,7 @@ export function sideChatService(db: Db) {
         .orderBy(asc(chatMessages.createdAt), asc(chatMessages.id));
       const anchorIndex = sourceMessages.findIndex((message) => message.id === input.sourceMessageId);
       const anchor = anchorIndex >= 0 ? sourceMessages[anchorIndex] : null;
-      if (!anchor || anchor.role !== "assistant" || anchor.kind !== "message" || anchor.status === "streaming") {
+      if (!anchor || anchor.role !== "assistant" || anchor.kind !== "message" || anchor.status !== "completed") {
         throw unprocessable("Side Chat source must be a completed assistant response");
       }
 
@@ -227,6 +227,13 @@ export function sideChatService(db: Db) {
           ))
           .then((rows) => rows[0] ?? null);
         if (!raced) throw new Error("Failed to create Side Chat");
+        if (
+          raced.conversationKind !== "side_chat"
+          || raced.forkedFromConversationId !== input.sourceConversationId
+          || raced.forkedFromMessageId !== input.sourceMessageId
+        ) {
+          throw conflict("Side Chat creation id was already used for different source context");
+        }
         return raced.id;
       }
 
@@ -335,7 +342,7 @@ export function sideChatService(db: Db) {
     if (activeGeneration) throw conflict("Wait for the Side Chat reply to finish");
 
     const now = new Date();
-    await db
+    const transitioned = await db
       .update(chatConversations)
       .set({
         sideChatState: "completed",
@@ -343,7 +350,16 @@ export function sideChatService(db: Db) {
         sideChatCompletedAt: now,
         updatedAt: now,
       })
-      .where(eq(chatConversations.id, conversation.id));
+      .where(and(
+        eq(chatConversations.id, conversation.id),
+        eq(chatConversations.sideChatState, "active"),
+      ))
+      .returning({ id: chatConversations.id });
+    if (transitioned.length === 0) {
+      const latest = await getOwnedSideChat(conversation.id, input.userId);
+      if (latest.sideChatState === "completed") return hydrated(conversation.id, input.userId);
+      throw conflict("Side Chat is already read-only");
+    }
     return hydrated(conversation.id, input.userId);
   }
 
@@ -352,10 +368,11 @@ export function sideChatService(db: Db) {
     if (conversation.sideChatState === "kept" && conversation.messengerVisible) {
       return hydrated(conversation.id, input.userId);
     }
+    if (conversation.sideChatState !== "active") throw conflict("Only an active Side Chat can be kept in Messenger");
 
     await db.transaction(async (tx) => {
       const now = new Date();
-      await tx
+      const transitioned = await tx
         .update(chatConversations)
         .set({
           status: "active",
@@ -366,7 +383,21 @@ export function sideChatService(db: Db) {
           resolvedAt: null,
           updatedAt: now,
         })
-        .where(eq(chatConversations.id, conversation.id));
+        .where(and(
+          eq(chatConversations.id, conversation.id),
+          eq(chatConversations.sideChatState, "active"),
+          eq(chatConversations.messengerVisible, false),
+        ))
+        .returning({ id: chatConversations.id });
+      if (transitioned.length === 0) {
+        const latest = await tx
+          .select({ sideChatState: chatConversations.sideChatState, messengerVisible: chatConversations.messengerVisible })
+          .from(chatConversations)
+          .where(eq(chatConversations.id, conversation.id))
+          .then((rows) => rows[0] ?? null);
+        if (latest?.sideChatState === "kept" && latest.messengerVisible) return;
+        throw conflict("Only an active Side Chat can be kept in Messenger");
+      }
 
       const sourceConversationId = conversation.forkedFromConversationId;
       if (!sourceConversationId) return;
