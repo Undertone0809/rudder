@@ -976,7 +976,8 @@ export async function cleanupLegacyRudderDocsManagedEntry(
 ): Promise<LegacyRudderDocsManagedEntryCleanupResult> {
   const targetPath = path.join(path.resolve(skillsHome), "rudder");
   const canonicalEntry = Array.from(selectedEntries).find((entry) =>
-    entry.key === "rudder/rudder-docs" && entry.runtimeName === "rudder-docs"
+    (entry.key === "rudder/rudder-docs" || entry.key === "bundled:rudder/rudder-docs")
+    && entry.runtimeName === "rudder-docs"
   );
   if (!canonicalEntry) {
     return { state: "not_applicable", targetPath, legacySourcePath: null, kind: null };
@@ -1001,6 +1002,14 @@ export async function cleanupLegacyRudderDocsManagedEntry(
     const resolvedLinkedPath = path.resolve(path.dirname(targetPath), linkedPath);
     if (resolvedLinkedPath !== legacySourcePath) {
       return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+    }
+    try {
+      await fs.stat(resolvedLinkedPath);
+      return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+        return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+      }
     }
     await fs.unlink(targetPath);
     return { state: "removed", targetPath, legacySourcePath, kind: "symlink" };

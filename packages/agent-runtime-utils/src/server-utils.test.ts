@@ -88,6 +88,58 @@ describe("cleanupLegacyRudderDocsManagedEntry", () => {
     }
   });
 
+  it("recognizes the canonical bundled selection key for a dangling legacy symlink", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-docs-bundled-legacy-symlink-"));
+    const skillsHome = path.join(root, "managed-skills");
+    const canonicalSource = path.join(root, "bundled-skills", "rudder-docs");
+    const legacySource = path.join(root, "bundled-skills", "rudder");
+    const legacyTarget = path.join(skillsHome, "rudder");
+
+    try {
+      await fs.mkdir(skillsHome, { recursive: true });
+      await fs.mkdir(canonicalSource, { recursive: true });
+      await fs.symlink(legacySource, legacyTarget);
+
+      const result = await cleanupLegacyRudderDocsManagedEntry(skillsHome, [{
+        key: "bundled:rudder/rudder-docs",
+        runtimeName: "rudder-docs",
+        source: canonicalSource,
+      }]);
+
+      expect(result.state).toBe("removed");
+      await expect(fs.lstat(legacyTarget)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves an exact legacy-source symlink when its target still exists", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-docs-live-legacy-symlink-"));
+    const skillsHome = path.join(root, "managed-skills");
+    const canonicalSource = path.join(root, "bundled-skills", "rudder-docs");
+    const legacySource = path.join(root, "bundled-skills", "rudder");
+    const legacyTarget = path.join(skillsHome, "rudder");
+
+    try {
+      await fs.mkdir(skillsHome, { recursive: true });
+      await fs.mkdir(canonicalSource, { recursive: true });
+      await fs.mkdir(legacySource, { recursive: true });
+      await fs.symlink(legacySource, legacyTarget);
+
+      const result = await cleanupLegacyRudderDocsManagedEntry(skillsHome, [{
+        key: "rudder/rudder-docs",
+        runtimeName: "rudder-docs",
+        source: canonicalSource,
+      }]);
+
+      expect(result.state).toBe("collision");
+      expect(result.kind).toBe("symlink");
+      expect(await fs.realpath(legacyTarget)).toBe(await fs.realpath(legacySource));
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("removes a legacy materialized directory only when its Rudder provenance matches the derived source", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-docs-legacy-materialized-"));
     const skillsHome = path.join(root, "managed-skills");
