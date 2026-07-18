@@ -2788,7 +2788,7 @@ export function MessengerContextSidebar() {
           to="/messenger/chat"
           onClick={() => handleMessengerEntrySelect("/messenger/chat")}
           className={cn(
-            "mx-1.5 flex items-center rounded-[calc(var(--radius-md)-2px)] border border-transparent text-sm transition-[background-color,border-color,color]",
+            "mx-0.5 flex items-center rounded-[calc(var(--radius-md)-2px)] border border-transparent text-sm transition-[background-color,border-color,color]",
             threadDensity === "compact" ? "gap-2 px-2 py-1.5" : "gap-3 px-3 py-2.5",
             route.kind === "chat" && !route.conversationId
               ? "chat-conversation-active border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-active)_90%,var(--surface-elevated))] font-medium text-foreground"

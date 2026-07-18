@@ -880,6 +880,54 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.getByTestId(threadTestId(`chat:${looseChat.id}`))).toBeVisible();
   });
 
+  test("aligns the New chat entry with custom group cards", async ({ page }) => {
+    const organization = await createOrganization(page, `Messenger-New-Chat-Alignment-${Date.now()}`);
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Grouped alignment tab",
+        summary: "Alignment fixture",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+    const groupRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
+      data: { name: "Aligned group", icon: "D::rose" },
+    });
+    expect(groupRes.ok()).toBe(true);
+    const group = await groupRes.json() as { id: string };
+    const assignRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups/${group.id}/entries`, {
+      data: { threadKey: `chat:${chat.id}` },
+    });
+    expect(assignRes.ok()).toBe(true);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "latest" }));
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+
+    const newChatEntry = page.getByRole("link", { name: "New chat" });
+    const groupSection = page.getByTestId(`messenger-thread-section-custom-group-${group.id}`);
+    await expect(newChatEntry).toBeVisible({ timeout: 15_000 });
+    await expect(groupSection).toContainText("Aligned group", { timeout: 15_000 });
+    const sidebarEntryBounds = await Promise.all([
+      newChatEntry.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return { left: Math.round(bounds.left), right: Math.round(bounds.right) };
+      }),
+      groupSection.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return { left: Math.round(bounds.left), right: Math.round(bounds.right) };
+      }),
+    ]);
+
+    expect(sidebarEntryBounds[0]).toEqual(sidebarEntryBounds[1]);
+  });
+
   test("uses Arc-style Messenger groups without exposing a default group or custom-groups mode", async ({ page }) => {
     const organization = await createOrganization(page, `Messenger-Arc-Groups-${Date.now()}`);
 
