@@ -963,12 +963,32 @@ export async function removeMaintainerOnlySkillSymlinks(
   return removeUnselectedRudderSkillSymlinks(skillsHome, allowedSkillNames);
 }
 
-export type LegacyRudderDocsManagedEntryCleanupResult = {
-  state: "not_applicable" | "absent" | "removed" | "collision";
+type LegacyRudderDocsManagedEntryCleanupResultBase = {
   targetPath: string;
   legacySourcePath: string | null;
   kind: "symlink" | "directory" | "file" | "other" | null;
 };
+
+export type LegacyRudderDocsManagedEntryCleanupResult =
+  | (LegacyRudderDocsManagedEntryCleanupResultBase & {
+      state: "not_applicable" | "absent" | "removed" | "collision";
+      detail?: never;
+    })
+  | (LegacyRudderDocsManagedEntryCleanupResultBase & {
+      state: "failed";
+      detail: string;
+    });
+
+function isFileSystemErrorCode(error: unknown, code: string): boolean {
+  return error instanceof Error && "code" in error && error.code === code;
+}
+
+function sameFileSystemEntry(
+  left: { dev: number | bigint; ino: number | bigint },
+  right: { dev: number | bigint; ino: number | bigint },
+): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
 
 export async function cleanupLegacyRudderDocsManagedEntry(
   skillsHome: string,
@@ -1007,18 +1027,76 @@ export async function cleanupLegacyRudderDocsManagedEntry(
       await fs.stat(resolvedLinkedPath);
       return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
     } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+      if (!isFileSystemErrorCode(error, "ENOENT")) {
         return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
       }
     }
-    await fs.unlink(targetPath);
+
+    // Ownership evidence is path-based, so revalidate inode, type, and target immediately before deletion.
+    const revalidated = await fs.lstat(targetPath).catch(() => null);
+    if (!revalidated?.isSymbolicLink() || !sameFileSystemEntry(existing, revalidated)) {
+      return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+    }
+    const revalidatedLink = await fs.readlink(targetPath).catch(() => null);
+    if (
+      revalidatedLink === null
+      || path.resolve(path.dirname(targetPath), revalidatedLink) !== legacySourcePath
+    ) {
+      return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+    }
+    const finalEntry = await fs.lstat(targetPath).catch(() => null);
+    if (!finalEntry?.isSymbolicLink() || !sameFileSystemEntry(existing, finalEntry)) {
+      return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+    }
+    try {
+      await fs.stat(legacySourcePath);
+      return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+    } catch (error) {
+      if (!isFileSystemErrorCode(error, "ENOENT")) {
+        return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+      }
+    }
+    try {
+      await fs.unlink(targetPath);
+    } catch (error) {
+      return {
+        state: "failed",
+        targetPath,
+        legacySourcePath,
+        kind: "symlink",
+        detail: `unlink failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
     return { state: "removed", targetPath, legacySourcePath, kind: "symlink" };
   }
 
   if (existing.isDirectory()) {
     const materializedSource = await readRudderMaterializedSkillSource(targetPath);
     if (materializedSource === legacySourcePath) {
-      await fs.rm(targetPath, { recursive: true, force: true });
+      // A matching manifest can move with a replacement; inode and provenance must both remain stable.
+      const revalidated = await fs.lstat(targetPath).catch(() => null);
+      if (!revalidated?.isDirectory() || !sameFileSystemEntry(existing, revalidated)) {
+        return { state: "collision", targetPath, legacySourcePath, kind: "directory" };
+      }
+      const revalidatedSource = await readRudderMaterializedSkillSource(targetPath);
+      if (revalidatedSource !== legacySourcePath) {
+        return { state: "collision", targetPath, legacySourcePath, kind: "directory" };
+      }
+      const finalEntry = await fs.lstat(targetPath).catch(() => null);
+      if (!finalEntry?.isDirectory() || !sameFileSystemEntry(existing, finalEntry)) {
+        return { state: "collision", targetPath, legacySourcePath, kind: "directory" };
+      }
+      try {
+        await fs.rm(targetPath, { recursive: true, force: true });
+      } catch (error) {
+        return {
+          state: "failed",
+          targetPath,
+          legacySourcePath,
+          kind: "directory",
+          detail: `recursive removal failed: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
       return { state: "removed", targetPath, legacySourcePath, kind: "directory" };
     }
     return { state: "collision", targetPath, legacySourcePath, kind: "directory" };

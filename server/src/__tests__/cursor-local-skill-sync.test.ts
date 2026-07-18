@@ -5,7 +5,7 @@ import {
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 async function makeTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -169,5 +169,44 @@ describe("cursor local skill sync", () => {
     await expect(fs.lstat(targetPath)).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("warns and realizes Rudder Docs when legacy deletion fails", async () => {
+    const home = await makeTempDir("rudder-cursor-skill-cleanup-failure-");
+    cleanupDirs.add(home);
+    const skillsHome = managedCursorSkillsHome(home);
+    const legacyTarget = path.join(skillsHome, "rudder");
+    const legacySource = path.join(process.cwd(), "server", "resources", "bundled-skills", "rudder");
+    await fs.mkdir(skillsHome, { recursive: true });
+    await fs.symlink(legacySource, legacyTarget);
+
+    const ctx = {
+      agentId: "agent-cleanup-failure",
+      orgId: "organization-1",
+      agentRuntimeType: "cursor",
+      config: {
+        env: {
+          HOME: home,
+          RUDDER_HOME: path.join(home, ".rudder"),
+        },
+        rudderSkillSync: {
+          desiredSkills: [rudderSkillKey],
+        },
+      },
+    } as const;
+    const unlinkSpy = vi.spyOn(fs, "unlink").mockRejectedValueOnce(new Error("simulated unlink failure"));
+
+    let after: Awaited<ReturnType<typeof syncCursorSkills>>;
+    try {
+      after = await syncCursorSkills(ctx, [rudderSkillKey]);
+    } finally {
+      unlinkSpy.mockRestore();
+    }
+
+    expect((await fs.lstat(legacyTarget)).isSymbolicLink()).toBe(true);
+    expect(after.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("installed");
+    expect(after.warnings).toContain(
+      `Failed to remove legacy Rudder-managed skill entry "rudder" at ${legacyTarget}; unlink failed: simulated unlink failure.`,
+    );
   });
 });

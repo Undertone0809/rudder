@@ -83,6 +83,10 @@ export async function syncPiSkills(
     warnings.push(
       `Preserved existing "rudder" path at ${cleanupResult.targetPath} because Rudder ownership could not be proven.`,
     );
+  } else if (cleanupResult.state === "failed") {
+    warnings.push(
+      `Failed to remove legacy Rudder-managed skill entry "rudder" at ${cleanupResult.targetPath}; ${cleanupResult.detail}.`,
+    );
   }
 
   for (const available of selectedEntries) {

@@ -2,7 +2,7 @@ import { ensureCursorSkillsInjected } from "@rudderhq/agent-runtime-cursor-local
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 async function makeTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -137,6 +137,46 @@ describe("cursor local adapter skill injection", () => {
     expect(await fs.realpath(canonicalTarget)).toBe(await fs.realpath(canonicalSource));
     expect(logs).toContain(
       `[rudder] Removed legacy Rudder-managed skill entry "rudder" from ${skillsHome}.\n`,
+    );
+  });
+
+  it("continues canonical injection when legacy symlink deletion fails", async () => {
+    const root = await makeTempDir("rudder-cursor-legacy-delete-failure-");
+    cleanupDirs.add(root);
+    const skillsHome = path.join(root, "managed-skills");
+    const canonicalSource = path.join(root, "server", "resources", "bundled-skills", "rudder-docs");
+    const legacySource = path.join(root, "server", "resources", "bundled-skills", "rudder");
+    const legacyTarget = path.join(skillsHome, "rudder");
+    const canonicalTarget = path.join(skillsHome, "rudder-docs");
+    await fs.mkdir(canonicalSource, { recursive: true });
+    await fs.mkdir(skillsHome, { recursive: true });
+    await fs.symlink(legacySource, legacyTarget);
+    const unlinkSpy = vi.spyOn(fs, "unlink").mockRejectedValueOnce(new Error("simulated unlink failure"));
+
+    const logs: string[] = [];
+    try {
+      await ensureCursorSkillsInjected(
+        async (_stream, chunk) => {
+          logs.push(chunk);
+        },
+        {
+          skillsHome,
+          skillsEntries: [{
+            key: "bundled:rudder/rudder-docs",
+            runtimeName: "rudder-docs",
+            source: canonicalSource,
+          }],
+          desiredSkillNames: ["bundled:rudder/rudder-docs"],
+        },
+      );
+    } finally {
+      unlinkSpy.mockRestore();
+    }
+
+    expect((await fs.lstat(legacyTarget)).isSymbolicLink()).toBe(true);
+    expect((await fs.lstat(canonicalTarget)).isSymbolicLink()).toBe(true);
+    expect(logs).toContain(
+      `[rudder] Failed to remove legacy Rudder-managed skill entry "rudder" at ${legacyTarget}; unlink failed: simulated unlink failure.\n`,
     );
   });
 
