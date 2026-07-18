@@ -437,6 +437,79 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("in the assistant message.");
   });
 
+  it("hides internal reasoning lifecycle and result protocol entries from chat", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          hiddenAssistantMessageText="Final answer shown in the assistant message."
+          entries={[
+            {
+              kind: "system",
+              ts: "2026-07-19T00:00:00.000Z",
+              text: "turn started",
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-07-19T00:00:01.000Z",
+              name: "command_execution",
+              toolUseId: "command-1",
+              input: { command: "printf done" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-07-19T00:00:02.000Z",
+              toolUseId: "command-1",
+              content: "done",
+              isError: false,
+            },
+            {
+              kind: "system",
+              ts: "2026-07-19T00:00:03.000Z",
+              text: "reasoning started",
+            },
+            {
+              kind: "system",
+              ts: "2026-07-19T00:00:04.000Z",
+              text: "reasoning completed",
+            },
+            {
+              kind: "assistant",
+              ts: "2026-07-19T00:00:05.000Z",
+              text: "R",
+              delta: true,
+            },
+            {
+              kind: "assistant",
+              ts: "2026-07-19T00:00:06.000Z",
+              text: "UD",
+              delta: true,
+            },
+            {
+              kind: "assistant",
+              ts: "2026-07-19T00:00:07.000Z",
+              text: "DER_RESULT_BEGIN\nFinal answer shown ",
+              delta: true,
+            },
+            {
+              kind: "assistant",
+              ts: "2026-07-19T00:00:08.000Z",
+              text: "in the assistant message.\nRUDDER_RESULT_END",
+              delta: true,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Ran printf done");
+    expect(html).not.toContain("reasoning started");
+    expect(html).not.toContain("reasoning completed");
+    expect(html).not.toContain("RUDDER_RESULT");
+    expect(html).not.toContain("Final answer shown in the assistant message.");
+  });
+
   it("uses orphan tool result content as the chat action summary", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>

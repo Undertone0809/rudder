@@ -70,6 +70,7 @@ related_code:
   - ui/src/pages/Chat.tsx
   - ui/src/pages/Chat.messages.tsx
   - ui/src/components/MarkdownEditor.tsx
+  - ui/src/components/transcript/RunTranscriptView.chat.tsx
   - ui/src/pages/Messenger.tsx
   - ui/src/pages/AgentDetail.runs.tsx
   - server/src/routes/website-metadata.ts
@@ -114,6 +115,7 @@ related_tests:
   - ui/src/pages/Chat.attachment-preview.test.tsx
   - ui/src/pages/Chat.messages.test.tsx
   - ui/src/components/MarkdownEditor.test.tsx
+  - ui/src/components/transcript/RunTranscriptView.test.tsx
   - server/src/__tests__/website-metadata.test.ts
   - server/src/__tests__/website-metadata-routes.test.ts
   - packages/shared/src/website-icons.test.ts
@@ -130,6 +132,7 @@ related_tests:
   - tests/e2e/built-in-browser.spec.ts
   - tests/e2e/chat-work-manifest.spec.ts
   - tests/e2e/chat-composer-at-mentions.spec.ts
+  - tests/e2e/chat-transcript-internal-events.spec.ts
   - tests/e2e/agent-detail-feishu-integration.spec.ts
   - tests/e2e/feishu-source-badges.spec.ts
   - desktop/scripts/smoke.mjs
@@ -175,6 +178,11 @@ Product model:
   transcript evidence such as thinking/reasoning entries, scratchpad text, tool
   logs, and incomplete adapter summaries remain run evidence, not chat bubble
   body content.
+- Chat process details expose meaningful thinking and tool activity, not raw
+  provider lifecycle bookkeeping. Empty lifecycle events such as
+  `reasoning started` / `reasoning completed` and Rudder result-envelope
+  delimiters are hidden from the default Chat projection even when they arrive
+  as fragmented streaming deltas.
 - The process transcript presents each provider reasoning item once. Readable
   summary and raw streams for the same item are alternative representations,
   not separate progress events; streamed fragments coalesce and multiple
@@ -269,6 +277,10 @@ Invariants:
   already streamed user-visible assistant text as a partial reply. It must not
   fill the bubble from provider reasoning/thinking events or incomplete runtime
   summaries.
+- Internal provider lifecycle events and Rudder result-envelope markers must
+  not render as Chat progress rows, assistant progress text, or fragmented
+  pseudo-content. The underlying transcript remains run evidence available to
+  diagnostic/raw views.
 - Reasoning evidence must remain inspectable without repeated words or rows when
   a provider emits parallel summary and raw streams. Providers that emit only
   raw reasoning must retain that evidence through stopped, interrupted, or
@@ -342,6 +354,9 @@ Evidence:
 - Chat assistant tests cover runtime-backed turns.
 - Chat assistant tests cover stopped runtime turns that keep reasoning out of
   partial assistant bodies.
+- Transcript component tests and Messenger E2E cover hiding internal reasoning
+  lifecycle rows and fragmented Rudder result protocol markers while keeping
+  meaningful tool activity visible.
 - Codex App Server adapter tests and concurrent-streaming E2E cover dual-stream
   reasoning deduplication, raw-only interrupted turns, multipart summary
   boundaries, and the completed Messenger process transcript.
