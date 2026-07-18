@@ -23,4 +23,3 @@ Files:
 - `results.json`: machine-readable loop output
 - `trigger-report.html`: description-optimization report
 - `review.html`: static `eval-viewer` review surface
-

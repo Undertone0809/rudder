@@ -213,6 +213,9 @@ at the issue execution boundary, not to generic chat, review, or heartbeat work.
    and automation prompts do not receive that rail. A configured custom prompt
    keeps its body, with the platform rail appended only for those assignee-
    capable issue scenes.
+   Reviewer context has precedence over stale or mixed assignee wake reasons, so
+   it cannot acquire the assignee rail through `issue_passive_followup`,
+   `issue_changes_requested`, assignment, or comment branches.
 
 9. Each adapter combines the loaded prefix with its runtime-specific prompt
    delivery mechanism. Codex-style stdin prompts append bootstrap prompt,

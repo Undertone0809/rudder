@@ -317,12 +317,13 @@ export function selectPromptTemplate(
     hasRecoveryContext || wakeReason === "process_lost_retry" || wakeReason === "retry_failed_run";
   const isAssigneeCapableIssueScene =
     (isRecovery && hasIssueContext && !reviewerContext) ||
-    wakeReason === "issue_passive_followup" ||
-    wakeReason === "issue_changes_requested" ||
+    (!reviewerContext && wakeReason === "issue_passive_followup") ||
+    (!reviewerContext && wakeReason === "issue_changes_requested") ||
     (!reviewerContext && (wakeSource === "assignment" || wakeReason === "issue_assigned")) ||
-    wakeSource === "comment.mention" ||
-    wakeReason === "issue_comment_mentioned" ||
-    isCommentTriggeredIssueWakeReason(wakeReason);
+    (!reviewerContext &&
+      (wakeSource === "comment.mention" ||
+        wakeReason === "issue_comment_mentioned" ||
+        isCommentTriggeredIssueWakeReason(wakeReason)));
 
   // Custom prompt bodies still win, but platform-owned issue execution rails do not.
   if (configuredTemplate?.trim()) {
@@ -339,14 +340,14 @@ export function selectPromptTemplate(
     if (!hasIssueContext) return RECOVERY_PROMPT_TEMPLATE;
     return reviewerContext ? ISSUE_REVIEW_RECOVERY_PROMPT_TEMPLATE : ISSUE_RECOVERY_PROMPT_TEMPLATE;
   }
+  if (reviewerContext) {
+    return ISSUE_REVIEW_PROMPT_TEMPLATE;
+  }
   if (wakeReason === "issue_passive_followup") {
     return ISSUE_PASSIVE_FOLLOWUP_PROMPT_TEMPLATE;
   }
   if (wakeReason === "issue_changes_requested") {
     return ISSUE_CHANGES_REQUESTED_PROMPT_TEMPLATE;
-  }
-  if (wakeSource === "review") {
-    return ISSUE_REVIEW_PROMPT_TEMPLATE;
   }
   if (wakeSource === "assignment" || wakeReason === "issue_assigned") {
     return ISSUE_ASSIGN_PROMPT_TEMPLATE;

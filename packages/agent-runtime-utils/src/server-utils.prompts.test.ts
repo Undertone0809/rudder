@@ -308,4 +308,26 @@ describe("server-utils prompt contracts", () => {
     expect(reviewerRecovery).toBe(custom);
     expect(generic).toBe(custom);
   });
+
+  it("gives reviewer context precedence over stale assignee wake reasons", () => {
+    const mixedReviewerContexts = [
+      { wakeReason: "issue_passive_followup" },
+      { wakeReason: "issue_changes_requested" },
+      { wakeSource: "assignment", wakeReason: "issue_assigned" },
+      { wakeSource: "comment.mention", wakeReason: "issue_comment_mentioned" },
+    ];
+
+    for (const mixedContext of mixedReviewerContexts) {
+      const context = {
+        ...mixedContext,
+        role: "reviewer",
+        issue: { id: "issue-mixed-reviewer" },
+      };
+
+      expect(selectPromptTemplate(undefined, context)).toBe(ISSUE_REVIEW_PROMPT_TEMPLATE);
+      expect(selectPromptTemplate("Custom reviewer workflow.", context)).toBe(
+        "Custom reviewer workflow.",
+      );
+    }
+  });
 });

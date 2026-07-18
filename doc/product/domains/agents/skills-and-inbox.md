@@ -55,7 +55,7 @@ Product model:
   global/user skill roots, and adapter-native skill directories when supported.
 - The current always-enabled bundled Rudder baseline is `para-memory-files`,
   `rudder-docs`, `rudder-create-agent`, `rudder-create-plugin`, and
-  `skill-creator`. Other repo-owned skill packages, including
+  `skill-creator`, and `visualize`. Other repo-owned skill packages, including
   `conversation-to-skill` and `skill-optimizer`, are not part of the default
   Rudder-resolved set unless they are introduced through a non-bundled
   selection path.
