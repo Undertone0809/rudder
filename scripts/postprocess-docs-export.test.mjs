@@ -36,7 +36,7 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
   fs.mkdirSync(path.dirname(runtimeChunkPath), { recursive: true });
   fs.writeFileSync(
     runtimeChunkPath,
-    'const runtime={ENV:"cli"};let o=false;o||(console.warn("Connected to Socket.io"),connect());',
+    'const runtime={ENV:"cli"};let o=false;o||(console.warn("Connected to Socket.io"),connect());let i=false;i||(console.warn("Connected to Socket.io"),connect());',
   );
   const footer = [
     '<a href="/get-started/installation">Quick Start</a>',
@@ -118,7 +118,11 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
   assert.match(runtimeChunk, /ENV:"production"/);
   assert.doesNotMatch(runtimeChunk, /ENV:"cli"/);
   assert.match(runtimeChunk, /o\|\|true\|\|\(console\.warn\("Connected to Socket\.io"\)/);
-  assert.doesNotMatch(runtimeChunk, /o\|\|\(console\.warn\("Connected to Socket\.io"\)/);
+  assert.match(runtimeChunk, /i\|\|true\|\|\(console\.warn\("Connected to Socket\.io"\)/);
+  assert.doesNotMatch(
+    runtimeChunk,
+    /(?<![\w$|])[A-Za-z_$][\w$]*\|\|\(console\.warn\("Connected to Socket\.io"\)/,
+  );
 });
 
 test("Simplified Chinese reference pages use localized titles", () => {

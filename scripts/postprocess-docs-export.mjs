@@ -60,9 +60,9 @@ function normalizeStaticRuntimeEnvironment(exportDir) {
     const source = fs.readFileSync(filePath, "utf8");
     const normalized = source
       .replaceAll('ENV:"cli"', 'ENV:"production"')
-      .replaceAll(
-        'o||(console.warn("Connected to Socket.io")',
-        'o||true||(console.warn("Connected to Socket.io")',
+      .replace(
+        /(?<![\w$|])([A-Za-z_$][\w$]*)\|\|\(console\.warn\("Connected to Socket\.io"\)/g,
+        '$1||true||(console.warn("Connected to Socket.io")',
       );
     if (normalized === source) continue;
     fs.writeFileSync(filePath, normalized);
