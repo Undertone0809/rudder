@@ -97,7 +97,13 @@ export async function verifyBrowserBundle(options) {
       const command = await resolver.resolveRudderMcpCliCommand(runtimeModuleDir);
       assertEqual(command.provenance, "desktop_bundle", "resolver provenance");
       assertEqual(command.expectedVersion, expectedVersion, "resolver expected version");
-      assertEqual(JSON.stringify(command.args), JSON.stringify(["--desktop-cli", "mcp-server"]), "resolver arguments");
+      const expectedArgs = process.platform === "win32"
+        ? [path.join(path.dirname(cliEntry), "desktop-cli-runner.js"), "mcp-server"]
+        : ["--desktop-cli", "mcp-server"];
+      assertEqual(JSON.stringify(command.args), JSON.stringify(expectedArgs), "resolver arguments");
+      if (process.platform === "win32") {
+        assertEqual(command.env?.ELECTRON_RUN_AS_NODE, "1", "resolver Electron Node mode");
+      }
       const packagedExecutable = options.desktopExecutable
         ? path.resolve(options.desktopExecutable)
         : packagedExecutableForServerPackage(path.dirname(cliEntry));

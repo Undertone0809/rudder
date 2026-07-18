@@ -7,6 +7,7 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..");
 const stagedServerPackageDir = path.join(repoRoot, "desktop", ".packaged", "server-package");
 const stagedCliEntry = path.join(stagedServerPackageDir, "desktop-cli.js");
+const stagedCliRunner = path.join(stagedServerPackageDir, "desktop-cli-runner.js");
 const stagedCliVersionManifest = path.join(stagedServerPackageDir, "rudder-cli-package.json");
 const sourceCliManifest = path.join(repoRoot, "cli", "package.json");
 const stagedCommanderDir = path.join(stagedServerPackageDir, "node_modules", "commander");
@@ -57,6 +58,7 @@ async function main() {
   await fs.mkdir(path.dirname(stagedCommanderDir), { recursive: true });
   await fs.rm(stagedCommanderDir, { recursive: true, force: true });
   await fs.cp(sourceCommanderDir, stagedCommanderDir, { recursive: true, dereference: true });
+  await fs.copyFile(path.join(scriptDir, "desktop-cli-runner.mjs"), stagedCliRunner);
 
   /**
    * Bundle the CLI program into the staged server package so packaged Desktop

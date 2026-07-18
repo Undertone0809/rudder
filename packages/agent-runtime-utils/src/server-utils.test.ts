@@ -11,6 +11,7 @@ import {
   loadAgentInstructionsPrefix,
   prepareAgentInstructionRuntimeContext,
   renderTemplate,
+  resolveDesktopCliSpawnTarget,
   resolveLocalOperatorHome,
   resolveRudderCliShimTarget,
   RUDDER_AGENT_HEARTBEAT_INSTRUCTION,
@@ -68,6 +69,26 @@ describe("filterRudderDesiredSkillsForBrowserCapability", () => {
 });
 
 describe("ensureRudderCliInPath", () => {
+  it("runs the packaged Windows CLI in Electron's Node mode so stdio remains available", () => {
+    const cliEntry = String.raw`C:\Program Files\Rudder\resources\server-package\desktop-cli.js`;
+    const cliRunner = String.raw`C:\Program Files\Rudder\resources\server-package\desktop-cli-runner.js`;
+    const executable = String.raw`C:\Program Files\Rudder\Rudder.exe`;
+
+    expect(resolveDesktopCliSpawnTarget(cliEntry, executable, "win32", cliRunner)).toEqual({
+      command: executable,
+      args: [cliRunner],
+      env: { ELECTRON_RUN_AS_NODE: "1" },
+    });
+    expect(resolveDesktopCliSpawnTarget(cliEntry, executable, "darwin")).toEqual({
+      command: executable,
+      args: ["--desktop-cli"],
+    });
+    expect(resolveDesktopCliSpawnTarget(cliEntry, executable, "win32")).toEqual({
+      command: executable,
+      args: ["--desktop-cli"],
+    });
+  });
+
   it("prefers the current source CLI shim over an existing rudder binary on PATH", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cli-source-shim-"));
     const moduleDir = path.join(root, "packages", "agent-runtime-utils", "src");
@@ -145,6 +166,7 @@ describe("ensureRudderCliInPath", () => {
       await fs.mkdir(path.dirname(desktopExecutable), { recursive: true });
       await fs.mkdir(staleBinDir, { recursive: true });
       await fs.writeFile(desktopCli, "console.log('fresh desktop cli');\n", "utf8");
+      await fs.writeFile(path.join(path.dirname(desktopCli), "desktop-cli-runner.js"), "console.log('desktop cli runner');\n", "utf8");
       await fs.writeFile(desktopExecutable, "desktop executable\n", "utf8");
       await fs.writeFile(desktopManifest, JSON.stringify({ name: "@rudderhq/cli", version: "0.4.6" }), "utf8");
       await fs.writeFile(
@@ -160,16 +182,29 @@ describe("ensureRudderCliInPath", () => {
       const firstPathEntry = readPathValue(env).split(path.delimiter)[0];
       const shim = await fs.readFile(path.join(firstPathEntry!, shimName()), "utf8");
 
-      expect(target).toMatchObject({
-        command: desktopExecutable,
-        args: ["--desktop-cli"],
-        provenance: "desktop_bundle",
-        version: "0.4.6",
-      });
+      expect(target).toMatchObject(process.platform === "win32"
+        ? {
+            command: desktopExecutable,
+            args: [path.join(path.dirname(desktopCli), "desktop-cli-runner.js")],
+            env: { ELECTRON_RUN_AS_NODE: "1" },
+            provenance: "desktop_bundle",
+            version: "0.4.6",
+          }
+        : {
+            command: desktopExecutable,
+            args: ["--desktop-cli"],
+            provenance: "desktop_bundle",
+            version: "0.4.6",
+          });
       expect(firstPathEntry).not.toBe(staleBinDir);
-      expect(shim).toContain("--desktop-cli");
       expect(shim).toContain(desktopExecutable);
-      expect(shim).not.toContain(desktopCli);
+      if (process.platform === "win32") {
+        expect(shim).toContain("ELECTRON_RUN_AS_NODE=1");
+        expect(shim).toContain("desktop-cli-runner.js");
+      } else {
+        expect(shim).toContain("--desktop-cli");
+        expect(shim).not.toContain(desktopCli);
+      }
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

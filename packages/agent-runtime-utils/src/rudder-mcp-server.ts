@@ -10,6 +10,7 @@ export async function resolveRudderMcpCliCommand(moduleDir: string): Promise<Rud
     command: target.command,
     args: [...target.args, "mcp-server"],
     env: {
+      ...(target.env ?? {}),
       RUDDER_MCP_RUDDER_BIN: cliShim,
     },
     provenance: target.provenance,
