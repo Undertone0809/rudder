@@ -167,14 +167,6 @@ function normalizedPromptQuery(value: string) {
   return value.trim().toLowerCase();
 }
 
-function promptTextMatchesTokenPrefixes(value: string, query: string) {
-  const valueTokens = value.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
-  const queryTokens = query.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
-  return queryTokens.length > 0 && queryTokens.every((queryToken) => (
-    valueTokens.some((valueToken) => valueToken.startsWith(queryToken))
-  ));
-}
-
 export function chatPromptQueryFromDraft(draft: string) {
   return draft
     .replace(CHAT_SKILL_REFERENCE_PATTERN, " ")
@@ -197,48 +189,28 @@ export function applyChatPromptToDraft(draft: string, prompt: string) {
 
 export function chatPromptSuggestionsForDraft(draft: string, limit = 4): EmptyStatePromptSuggestion[] {
   const query = chatPromptQueryKey(draft);
-  if (query.length < 2 || limit <= 0) return [];
+  if (query.length === 0 || limit <= 0) return [];
 
-  const allSuggestions = EMPTY_STATE_PROMPT_GROUPS.flatMap((group) => (
-    group.suggestions.map((suggestion) => ({ ...suggestion, groupId: group.id }))
-  ));
-  if (allSuggestions.some((suggestion) => {
-    const prompt = normalizedPromptQuery(suggestion.prompt);
-    return query === prompt || query.startsWith(`${prompt} `);
-  })) return [];
-
-  const queryTokens = query.split(/\s+/u).filter((token) => token.length >= 3);
-  const ranked = EMPTY_STATE_PROMPT_GROUPS.flatMap((group, groupIndex) => {
-    const groupLabel = normalizedPromptQuery(group.label);
-    const groupTrigger = normalizedPromptQuery(group.trigger);
-    const broadGroupMatch = groupLabel.startsWith(query)
-      || groupTrigger.startsWith(query)
-      || promptTextMatchesTokenPrefixes(`${groupLabel} ${groupTrigger}`, query);
-
-    return group.suggestions.flatMap((suggestion, suggestionIndex) => {
-      const label = normalizedPromptQuery(suggestion.label);
-      const prompt = normalizedPromptQuery(suggestion.prompt);
-      const searchable = `${label} ${prompt}`;
-      let score = -1;
-      if (broadGroupMatch) score = 100;
-      else if (label.startsWith(query)) score = 92;
-      else if (label.includes(query)) score = 82;
-      else if (prompt.includes(query)) score = 72;
-      else if (queryTokens.length > 1 && queryTokens.every((token) => searchable.includes(token))) score = 62;
-      if (score < 0) return [];
-      return [{
-        ...suggestion,
-        groupId: group.id,
-        score,
-        order: groupIndex * 10 + suggestionIndex,
-      }];
-    });
+  const group = EMPTY_STATE_PROMPT_GROUPS.find((candidate) => {
+    const trigger = normalizedPromptQuery(candidate.trigger);
+    return query === trigger || query.startsWith(`${trigger} `);
   });
+  if (!group) return [];
 
-  return ranked
-    .sort((left, right) => right.score - left.score || left.order - right.order)
-    .slice(0, limit)
-    .map(({ score: _score, order: _order, ...suggestion }) => suggestion);
+  return group.suggestions
+    .map((suggestion) => ({ ...suggestion, groupId: group.id }))
+    .filter((suggestion) => normalizedPromptQuery(suggestion.label).startsWith(query))
+    .slice(0, limit);
+}
+
+export function chatPromptSuggestionsForDisplay(
+  suggestions: readonly EmptyStatePromptSuggestion[],
+  retainedSuggestions: readonly EmptyStatePromptSuggestion[],
+  query: string,
+  dismissedQuery: string | null,
+): readonly EmptyStatePromptSuggestion[] {
+  if (suggestions.length > 0) return suggestions;
+  return dismissedQuery === query ? retainedSuggestions : [];
 }
 
 export function ChatEmptyStatePromptIcon({

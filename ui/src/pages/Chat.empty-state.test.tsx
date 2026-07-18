@@ -14,6 +14,7 @@ import {
   ChatLongMessageBody,
   chatPromptGroupForExactTrigger,
   chatPromptQueryFromDraft,
+  chatPromptSuggestionsForDisplay,
   chatPromptSuggestionsForDraft,
   EMPTY_STATE_PROMPT_GROUPS,
 } from "./Chat";
@@ -153,18 +154,21 @@ describe("Chat empty-state prompt starters", () => {
     }));
   });
 
-  it("matches typed task intent and narrows the suggestion list", () => {
-    expect(chatPromptSuggestionsForDraft("Automate").map((suggestion) => suggestion.label)).toEqual([
-      "Automate a recurring report",
-      "Automate my morning prep",
-      "Automate triage",
-      "Automate monitoring important changes",
+  it("matches only normalized prefixes of displayed suggestion labels", () => {
+    expect(chatPromptSuggestionsForDraft("Create a").map((suggestion) => suggestion.label)).toEqual([
+      "Create a new document",
+      "Create a new spreadsheet",
+      "Create a new presentation",
+      "Create a new website",
     ]);
-    expect(chatPromptSuggestionsForDraft("Automate my").map((suggestion) => suggestion.label)).toEqual([
-      "Automate my morning prep",
+    expect(chatPromptSuggestionsForDraft("  cReAtE A NeW D  ").map((suggestion) => suggestion.label)).toEqual([
+      "Create a new document",
     ]);
-    expect(chatPromptSuggestionsForDraft("monitoring changes").map((suggestion) => suggestion.label)).toEqual([
-      "Automate monitoring important changes",
+    expect(chatPromptSuggestionsForDraft("Figure out next steps").map((suggestion) => suggestion.label)).toEqual([
+      "Figure out next steps for a topic I'm exploring",
+      "Figure out next steps after comparing options",
+      "Figure out next steps for an upcoming meeting",
+      "Figure out next steps for a strategy or project",
     ]);
   });
 
@@ -174,18 +178,27 @@ describe("Chat empty-state prompt starters", () => {
     expect(chatPromptGroupForExactTrigger("Automate")?.id).toBe("automate");
   });
 
-  it.each([
-    ["file", "create"],
-    ["plan", "research"],
-    ["briefing", "briefing"],
-    ["routine", "automate"],
-  ] as const)("matches the %s task keyword against group label tokens", (query, groupId) => {
-    expect(chatPromptSuggestionsForDraft(query).map((suggestion) => suggestion.groupId)).toEqual([
-      groupId,
-      groupId,
-      groupId,
-      groupId,
-    ]);
+  it("returns no suggestions for empty or unmatched prefixes", () => {
+    expect(chatPromptSuggestionsForDraft("")).toEqual([]);
+    expect(chatPromptSuggestionsForDraft("   ")).toEqual([]);
+    expect(chatPromptSuggestionsForDraft("fi")).toEqual([]);
+    expect(chatPromptSuggestionsForDraft("file")).toEqual([]);
+    expect(chatPromptSuggestionsForDraft("monitoring changes")).toEqual([]);
+    expect(chatPromptSuggestionsForDraft("A")).toEqual([]);
+  });
+
+  it("does not reuse retained rows for an unmatched query", () => {
+    const retainedSuggestions = chatPromptSuggestionsForDraft("Automate");
+    expect(chatPromptSuggestionsForDisplay([], retainedSuggestions, "fi", null)).toEqual([]);
+    expect(chatPromptSuggestionsForDisplay([], retainedSuggestions, "", null)).toEqual([]);
+
+    const selectedPromptQuery = automateGroup().suggestions[0].prompt.toLowerCase();
+    expect(chatPromptSuggestionsForDisplay(
+      [],
+      retainedSuggestions,
+      selectedPromptQuery,
+      selectedPromptQuery,
+    )).toBe(retainedSuggestions);
   });
 
   it("hides suggestions after a complete prompt has been selected", () => {
@@ -261,6 +274,36 @@ describe("Chat empty-state prompt starters", () => {
     expect(listbox?.dataset.interactive).toBe("false");
     expect(firstOption?.disabled).toBe(true);
     expect(firstOption?.getAttribute("aria-disabled")).toBe("true");
+
+    act(() => {
+      firstOption?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onSuggestionSelect).not.toHaveBeenCalled();
+  });
+
+  it("keeps retained prompt options inert while their page is hidden", () => {
+    const onSuggestionSelect = vi.fn();
+    const suggestions = automateGroup().suggestions.map((suggestion) => ({
+      ...suggestion,
+      groupId: automateGroup().id,
+    }));
+    const container = render(
+      <ChatEmptyStatePromptOptions
+        suggestions={suggestions}
+        optionsId="chat-empty-state-prompt-options"
+        activeIndex={0}
+        active={false}
+        interactive={false}
+        onActiveIndexChange={vi.fn()}
+        onSuggestionSelect={onSuggestionSelect}
+      />,
+    );
+
+    const listbox = container.querySelector<HTMLElement>("[role='listbox']");
+    const firstOption = container.querySelector<HTMLButtonElement>("[role='option']");
+    expect(listbox?.getAttribute("aria-hidden")).toBe("true");
+    expect(listbox?.dataset.interactive).toBe("false");
+    expect(firstOption?.disabled).toBe(true);
 
     act(() => {
       firstOption?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
