@@ -41,6 +41,7 @@ related_code:
   - server/src/services/chats.ts
   - server/src/services/chat-work-manifest.ts
   - server/src/services/chat-agent-runs.ts
+  - server/src/services/chat-steer-messages.ts
   - server/src/services/messenger.ts
   - server/src/services/organization-intelligence-profiles.ts
   - server/src/routes/integrations.ts
@@ -199,6 +200,11 @@ Product model:
   to that same provider turn. Otherwise Rudder interrupts the current attempt
   and automatically starts a feedback continuation after the old owner reaches
   a safe terminal boundary.
+- Once Rudder accepts Steer as a durable control action, its feedback becomes a
+  normal visible user message in the conversation immediately. Native
+  same-turn delivery and fallback continuation reuse that one persisted
+  message, so the operator's input remains visible after the queue row leaves,
+  across reloads, and without duplicate bubbles on retry.
 - Every Steer reaches an inspectable disposition: delivered to the current
   provider turn, scheduled as the next continuation, provider acceptance
   unknown, or actionable failure. Provider receipt does not claim that the
@@ -252,11 +258,16 @@ Flow:
 10. The queue renders beside the composer with stable ordering. The first queued
    item is marked as next, later items show their queue position, and editable
    queued items expose edit/delete controls.
-11. When the current reply completes, a server-owned worker claims the next
+11. When the operator chooses Steer, Rudder atomically persists the durable
+   control action, one normal user message, their queue linkage, and message
+   activity evidence before attempting provider delivery. That
+   message stays in the conversation whether delivery is native, deferred,
+   unknown, or actionable failure; delivery status remains separate evidence.
+12. When the current reply completes, a server-owned worker claims the next
    eligible queued follow-up, sends it as the next chat turn, and hides the
    queued row after it is linked to the delivered user message. Delivery does
    not depend on the originating page remaining open.
-12. If the current reply is stopped, fails, or is otherwise not completed,
+13. If the current reply is stopped, fails, or is otherwise not completed,
    ordinary queued follow-ups stay parked and are not silently flushed. The
    operator may explicitly Steer retained feedback; Rudder then persists a
    continuation, waits for the prior owner to terminate, and starts that
@@ -309,9 +320,14 @@ Invariants:
 - Queue ordering must be deterministic by stored position and creation time.
   Idempotency keys must not allow the same queued item id to be reused with a
   different payload.
-- A queued follow-up must not become a visible user message until it is claimed
-  and delivered through the normal chat send path. Delivered or running queued
-  rows are hidden from the running-queue UI once linked to a user message.
+- An ordinary queued follow-up must not become a visible user message until it
+  is claimed and delivered through the normal chat send path. Explicit Steer is
+  the exception: accepting its durable control action must materialize exactly
+  one normal user message immediately, and native delivery, continuation,
+  retries, and reloads must reuse that same message. A visible Steer message
+  records operator input; it does not by itself claim provider compliance.
+  Delivered or running queued rows are hidden from the running-queue UI once
+  linked to a user message.
 - Stopped or failed replies leave ordinary queued follow-ups parked. Rudder
   must not silently flush old queued work after an interrupted run. A retained
   row changes this rule only when the operator explicitly chooses Steer.
@@ -367,8 +383,9 @@ Evidence:
   generation still stoppable.
 - Chat concurrent-streaming E2E covers queueing a follow-up during an active
   stream, editing the queued body, native same-turn Codex Steer, fallback
-  continuation, immediate Stop, server-owned Stop-then-Steer delivery, and
-  retained ordinary follow-ups after a stopped reply.
+  continuation, immediate Stop, server-owned Stop-then-Steer delivery, retained
+  ordinary follow-ups after a stopped reply, and one durable native-Steer user
+  bubble that survives reload without duplication.
 - Chat route and UI tests cover queue snapshots, active-generation reporting,
   queued follow-up editing/cancellation/claiming, hidden delivered rows,
   retained parked rows, and Feishu-bound queue mutation rejection.
