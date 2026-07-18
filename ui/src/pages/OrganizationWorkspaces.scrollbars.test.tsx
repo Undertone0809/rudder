@@ -373,7 +373,16 @@ vi.mock("@tanstack/react-query", () => ({
           skillId: key[2],
           path: key[4] ?? "SKILL.md",
           kind: "skill",
-          content: "# Bundled Rudder\n\nRead-only bundled skill.",
+          content: [
+            "---",
+            "name: rudder",
+            "description: Rudder operating skill",
+            "---",
+            "",
+            "# Bundled Rudder",
+            "",
+            "Read-only bundled skill.",
+          ].join("\n"),
           language: "markdown",
           markdown: true,
           editable: false,
@@ -968,6 +977,12 @@ describe("OrganizationWorkspaces scroll regions", () => {
     expect(readOnlyPanel).not.toBeNull();
     expect(readOnlyPanel?.textContent).toContain("Read-only bundled skill");
     expect(readOnlyPanel?.textContent).toContain("Bundled skills are read only");
+    const metadataPanel = document.querySelector("[data-testid='org-workspaces-virtual-skill-metadata']");
+    expect(metadataPanel).not.toBeNull();
+    expect(metadataPanel?.textContent).toContain("Metadata");
+    expect(metadataPanel?.textContent).toContain("name: rudder");
+    expect(metadataPanel?.textContent).toContain("description: Rudder operating skill");
+    expect(metadataPanel?.querySelector("textarea")).toBeNull();
     expect(document.querySelector("[data-testid='org-workspaces-editor-status-bar']")).toBeNull();
 
     const breadcrumb = document.querySelector("[data-testid='org-workspaces-path-breadcrumb']");

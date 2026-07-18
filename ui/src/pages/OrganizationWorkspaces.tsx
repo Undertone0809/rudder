@@ -2471,6 +2471,23 @@ export function OrganizationWorkspaceBrowser({
                     </div>
                     {selectedVirtualSkillFileDetail.markdown ? (
                       <article className="mx-auto min-h-full w-full max-w-[880px] px-8 py-8">
+                        {selectedVirtualSkillMarkdownParts.frontmatter !== null ? (
+                          <details
+                            className="group mb-6 rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-page)]"
+                            data-testid="org-workspaces-virtual-skill-metadata"
+                          >
+                            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40 [&::-webkit-details-marker]:hidden">
+                              <span>Metadata</span>
+                              <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+                            </summary>
+                            <pre
+                              aria-label="Skill metadata"
+                              className="overflow-x-auto whitespace-pre-wrap break-words border-t border-[color:var(--border-soft)] px-3 py-2 font-mono text-xs leading-5 text-foreground"
+                            >
+                              <code>{selectedVirtualSkillMarkdownParts.frontmatter}</code>
+                            </pre>
+                          </details>
+                        ) : null}
                         <MarkdownBody className="rudder-library-document-editor text-[15px] leading-7 text-foreground">
                           {selectedVirtualSkillMarkdownParts.body}
                         </MarkdownBody>
