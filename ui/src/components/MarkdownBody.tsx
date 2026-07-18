@@ -1,7 +1,7 @@
 import { buildAgentMentionHref, resolveKnownWebsiteIcon } from "@rudderhq/shared";
 import { Check, Copy, Globe2 } from "lucide-react";
-import { isValidElement, useCallback, useEffect, useId, useRef, useState, type ClipboardEvent, type MouseEvent, type ReactNode } from "react";
-import Markdown, { type Components } from "react-markdown";
+import { isValidElement, memo, useCallback, useEffect, useId, useRef, useState, type ClipboardEvent, type ComponentProps, type MouseEvent, type ReactNode } from "react";
+import Markdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { websiteMetadataApi } from "../api/websiteMetadata";
 import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
@@ -626,6 +626,10 @@ function markdownSourceAttributes(node: unknown) {
   };
 }
 
+function MarkdownListItem({ node, children, ...itemProps }: ComponentProps<"li"> & ExtraProps) {
+  return <li {...itemProps} {...markdownSourceAttributes(node)}>{children}</li>;
+}
+
 function closestMarkdownSourceElement(node: Node | null): HTMLElement | null {
   const element = node instanceof HTMLElement ? node : node?.parentElement ?? null;
   return element?.closest<HTMLElement>("[data-markdown-source-start][data-markdown-source-end]") ?? null;
@@ -670,7 +674,7 @@ function markdownSourceForSelection(root: HTMLElement, selection: Selection, sou
   return source.slice(start, end);
 }
 
-function MermaidDiagramBlock({ source, darkMode }: { source: string; darkMode: boolean }) {
+const MermaidDiagramBlock = memo(function MermaidDiagramBlock({ source, darkMode }: { source: string; darkMode: boolean }) {
   const renderId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const [svg, setSvg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -723,7 +727,7 @@ function MermaidDiagramBlock({ source, darkMode }: { source: string; darkMode: b
       )}
     </div>
   );
-}
+});
 
 function CopyableCodeBlock({
   children,
@@ -882,6 +886,47 @@ export function MarkdownBody({
     event.preventDefault();
     navigateInternalAppRoute(internalRoute);
   };
+  const renderPre = useCallback(({ node, children: preChildren, ...preProps }: ComponentProps<"pre"> & ExtraProps) => {
+    const mermaidSource = extractMermaidSource(preChildren);
+    if (mermaidSource) {
+      return <MermaidDiagramBlock source={mermaidSource} darkMode={resolvedTheme === "dark"} />;
+    }
+    const sourceAttributes = markdownSourceAttributes(node);
+    const codeBlockLanguage = extractCodeBlockLanguage(preChildren);
+    const patchSource = isPatchCodeBlockLanguage(codeBlockLanguage) ? extractCodeBlockSource(preChildren) : null;
+    if (patchSource !== null) {
+      const patchBlock = (
+        <PatchCodeBlock
+          source={patchSource}
+          preProps={preProps}
+          sourceAttributes={sourceAttributes}
+        />
+      );
+      if (enableCodeBlockCopy) {
+        return (
+          <CopyableCodeBlock
+            copyText={patchSource}
+            preProps={{}}
+            sourceAttributes={{}}
+            block={patchBlock}
+          />
+        );
+      }
+      return patchBlock;
+    }
+    if (enableCodeBlockCopy) {
+      return (
+        <CopyableCodeBlock
+          copyText={extractCodeBlockSource(preChildren)}
+          preProps={preProps}
+          sourceAttributes={sourceAttributes}
+        >
+          {preChildren}
+        </CopyableCodeBlock>
+      );
+    }
+    return <pre {...preProps} {...sourceAttributes}>{preChildren}</pre>;
+  }, [enableCodeBlockCopy, resolvedTheme]);
   const components: Components = {
     p: ({ node, children: paragraphChildren, ...paragraphProps }) => (
       <p {...paragraphProps} {...markdownSourceAttributes(node)}>{paragraphChildren}</p>
@@ -904,55 +949,13 @@ export function MarkdownBody({
     h6: ({ node, children: headingChildren, ...headingProps }) => (
       <h6 {...headingProps} {...markdownSourceAttributes(node)}>{headingChildren}</h6>
     ),
-    li: ({ node, children: itemChildren, ...itemProps }) => (
-      <li {...itemProps} {...markdownSourceAttributes(node)}>{itemChildren}</li>
-    ),
+    li: MarkdownListItem,
     table: ({ node, children: tableChildren, ...tableProps }) => (
       <div className="rudder-markdown-table-scroll">
         <table {...tableProps} {...markdownSourceAttributes(node)}>{tableChildren}</table>
       </div>
     ),
-    pre: ({ node, children: preChildren, ...preProps }) => {
-      const mermaidSource = extractMermaidSource(preChildren);
-      if (mermaidSource) {
-        return <MermaidDiagramBlock source={mermaidSource} darkMode={resolvedTheme === "dark"} />;
-      }
-      const sourceAttributes = markdownSourceAttributes(node);
-      const codeBlockLanguage = extractCodeBlockLanguage(preChildren);
-      const patchSource = isPatchCodeBlockLanguage(codeBlockLanguage) ? extractCodeBlockSource(preChildren) : null;
-      if (patchSource !== null) {
-        const patchBlock = (
-          <PatchCodeBlock
-            source={patchSource}
-            preProps={preProps}
-            sourceAttributes={sourceAttributes}
-          />
-        );
-        if (enableCodeBlockCopy) {
-          return (
-            <CopyableCodeBlock
-              copyText={patchSource}
-              preProps={{}}
-              sourceAttributes={{}}
-              block={patchBlock}
-            />
-          );
-        }
-        return patchBlock;
-      }
-      if (enableCodeBlockCopy) {
-        return (
-          <CopyableCodeBlock
-            copyText={extractCodeBlockSource(preChildren)}
-            preProps={preProps}
-            sourceAttributes={sourceAttributes}
-          >
-            {preChildren}
-          </CopyableCodeBlock>
-        );
-      }
-      return <pre {...preProps} {...sourceAttributes}>{preChildren}</pre>;
-    },
+    pre: renderPre,
     a: ({ node, href, children: linkChildren }) => {
       const parsed = href ? parseMentionChipHref(href) : null;
       if (parsed) {

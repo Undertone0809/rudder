@@ -2,7 +2,7 @@
 
 import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, buildLibraryDirectoryMentionHref, buildLibraryDocMentionHref, buildLibraryEntryMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, type ReactNode } from "react";
+import { act, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup as renderReactToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
@@ -22,6 +22,15 @@ import {
 
 const markdownMentionsMock = vi.hoisted(() => ({
   mentions: [] as MentionOption[],
+}));
+
+const mermaidMocks = vi.hoisted(() => ({
+  initialize: vi.fn(),
+  render: vi.fn(),
+}));
+
+vi.mock("mermaid", () => ({
+  default: mermaidMocks,
 }));
 
 const entityPreviewApiMocks = vi.hoisted(() => ({
@@ -181,6 +190,11 @@ afterEach(() => {
 });
 
 beforeEach(() => {
+  mermaidMocks.initialize.mockReset();
+  mermaidMocks.render.mockReset();
+  mermaidMocks.render.mockResolvedValue({
+    svg: '<svg data-testid="mock-mermaid-svg"></svg>',
+  });
   entityPreviewApiMocks.getIssue.mockRejectedValue(new Error("Issue detail is not configured for this test"));
   entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValue({
     url: "https://example.com/",
@@ -269,6 +283,43 @@ async function advanceTimersAndFlush(ms: number) {
 }
 
 describe("MarkdownBody", () => {
+  it("keeps a rendered Mermaid diagram mounted when its parent rerenders", async () => {
+    function RerenderingParent() {
+      const [draft, setDraft] = useState("");
+      return (
+        <ThemeProvider>
+          <MarkdownBody>{"- Diagram\n\n  ```mermaid\n  graph TD\n    A --> B\n  ```"}</MarkdownBody>
+          <input aria-label="Composer" value={draft} readOnly />
+          <button type="button" onClick={() => setDraft("typing")}>Type</button>
+        </ThemeProvider>
+      );
+    }
+
+    const container = render(<RerenderingParent />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mermaidMocks.render).toHaveBeenCalledTimes(1);
+    const renderedSvg = container.querySelector('[data-testid="mock-mermaid-svg"]');
+    expect(renderedSvg).toBeTruthy();
+
+    const typeButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent === "Type");
+    await act(async () => {
+      typeButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector<HTMLInputElement>('[aria-label="Composer"]')?.value).toBe("typing");
+
+    expect(mermaidMocks.render).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[data-testid="mock-mermaid-svg"]')).toBe(renderedSvg);
+    expect(container.querySelector(".rudder-mermaid-source")).toBeNull();
+  });
+
   it("renders markdown images without a resolver", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
