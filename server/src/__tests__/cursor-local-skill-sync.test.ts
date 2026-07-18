@@ -31,9 +31,13 @@ describe("cursor local skill sync", () => {
     cleanupDirs.clear();
   });
 
-  it("reports configured Rudder skills and installs them into the Cursor skills home", async () => {
+  it("removes the dangling legacy Rudder Docs entry before installing the canonical Cursor skill", async () => {
     const home = await makeTempDir("rudder-cursor-skill-sync-");
     cleanupDirs.add(home);
+    const skillsHome = managedCursorSkillsHome(home);
+    const legacyTarget = path.join(skillsHome, "rudder");
+    const legacySource = path.join(process.cwd(), "server", "resources", "bundled-skills", "rudder");
+    const unrelatedSkill = path.join(skillsHome, "external-cursor-skill");
 
     const ctx = {
       agentId: "agent-1",
@@ -49,7 +53,8 @@ describe("cursor local skill sync", () => {
         },
       },
     } as const;
-    await fs.mkdir(path.join(managedCursorSkillsHome(home), "external-cursor-skill"), { recursive: true });
+    await fs.mkdir(unrelatedSkill, { recursive: true });
+    await fs.symlink(legacySource, legacyTarget);
 
     const before = await listCursorSkills(ctx);
     expect(before.mode).toBe("persistent");
@@ -62,11 +67,15 @@ describe("cursor local skill sync", () => {
     const after = await syncCursorSkills(ctx, [rudderSkillKey]);
     const installedEntry = after.entries.find((entry) => entry.key === rudderSkillKey);
     expect(installedEntry?.state).toBe("installed");
-    expect(installedEntry?.targetPath).toContain(managedCursorSkillsHome(home));
+    expect(installedEntry?.targetPath).toContain(skillsHome);
     expect((await fs.lstat(installedEntry?.targetPath ?? "")).isSymbolicLink()).toBe(true);
-    await expect(fs.lstat(path.join(home, ".cursor", "skills", "rudder"))).rejects.toMatchObject({
+    await expect(fs.lstat(legacyTarget)).rejects.toMatchObject({
       code: "ENOENT",
     });
+    expect((await fs.lstat(unrelatedSkill)).isDirectory()).toBe(true);
+    expect(after.warnings).toContain(
+      `Removed legacy Rudder-managed skill entry "rudder" from ${skillsHome}.`,
+    );
   });
 
   it("recognizes organization-library runtime skills supplied outside the bundled Rudder directory", async () => {

@@ -963,6 +963,62 @@ export async function removeMaintainerOnlySkillSymlinks(
   return removeUnselectedRudderSkillSymlinks(skillsHome, allowedSkillNames);
 }
 
+export type LegacyRudderDocsManagedEntryCleanupResult = {
+  state: "not_applicable" | "absent" | "removed" | "collision";
+  targetPath: string;
+  legacySourcePath: string | null;
+  kind: "symlink" | "directory" | "file" | "other" | null;
+};
+
+export async function cleanupLegacyRudderDocsManagedEntry(
+  skillsHome: string,
+  selectedEntries: Iterable<{ key: string; runtimeName: string; source: string }>,
+): Promise<LegacyRudderDocsManagedEntryCleanupResult> {
+  const targetPath = path.join(path.resolve(skillsHome), "rudder");
+  const canonicalEntry = Array.from(selectedEntries).find((entry) =>
+    entry.key === "rudder/rudder-docs" && entry.runtimeName === "rudder-docs"
+  );
+  if (!canonicalEntry) {
+    return { state: "not_applicable", targetPath, legacySourcePath: null, kind: null };
+  }
+
+  const legacySourcePath = path.join(path.dirname(path.resolve(canonicalEntry.source)), "rudder");
+  let existing: Awaited<ReturnType<typeof fs.lstat>>;
+  try {
+    existing = await fs.lstat(targetPath);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return { state: "absent", targetPath, legacySourcePath, kind: null };
+    }
+    return { state: "collision", targetPath, legacySourcePath, kind: "other" };
+  }
+
+  if (existing.isSymbolicLink()) {
+    const linkedPath = await fs.readlink(targetPath).catch(() => null);
+    if (linkedPath === null) {
+      return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+    }
+    const resolvedLinkedPath = path.resolve(path.dirname(targetPath), linkedPath);
+    if (resolvedLinkedPath !== legacySourcePath) {
+      return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+    }
+    await fs.unlink(targetPath);
+    return { state: "removed", targetPath, legacySourcePath, kind: "symlink" };
+  }
+
+  if (existing.isDirectory()) {
+    const materializedSource = await readRudderMaterializedSkillSource(targetPath);
+    if (materializedSource === legacySourcePath) {
+      await fs.rm(targetPath, { recursive: true, force: true });
+      return { state: "removed", targetPath, legacySourcePath, kind: "directory" };
+    }
+    return { state: "collision", targetPath, legacySourcePath, kind: "directory" };
+  }
+
+  const kind = existing.isFile() ? "file" : "other";
+  return { state: "collision", targetPath, legacySourcePath, kind };
+}
+
 async function readRudderMaterializedSkillSource(target: string): Promise<string | null> {
   const manifestPath = path.join(target, ".rudder", "materialized-skill.json");
   const raw = await fs.readFile(manifestPath, "utf8").catch(() => null);

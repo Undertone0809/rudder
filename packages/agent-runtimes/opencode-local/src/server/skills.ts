@@ -5,6 +5,7 @@ import type {
 import { resolveOrganizationStorageKey } from "@rudderhq/agent-runtime-utils";
 import {
   buildPersistentSkillSnapshot,
+  cleanupLegacyRudderDocsManagedEntry,
   ensureRudderSkillSymlink,
   readInstalledSkillTargets,
   readRudderRuntimeSkillEntries,
@@ -36,7 +37,11 @@ export function resolveOpenCodeSkillsHome(config: Record<string, unknown>, orgId
   return path.join(resolveManagedOpenCodeHomeDir(config, orgId), ".claude", "skills");
 }
 
-async function buildOpenCodeSkillSnapshot(config: Record<string, unknown>, orgId: string): Promise<AgentRuntimeSkillSnapshot> {
+async function buildOpenCodeSkillSnapshot(
+  config: Record<string, unknown>,
+  orgId: string,
+  warnings: string[] = [],
+): Promise<AgentRuntimeSkillSnapshot> {
   const availableEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredSkills = resolveRudderDesiredSkillNames(config, availableEntries);
   const skillsHome = resolveOpenCodeSkillsHome(config, orgId);
@@ -52,6 +57,7 @@ async function buildOpenCodeSkillSnapshot(config: Record<string, unknown>, orgId
     missingDetail: "Configured but not currently linked into the managed OpenCode skills sidecar.",
     externalConflictDetail: "Skill name is occupied by a non-Rudder entry inside the managed OpenCode skills sidecar.",
     externalDetail: "Installed outside Rudder management in the OpenCode sidecar.",
+    warnings,
   });
 }
 
@@ -69,9 +75,18 @@ export async function syncOpenCodeSkills(
   await fs.mkdir(skillsHome, { recursive: true });
   const installed = await readInstalledSkillTargets(skillsHome);
   const availableByRuntimeName = new Map(availableEntries.map((entry) => [entry.runtimeName, entry]));
+  const selectedEntries = availableEntries.filter((entry) => desiredSet.has(entry.key));
+  const cleanupResult = await cleanupLegacyRudderDocsManagedEntry(skillsHome, selectedEntries);
+  const warnings: string[] = [];
+  if (cleanupResult.state === "removed") {
+    warnings.push(`Removed legacy Rudder-managed skill entry "rudder" from ${skillsHome}.`);
+  } else if (cleanupResult.state === "collision") {
+    warnings.push(
+      `Preserved existing "rudder" path at ${cleanupResult.targetPath} because Rudder ownership could not be proven.`,
+    );
+  }
 
-  for (const available of availableEntries) {
-    if (!desiredSet.has(available.key)) continue;
+  for (const available of selectedEntries) {
     const target = path.join(skillsHome, available.runtimeName);
     await ensureRudderSkillSymlink(available.source, target);
   }
@@ -84,7 +99,7 @@ export async function syncOpenCodeSkills(
     await fs.unlink(path.join(skillsHome, name)).catch(() => {});
   }
 
-  return buildOpenCodeSkillSnapshot(ctx.config, ctx.orgId);
+  return buildOpenCodeSkillSnapshot(ctx.config, ctx.orgId, warnings);
 }
 
 export function resolveOpenCodeDesiredSkillNames(

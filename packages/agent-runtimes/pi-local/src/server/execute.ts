@@ -19,6 +19,7 @@ import {
   asString,
   asStringArray,
   buildRudderEnv,
+  cleanupLegacyRudderDocsManagedEntry,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
   ensurePathInEnv,
@@ -555,9 +556,23 @@ async function ensurePiSkillsInjected(
   const desiredSet = new Set(desiredSkillNames ?? skillsEntries.map((entry) => entry.key));
   const selectedEntries = skillsEntries.filter((entry) => desiredSet.has(entry.key));
   await fs.mkdir(skillsDir, { recursive: true });
+  const legacyCleanup = await cleanupLegacyRudderDocsManagedEntry(skillsDir, selectedEntries);
+  if (legacyCleanup.state === "removed") {
+    await onLog(
+      "stderr",
+      `[rudder] Removed legacy Rudder-managed skill entry "rudder" from ${skillsDir}.\n`,
+    );
+  } else if (legacyCleanup.state === "collision") {
+    await onLog(
+      "stderr",
+      `[rudder] Preserved existing "rudder" path at ${legacyCleanup.targetPath} because Rudder ownership could not be proven.\n`,
+    );
+  }
+  const allowedSkillNames = selectedEntries.map((entry) => entry.runtimeName);
+  if (legacyCleanup.state === "collision") allowedSkillNames.push("rudder");
   const removedSkills = await removeUnselectedRudderSkillSymlinks(
     skillsDir,
-    selectedEntries.map((entry) => entry.runtimeName),
+    allowedSkillNames,
     skillsEntries.map((entry) => entry.source),
   );
   for (const skillName of removedSkills) {

@@ -70,6 +70,40 @@ describe("cursor local adapter skill injection", () => {
     expect((await fs.lstat(path.join(skillsHome, "rudder-create-agent"))).isSymbolicLink()).toBe(true);
   });
 
+  it("logs and preserves an unproven legacy-name collision before injecting Rudder Docs", async () => {
+    const root = await makeTempDir("rudder-cursor-legacy-collision-");
+    cleanupDirs.add(root);
+    const skillsHome = path.join(root, "managed-skills");
+    const canonicalSource = path.join(root, "server", "resources", "bundled-skills", "rudder-docs");
+    const unrecognizedSource = path.join(root, "server", "resources", "bundled-skills", "other");
+    const legacyTarget = path.join(skillsHome, "rudder");
+    await fs.mkdir(canonicalSource, { recursive: true });
+    await fs.mkdir(skillsHome, { recursive: true });
+    await fs.symlink(unrecognizedSource, legacyTarget);
+
+    const logs: string[] = [];
+    await ensureCursorSkillsInjected(
+      async (_stream, chunk) => {
+        logs.push(chunk);
+      },
+      {
+        skillsHome,
+        skillsEntries: [{
+          key: "rudder/rudder-docs",
+          runtimeName: "rudder-docs",
+          source: canonicalSource,
+        }],
+        desiredSkillNames: ["rudder/rudder-docs"],
+      },
+    );
+
+    expect(await fs.readlink(legacyTarget)).toBe(unrecognizedSource);
+    expect((await fs.lstat(path.join(skillsHome, "rudder-docs"))).isSymbolicLink()).toBe(true);
+    expect(logs).toContain(
+      `[rudder] Preserved existing "rudder" path at ${legacyTarget} because Rudder ownership could not be proven.\n`,
+    );
+  });
+
   it("logs per-skill link failures and continues without throwing", async () => {
     const skillsDir = await makeTempDir("rudder-cursor-fail-src-");
     const skillsHome = await makeTempDir("rudder-cursor-fail-home-");

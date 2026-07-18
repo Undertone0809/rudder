@@ -5,6 +5,7 @@ import type {
 import { resolveOrganizationStorageKey } from "@rudderhq/agent-runtime-utils";
 import {
   buildPersistentSkillSnapshot,
+  cleanupLegacyRudderDocsManagedEntry,
   ensureRudderSkillSymlink,
   readInstalledSkillTargets,
   readRudderRuntimeSkillEntries,
@@ -36,7 +37,11 @@ export function resolvePiSkillsHome(config: Record<string, unknown>, orgId: stri
   return path.join(resolveManagedPiHomeDir(config, orgId), ".pi", "agent", "skills");
 }
 
-async function buildPiSkillSnapshot(config: Record<string, unknown>, orgId: string): Promise<AgentRuntimeSkillSnapshot> {
+async function buildPiSkillSnapshot(
+  config: Record<string, unknown>,
+  orgId: string,
+  warnings: string[] = [],
+): Promise<AgentRuntimeSkillSnapshot> {
   const availableEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredSkills = resolveRudderDesiredSkillNames(config, availableEntries);
   const skillsHome = resolvePiSkillsHome(config, orgId);
@@ -51,6 +56,7 @@ async function buildPiSkillSnapshot(config: Record<string, unknown>, orgId: stri
     missingDetail: "Configured but not currently linked into the Pi skills home.",
     externalConflictDetail: "Skill name is occupied by an external installation.",
     externalDetail: "Installed outside Rudder management.",
+    warnings,
   });
 }
 
@@ -68,9 +74,18 @@ export async function syncPiSkills(
   await fs.mkdir(skillsHome, { recursive: true });
   const installed = await readInstalledSkillTargets(skillsHome);
   const availableByRuntimeName = new Map(availableEntries.map((entry) => [entry.runtimeName, entry]));
+  const selectedEntries = availableEntries.filter((entry) => desiredSet.has(entry.key));
+  const cleanupResult = await cleanupLegacyRudderDocsManagedEntry(skillsHome, selectedEntries);
+  const warnings: string[] = [];
+  if (cleanupResult.state === "removed") {
+    warnings.push(`Removed legacy Rudder-managed skill entry "rudder" from ${skillsHome}.`);
+  } else if (cleanupResult.state === "collision") {
+    warnings.push(
+      `Preserved existing "rudder" path at ${cleanupResult.targetPath} because Rudder ownership could not be proven.`,
+    );
+  }
 
-  for (const available of availableEntries) {
-    if (!desiredSet.has(available.key)) continue;
+  for (const available of selectedEntries) {
     const target = path.join(skillsHome, available.runtimeName);
     await ensureRudderSkillSymlink(available.source, target);
   }
@@ -83,7 +98,7 @@ export async function syncPiSkills(
     await fs.unlink(path.join(skillsHome, name)).catch(() => {});
   }
 
-  return buildPiSkillSnapshot(ctx.config, ctx.orgId);
+  return buildPiSkillSnapshot(ctx.config, ctx.orgId, warnings);
 }
 
 export function resolvePiDesiredSkillNames(

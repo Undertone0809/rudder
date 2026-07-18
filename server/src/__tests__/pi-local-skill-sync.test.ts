@@ -24,9 +24,15 @@ describe("pi local skill sync", () => {
     cleanupDirs.clear();
   });
 
-  it("reports configured Rudder skills and installs them into the Pi skills home", async () => {
+  it("removes the dangling legacy Rudder Docs entry before installing the canonical Pi skill", async () => {
     const home = await makeTempDir("rudder-pi-skill-sync-");
     cleanupDirs.add(home);
+    const skillsHome = managedPiSkillsHome(home);
+    const legacyTarget = path.join(skillsHome, "rudder");
+    const legacySource = path.join(process.cwd(), "server", "resources", "bundled-skills", "rudder");
+    const unrelatedSkill = path.join(skillsHome, "user-notes");
+    await fs.mkdir(unrelatedSkill, { recursive: true });
+    await fs.symlink(legacySource, legacyTarget);
 
     const ctx = {
       agentId: "agent-1",
@@ -51,11 +57,13 @@ describe("pi local skill sync", () => {
     const after = await syncPiSkills(ctx, [rudderSkillKey]);
     const installedEntry = after.entries.find((entry) => entry.key === rudderSkillKey);
     expect(installedEntry?.state).toBe("installed");
-    expect(installedEntry?.targetPath).toContain(managedPiSkillsHome(home));
+    expect(installedEntry?.targetPath).toContain(skillsHome);
     expect((await fs.lstat(installedEntry?.targetPath ?? "")).isSymbolicLink()).toBe(true);
-    await expect(fs.lstat(path.join(home, ".pi", "agent", "skills", "rudder-docs"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    await expect(fs.lstat(legacyTarget)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await fs.lstat(unrelatedSkill)).isDirectory()).toBe(true);
+    expect(after.warnings).toContain(
+      `Removed legacy Rudder-managed skill entry "rudder" from ${skillsHome}.`,
+    );
   });
 
   it("removes Rudder-managed symlinks when the desired set is emptied", async () => {
