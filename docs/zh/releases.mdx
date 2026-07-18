@@ -18,6 +18,31 @@ npx @rudderhq/cli@latest start
 
 这个页面只记录稳定版本。Canary 会更频繁地用于验证和 Desktop 资产测试；如果需要查看预发布历史，可以看 [GitHub Releases](https://github.com/Undertone0809/rudder/releases)。
 
+## v0.5.0
+
+发布时间：2026-07-19
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.5.0)
+
+### New Features
+
+- 增加内置 Desktop 浏览器，支持安全的本地 profile、浏览器设置、Chromium Cookie 导入、local runtime capability projection，以及面向 agent workflow 的浏览器快捷键。
+- 扩展 Chat 工作界面，增加持久化 Work manifest、inline visual artifacts、website previews、forked chat 命名和改进后的 prompt starters。
+- 增加 Library PDF 预览、Markdown 编辑、默认应用打开操作，以及从 Side Panel 访问 organization files 的能力。
+- 增加 Automation templates，并扩展 Desktop 启动恢复、诊断和更新处理能力。
+
+### Improvements
+
+- 重新设计 Settings、onboarding、Messenger groups、project resource picker 和 Side Panel 交互，使导航更快、上下文更清晰。
+- 改善 agent runtime 可靠性，增加受监管的 server resources、持久化 terminal recovery、session lineage diagnostics、coalesced run admission，以及有界的 run-intelligence payloads。
+- 改善 organization/workspace migrations、local file preview boundaries、browser error reporting，以及 macOS、Windows 和 Linux 上的 release verification。
+
+### Bug Fixes
+
+- 修复 Chat steering、停止、滚动、output finalization、reference rendering、project visibility 和 organization switch recovery 回归。
+- 修复 Desktop packaged startup、browser bundle handshakes、MCP stdio attachment、update blockers 和跨平台快捷键行为。
+- 修复 issue workflow context、Messenger layout、Library controls、website preview isolation，以及多项 CI 和文档部署回归。
+
 ## v0.4.5
 
 发布时间：2026-07-11
