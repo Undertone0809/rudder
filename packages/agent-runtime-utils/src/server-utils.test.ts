@@ -12,6 +12,7 @@ import {
   prepareAgentInstructionRuntimeContext,
   renderTemplate,
   resolveLocalOperatorHome,
+  resolveRudderDesiredSkillNames,
   resolveRudderCliShimTarget,
   RUDDER_AGENT_HEARTBEAT_INSTRUCTION,
   RUDDER_AGENT_OPERATING_CONTRACT,
@@ -64,6 +65,25 @@ describe("filterRudderDesiredSkillsForBrowserCapability", () => {
 
   it("preserves the desired set when Browser remains available", () => {
     expect(filterRudderDesiredSkillsForBrowserCapability(available, desired, true)).toEqual(desired);
+  });
+});
+
+describe("resolveRudderDesiredSkillNames", () => {
+  it("normalizes legacy Rudder Docs inputs and emits one canonical runtime key", () => {
+    const available = [
+      { key: "bundled:rudder/rudder-docs", runtimeName: "rudder-docs" },
+    ];
+
+    expect(resolveRudderDesiredSkillNames({
+      rudderSkillSync: {
+        desiredSkills: [
+          "rudder",
+          "rudder/rudder",
+          "bundled:rudder/rudder",
+          "bundled:rudder/rudder-docs",
+        ],
+      },
+    }, available)).toEqual(["bundled:rudder/rudder-docs"]);
   });
 });
 

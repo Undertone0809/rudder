@@ -5,15 +5,25 @@ import { describe, expect, it } from "vitest";
 describe("bundled rudder skill docs", () => {
   const readSkillDoc = async () =>
     fs.readFile(
-      path.join(process.cwd(), "server/resources/bundled-skills/rudder/SKILL.md"),
+      path.join(process.cwd(), "server/resources/bundled-skills/rudder-docs/SKILL.md"),
       "utf8",
     );
 
+  it("uses the canonical Rudder Docs package identity", async () => {
+    const contents = await readSkillDoc();
+
+    expect(contents).toMatch(/^---\nname: rudder-docs\n/);
+    await expect(fs.stat(path.join(
+      process.cwd(),
+      "server/resources/bundled-skills/rudder/SKILL.md",
+    ))).rejects.toThrow();
+  });
+
   it("does not teach agent-authored Library entry display metadata in mention URLs", async () => {
     const docs = [
-      "server/resources/bundled-skills/rudder/SKILL.md",
-      "server/resources/bundled-skills/rudder/references/api-reference.md",
-      "server/resources/bundled-skills/rudder/references/cli-reference.md",
+      "server/resources/bundled-skills/rudder-docs/SKILL.md",
+      "server/resources/bundled-skills/rudder-docs/references/api-reference.md",
+      "server/resources/bundled-skills/rudder-docs/references/cli-reference.md",
     ];
     const legacyLibraryEntryTitleMetadataPattern = /library-entry:\/\/[^\s)`\]]+\?(?=[^)\]`\s]*t=)/;
 
@@ -83,9 +93,9 @@ describe("bundled rudder skill docs", () => {
 
   it("keeps linked Library references aligned with no-project artifacts fallback", async () => {
     const docs = [
-      "server/resources/bundled-skills/rudder/SKILL.md",
-      "server/resources/bundled-skills/rudder/references/api-reference.md",
-      "server/resources/bundled-skills/rudder/references/cli-reference.md",
+      "server/resources/bundled-skills/rudder-docs/SKILL.md",
+      "server/resources/bundled-skills/rudder-docs/references/api-reference.md",
+      "server/resources/bundled-skills/rudder-docs/references/cli-reference.md",
     ];
 
     for (const doc of docs) {

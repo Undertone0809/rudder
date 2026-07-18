@@ -149,9 +149,9 @@ describe("organization-skill-picker", () => {
       [
         makeSkill({
           id: "bundle-rudder",
-          key: "rudder/rudder",
-          slug: "rudder",
-          name: "rudder",
+          key: "rudder/rudder-docs",
+          slug: "rudder-docs",
+          name: "rudder-docs",
           sourceType: "local_path",
           sourceBadge: "rudder",
           sourceLabel: "Bundled by Rudder",

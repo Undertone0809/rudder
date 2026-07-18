@@ -9,8 +9,13 @@ describe("organization bundled skill pruning", () => {
     const staleIds = listStaleBundledSkillIds(
       [
         {
-          id: "keep-rudder",
+          id: "drop-legacy-rudder",
           key: "rudder/rudder",
+          metadata: { sourceKind: "rudder_bundled" },
+        },
+        {
+          id: "keep-rudder-docs",
+          key: "rudder/rudder-docs",
           metadata: { sourceKind: "rudder_bundled" },
         },
         {
@@ -39,10 +44,11 @@ describe("organization bundled skill pruning", () => {
           metadata: { sourceKind: "managed_local" },
         },
       ],
-      ["rudder/rudder", "rudder/rudder-create-agent"],
+      ["rudder/rudder-docs", "rudder/rudder-create-agent"],
     );
 
     expect(staleIds).toEqual([
+      "drop-legacy-rudder",
       "drop-agent-browser",
       "drop-skill-optimizer",
       "drop-conversation-to-skill",

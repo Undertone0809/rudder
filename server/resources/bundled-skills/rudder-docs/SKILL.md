@@ -1,5 +1,5 @@
 ---
-name: rudder
+name: rudder-docs
 description: Use Rudder control-plane best practices and CLI-backed references for ownership, checkout, comments, reviews, Library handoff, and organization skills. Runtime-owned heartbeat prompts provide the fixed heartbeat execution flow.
 ---
 

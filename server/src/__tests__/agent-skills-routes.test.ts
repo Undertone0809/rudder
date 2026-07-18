@@ -193,7 +193,14 @@ function normalizeDesiredSkillSelectionRefs(agentRuntimeType: string, requested:
   return Array.from(new Set(requested.flatMap((value) => {
     const trimmed = value.trim();
     if (!trimmed) return [];
-    if (trimmed === "rudder" || trimmed === "rudder/rudder" || trimmed === "bundled:rudder/rudder") {
+    if (
+      trimmed === "rudder-docs"
+      || trimmed === "rudder/rudder-docs"
+      || trimmed === "bundled:rudder/rudder-docs"
+      || trimmed === "rudder"
+      || trimmed === "rudder/rudder"
+      || trimmed === "bundled:rudder/rudder"
+    ) {
       return [];
     }
     if (trimmed === "alpha-test" || trimmed === "organization/organization-1/alpha-test") {
@@ -226,9 +233,9 @@ function buildMockSkillSnapshot(agentRuntimeType: string, desiredSkills: string[
     desiredSkills,
     entries: [
       {
-        key: "rudder",
-        selectionKey: "bundled:rudder/rudder",
-        runtimeName: "rudder",
+        key: "rudder-docs",
+        selectionKey: "bundled:rudder/rudder-docs",
+        runtimeName: "rudder-docs",
         description: "Bundled Rudder skill",
         desired: true,
         configurable: false,
@@ -290,22 +297,22 @@ describe("agent skill routes", () => {
       {
         id: "skill-rudder",
         orgId: "organization-1",
-        key: "rudder/rudder",
-        slug: "rudder",
-        name: "rudder",
+        key: "rudder/rudder-docs",
+        slug: "rudder-docs",
+        name: "rudder-docs",
         sourceBadge: "rudder",
       },
     ]);
     mockCompanySkillService.listRuntimeSkillEntries.mockResolvedValue([
       {
-        key: "rudder/rudder",
-        runtimeName: "rudder",
-        source: "/tmp/rudder",
+        key: "rudder/rudder-docs",
+        runtimeName: "rudder-docs",
+        source: "/tmp/rudder-docs",
       },
     ]);
     mockCompanySkillService.mergeWithRequiredSkillKeys.mockImplementation(
       async (_orgId: string, skillKeys: string[]) =>
-        Array.from(new Set(["rudder/rudder", ...skillKeys])).sort((left, right) => left.localeCompare(right)),
+        Array.from(new Set(["rudder/rudder-docs", ...skillKeys])).sort((left, right) => left.localeCompare(right)),
     );
     mockCompanySkillService.getEnabledSkillKeysForAgent.mockImplementation(
       async () => enabledSkillState,
@@ -336,7 +343,7 @@ describe("agent skill routes", () => {
       agentRuntimeType: "claude_local",
       supported: true,
       mode: "ephemeral",
-      desiredSkills: ["rudder/rudder"],
+      desiredSkills: ["rudder/rudder-docs"],
       entries: [],
       warnings: [],
     });
@@ -344,7 +351,7 @@ describe("agent skill routes", () => {
       agentRuntimeType: "claude_local",
       supported: true,
       mode: "ephemeral",
-      desiredSkills: ["rudder/rudder"],
+      desiredSkills: ["rudder/rudder-docs"],
       entries: [],
       warnings: [],
     });

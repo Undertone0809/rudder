@@ -53,6 +53,10 @@ describe("buildInviteOnboardingTextDocument", () => {
     expect(text).toContain("RUDDER_API_KEY");
     expect(text).toContain("saved token field");
     expect(text).toContain("Gateway token unexpectedly short");
+    expect(text).toContain("/api/skills/rudder-docs");
+    expect(text).toContain("~/.openclaw/skills/rudder-docs/SKILL.md");
+    expect(text).not.toContain("/api/skills/rudder\n");
+    expect(text).not.toContain("~/.openclaw/skills/rudder/SKILL.md");
   });
 
   it("includes loopback diagnostics for authenticated/private onboarding", () => {

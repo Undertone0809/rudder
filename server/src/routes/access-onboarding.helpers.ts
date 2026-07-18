@@ -412,7 +412,7 @@ export function buildInviteOnboardingManifest(
   }
 ) {
   const baseUrl = requestBaseUrl(req);
-  const skillPath = "/api/skills/rudder";
+  const skillPath = "/api/skills/rudder-docs";
   const skillUrl = baseUrl ? `${baseUrl}${skillPath}` : skillPath;
   const registrationEndpointPath = `/api/invites/${token}/accept`;
   const registrationEndpointUrl = baseUrl
@@ -482,10 +482,10 @@ export function buildInviteOnboardingManifest(
         contentType: "text/plain"
       },
       skill: {
-        name: "rudder",
+        name: "rudder-docs",
         path: skillPath,
         url: skillUrl,
-        installPath: "~/.openclaw/skills/rudder/SKILL.md"
+        installPath: "~/.openclaw/skills/rudder-docs/SKILL.md"
       }
     }
   };
@@ -922,4 +922,3 @@ export async function probeInviteResolutionTarget(
     clearTimeout(timeout);
   }
 }
-

@@ -566,7 +566,7 @@ export function registerAgentCommands(program: Command): void {
         examples: [
           {
             description: "Add skills while preserving the agent's existing enabled set:",
-            command: "rudder agent skills enable <agent-id> rudder/rudder local/abc123/custom-skill",
+            command: "rudder agent skills enable <agent-id> rudder/rudder-docs local/abc123/custom-skill",
           },
           {
             description: "Enable one newly created private skill and inspect the resulting snapshot:",
@@ -598,13 +598,13 @@ export function registerAgentCommands(program: Command): void {
       .argument("<agentId>", "Agent ID")
       .requiredOption(
         "--desired-skills <csv>",
-        "Comma-separated desired skill refs (for example rudder/rudder)",
+        "Comma-separated desired skill refs (for example rudder/rudder-docs)",
       )
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
           {
             description: "Replace the optional enabled set with an explicitly preserved CSV:",
-            command: "rudder agent skills sync <agent-id> --desired-skills \"rudder/rudder,local/abc123/custom-skill\"",
+            command: "rudder agent skills sync <agent-id> --desired-skills \"rudder/rudder-docs,local/abc123/custom-skill\"",
           },
           {
             description: "Clear optional skills only when that is the intended final state:",

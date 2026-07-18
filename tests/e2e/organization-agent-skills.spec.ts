@@ -134,7 +134,7 @@ test.describe("Organization and agent skills", () => {
     const skills = await skillsRes.json() as Array<{ key: string }>;
     expect(skills.map((skill) => skill.key)).toEqual(expect.arrayContaining([
       "rudder/para-memory-files",
-      "rudder/rudder",
+      "rudder/rudder-docs",
       "rudder/rudder-create-agent",
       "rudder/rudder-create-plugin",
       "rudder/visualize",
@@ -798,7 +798,7 @@ test.describe("Organization and agent skills", () => {
           command: captureCommandPath,
           model: "gpt-5.4",
           rudderSkillSync: {
-            desiredSkills: ["rudder/rudder"],
+            desiredSkills: ["rudder/rudder-docs"],
           },
         },
       },

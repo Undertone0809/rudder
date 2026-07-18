@@ -19,7 +19,7 @@ async function createSkillDir(root: string, name: string, description = `${name}
 }
 
 describe("claude local skill sync", () => {
-  const rudderSkillKey = "rudder/rudder";
+  const rudderSkillKey = "rudder/rudder-docs";
   const createAgentKey = "rudder/rudder-create-agent";
   const cleanupDirs = new Set<string>();
 

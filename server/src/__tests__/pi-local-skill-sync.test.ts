@@ -12,7 +12,7 @@ async function makeTempDir(prefix: string): Promise<string> {
 }
 
 describe("pi local skill sync", () => {
-  const rudderSkillKey = "rudder/rudder";
+  const rudderSkillKey = "rudder/rudder-docs";
   const cleanupDirs = new Set<string>();
 
   function managedPiSkillsHome(home: string, orgId = "organization-1") {
@@ -53,7 +53,7 @@ describe("pi local skill sync", () => {
     expect(installedEntry?.state).toBe("installed");
     expect(installedEntry?.targetPath).toContain(managedPiSkillsHome(home));
     expect((await fs.lstat(installedEntry?.targetPath ?? "")).isSymbolicLink()).toBe(true);
-    await expect(fs.lstat(path.join(home, ".pi", "agent", "skills", "rudder"))).rejects.toMatchObject({
+    await expect(fs.lstat(path.join(home, ".pi", "agent", "skills", "rudder-docs"))).rejects.toMatchObject({
       code: "ENOENT",
     });
   });

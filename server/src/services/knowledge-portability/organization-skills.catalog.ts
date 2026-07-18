@@ -365,7 +365,11 @@ export function parseSelectionKey(selectionKey: string): {
     return { sourceClass: null, orgKey: null, slug: null, agentRuntimeType: null };
   }
   if (trimmed.startsWith(BUNDLED_SELECTION_PREFIX)) {
-    const orgKey = trimmed.slice(BUNDLED_SELECTION_PREFIX.length).trim();
+    const rawOrgKey = trimmed.slice(BUNDLED_SELECTION_PREFIX.length).trim();
+    const canonicalSlug = getBundledRudderSkillSlug(trimmed);
+    const orgKey = canonicalSlug
+      ? toBundledRudderSkillKey(canonicalSlug) ?? rawOrgKey
+      : rawOrgKey;
     return {
       sourceClass: "bundled",
       orgKey: orgKey || null,
@@ -636,6 +640,7 @@ export function listStaleBundledSkillIds(
         return false;
       }
       const canonicalKey = toBundledRudderSkillKey(getBundledRudderSkillSlug(skill.key)) ?? skill.key;
+      if (canonicalKey !== skill.key) return true;
       return !currentKeysSet.has(canonicalKey);
     })
     .map((skill) => skill.id);

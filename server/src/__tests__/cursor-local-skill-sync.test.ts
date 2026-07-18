@@ -19,7 +19,7 @@ async function createSkillDir(root: string, name: string) {
 }
 
 describe("cursor local skill sync", () => {
-  const rudderSkillKey = "rudder/rudder";
+  const rudderSkillKey = "rudder/rudder-docs";
   const cleanupDirs = new Set<string>();
 
   function managedCursorSkillsHome(home: string, orgId = "organization-1") {
@@ -89,8 +89,8 @@ describe("cursor local skill sync", () => {
         },
         rudderRuntimeSkills: [
           {
-            key: "rudder",
-            runtimeName: "rudder",
+            key: "rudder/rudder-docs",
+            runtimeName: "rudder-docs",
             source: rudderDir,
           },
           {

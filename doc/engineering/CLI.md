@@ -579,13 +579,13 @@ Recommended cases:
   creating, copying, or importing a skill when the goal is additive loading for
   future runs.
   ```sh
-  pnpm rudder agent skills enable <agent-id> rudder/rudder local/abc123/custom-skill --json
+  pnpm rudder agent skills enable <agent-id> rudder/rudder-docs local/abc123/custom-skill --json
   ```
 - **Replace the full optional skill set intentionally.** Use `skills sync` only
   when you have already preserved every desired existing skill in the CSV and
   want the final enabled set to exactly match it.
   ```sh
-  pnpm rudder agent skills sync <agent-id> --desired-skills "rudder/rudder,local/abc123/custom-skill" --json
+  pnpm rudder agent skills sync <agent-id> --desired-skills "rudder/rudder-docs,local/abc123/custom-skill" --json
   ```
 
 Bad cases to avoid:

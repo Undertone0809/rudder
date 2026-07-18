@@ -383,7 +383,7 @@ export function accessRoutes(
   router.get("/skills/index", (_req, res) => {
     res.json({
       skills: [
-        { name: "rudder", path: "/api/skills/rudder" },
+        { name: "rudder-docs", path: "/api/skills/rudder-docs" },
         {
           name: "para-memory-files",
           path: "/api/skills/para-memory-files"

@@ -12,7 +12,7 @@ async function makeTempDir(prefix: string): Promise<string> {
 }
 
 describe("gemini local skill sync", () => {
-  const rudderSkillKey = "rudder/rudder";
+  const rudderSkillKey = "rudder/rudder-docs";
   const cleanupDirs = new Set<string>();
 
   function managedGeminiSkillsHome(home: string, orgId = "organization-1") {

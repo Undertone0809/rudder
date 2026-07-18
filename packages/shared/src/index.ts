@@ -216,7 +216,7 @@ export {
   normalizeOrganizationIssueKey
 } from "./organization-issue-key.js";
 export {
-  RUDDER_BUNDLED_SKILL_SLUGS, buildOrganizationSkillSearchText, formatOrganizationSkillPublicRef, getActiveRudderBundledSkillSlugs, getBundledRudderSkillSlug,
+  RUDDER_BUNDLED_SKILL_SLUGS, RUDDER_DOCS_SELECTION_KEY, RUDDER_DOCS_SKILL_KEY, RUDDER_DOCS_SKILL_SLUG, buildOrganizationSkillSearchText, formatOrganizationSkillPublicRef, getActiveRudderBundledSkillSlugs, getBundledRudderSkillSlug,
   isCanonicalBundledRudderSkillKey, normalizeOrganizationSkillKey, parseOrganizationSkillReference,
   resolveOrganizationSkillReference, toBundledRudderSkillKey, type OrganizationSkillPublicRefContext,
   type OrganizationSkillPublicRefScope,

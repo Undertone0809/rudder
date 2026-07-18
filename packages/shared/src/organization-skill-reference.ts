@@ -48,7 +48,7 @@ function normalizeSkillSlug(value: string | null | undefined) {
 
 export const RUDDER_BUNDLED_SKILL_SLUGS = [
   "para-memory-files",
-  "rudder",
+  "rudder-docs",
   "rudder-create-agent",
   "rudder-create-plugin",
   "skill-creator",
@@ -64,10 +64,31 @@ const RUDDER_BUNDLED_SKILL_KEYS = new Set(
   RUDDER_BUNDLED_SKILL_SLUGS.map((slug) => `rudder/${slug}`),
 );
 
+export const RUDDER_DOCS_SKILL_SLUG = "rudder-docs";
+export const RUDDER_DOCS_SKILL_KEY = `rudder/${RUDDER_DOCS_SKILL_SLUG}`;
+export const RUDDER_DOCS_SELECTION_KEY = `bundled:${RUDDER_DOCS_SKILL_KEY}`;
+
+const LEGACY_RUDDER_DOCS_SKILL_REFERENCES = new Set([
+  "rudder",
+  "rudder/rudder",
+  "bundled:rudder/rudder",
+]);
+
 export function getBundledRudderSkillSlug(value: string | null | undefined) {
   if (!value) return null;
-  const segments = value
-    .trim()
+  const normalizedReference = value.trim().toLowerCase();
+  if (LEGACY_RUDDER_DOCS_SKILL_REFERENCES.has(normalizedReference)) {
+    return RUDDER_DOCS_SKILL_SLUG;
+  }
+
+  const selectionReference = normalizedReference.startsWith("bundled:")
+    ? normalizedReference.slice("bundled:".length)
+    : normalizedReference;
+  if (selectionReference === RUDDER_DOCS_SKILL_SLUG) {
+    return RUDDER_DOCS_SKILL_SLUG;
+  }
+
+  const segments = selectionReference
     .split("/")
     .map((segment) => normalizeSkillSlug(segment))
     .filter((segment): segment is string => Boolean(segment));
@@ -84,9 +105,9 @@ export function getBundledRudderSkillSlug(value: string | null | undefined) {
 }
 
 export function toBundledRudderSkillKey(value: string | null | undefined) {
-  const slug = normalizeSkillSlug(value);
+  const slug = getBundledRudderSkillSlug(value) ?? normalizeSkillSlug(value);
   if (!slug) return null;
-  return `rudder/${slug}`;
+  return `rudder/${slug === "rudder" ? RUDDER_DOCS_SKILL_SLUG : slug}`;
 }
 
 export function isCanonicalBundledRudderSkillKey(value: string | null | undefined) {
@@ -311,9 +332,13 @@ export function resolveOrganizationSkillReference<TSkill extends SkillReferenceS
   if (parsed.kind === "rudder") {
     const slug = parsed.slug;
     if (!slug) return { skill: null, ambiguous: false };
-    const canonicalKey = toBundledRudderSkillKey(slug);
+    const canonicalSlug = getBundledRudderSkillSlug(trimmed) ?? slug;
+    const canonicalKey = toBundledRudderSkillKey(canonicalSlug);
     const legacyKey = canonicalKey ? `rudder/${canonicalKey}` : null;
-    for (const exactKey of [canonicalKey, legacyKey]) {
+    const legacyRudderDocsKey = canonicalSlug === RUDDER_DOCS_SKILL_SLUG
+      ? "rudder/rudder"
+      : null;
+    for (const exactKey of [canonicalKey, legacyKey, legacyRudderDocsKey]) {
       if (!exactKey) continue;
       const byExactKey = skills.find((skill) => skill.key === exactKey);
       if (byExactKey) {

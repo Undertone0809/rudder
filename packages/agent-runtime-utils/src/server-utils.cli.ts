@@ -528,6 +528,19 @@ export function canonicalizeDesiredRudderSkillReference(
   const normalizedReference = reference.trim().toLowerCase().replace(/^rudder\/rudder\//, "rudder/");
   if (!normalizedReference) return "";
 
+  if (
+    normalizedReference === "rudder"
+    || normalizedReference === "rudder/rudder"
+    || normalizedReference === "bundled:rudder/rudder"
+  ) {
+    const canonicalRudderDocsEntry = availableEntries.find((entry) =>
+      entry.key.trim().toLowerCase() === "rudder/rudder-docs"
+      || entry.key.trim().toLowerCase() === "bundled:rudder/rudder-docs"
+      || entry.runtimeName?.trim().toLowerCase() === "rudder-docs"
+    );
+    return canonicalRudderDocsEntry?.key ?? "rudder/rudder-docs";
+  }
+
   const exactKey = availableEntries.find((entry) => entry.key.trim().toLowerCase() === normalizedReference);
   if (exactKey) return exactKey.key;
 

@@ -503,7 +503,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "claude");
     const capturePath = path.join(root, "capture.json");
-    const bundledSkillRoot = path.join(root, "bundled", "rudder");
+    const bundledSkillRoot = path.join(root, "bundled", "rudder-docs");
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(bundledSkillRoot, { recursive: true });
     await fs.writeFile(path.join(bundledSkillRoot, "SKILL.md"), "---\nname: rudder\n---\n", "utf8");
@@ -536,14 +536,14 @@ describe("claude execute", { timeout: 20_000 }, () => {
           },
           rudderRuntimeSkills: [
             {
-              key: "bundled:rudder/rudder",
-              runtimeName: "rudder",
-              name: "rudder",
+              key: "bundled:rudder/rudder-docs",
+              runtimeName: "rudder-docs",
+              name: "rudder-docs",
               source: bundledSkillRoot,
             },
           ],
           rudderSkillSync: {
-            desiredSkills: ["bundled:rudder/rudder"],
+            desiredSkills: ["bundled:rudder/rudder-docs"],
           },
           promptTemplate: "Follow the rudder heartbeat.",
         },
@@ -557,10 +557,10 @@ describe("claude execute", { timeout: 20_000 }, () => {
         appendedSystemPrompt: string | null;
         addDirSkillEntries: string[];
       };
-      expect(capture.addDirSkillEntries).toContain("rudder");
+      expect(capture.addDirSkillEntries).toContain("rudder-docs");
       expect(capture.appendedSystemPrompt).toContain("# Enabled Rudder Skills");
-      expect(capture.appendedSystemPrompt).toContain("- rudder");
-      expect(capture.appendedSystemPrompt).not.toContain("- rudder: bundled:rudder/rudder");
+      expect(capture.appendedSystemPrompt).toContain("- rudder-docs");
+      expect(capture.appendedSystemPrompt).not.toContain("- rudder-docs: bundled:rudder/rudder-docs");
     } finally {
       restoreEnv();
       await fs.rm(root, { recursive: true, force: true });

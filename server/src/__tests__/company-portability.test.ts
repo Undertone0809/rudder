@@ -114,7 +114,7 @@ function asTextFile(entry: OrganizationPortabilityFileEntry | undefined) {
 }
 
 describe("organization portability", () => {
-  const rudderSkillKey = "rudder/rudder";
+  const rudderSkillKey = "rudder/rudder-docs";
   const companyPlaybookKey = "organization/organization-1/organization-playbook";
 
   beforeEach(() => {
@@ -264,12 +264,12 @@ describe("organization portability", () => {
         id: "skill-1",
         orgId: "organization-1",
         key: rudderSkillKey,
-        slug: "rudder",
-        name: "rudder",
+        slug: "rudder-docs",
+        name: "rudder-docs",
         description: "Rudder coordination skill",
-        markdown: "---\nname: rudder\ndescription: Rudder coordination skill\n---\n\n# Rudder\n",
+        markdown: "---\nname: rudder-docs\ndescription: Rudder coordination skill\n---\n\n# Rudder\n",
         sourceType: "github",
-        sourceLocator: "https://github.com/Undertone0809/rudder/tree/master/server/resources/bundled-skills/rudder",
+        sourceLocator: "https://github.com/Undertone0809/rudder/tree/master/server/resources/bundled-skills/rudder-docs",
         sourceRef: "0123456789abcdef0123456789abcdef01234567",
         trustLevel: "markdown_only",
         compatibility: "compatible",
@@ -283,7 +283,7 @@ describe("organization portability", () => {
           repo: "rudder",
           ref: "0123456789abcdef0123456789abcdef01234567",
           trackingRef: "master",
-          repoSkillDir: "server/resources/bundled-skills/rudder",
+          repoSkillDir: "server/resources/bundled-skills/rudder-docs",
         },
       },
       {
@@ -426,9 +426,9 @@ describe("organization portability", () => {
     expect(asTextFile(exported.files["agents/claudecoder/AGENTS.md"])).toContain("skills:");
     expect(asTextFile(exported.files["agents/claudecoder/AGENTS.md"])).toContain(`- "${rudderSkillKey}"`);
     expect(asTextFile(exported.files["agents/cmo/AGENTS.md"])).not.toContain("skills:");
-    expect(asTextFile(exported.files["skills/rudder/rudder/SKILL.md"])).toContain("metadata:");
-    expect(asTextFile(exported.files["skills/rudder/rudder/SKILL.md"])).toContain('kind: "github-dir"');
-    expect(exported.files["skills/rudder/rudder/references/api.md"]).toBeUndefined();
+    expect(asTextFile(exported.files["skills/rudder/rudder-docs/SKILL.md"])).toContain("metadata:");
+    expect(asTextFile(exported.files["skills/rudder/rudder-docs/SKILL.md"])).toContain('kind: "github-dir"');
+    expect(exported.files["skills/rudder/rudder-docs/references/api.md"]).toBeUndefined();
     expect(asTextFile(exported.files["skills/organization/PAP/organization-playbook/SKILL.md"])).toContain("# Organization Playbook");
     expect(asTextFile(exported.files["skills/organization/PAP/organization-playbook/references/checklist.md"])).toContain("# Checklist");
 
@@ -579,9 +579,9 @@ describe("organization portability", () => {
       expandReferencedSkills: true,
     });
 
-    expect(asTextFile(exported.files["skills/rudder/rudder/SKILL.md"])).toContain("# Rudder");
-    expect(asTextFile(exported.files["skills/rudder/rudder/SKILL.md"])).toContain("metadata:");
-    expect(asTextFile(exported.files["skills/rudder/rudder/references/api.md"])).toContain("# API");
+    expect(asTextFile(exported.files["skills/rudder/rudder-docs/SKILL.md"])).toContain("# Rudder");
+    expect(asTextFile(exported.files["skills/rudder/rudder-docs/SKILL.md"])).toContain("metadata:");
+    expect(asTextFile(exported.files["skills/rudder/rudder-docs/references/api.md"])).toContain("# API");
   });
 
   it("exports only selected skills when skills filter is provided", async () => {
@@ -599,7 +599,7 @@ describe("organization portability", () => {
 
     expect(exported.files["skills/organization/PAP/organization-playbook/SKILL.md"]).toBeDefined();
     expect(asTextFile(exported.files["skills/organization/PAP/organization-playbook/SKILL.md"])).toContain("# Organization Playbook");
-    expect(exported.files["skills/rudder/rudder/SKILL.md"]).toBeUndefined();
+    expect(exported.files["skills/rudder/rudder-docs/SKILL.md"]).toBeUndefined();
   });
 
   it("warns and exports all skills when skills filter matches nothing", async () => {
@@ -617,7 +617,7 @@ describe("organization portability", () => {
 
     expect(exported.warnings).toContainEqual(expect.stringContaining("nonexistent-skill"));
     expect(exported.files["skills/organization/PAP/organization-playbook/SKILL.md"]).toBeDefined();
-    expect(exported.files["skills/rudder/rudder/SKILL.md"]).toBeDefined();
+    expect(exported.files["skills/rudder/rudder-docs/SKILL.md"]).toBeDefined();
   });
 
   it("exports the organization logo into images/ and references it from .rudder.yaml", async () => {

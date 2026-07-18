@@ -162,7 +162,7 @@ describe("project workspace skill discovery", () => {
         "  sources:",
         "    - kind: github-dir",
         "      repo: rudder/rudder",
-        "      path: server/resources/bundled-skills/rudder",
+        "      path: server/resources/bundled-skills/rudder-docs",
         "---",
         "",
         "# Inline Metadata Skill",
@@ -183,7 +183,7 @@ describe("project workspace skill discovery", () => {
         {
           kind: "github-dir",
           repo: "rudder/rudder",
-          path: "server/resources/bundled-skills/rudder",
+          path: "server/resources/bundled-skills/rudder-docs",
         },
       ],
     });

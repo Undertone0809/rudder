@@ -19,7 +19,7 @@ async function createSkillDir(root: string, name: string, description = `${name}
 }
 
 describe("opencode local skill sync", () => {
-  const rudderSkillKey = "rudder/rudder";
+  const rudderSkillKey = "rudder/rudder-docs";
   const cleanupDirs = new Set<string>();
 
   function managedOpenCodeSkillsHome(home: string, orgId = "organization-1") {
@@ -64,9 +64,9 @@ describe("opencode local skill sync", () => {
     expect(after.mode).toBe("persistent");
     const installedEntry = after.entries.find((entry) => entry.key === rudderSkillKey);
     expect(installedEntry?.state).toBe("installed");
-    expect(installedEntry?.targetPath).toBe(path.join(managedOpenCodeSkillsHome(home), "rudder"));
+    expect(installedEntry?.targetPath).toBe(path.join(managedOpenCodeSkillsHome(home), "rudder-docs"));
     expect((await fs.lstat(installedEntry?.targetPath ?? "")).isSymbolicLink()).toBe(true);
-    await expect(fs.lstat(path.join(home, ".claude", "skills", "rudder"))).rejects.toMatchObject({
+    await expect(fs.lstat(path.join(home, ".claude", "skills", "rudder-docs"))).rejects.toMatchObject({
       code: "ENOENT",
     });
   });
@@ -108,7 +108,7 @@ describe("opencode local skill sync", () => {
     expect(after.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("available");
     const targetPath = after.entries.find((entry) => entry.key === rudderSkillKey)?.targetPath ?? "";
     expect(targetPath).toContain(managedOpenCodeSkillsHome(home));
-    await expect(fs.lstat(path.join(managedOpenCodeSkillsHome(home), "rudder"))).rejects.toMatchObject({
+    await expect(fs.lstat(path.join(managedOpenCodeSkillsHome(home), "rudder-docs"))).rejects.toMatchObject({
       code: "ENOENT",
     });
   });
