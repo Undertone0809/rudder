@@ -258,6 +258,22 @@ vi.mock("@tanstack/react-query", () => ({
           error: null,
         };
       }
+      if (String(filePath).endsWith(".truncated")) {
+        return {
+          data: {
+            filePath,
+            rootExists: mockState.workspaceFileRootExists,
+            content: "Bounded text remains readable.",
+            contentPath: null,
+            contentType: "text/plain",
+            previewKind: "text",
+            message: "Showing the bounded read-only preview.",
+            truncated: true,
+          },
+          isLoading: false,
+          error: null,
+        };
+      }
       if (String(filePath).endsWith(".bin") || String(filePath).endsWith(".opaque")) {
         return {
           data: {
@@ -768,6 +784,17 @@ describe("OrganizationWorkspaces scroll regions", () => {
       await Promise.resolve();
     });
 
+    expect(document.body.textContent).not.toContain("This file can’t be previewed or edited in Rudder.");
+    expect(document.querySelector("[data-testid='org-workspaces-unsupported-file-launcher']")).toBeNull();
+  });
+
+  it("keeps bounded truncated text in the read-only presentation before the unsupported fallback", () => {
+    mockState.searchParams = "path=artifacts/chat-ui-review/bounded.truncated";
+
+    renderWorkspacesPage();
+
+    expect(document.querySelector("[data-testid='org-workspaces-readonly-preview-scroll']")).not.toBeNull();
+    expect(document.body.textContent).toContain("Bounded text remains readable.");
     expect(document.body.textContent).not.toContain("This file can’t be previewed or edited in Rudder.");
     expect(document.querySelector("[data-testid='org-workspaces-unsupported-file-launcher']")).toBeNull();
   });
