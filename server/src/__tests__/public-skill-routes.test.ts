@@ -27,6 +27,8 @@ describe("public skill bootstrap routes", () => {
     });
     expect(response.body.skills).not.toContainEqual(expect.objectContaining({ name: "rudder" }));
     expect(response.body.skills).not.toContainEqual(expect.objectContaining({ path: "/api/skills/rudder" }));
+    expect(response.body.skills).not.toContainEqual(expect.objectContaining({ name: "rudder-create-agent" }));
+    expect(response.body.skills).not.toContainEqual(expect.objectContaining({ name: "rudder-create-plugin" }));
   });
 
   it("serves the canonical body from both canonical and compatibility routes", async () => {
@@ -39,5 +41,14 @@ describe("public skill bootstrap routes", () => {
     expect(canonical.text).toMatch(/^---\nname: rudder-docs\n/);
     expect(legacy.status).toBe(200);
     expect(legacy.text).toBe(canonical.text);
+  });
+
+  it("hard-deletes both retired creation skill download routes", async () => {
+    const app = createApp();
+
+    for (const retiredSlug of ["rudder-create-agent", "rudder-create-plugin"]) {
+      const response = await request(app).get(`/api/skills/${retiredSlug}`);
+      expect(response.status, retiredSlug).toBe(404);
+    }
   });
 });

@@ -1,4 +1,5 @@
 import {
+  agentEnabledSkills,
   agents,
   applyPendingMigrations,
   createDb,
@@ -191,11 +192,9 @@ describe("organization skill references", () => {
 
     const skills = await skillSvc.list(orgId);
 
-    expect(skills.slice(0, 7).map((skill) => skill.key)).toEqual([
+    expect(skills.slice(0, 5).map((skill) => skill.key)).toEqual([
       "rudder/para-memory-files",
       "rudder/rudder-docs",
-      "rudder/rudder-create-agent",
-      "rudder/rudder-create-plugin",
       "rudder/skill-creator",
       "rudder/visualize",
       "rudder/browser",
@@ -203,13 +202,14 @@ describe("organization skill references", () => {
 
     expect(skills.map((skill) => skill.key)).toEqual(expect.arrayContaining([
       "rudder/rudder-docs",
-      "rudder/rudder-create-agent",
       "rudder/skill-creator",
       "rudder/visualize",
       `organization/${orgId}/deep-research`,
       `organization/${orgId}/software-product-advisor`,
     ]));
     expect(skills.map((skill) => skill.key)).not.toEqual(expect.arrayContaining([
+      "rudder/rudder-create-agent",
+      "rudder/rudder-create-plugin",
       "rudder/skill-optimizer",
       "rudder/conversation-to-skill",
     ]));
@@ -233,6 +233,163 @@ describe("organization skill references", () => {
       editable: false,
       trustLevel: "assets",
     });
+  });
+
+  it("prunes retired bundled rows and their enabled associations during inventory refresh", { timeout: 30000 }, async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const retiredRows = [
+      {
+        id: randomUUID(),
+        key: "rudder/rudder-create-agent",
+        slug: "rudder-create-agent",
+        sourceKind: "rudder_bundled",
+      },
+      {
+        id: randomUUID(),
+        key: "rudder/rudder-create-plugin",
+        slug: "rudder-create-plugin",
+        sourceKind: "paperclip_bundled",
+      },
+    ];
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Retired Skills Org",
+      urlKey: "retired-skills-org",
+      issuePrefix: "RSO",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Builder",
+      workspaceKey: "builder",
+      role: "engineer",
+      status: "idle",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+    });
+    await db.insert(organizationSkills).values(retiredRows.map((row) => ({
+      id: row.id,
+      orgId,
+      key: row.key,
+      slug: row.slug,
+      name: row.slug,
+      description: null,
+      markdown: `---\nname: ${row.slug}\ndescription: retired\n---\n`,
+      sourceType: "local_path" as const,
+      sourceLocator: `/retired/${row.slug}`,
+      sourceRef: null,
+      trustLevel: "markdown_only" as const,
+      compatibility: "compatible" as const,
+      fileInventory: [{ path: "SKILL.md", kind: "skill" as const }],
+      metadata: { sourceKind: row.sourceKind, skillKey: row.key },
+    })));
+    await db.insert(agentEnabledSkills).values(retiredRows.map((row) => ({
+      orgId,
+      agentId,
+      skillKey: row.key,
+    })));
+
+    const refreshed = await skillSvc.list(orgId);
+    expect(refreshed.map((skill) => skill.key)).not.toEqual(expect.arrayContaining(
+      retiredRows.map((row) => row.key),
+    ));
+
+    const persistedSkills = await db.select().from(organizationSkills);
+    const persistedAssociations = await db.select().from(agentEnabledSkills);
+    expect(persistedSkills.map((row) => row.key)).not.toEqual(expect.arrayContaining(
+      retiredRows.map((row) => row.key),
+    ));
+    expect(persistedAssociations.map((row) => row.skillKey)).not.toEqual(expect.arrayContaining(
+      retiredRows.map((row) => row.key),
+    ));
+  });
+
+  it("preserves user-owned collisions but removes retired identities from selection and runtime projection", { timeout: 30000 }, async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const retiredSkillId = randomUUID();
+    const retiredSkillKey = "rudder/rudder-create-agent";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "User Collision Org",
+      urlKey: "user-collision-org",
+      issuePrefix: "UCO",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Collision Agent",
+      workspaceKey: "collision-agent",
+      role: "engineer",
+      status: "idle",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+    });
+    await db.insert(organizationSkills).values({
+      id: retiredSkillId,
+      orgId,
+      key: retiredSkillKey,
+      slug: "rudder-create-agent",
+      name: "User-owned Agent Helper",
+      description: "A user-owned collision that must not be deleted.",
+      markdown: "---\nname: rudder-create-agent\n---\n",
+      sourceType: "catalog",
+      sourceLocator: "user-owned/rudder-create-agent",
+      sourceRef: null,
+      trustLevel: "markdown_only",
+      compatibility: "compatible",
+      fileInventory: [{ path: "SKILL.md", kind: "skill" }],
+      metadata: { sourceKind: "catalog" },
+    });
+    await db.insert(agentEnabledSkills).values({
+      orgId,
+      agentId,
+      skillKey: retiredSkillKey,
+    });
+
+    const agent = {
+      id: agentId,
+      orgId,
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+    };
+    const inventory = await skillSvc.list(orgId);
+    expect(inventory).toContainEqual(expect.objectContaining({
+      id: retiredSkillId,
+      key: retiredSkillKey,
+      sourceBadge: "catalog",
+    }));
+    await expect(skillSvc.resolveRequestedSkillKeys(orgId, [retiredSkillKey])).rejects.toThrow(
+      "unknown references: rudder/rudder-create-agent",
+    );
+    for (const retiredSelectionRef of [
+      "bundled:rudder/rudder-create-agent",
+      "bundled:rudder/rudder-create-plugin",
+    ]) {
+      await expect(skillSvc.resolveDesiredSkillSelectionForAgent(
+        agent,
+        {},
+        [retiredSelectionRef],
+      )).rejects.toThrow(`unknown references: ${retiredSelectionRef}`);
+    }
+    await expect(skillSvc.getEnabledSkillKeysForAgent(orgId, agent)).resolves.toEqual([]);
+    await expect(skillSvc.listRealizedSkillEntriesForAgent(
+      orgId,
+      agentId,
+      "codex_local",
+      {},
+      [`org:${retiredSkillKey}`],
+      { materializeMissing: false },
+    )).resolves.toEqual(expect.not.arrayContaining([
+      expect.objectContaining({ runtimeName: "rudder-create-agent" }),
+    ]));
   });
 
   it("normalizes legacy desired inputs without duplicating the canonical bundled row or snapshot entry", { timeout: 30000 }, async () => {

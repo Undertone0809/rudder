@@ -118,8 +118,8 @@ report the status and required follow-up rather than bypassing it.
 - Never cancel cross-team work. Reassign upward with an explanation, and use
   `chainOfCommand` for escalation.
 - Above 80% spend, focus on critical work only and avoid expanding scope.
-- Use the canonical `rudder-create-agent` workflow for hiring or agent creation
-  rather than assembling a raw control-plane payload.
+- Use [Agent creation](agent-creation.md) for the canonical governed hiring
+  workflow rather than assembling a raw control-plane payload.
 
 ## Git Identity And Attribution
 

@@ -5,12 +5,13 @@ import {
   asString,
   asStringArray,
   buildRudderEnv,
-  cleanupLegacyRudderDocsManagedEntry,
+  cleanupRetiredRudderManagedEntries,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
   ensurePathInEnv,
   ensureRudderCliInPath,
   ensureRudderSkillSymlink,
+  formatRetiredRudderManagedEntryCleanupWarnings,
   joinPromptSections,
   loadAgentInstructionsPrefix,
   parseObject,
@@ -174,26 +175,15 @@ export async function ensureCursorSkillsInjected(
   }
   const desiredSet = new Set(options.desiredSkillNames ?? skillsEntries.map((entry) => entry.key));
   const selectedEntries = skillsEntries.filter((entry) => desiredSet.has(entry.key));
-  const legacyCleanup = await cleanupLegacyRudderDocsManagedEntry(skillsHome, selectedEntries);
-  if (legacyCleanup.state === "removed") {
-    await onLog(
-      "stderr",
-      `[rudder] Removed legacy Rudder-managed skill entry "rudder" from ${skillsHome}.\n`,
-    );
-  } else if (legacyCleanup.state === "collision") {
-    await onLog(
-      "stderr",
-      `[rudder] Preserved existing "rudder" path at ${legacyCleanup.targetPath} because Rudder ownership could not be proven.\n`,
-    );
-  } else if (legacyCleanup.state === "failed") {
-    await onLog(
-      "stderr",
-      `[rudder] Failed to remove legacy Rudder-managed skill entry "rudder" at ${legacyCleanup.targetPath}; ${legacyCleanup.detail}.\n`,
-    );
+  const cleanupResults = await cleanupRetiredRudderManagedEntries(skillsHome, selectedEntries);
+  for (const warning of formatRetiredRudderManagedEntryCleanupWarnings(cleanupResults, skillsHome)) {
+    await onLog("stderr", `[rudder] ${warning}\n`);
   }
   const allowedSkillNames = selectedEntries.map((entry) => entry.runtimeName);
-  if (legacyCleanup.state === "collision" || legacyCleanup.state === "failed") {
-    allowedSkillNames.push("rudder");
+  for (const cleanupResult of cleanupResults) {
+    if (cleanupResult.state === "collision" || cleanupResult.state === "failed") {
+      allowedSkillNames.push(cleanupResult.runtimeName);
+    }
   }
   const removedSkills = await removeUnselectedRudderSkillSymlinks(
     skillsHome,

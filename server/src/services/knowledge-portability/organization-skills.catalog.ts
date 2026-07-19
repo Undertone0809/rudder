@@ -19,6 +19,7 @@ import {
   RUDDER_BUNDLED_SKILL_SLUGS,
   getBundledRudderSkillSlug,
   isCanonicalBundledRudderSkillKey,
+  isRetiredRudderCreationSkillReference,
   normalizeAgentUrlKey,
   resolveOrganizationSkillReference,
   toBundledRudderSkillKey,
@@ -428,8 +429,15 @@ export function normalizeSelectionRef(
 ): string | null {
   const trimmed = reference.trim();
   if (!trimmed) return null;
+  if (isRetiredRudderCreationSkillReference(trimmed)) return null;
 
   const parsedSelection = parseSelectionKey(trimmed);
+  if (
+    parsedSelection.orgKey
+    && isRetiredRudderCreationSkillReference(parsedSelection.orgKey)
+  ) {
+    return null;
+  }
   if (parsedSelection.sourceClass === "bundled") {
     return parsedSelection.orgKey ? buildBundledSelectionKey(parsedSelection.orgKey) : null;
   }

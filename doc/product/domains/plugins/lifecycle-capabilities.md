@@ -24,6 +24,7 @@ related_code:
   - server/src/services/plugin-capability-validator.ts
   - server/src/services/plugin-job-scheduler.ts
   - server/src/services/plugin-tool-dispatcher.ts
+  - server/resources/bundled-skills/rudder-docs/references/plugin-authoring.md
   - ui/src/pages/PluginManager.tsx
   - ui/src/pages/PluginSettings.tsx
   - ui/src/pages/PluginPage.tsx
@@ -33,6 +34,9 @@ related_tests:
   - server/src/__tests__/plugin-package-resolution.test.ts
   - server/src/__tests__/plugin-dev-watcher.test.ts
   - tests/e2e/linear-plugin-import.spec.ts
+  - server/src/__tests__/bundled-rudder-skill-docs.test.ts
+related_plans:
+  - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
 edit_policy: user_confirmed_only
 ---
 
@@ -82,6 +86,10 @@ Evidence:
 - `tests/e2e/linear-plugin-import.spec.ts` covers an installed plugin user path.
 - Known gap: plugin contracts are extension-surface guardrails, not a promotion
   of plugins into the dated V1 core scope.
+- The bundled `rudder-docs` Plugin authoring reference routes explicit scaffold
+  and package-development requests through the current engineering guide and
+  SDK, then requires package and applicable host verification. It does not add
+  a new install source or lifecycle state.
 
 ## PLUGIN.CAPABILITY.001
 
@@ -120,6 +128,9 @@ Evidence:
   `server/src/services/plugin-tool-registry.ts` own namespaced tool dispatch.
 - Known gap: every new bridge operation must update capability validation
   before it is exposed to plugins.
+- The bundled Plugin authoring reference preserves the current trusted-code and
+  worker capability boundary, including the absence of a frontend capability
+  sandbox. It does not grant a Plugin new host APIs.
 
 ## PLUGIN.JOBS.WEBHOOKS.001
 
@@ -155,3 +166,6 @@ Evidence:
   tables preserve plugin-owned operational evidence.
 - Known gap: webhook delivery retry policy should be expanded if external
   plugin webhooks become a primary automation path.
+- The bundled Plugin authoring reference points authors back to these
+  namespacing, capability, logging, and failure-evidence rules for jobs and
+  webhooks; it does not change their runtime semantics.

@@ -1,6 +1,6 @@
 ---
 name: rudder-docs
-description: "Use when the user asks how Rudder works or how to use, configure, extend, operate, or troubleshoot Rudder; needs current guidance for Rudder agents, issues, Chat, runs, reviews, approvals, automations, Library, projects, skills, workspaces, CLI, MCP tools, APIs, or source behavior; or needs an exact supported command or product contract. Do not use for greetings, ordinary work merely running inside Rudder, routine actions already clear from the active context and typed tools, or general coding and research tasks that do not ask about Rudder."
+description: "Use when the user asks how Rudder works; needs current Rudder docs, exact behavior, commands, contracts, APIs, or source evidence; asks to create, hire, or configure Rudder agents; or asks to scaffold, develop, or verify Rudder plugins. For explicit creation requests, verify the current interface before acting within existing authorization. Do not use for greetings, ordinary work merely running inside Rudder, routine actions already clear from the active context and typed tools, non-Rudder plugin work, or general coding and research tasks that do not ask about Rudder."
 ---
 
 # Rudder Docs
@@ -33,6 +33,8 @@ Choose one primary class before retrieving evidence:
   tests, API compatibility, or an exact source-level explanation.
 - **Discrepancy, troubleshooting, or release:** observed behavior differs from
   guidance, a Rudder operation failed, or the answer depends on a version.
+- **Explicit creation or authoring:** the user asks to create, hire, or
+  configure a Rudder Agent, or to scaffold, develop, or verify a Rudder Plugin.
 - **Offline or restricted:** the preferred live, public, or source evidence is
   unavailable.
 
@@ -48,6 +50,16 @@ use `rudder agent capabilities --json`; then use `rudder --version` and the
 exact installed command's `--help`. Consult the relevant part of the CLI
 reference only after those live checks. Use the API reference only for an
 explicit internal, debugging, or compatibility question.
+
+### Explicit Agent Or Plugin Work
+
+For Agent creation or configuration, read
+[Agent creation](references/agent-creation.md). For Plugin scaffolding or
+authoring, read [Plugin authoring](references/plugin-authoring.md). Verify the
+current typed capability, installed command, engineering contract, or source
+before acting. Only an explicit user request to perform the creation or change
+authorizes entering a mutation workflow; a question about how it works remains
+read-only.
 
 ### Official Public Documentation
 
@@ -120,12 +132,16 @@ Read only the reference needed for the request:
    compatibility endpoint contracts; not the normal first interface.
 2. [CLI reference](references/cli-reference.md) — typed MCP capability and
    installed CLI fallback catalog plus exact command semantics.
-3. [Control-plane practices](references/control-plane-practices.md) — exact
+3. [Agent creation](references/agent-creation.md) — permission-aware Agent
+   configuration, governed hiring, approval, revision, and evidence workflow.
+4. [Plugin authoring](references/plugin-authoring.md) — current scaffold,
+   manifest, worker, UI, capability, route, and verification workflow.
+5. [Control-plane practices](references/control-plane-practices.md) — exact
    conditional behavior for ownership, reviews, approvals, budgets,
    workspaces, Library handoff, authentication, and safe git use.
-4. [Organization skills](references/organization-skills.md) — discover,
+6. [Organization skills](references/organization-skills.md) — discover,
    import, inspect, enable, and synchronize organization or agent skills.
-5. [Source map](references/source-map.md) — stable official documentation,
+7. [Source map](references/source-map.md) — stable official documentation,
    Product Logic, engineering, implementation, test, release, and search
    routes.
 

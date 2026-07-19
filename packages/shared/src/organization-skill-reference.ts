@@ -49,8 +49,6 @@ function normalizeSkillSlug(value: string | null | undefined) {
 export const RUDDER_BUNDLED_SKILL_SLUGS = [
   "para-memory-files",
   "rudder-docs",
-  "rudder-create-agent",
-  "rudder-create-plugin",
   "skill-creator",
   "visualize",
   "browser",
@@ -67,6 +65,15 @@ const RUDDER_BUNDLED_SKILL_KEYS = new Set(
 export const RUDDER_DOCS_SKILL_SLUG = "rudder-docs";
 export const RUDDER_DOCS_SKILL_KEY = `rudder/${RUDDER_DOCS_SKILL_SLUG}`;
 export const RUDDER_DOCS_SELECTION_KEY = `bundled:${RUDDER_DOCS_SKILL_KEY}`;
+
+export const RETIRED_RUDDER_CREATION_SKILL_SLUGS = [
+  "rudder-create-agent",
+  "rudder-create-plugin",
+] as const;
+
+const RETIRED_RUDDER_CREATION_SKILL_SLUG_SET = new Set<string>(
+  RETIRED_RUDDER_CREATION_SKILL_SLUGS,
+);
 
 const LEGACY_RUDDER_DOCS_SKILL_REFERENCES = new Set([
   "rudder",
@@ -139,6 +146,26 @@ function normalizeSegmentList(reference: string) {
     .split("/")
     .map((segment) => normalizeSkillSlug(segment))
     .filter((segment): segment is string => Boolean(segment));
+}
+
+export function isRetiredRudderCreationSkillReference(value: string | null | undefined) {
+  if (!value) return false;
+  const normalizedReference = value.trim().toLowerCase();
+  const selectionReference = normalizedReference.startsWith("bundled:")
+    ? normalizedReference.slice("bundled:".length)
+    : normalizedReference;
+  const segments = normalizeSegmentList(selectionReference);
+
+  if (segments.length === 1) {
+    return RETIRED_RUDDER_CREATION_SKILL_SLUG_SET.has(segments[0]!);
+  }
+  if (segments.length === 2 && segments[0] === "rudder") {
+    return RETIRED_RUDDER_CREATION_SKILL_SLUG_SET.has(segments[1]!);
+  }
+  if (segments.length === 3 && segments[0] === "rudder" && segments[1] === "rudder") {
+    return RETIRED_RUDDER_CREATION_SKILL_SLUG_SET.has(segments[2]!);
+  }
+  return false;
 }
 
 function parseRepositoryLocator(sourceLocator: string | null | undefined, sourceLabel: string | null | undefined) {
@@ -290,6 +317,9 @@ export function resolveOrganizationSkillReference<TSkill extends SkillReferenceS
 ): ResolveOrganizationSkillReferenceResult<TSkill> {
   const trimmed = reference.trim();
   if (!trimmed) {
+    return { skill: null, ambiguous: false };
+  }
+  if (isRetiredRudderCreationSkillReference(trimmed)) {
     return { skill: null, ambiguous: false };
   }
 

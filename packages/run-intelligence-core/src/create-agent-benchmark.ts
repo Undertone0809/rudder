@@ -113,7 +113,7 @@ const FALLBACK_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\bmkdir\b.*\.agents\//i, label: "mkdir .agents path" },
   { pattern: /\b(create|write|save).*(SKILL\.md|COMPANY\.md|instructions? file)/i, label: "local instructions write" },
   { pattern: /create agent director(y|ies)|local agent director(y|ies)/i, label: "local agent directory fallback" },
-  { pattern: /\.agents\/skills\/|server\/resources\/bundled-skills\/rudder-create-agent/i, label: "manual skill file browsing" },
+  { pattern: /\.agents\/skills\//i, label: "manual skill file browsing" },
 ];
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
 

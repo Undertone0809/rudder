@@ -144,7 +144,7 @@ describe("create-agent benchmark helpers", () => {
         title: "Chief Technology Officer",
         reportsToFixture: "ceo",
         agentRuntimeType: "codex_local",
-        desiredSkills: ["rudder/rudder-create-agent"],
+        desiredSkills: ["rudder/rudder-docs"],
         sourceIssueRequired: true,
       },
       fixtures: {
@@ -189,7 +189,7 @@ describe("create-agent benchmark helpers", () => {
         title: "Chief Technology Officer",
         reportsToFixture: "ceo",
         agentRuntimeType: "codex_local",
-        desiredSkills: ["rudder/rudder-create-agent"],
+        desiredSkills: ["rudder/rudder-docs"],
         sourceIssueRequired: true,
       },
     });
@@ -206,7 +206,7 @@ describe("create-agent benchmark helpers", () => {
             agentRuntimeType: "codex_local",
             supported: true,
             mode: "persistent",
-            desiredSkills: ["rudder/rudder-create-agent"],
+            desiredSkills: ["rudder/rudder-docs"],
             entries: [],
             warnings: [],
           },
@@ -262,6 +262,54 @@ describe("create-agent benchmark helpers", () => {
     expect(result.checks.create_agent_no_filesystem_fallback.value).toBe("fail");
     expect(result.checks.create_agent_overall_correctness.value).toBe("fail");
     expect(result.finalClassification).toBe("fail");
+  });
+
+  it("does not classify reading the unified Agent creation reference as a filesystem fallback", () => {
+    const testCase = parseCreateAgentCase({
+      id: "direct-engineer-docs",
+      prompt: "Create an engineer",
+      expectedPath: "direct_create",
+      expectedAgentShape: { role: "engineer" },
+    });
+    const detail = makeRunDetail();
+    detail.logContent = "Read server/resources/bundled-skills/rudder-docs/references/agent-creation.md";
+
+    const result = evaluateCreateAgentBenchmark({
+      testCase,
+      benchmarkMetadata: buildCreateAgentBenchmarkMetadata({ testCase, judgeVersion: null }),
+      issueId: "issue-1",
+      runDetail: detail,
+      createdAgents: [],
+      createdApprovals: [],
+      judge: null,
+    });
+
+    expect(result.filesystemFallbackMatches).toEqual([]);
+    expect(result.checks.create_agent_no_filesystem_fallback.value).toBe("pass");
+  });
+
+  it("continues to flag manual repo skill browsing as a filesystem fallback", () => {
+    const testCase = parseCreateAgentCase({
+      id: "direct-engineer-repo-skill",
+      prompt: "Create an engineer",
+      expectedPath: "direct_create",
+      expectedAgentShape: { role: "engineer" },
+    });
+    const detail = makeRunDetail();
+    detail.logContent = "Read .agents/skills/create-agent/SKILL.md";
+
+    const result = evaluateCreateAgentBenchmark({
+      testCase,
+      benchmarkMetadata: buildCreateAgentBenchmarkMetadata({ testCase, judgeVersion: null }),
+      issueId: "issue-1",
+      runDetail: detail,
+      createdAgents: [],
+      createdApprovals: [],
+      judge: null,
+    });
+
+    expect(result.filesystemFallbackMatches).toContain("manual skill file browsing");
+    expect(result.checks.create_agent_no_filesystem_fallback.value).toBe("fail");
   });
 
   it("keeps partial side effects observable when the run is still in progress", () => {

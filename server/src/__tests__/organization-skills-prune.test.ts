@@ -24,6 +24,21 @@ describe("organization bundled skill pruning", () => {
           metadata: { sourceKind: "rudder_bundled" },
         },
         {
+          id: "drop-retired-create-agent",
+          key: "rudder/rudder-create-agent",
+          metadata: { sourceKind: "rudder_bundled" },
+        },
+        {
+          id: "drop-retired-create-plugin",
+          key: "rudder/rudder-create-plugin",
+          metadata: { sourceKind: "paperclip_bundled" },
+        },
+        {
+          id: "keep-user-owned-create-agent",
+          key: "rudder/rudder-create-agent",
+          metadata: { sourceKind: "local_path" },
+        },
+        {
           id: "drop-skill-optimizer",
           key: "rudder/skill-optimizer",
           metadata: { sourceKind: "rudder_bundled" },
@@ -44,12 +59,14 @@ describe("organization bundled skill pruning", () => {
           metadata: { sourceKind: "managed_local" },
         },
       ],
-      ["rudder/rudder-docs", "rudder/rudder-create-agent"],
+      ["rudder/rudder-docs"],
     );
 
     expect(staleIds).toEqual([
       "drop-legacy-rudder",
       "drop-agent-browser",
+      "drop-retired-create-agent",
+      "drop-retired-create-plugin",
       "drop-skill-optimizer",
       "drop-conversation-to-skill",
       "drop-legacy-paperclip",

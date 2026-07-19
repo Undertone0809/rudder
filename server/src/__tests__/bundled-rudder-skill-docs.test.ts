@@ -11,6 +11,8 @@ describe("bundled rudder docs skill", () => {
   const referenceNames = [
     "api-reference.md",
     "cli-reference.md",
+    "agent-creation.md",
+    "plugin-authoring.md",
     "control-plane-practices.md",
     "organization-skills.md",
     "source-map.md",
@@ -38,10 +40,22 @@ describe("bundled rudder docs skill", () => {
     expect(description.length).toBeLessThan(1024);
     expect(description).not.toMatch(/[<>]/);
     expect(description).toContain("how Rudder works");
+    expect(description).toMatch(/create, hire, or configure Rudder [Aa]gents/);
+    expect(description).toMatch(/scaffold, develop, or verify Rudder [Pp]lugins/);
     expect(description).toContain("Do not use for greetings");
     expect(description).toContain("ordinary work merely running inside Rudder");
     expect(description).toContain("routine actions already clear from the active context and typed tools");
     expect(description).toContain("general coding and research tasks that do not ask about Rudder");
+  });
+
+  it("routes explicit creation and authoring intent without treating docs lookup as mutation authority", async () => {
+    const contents = await readSkill();
+
+    expect(contents).toContain("Explicit creation or authoring");
+    expect(contents).toMatch(/Agent creation or configuration[\s\S]*agent-creation\.md/);
+    expect(contents).toMatch(/Plugin scaffolding or\s+authoring[\s\S]*plugin-authoring\.md/);
+    expect(contents).toMatch(/Only an explicit user request[\s\S]*mutation/);
+    expect(contents).toMatch(/docs-only question does not authorize mutations/i);
   });
 
   it("is a compact authoritative router with an explicit prompt-injection self-gate", async () => {
@@ -102,10 +116,13 @@ describe("bundled rudder docs skill", () => {
     expect((contents.match(/^```/gm) ?? []).length).toBe(0);
   });
 
-  it("links exactly the five progressive references and every link resolves", async () => {
+  it("links exactly the seven progressive references and every link resolves", async () => {
     const contents = await readSkill();
+    const referenceMap = contents.match(
+      /## Progressive Reference Map\n([\s\S]*?)(?=\n## )/,
+    )?.[1] ?? "";
     const linkedReferences = Array.from(
-      contents.matchAll(/\]\(references\/([^)]+\.md)\)/g),
+      referenceMap.matchAll(/\]\(references\/([^)]+\.md)\)/g),
       (match) => match[1],
     );
 
@@ -114,6 +131,83 @@ describe("bundled rudder docs skill", () => {
       await expect(
         fs.stat(path.join(root, "references", linkedReference)),
       ).resolves.toBeDefined();
+    }
+  });
+
+  it("preserves the governed Agent creation workflow in its focused reference", async () => {
+    const contents = await fs.readFile(
+      path.join(root, "references", "agent-creation.md"),
+      "utf8",
+    );
+
+    for (const required of [
+      "canCreateAgents",
+      "rudder agent me --json",
+      "rudder agent config index",
+      "rudder agent config doc",
+      "rudder agent config list",
+      "desiredSkills",
+      "reportsTo",
+      "promptTemplate",
+      "SOUL.md",
+      "sourceIssueId",
+      "pending_approval",
+      "rudder approval resubmit",
+      "agent.id",
+      "approval.id",
+    ]) {
+      expect(contents, required).toContain(required);
+    }
+    for (const role of [
+      "ceo", "cto", "cmo", "cfo", "engineer", "designer", "pm",
+      "qa", "devops", "researcher", "general",
+    ]) {
+      expect(contents, role).toMatch(new RegExp(`\\b${role}\\b`));
+    }
+    expect(contents).toMatch(/typed capabilit(?:y|ies)[\s\S]*rudder agent hire/i);
+    expect(contents).toMatch(/direct[\s\S]*approval: null/i);
+    expect(contents).toMatch(/explicit user request[\s\S]*create|create[\s\S]*explicit user request/i);
+    expect(contents).not.toContain("POST /api/orgs/:orgId/agent-hires");
+  });
+
+  it("preserves current Plugin authoring boundaries in its focused reference", async () => {
+    const contents = await fs.readFile(
+      path.join(root, "references", "plugin-authoring.md"),
+      "utf8",
+    );
+
+    for (const required of [
+      "doc/engineering/PLUGIN_AUTHORING_GUIDE.md",
+      "packages/plugins/sdk/README.md",
+      "create-rudder-plugin",
+      "--sdk-path",
+      ".rudder-sdk/",
+      "src/manifest.ts",
+      "src/worker.ts",
+      "src/ui/index.tsx",
+      "tests/plugin.spec.ts",
+      "trusted code",
+      "capability-gated",
+      "routePath",
+      "ctx.assets",
+      "typecheck",
+      "test",
+      "build",
+    ]) {
+      expect(contents, required).toContain(required);
+    }
+    expect(contents).toMatch(/only if the user explicitly asks[\s\S]*bundled example/i);
+    expect(contents).toMatch(/explicit user request[\s\S]*scaffold|scaffold[\s\S]*explicit user request/i);
+    expect(contents).not.toMatch(/\|\s*HTTP route\s*\|/i);
+  });
+
+  it("hard-deletes the two retired bundled packages", async () => {
+    const bundledRoot = path.dirname(root);
+
+    for (const retiredSlug of ["rudder-create-agent", "rudder-create-plugin"]) {
+      await expect(fs.stat(path.join(bundledRoot, retiredSlug))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     }
   });
 
@@ -307,6 +401,10 @@ describe("bundled rudder docs skill", () => {
     expect(evals.filter((item) => item.should_trigger)).toHaveLength(10);
     expect(evals.filter((item) => !item.should_trigger)).toHaveLength(10);
     expect(evals.some((item) => item.query === "hi" && !item.should_trigger)).toBe(true);
+    expect(evals.some((item) => item.should_trigger && /(?:create|hire|hiring|创建).*Agent/i.test(item.query))).toBe(true);
+    expect(evals.some((item) => item.should_trigger && /Rudder Plugin/.test(item.query))).toBe(true);
+    expect(evals.some((item) => !item.should_trigger && /typed Agent update tool/.test(item.query))).toBe(true);
+    expect(evals.some((item) => !item.should_trigger && /不是 Rudder Plugin/.test(item.query))).toBe(true);
 
     for (const expected of [true, false]) {
       const group = evals.filter((item) => item.should_trigger === expected);
@@ -336,5 +434,7 @@ describe("bundled rudder docs skill", () => {
     expect(contents).not.toMatch(/^name: rudder$/m);
     expect(contents).not.toMatch(/bundled `rudder` skill/i);
     expect(contents).not.toContain("# Rudder Skill");
+    expect(contents).not.toContain("rudder-create-agent");
+    expect(contents).not.toContain("rudder-create-plugin");
   });
 });

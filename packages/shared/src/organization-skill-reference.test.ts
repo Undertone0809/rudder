@@ -5,6 +5,8 @@ import {
   formatOrganizationSkillPublicRef,
   getActiveRudderBundledSkillSlugs,
   getBundledRudderSkillSlug,
+  isCanonicalBundledRudderSkillKey,
+  isRetiredRudderCreationSkillReference,
   normalizeOrganizationSkillKey,
   resolveOrganizationSkillReference,
   toBundledRudderSkillKey,
@@ -82,8 +84,6 @@ describe("organization-skill-reference", () => {
     expect(getActiveRudderBundledSkillSlugs(true)).toEqual([
       "para-memory-files",
       "rudder-docs",
-      "rudder-create-agent",
-      "rudder-create-plugin",
       "skill-creator",
       "visualize",
       "browser",
@@ -145,6 +145,66 @@ describe("organization-skill-reference", () => {
     expect(toBundledRudderSkillKey(getBundledRudderSkillSlug("rudder"))).toBe(
       "rudder/rudder-docs",
     );
+  });
+
+  it("keeps retired creation skill references missing instead of aliasing them to Rudder Docs", () => {
+    const rudderDocs = {
+      ...bundledSkill,
+      id: "skill-rudder-docs",
+      key: "rudder/rudder-docs",
+      slug: "rudder-docs",
+      name: "Rudder Docs",
+    };
+
+    for (const reference of [
+      "rudder/rudder-create-agent",
+      "bundled:rudder/rudder-create-agent",
+      "rudder/rudder-create-plugin",
+      "bundled:rudder/rudder-create-plugin",
+    ]) {
+      expect(getBundledRudderSkillSlug(reference), reference).not.toBe("rudder-docs");
+      expect(toBundledRudderSkillKey(reference), reference).not.toBe("rudder/rudder-docs");
+      expect(isCanonicalBundledRudderSkillKey(toBundledRudderSkillKey(reference))).toBe(false);
+      expect(resolveOrganizationSkillReference([rudderDocs], reference, organizationContext)).toEqual({
+        skill: null,
+        ambiguous: false,
+      });
+    }
+  });
+
+  it("rejects retired creation identities even when a preserved user-owned row has the same key", () => {
+    const retiredUserOwnedAgentSkill = {
+      ...organizationSkill,
+      id: "skill-user-owned-retired-agent-name",
+      key: "rudder/rudder-create-agent",
+      slug: "rudder-create-agent",
+      name: "User-owned Agent Helper",
+    };
+    const retiredUserOwnedPluginSkill = {
+      ...organizationSkill,
+      id: "skill-user-owned-retired-plugin-name",
+      key: "rudder/rudder-create-plugin",
+      slug: "rudder-create-plugin",
+      name: "User-owned Plugin Helper",
+    };
+    const skills = [retiredUserOwnedAgentSkill, retiredUserOwnedPluginSkill];
+
+    for (const reference of [
+      "rudder-create-agent",
+      "rudder/rudder-create-agent",
+      "rudder/rudder/rudder-create-agent",
+      "bundled:rudder/rudder-create-agent",
+      "rudder-create-plugin",
+      "rudder/rudder-create-plugin",
+      "rudder/rudder/rudder-create-plugin",
+      "bundled:rudder/rudder-create-plugin",
+    ]) {
+      expect(isRetiredRudderCreationSkillReference(reference), reference).toBe(true);
+      expect(resolveOrganizationSkillReference(skills, reference, organizationContext), reference).toEqual({
+        skill: null,
+        ambiguous: false,
+      });
+    }
   });
 
   it("builds searchable text from the public ref and source metadata", () => {

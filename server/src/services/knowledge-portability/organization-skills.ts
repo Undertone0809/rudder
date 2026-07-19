@@ -19,6 +19,7 @@ import type {
 import {
   getActiveRudderBundledSkillSlugs,
   getBundledRudderSkillSlug,
+  isRetiredRudderCreationSkillReference,
   toBundledRudderSkillKey,
 } from "@rudderhq/shared";
 import { and, asc, eq } from "drizzle-orm";
@@ -554,6 +555,12 @@ export function organizationSkillService(
     const entries: AgentSkillCatalogEntry[] = [];
 
     for (const skill of skills) {
+      if (
+        isRetiredRudderCreationSkillReference(skill.key)
+        || isRetiredRudderCreationSkillReference(skill.slug)
+      ) {
+        continue;
+      }
       const bundled = isBundledRudderSkillKey(skill.key);
       entries.push({
         key: skill.slug,
@@ -757,6 +764,10 @@ export function organizationSkillService(
     const ambiguousRefs = new Set<string>();
     const unresolvedRefs = new Set<string>();
     const requestedRefs = sortUniqueSelectionRefs((requestedDesiredSkills ?? []).flatMap((reference) => {
+      if (isRetiredRudderCreationSkillReference(reference)) {
+        unresolvedRefs.add(reference.trim());
+        return [];
+      }
       const resolved = resolveRequestedSelectionRefAgainstCatalog(reference, skills, catalogEntries, agent);
       if (resolved.ambiguous) {
         ambiguousRefs.add(reference.trim());
@@ -1215,6 +1226,12 @@ export function organizationSkillService(
 
     const out: RudderSkillEntry[] = [];
     for (const skill of skills) {
+      if (
+        isRetiredRudderCreationSkillReference(skill.key)
+        || isRetiredRudderCreationSkillReference(skill.slug)
+      ) {
+        continue;
+      }
       let source = normalizeSkillDirectory(skill);
       if (!source) {
         source = options.materializeMissing === false

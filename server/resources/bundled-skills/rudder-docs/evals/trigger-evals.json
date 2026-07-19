@@ -16,19 +16,19 @@
     "should_trigger": true
   },
   {
-    "query": "Where in the official Rudder source are bundled skills materialized for local runtime adapters, and which tests protect stale managed-skill cleanup?",
+    "query": "请在 Rudder 里创建一个 Researcher Agent，让它向 CTO 汇报；先核对当前权限、runtime config、role enum 和 approval 流程，再执行创建。",
     "should_trigger": true
   },
   {
-    "query": "Rudder 显示这个 skill 已 enabled，但刚才的 run 没有使用它。这是 selected、loaded 和 used 语义不同，还是运行时出了 bug？请核对当前契约。",
+    "query": "Scaffold a new Rudder Plugin named @acme/quality-gate in a temporary external package directory. Verify the current create-rudder-plugin and SDK workflow first, then run its typecheck, tests, and build.",
     "should_trigger": true
   },
   {
-    "query": "我把交付文档写进 Rudder Library 后，为什么评论里必须使用返回的 markdownLink，不能手写 library-entry URL？请给出准确规则。",
+    "query": "Rudder Plugin 的 worker capability、same-origin UI、routePath 和 ctx.assets 现在到底有哪些边界？请查当前 authoring guide、SDK 和源码后回答。",
     "should_trigger": true
   },
   {
-    "query": "Which Rudder API endpoint is the compatibility fallback behind the CLI issue checkout command, and under what failure conditions is direct API fallback allowed?",
+    "query": "Before hiring a Founding Engineer in Rudder, compare the installed Codex runtime configuration with existing agents and explain the correct role, title, reportsTo, SOUL.md, desiredSkills, and sourceIssueId fields.",
     "should_trigger": true
   },
   {
@@ -44,7 +44,7 @@
     "should_trigger": false
   },
   {
-    "query": "这个 React 组件在当前 Rudder run 里渲染成空白了，帮我修复状态更新逻辑并补一个组件测试。",
+    "query": "这个 React 组件在当前 Rudder run 里渲染成空白了，帮我修复状态更新逻辑并补一个组件测试；这不是 Rudder 产品行为问题。",
     "should_trigger": false
   },
   {
@@ -56,7 +56,11 @@
     "should_trigger": false
   },
   {
-    "query": "把下面这段提到 rudder control 的英文产品文案总结成三条中文要点；这里的 rudder 是船舵控制，不是软件产品。",
+    "query": "The target Agent and new title are already in context. Use the exposed typed Agent update tool to change only its title to Staff Engineer; do not look up Rudder docs.",
+    "should_trigger": false
+  },
+  {
+    "query": "给这个普通 Vite 应用写一个 markdown-it plugin，把内部链接加上 target 属性；它不是 Rudder Plugin，也不需要 Rudder SDK。",
     "should_trigger": false
   },
   {
@@ -68,15 +72,11 @@
     "should_trigger": false
   },
   {
-    "query": "Please fix the spelling mistakes on the docs page in this repository, preserve its existing tone, and run the markdown linter afterward.",
+    "query": "Please fix spelling mistakes on an unrelated library's docs page in this repository, preserve its tone, and run the markdown linter; no Rudder behavior needs clarification.",
     "should_trigger": false
   },
   {
     "query": "帮我设计一个名叫 Rudder 的船舵图标：深蓝色、圆形徽章、透明背景，输出 1024px PNG。",
-    "should_trigger": false
-  },
-  {
-    "query": "用当前已经暴露的 Library 文件读取工具打开季度计划，把第二节复制到这条聊天里；路径和权限都已在上下文中。",
     "should_trigger": false
   }
 ]

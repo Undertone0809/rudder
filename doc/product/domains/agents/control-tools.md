@@ -23,6 +23,7 @@ related_code:
   - server/resources/bundled-skills/browser/SKILL.md
   - server/resources/bundled-skills/rudder-docs/SKILL.md
   - server/resources/bundled-skills/rudder-docs/references/cli-reference.md
+  - server/resources/bundled-skills/rudder-docs/references/agent-creation.md
 related_tests:
   - cli/src/__tests__/browser-command.test.ts
   - cli/src/__tests__/agent-v1-registry.test.ts
@@ -38,6 +39,7 @@ related_plans:
   - doc/plans/2026-06-30-agent-v1-mcp-tools.md
   - doc/plans/2026-07-12-built-in-browser.md
   - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
+  - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
 edit_policy: user_confirmed_only
 ---
 

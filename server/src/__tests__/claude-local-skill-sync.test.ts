@@ -20,7 +20,6 @@ async function createSkillDir(root: string, name: string, description = `${name}
 
 describe("claude local skill sync", () => {
   const rudderSkillKey = "rudder/rudder-docs";
-  const createAgentKey = "rudder/rudder-create-agent";
   const cleanupDirs = new Set<string>();
 
   afterEach(async () => {
@@ -60,7 +59,8 @@ describe("claude local skill sync", () => {
 
     expect(snapshot.desiredSkills).toContain(rudderSkillKey);
     expect(snapshot.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("configured");
-    expect(snapshot.entries.find((entry) => entry.key === createAgentKey)?.state).toBe("available");
+    expect(snapshot.entries.find((entry) => entry.key === "rudder/rudder-create-agent")).toBeUndefined();
+    expect(snapshot.entries.find((entry) => entry.key === "rudder/rudder-create-plugin")).toBeUndefined();
   });
 
   it("keeps legacy paperclipSkillSync config compatible", async () => {

@@ -19,6 +19,7 @@ related_code:
   - server/src/services/agents.ts
   - server/src/routes/agents.ts
   - server/src/routes/agents.management-routes.ts
+  - server/resources/bundled-skills/rudder-docs/references/agent-creation.md
   - server/src/agent-runtimes/registry.ts
   - server/src/services/runtime-kernel/heartbeat.execute.ts
   - ui/src/components/AgentConfigForm.environment.tsx
@@ -43,6 +44,9 @@ related_tests:
   - tests/e2e/agent-config-advanced-options.spec.ts
   - tests/e2e/codex-model-order.spec.ts
   - tests/e2e/onboarding.spec.ts
+  - server/src/__tests__/bundled-rudder-skill-docs.test.ts
+related_plans:
+  - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
 edit_policy: user_confirmed_only
 ---
 
@@ -90,6 +94,10 @@ Evidence:
 - Agent Detail shows the config surface used by operators to inspect an agent.
 - Runtime execution stores enough context to reconstruct the agent's operating
   frame for a run.
+- The bundled `rudder-docs` Agent creation reference routes explicit creation
+  requests through the existing identity, `canCreateAgents`, runtime discovery,
+  role enum, reporting-line, `SOUL.md`, source-issue, canonical hire,
+  direct-create, `pending_approval`, revision, and success-evidence semantics.
 
 ## AGENT.RUNTIME.ADAPTERS.001
 

@@ -146,6 +146,7 @@ Use the incremental `after` form when you already know the thread.
 - `GET /api/orgs/:orgId/issues`
 - `POST /api/orgs/:orgId/issues`
 - `GET /api/orgs/:orgId/agents`
+- `POST /api/orgs/:orgId/agent-hires`
 - `GET /api/orgs/:orgId/org`
 - `GET /api/orgs/:orgId/dashboard`
 - `GET /api/orgs/:orgId/projects`
@@ -159,6 +160,12 @@ Use the incremental `after` form when you already know the thread.
 - `GET /api/orgs/:orgId/costs/summary`
 - `GET /api/orgs/:orgId/costs/by-agent`
 - `GET /api/orgs/:orgId/costs/by-project`
+
+`POST /api/orgs/:orgId/agent-hires` is the governed Agent creation route behind
+`rudder agent hire`. It returns `approval: null` for direct creation or an Agent
+in `pending_approval` plus the approval record when organization policy requires
+review. Normal runtime work should follow [Agent creation](agent-creation.md)
+and the installed CLI instead of calling this route directly.
 
 ### Resources
 

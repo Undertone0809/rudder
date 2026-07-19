@@ -27,7 +27,7 @@ describe("rudder skill utils", () => {
     const moduleDir = path.join(root, "a", "b", "c", "d", "e");
     await fs.mkdir(moduleDir, { recursive: true });
     await fs.mkdir(path.join(root, "server", "resources", "bundled-skills", "rudder-docs"), { recursive: true });
-    await fs.mkdir(path.join(root, "server", "resources", "bundled-skills", "rudder-create-agent"), { recursive: true });
+    await fs.mkdir(path.join(root, "server", "resources", "bundled-skills", "skill-creator"), { recursive: true });
     await fs.mkdir(path.join(root, "skills", "release"), { recursive: true });
     await fs.writeFile(
       path.join(root, "server", "resources", "bundled-skills", "rudder-docs", "SKILL.md"),
@@ -35,24 +35,24 @@ describe("rudder skill utils", () => {
       "utf8",
     );
     await fs.writeFile(
-      path.join(root, "server", "resources", "bundled-skills", "rudder-create-agent", "SKILL.md"),
-      "---\nname: rudder-create-agent\ndescription: Create agents.\n---\n",
+      path.join(root, "server", "resources", "bundled-skills", "skill-creator", "SKILL.md"),
+      "---\nname: skill-creator\ndescription: Create skills.\n---\n",
       "utf8",
     );
 
     const entries = await listRudderSkillEntries(moduleDir);
 
     expect(entries.map((entry) => entry.key)).toEqual([
-      "rudder/rudder-create-agent",
       "rudder/rudder-docs",
+      "rudder/skill-creator",
     ]);
     expect(entries.map((entry) => entry.runtimeName)).toEqual([
-      "rudder-create-agent",
       "rudder-docs",
+      "skill-creator",
     ]);
-    expect(entries[1]?.source).toBe(path.join(root, "server", "resources", "bundled-skills", "rudder-docs"));
-    expect(entries[1]?.name).toBe("rudder-docs");
-    expect(entries[1]?.description).toBe("Core Rudder coordination skill.");
+    expect(entries[0]?.source).toBe(path.join(root, "server", "resources", "bundled-skills", "rudder-docs"));
+    expect(entries[0]?.name).toBe("rudder-docs");
+    expect(entries[0]?.description).toBe("Core Rudder coordination skill.");
   });
 
   it("falls back to packaged skills beside a runtime package dist directory", async () => {

@@ -387,10 +387,6 @@ export function accessRoutes(
         {
           name: "para-memory-files",
           path: "/api/skills/para-memory-files"
-        },
-        {
-          name: "rudder-create-agent",
-          path: "/api/skills/rudder-create-agent"
         }
       ]
     });

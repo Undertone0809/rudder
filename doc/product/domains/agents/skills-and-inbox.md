@@ -11,6 +11,9 @@ related_code:
   - packages/shared/src/organization-skill-reference.ts
   - server/resources/bundled-skills/browser/SKILL.md
   - server/resources/bundled-skills/rudder-docs/SKILL.md
+  - server/resources/bundled-skills/rudder-docs/references/agent-creation.md
+  - server/resources/bundled-skills/rudder-docs/references/plugin-authoring.md
+  - packages/agent-runtime-utils/src/server-utils.cli.ts
   - server/src/routes/agents.ts
   - server/src/services/agent-run-context.ts
   - server/src/services/agent-enabled-skills.ts
@@ -29,6 +32,7 @@ related_tests:
   - tests/e2e/organization-agent-skills.spec.ts
 related_plans:
   - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
+  - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
 edit_policy: user_confirmed_only
 ---
 
@@ -54,17 +58,28 @@ Product model:
 - Skill sources include bundled skills, organization skill library, agent home,
   global/user skill roots, and adapter-native skill directories when supported.
 - The current always-enabled bundled Rudder baseline is `para-memory-files`,
-  `rudder-docs`, `rudder-create-agent`, `rudder-create-plugin`, and
-  `skill-creator`, and `visualize`. Other repo-owned skill packages, including
+  `rudder-docs`, `skill-creator`, and `visualize`. Other repo-owned skill packages, including
   `conversation-to-skill` and `skill-optimizer`, are not part of the default
   Rudder-resolved set unless they are introduced through a non-bundled
   selection path.
 - `rudder-docs` is a self-gating documentation router. It is always enabled so
   supported runtimes can discover it, but the agent should consult it only when
   the task needs Rudder product behavior, exact CLI/API details, official docs,
-  or source-level verification. Its canonical selection ref is
+  source-level verification, Agent creation/configuration, or Plugin authoring.
+  Its Agent and Plugin creation references are intent-routed domain workflows,
+  not separate always-enabled skill identities. Its canonical selection ref is
   `bundled:rudder/rudder-docs`; legacy `rudder` refs are accepted only as input
   aliases and new output uses the canonical identity.
+- Default availability, intent activation, and mutation authorization are
+  separate. An explicit Rudder creation or authoring request may activate the
+  relevant reference and proceed through current governed interfaces after
+  verification. A documentation question, skill exposure, or body injection
+  alone does not authorize an Agent, Plugin package, configuration, or host
+  mutation.
+- `rudder-create-agent` and `rudder-create-plugin` are retired identities with
+  no selection, runtime, package, or HTTP compatibility aliases. Current
+  references to either identity are missing, not redirected to `rudder-docs`.
+  Historical transcript and telemetry evidence may retain the old strings.
 - `Browser` is a capability-bundled skill, not part of the always-enabled
   baseline. In `local_trusted` mode it is projected for every organization when
   the instance-level Built-in Browser is enabled. It is materialized for a run
@@ -91,6 +106,8 @@ Flow:
 1. Rudder resolves always-bundled and capability-bundled skills from current
    instance capability state.
 2. Organization skill library is seeded, reconciled, and scanned.
+   Reconciliation removes retired rows and enabled associations only when their
+   stored provenance identifies them as Rudder-bundled.
 3. Agent skill snapshot is built from all supported sources.
 4. Desired selection is validated against available/always-enabled entries.
 5. Runtime skill sync/materialization prepares the runtime-side skill surface
@@ -113,6 +130,22 @@ Invariants:
   skill-directed action. Native read state remains unknown when a provider emits
   no direct activation/read evidence; prompt injection is not reported as model
   intent matching or use.
+- Explicit Agent creation/configuration and Rudder Plugin authoring requests may
+  activate `rudder-docs`. Ordinary Agent field updates already served by a
+  typed tool and non-Rudder Plugin work do not activate this documentation
+  workflow. Advisory creation questions may activate documentation retrieval
+  but do not authorize or imply a mutation.
+- Persistent Cursor, OpenCode, Gemini, and Pi homes remove retired managed
+  creation-skill entries only when an exact retired-source symlink or matching
+  Rudder materialization provenance proves ownership. Same-named user paths,
+  native provider skills, unknown links, files, and changed entries are
+  preserved and reported as collisions.
+- Canonical bundled/default inventories, public skill downloads, and runtime
+  materialization must not expose `rudder-create-agent` or
+  `rudder-create-plugin`. A non-bundled user-owned collision row may remain
+  visible in the organization library, but the retired identity is not
+  selectable or runtime-materialized. There is no redirect stub or output alias
+  for either retired identity.
 - `Browser` must be read-only and available to existing and future organizations
   only while the `local_trusted` Built-in Browser capability is instance-
   eligible. A run must also use a supported local adapter. A stale organization
@@ -141,6 +174,9 @@ Evidence:
 - Organization reconciliation and run-context tests prove that `Browser` is
   projected when enabled, absent when disabled, and derived from trusted live
   instance state rather than agent-supplied config.
+- Bundled docs, public route, organization refresh, persistent-adapter cleanup,
+  Desktop smoke, and organization Agent Skills E2E tests prove the canonical
+  `rudder-docs` inventory and retired-identity hard deletion.
 
 ## AGENT.SKILL.TELEMETRY.001
 

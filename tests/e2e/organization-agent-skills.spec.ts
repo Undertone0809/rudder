@@ -85,10 +85,12 @@ test.describe("Organization and agent skills", () => {
     await expect(newAgentMain.getByRole("heading", { name: "New Agent" })).toBeVisible();
     await expect(newAgentMain.getByRole("heading", { name: "Organization skills" })).toBeVisible();
     await expect(newAgentMain.getByText("deep-research").first()).toBeVisible();
-    await expect(newAgentMain.getByText("skill-creator").first()).toBeVisible();
+    await expect(newAgentMain.getByText("skill-creator")).toHaveCount(0);
     await expect(newAgentMain.getByText("software-product-advisor").first()).toBeVisible();
     await expect(newAgentMain.getByText("para-memory-files")).toHaveCount(0);
+    await expect(newAgentMain.getByText("rudder-docs")).toHaveCount(0);
     await expect(newAgentMain.getByText("rudder-create-agent")).toHaveCount(0);
+    await expect(newAgentMain.getByText("rudder-create-plugin")).toHaveCount(0);
 
     const customSkillRes = await page.request.post(`/api/orgs/${organization.id}/skills`, {
       data: {
@@ -103,8 +105,11 @@ test.describe("Organization and agent skills", () => {
     await expect(newAgentMain.getByRole("heading", { name: "Organization skills" })).toBeVisible();
     await expect(newAgentMain.getByText("alpha-test").first()).toBeVisible();
     await expect(newAgentMain.getByText("deep-research").first()).toBeVisible();
+    await expect(newAgentMain.getByText("skill-creator")).toHaveCount(0);
     await expect(newAgentMain.getByText("para-memory-files")).toHaveCount(0);
+    await expect(newAgentMain.getByText("rudder-docs")).toHaveCount(0);
     await expect(newAgentMain.getByText("rudder-create-agent")).toHaveCount(0);
+    await expect(newAgentMain.getByText("rudder-create-plugin")).toHaveCount(0);
   });
 
   test("seeds bundled and community preset org skills and keeps bundled Rudder skills always enabled", async ({ page }) => {
@@ -136,8 +141,6 @@ test.describe("Organization and agent skills", () => {
     expect(skills.map((skill) => skill.key)).toEqual(expect.arrayContaining([
       "rudder/para-memory-files",
       "rudder/rudder-docs",
-      "rudder/rudder-create-agent",
-      "rudder/rudder-create-plugin",
       "rudder/visualize",
       expect.stringMatching(/deep-research$/),
       expect.stringMatching(/skill-creator$/),
@@ -145,6 +148,8 @@ test.describe("Organization and agent skills", () => {
       expect.stringMatching(/alpha-test$/),
     ]));
     expect(skills.map((skill) => skill.key)).not.toEqual(expect.arrayContaining([
+      "rudder/rudder-create-agent",
+      "rudder/rudder-create-plugin",
       "rudder/conversation-to-skill",
       "rudder/skill-optimizer",
     ]));
@@ -173,7 +178,9 @@ test.describe("Organization and agent skills", () => {
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/library\\?directory=skills$`));
     const libraryFiles = page.getByTestId("org-workspaces-files-scroll");
     await expect(libraryFiles).toContainText("para-memory-files");
-    await expect(libraryFiles).toContainText("rudder-create-agent");
+    await expect(libraryFiles).toContainText("rudder-docs");
+    await expect(libraryFiles).not.toContainText("rudder-create-agent");
+    await expect(libraryFiles).not.toContainText("rudder-create-plugin");
     await expect(libraryFiles).toContainText("visualize");
     await expect(skillsMain.getByText("conversation-to-skill")).toHaveCount(0);
     await expect(skillsMain.getByText("skill-optimizer")).toHaveCount(0);
@@ -843,8 +850,6 @@ test.describe("Organization and agent skills", () => {
         rootEntries: [
           "browser",
           "para-memory-files",
-          "rudder-create-agent",
-          "rudder-create-plugin",
           "rudder-docs",
           "skill-creator",
           "visualize",

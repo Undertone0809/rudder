@@ -5,12 +5,14 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cleanupLegacyRudderDocsManagedEntry,
+  cleanupRetiredRudderManagedEntries,
   createOperatorInterruptAbortReason,
   ensureLocalCliCredentialShimsInPath,
   ensureRudderCliInPath,
   filterRudderDesiredSkillsForBrowserCapability,
   loadAgentInstructionsPrefix,
   prepareAgentInstructionRuntimeContext,
+  readRudderRuntimeSkillEntries,
   renderTemplate,
   resolveDesktopCliSpawnTarget,
   resolveLocalOperatorHome,
@@ -422,6 +424,81 @@ describe("cleanupLegacyRudderDocsManagedEntry", () => {
   });
 });
 
+describe("cleanupRetiredRudderManagedEntries", () => {
+  it("removes exact retired-source symlinks and provenance-marked materialized directories", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-retired-skills-"));
+    const skillsHome = path.join(root, "managed-skills");
+    const bundledRoot = path.join(root, "bundled-skills");
+    const canonicalSource = path.join(bundledRoot, "rudder-docs");
+    const createAgentSource = path.join(bundledRoot, "rudder-create-agent");
+    const createPluginSource = path.join(bundledRoot, "rudder-create-plugin");
+    const createAgentTarget = path.join(skillsHome, "rudder-create-agent");
+    const createPluginTarget = path.join(skillsHome, "rudder-create-plugin");
+
+    try {
+      await fs.mkdir(canonicalSource, { recursive: true });
+      await fs.mkdir(createAgentSource, { recursive: true });
+      await fs.mkdir(path.join(createPluginTarget, ".rudder"), { recursive: true });
+      await fs.symlink(createAgentSource, createAgentTarget);
+      await fs.writeFile(
+        path.join(createPluginTarget, ".rudder", "materialized-skill.json"),
+        JSON.stringify({ sourcePath: createPluginSource }),
+        "utf8",
+      );
+
+      const results = await cleanupRetiredRudderManagedEntries(skillsHome, [{
+        key: "rudder/rudder-docs",
+        runtimeName: "rudder-docs",
+        source: canonicalSource,
+      }]);
+
+      expect(results.find((result) => result.runtimeName === "rudder-create-agent")?.state).toBe("removed");
+      expect(results.find((result) => result.runtimeName === "rudder-create-plugin")?.state).toBe("removed");
+      await expect(fs.lstat(createAgentTarget)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(fs.lstat(createPluginTarget)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves same-named user directories and unknown symlinks as reported collisions", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-retired-skill-collisions-"));
+    const skillsHome = path.join(root, "managed-skills");
+    const canonicalSource = path.join(root, "bundled-skills", "rudder-docs");
+    const createAgentTarget = path.join(skillsHome, "rudder-create-agent");
+    const createPluginTarget = path.join(skillsHome, "rudder-create-plugin");
+    const unknownSource = path.join(root, "user-skills", "rudder-create-agent");
+    const marker = path.join(createPluginTarget, "USER_OWNED.md");
+
+    try {
+      await fs.mkdir(canonicalSource, { recursive: true });
+      await fs.mkdir(path.dirname(unknownSource), { recursive: true });
+      await fs.mkdir(createPluginTarget, { recursive: true });
+      await fs.symlink(unknownSource, createAgentTarget);
+      await fs.writeFile(marker, "keep\n", "utf8");
+
+      const results = await cleanupRetiredRudderManagedEntries(skillsHome, [{
+        key: "bundled:rudder/rudder-docs",
+        runtimeName: "rudder-docs",
+        source: canonicalSource,
+      }]);
+
+      expect(results.find((result) => result.runtimeName === "rudder-create-agent")).toMatchObject({
+        state: "collision",
+        kind: "symlink",
+      });
+      expect(results.find((result) => result.runtimeName === "rudder-create-plugin")).toMatchObject({
+        state: "collision",
+        kind: "directory",
+      });
+      expect((await fs.lstat(createAgentTarget)).isSymbolicLink()).toBe(true);
+      await expect(fs.readFile(marker, "utf8")).resolves.toBe("keep\n");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("filterRudderDesiredSkillsForBrowserCapability", () => {
   const available = [
     { key: "bundled:rudder/browser", runtimeName: "browser" },
@@ -467,6 +544,58 @@ describe("resolveRudderDesiredSkillNames", () => {
         ],
       },
     }, available)).toEqual(["bundled:rudder/rudder-docs"]);
+  });
+
+  it("drops retired creation identities and entries before runtime materialization", () => {
+    const available = [
+      { key: "bundled:rudder/rudder-docs", runtimeName: "rudder-docs" },
+      { key: "rudder/rudder-create-agent", runtimeName: "rudder-create-agent" },
+      { key: "organization/org-123/custom-plugin-helper", runtimeName: "rudder-create-plugin" },
+    ];
+
+    expect(resolveRudderDesiredSkillNames({
+      rudderSkillSync: {
+        desiredSkills: [
+          "bundled:rudder/rudder-docs",
+          "rudder-create-agent",
+          "rudder/rudder-create-agent",
+          "rudder/rudder/rudder-create-agent",
+          "bundled:rudder/rudder-create-agent",
+          "rudder-create-plugin",
+          "rudder/rudder-create-plugin",
+          "rudder/rudder/rudder-create-plugin",
+          "bundled:rudder/rudder-create-plugin",
+          "organization/org-123/custom-plugin-helper",
+        ],
+      },
+    }, available)).toEqual(["bundled:rudder/rudder-docs"]);
+  });
+
+  it("omits retired creation entries from configured runtime projections", async () => {
+    await expect(readRudderRuntimeSkillEntries({
+      rudderRuntimeSkills: [
+        {
+          key: "bundled:rudder/rudder-docs",
+          runtimeName: "rudder-docs",
+          source: "/managed/rudder-docs",
+        },
+        {
+          key: "org:rudder/rudder-create-agent",
+          runtimeName: "rudder-create-agent",
+          source: "/user-owned/rudder-create-agent",
+        },
+        {
+          key: "organization/org-123/custom-plugin-helper",
+          runtimeName: "rudder-create-plugin",
+          source: "/user-owned/rudder-create-plugin",
+        },
+      ],
+    }, "/unused")).resolves.toEqual([
+      expect.objectContaining({
+        key: "bundled:rudder/rudder-docs",
+        runtimeName: "rudder-docs",
+      }),
+    ]);
   });
 });
 

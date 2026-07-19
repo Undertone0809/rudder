@@ -66,9 +66,6 @@ export function readSkillMarkdown(skillName: string): string | null {
   const normalized = requested === "rudder" ? "rudder-docs" : requested;
   if (
     normalized !== "rudder-docs" &&
-    normalized !== "rudder-create-agent" &&
-    // TODO 2026-04-12 15:42:09: disabled: not used yet; will be re-enabled when plugin scaffold is ready
-    // normalized !== "rudder-create-plugin" &&
     normalized !== "para-memory-files"
   )
     return null;

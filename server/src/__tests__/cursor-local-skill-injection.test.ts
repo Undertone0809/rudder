@@ -26,8 +26,8 @@ describe("cursor local adapter skill injection", () => {
     cleanupDirs.add(skillsDir);
     cleanupDirs.add(skillsHome);
 
-    await createSkillDir(skillsDir, "rudder");
-    await createSkillDir(skillsDir, "rudder-create-agent");
+    await createSkillDir(skillsDir, "rudder-docs");
+    await createSkillDir(skillsDir, "skill-creator");
     await fs.writeFile(path.join(skillsDir, "README.txt"), "ignore", "utf8");
 
     const logs: string[] = [];
@@ -38,16 +38,16 @@ describe("cursor local adapter skill injection", () => {
       { skillsDir, skillsHome },
     );
 
-    const injectedA = path.join(skillsHome, "rudder");
-    const injectedB = path.join(skillsHome, "rudder-create-agent");
+    const injectedA = path.join(skillsHome, "rudder-docs");
+    const injectedB = path.join(skillsHome, "skill-creator");
     expect((await fs.lstat(injectedA)).isSymbolicLink()).toBe(true);
     expect((await fs.lstat(injectedB)).isSymbolicLink()).toBe(true);
-    expect(await fs.realpath(injectedA)).toBe(await fs.realpath(path.join(skillsDir, "rudder")));
+    expect(await fs.realpath(injectedA)).toBe(await fs.realpath(path.join(skillsDir, "rudder-docs")));
     expect(await fs.realpath(injectedB)).toBe(
-      await fs.realpath(path.join(skillsDir, "rudder-create-agent")),
+      await fs.realpath(path.join(skillsDir, "skill-creator")),
     );
-    expect(logs.some((line) => line.includes('Injected Cursor skill "rudder"'))).toBe(true);
-    expect(logs.some((line) => line.includes('Injected Cursor skill "rudder-create-agent"'))).toBe(true);
+    expect(logs.some((line) => line.includes('Injected Cursor skill "rudder-docs"'))).toBe(true);
+    expect(logs.some((line) => line.includes('Injected Cursor skill "skill-creator"'))).toBe(true);
   });
 
   it("preserves existing targets and only links missing skills", async () => {
@@ -56,10 +56,10 @@ describe("cursor local adapter skill injection", () => {
     cleanupDirs.add(skillsDir);
     cleanupDirs.add(skillsHome);
 
-    await createSkillDir(skillsDir, "rudder");
-    await createSkillDir(skillsDir, "rudder-create-agent");
+    await createSkillDir(skillsDir, "rudder-docs");
+    await createSkillDir(skillsDir, "skill-creator");
 
-    const existingTarget = path.join(skillsHome, "rudder");
+    const existingTarget = path.join(skillsHome, "rudder-docs");
     await fs.mkdir(existingTarget, { recursive: true });
     await fs.writeFile(path.join(existingTarget, "keep.txt"), "keep", "utf8");
 
@@ -67,7 +67,7 @@ describe("cursor local adapter skill injection", () => {
 
     expect((await fs.lstat(existingTarget)).isDirectory()).toBe(true);
     expect(await fs.readFile(path.join(existingTarget, "keep.txt"), "utf8")).toBe("keep");
-    expect((await fs.lstat(path.join(skillsHome, "rudder-create-agent"))).isSymbolicLink()).toBe(true);
+    expect((await fs.lstat(path.join(skillsHome, "skill-creator"))).isSymbolicLink()).toBe(true);
   });
 
   it("logs and preserves an unproven legacy-name collision before injecting Rudder Docs", async () => {

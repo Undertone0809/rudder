@@ -54,9 +54,7 @@ const windowsToUnixEpochMicroseconds = 11_644_473_600_000_000n;
 const REQUIRED_BUNDLED_SKILLS = [
   "browser",
   "para-memory-files",
-  "rudder",
-  "rudder-create-agent",
-  "rudder-create-plugin",
+  "rudder-docs",
   "skill-creator",
   "visualize",
 ];

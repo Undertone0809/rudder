@@ -1674,16 +1674,16 @@ describe("MarkdownBody", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
         <MarkdownBody>
-          {"[$rudder/rudder-create-plugin](/Users/zeeland/projects/rudder/.agents/skills/rudder-create-plugin/SKILL.md)"}
+          {"[$rudder/rudder-docs](/Users/zeeland/projects/rudder/server/resources/bundled-skills/rudder-docs/SKILL.md)"}
         </MarkdownBody>
       </ThemeProvider>,
     );
 
     expect(html).toContain('class="rudder-skill-token"');
-    expect(html).toContain("rudder-create-plugin");
-    expect(html).not.toContain("rudder/rudder-create-plugin");
+    expect(html).toContain("rudder-docs");
+    expect(html).not.toContain("rudder/rudder-docs");
     expect(html).not.toContain("href=");
-    expect(html).not.toContain("/Users/zeeland/projects/rudder/.agents/skills/rudder-create-plugin/SKILL.md");
+    expect(html).not.toContain("/Users/zeeland/projects/rudder/server/resources/bundled-skills/rudder-docs/SKILL.md");
   });
 
   it("renders skill reference hover card metadata when provided", () => {

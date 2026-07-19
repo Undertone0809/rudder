@@ -12,6 +12,10 @@ import type {
 
 const LOCAL_CLI_CREDENTIAL_AUTH_CHECK_TIMEOUT_MS = 3000;
 const RUDDER_DESKTOP_CLI_ENTRY_ENV = "RUDDER_DESKTOP_CLI_ENTRY";
+const RETIRED_RUDDER_CREATION_SKILL_SLUGS = new Set([
+  "rudder-create-agent",
+  "rudder-create-plugin",
+]);
 export const OPERATOR_INTERRUPT_ABORT_REASON_KIND = "operator_interrupt" as const;
 
 export interface OperatorInterruptAbortReason {
@@ -503,6 +507,31 @@ export function normalizeConfiguredPaperclipRuntimeSkills(value: unknown): Rudde
   return out;
 }
 
+function isRetiredRudderCreationSkillReference(value: string | null | undefined) {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  const withoutSelectionPrefix = normalized.startsWith("bundled:")
+    ? normalized.slice("bundled:".length)
+    : normalized;
+  const segments = withoutSelectionPrefix.split("/").filter(Boolean);
+
+  if (segments.length === 1) {
+    return RETIRED_RUDDER_CREATION_SKILL_SLUGS.has(segments[0]!);
+  }
+  if (segments.length === 2 && segments[0] === "rudder") {
+    return RETIRED_RUDDER_CREATION_SKILL_SLUGS.has(segments[1]!);
+  }
+  if (segments.length === 3 && segments[0] === "rudder" && segments[1] === "rudder") {
+    return RETIRED_RUDDER_CREATION_SKILL_SLUGS.has(segments[2]!);
+  }
+  return false;
+}
+
+function isRetiredRudderCreationRuntimeEntry(entry: { key: string; runtimeName?: string | null }) {
+  return isRetiredRudderCreationSkillReference(entry.key)
+    || isRetiredRudderCreationSkillReference(entry.runtimeName);
+}
+
 export async function readRudderRuntimeSkillEntries(
   config: Record<string, unknown>,
   moduleDir: string,
@@ -511,8 +540,11 @@ export async function readRudderRuntimeSkillEntries(
   const configuredEntries = normalizeConfiguredPaperclipRuntimeSkills(
     config.rudderRuntimeSkills ?? config.paperclipRuntimeSkills,
   );
-  if (configuredEntries.length > 0) return configuredEntries;
-  return listRudderSkillEntries(moduleDir, additionalCandidates);
+  if (configuredEntries.length > 0) {
+    return configuredEntries.filter((entry) => !isRetiredRudderCreationRuntimeEntry(entry));
+  }
+  return (await listRudderSkillEntries(moduleDir, additionalCandidates))
+    .filter((entry) => !isRetiredRudderCreationRuntimeEntry(entry));
 }
 
 export async function readRudderSkillMarkdown(
@@ -561,9 +593,10 @@ export function canonicalizeDesiredRudderSkillReference(
 ): string {
   const normalizedReference = reference.trim().toLowerCase();
   if (!normalizedReference) return "";
+  if (isRetiredRudderCreationSkillReference(normalizedReference)) return "";
 
   const exactKey = availableEntries.find((entry) => entry.key.trim().toLowerCase() === normalizedReference);
-  if (exactKey) return exactKey.key;
+  if (exactKey) return isRetiredRudderCreationRuntimeEntry(exactKey) ? "" : exactKey.key;
 
   if (
     normalizedReference === "rudder"
@@ -580,17 +613,23 @@ export function canonicalizeDesiredRudderSkillReference(
 
   const lookupReference = normalizedReference.replace(/^rudder\/rudder\//, "rudder/");
   const legacyNestedKey = availableEntries.find((entry) => entry.key.trim().toLowerCase() === lookupReference);
-  if (legacyNestedKey) return legacyNestedKey.key;
+  if (legacyNestedKey) {
+    return isRetiredRudderCreationRuntimeEntry(legacyNestedKey) ? "" : legacyNestedKey.key;
+  }
 
   const byRuntimeName = availableEntries.filter((entry) =>
     typeof entry.runtimeName === "string" && entry.runtimeName.trim().toLowerCase() === lookupReference,
   );
-  if (byRuntimeName.length === 1) return byRuntimeName[0]!.key;
+  if (byRuntimeName.length === 1) {
+    return isRetiredRudderCreationRuntimeEntry(byRuntimeName[0]!) ? "" : byRuntimeName[0]!.key;
+  }
 
   const slugMatches = availableEntries.filter((entry) =>
     entry.key.trim().toLowerCase().split("/").pop() === lookupReference,
   );
-  if (slugMatches.length === 1) return slugMatches[0]!.key;
+  if (slugMatches.length === 1) {
+    return isRetiredRudderCreationRuntimeEntry(slugMatches[0]!) ? "" : slugMatches[0]!.key;
+  }
 
   return lookupReference;
 }
@@ -1024,11 +1063,13 @@ function sameFileSystemEntry(
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-export async function cleanupLegacyRudderDocsManagedEntry(
+async function cleanupRetiredRudderManagedEntry(
   skillsHome: string,
   selectedEntries: Iterable<{ key: string; runtimeName: string; source: string }>,
+  retiredRuntimeName: string,
+  requireMissingSymlinkSource: boolean,
 ): Promise<LegacyRudderDocsManagedEntryCleanupResult> {
-  const targetPath = path.join(path.resolve(skillsHome), "rudder");
+  const targetPath = path.join(path.resolve(skillsHome), retiredRuntimeName);
   const canonicalEntry = Array.from(selectedEntries).find((entry) =>
     (entry.key === "rudder/rudder-docs" || entry.key === "bundled:rudder/rudder-docs")
     && entry.runtimeName === "rudder-docs"
@@ -1037,7 +1078,10 @@ export async function cleanupLegacyRudderDocsManagedEntry(
     return { state: "not_applicable", targetPath, legacySourcePath: null, kind: null };
   }
 
-  const legacySourcePath = path.join(path.dirname(path.resolve(canonicalEntry.source)), "rudder");
+  const legacySourcePath = path.join(
+    path.dirname(path.resolve(canonicalEntry.source)),
+    retiredRuntimeName,
+  );
   let existing: Awaited<ReturnType<typeof fs.lstat>>;
   try {
     existing = await fs.lstat(targetPath);
@@ -1057,12 +1101,14 @@ export async function cleanupLegacyRudderDocsManagedEntry(
     if (resolvedLinkedPath !== legacySourcePath) {
       return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
     }
-    try {
-      await fs.stat(resolvedLinkedPath);
-      return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
-    } catch (error) {
-      if (!isFileSystemErrorCode(error, "ENOENT")) {
+    if (requireMissingSymlinkSource) {
+      try {
+        await fs.stat(resolvedLinkedPath);
         return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+      } catch (error) {
+        if (!isFileSystemErrorCode(error, "ENOENT")) {
+          return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+        }
       }
     }
 
@@ -1082,12 +1128,14 @@ export async function cleanupLegacyRudderDocsManagedEntry(
     if (!finalEntry?.isSymbolicLink() || !sameFileSystemEntry(existing, finalEntry)) {
       return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
     }
-    try {
-      await fs.stat(legacySourcePath);
-      return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
-    } catch (error) {
-      if (!isFileSystemErrorCode(error, "ENOENT")) {
+    if (requireMissingSymlinkSource) {
+      try {
+        await fs.stat(legacySourcePath);
         return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+      } catch (error) {
+        if (!isFileSystemErrorCode(error, "ENOENT")) {
+          return { state: "collision", targetPath, legacySourcePath, kind: "symlink" };
+        }
       }
     }
     try {
@@ -1138,6 +1186,72 @@ export async function cleanupLegacyRudderDocsManagedEntry(
 
   const kind = existing.isFile() ? "file" : "other";
   return { state: "collision", targetPath, legacySourcePath, kind };
+}
+
+export async function cleanupLegacyRudderDocsManagedEntry(
+  skillsHome: string,
+  selectedEntries: Iterable<{ key: string; runtimeName: string; source: string }>,
+): Promise<LegacyRudderDocsManagedEntryCleanupResult> {
+  return cleanupRetiredRudderManagedEntry(skillsHome, selectedEntries, "rudder", true);
+}
+
+export type RetiredRudderManagedEntryCleanupResult =
+  LegacyRudderDocsManagedEntryCleanupResult & { runtimeName: string };
+
+const RETIRED_RUDDER_MANAGED_RUNTIME_NAMES = [
+  "rudder",
+  "rudder-create-agent",
+  "rudder-create-plugin",
+] as const;
+
+/**
+ * Reconcile obsolete persistent runtime entries from known Rudder migrations.
+ *
+ * Ownership is derived from the selected canonical Rudder Docs source. Each
+ * candidate is removed only when the existing symlink target or materialized
+ * provenance exactly matches its retired sibling source, with inode/type and
+ * target/provenance revalidation immediately before deletion.
+ */
+export async function cleanupRetiredRudderManagedEntries(
+  skillsHome: string,
+  selectedEntries: Iterable<{ key: string; runtimeName: string; source: string }>,
+): Promise<RetiredRudderManagedEntryCleanupResult[]> {
+  const selected = Array.from(selectedEntries);
+  const results: RetiredRudderManagedEntryCleanupResult[] = [];
+  for (const runtimeName of RETIRED_RUDDER_MANAGED_RUNTIME_NAMES) {
+    const result = await cleanupRetiredRudderManagedEntry(
+      skillsHome,
+      selected,
+      runtimeName,
+      runtimeName === "rudder",
+    );
+    results.push({ ...result, runtimeName });
+  }
+  return results;
+}
+
+export function formatRetiredRudderManagedEntryCleanupWarnings(
+  results: Iterable<RetiredRudderManagedEntryCleanupResult>,
+  skillsHome: string,
+): string[] {
+  const warnings: string[] = [];
+  for (const result of results) {
+    const lifecycle = result.runtimeName === "rudder" ? "legacy" : "retired";
+    if (result.state === "removed") {
+      warnings.push(
+        `Removed ${lifecycle} Rudder-managed skill entry "${result.runtimeName}" from ${skillsHome}.`,
+      );
+    } else if (result.state === "collision") {
+      warnings.push(
+        `Preserved existing "${result.runtimeName}" path at ${result.targetPath} because Rudder ownership could not be proven.`,
+      );
+    } else if (result.state === "failed") {
+      warnings.push(
+        `Failed to remove ${lifecycle} Rudder-managed skill entry "${result.runtimeName}" at ${result.targetPath}; ${result.detail}.`,
+      );
+    }
+  }
+  return warnings;
 }
 
 async function readRudderMaterializedSkillSource(target: string): Promise<string | null> {

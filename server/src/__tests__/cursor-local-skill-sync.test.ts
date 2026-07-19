@@ -37,6 +37,10 @@ describe("cursor local skill sync", () => {
     const skillsHome = managedCursorSkillsHome(home);
     const legacyTarget = path.join(skillsHome, "rudder");
     const legacySource = path.join(process.cwd(), "server", "resources", "bundled-skills", "rudder");
+    const retiredAgentTarget = path.join(skillsHome, "rudder-create-agent");
+    const retiredAgentSource = path.join(process.cwd(), "server", "resources", "bundled-skills", "rudder-create-agent");
+    const retiredPluginTarget = path.join(skillsHome, "rudder-create-plugin");
+    const retiredPluginSource = path.join(process.cwd(), "server", "resources", "bundled-skills", "rudder-create-plugin");
     const unrelatedSkill = path.join(skillsHome, "external-cursor-skill");
 
     const ctx = {
@@ -55,6 +59,8 @@ describe("cursor local skill sync", () => {
     } as const;
     await fs.mkdir(unrelatedSkill, { recursive: true });
     await fs.symlink(legacySource, legacyTarget);
+    await fs.symlink(retiredAgentSource, retiredAgentTarget);
+    await fs.symlink(retiredPluginSource, retiredPluginTarget);
 
     const before = await listCursorSkills(ctx);
     expect(before.mode).toBe("persistent");
@@ -72,9 +78,17 @@ describe("cursor local skill sync", () => {
     await expect(fs.lstat(legacyTarget)).rejects.toMatchObject({
       code: "ENOENT",
     });
+    await expect(fs.lstat(retiredAgentTarget)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.lstat(retiredPluginTarget)).rejects.toMatchObject({ code: "ENOENT" });
     expect((await fs.lstat(unrelatedSkill)).isDirectory()).toBe(true);
     expect(after.warnings).toContain(
       `Removed legacy Rudder-managed skill entry "rudder" from ${skillsHome}.`,
+    );
+    expect(after.warnings).toContain(
+      `Removed retired Rudder-managed skill entry "rudder-create-agent" from ${skillsHome}.`,
+    );
+    expect(after.warnings).toContain(
+      `Removed retired Rudder-managed skill entry "rudder-create-plugin" from ${skillsHome}.`,
     );
   });
 

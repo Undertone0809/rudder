@@ -390,12 +390,15 @@ contracts:
       - server/src/services/agents.ts
       - server/src/routes/agents.ts
       - server/src/routes/agents.management-routes.ts
+      - server/resources/bundled-skills/rudder-docs/references/agent-creation.md
     related_tests:
       - server/src/__tests__/agent-permissions-routes.test.ts
       - server/src/__tests__/agent-startup-context.test.ts
+      - server/src/__tests__/bundled-rudder-skill-docs.test.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-06-24-agent-run-scene-runtime-contract.md
+      - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
   AGENT.RUNTIME.ADAPTERS.001:
     owner: product
     domain: agents
@@ -506,6 +509,7 @@ contracts:
       - server/resources/bundled-skills/browser/SKILL.md
       - server/resources/bundled-skills/rudder-docs/SKILL.md
       - server/resources/bundled-skills/rudder-docs/references/cli-reference.md
+      - server/resources/bundled-skills/rudder-docs/references/agent-creation.md
     related_tests:
       - cli/src/__tests__/browser-command.test.ts
       - cli/src/__tests__/agent-v1-registry.test.ts
@@ -522,6 +526,7 @@ contracts:
       - doc/plans/2026-06-30-agent-v1-mcp-tools.md
       - doc/plans/2026-07-12-built-in-browser.md
       - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
+      - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
   AGENT.BROWSER.001:
     owner: product
     domain: agents
@@ -628,6 +633,9 @@ contracts:
     related_code:
       - server/resources/bundled-skills/browser/SKILL.md
       - server/resources/bundled-skills/rudder-docs/SKILL.md
+      - server/resources/bundled-skills/rudder-docs/references/agent-creation.md
+      - server/resources/bundled-skills/rudder-docs/references/plugin-authoring.md
+      - packages/agent-runtime-utils/src/server-utils.cli.ts
       - server/src/routes/agents.ts
       - server/src/services/agent-run-context.ts
       - server/src/services/browser-capability.ts
@@ -642,6 +650,11 @@ contracts:
       - server/src/__tests__/model-fallback.test.ts
       - server/src/__tests__/organization-skills-reference.test.ts
       - server/src/__tests__/organization-skills-prune.test.ts
+      - packages/agent-runtime-utils/src/server-utils.test.ts
+      - server/src/__tests__/cursor-local-skill-sync.test.ts
+      - server/src/__tests__/gemini-local-skill-sync.test.ts
+      - server/src/__tests__/opencode-local-skill-sync.test.ts
+      - server/src/__tests__/pi-local-skill-sync.test.ts
       - desktop/scripts/smoke.mjs
       - server/src/__tests__/agent-skill-contract.test.ts
       - tests/e2e/organization-agent-skills.spec.ts
@@ -649,6 +662,7 @@ contracts:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-07-12-built-in-browser.md
       - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
+      - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
   AGENT.SKILL.TELEMETRY.001:
     owner: product
     domain: agents
@@ -1680,6 +1694,7 @@ contracts:
       - server/src/services/plugin-loader.ts
       - server/src/services/plugin-lifecycle.ts
       - server/src/services/plugin-worker-manager.ts
+      - server/resources/bundled-skills/rudder-docs/references/plugin-authoring.md
       - ui/src/pages/PluginManager.tsx
       - ui/src/pages/PluginSettings.tsx
     related_tests:
@@ -1687,8 +1702,10 @@ contracts:
       - server/src/__tests__/plugin-package-resolution.test.ts
       - server/src/__tests__/plugin-dev-watcher.test.ts
       - tests/e2e/linear-plugin-import.spec.ts
+      - server/src/__tests__/bundled-rudder-skill-docs.test.ts
     related_plans:
       - doc/plans/2026-03-13-plugin-kitchen-sink-example.md
+      - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
   PLUGIN.CAPABILITY.001:
     owner: product
     domain: plugins
@@ -1699,10 +1716,12 @@ contracts:
       - server/src/services/plugin-tool-dispatcher.ts
       - server/src/services/plugin-tool-registry.ts
       - server/src/services/plugin-host-services.ts
+      - server/resources/bundled-skills/rudder-docs/references/plugin-authoring.md
     related_tests:
       - server/src/__tests__/plugin-worker-manager.test.ts
     related_plans:
       - doc/plans/2026-03-13-plugin-kitchen-sink-example.md
+      - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
   PLUGIN.JOBS.WEBHOOKS.001:
     owner: product
     domain: plugins
@@ -1717,7 +1736,9 @@ contracts:
       - server/src/services/plugin-job-store.ts
       - server/src/services/plugin-state-store.ts
       - server/src/routes/plugins.operations-routes.ts
+      - server/resources/bundled-skills/rudder-docs/references/plugin-authoring.md
     related_tests:
       - server/src/__tests__/plugin-job-scheduler.test.ts
     related_plans:
       - doc/plans/2026-03-13-plugin-kitchen-sink-example.md
+      - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md

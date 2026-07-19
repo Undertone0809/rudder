@@ -30,9 +30,15 @@ describe("pi local skill sync", () => {
     const skillsHome = managedPiSkillsHome(home);
     const legacyTarget = path.join(skillsHome, "rudder");
     const legacySource = path.join(process.cwd(), "server", "resources", "bundled-skills", "rudder");
+    const retiredAgentTarget = path.join(skillsHome, "rudder-create-agent");
+    const retiredAgentSource = path.join(process.cwd(), "server", "resources", "bundled-skills", "rudder-create-agent");
+    const retiredPluginTarget = path.join(skillsHome, "rudder-create-plugin");
+    const retiredPluginSource = path.join(process.cwd(), "server", "resources", "bundled-skills", "rudder-create-plugin");
     const unrelatedSkill = path.join(skillsHome, "user-notes");
     await fs.mkdir(unrelatedSkill, { recursive: true });
     await fs.symlink(legacySource, legacyTarget);
+    await fs.symlink(retiredAgentSource, retiredAgentTarget);
+    await fs.symlink(retiredPluginSource, retiredPluginTarget);
 
     const ctx = {
       agentId: "agent-1",
@@ -60,9 +66,17 @@ describe("pi local skill sync", () => {
     expect(installedEntry?.targetPath).toContain(skillsHome);
     expect((await fs.lstat(installedEntry?.targetPath ?? "")).isSymbolicLink()).toBe(true);
     await expect(fs.lstat(legacyTarget)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.lstat(retiredAgentTarget)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.lstat(retiredPluginTarget)).rejects.toMatchObject({ code: "ENOENT" });
     expect((await fs.lstat(unrelatedSkill)).isDirectory()).toBe(true);
     expect(after.warnings).toContain(
       `Removed legacy Rudder-managed skill entry "rudder" from ${skillsHome}.`,
+    );
+    expect(after.warnings).toContain(
+      `Removed retired Rudder-managed skill entry "rudder-create-agent" from ${skillsHome}.`,
+    );
+    expect(after.warnings).toContain(
+      `Removed retired Rudder-managed skill entry "rudder-create-plugin" from ${skillsHome}.`,
     );
   });
 

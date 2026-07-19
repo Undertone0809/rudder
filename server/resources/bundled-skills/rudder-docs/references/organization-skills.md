@@ -180,4 +180,4 @@ the full optional enabled-skill set intentionally.
 - If a skill reference is missing or ambiguous, Rudder returns `422`.
 - Prefer linking back to the relevant issue, approval, and agent when commenting about skill changes.
 - This document only covers library import/inspect/enable/sync.
-- Hire and create flows now live on the CLI-first `rudder-create-agent` path.
+- Agent hire and create flows live in [Agent creation](agent-creation.md).

@@ -5,8 +5,9 @@ import type {
 import { resolveOrganizationStorageKey } from "@rudderhq/agent-runtime-utils";
 import {
   buildPersistentSkillSnapshot,
-  cleanupLegacyRudderDocsManagedEntry,
+  cleanupRetiredRudderManagedEntries,
   ensureRudderSkillSymlink,
+  formatRetiredRudderManagedEntryCleanupWarnings,
   readInstalledSkillTargets,
   readRudderRuntimeSkillEntries,
   resolveRudderDesiredSkillNames,
@@ -75,19 +76,8 @@ export async function syncCursorSkills(
   const installed = await readInstalledSkillTargets(skillsHome);
   const availableByRuntimeName = new Map(availableEntries.map((entry) => [entry.runtimeName, entry]));
   const selectedEntries = availableEntries.filter((entry) => desiredSet.has(entry.key));
-  const cleanupResult = await cleanupLegacyRudderDocsManagedEntry(skillsHome, selectedEntries);
-  const warnings: string[] = [];
-  if (cleanupResult.state === "removed") {
-    warnings.push(`Removed legacy Rudder-managed skill entry "rudder" from ${skillsHome}.`);
-  } else if (cleanupResult.state === "collision") {
-    warnings.push(
-      `Preserved existing "rudder" path at ${cleanupResult.targetPath} because Rudder ownership could not be proven.`,
-    );
-  } else if (cleanupResult.state === "failed") {
-    warnings.push(
-      `Failed to remove legacy Rudder-managed skill entry "rudder" at ${cleanupResult.targetPath}; ${cleanupResult.detail}.`,
-    );
-  }
+  const cleanupResults = await cleanupRetiredRudderManagedEntries(skillsHome, selectedEntries);
+  const warnings = formatRetiredRudderManagedEntryCleanupWarnings(cleanupResults, skillsHome);
 
   for (const available of selectedEntries) {
     const target = path.join(skillsHome, available.runtimeName);
