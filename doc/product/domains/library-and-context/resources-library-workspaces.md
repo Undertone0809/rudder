@@ -31,9 +31,6 @@ related_code:
   - ui/src/components/WorkspaceFilePreview.tsx
   - ui/src/components/WorkspacePdfPreview.tsx
   - ui/src/pages/OrganizationWorkspaces.tsx
-  - ui/src/components/workspaces/WorkspaceLaunchControls.tsx
-  - ui/src/lib/workspace-preferences.ts
-  - ui/src/lib/desktop-shell.ts
   - ui/src/pages/Chat.side-panel.tsx
   - desktop/src/ide-opener.ts
   - ui/src/pages/OrganizationWorkspaceBackups.tsx
@@ -53,8 +50,6 @@ related_tests:
   - ui/src/context/ImagePreviewContext.test.tsx
   - ui/src/components/WorkspaceFilePreview.test.tsx
   - ui/src/components/WorkspacePdfPreview.test.tsx
-  - ui/src/components/workspaces/WorkspaceLaunchControls.test.tsx
-  - ui/src/lib/workspace-preferences.test.ts
   - ui/src/pages/Chat.attachment-preview.test.tsx
   - ui/src/components/NewProjectDialog.test.tsx
   - tests/e2e/organization-workspaces-image-preview.spec.ts
@@ -154,15 +149,6 @@ Product model:
   Code remain explicit file targets. In Messenger document previews, folder and
   terminal entries are containing-directory targets: folder targets reveal the
   file, while terminal targets use the file's parent directory as cwd.
-- When a valid existing file in Full Library has neither a built-in preview nor
-  an editor capability, its content area becomes a centered compact split
-  launcher. This fallback is based on presentation capabilities, not on binary
-  type, MIME family, or a file-extension denylist; existing preview-only formats
-  remain in their previews and editable formats remain in their editors.
-- The fallback launcher's primary action starts as `Default app`. After another
-  compatible target opens successfully, that target can be restored while it
-  remains available. The menu may combine default-app and detected IDE file
-  targets with compatible folder and terminal containing-directory targets.
 - Messenger Library file previews render supported documents inline, including
   PDF files through the validated workspace content endpoint. Their compact path
   breadcrumb exposes the complete Library-relative path on hover, and the
@@ -200,21 +186,16 @@ Flow:
 7. In Desktop shells, Rudder asks the Desktop bridge for available launcher
    targets and sends workspace/file open requests through that bridge rather
    than through the server file API.
-8. Full Library evaluates preview and edit capabilities for a valid existing
-   file. Only when both are absent does Desktop show the compact split launcher,
-   using `Default app` initially or a still-compatible previously successful
-   target; file choices use the trusted file bridge, while folder and terminal
-   choices use the validated containing-directory bridge.
-9. From a Messenger Library preview, the operator can open the same validated
+8. From a Messenger Library preview, the operator can open the same validated
    file path in the full Library route without changing its organization scope.
-10. A Markdown Side Panel edit saves only when its expected prior content still
+9. A Markdown Side Panel edit saves only when its expected prior content still
    matches. A conflict pauses autosave, preserves the local draft, and lets the
    operator either retry the draft against the latest version (`Keep mine`) or
    replace it with the latest server content (`Use latest`). If a save response
    is ambiguous, Rudder rereads the file before deciding whether the save failed.
-11. From either Library surface, selecting an image opens the shared image
+10. From either Library surface, selecting an image opens the shared image
    overlay without replacing the current Library route or Side Panel target.
-12. Opening a supported HTML file delegates website rendering and inspection
+11. Opening a supported HTML file delegates website rendering and inspection
     controls to `LIBRARY.WEB.PREVIEW.001` while Open continues to target the
     original validated Library file.
 
@@ -231,16 +212,6 @@ Invariants:
 - Desktop launchers are operator-local conveniences. They must not bypass
   Library path validation, expose protected paths as ordinary entries, or imply
   that browser/server deployments can open files on the operator machine.
-- The Full Library fallback launcher must require a valid existing file and the
-  absence of both built-in preview and edit capabilities. Unsupported-state
-  classification must not displace a working preview or editor merely because
-  a file is binary, large, read-only, or has an unfamiliar extension.
-- The fallback launcher is Desktop-only. Browser/server surfaces must preserve
-  an honest cannot-render state and must not present local launch actions they
-  cannot execute.
-- `Default app` is the initial primary fallback action. A different target is
-  persisted or restored only after a successful launch and only while that
-  target remains compatible and available for the selected file.
 - Messenger file launcher menus distinguish file-open targets from
   containing-directory targets. Default apps and IDEs receive the validated file
   path; folder targets reveal that file and terminal targets receive its parent
@@ -285,10 +256,6 @@ Evidence:
   path-escape rejection, and Library sidebar launcher placement.
 - Organization workspace sidebar component tests cover the visible `Open In`
   label and `Default app` file target.
-- Full Library component and E2E coverage prove capability-based fallback
-  gating, centered split-launcher behavior, initial and restored successful
-  targets, file versus containing-directory bridge routing, launch failures,
-  preview/edit preservation, and browser/server degradation.
 - Messenger Side Panel component and E2E coverage prove a Library document can
   use the same Desktop launcher menu and route terminal/folder actions through
   the validated containing-directory bridge.
