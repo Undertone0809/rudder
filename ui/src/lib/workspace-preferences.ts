@@ -6,6 +6,7 @@ import type {
 import { normalizeRequestedPath } from "./workspace-path-policy";
 
 const WORKSPACE_LAUNCH_TARGET_STORAGE_KEY = "rudder.workspace.launchTargetId";
+const WORKSPACE_UNSUPPORTED_FILE_LAUNCH_TARGET_STORAGE_KEY = "rudder.workspace.unsupportedFileLaunchTargetId";
 const WORKSPACE_OPEN_FILE_TABS_STORAGE_PREFIX = "rudder.workspace.openFileTabs";
 const WORKSPACE_OPEN_FILE_TABS_LIMIT = 24;
 const WORKSPACE_LAUNCH_TARGET_IDS = [
@@ -32,6 +33,7 @@ export type WorkspaceFileOpenTarget = {
 };
 
 export type WorkspaceOpenTargetId = DesktopWorkspaceLaunchTarget["id"] | WorkspaceFileOpenTarget["id"];
+export type WorkspaceUnsupportedFileLaunchTarget = WorkspaceFileOpenTarget | DesktopWorkspaceLaunchTarget;
 
 const DEFAULT_FILE_OPEN_TARGET: WorkspaceFileOpenTarget = {
   fileTarget: true,
@@ -67,6 +69,40 @@ export function workspaceFileOpenTargets(targets: DesktopWorkspaceLaunchTarget[]
       workspaceTarget: target,
     })),
   ];
+}
+
+export function workspaceUnsupportedFileLaunchTargets(
+  targets: DesktopWorkspaceLaunchTarget[],
+  capabilities: { canOpenFile: boolean; canOpenLocation: boolean },
+): WorkspaceUnsupportedFileLaunchTarget[] {
+  if (!capabilities.canOpenFile) return [];
+  const fileTargets = workspaceFileOpenTargets(targets);
+  if (!capabilities.canOpenLocation) return fileTargets;
+  return [
+    ...fileTargets,
+    ...targets.filter((target) => target.kind === "folder" || target.kind === "terminal"),
+  ];
+}
+
+export function resolveWorkspaceUnsupportedFileLaunchTarget(
+  targets: WorkspaceUnsupportedFileLaunchTarget[],
+  storedId: string | null,
+) {
+  return targets.find((target) => target.id === storedId)
+    ?? targets.find((target) => target.id === "defaultApp")
+    ?? null;
+}
+
+export function readStoredWorkspaceUnsupportedFileLaunchTargetId(): WorkspaceOpenTargetId | null {
+  if (typeof window === "undefined") return null;
+  const value = window.localStorage.getItem(WORKSPACE_UNSUPPORTED_FILE_LAUNCH_TARGET_STORAGE_KEY);
+  if (value === "defaultApp") return value;
+  return isWorkspaceLaunchTargetId(value) ? value : null;
+}
+
+export function writeStoredWorkspaceUnsupportedFileLaunchTargetId(targetId: WorkspaceOpenTargetId) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(WORKSPACE_UNSUPPORTED_FILE_LAUNCH_TARGET_STORAGE_KEY, targetId);
 }
 
 export function readStoredWorkspaceLaunchTargetId() {

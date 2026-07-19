@@ -23,6 +23,9 @@ const mockState = vi.hoisted(() => ({
   viewedOrganizationIssuePrefix: "RUD",
   desktopShell: null as unknown,
   loadingWorkspaceFilePaths: new Set<string>(),
+  workspaceFileErrors: new Map<string, Error>(),
+  workspaceRootExists: true,
+  workspaceFileRootExists: true,
   loadingLibraryEntryIds: new Set<string>(),
   markdownEditorValues: [] as string[],
 }));
@@ -186,10 +189,11 @@ vi.mock("@tanstack/react-query", () => ({
       } as const;
       return {
         data: {
-          rootExists: true,
+          rootExists: mockState.workspaceRootExists,
           rootPath: "/tmp/rudder-org",
           directoryPath,
           entries: entriesByPath[directoryPath as keyof typeof entriesByPath] ?? [],
+          message: mockState.workspaceRootExists ? null : "The shared Library root is missing.",
         },
         isLoading: false,
         error: null,
@@ -204,10 +208,19 @@ vi.mock("@tanstack/react-query", () => ({
           error: null,
         };
       }
+      const workspaceFileError = mockState.workspaceFileErrors.get(String(filePath));
+      if (workspaceFileError) {
+        return {
+          data: null,
+          isLoading: false,
+          error: workspaceFileError,
+        };
+      }
       if (String(filePath).endsWith(".html")) {
         return {
           data: {
             filePath,
+            rootExists: mockState.workspaceFileRootExists,
             content: "<!doctype html><html><body><h1>Rendered proposal</h1><p>HTML output.</p></body></html>",
             contentType: "text/html",
             previewKind: "text",
@@ -239,6 +252,22 @@ vi.mock("@tanstack/react-query", () => ({
               : `# ${filePath}\n`,
             contentType: "text/markdown",
             previewKind: "text",
+            truncated: false,
+          },
+          isLoading: false,
+          error: null,
+        };
+      }
+      if (String(filePath).endsWith(".bin") || String(filePath).endsWith(".opaque")) {
+        return {
+          data: {
+            filePath,
+            rootExists: mockState.workspaceFileRootExists,
+            content: null,
+            contentPath: null,
+            contentType: String(filePath).endsWith(".bin") ? "application/octet-stream" : "text/plain",
+            previewKind: String(filePath).endsWith(".bin") ? "binary" : "text",
+            message: "Legacy fallback message",
             truncated: false,
           },
           isLoading: false,
@@ -593,6 +622,9 @@ beforeEach(() => {
   mockState.viewedOrganizationId = "org-1";
   mockState.viewedOrganizationIssuePrefix = "RUD";
   mockState.loadingWorkspaceFilePaths.clear();
+  mockState.workspaceFileErrors.clear();
+  mockState.workspaceRootExists = true;
+  mockState.workspaceFileRootExists = true;
   mockState.loadingLibraryEntryIds.clear();
   mockState.markdownEditorValues = [];
   Object.defineProperty(window, "localStorage", {
@@ -710,6 +742,231 @@ describe("OrganizationWorkspaces scroll regions", () => {
 
     expect(() => renderWorkspacesPage()).not.toThrow();
     expect(document.querySelector("[data-testid='org-workspaces-files-scroll']")).not.toBeNull();
+  });
+
+  it("shows the capability-terminal unsupported-file message without inert controls on Web", () => {
+    mockState.searchParams = "path=artifacts/chat-ui-review/result.opaque";
+
+    renderWorkspacesPage();
+
+    expect(document.body.textContent).toContain("This file can’t be previewed or edited in Rudder.");
+    expect(document.body.textContent).not.toContain("Legacy fallback message");
+    expect(document.querySelector("[data-testid='org-workspaces-unsupported-file-launcher']")).toBeNull();
+  });
+
+  it.each([
+    "artifacts/chat-ui-review/image.png",
+    "artifacts/chat-ui-review/README.md",
+    "artifacts/chat-ui-review/proposal.html",
+    "artifacts/chat-ui-review/evals.json",
+  ])("keeps built-in Library presentation for %s", async (filePath) => {
+    mockState.searchParams = `path=${encodeURIComponent(filePath)}`;
+
+    renderWorkspacesPage();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).not.toContain("This file can’t be previewed or edited in Rudder.");
+    expect(document.querySelector("[data-testid='org-workspaces-unsupported-file-launcher']")).toBeNull();
+  });
+
+  it("routes unsupported-file app and location targets and remembers only successful choices", async () => {
+    mockState.searchParams = "path=artifacts/chat-ui-review/archive.bin";
+    const openWorkspaceFileInIde = vi.fn(async () => {});
+    const openWorkspaceFileLocation = vi.fn(async () => {});
+    mockState.desktopShell = {
+      listAvailableIdes: vi.fn().mockResolvedValue([{ id: "vscode", label: "VS Code" }]),
+      listWorkspaceLaunchTargets: vi.fn().mockResolvedValue([
+        { id: "vscode", label: "VS Code", kind: "ide" },
+        { id: "xcode", label: "Xcode", kind: "ide" },
+        { id: "terminal", label: "Terminal", kind: "terminal" },
+        { id: "finder", label: "Finder", kind: "folder" },
+      ]),
+      openWorkspaceFileInIde,
+      openWorkspaceFileLocation,
+    };
+
+    renderWorkspacesPage();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const primary = document.querySelector<HTMLButtonElement>("[data-testid='org-workspaces-unsupported-file-open-current']");
+    expect(primary?.getAttribute("aria-label")).toBe("Open file with Default app");
+    await act(async () => {
+      primary?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(openWorkspaceFileInIde).toHaveBeenCalledWith(
+      "/tmp/rudder-org",
+      "artifacts/chat-ui-review/archive.bin",
+      "defaultApp",
+    );
+    expect(openWorkspaceFileLocation).not.toHaveBeenCalled();
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>("[data-testid='org-workspaces-unsupported-file-launcher']")
+        ?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>("[data-testid='org-workspaces-unsupported-file-target-vscode']")?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(openWorkspaceFileInIde).toHaveBeenLastCalledWith(
+      "/tmp/rudder-org",
+      "artifacts/chat-ui-review/archive.bin",
+      "vscode",
+    );
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>("[data-testid='org-workspaces-unsupported-file-launcher']")
+        ?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>("[data-testid='org-workspaces-unsupported-file-target-terminal']")?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(openWorkspaceFileLocation).toHaveBeenLastCalledWith(
+      "/tmp/rudder-org",
+      "artifacts/chat-ui-review/archive.bin",
+      "terminal",
+    );
+    expect(document.querySelector("[data-testid='org-workspaces-unsupported-file-open-current']")?.getAttribute("aria-label"))
+      .toBe("Open file with Terminal");
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>("[data-testid='org-workspaces-unsupported-file-launcher']")
+        ?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+      await Promise.resolve();
+    });
+    expect(document.querySelector("[data-testid='org-workspaces-unsupported-file-target-xcode']")).toBeNull();
+    const finder = document.querySelector<HTMLButtonElement>("[data-testid='org-workspaces-unsupported-file-target-finder']");
+    expect(finder?.textContent).toContain("Finder");
+    await act(async () => {
+      finder?.click();
+      await Promise.resolve();
+    });
+    expect(openWorkspaceFileLocation).toHaveBeenCalledWith(
+      "/tmp/rudder-org",
+      "artifacts/chat-ui-review/archive.bin",
+      "finder",
+    );
+    expect(document.querySelector("[data-testid='org-workspaces-unsupported-file-open-current']")?.getAttribute("aria-label"))
+      .toBe("Open file with Finder");
+    expect(window.localStorage.setItem).toHaveBeenLastCalledWith(
+      "rudder.workspace.unsupportedFileLaunchTargetId",
+      "finder",
+    );
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>("[data-testid='org-workspaces-unsupported-file-open-current']")?.click();
+      await Promise.resolve();
+    });
+    expect(openWorkspaceFileLocation).toHaveBeenLastCalledWith(
+      "/tmp/rudder-org",
+      "artifacts/chat-ui-review/archive.bin",
+      "finder",
+    );
+  });
+
+  it("does not remember a failed unsupported-file target", async () => {
+    mockState.searchParams = "path=artifacts/chat-ui-review/archive.bin";
+    const openWorkspaceFileLocation = vi.fn(async () => {
+      throw new Error("Finder rejected the request");
+    });
+    mockState.desktopShell = {
+      listAvailableIdes: vi.fn().mockResolvedValue([]),
+      listWorkspaceLaunchTargets: vi.fn().mockResolvedValue([
+        { id: "finder", label: "Finder", kind: "folder" },
+      ]),
+      openWorkspaceFileInIde: vi.fn(async () => {}),
+      openWorkspaceFileLocation,
+    };
+
+    renderWorkspacesPage();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      document.querySelector<HTMLButtonElement>("[data-testid='org-workspaces-unsupported-file-launcher']")
+        ?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>("[data-testid='org-workspaces-unsupported-file-target-finder']")?.click();
+      await Promise.resolve();
+    });
+
+    expect(openWorkspaceFileLocation).toHaveBeenCalledTimes(1);
+    expect(window.localStorage.setItem).not.toHaveBeenCalledWith(
+      "rudder.workspace.unsupportedFileLaunchTargetId",
+      "finder",
+    );
+    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      tone: "error",
+      body: "Finder rejected the request",
+    }));
+  });
+
+  it("keeps the root-missing message separate from unsupported-file launch controls", async () => {
+    mockState.searchParams = "path=artifacts/chat-ui-review/archive.bin";
+    mockState.workspaceRootExists = false;
+    mockState.desktopShell = {
+      listWorkspaceLaunchTargets: vi.fn().mockResolvedValue([{ id: "finder", label: "Finder", kind: "folder" }]),
+      openWorkspaceFileInIde: vi.fn(async () => {}),
+      openWorkspaceFileLocation: vi.fn(async () => {}),
+    };
+
+    renderWorkspacesPage();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("The shared Library root is missing.");
+    expect(document.body.textContent).not.toContain("This file can’t be previewed or edited in Rudder.");
+    expect(document.querySelector("[data-testid='org-workspaces-unsupported-file-launcher']")).toBeNull();
+  });
+
+  it.each(["loading", "error"] as const)("keeps the file %s state separate from unsupported-file launch controls", (state) => {
+    const filePath = "artifacts/chat-ui-review/archive.bin";
+    mockState.searchParams = `path=${encodeURIComponent(filePath)}`;
+    if (state === "loading") {
+      mockState.loadingWorkspaceFilePaths.add(filePath);
+    } else {
+      mockState.workspaceFileErrors.set(filePath, new Error("File read failed"));
+    }
+
+    renderWorkspacesPage();
+
+    expect(document.body.textContent).toContain(state === "loading" ? "Loading file…" : "File read failed");
+    expect(document.body.textContent).not.toContain("This file can’t be previewed or edited in Rudder.");
+    expect(document.querySelector("[data-testid='org-workspaces-unsupported-file-launcher']")).toBeNull();
+  });
+
+  it("keeps a resolved file's root-missing state separate from the unsupported-file fallback", async () => {
+    mockState.searchParams = "path=artifacts/chat-ui-review/archive.bin";
+    mockState.workspaceFileRootExists = false;
+    mockState.desktopShell = {
+      listWorkspaceLaunchTargets: vi.fn().mockResolvedValue([{ id: "finder", label: "Finder", kind: "folder" }]),
+      openWorkspaceFileInIde: vi.fn(async () => {}),
+      openWorkspaceFileLocation: vi.fn(async () => {}),
+    };
+
+    renderWorkspacesPage();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("Legacy fallback message");
+    expect(document.body.textContent).not.toContain("This file can’t be previewed or edited in Rudder.");
+    expect(document.querySelector("[data-testid='org-workspaces-unsupported-file-launcher']")).toBeNull();
   });
 
   it("moves workspace launch targets into the Library sidebar menu", async () => {

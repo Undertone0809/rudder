@@ -4,7 +4,12 @@ import type { DesktopWorkspaceLaunchTarget } from "@/lib/desktop-shell";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { WorkspaceLaunchMenu, WorkspaceLaunchTargetIcon } from "./WorkspaceLaunchControls";
+import * as workspaceLaunchControls from "./WorkspaceLaunchControls";
+import {
+  UnsupportedWorkspaceFileLauncher,
+  WorkspaceLaunchMenu,
+  WorkspaceLaunchTargetIcon,
+} from "./WorkspaceLaunchControls";
 
 vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -18,7 +23,9 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
 vi.mock("@/components/ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
   TooltipTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
-  TooltipContent: ({ children }: { children: ReactNode }) => <span>{children}</span>,
+  TooltipContent: ({ children, className }: { children: ReactNode; className?: string }) => (
+    <span className={className}>{children}</span>
+  ),
 }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -121,5 +128,77 @@ describe("WorkspaceLaunchMenu", () => {
     expect(container.querySelector<HTMLButtonElement>('[data-testid="org-workspaces-launcher"]')?.disabled).toBe(true);
     expect(Array.from(container.querySelectorAll<HTMLButtonElement>('[data-testid^="org-workspaces-launch-target-"]')).every((button) => button.disabled)).toBe(true);
     expect(container.querySelector('[data-testid="org-workspaces-launch-target-terminal"] .animate-spin')).toBeTruthy();
+  });
+});
+
+describe("UnsupportedWorkspaceFileLauncher", () => {
+  it("is available as a reusable launcher surface", () => {
+    expect("UnsupportedWorkspaceFileLauncher" in workspaceLaunchControls).toBe(true);
+  });
+
+  it("shows honest centered fallback copy without controls when no targets are available", () => {
+    const container = render(
+      <UnsupportedWorkspaceFileLauncher
+        targets={[]}
+        currentTarget={null}
+        openingTargetId={null}
+        onOpenTarget={vi.fn()}
+      />,
+    );
+
+    expect(container.textContent).toContain("This file can’t be previewed or edited in Rudder.");
+    expect(container.querySelector('[data-testid="org-workspaces-unsupported-file-launcher"]')).toBeNull();
+    expect(container.firstElementChild?.className).toContain("items-center");
+    expect(container.firstElementChild?.className).toContain("justify-center");
+  });
+
+  it("renders a compact split action with target icons, labels, and accessible names", () => {
+    const targets = [
+      { fileTarget: true as const, id: "defaultApp" as const, label: "Default app", kind: "app" as const },
+      { fileTarget: true as const, id: "vscode" as const, label: "VS Code", kind: "ide" as const, workspaceTarget: { id: "vscode" as const, label: "VS Code", kind: "ide" as const } },
+      { id: "finder" as const, label: "Finder", kind: "folder" as const },
+    ];
+    const onOpenTarget = vi.fn();
+    const container = render(
+      <UnsupportedWorkspaceFileLauncher
+        targets={targets}
+        currentTarget={targets[0]}
+        openingTargetId={null}
+        onOpenTarget={onOpenTarget}
+      />,
+    );
+
+    const primary = container.querySelector<HTMLButtonElement>('[data-testid="org-workspaces-unsupported-file-open-current"]');
+    const menu = container.querySelector<HTMLButtonElement>('[data-testid="org-workspaces-unsupported-file-launcher"]');
+    expect(primary?.getAttribute("aria-label")).toBe("Open file with Default app");
+    expect(menu?.getAttribute("aria-label")).toBe("Choose how to open file");
+    expect(Array.from(container.querySelectorAll("span")).find((element) => (
+      element.textContent === "Choose how to open file"
+    ))?.classList.contains("pointer-events-none")).toBe(true);
+    expect(primary?.className).toContain("h-9");
+    expect(container.querySelector('[data-workspace-launch-target-icon="defaultApp"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="org-workspaces-unsupported-file-target-vscode"]')?.textContent).toContain("VS Code");
+    expect(container.querySelector('[data-testid="org-workspaces-unsupported-file-target-finder"]')?.textContent).toContain("Finder");
+
+    act(() => primary?.click());
+    expect(onOpenTarget).toHaveBeenCalledWith(targets[0]);
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="org-workspaces-unsupported-file-target-finder"]')?.click());
+    expect(onOpenTarget).toHaveBeenLastCalledWith(targets[2]);
+  });
+
+  it("disables both split actions and shows a spinner while a launch is pending", () => {
+    const target = { fileTarget: true as const, id: "defaultApp" as const, label: "Default app", kind: "app" as const };
+    const container = render(
+      <UnsupportedWorkspaceFileLauncher
+        targets={[target]}
+        currentTarget={target}
+        openingTargetId="defaultApp"
+        onOpenTarget={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="org-workspaces-unsupported-file-open-current"]')?.disabled).toBe(true);
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="org-workspaces-unsupported-file-launcher"]')?.disabled).toBe(true);
+    expect(container.querySelector('[data-testid="org-workspaces-unsupported-file-open-current"] .animate-spin')).toBeTruthy();
   });
 });

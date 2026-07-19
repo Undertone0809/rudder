@@ -762,6 +762,8 @@ contracts:
       - ui/src/context/ImagePreviewContext.tsx
       - ui/src/components/WorkspaceFilePreview.tsx
       - ui/src/components/WorkspacePdfPreview.tsx
+      - ui/src/components/workspaces/WorkspaceLaunchControls.tsx
+      - ui/src/lib/workspace-preferences.ts
       - ui/src/pages/OrganizationResources.tsx
       - ui/src/pages/OrganizationWorkspaces.tsx
       - ui/src/pages/Chat.side-panel.tsx
@@ -778,12 +780,15 @@ contracts:
       - ui/src/pages/OrganizationWorkspaces.scrollbars.test.tsx
       - ui/src/components/WorkspaceFilePreview.test.tsx
       - ui/src/components/WorkspacePdfPreview.test.tsx
+      - ui/src/components/workspaces/WorkspaceLaunchControls.test.tsx
+      - ui/src/lib/workspace-preferences.test.ts
       - tests/e2e/chat-side-panel.spec.ts
       - tests/e2e/organization-workspaces-image-preview.spec.ts
       - tests/e2e/organization-workspaces-launcher.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-06-30-org-library-folder-and-backup-zip.md
+      - doc/plans/2026-07-20-library-unsupported-file-launcher.md
   LIBRARY.WEB.PREVIEW.001:
     owner: product
     domain: library-and-context
