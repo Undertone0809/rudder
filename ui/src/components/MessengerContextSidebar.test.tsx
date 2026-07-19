@@ -1077,6 +1077,89 @@ describe("MessengerContextSidebar", () => {
     }));
   });
 
+  it("renders pinned Messenger threads in a dedicated section above project groups", () => {
+    localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "project" });
+    localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": false });
+    const projectContextLinks = [{
+      entityType: "project",
+      entityId: "project-1",
+      entity: { label: "Website launch", identifier: null },
+    }];
+    chatList = [
+      {
+        id: "chat-pinned",
+        title: "Pinned project chat",
+        summary: "Keep this visible.",
+        latestReplyPreview: "Keep this visible.",
+        latestUserMessagePreview: null,
+        userMessageCount: 0,
+        updatedAt: "2026-04-11T09:40:00.000Z",
+        lastMessageAt: "2026-04-11T09:40:00.000Z",
+        unreadCount: 0,
+        needsAttention: false,
+        isUnread: false,
+        isPinned: true,
+        primaryIssue: null,
+        contextLinks: projectContextLinks,
+      },
+      {
+        id: "chat-regular",
+        title: "Regular project chat",
+        summary: "Stay in the project.",
+        latestReplyPreview: "Stay in the project.",
+        latestUserMessagePreview: null,
+        userMessageCount: 0,
+        updatedAt: "2026-04-11T09:41:00.000Z",
+        lastMessageAt: "2026-04-11T09:41:00.000Z",
+        unreadCount: 0,
+        needsAttention: false,
+        isUnread: false,
+        isPinned: false,
+        primaryIssue: null,
+        contextLinks: projectContextLinks,
+      },
+    ];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "chat:chat-pinned",
+          kind: "chat",
+          title: "Pinned project chat",
+          preview: "Keep this visible.",
+          subtitle: null,
+          href: "/messenger/chat/chat-pinned",
+          latestActivityAt: "2026-04-11T09:40:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: true,
+        },
+        {
+          threadKey: "chat:chat-regular",
+          kind: "chat",
+          title: "Regular project chat",
+          preview: "Stay in the project.",
+          subtitle: null,
+          href: "/messenger/chat/chat-regular",
+          latestActivityAt: "2026-04-11T09:41:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+      ],
+    };
+    projectList = [{ id: "project-1", name: "Website launch", icon: "rocket", color: "#0ea5e9" }];
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html).toContain('data-testid="messenger-thread-section-project-pinned"');
+    expect(html.indexOf("Pinned")).toBeLessThan(html.indexOf("Website launch"));
+    expect(html.match(/Pinned project chat/g)).toHaveLength(1);
+    expect(html.match(/Regular project chat/g)).toHaveLength(1);
+  });
+
   it("orders real project thread groups by the stored project order and keeps fixed groups at the bottom", () => {
     localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "project" });
     localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": false });

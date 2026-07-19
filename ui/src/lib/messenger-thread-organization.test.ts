@@ -13,6 +13,7 @@ import {
   organizeThreadEntries,
   projectSectionKeyToStoredId,
   sortCustomLayoutSections,
+  sortManagedThreadSections,
   storedProjectSectionIdToKey,
   type OrganizedThreadEntry,
   type OrganizedThreadSection,
@@ -105,6 +106,61 @@ describe("messenger thread organization", () => {
 
     expect(sections.map((section) => section.key)).toEqual(["project:project-1", "system", "project:none"]);
     expect(sections[0]?.entries.map((item) => item.thread.threadKey)).toEqual(["chat:alpha", "issue:alpha"]);
+  });
+
+  it("collects pinned project threads in a dedicated section without duplicating them", () => {
+    const projects = new Map<string, Project>([
+      ["project-1", { id: "project-1", name: "Alpha", icon: "folder", color: "teal" } as Project],
+    ]);
+    const alphaConversation = conversation("alpha", {
+      contextLinks: [{
+        entityType: "project",
+        entityId: "project-1",
+        entity: { label: "Alpha" },
+      } as ChatConversation["contextLinks"][number]],
+    });
+    const entries = [
+      entry("chat:pinned", { isPinned: true }, alphaConversation),
+      entry("issue:pinned", {
+        kind: "issues",
+        isPinned: true,
+        metadata: { splitIssue: true, projectId: "project-1", projectName: "Alpha" },
+      }),
+      entry("chat:regular", {}, alphaConversation),
+    ];
+
+    const sections = organizeThreadEntries(entries, "project", new Map(), projects, (kind) => kind);
+
+    expect(sections.map((section) => section.key)).toEqual(["project:pinned", "project:project-1"]);
+    expect(sections[0]).toMatchObject({ label: "Pinned", isPinned: true });
+    expect(sections[0]?.entries.map((item) => item.thread.threadKey)).toEqual([
+      "chat:pinned",
+      "issue:pinned",
+    ]);
+    expect(sections[1]?.entries.map((item) => item.thread.threadKey)).toEqual(["chat:regular"]);
+  });
+
+  it("keeps the project pinned section ahead of stored project ordering", () => {
+    const pinnedSection: OrganizedThreadSection = {
+      key: "project:pinned",
+      label: "Pinned",
+      isPinned: true,
+      entries: [entry("chat:pinned", { isPinned: true })],
+    };
+    const projectSection: OrganizedThreadSection = {
+      key: "project:project-1",
+      label: "Alpha",
+      entries: [entry("chat:regular")],
+    };
+
+    const sections = sortManagedThreadSections(
+      [projectSection, pinnedSection],
+      "project",
+      ["project-1"],
+      ["project-1", "messenger-section:project:pinned"],
+    );
+
+    expect(sections.map((section) => section.key)).toEqual(["project:pinned", "project:project-1"]);
   });
 
   it("keeps project section storage identifiers reversible", () => {

@@ -3,6 +3,8 @@ import { isLocalManagedThreadGroupRule, type ThreadOrganizationRule } from "./me
 
 export type StandardThreadOrganizationRule = Exclude<ThreadOrganizationRule, "custom" | "latest">;
 
+const PROJECT_PINNED_SECTION_KEY = "project:pinned";
+
 interface ThreadGroup {
   key: string;
   label: string;
@@ -58,7 +60,9 @@ export function flattenThreadSections(
 }
 
 export function projectIdFromSectionKey(sectionKey: string) {
-  return sectionKey.startsWith("project:") && sectionKey !== "project:none"
+  return sectionKey.startsWith("project:")
+    && sectionKey !== "project:none"
+    && sectionKey !== PROJECT_PINNED_SECTION_KEY
     ? sectionKey.slice("project:".length)
     : null;
 }
@@ -99,11 +103,13 @@ function sortProjectThreadSections(
   orderedSectionIds: string[] = [],
 ) {
   if (sections.length === 0) return sections;
+  const pinnedSections = sections.filter((section) => section.isPinned);
+  const unpinnedSections = sections.filter((section) => !section.isPinned);
   const orderIndex = new Map(orderedProjectIds.map((id, index) => [id, index]));
   const realProjectSections: OrganizedThreadSection[] = [];
   const fixedSections: OrganizedThreadSection[] = [];
 
-  for (const section of sections) {
+  for (const section of unpinnedSections) {
     if (projectIdFromSectionKey(section.key)) realProjectSections.push(section);
     else fixedSections.push(section);
   }
@@ -120,12 +126,12 @@ function sortProjectThreadSections(
   });
 
   const projectSortedSections = [...realProjectSections, ...fixedSections];
-  if (orderedSectionIds.length === 0) return projectSortedSections;
+  if (orderedSectionIds.length === 0) return [...pinnedSections, ...projectSortedSections];
   const sectionOrderIndex = new Map(
     orderedSectionIds.map((id, index) => [storedProjectSectionIdToKey(id), index]),
   );
   const baseIndex = new Map(projectSortedSections.map((section, index) => [section.key, index]));
-  return [...projectSortedSections].sort((a, b) => {
+  const orderedUnpinnedSections = [...projectSortedSections].sort((a, b) => {
     const aIndex = sectionOrderIndex.get(a.key);
     const bIndex = sectionOrderIndex.get(b.key);
     if (aIndex !== undefined || bIndex !== undefined) {
@@ -133,6 +139,7 @@ function sortProjectThreadSections(
     }
     return (baseIndex.get(a.key) ?? 0) - (baseIndex.get(b.key) ?? 0);
   });
+  return [...pinnedSections, ...orderedUnpinnedSections];
 }
 
 export function sortManagedThreadSections(
@@ -510,12 +517,21 @@ export function organizeThreadEntries(
 ): OrganizedThreadSection[] {
   const sorted = [...entries].sort(compareThreadEntries);
   if (rule === "project") {
-    return groupEntries(sorted, (entry) => {
+    const pinnedEntries = sorted.filter(isPinnedEntry);
+    const projectSections = groupEntries(sorted.filter((entry) => !isPinnedEntry(entry)), (entry) => {
       const splitIssueProject = splitIssueProjectGroup(entry.thread, projectsById);
       if (splitIssueProject) return splitIssueProject;
       if (entry.thread.kind !== "chat") return { key: "system", label: "System" };
       return chatProjectGroup(entry.conversation, projectsById);
     });
+    return pinnedEntries.length > 0
+      ? [{
+        key: PROJECT_PINNED_SECTION_KEY,
+        label: "Pinned",
+        isPinned: true,
+        entries: pinnedEntries,
+      }, ...projectSections]
+      : projectSections;
   }
   if (rule === "agent") return groupEntries(sorted, (entry) => entryAgentGroup(entry, agentsById));
   if (rule === "kind") {
