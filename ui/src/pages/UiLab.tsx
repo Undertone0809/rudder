@@ -32,6 +32,7 @@ import { PackageFileTree, type FileTreeNode } from "@/components/PackageFileTree
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { PageTabBar } from "@/components/PageTabBar";
 import { PriorityIcon } from "@/components/PriorityIcon";
+import { ProjectIcon } from "@/components/ProjectIdentity";
 import { ProjectProperties } from "@/components/ProjectProperties";
 import { QuotaBar } from "@/components/QuotaBar";
 import { ReportsToPicker } from "@/components/ReportsToPicker";
@@ -1603,17 +1604,23 @@ function CommonComponentsSection() {
                   <div className="group/project relative inline-flex max-w-[min(100%,15rem)] min-w-0">
                     <button
                       type="button"
-                      className="chat-chip inline-flex w-full min-w-0 items-center rounded-[var(--radius-md)] py-1.5 pl-3 pr-9 text-xs font-medium"
+                      className="chat-chip inline-flex w-full min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium"
                       aria-label="Project context: UI Lab"
                     >
+                      <ProjectIcon
+                        color="#2f80ed"
+                        icon="folder"
+                        size="xs"
+                        className="transition-opacity group-focus-within/project:opacity-0 group-hover/project:opacity-0"
+                      />
                       <span className="min-w-0 truncate">UI Lab</span>
                     </button>
                     <button
                       type="button"
                       aria-label="Clear project context: UI Lab"
-                      className="absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-[var(--radius-sm)] text-muted-foreground opacity-0 pointer-events-none group-focus-within/project:pointer-events-auto group-focus-within/project:opacity-100 group-hover/project:pointer-events-auto group-hover/project:opacity-100"
+                      className="absolute left-2 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-[var(--radius-sm)] text-muted-foreground opacity-0 pointer-events-none group-focus-within/project:pointer-events-auto group-focus-within/project:opacity-100 group-hover/project:pointer-events-auto group-hover/project:opacity-100"
                     >
-                      <X className="h-3 w-3" />
+                      <X className="h-4 w-4" />
                     </button>
                   </div>
                   <button

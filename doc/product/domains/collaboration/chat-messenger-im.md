@@ -224,6 +224,12 @@ Product model:
   page of four complete editable prompt suggestions. Selecting a suggestion
   replaces the trigger with the full prompt but does not create a conversation
   or submit work until the operator sends it.
+- A selected Project is always identifiable in the Chat composer by its Project
+  icon, including after the conversation starts and Project context becomes
+  locked. Before the first turn, hovering or focusing the selected Project chip
+  replaces that icon in place with the clear action; the label and chip geometry
+  stay fixed. Locked Project context keeps the icon visible and exposes no clear
+  action.
 - Conversations with more than five visible user messages show a compact
   message map for jumping to earlier user turns. The map samples at most 64
   markers and previews the user turn plus the following assistant reply without
@@ -390,6 +396,7 @@ Evidence:
   queued follow-up editing/cancellation/claiming, hidden delivered rows,
   retained parked rows, and Feishu-bound queue mutation rejection.
 - Chat empty-state UI and E2E coverage verify aligned tabs/Project context,
+  the selected Project icon/clear-action swap, the locked-conversation icon,
   full-width square resting rows, and inset rounded hover emphasis for recent
   Project conversations.
 - Chat prompt-flow UI, motion-contract, and E2E coverage verify compact starters,
