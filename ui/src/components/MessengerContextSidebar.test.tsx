@@ -294,6 +294,25 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain('aria-label="Organize threads"');
   });
 
+  it("renders the agent avatar before the agent group name", () => {
+    localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "agent" });
+    chatList = [{
+      ...chatList[0],
+      preferredAgentId: "agent-1",
+    }];
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+    const sectionStart = html.indexOf('data-testid="messenger-thread-section-agent-agent-1"');
+    const avatarStart = html.indexOf('data-testid="messenger-thread-section-agent-agent-1-agent-avatar"');
+    const agentNameStart = html.indexOf(">Asher</span>", avatarStart);
+
+    expect(sectionStart).toBeGreaterThanOrEqual(0);
+    expect(avatarStart).toBeGreaterThan(sectionStart);
+    expect(agentNameStart).toBeGreaterThan(avatarStart);
+    expect(html.slice(avatarStart, agentNameStart)).toContain("<img");
+    expect(html.slice(avatarStart, agentNameStart)).toContain('aria-hidden="true"');
+  });
+
   it("defaults Messenger threads to compact density and split issue notifications without status labels", () => {
     const html = renderToStaticMarkup(<MessengerContextSidebar />);
 
