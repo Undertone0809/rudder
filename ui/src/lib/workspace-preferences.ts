@@ -95,14 +95,22 @@ export function resolveWorkspaceUnsupportedFileLaunchTarget(
 
 export function readStoredWorkspaceUnsupportedFileLaunchTargetId(): WorkspaceOpenTargetId | null {
   if (typeof window === "undefined") return null;
-  const value = window.localStorage.getItem(WORKSPACE_UNSUPPORTED_FILE_LAUNCH_TARGET_STORAGE_KEY);
-  if (value === "defaultApp") return value;
-  return isWorkspaceLaunchTargetId(value) ? value : null;
+  try {
+    const value = window.localStorage.getItem(WORKSPACE_UNSUPPORTED_FILE_LAUNCH_TARGET_STORAGE_KEY);
+    if (value === "defaultApp") return value;
+    return isWorkspaceLaunchTargetId(value) ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 export function writeStoredWorkspaceUnsupportedFileLaunchTargetId(targetId: WorkspaceOpenTargetId) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(WORKSPACE_UNSUPPORTED_FILE_LAUNCH_TARGET_STORAGE_KEY, targetId);
+  try {
+    window.localStorage.setItem(WORKSPACE_UNSUPPORTED_FILE_LAUNCH_TARGET_STORAGE_KEY, targetId);
+  } catch {
+    // The in-memory selection remains usable when preference storage is unavailable.
+  }
 }
 
 export function readStoredWorkspaceLaunchTargetId() {

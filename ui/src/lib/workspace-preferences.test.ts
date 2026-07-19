@@ -86,6 +86,15 @@ describe("workspace launch preferences", () => {
     expect(preferences.readStoredWorkspaceUnsupportedFileLaunchTargetId()).toBeNull();
   });
 
+  it("treats a blocked unsupported-file preference read as no stored target", () => {
+    const getItem = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new DOMException("Storage access denied", "SecurityError");
+    });
+
+    expect(workspacePreferences.readStoredWorkspaceUnsupportedFileLaunchTargetId()).toBeNull();
+    expect(getItem).toHaveBeenCalledWith("rudder.workspace.unsupportedFileLaunchTargetId");
+  });
+
   it("accepts only supported workspace target ids", () => {
     expect(isWorkspaceLaunchTargetId("cursor")).toBe(true);
     expect(isWorkspaceLaunchTargetId("defaultApp")).toBe(false);

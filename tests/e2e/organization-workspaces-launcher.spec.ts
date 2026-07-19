@@ -225,6 +225,15 @@ test("launches unsupported Library files while preserving supported presentation
   };
   await expect(primary).toHaveAttribute("aria-label", "Open file with Default app");
   await page.screenshot({ path: "/tmp/rudder-library-unsupported-desktop.png", fullPage: true });
+  await page.evaluate(() => window.localStorage.setItem("rudder.theme", "dark"));
+  await page.reload();
+  await expect(page.getByText("This file can’t be previewed or edited in Rudder.")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator("html")).toHaveClass(/dark/);
+  await page.screenshot({ path: "/tmp/rudder-library-unsupported-desktop-dark.png", fullPage: true });
+  await page.evaluate(() => window.localStorage.setItem("rudder.theme", "light"));
+  await page.reload();
+  await expect(primary).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator("html")).not.toHaveClass(/dark/);
   await primary.click();
   await expect.poll(async () => page.evaluate(() => (window as typeof window & {
     __rudderOpenedWorkspaceFiles?: Array<{ filePath: string; targetId?: string }>;

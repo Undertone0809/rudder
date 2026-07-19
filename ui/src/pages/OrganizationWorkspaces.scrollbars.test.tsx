@@ -904,6 +904,43 @@ describe("OrganizationWorkspaces scroll regions", () => {
     );
   });
 
+  it("keeps a successful unsupported-file launch successful when preference storage rejects the write", async () => {
+    mockState.searchParams = "path=artifacts/chat-ui-review/archive.bin";
+    const openWorkspaceFileInIde = vi.fn(async () => {});
+    vi.mocked(window.localStorage.setItem).mockImplementation(() => {
+      throw new DOMException("Storage quota exceeded", "QuotaExceededError");
+    });
+    mockState.desktopShell = {
+      listAvailableIdes: vi.fn().mockResolvedValue([]),
+      listWorkspaceLaunchTargets: vi.fn().mockResolvedValue([]),
+      openWorkspaceFileInIde,
+    };
+
+    renderWorkspacesPage();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      document.querySelector<HTMLButtonElement>("[data-testid='org-workspaces-unsupported-file-open-current']")?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(openWorkspaceFileInIde).toHaveBeenCalledWith(
+      "/tmp/rudder-org",
+      "artifacts/chat-ui-review/archive.bin",
+      "defaultApp",
+    );
+    expect(window.localStorage.setItem).toHaveBeenCalledWith(
+      "rudder.workspace.unsupportedFileLaunchTargetId",
+      "defaultApp",
+    );
+    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Opened file",
+      tone: "info",
+    }));
+    expect(mockState.pushToast).not.toHaveBeenCalledWith(expect.objectContaining({ tone: "error" }));
+  });
+
   it("does not remember a failed unsupported-file target", async () => {
     mockState.searchParams = "path=artifacts/chat-ui-review/archive.bin";
     const openWorkspaceFileLocation = vi.fn(async () => {
