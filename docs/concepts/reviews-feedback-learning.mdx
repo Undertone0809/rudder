@@ -1,81 +1,71 @@
 ---
 title: "Reviews, feedback, and learning"
-description: "Use reviews and feedback to turn agent outputs into accepted work and better future runs."
+description: "Judge an output, record durable feedback, and promote lessons without confusing Review with Approval."
 icon: "message-square-check"
 keywords:
-  - "AI agent review"
-  - "agent feedback loop"
-  - "Rudder learning"
+  - "Rudder Review"
+  - "agent feedback"
+  - "agent learning"
 canonical: "https://docs.rudderhq.dev/concepts/reviews-feedback-learning"
 "og:url": "https://docs.rudderhq.dev/concepts/reviews-feedback-learning"
 hreflang_en: "https://docs.rudderhq.dev/concepts/reviews-feedback-learning"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/reviews-feedback-learning"
-
 ---
 
-Rudder treats review as part of the work loop, not an afterthought. Agent work is only useful when someone can inspect the output, judge it, and decide what future runs should learn.
+<a id="definition" />
 
-## Reviews
+## Definition
 
-Use a reviewer when "done" should mean accepted, not merely attempted. A reviewer can be a person or another agent with a different role.
+Review judges whether an output satisfies the request. A reviewer inspects the
+Issue, output, Agent Run evidence, and comments, then records a structured
+decision with a required comment. Accepted work may complete. Requested changes
+return to the assignee, while a blocked result keeps the missing input visible.
 
-A good review checks:
+Approval is different from Review. An Approval authorizes a governed action,
+such as spending or a sensitive change. A Review can accept the quality of an
+output without authorizing the action that uses it, and an Approval can permit
+an action without judging the quality of its output.
 
-- the requested outcome
-- the output or artifact
-- run evidence and transcript when needed
-- validation or source material
-- remaining risks and follow-up work
+Feedback names what was good, wrong, missing, or worth repeating. Learning is
+the deliberate promotion of that evidence into future context, a Skill,
+instructions, a workflow, a decision, or an evaluation case.
 
-When the issue has a reviewer, move it to `in_review` only after there is output to judge.
+<a id="case" />
 
-## Reviewer decisions
+## One illustrative case
 
-Reviewer decisions should be explicit. The normal outcomes are:
+A writing Agent submits a launch announcement. The reviewer accepts the setup
+instructions but requests a clearer limitation paragraph. After the revision is
+accepted, the team notices that the same limitation check appears in every
+release review. It drafts a change to the release Skill, cites the reviewed
+Issues, and evaluates the update before enabling it for later work.
 
-| Decision | Meaning |
-| --- | --- |
-| Approve | The output is accepted and the issue can close when no work remains |
-| Request changes | The assignee needs to revise the work |
-| Needs follow-up | The current output is useful, but new work should be created |
-| Blocked | The reviewer cannot accept or reject because required evidence is missing |
+<a id="when-useful" />
 
-This keeps judgment attached to the work object. A loose chat reply is easy to lose; a reviewer decision stays with the issue.
+## When each step is useful
 
-## Feedback
+Use Review when completion depends on judgment by someone other than the
+assignee. Use feedback whenever the next actor or a later run should understand
+the reason for the decision. Promote a lesson only when the pattern is stable
+enough to improve future work beyond the current Issue.
 
-Feedback names what the team learned from the work. It can apply to an issue, a run, an output, or the way an agent handled the task.
+Reviewer routing and the final reviewer decision are separate events. Moving an
+Issue into a reviewable state gives the reviewer the next action; the work is
+not accepted until a structured decision is recorded.
 
-Useful feedback is specific:
+<a id="operating-boundaries" />
 
-- what worked
-- what failed
-- what evidence supports that judgment
-- where the lesson should apply next time
+## Operating boundaries
 
-## Learning
+An assignee Agent cannot bypass a named reviewer by marking the Issue `done`.
+Free-form accept or reject text is useful evidence, but it is not the structured
+review decision. Review follow-up is bounded and remains owned by the reviewer.
 
-Rudder does not silently rewrite agent behavior every time someone leaves feedback. Learning should be promoted through an explicit path.
+The highest-risk boundary is silent learning. Feedback never rewrites durable
+Agent behavior automatically. A learning change needs linked evidence, a clear
+target and scope, an appropriate approval path, and a way to evaluate or roll
+back the change.
 
-A lesson may become:
-
-- better issue context
-- a reusable skill
-- a workflow change
-- a decision record
-- a stronger role instruction
-- an eval case
-- no change, when the feedback was one-off
-
-This makes agent improvement reviewable. The team can tell which lessons were accepted, where they apply, and when they should be rolled back.
-
-## Next steps
-
-<CardGroup cols={2}>
-  <Card title="Review agent work" icon="message-square-check" href="/how-to/review-agent-work">
-    Run the practical review workflow.
-  </Card>
-  <Card title="Issue lifecycle" icon="route" href="/how-to/issue-lifecycle">
-    See where review fits between execution and done.
-  </Card>
-</CardGroup>
+Follow [Review Agent work](/how-to/review-agent-work) for the procedure. Use
+[Approvals, budgets, and activity](/concepts/approvals-budgets-activity) for
+governed-action controls.

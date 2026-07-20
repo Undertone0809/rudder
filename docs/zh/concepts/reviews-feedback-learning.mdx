@@ -1,81 +1,47 @@
 ---
-title: "Review、feedback 和 learning"
-description: "用 review 和 feedback 判断 agent 输出，并把经验转成未来 run 可以使用的改进。"
+title: "评审、反馈和学习"
+description: "判断产物、保存反馈并谨慎沉淀经验，同时分清评审与审批。"
 icon: "message-square-check"
 keywords:
-  - "AI agent review"
-  - "agent feedback"
-  - "Rudder learning"
+  - "Rudder 评审"
+  - "Agent 反馈"
+  - "Agent 学习"
 canonical: "https://docs.rudderhq.dev/zh/concepts/reviews-feedback-learning"
 "og:url": "https://docs.rudderhq.dev/zh/concepts/reviews-feedback-learning"
 hreflang_en: "https://docs.rudderhq.dev/concepts/reviews-feedback-learning"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/reviews-feedback-learning"
-
 ---
 
-Rudder 把 review 当成工作循环的一部分。Agent 输出只有能被检查、判断，并沉淀成下一次可用的经验，才算真正进入团队的工作系统。
+<a id="definition" />
 
-## Review
+## 定义
 
-当 "done" 应该表示已接受，而不只是尝试过，就需要 reviewer。Reviewer 可以是人，也可以是另一个职责不同的 agent。
+评审判断产物是否满足请求。评审人检查 Issue、产物、Agent 运行证据和评论，再选择结构化结论，并填写必要说明。接受后可以完成任务；要求修改时回到负责人；被阻塞时，缺少的信息继续保持可见。
 
-一次好的 review 会检查：
+审批和评审不是一回事。审批授权一项受治理的操作，例如支出或敏感变更。评审可以接受产物质量，但不授权使用该产物的操作；审批也可以允许一项操作，却不判断产物质量。
 
-- 原始请求
-- 输出或产物
-- 必要时查看 run evidence 和 transcript
-- 验证结果或来源材料
-- 剩余风险和 follow-up
+反馈指出哪里做得好、哪里有错、缺少什么，或哪些做法值得重复。学习则是有意识地把这些证据沉淀到未来上下文、技能、操作说明、工作流、决策或评估案例中。
 
-Issue 有 reviewer 时，只有在已经有输出可判断后，才应该进入 `in_review`。
+<a id="case" />
 
-## Reviewer decision
+## 一个示意案例
 
-Reviewer 的判断要明确。
+文案 Agent 提交了发布公告。评审人认可安装说明，但要求把限制条件写得更清楚。修改通过后，团队发现每次发布评审都会检查同一项限制，于是起草发布技能变更，引用已经评审的 Issue，并先评估效果，再让后续工作使用。
 
-| Decision | 含义 |
-| --- | --- |
-| Approve | 输出被接受，没有剩余工作时可以关闭 |
-| Request changes | assignee 需要修改当前工作 |
-| Needs follow-up | 当前输出有用，但还需要新工作 |
-| Blocked | 缺少证据或访问权限，暂时无法判断 |
+<a id="when-useful" />
 
-这样判断会留在工作对象上，而不是散在聊天里。
+## 各个步骤适合什么时候使用
 
-## Feedback
+任务是否完成需要由负责人之外的人判断时，用评审。下一位执行者或未来运行需要理解结论原因时，留下反馈。只有某个规律已经稳定，而且能改善当前 Issue 之外的工作时，才沉淀为长期经验。
 
-Feedback 说明团队从这次工作里学到了什么。它可以针对 issue、run、输出，或 agent 的处理方式。
+把评审工作交给评审人和真正记录评审结论，是两个不同事件。Issue 进入可评审状态，只代表下一步轮到评审人；结构化结论写入之前，工作还没有被接受。
 
-有用的 feedback 要具体：
+<a id="operating-boundaries" />
 
-- 哪里有效
-- 哪里失败
-- 有什么证据
-- 下次应该应用到哪里
+## 操作边界
 
-## Learning
+Issue 已指定评审人时，负责执行的 Agent 不能直接标记 `done` 来绕过评审。自由文字中的“接受”或“拒绝”可以作为证据，但不能代替结构化评审结论。评审跟进次数有边界，并继续由评审人负责。
 
-Rudder 不会因为一条 feedback 就在后台静默改写 agent 行为。经验需要通过明确路径被提升。
+风险最高的是静默学习。反馈不会自动改写 Agent 的长期行为。学习变更需要关联证据、明确目标和范围、合适的审批路径，以及评估或回滚方法。
 
-一条经验可能变成：
-
-- 更好的 issue context
-- 可复用 skill
-- workflow 调整
-- decision record
-- 更强的 role instruction
-- eval case
-- 不做改变，因为它只是一次性反馈
-
-这样 agent 改进就是可审查的。团队能看到哪些经验被接受、适用在哪里，以及什么时候应该撤回。
-
-## 下一步
-
-<CardGroup cols={2}>
-  <Card title="Review agent 工作" icon="message-square-check" href="/zh/how-to/review-agent-work">
-    走一遍实际 review 流程。
-  </Card>
-  <Card title="Issue lifecycle" icon="route" href="/zh/how-to/issue-lifecycle">
-    看 review 如何连接执行和 done。
-  </Card>
-</CardGroup>
+具体步骤见[评审 Agent 工作](/zh/how-to/review-agent-work)。受治理操作应查阅[审批、预算和活动记录](/zh/concepts/approvals-budgets-activity)。

@@ -1,82 +1,75 @@
 ---
-title: "Create an automation"
-description: "Create repeatable Rudder agent work with a trigger, owner, runtime context, and output path."
+title: "Create an Automation"
+description: "Create a repeatable Automation with a stable owner, trigger, context, concurrency policy, and verified output route."
 icon: "workflow"
 keywords:
-  - "create Rudder automation"
-  - "AI agent scheduled task"
-  - "automation output"
+  - "create Rudder Automation"
+  - "scheduled Agent work"
+  - "Automation output route"
 canonical: "https://docs.rudderhq.dev/how-to/create-automation"
 "og:url": "https://docs.rudderhq.dev/how-to/create-automation"
 hreflang_en: "https://docs.rudderhq.dev/how-to/create-automation"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/create-automation"
-
 ---
 
-Use an automation when a task should run more than once with the same owner, trigger, and output path.
+<a id="completed-state" />
 
-## Before you start
+## Completed state
 
-Decide four things:
+At the end of this guide, an active weekly operations digest has a saved Agent
+owner, project context, schedule, concurrency policy, and Chat output route. A
+manual test run has produced one linked conversation with inspectable Run
+evidence.
 
-| Question | Why it matters |
-| --- | --- |
-| What should run? | The automation needs a stable task, not an open-ended discussion |
-| Who owns it? | Ownership decides who should inspect failures and results |
-| What starts it? | Choose schedule, manual dispatch, API, or webhook |
-| Where should output go? | Choose chat output or tracked issue output |
+<a id="prerequisites" />
 
-If those answers are unclear, shape the work in Chat or an issue before automating it. Both are first-class task surfaces; choose the structure that fits the scenario.
+## Prerequisites
 
-## Create the automation
+Prepare a working Agent and a repeated request whose inputs and result shape are
+already stable. Decide who owns failures, what starts the work, and whether each
+result belongs in a new Chat or a tracked Issue. The exact output comparison is
+in [Automation output routing](/reference/automation-output-routing).
 
-1. Open Automations.
-2. Create a new automation.
-3. Name the repeated job in plain language.
-4. Choose the owner and agent or runtime that should execute it.
-5. Write the prompt or job definition.
-6. Choose a trigger.
-7. Keep the default chat output, or explicitly switch to tracked issue output.
-8. Save the automation.
+<a id="case-backed-steps" />
 
-Use a name that describes the actual work, such as "Prepare weekly agent work report" or "Check failed run backlog."
+## Create the operations digest
 
-## Choose a trigger
+1. Open **Automations** and start a custom definition.
+2. Name it `Weekly operations digest` and select the reporting Agent and
+   operations project.
+3. Write instructions that define the reporting window, source records,
+   expected sections, and how to report missing data.
+4. Set the schedule to Monday at 09:00. The current UI has no timezone
+   selector: it saves and shows the schedule in the browser's local timezone.
+5. Keep **Send to chat** so every real execution gets a separate Messenger
+   conversation. Choose tracked Issue output instead when the result needs
+   explicit assignment, status, dependencies, or review.
+6. Select the concurrency behavior for an overlapping run. Choose skip or
+   coalesce when duplicate reports would be harmful.
+7. Save the Automation, then dispatch it manually once.
+8. Open Run history and follow the linked Chat. Inspect the input message,
+   Agent reply, source Agent Run, and terminal status.
 
-Use a schedule for routine work. Use manual dispatch when an operator should decide when the task runs. Use API or webhook triggers when another system starts the work.
+Selecting a built-in template only fills an editable draft. It does not create
+an Automation until the definition is submitted.
 
-## Choose the output mode
+<a id="success-signal" />
 
-New custom automations default to chat output. Keep it when operators should receive and continue each result through a conversation.
+## Success signal
 
-Switch to issue output when the result needs explicit assignment, status, review, artifacts, or follow-up work. Task importance, cost, or length does not force that choice, although a governed team policy may require issue fields.
+Automation detail shows the saved definition, next scheduled run, output mode,
+and test Run. The test produces one new Chat linked from that Run, and the Chat
+contains a useful result or visible failure evidence.
 
-## Understand what each run creates
+<a id="recovery" />
 
-Each real chat-output execution creates a separate Messenger conversation linked from that automation run. Rudder does not reuse an arbitrary existing Chat for every run.
+## Recovery
 
-Skipped or coalesced runs do not create empty conversations. If execution fails after chat output begins, the conversation keeps visible partial or fallback evidence so the failure is not hidden behind an empty unread thread. Tracked issue output creates an execution issue and then follows the normal issue assignment, run, and review lifecycle.
+If no work appears, inspect the Automation Run first. A skipped or coalesced
+record should name the concurrency reason and should not create an empty Chat.
+If dispatch failed after Chat output began, inspect the linked conversation and
+Agent Run for partial or fallback evidence.
 
-## Test the automation
-
-Run the automation once before relying on it.
-
-Check:
-
-- the run starts from the expected trigger
-- the selected agent or runtime receives the right context
-- the result appears in the expected issue or chat
-- failures are visible from the automation run history
-- a failed chat-output run leaves inspectable evidence rather than an empty thread
-- the owner knows where to inspect future runs
-
-## Next steps
-
-<CardGroup cols={2}>
-  <Card title="Automations" icon="workflow" href="/concepts/automations">
-    Understand the automation model.
-  </Card>
-  <Card title="Automation output routing" icon="route" href="/reference/automation-output-routing">
-    Pick issue output or chat output.
-  </Card>
-</CardGroup>
+Correct the owner, context, schedule, runtime, or output route, then
+run one more manual test. Pause the Automation while repairing it so a schedule
+does not create additional attempts.

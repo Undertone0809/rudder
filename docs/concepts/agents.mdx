@@ -1,102 +1,81 @@
 ---
-title: "Agents"
-description: "Understand Rudder agents as durable AI team members with roles, runtime configuration, capabilities, budgets, skills, and reporting boundaries."
+title: "Agents and Agent Runs"
+description: "Distinguish a durable Rudder Agent from its runtime, bounded runs, outputs, cost, and raw evidence."
 icon: "bot"
 keywords:
-  - "AI agents"
-  - "agent runtime configuration"
-  - "agent team members"
-  - "Rudder agents"
+  - "Rudder Agent"
+  - "Agent Run"
+  - "agent runtime"
 canonical: "https://docs.rudderhq.dev/concepts/agents"
 "og:url": "https://docs.rudderhq.dev/concepts/agents"
 hreflang_en: "https://docs.rudderhq.dev/concepts/agents"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/agents"
-
 ---
 
-Agents in Rudder are durable team members with explicit roles, runtime configuration, capabilities, budgets, skills, and reporting boundaries.
+<a id="definition" />
 
-![Agent detail surface](../images/agent-detail.png)
+## Definition
 
-## When to create an agent
+An Agent is a durable member of an organization. Its record holds a role,
+capabilities, reporting line, runtime configuration, skills, budget, and
+permission state.
 
-Create an agent when a repeated class of work needs a stable owner, runtime,
-skills, budget, and reporting line. Do not create a new agent just to run one
-unclear prompt; shape the task in Chat or an issue with an existing agent first.
+An Agent Run is one bounded attempt by that Agent. The runtime is the program or
+service Rudder invokes for the attempt. Rudder coordinates the work, while the
+runtime performs it.
 
-## Agent profile
+The run keeps several kinds of evidence distinct:
 
-An agent record captures:
+| Record | What it answers |
+| --- | --- |
+| Result summary | What the completed runtime turn reported |
+| Output | What the work produced, such as a file, report, screenshot, or link |
+| Cost and usage | What the run consumed when the runtime reports it |
+| Raw evidence | What happened underneath, including transcript entries, logs, tool activity, and terminal errors |
 
-- title and role
-- reporting manager and direct reports
-- runtime type and runtime configuration
-- capabilities description
-- budget and execution limits where configured
-- enabled skills and operating instructions
-- IM integrations such as Feishu or Lark, when the agent should be reachable from chat tools
+A readable summary never replaces the raw evidence. A partial or stopped stream
+also does not become a completed result merely because text exists.
 
-Rudder uses these fields to keep agent work assignable, reviewable, and reusable across future runs.
+<a id="case" />
 
-## IM integrations
+## One illustrative case
 
-Agents can also receive work from IM. Today Rudder supports Feishu and Lark as the first chat integration path, with more platforms planned as real teams ask for them. If your team needs another IM platform, open a GitHub issue or PR with the workflow you want supported.
+A release team has a writing Agent responsible for launch copy. The Agent keeps
+that responsibility after one announcement is finished. For a new announcement,
+Rudder starts one Agent Run through the configured local runtime. The run leaves
+a draft file, a short result summary, cost data, and a transcript that the
+reviewer can inspect.
 
-Each IM connection belongs to one agent. This is deliberate: a Feishu bot should have a clear owner, capability boundary, runtime, and budget. If two agents need to be reachable from Feishu, connect them separately.
+If the draft needs another attempt, the team starts another run. It is still the
+same Agent, but the two runs keep separate evidence and cost.
 
-To connect an agent, follow [Configure Feishu integration](/how-to/configure-feishu-integration).
+![Agent run detail](../images/agent-run-detail.png)
 
-## Runtime model
+<a id="when-useful" />
 
-Rudder is runtime-neutral. It coordinates agent work and tracks execution, while the selected runtime decides how to interpret prompts, use tools, and perform the actual work.
+## When an Agent is useful
 
-The two fundamental heartbeat modes are:
+Create an Agent when a repeated class of work needs a stable owner and operating
+frame. Use an existing Agent for a one-off request that fits its role. An Agent
+record is useful when later work should inherit the same responsibility,
+runtime, skills, budget, or escalation path.
 
-- run a local command that Rudder starts and tracks
-- send a request to an external runtime that handles execution elsewhere
+Runs can begin from Chat, Issue assignment, review routing, an Automation, or a
+manual or scheduled heartbeat. The trigger does not change the distinction:
+the Agent persists, the Run is bounded, and the runtime is invoked for that run.
 
-## First-party control tools
+<a id="operating-boundaries" />
 
-Supported local runtimes receive Rudder-managed tools for working with issues, runs, Chat, automations, Library files, approvals, skills, and agents. In Rudder Desktop `local_trusted` deployments, supported Codex, Claude Code, OpenCode, and Pi runs can also receive the [Built-in Browser](/concepts/built-in-browser) capability when it is enabled.
+## Operating boundaries
 
-These tools are automatic runtime infrastructure, not custom integrations. Rudder prepares their configuration and run identity; operators do not manually connect or configure them. When a runtime cannot use the managed tool surface and needs exact fallback commands, it can consult the bundled `rudder-docs` skill for the CLI compatibility path.
+Runtime capabilities vary. A local adapter may support managed tools, Browser
+control, session reuse, transcripts, or cost metadata that another adapter does
+not. Rudder must show those differences instead of implying provider parity.
 
-Tool visibility does not bypass product authority. Calls remain scoped to the
-current organization and run and continue through the normal permissions,
-ownership checks, and approval gates. Rudder-managed runs do not automatically
-inherit arbitrary user or provider MCP servers.
+The highest-risk boundary is authority. A runtime tool can act only with the
+organization, Agent, Run, and permission context Rudder supplies. Tool
+availability does not bypass assignment, checkout, approval, budget, or
+workspace rules.
 
-Capabilities vary by adapter. Remote and unsupported runtimes should not be assumed to have local Desktop Browser control or the same managed tools as a supported local runtime.
-
-## Heartbeats
-
-A heartbeat is a bounded, priority-aware work cycle. Rudder wakes an agent for actionable assigned work, review work, or a directed wake request such as an explicit agent mention in an issue comment. For assigned work, the agent inspects the highest-priority issue it can move. A mention-directed run receives the source comment as its reason and does not silently take ownership of the issue. Every run should leave a clear signal: progress, done, blocked, or review feedback.
-
-![Reactive heartbeat flow](../images/heartbeat-reactive-loop-en.svg)
-
-This makes heartbeats reactive instead of wasteful. You can leave timer heartbeats enabled; if there is no actionable work, Rudder skips the runtime invocation instead of asking the agent to spin on an empty queue. That saves tokens while keeping the agent ready to respond when new work appears.
-
-Runs that do execute preserve evidence: reason, status, transcript entries, raw output, costs, touched issues, workspace operations, and retry or cancellation history.
-
-Rudder's next heartbeat work is to support richer always-on agent exploration: more triggers, more context-aware wakeups, and more ways for agents to notice useful work without burning tokens when the board is quiet.
-
-## Reporting lines
-
-Reporting structure gives the board a stable way to understand ownership, escalation, and delegation. Agents should know who they report to and why their assigned work matters to the organization goal.
-
-## Next steps
-
-<CardGroup cols={2}>
-  <Card title="Issues" icon="circle-check" href="/concepts/issues">
-    See how agents pick up and close out durable work.
-  </Card>
-  <Card title="Skills" icon="book-open" href="/concepts/skills">
-    Package reusable operating instructions for agents.
-  </Card>
-  <Card title="Configure Feishu integration" icon="messages-square" href="/how-to/configure-feishu-integration">
-    Connect an agent to Feishu or Lark.
-  </Card>
-  <Card title="Built-in Browser" icon="globe" href="/concepts/built-in-browser">
-    Understand shared website sessions and isolated agent browser control.
-  </Card>
-</CardGroup>
+For exact runtime choices, see [Runtime types](/reference/runtime-types). To set
+one up, follow [Configure an Agent runtime](/how-to/configure-agent-runtime).

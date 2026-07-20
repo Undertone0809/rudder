@@ -1,88 +1,70 @@
 ---
-title: "Goals, Projects, And Issues"
-description: "How Rudder turns strategy into durable agent work."
-icon: "list-tree"
+title: "Goals, projects, and issues"
+description: "Connect an organization's durable direction to grouped work and executable Issue records."
+icon: "target"
 keywords:
-  - "AI agent orchestration"
-  - "agent work management"
-  - "agent teams"
-  - "Rudder"
-  - "agent issue tracking"
+  - "Rudder goals"
+  - "Rudder projects"
+  - "Rudder Issues"
 canonical: "https://docs.rudderhq.dev/concepts/goals-projects-issues"
 "og:url": "https://docs.rudderhq.dev/concepts/goals-projects-issues"
 hreflang_en: "https://docs.rudderhq.dev/concepts/goals-projects-issues"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/goals-projects-issues"
-
 ---
 
-Rudder work should always answer one question: why does this task exist?
+<a id="definition" />
 
-Goals, projects, and issues keep that answer visible while agents execute.
+## Definition
 
-![Issue board with project slices](../images/issue-flow.png)
+A goal records why a line of work exists. Goals can form a hierarchy inside one
+organization, so the organization mission can connect to narrower outcomes.
 
-## When to use each object
+A project groups related work and context. It can connect goals with Chats,
+Issues, resources, workspaces, a lead Agent, and a target date. Project status
+groups the work; it does not replace the status of an Issue or Automation.
 
-| Object | Use it when... | Avoid using it for... |
-| --- | --- | --- |
-| Goal | You need to explain why work matters | A one-off implementation checklist |
-| Project | Multiple issues share delivery context, resources, or a workspace | A single tiny task |
-| Issue | Someone needs to execute, review, or track a unit of work | Broad strategy with no next action |
-| Sub-issue | One issue needs multiple owners or steps | Hiding unrelated work under one parent |
+An issue is a durable task record with an explicit status and lifecycle. Use
+one when work needs a named owner, dependencies, or a review path; comments,
+agent runs, artifacts, and review decisions can stay with the same record.
 
-## Goals
+The [Issues concept](/concepts/issues) owns the detailed model, and [Issue
+statuses](/reference/issue-statuses) is the authoritative status lookup.
 
-Goals express direction. They can belong to an organization, team, agent, or task, and they give work a reason beyond the next prompt.
+<a id="case" />
 
-Use goals for outcomes, not for every small task.
+## One illustrative case
 
-## Projects
+A small team wants to publish a launch announcement. Its organization goal is
+to make the release understandable to new users. A launch project groups the
+announcement with screenshots and release notes. One Issue asks a writing Agent
+to produce the Markdown draft and names a reviewer.
 
-Projects group related execution. A project can include:
+The goal explains the reason, the project gathers the shared context, and the
+Issue tells one owner what result to deliver next.
 
-- linked goals
-- linked chats and issues
-- lead agents
-- target dates
-- attached Project Context resources from Docs or external systems
-- one or more project workspaces
-- budget context
+<a id="when-useful" />
 
-Use projects when work has sustained scope, shared context, or a codebase.
+## When each object is useful
 
-## Issues
+Use a goal when the reason should survive individual tasks. Use a project when
+several work items share context, resources, or a result. Use an Issue when the
+next piece of work needs explicit coordination. A short conversational task can
+remain in Chat without an Issue.
 
-Issues are structured work units. They support:
+Link work only when the relationship helps someone understand or execute it.
+Not every Issue needs its own project, and not every project needs a new goal.
 
-- statuses such as backlog, todo, in progress, in review, done, blocked, and cancelled
-- priority, assignee, and reviewer
-- parent issues and sub-issues
-- project and goal links
-- comments, activity, documents, and attachments
-- approvals
-- checkout and current execution locks
+<a id="operating-boundaries" />
 
-![Issue detail with ownership and context](../images/issue-detail.png)
+## Operating boundaries
 
-Use `todo` when the requirement is decided, the next action is clear, and an assignee can start without reopening product judgment. Use `backlog` when the problem is worth keeping but the scope, acceptance criteria, priority, or owner still needs discussion.
+Goals, projects, and Issues stay inside one organization. Goal hierarchies
+cannot cross organizations or form cycles. Project links do not make work
+executable by themselves, and an Issue keeps a single assignee.
 
-Reviewer and follow-up loops keep close-out inspectable. A reviewer owns the quality judgment after implementation; follow-up names the remaining owner, decision, or evidence when work cannot close cleanly in the current run.
+The highest-risk operation is deletion or detachment. Rudder blocks goal
+deletion while linked projects, Issues, Automations, or other work still depend
+on it, so the reason for existing work is not removed silently.
 
-## What structured issue execution adds
-
-Chat and issues can both carry real tasks. Chat organizes execution through an ongoing conversation; issues make ownership, status, priority, dependencies, history, and review context explicit. When an agent works from an issue, another human or agent can scan that structure without replaying the conversation.
-
-Use this model when structured coordination helps or team policy requires it.
-Time, budget, or task importance alone does not force Chat work into an issue;
-both surfaces should preserve inspectable run and output evidence.
-
-## Next steps
-
-<CardGroup cols={2}>
-  <Card title="Issues" icon="circle-check" href="/concepts/issues">
-    Learn the status model, checkout semantics, and close-out signals.
-  </Card>
-  <Card title="Agents" icon="bot" href="/concepts/agents">
-    See how assignees execute issue work through heartbeats.
-  </Card>
-</CardGroup>
+Follow [Run an Issue from intake to done](/how-to/issue-lifecycle) when the task
+needs structured execution.

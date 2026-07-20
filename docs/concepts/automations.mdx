@@ -1,76 +1,70 @@
 ---
 title: "Automations"
-description: "Use Rudder automations to run repeatable agent work from schedules, manual dispatch, APIs, or webhooks."
+description: "Run repeatable agent work from a defined trigger, owner, context, concurrency policy, and output route."
 icon: "workflow"
 keywords:
-  - "AI agent automation"
+  - "Rudder Automations"
   - "scheduled agent work"
-  - "Rudder automations"
+  - "automation output"
 canonical: "https://docs.rudderhq.dev/concepts/automations"
 "og:url": "https://docs.rudderhq.dev/concepts/automations"
 hreflang_en: "https://docs.rudderhq.dev/concepts/automations"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/automations"
-
 ---
 
-Automations turn repeatable work into a defined Rudder object. They name the owner, trigger, runtime context, and output path before the run starts.
+<a id="definition" />
 
-Use an automation when the same agent task should run on a schedule, from a manual button, through an API call, or from a webhook.
+## Definition
 
-## What an automation contains
+An Automation is a repeatable agent-work definition. It combines instructions,
+an Agent owner, optional goal or project context, a trigger, an output route,
+priority, and a concurrency policy.
 
-An automation keeps the repeatable part of the work together:
+Triggers can be scheduled, manual or API-driven, or webhook-based. Each
+dispatch creates an Automation run record, even when concurrency or eligibility
+causes the dispatch to skip or coalesce. The record connects the trigger to the
+Issue, Chat, and Agent Run that handled the work.
 
-- the organization and owner
-- the agent or runtime that should execute the work
-- the trigger that starts a run
-- the input prompt or job definition
-- the output mode
-- run history, status, and failures
+Output has two modes. A tracked Issue enters the normal Issue lifecycle. Chat
+output creates a separate Messenger conversation for each real execution. See
+[Automation output routing](/reference/automation-output-routing) for the
+authoritative comparison.
 
-Automation runs are separate records. That lets Rudder show what was dispatched, whether it ran, what it produced, and where the output went.
+<a id="case" />
 
-## Triggers
+## One illustrative case
 
-Rudder supports four trigger shapes:
+An operations owner wants a digest every weekday evening. The Automation names
+a reporting Agent, links the operations project, and asks for completed work,
+blockers, and the next decision. Each execution sends its result to a new Chat,
+where the owner can inspect that run without mixing it with yesterday's digest.
 
-| Trigger | Use it for |
-| --- | --- |
-| Schedule | Reports, recurring checks, maintenance tasks, and routine analysis |
-| Manual dispatch | Operator-started repeatable work |
-| API | Work started from another system with an explicit request |
-| Webhook | Work started by an external event |
+<a id="when-useful" />
 
-The trigger decides when work is dispatched. The automation definition decides what work should run.
+## When it is useful
 
-## Output modes
+Use an Automation after the trigger, owner, instructions, and result destination
+are predictable. Keep exploratory work in Chat or an Issue while the request is
+still changing. Built-in templates are editable starting values in the creation
+form; selecting one does not create an Automation until the operator submits it.
 
-Automations can route output into a structured issue or a chat conversation:
+The current lifecycle has `active` and `paused` states. Pause an Automation when
+its definition and history should remain visible but new dispatches should
+stop. Return it to active when the definition is ready to run again.
 
-- Use issue output when the result needs assignment, review, status, artifacts, or follow-up work.
-- Use chat output when operators should receive and continue the result through a conversation.
+<a id="operating-boundaries" />
 
-New custom automations default to chat output, with tracked issue output available as an explicit alternative. The output path matters because it changes where people review the result: issue output enters the normal issue workflow, while chat output keeps the work inspectable through the automation run and its chat conversation. Importance, cost, or run length alone does not require issue output, although team policy may require issue structure for governed workflows.
+## Operating boundaries
 
-Each real chat-output execution gets its own Messenger conversation; an automation does not reuse one human chat for every future run. A skipped or coalesced run does not create an empty conversation. If a chat-output run fails, Rudder keeps visible partial or fallback evidence instead of leaving a silent empty unread thread.
+Automations belong to one organization. Linked goals, projects, parent Issues,
+and assignees must remain in that organization. A schedule is evaluated with
+its stored timezone. The current UI uses the browser's local timezone when it
+creates or edits that schedule. External triggers require replay and
+idempotency protection.
 
-## Run history
+The highest-risk boundary is duplicate work. Concurrency policy decides whether
+active work causes a new dispatch to enqueue, skip, or coalesce. A skipped or
+coalesced run must still explain why no new Chat or Issue appeared, and it must
+not create an empty conversation.
 
-Each automation run should leave inspectable evidence: dispatch source, current state, timestamps, result, failure reason when it fails, and linked issue or chat output when one exists.
-
-This is useful for routine work. A weekly report should not be a mystery prompt. It should show when it ran, what agent handled it, what the result was, and whether a person needs to review anything.
-
-## When not to use automation
-
-Do not use an automation for work that still needs shaping. Continue in Chat or use issue structure first when the outcome, owner, data source, or review path is unclear.
-
-## Next steps
-
-<CardGroup cols={2}>
-  <Card title="Create an automation" icon="workflow" href="/how-to/create-automation">
-    Configure repeatable agent work and choose an output path.
-  </Card>
-  <Card title="Automation output routing" icon="route" href="/reference/automation-output-routing">
-    Compare issue output and chat output.
-  </Card>
-</CardGroup>
+Follow [Create an Automation](/how-to/create-automation) to build and verify one.

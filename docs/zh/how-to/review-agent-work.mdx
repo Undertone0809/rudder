@@ -1,73 +1,50 @@
 ---
-title: "Review agent 工作"
-description: "用 Rudder review 检查输出、证据、风险和 follow-up，再关闭 agent 工作。"
+title: "评审 Agent 工作"
+description: "检查一项 Agent 产物和运行证据，记录结构化结论，并把下一步交给正确负责人。"
 icon: "message-square-check"
 keywords:
-  - "review AI agent work"
-  - "agent reviewer"
-  - "Rudder review workflow"
+  - "评审 Agent 工作"
+  - "Rudder 评审结论"
+  - "Agent 运行证据"
 canonical: "https://docs.rudderhq.dev/zh/how-to/review-agent-work"
 "og:url": "https://docs.rudderhq.dev/zh/how-to/review-agent-work"
 hreflang_en: "https://docs.rudderhq.dev/how-to/review-agent-work"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/review-agent-work"
-
 ---
 
-当 agent 输出需要判断后才能关闭 issue，就进入 review。
+<a id="completed-state" />
 
-## Review 前
+## 完成后的状态
 
-Issue 应该有可检查的证据：
+完成本页后，发布公告 Issue 会保存产物、Agent 运行证据，以及带说明的结构化评审结论，并明确下一位负责人。接受的工作已经关闭；需要修改或输入的工作仍保持打开，而且已经正确路由。
 
-- 原始请求
-- agent 输出
-- 关联文件、截图、preview 或报告
-- 必要时的 run transcript 或 logs
-- 验证说明
-- 已知风险或缺口
+<a id="prerequisites" />
 
-如果证据缺失，不要把 issue 关成 `done`。要求修改，或把它退回 assignee。
+## 开始前
 
-## 进入 review
+Issue 必须处于可以评审的状态，并且已经指定评审人。负责人应附上或链接产物、验证说明、已知风险和相关 Agent 运行。评审判断产物是否满足请求；审批则是另一项决定，用来授权受治理操作。
 
-1. 打开 issue。
-2. 确认输出已经附上或链接。
-3. 确认 reviewer 已设置。
-4. 把 issue 移到 `in_review`。
-5. 让 reviewer 检查输出和证据。
+<a id="case-backed-steps" />
 
-Reviewer 可以是人，也可以是另一个 agent。需要第二个 agent 检查来源、run evidence、边界情况或文风时，用 agent reviewer。涉及业务优先级、客户承诺、法律判断、预算或 credentials 时，用 human reviewer。
+## 评审发布公告
 
-## 做 decision
+1. 打开 Issue，重新核对验收标准：安装命令正确、宣传主张有依据、受众明确，而且交付的是 Markdown 文件。
+2. 打开公告本身。不能只看运行摘要就判断产物质量。
+3. 检查 Agent 运行结果、运行环境和模型、可用的成本数据、对话记录、原始证据、验证和终止状态。只有可读证据没有回答问题时，才继续查看原始日志。
+4. 确认产物连接到这条 Issue 和本次运行，普通来源链接也没有被错误标成 Agent 生成的产物。
+5. 填写具体说明，并记录一个结构化评审结论。满足标准时接受；需要负责人修改时要求修改；缺少必要证据或权限时选择阻塞。
+6. 评审发现独立工作时，新建或链接后续 Issue，不要把它藏在含糊的接受说明中。
 
-| Decision | 什么时候用 |
-| --- | --- |
-| Approve | 输出满足请求，没有剩余工作 |
-| Request changes | assignee 应该修改当前工作 |
-| Needs follow-up | 当前输出有用，但需要新工作 |
-| Blocked | 缺少必要证据或访问权限 |
+<a id="success-signal" />
 
-加一条 comment 解释 decision。它不需要长，但要说明具体原因。
+## 成功信号
 
-## 关闭循环
+后来的人能够看见评审了什么、哪些证据支持结论、评审人为什么这样判断，以及下一步由谁负责。接受只能通过结构化路径完成 Issue；要求修改时，任务会回到负责人，评审说明继续保留。
 
-只有满足这些条件，才关闭 issue：
+<a id="recovery" />
 
-- 输出可见
-- 需要 review 时已经被接受
-- 风险已说明
-- follow-up 已创建或明确拒绝
-- issue 历史能看出发生了什么
+## 恢复
 
-如果 review 暴露了可复用经验，要明确提升它。它可能变成 context、skill、workflow change、decision 或 eval case。
+产物或证据缺失时，不要接受。明确要求补充用于判断的文件、来源、测试、截图或运行详情。如果评审运行结束时没有结构化结论，而且 Issue 仍在 `in_review`，Rudder 可以安排次数有限的评审人跟进；自由文字回复不会自动变成接受。
 
-## 下一步
-
-<CardGroup cols={2}>
-  <Card title="Review、feedback 和 learning" icon="message-square-check" href="/zh/concepts/reviews-feedback-learning">
-    理解 review 如何影响未来 agent 工作。
-  </Card>
-  <Card title="Issue lifecycle" icon="route" href="/zh/how-to/issue-lifecycle">
-    查看从 intake 到 done 的完整路径。
-  </Card>
-</CardGroup>
+评审发现可复用经验时，把反馈和证据一起保存。不要静默修改技能、Agent 操作说明、工作流或决策。沉淀前应提出明确目标、范围、评估、审批路径和回滚方法。

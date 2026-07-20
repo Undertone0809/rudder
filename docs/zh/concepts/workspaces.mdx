@@ -1,90 +1,56 @@
 ---
-title: "工作区"
-description: "项目 Library 文件、agent 文件和运行时状态放在哪里。"
+title: "工作区和 Library"
+description: "把项目上下文、持久文件、运行改动和备份放在各自的文件边界内。"
 icon: "folder-tree"
 keywords:
-  - "AI agent 协作"
-  - "agent team"
-  - "Rudder"
-  - "agent 工作管理"
-  - "AI agent 工作流"
+  - "Rudder 工作区"
+  - "Rudder Library"
+  - "Agent 运行工作区"
 canonical: "https://docs.rudderhq.dev/zh/concepts/workspaces"
 "og:url": "https://docs.rudderhq.dev/zh/concepts/workspaces"
 hreflang_en: "https://docs.rudderhq.dev/concepts/workspaces"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/workspaces"
-
 ---
 
-Rudder 为项目 Library 文件、技能、运行时工作和 agent 私有状态提供固定的文件系统位置。
+<a id="definition" />
 
-![工作区和资源](../../images/workspaces-resources.png)
+## 定义
 
-## 应该使用哪个工作区？
+Rudder 划分了几种文件边界，因为背景资料、持久产物和可修改的执行目录承担的任务不同。
 
-| 场景 | 位置 |
+| 位置 | 用途 |
 | --- | --- |
-| 源码或项目仓库工作 | 项目工作区 |
-| 持久报告、截图、导出、计划和交接文件 | Library 中的项目文件夹 |
-| 跨项目引用和可复用文档 | 共享 Library 文件 |
-| Agent 私有说明、记忆和本地状态 | Agent home |
-| 临时验证草稿 | `/tmp` 或系统临时目录 |
+| Library | 人和 Agent 都可以引用的组织持久文件 |
+| 项目资料 | 项目运行可以作为起始上下文使用的一组 Library 文件或外部资料 |
+| 项目工作区 | 项目实际工作的代码仓库或文件夹 |
+| 运行工作区 | 单次运行使用的具体文件系统与分支边界 |
+| Agent 文件夹 | 单个 Agent 的操作说明、记忆、长期记录和技能状态 |
+| 工作区备份 | 可检查、恢复或下载的组织工作区版本 |
 
-## 工作区边界
+项目资料是一份准入清单，不是组织中的全部文件。产物应继续连接到产生它的 Chat、Issue、运行或项目，不能只留在对话记录里。
 
-使用 Rudder 托管的工作区路径，不要随手新建临时目录：
+<a id="case" />
 
-- 项目仓库保存在其附加的项目资源位置
-- 持久项目文件应写入对应项目的 Library 文件夹
-- agent 私有记忆、说明和技能保存在这个 agent 的 home 目录下
+## 一个示意案例
 
-## 持久输出
+一个咨询团队正在准备客户简报。源笔记保存在 Library，并作为精选资料附加到项目。Agent 通过运行工作区修改项目仓库，再把最终简报保存到项目 Library 文件夹，并从待评审 Issue 中链接过去。后续运行可以找到已经接受的简报，不会连第一次尝试留下的所有草稿文件一起继承。
 
-创建项目时，Rudder 会在 Library 下创建对应项目文件夹：
+![工作区和资料](../../images/workspaces-resources.png)
 
-```text
-projects/<project-slug>/
-  README.md
-```
+<a id="when-useful" />
 
-Agent 应该把持久项目文件写在这个项目文件夹内，并根据工作需要自行创建 `research/`、`screenshots/`、`proposals/`、`evals/` 或 `handoff/` 等子目录。Rudder 不要求固定的 `plans/` 文件夹。
+## 各个位置适合什么时候使用
 
-`/tmp` 只放临时草稿和验证产物。
+需要长期留在组织记录中的文件放到 Library。只有项目运行应默认得到某项资料时，才把它附加为项目资料。代码仓库工作使用项目工作区；改动需要明确隔离策略时，使用运行工作区。临时产物不应放进 Library，除非它属于最终证据。
 
-## 项目资源
+在默认本地 Desktop 布局中，组织文件位于 `~/Documents/Rudder` 下的映射文件夹。映射以组织身份为准，因此修改组织名称不会悄悄移动文件。
 
-一次运行链接到项目时，Rudder 会把相关项目资源注入运行时上下文。这些资源可以是外部引用或 Library 文件。Project Context 是默认起点，不是知识边界；上下文不够时，Agent 可以继续检查更广的 Library 文件。
+<a id="operating-boundaries" />
 
-Library 文件树也会在对应的 `projects/<project-slug>/resources/` 下展示这些项目资源。这里是指向资源目录的虚拟引用；外部仓库、URL 和 connector 对象不会被复制进 Library 文件。
+## 操作边界
 
-## 检查和编辑 Library 文件
+受保护的 Agent 操作说明、技能、运行环境托管目录和缓存路径都不是普通 Library 内容。Desktop 的本地打开操作仍要经过工作区和真实路径校验，也不会让浏览器或服务器部署获得打开本地应用的能力。
 
-Library 引用可以在 Rudder Side Panel 中打开，因此你不需要离开当前 Chat、issue 或 Messenger 页面。PDF 等支持的文件会直接内联预览。需要完整的 Library 工作面时，再选择 **Open in Library**。
+风险最高的是破坏性文件操作。已经映射的组织文件夹如果丢失，Rudder 会把它当作恢复问题，不会自动建立空文件夹覆盖现场。还有未完成 Issue 依赖运行工作区时不能归档；恢复备份前，也会先创建一份安全版本。
 
-Markdown 文件可以直接在 Side Panel 中编辑。Autosave 会以上次确认的版本为条件，不会静默覆盖更新内容。如果另一个写入者先改了文件，本地草稿会继续保留，并让你选择 **Keep mine** 或 **Use latest**。
-
-在 Rudder Desktop 里，文件 **Open** 菜单可以用系统默认应用或检测到的 IDE 打开经过校验的文件。Folder 和 terminal 操作会打开文件所在目录。这些是本地 Desktop 能力；无法访问本机文件的 browser 或 remote deployment 不会提供这些入口。
-
-## 本地 Desktop 文件夹
-
-默认本地 Desktop 布局会把组织文件放在 `~/Documents/Rudder/<org-folder>` 下的可读文件夹里。这个文件夹和组织的稳定身份绑定，修改显示名称不会静默移动或替换它。如果一个已经建立的组织文件夹丢失，应恢复原文件夹或 workspace backup，不要创建一个空目录来代替。
-
-## 本地开发
-
-Rudder 仓库本身使用 `pnpm dev` 本地开发。Codex 管理的 worktree 会被 dev runner 自动隔离；手动创建的 worktree 在启动第二个本地 server 前，应先初始化隔离的 worktree 实例。
-
-## 下一步
-
-<CardGroup cols={2}>
-  <Card title="技能" icon="book-open" href="/zh/concepts/skills">
-    为 agent 打包可复用的操作知识。
-  </Card>
-  <Card title="任务" icon="circle-check" href="/zh/concepts/issues">
-    把执行、证据和评审保存在同一个工作对象上。
-  </Card>
-  <Card title="管理 Workspaces 和 Library" icon="folder-tree" href="/zh/how-to/manage-workspaces-and-library">
-    把 resources、outputs 和 backups 放在正确位置。
-  </Card>
-  <Card title="Workspace boundaries" icon="list-checks" href="/zh/reference/workspace-boundaries">
-    检查文件和 runtime state 应该放在哪里。
-  </Card>
-</CardGroup>
+先查阅[工作区边界](/zh/reference/workspace-boundaries)，再按[管理工作区和 Library](/zh/how-to/manage-workspaces-and-library)操作。

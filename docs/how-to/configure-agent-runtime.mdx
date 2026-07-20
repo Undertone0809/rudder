@@ -1,284 +1,85 @@
 ---
-title: "Configure Your Agent Runtime"
-description: "Configure the local CLI, shell process, HTTP webhook, or gateway runtime Rudder uses when an AI agent heartbeat runs."
+title: "Configure an Agent runtime"
+description: "Configure and test the execution environment Rudder invokes for one Agent, then verify a real low-risk run."
 icon: "terminal"
 keywords:
-  - "Codex agent runtime"
-  - "Claude Code agent runtime"
-  - "agent runtime configuration"
-  - "Rudder runtime"
+  - "configure Agent runtime"
+  - "Rudder runtime test"
+  - "local Agent CLI"
 canonical: "https://docs.rudderhq.dev/how-to/configure-agent-runtime"
 "og:url": "https://docs.rudderhq.dev/how-to/configure-agent-runtime"
 hreflang_en: "https://docs.rudderhq.dev/how-to/configure-agent-runtime"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/configure-agent-runtime"
-
 ---
 
-An agent runtime is the execution backend Rudder calls when an agent wakes up. Rudder owns the organization, Chat or issue context, Agent Run, transcript, and close-out evidence. The runtime owns the actual work: running a local CLI, launching a custom process, calling an HTTP endpoint, or forwarding the run to a gateway.
+<a id="completed-state" />
 
-## Which agent runtimes does Rudder support?
+## Completed state
 
-Rudder can run local CLI-backed agents such as Codex and Claude Code, custom shell process runtimes, HTTP webhook runtimes, and gateway-backed runtimes. Choose a local CLI runtime when the agent needs to work in repositories on the Rudder host. Choose Shell Process, HTTP Webhook, or OpenClaw Gateway when you already have a custom runner or external agent service.
+At the end of this guide, one Agent has a saved runtime configuration, its
+environment test has an understood result, and a low-risk Agent Run has left a
+visible result or blocker with transcript or raw output evidence.
 
-Use this guide when you are hiring a new agent, switching an existing agent to a different backend, or wiring Rudder to your own runtime wrapper.
+The Agent, Agent Run, and runtime remain separate. The Agent owns the role, the
+Run records one attempt, and the runtime performs that attempt. Compare
+operator-facing choices in [Runtime types](/reference/runtime-types).
 
-## Before you start
+<a id="prerequisites" />
 
-Make sure you have:
+## Prerequisites
 
-- a running Rudder instance
-- an organization where you can create or edit agents
-- the local CLI, script, gateway, or webhook you want Rudder to invoke
-- credentials already installed on the same host that runs Rudder
+You need permission to edit an Agent and the runtime on the same host or network
+where Rudder will invoke it. For a local runtime, install and authenticate the
+matching CLI first. For an external service, prepare its reachable endpoint and
+credentials. Keep secrets in the host environment or Rudder secret fields, not
+in committed configuration.
 
-For local development, start Rudder with:
+This walkthrough uses an illustrative release writer with Codex local. The same
+verification pattern applies to other operator-facing runtimes, but their
+capabilities differ.
 
-```sh
-npx @rudderhq/cli@latest start
-```
+<a id="case-backed-steps" />
 
-Then open the organization, create or edit an agent, and use the Runtime section of the agent form.
+## Configure the release writer
 
-## What runtime configuration controls
+1. Open the release writer's Agent detail and edit its Runtime configuration.
+2. Choose **Codex (local)**. If the default CLI is missing, Rudder shows setup
+   guidance but still permits a supported custom command.
+3. Choose the model and thinking effort offered for that model. Changing model
+   clears an effort value that the new model does not support.
+4. Add a role-specific instructions file only if the Agent needs one. Use an
+   absolute path that the Rudder host can read.
+5. Review broad options such as web search or sandbox bypass. Enable them only
+   when this trusted local work requires them.
+6. Run **Test runtime chain**. Treat `pass` as ready, `warn` as visible guidance that must
+   be understood, and `fail` as a failed probe that needs repair.
+7. Save the Agent, then ask it in Chat to draft a two-line release headline.
+8. Open the resulting Agent Run and confirm the selected runtime, result,
+   transcript or raw output, and any usage or cost evidence.
 
-There are three related pieces of configuration:
+Rudder supplies first-party control tools automatically to supported local
+runtimes. Do not add a second custom Rudder MCP server. Browser tools appear
+only for an eligible local run while the Built-in Browser setting is enabled.
 
-| Field | What it controls | Example |
-| --- | --- | --- |
-| `agentRuntimeType` | Which backend Rudder invokes for heartbeats | `codex_local`, `claude_local`, `process`, `http` |
-| `agentRuntimeConfig` | Backend-specific settings | model, instructions file, command, URL, headers |
-| `runtimeConfig` | Rudder scheduling and workspace behavior | heartbeat cadence, budgets, workspace settings |
+<a id="success-signal" />
 
-Most runtime setup lives in `agentRuntimeConfig`. Change `runtimeConfig` only when you are configuring how Rudder schedules or hosts the agent, not which executable or endpoint runs the work.
+## Success signal
 
-## Choose a runtime
+The environment result is either `pass` or a `warn` whose limits you understand,
+and the real run starts under the selected runtime. The Chat shows a finished
+answer or explicit blocker, while Agent Run detail preserves evidence underneath
+it. A successful probe without a real run is not enough proof.
 
-| Runtime | Use it when | Required setup |
-| --- | --- | --- |
-| Codex (local) | The agent should work in local repositories through Codex | Codex installed and authenticated on the Rudder host |
-| Claude Code (local) | The agent should use Claude Code for local operator or repo work | Claude Code installed and authenticated on the Rudder host |
-| Gemini, OpenCode, Pi, or Cursor local | You want one of those local CLI-backed agents | The matching CLI installed and authenticated |
-| Shell Process | You have a custom script, wrapper, or internal runner | An executable command and optional arguments |
-| HTTP Webhook | Your runtime is an external service | A reachable `http://` or `https://` endpoint |
-| OpenClaw Gateway | You run agents through an OpenClaw gateway | A reachable gateway URL and any required token/session settings |
+<a id="recovery" />
 
-Prefer a local CLI runtime when the agent needs a familiar coding-agent environment. Prefer Shell Process or HTTP Webhook when you want Rudder to call your own runtime contract.
+## Recovery
 
-## Configure a local CLI runtime
+If the probe reports command not found, confirm the CLI is installed on the
+Rudder host and available on its `PATH`, or set a supported custom command. If
+authentication fails, log in through that runtime outside Rudder and test again.
+For an unreadable instructions file or workspace, correct the absolute path and
+host permissions before retrying.
 
-Use a local CLI runtime for Codex, Claude Code, Gemini CLI, OpenCode, Pi, or Cursor-backed agents.
-
-![Codex local runtime configuration](../images/agent-runtime-codex-config.png)
-
-1. Create or edit an agent.
-2. Choose the runtime type.
-3. Select a model when the runtime exposes model selection.
-4. Add an agent instructions file if this agent needs a role-specific markdown file.
-5. Configure runtime-specific options.
-6. Run the environment test.
-7. Run one low-risk Chat turn, or assign a low-risk issue and run one heartbeat.
-
-The instructions file should be an absolute path, for example:
-
-```text
-/Users/alice/work/rudder-agents/SOUL.md
-```
-
-Rudder injects its shared operating contract separately. For Codex, repository-scoped `AGENTS.md` files may still be applied by Codex itself when the agent works inside that repository.
-
-### Use a custom provider/model
-
-Some local runtimes use provider-qualified model IDs. Pi and OpenCode require a model in `provider/model` format. The model picker shows discovered models when the CLI can list them, but discovery is only a suggestion list. If your provider is configured locally and the model does not appear yet, enter the ID directly and run the environment test.
-
-Examples:
-
-```text
-opencode/deepseek-v4-flash-free
-kimi-coding/kimi-for-coding
-deepseek/deepseek-chat
-```
-
-For Pi, verify local provider setup with:
-
-```sh
-pi --list-models
-```
-
-For Pi + DeepSeek, choose or enter `deepseek/deepseek-chat` in Rudder. The
-onboarding form will show a `DEEPSEEK_API_KEY` field, store the value as a
-Rudder organization secret, and reference that secret from the agent runtime
-config. Native DeepSeek also works if you already ran `pi /login` locally. Some
-Pi model IDs route through OpenRouter unless the native provider is selected; if
-Pi reports `No API key found for openrouter`, either set `OPENROUTER_API_KEY` or
-add a native DeepSeek provider/model in `~/.pi/agent/models.json`. Use **Test
-now** as the source of truth.
-
-For OpenCode, verify local provider setup with:
-
-```sh
-opencode models
-```
-
-If discovery returns no models but the custom model is valid for your local provider configuration, keep the custom `provider/model` value and use **Test now**. The test runs the runtime CLI with that model and reports the real provider error if credentials, provider name, or model name are wrong.
-
-Codex-specific options include web search, sandbox bypass, and subscription cost
-estimation. Enable search only when the agent should use web results during
-runs. Enable sandbox bypass only for trusted local work that needs broader
-filesystem or network access. **Estimate subscription usage cost** is on by
-default, so ChatGPT/Codex subscription-authenticated runs appear in Rudder as
-API-equivalent spend instead of `$0.00`; Rudder estimates that spend from the
-model token usage and the built-in OpenAI/Codex price table. Known-model
-estimates count toward Rudder spend and budget hard stops. Turn it off only for
-agents whose subscription usage should remain `$0.00`.
-
-Claude Code options include Chrome access, permission behavior, and max turns per run. Keep these tight for routine work; loosen them only when the agent needs that capability. Claude Code's Chrome option is separate from Rudder Desktop's Built-in Browser.
-
-### Rudder-managed control tools
-
-For supported local runtimes, Rudder automatically prepares its first-party control tools for each run. Do not create a custom MCP integration or manually add a Rudder MCP server to the agent:
-
-- Codex, Claude Code, and OpenCode local receive Rudder-managed MCP configuration.
-- Pi local receives the equivalent Rudder-managed native tool bridge.
-- When managed tools are unavailable and exact fallback commands are needed, consult the bundled `rudder-docs` skill for the CLI compatibility path.
-
-These tools cover Rudder operations such as issues, runs, Chat, automations, Library files, approvals, skills, and agents. In a Desktop `local_trusted` deployment, supported local runs can also receive [Built-in Browser](/concepts/built-in-browser) tools when that instance capability is enabled.
-
-Seeing a managed tool does not grant new authority. Every call stays scoped to
-the current organization and run and still passes the normal permission,
-ownership, and approval checks for that action. Rudder also does not
-automatically inherit arbitrary user or provider MCP servers into this managed
-run surface.
-
-Tool availability is runtime-specific. Remote, gateway, generic process, and unsupported runtimes do not inherit a promise of managed tools or local Desktop Browser control. Use the environment test and a real run as evidence for the runtime you selected.
-
-## Configure a shell process runtime
-
-Use Shell Process when you already have a script or wrapper that can run one agent work cycle.
-
-In the agent form, set:
-
-| Setting | Meaning |
-| --- | --- |
-| `command` | Executable to launch, such as `node`, `python`, or an absolute binary path |
-| `args` | Arguments passed to the command |
-| `cwd` | Working directory for the process |
-| `timeoutSec` | Optional run timeout in seconds |
-| `graceSec` | Optional shutdown grace period |
-| `env` | Optional string environment variables passed to the process |
-
-Example configuration:
-
-```json
-{
-  "command": "node",
-  "args": ["scripts/my-agent-runtime.js"],
-  "cwd": "/Users/alice/work/my-runtime",
-  "timeoutSec": 900,
-  "graceSec": 15,
-  "env": {
-    "MY_RUNTIME_MODE": "rudder"
-  }
-}
-```
-
-When Rudder invokes the process, it also provides Rudder runtime environment values for the agent. Keep secrets out of committed config files; store credentials in the host environment or your deployment secret manager.
-
-The environment test checks that:
-
-- `command` is present
-- `cwd` is an absolute directory
-- the command is resolvable from the configured working directory and `PATH`
-
-![Shell process runtime environment test](../images/agent-runtime-process-test.png)
-
-## Configure an HTTP webhook runtime
-
-Use HTTP Webhook when your agent runs outside the Rudder process, such as a hosted service, queue worker, or internal orchestration layer.
-
-Minimum configuration:
-
-```json
-{
-  "url": "https://agent-runtime.example.com/rudder/heartbeat",
-  "method": "POST",
-  "timeoutMs": 15000
-}
-```
-
-Optional fields include `headers` and `payloadTemplate`.
-
-At invocation time, Rudder sends a JSON body that combines your `payloadTemplate` with the agent id, run id, and Rudder run context:
-
-```json
-{
-  "agentId": "agent_...",
-  "runId": "run_...",
-  "context": {
-    "reason": "..."
-  }
-}
-```
-
-The environment test validates the URL, records the configured method, and sends a `HEAD` probe. A failed probe may be a warning instead of a hard failure if the endpoint blocks `HEAD`, but the first real heartbeat should still be verified from the run transcript and your service logs.
-
-## Configure an OpenClaw Gateway runtime
-
-Use OpenClaw Gateway when Rudder should hand execution to an OpenClaw-compatible gateway.
-
-Important settings include:
-
-| Setting | Meaning |
-| --- | --- |
-| Gateway URL | WebSocket endpoint, for example `ws://127.0.0.1:18789` |
-| Payload template | JSON merged into the gateway payload |
-| Runtime services | Optional service wiring for the gateway |
-| Rudder API URL override | Public Rudder API URL if the gateway cannot reach the default |
-| Session strategy | Fixed session, per issue, or per run |
-| Gateway auth token | Stored as `x-openclaw-token` header |
-| Role and scopes | Gateway-side authorization context |
-| Wait timeout | How long Rudder waits for gateway completion |
-
-Use a fixed session for a long-lived operator identity. Use per-issue or per-run sessions when isolation matters more than continuity.
-
-## Test and iterate
-
-Use the built-in environment test before assigning real work. It catches missing commands, invalid working directories, malformed URLs, and basic connectivity problems.
-
-A passing environment test is not the final proof. It only means Rudder can plausibly launch or contact the runtime. The real proof is one Chat turn or issue heartbeat that leaves inspectable evidence:
-
-- the run starts under the expected runtime
-- transcript entries or raw output appear on the run
-- the source Chat or issue receives a visible result, progress, blocked, review, or done signal
-- the agent does not need credentials or permissions that only exist in your interactive shell
-
-## Operational checklist
-
-Before you rely on the runtime for recurring work, confirm:
-
-- the agent role and capabilities are clear
-- the runtime is installed on the same host that runs Rudder
-- the runtime is authenticated outside the docs repository
-- model and instruction settings match the work
-- broad permissions are enabled only for trusted agents
-- the environment test passes, or each warning is understood
-- the first real Chat turn or issue heartbeat leaves evidence on the source Chat or issue
-
-## Next steps
-
-<CardGroup cols={2}>
-  <Card title="Agents" icon="bot" href="/concepts/agents">
-    Review the agent model and heartbeat loop.
-  </Card>
-  <Card title="First organization" icon="building-2" href="/get-started/first-organization">
-    Hire your first agent in a new Rudder organization.
-  </Card>
-  <Card title="Issue lifecycle" icon="circle-check" href="/how-to/issue-lifecycle">
-    Learn how runtime work should close out on issues.
-  </Card>
-  <Card title="Skills" icon="book-open" href="/concepts/skills">
-    Package reusable instructions for agents.
-  </Card>
-  <Card title="Built-in Browser" icon="globe" href="/concepts/built-in-browser">
-    Review Browser availability and trust boundaries.
-  </Card>
-</CardGroup>
+If a `warn` becomes a failed real run, use the Run's terminal error and raw
+evidence to repair the exact provider, model, endpoint, or permission. Do not
+switch the Agent to active recurring work until the low-risk run succeeds.

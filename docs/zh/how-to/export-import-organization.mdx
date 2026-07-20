@@ -1,75 +1,56 @@
 ---
 title: "导出和导入组织"
-description: "用可预览、范围明确的 export/import 移动 Rudder organization knowledge。"
+description: "构建可移植组织包，先预览依赖和冲突，再以新身份导入，同时避免泄露机密。"
 icon: "package-open"
 keywords:
-  - "Rudder export"
-  - "Rudder import"
-  - "organization portability"
+  - "导出 Rudder 组织"
+  - "导入 Rudder 组织"
+  - "组织迁移"
 canonical: "https://docs.rudderhq.dev/zh/how-to/export-import-organization"
 "og:url": "https://docs.rudderhq.dev/zh/how-to/export-import-organization"
 hreflang_en: "https://docs.rudderhq.dev/how-to/export-import-organization"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/export-import-organization"
-
 ---
 
-当你需要在 Rudder instances 之间移动组织知识，或保留一份 operating record 时，使用 export 和 import。
+<a id="completed-state" />
 
-## Export 适合什么
+## 完成后的状态
 
-Export 用于 organization portability。它应该保留以后理解这个组织所需的知识和结构。
+完成本页后，选定的组织内容已经打包导出，并在导入前经过完整预览。当前软件包支持组织、Agent、项目、Issue、自动化和技能。导入副本拥有新的组织 UUID、规范路由键和 Issue Key。
 
-根据当前产品 surface，export 可能包含 organization settings、goals、projects、agents、issues、resources、Library metadata 和相关 records。把它当作 organization data，不要当成整台机器的备份。
+<a id="prerequisites" />
 
-## Export 前
+## 开始前
 
-检查：
+你需要源实例和目标实例的看板访问权限、本地保存软件包的空间，以及一份只包含受支持实体的迁移清单。目标、Library 文件和组织资料不会包含在软件包中。替代用的机密和环境变量要另外准备。导出结果是带 `.rudder.yaml` 清单的可移植软件包，不是任意数据库转储，也不能泄露已保存机密。
 
-- 当前组织就是你要移动的组织
-- 重要工作已经关闭，或明确标记为 in progress
-- 持久文件放在 Library 或 project workspaces
-- 分享 archive 前理解里面是否有敏感数据
+导入的 Issue 不会保留目标关联，`goalId` 为 `null`。如果目标实例仍需要这些内容，应在导入后另行重建目标、目标关联、Library 文件和组织资料。
 
-## 安全 import
+下面的示意案例把咨询团队的客户简报项目迁移到新的本地实例。
 
-Import 应该可预览、范围明确。应用 import 前，先检查它会创建或更新什么。
+<a id="case-backed-steps" />
 
-用 preview 检查：
+## 迁移客户简报项目
 
-- target organization
-- object counts
-- conflicts 或 missing references
-- 可能改变行为的 settings
-- 需要 follow-up 的 resources 或 files
+1. 打开源组织的导出页面，选择组织、相关 Agent、客户简报项目、其中的 Issue 和自动化，以及这些 Agent 需要的技能。
+2. 启动导出任务。任务完成后下载软件包，把生成的清单和说明文件放在一起。
+3. 打开目标实例的导入页面，选择这个软件包。
+4. 应用之前先检查预览。核对选中的组织、Agent、项目、Issue、自动化和技能，以及冲突、机密或环境要求。另行确认导入后需要重建哪些目标、Library 文件和组织资料。
+5. 选择导入为新组织。填写新的显示名称，并单独检查建议的 Issue Key。如果 Key 冲突，应明确改用另一个 Key，不要为了绕过冲突而改掉导入名称。
+6. 通过目标实例的机密设置补充必要凭据。
+7. 按已经预览的方案执行导入。
+8. 分别打开一个导入的 Agent、项目、Issue、自动化和技能。确认受支持的关联都指向新组织内部，并在重建目标关联前确认导入的 Issue 没有目标关联。
 
-如果 preview 和预期组织不一致，不要 apply。
+<a id="success-signal" />
 
-### 检查导入后的组织身份
+## 成功信号
 
-导入为新组织时，分别检查新的组织名称和 Issue Key。修改建议的 Issue Key 不会顺带重命名组织。如果这个 key 和目标 Rudder 实例里另一个组织的当前 URL、当前 Issue Key 或历史 Issue Key 冲突，import preview 会要求你先改成一个明确可用的值。
+目标实例显示全新的组织身份，没有复用源 UUID 或历史路由别名。选中的 Agent、项目、Issue、自动化和技能都已出现；导入 Issue 的 `goalId` 为 `null`；软件包预览和导入内容中也没有任何凭据值。
 
-新组织会获得新的内部身份和稳定 URL。源实例里的历史 Issue Key alias 不会复制到这个新组织。
+<a id="recovery" />
 
-## Import 后
+## 恢复
 
-打开导入后的组织，检查：
+预览报告缺少受支持依赖时，回到导出流程补上，或从导入范围中移除依赖它的实体。目标、目标关联、Library 文件和组织资料需要在软件包流程之外重建。Issue Key 冲突时，明确选择替代值。缺少机密时，先停止应用，通过目标实例的机密入口准备好再继续。
 
-- goals 和 projects
-- agents 和 runtime settings
-- issues 和 review state
-- 新的 Issue Key 和可读 issue 编号
-- Library files 和 resources
-- 可能需要重新配置 credentials 的 automations 或 integrations
-
-外部 credentials 和本地 runtime paths 可能需要在目标机器上重新配置。
-
-## 下一步
-
-<CardGroup cols={2}>
-  <Card title="核心概念" icon="book-open" href="/zh/concepts/overview">
-    回看 organization model。
-  </Card>
-  <Card title="管理 Workspaces 和 Library" icon="folder-tree" href="/zh/how-to/manage-workspaces-and-library">
-    Export 前检查持久文件。
-  </Card>
-</CardGroup>
+不要跳过预览直接写数据库。如果应用失败，保留软件包和预览证据，按导入报告检查已经写入目标实例的实体，再解决明确指出的冲突后重试。

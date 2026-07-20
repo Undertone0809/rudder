@@ -1,55 +1,47 @@
 ---
-title: "Plugins"
-description: "用 Rudder plugins 添加能力、jobs、webhooks 和 UI surface，同时保留核心工作流边界。"
+title: "插件"
+description: "通过宿主管理的能力、任务、webhook 和界面插槽扩展 Rudder，同时保留核心工作流规则。"
 icon: "plug"
 keywords:
-  - "Rudder plugins"
-  - "agent platform plugins"
-  - "plugin capabilities"
+  - "Rudder 插件"
+  - "插件能力"
+  - "插件任务和 webhook"
 canonical: "https://docs.rudderhq.dev/zh/concepts/plugins"
 "og:url": "https://docs.rudderhq.dev/zh/concepts/plugins"
 hreflang_en: "https://docs.rudderhq.dev/concepts/plugins"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/plugins"
-
 ---
 
-Plugins 扩展 Rudder 的边缘能力。它们可以添加 capabilities、jobs、webhooks、logs、state 和 UI surfaces，但核心产品仍然拥有 issues、approvals、budgets、runs 和组织边界。
+<a id="definition" />
 
-## Plugins 适合做什么
+## 定义
 
-当一个 integration 或 workflow 不应该塞进核心产品时，用 plugin：
+插件是由 Rudder 宿主安装和管理的可选软件包。它可以声明工具、状态、HTTP 访问、界面插槽、事件订阅、webhook、后台任务和宿主服务访问。
 
-- 从外部系统导入工作
-- 和外部 tracker 同步
-- 处理 webhook 事件
-- 添加专门工具或 capability
-- 在 UI 中展示 plugin 自己的状态
+宿主会校验清单，启动或停止工作进程，为每次桥接操作检查已声明能力，并保存状态、配置、日志、任务、webhook 和插件数据供负责人检查。插件工具使用带命名空间的名称，不能覆盖核心工具或其他插件工具。
 
-Plugin 应该增加能力，不应该绕过Rudder 核心功能的规则。
+<a id="case" />
 
-## Lifecycle
+## 一个示意案例
 
-Installed plugins 通过 Rudder 管理 lifecycle。Rudder 控制 install、activate、worker health、update 和 uninstall。
+一个团队安装了 CRM 插件，为项目增加客户面板和定时账户同步。插件配置写明外部服务，后台任务明确归属于该插件，同步失败时可以在插件日志中查到。CRM 面板可以链接到 Rudder 工作，但不能建立新的 Issue 状态，也不能绕过原有审批流程。
 
-这个边界很重要。Plugin 可以运行 jobs、暴露 capabilities，但 host 仍然拥有 organization scope、tool name、approval 和 product state 的安全规则。
+![插件管理器](../../images/plugin-manager.png)
 
-## Capabilities
+<a id="when-useful" />
 
-Plugins 会声明自己能做什么。Rudder 根据这些声明决定 plugin 可以使用哪些 tools、jobs、webhooks 和 UI slots。
+## 什么时候有用
 
-Capability 应该有 namespace。Plugin 不应该和 first-party tools 冲突，也不应该伪装成 core runtime。
+可选集成或专门界面不适合进入 Rudder 核心工作循环时，用插件。常见用途包括服务连接器、自定义工具、后台任务、webhook、界面组件和运维视图。
 
-## Jobs 和 webhooks
+目标、Chat、Issue、Agent 运行、评审、审批、预算和工作区仍由内置产品对象负责。插件可以通过宿主 API 连接这些对象，但不拥有它们的规则。
 
-Plugin jobs 和 webhooks 应该可观察。Plugin 运行工作时，operator 应该能看到 state、logs、failures 和 output links。
+<a id="operating-boundaries" />
 
-## 下一步
+## 操作边界
 
-<CardGroup cols={2}>
-  <Card title="管理 plugins" icon="plug" href="/zh/how-to/manage-plugins">
-    安装、启用、检查和移除 plugins。
-  </Card>
-  <Card title="Rudder" icon="sliders-horizontal" href="/zh/concepts/approvals-budgets-activity">
-    理解 plugins 不能绕过的核心规则。
-  </Card>
-</CardGroup>
+插件只能做增量扩展。它不能覆盖核心路由或名称，不能通过未声明状态跨越组织范围，也不能绕开公共宿主 API 去修改审批、身份验证、Issue 签出或预算执行规则。
+
+风险最高的是信任边界。插件工作进程和前端软件包都是安装到本机的代码，不是用来运行不可信软件包的安全沙箱。启用前应检查来源、声明的能力、配置、外部服务和版本变更。卸载必须通过宿主生命周期完成，不能删除核心 Issue、审批、预算或运行历史。
+
+按照[管理插件](/zh/how-to/manage-plugins)完成安装和检查。

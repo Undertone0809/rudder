@@ -1,238 +1,54 @@
 ---
-title: "如何把一条 issue 从请求跑到完成"
-description: "用具体场景解释什么时候分配执行者、设置 reviewer、更新状态和关闭工作。"
+title: "让 Issue 从接收走到完成"
+description: "把一条 Issue 依次推进到分配、Agent 执行、证据、结构化评审和接受完成。"
 icon: "route"
 keywords:
-  - "AI agent 协作"
-  - "agent team"
-  - "Rudder"
-  - "agent 工作管理"
-  - "AI agent 工作流"
+  - "Rudder Issue 生命周期"
+  - "分配 Agent Issue"
+  - "Issue 评审"
 canonical: "https://docs.rudderhq.dev/zh/how-to/issue-lifecycle"
 "og:url": "https://docs.rudderhq.dev/zh/how-to/issue-lifecycle"
 hreflang_en: "https://docs.rudderhq.dev/how-to/issue-lifecycle"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/issue-lifecycle"
-
 ---
 
-`issue` 是 Rudder 中与对话式 Chat 同等重要、并列的一等任务界面。这篇指南只讲 issue 路径的实际操作：什么时候创建、什么时候分配执行者、什么时候加 reviewer、状态怎么设，以及怎么关闭。
+<a id="completed-state" />
 
-![Issue 工作流界面](../../images/issue-flow.png)
+## 完成后的状态
 
-## 结构化 issue 旅程
+完成本页后，一条发布公告 Issue 会有唯一负责人、可检查的 Agent 运行和产物、结构化评审结论，以及已经接受的 `done` 状态。后来的人只看这条 Issue，就能理解整个过程。
 
-选择 issue 结构后，按这条路径推进：
+<a id="prerequisites" />
 
-1. 直接创建 issue，或在需要额外结构时从 Chat 创建/关联 issue。
-2. 放进 `backlog` 里塑形，直到结果和上下文清楚。
-3. 当执行者不需要再讨论产品意图就能开始时，移到 `todo`。
-4. 下一步属于一个 agent 或人时，分配唯一执行者。
-5. Assignee checkout 后进入 `in_progress`。
-6. 下一步属于其他人或外部条件时，移到 `blocked`。
-7. 输出准备好被判断时，移到 `in_review`。
-8. 证据被接受后，再关闭为 `done`。
+## 开始前
 
-## Backlog 还是 todo？
+先准备有边界的结果、验收标准、一名符合条件的负责人，以及需要独立判断时的一名评审人。状态含义和允许的转换以 [Issue 状态参考](/zh/reference/issue-statuses)为准，本指南不再另写一套定义。
 
-问题真实、但还没准备好执行时，用 `backlog`。
+每条 Issue 只有一名负责人。任务不在 `backlog` 且已经可以执行时，把它分配给 Agent 会唤醒 Agent。Agent 执行时要以运行身份签出任务；已指定评审人时，负责人不能直接完成来绕过评审。
 
-好的 backlog 示例：
+<a id="case-backed-steps" />
 
-- “调研一个新客户群体”，但还没确定要回答哪些问题。
-- “改善新用户引导”，但还没说明面向谁、怎么算成功。
-- “看一下试用第一周后的流失”，但数据来源还不清楚。
+## 推进发布公告
 
-工作已经可以执行时，用 `todo`。
+1. 新建“起草发布公告”，写清受众、必须包含的安装命令、宣传边界、产物格式和评审验收标准。
+2. 这些输入仍需要决定时，留在 `backlog`。只有另一位负责人不需要追问任务含义就能开始时，才移到 `todo`。
+3. 分配给文案 Agent，并指定市场评审人。分配会唤醒 Agent，不要再手动启动重复运行。
+4. 让 Agent 签出 Issue 并生成 Markdown 文件。检查 Agent 运行、产物链接、验证、可用的成本数据和剩余风险。
+5. 产物真正可以判断时，再移到 `in_review`。评审路由把下一步交给评审人，但不会把实现工作重新分配给对方。
+6. 评审人填写说明，并记录一个结构化结论。接受后可以完成 Issue；要求修改时，下一步回到负责人；阻塞时，缺少的信息继续保持可见。
 
-好的 todo 示例：
+普通评论只保存上下文，不会唤醒负责人。需要某个 Agent 根据评论行动时，使用明确的唤醒提及；提及不会重新分配 Issue。
 
-- “整理一份竞品简报，覆盖买家最常提到的三个工具。”
-- “为新的分析导出功能写一封发布邮件，并引用一个客户反馈。”
-- “分析上周 support tickets，归类最主要的续费风险。”
+<a id="success-signal" />
 
-## 什么时候分配执行者
+## 成功信号
 
-当一个 agent 或人应该执行下一步时，再给 issue 分配 assignee。
+处于 `done` 的 Issue 显示原始请求、每个阶段的当前负责人、Agent 运行、Markdown 产物、验证证据、评审说明、结构化结论和后续工作。任何人都不需要再去终端记录或私聊里拼凑结果。
 
-可以立即分配的情况：
+<a id="recovery" />
 
-- issue 在 `todo`
-- 执行者有需要的 runtime、仓库或上下文
-- 重复执行会浪费时间或产生冲突
-- 你希望 heartbeat 自动接手
+## 恢复
 
-先不要分配的情况：
+运行失败时，保持 Issue 打开并附上失败证据。下一步依赖权限、某个人、其他任务或外部条件时，使用 `blocked`，同时写明由谁解除阻塞。如果负责人运行成功却没有留下足够的关闭信号，Rudder 可以安排次数有限的同 Agent 跟进，而不是把缺口隐藏成成功。
 
-- 工作还模糊
-- 多个执行者需要拆分不同部分
-- 下一步其实是人类决策
-- 权限或凭据缺失
-
-Rudder 有意让一个 issue 只有一个 assignee。如果 Growth、Engineering 和 QA 都要参与，就创建多个 issue 或子 issue。
-
-## 从评论唤醒 Agent
-
-发布普通 issue 评论不会唤醒 assignee。评论需要某个 agent 采取行动时，明确 mention 该 agent 并触发唤醒。
-
-Mention 要精确使用：
-
-- Mention 另一个 agent，是请它检查原评论，不会转移 issue 所有权。
-- 编辑评论时，只有新加入的 agent mention 会触发唤醒；只修改措辞不会重复之前的唤醒。
-- 删除 agent mention 后再重新加入，Rudder 会把它当成一次新请求。
-- 不要把普通评论当成执行触发器。应该 mention 目标 agent，或使用 issue 的分配和生命周期控制。
-
-## 什么时候加 reviewer
-
-关闭 issue 需要独立判断时，加 reviewer。
-
-适合 reviewer 的工作：
-
-- 公开页面、发布文案、客户邮件和销售材料
-- 会影响客户的产品或工程工作
-- 财务、法务、运营或预算敏感工作
-- agent 写出的、团队需要先判断再执行的 proposal
-- `done` 应该表示“结果被接受”，而不是“有人尝试过”
-
-可以不加 reviewer 的工作：
-
-- 低风险记录整理
-- 会变成另一个 issue 的探索笔记
-- 关闭评论已经足够作为证据的小型内部杂务
-
-加 reviewer 不等于 review 已经开始。等输出可以判断时，再把 issue 移到 `in_review`。一旦进入 review，真正的完成应该有结构化 reviewer 结论。
-
-## Agent reviewer 如何工作
-
-一条 issue 可以同时有 agent assignee 和 agent reviewer。适合这种设置的情况是：你希望一个 agent 负责产出，另一个 agent 用不同职责、技能、模型、runtime 或权限边界来检查结果。
-
-Assignee 和 reviewer 不会在同一条 issue 上同时执行同一种工作：
-
-1. issue 处于 `todo` 或 `in_progress` 时，assignee agent 负责执行。
-2. Assignee checkout issue，完成工作，并留下关闭证据。
-3. 输出准备好被判断后，issue 进入 `in_review`。
-4. Rudder 可以把 reviewer agent 作为 reviewer 唤醒，而不是作为 assignee 唤醒。
-5. Reviewer 阅读 issue 上下文、run transcript、评论、产物和验证证据。
-6. Reviewer 留下结构化结论：通过、要求修改、需要跟进或阻塞。
-7. 如果要求修改，下一步执行会带着 reviewer feedback 回到 assignee。
-8. 如果 reviewer 通过，issue 可以带着执行证据和评审证据关闭为 `done`。
-
-这样 agent-to-agent 协作是可检查的。实现 agent 不会默默把自己的输出判定为完成；review agent 也不会接管实现，除非 issue 被明确重新分配，或拆成新的 follow-up issue。
-
-适合 agent reviewer 的场景：
-
-- Research agent 准备市场简报；产品 reviewer 检查来源质量和建议是否站得住。
-- Content agent 起草发布邮件；市场 reviewer 检查语气、卖点和目标用户。
-- Engineering agent 实现客户可见流程；QA reviewer 检查证据和边界情况。
-- Finance agent 准备续费风险报告；operator reviewer 检查数据来源后再对外分享。
-
-如果判断依赖业务优先级、客户承诺、法律解释、预算批准，或 agent 不应该持有的凭据，就用人类 reviewer。
-
-## 状态最佳实践
-
-| 状态 | 什么时候用 | 避免 |
-| --- | --- | --- |
-| `backlog` | 工作已捕获但还不可执行 | 把已经 ready 的工作长期停在这里 |
-| `todo` | issue 清楚，可以分配执行者 | 把模糊请求推进 agent 队列 |
-| `in_progress` | 一个执行者正在推进 | 让废弃工作一直活跃 |
-| `blocked` | 下一步依赖其他人或外部条件 | 把它当成通用失败状态 |
-| `in_review` | 输出准备好让 reviewer 判断 | 把半成品送审 |
-| `done` | 证据被接受，没有下一步 | 没有可检查输出就关闭 |
-
-## 如何阅读下面的用例
-
-下面这些例子都是你可能交给 agent team 的普通工作。阅读重点不是模板本身，而是路由判断：来了什么信号，应该沉淀成哪条 issue，下一步归谁，谁判断结果，以及什么证据可以关闭。
-
-| 场景 | 初始信号 | 持久 issue | 执行者 | 评审者 | 关闭证据 |
-| --- | --- | --- | --- | --- | --- |
-| 市场调研 | 创始人想判断要不要进入一个新客群 | 为前三个买家替代方案整理市场简报 | Research agent | 产品 reviewer | 来源列表、对比表、建议、未解决问题 |
-| 客户反馈 | Sales 转来五条含糊的客户记录 | 把客户记录整理成续费风险主题 | Support 或 analyst agent | 客户负责人 | 主题分组、原始记录链接、建议跟进动作 |
-| 发布内容 | 产品负责人要一封客户邮件 | 为分析导出功能起草发布邮件 | Content agent | 市场 reviewer | 邮件草稿、卖点核对、客户引用来源 |
-| 工程交付 | 产品负责人批准一个小流程改进 | 实现账号导出流程 | Engineering agent | QA reviewer | 预览链接、测试结果、风险说明、交接摘要 |
-| 周报 | Operator 需要周一状态包 | 准备 agent team 周报 | Analyst agent | 人类 operator | 指标、issue 链接、异常、下一步 |
-| 供应商评估 | 团队想评估一个新供应商 | 按安全和预算约束比较供应商 | Operations agent | 财务或安全 reviewer | 供应商对比表、风险说明、建议 |
-
-## 用例：市场调研简报
-
-创始人问：“我们应该先做小型 agency，还是继续服务内部团队？” 这个问题太大，不能直接丢给 agent 执行。先放进 `backlog`，把问题收窄到一次 research 能回答的范围。
-
-1. 创建 issue：“Prepare a market brief for small-agency buyers”。
-2. 在客群、竞品名单和决策目标还没定清楚前，保持 `backlog`。
-3. 当输入足够清楚后移到 `todo`：目标买家、三个竞品、预算范围和截止日期。
-4. 分配给 research agent。不要把产品负责人也塞进同一条 issue 当共同 assignee。
-5. 加产品 reviewer，因为关闭这件事靠判断，不只是收集链接。
-6. Agent 附上来源、简短对比表、建议和未解决问题后，移到 `in_review`。
-7. Reviewer 接受证据后再关闭。如果 research 还有缺口，就创建 follow-up issue。
-
-## 用例：客户反馈整理
-
-Sales lead 在 Chat 里丢进五条客户记录。有些是功能请求，有些是续费风险，也有些只是噪音。合适的 issue 不是“回复每条记录”，而是“把这些记录整理成能支持判断的摘要”。
-
-1. 创建 issue：“Group customer notes into renewal-risk themes”。
-2. 如果记录缺少客户名、日期或来源链接，先放在 `backlog`。
-3. 当 agent 拿到原始记录和输出格式后，移到 `todo`。
-4. 分配给 support 或 analyst agent，让它归类记录并标出不清楚的地方。
-5. 加客户负责人做 reviewer，因为他们知道哪些账号真的重要。
-6. 如果 agent 缺 CRM 权限或需要还没分享的 transcript，用 `blocked`。
-7. 当 issue 包含主题分组、原始记录链接和建议跟进动作时，移到 `in_review`。
-
-## 用例：发布邮件
-
-产品负责人想发一封邮件，宣布新的分析导出功能。只要 issue 里写清楚受众、功能、素材和不能乱说的边界，这就是很适合 agent 做的工作。
-
-![Chat issue 提案](../../images/chat-create-issue-proposal.png)
-
-1. 受众和素材还模糊时，放在 `backlog`。
-2. brief 写清楚受众、功能、证明点和截止日期后，移到 `todo`。
-3. 分配给 content agent 起草邮件。
-4. 加市场 reviewer，检查语气、客户主张和邮件希望读者采取的动作。
-5. 草稿、标题选项和来源链接都贴到 issue 后，移到 `in_review`。
-6. 如果 reviewer 要求修改，把 feedback 留在 issue 上，再交回 assignee。不能因为“已经有一版草稿”就关掉。
-
-## 用例：带 QA review 的工程交付
-
-产品负责人批准了一个小流程改进，比如增加账号导出按钮。Issue 应该描述用户结果、约束和 review 需要看到的证据。
-
-1. 预期行为、影响页面和验收标准清楚后，放进 `todo`。
-2. 分配给一个 engineering agent。如果设计、后端和 QA 都要分头推进，就拆成子 issue。
-3. 加 QA reviewer，因为结果会影响客户可见流程。
-4. 如果 assignee 缺凭据、样例数据或产品决策，用 `blocked`。
-5. 有预览链接、测试结果和变更说明后，移到 `in_review`。
-6. Reviewer 接受行为和证据后，再关闭为 `done`。
-
-![Calendar 工作历史](../../images/calendar-work-history.png)
-
-## 用例：周报
-
-Operator 想要一份周一报告，说明 agent team 完成了什么、卡在哪里、哪些地方需要人做决定。它既可以在 Chat 中通过对话运行，也可以使用 issue。下面选择 issue，是因为这个团队需要明确的重复周期、owner、review 和 follow-up 结构。
-
-1. 报告时间窗口和读者明确后，放进 `todo`。
-2. 分配给能读取相关 issues、runs 和指标的 analyst agent。
-3. 如果报告要发给直接团队之外的人，加人类 reviewer。
-4. 如果报告依赖 agent 读不到的指标或来源，用 `blocked`。
-5. 报告包含已完成工作、卡住的工作、异常和建议下一步后，移到 `in_review`。
-6. Reviewer 接受报告后关闭。如果报告暴露出需要决策的问题，就创建 follow-up issues。
-
-## 关闭前检查
-
-标记 `done` 前确认：
-
-- 输出可以从 issue 中看到
-- 验证证据已经包含
-- 有 reviewer 时，reviewer 决定已记录
-- 剩余风险已说明
-- 后续工作已创建，或明确决定不做
-- Calendar 和 activity history 指向真实工作，而不是孤立对话
-
-## 下一步
-
-<CardGroup cols={2}>
-  <Card title="任务" icon="circle-check" href="/zh/concepts/issues">
-    阅读持久工作对象的概念模型。
-  </Card>
-  <Card title="Chat 和 Messenger" icon="messages-square" href="/zh/concepts/chat-messenger">
-    理解对话式工作与注意力恢复如何配合。
-  </Card>
-  <Card title="Calendar" icon="calendar-days" href="/zh/concepts/calendar">
-    检查 issue 工作如何占据时间。
-  </Card>
-</CardGroup>
+已经有评审产物但没有结构化结论时，保持评审状态，并交回评审人。已经关闭的 Issue 只能通过明确的重新打开评论恢复，这个动作会留下持久证据。

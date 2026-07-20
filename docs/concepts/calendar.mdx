@@ -1,70 +1,62 @@
 ---
 title: "Calendar"
-description: "Use Rudder Calendar to inspect AI agent run history, issue work, cost signals, and human checkpoints over time."
+description: "Inspect scheduled and dated work without turning Calendar into a second task state machine."
 icon: "calendar-days"
 keywords:
-  - "agent run history"
-  - "AI agent calendar"
-  - "agent work timeline"
   - "Rudder Calendar"
+  - "Agent Run history"
+  - "scheduled work"
 canonical: "https://docs.rudderhq.dev/concepts/calendar"
 "og:url": "https://docs.rudderhq.dev/concepts/calendar"
 hreflang_en: "https://docs.rudderhq.dev/concepts/calendar"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/calendar"
-
 ---
 
-Calendar shows how work actually occupied time. It is not just a scheduling add-on. In Rudder, Calendar is a view over agent runs, issue work, planned human checkpoints, and imported operator calendar blocks.
+<a id="definition" />
+
+## Definition
+
+Calendar is an organization-scoped time view of work that already has a date or
+window. Events can come from Automation schedules, Issue dates, Agent Run
+windows, or configured calendar sources. A navigable event keeps a link to its
+source object.
+
+Calendar answers when something was scheduled or happened. The source Issue,
+Automation, or Run still owns its status, result, and next action.
+
+<a id="case" />
+
+## One illustrative case
+
+The operations digest is scheduled for 18:00. Calendar shows the scheduled
+event and, after execution, the run window. The owner opens the event, follows
+it to the Automation, and checks the linked Chat result. If the run failed, the
+failure is handled on the source run and Automation record, not by editing a
+separate Calendar status.
 
 ![Calendar work history](../images/calendar-work-history.png)
 
-## Why Calendar matters
+<a id="when-useful" />
 
-An agent team can look active while still being hard to inspect. Calendar helps answer time-based operating questions:
+## When it is useful
 
-- Which agents were active today?
-- Which issues received work?
-- Did review happen soon after execution?
-- Are multiple agents blocked at the same time?
-- Is agent runtime clustered around launch, release, or support work?
-- Where did human checkpoints interrupt or unblock the workflow?
+Use Calendar to see timing, overlap, missed windows, and human checkpoints
+across a period. Day, week, and month views change how the same source events
+are arranged. They do not change the underlying records.
 
-## What appears on Calendar
+For current ownership or a decision that needs attention, return to the source
+Issue, Messenger thread, Automation, or Agent Run.
 
-Calendar can show several kinds of blocks:
+<a id="operating-boundaries" />
 
-| Block | Meaning |
-| --- | --- |
-| Agent run history | Actual agent runs tied to agents, issues, and projects |
-| Human checkpoints | Operator review, planning, or decision blocks |
-| Imported calendar events | External calendar context when connected |
-| Project and issue context | Links back to the durable work record |
+## Operating boundaries
 
-The best Calendar view comes from real issue and run records. Avoid inventing decorative calendar-only data when the underlying work should already explain the schedule.
+Calendar is not an assignment queue and does not infer that time spent means
+work succeeded. It must preserve organization scope and source identity.
 
-## How to read it
+The highest-risk boundary is duplicate state. A Calendar event must never
+become a second status record for an Issue or Automation. If a source changes,
+Calendar reflects that source rather than maintaining an independent truth.
 
-Use Calendar after a few issues have run. Look for:
-
-- dense clusters around one project
-- review blocks after implementation blocks
-- long gaps between agent output and human decision
-- repeated blocked runs that need better setup
-- agents running without a clear linked issue
-
-Calendar is most useful when it changes an operating decision: reassign, split work, unblock access, schedule review, or stop low-value runtime.
-
-## Calendar is not assignment
-
-Creating a Calendar block does not assign an issue, change priority, or run a heartbeat. Assignment and status still live on the issue. Calendar explains time; the issue controls work.
-
-## Next steps
-
-<CardGroup cols={2}>
-  <Card title="Issue Lifecycle Guide" icon="route" href="/how-to/issue-lifecycle">
-    Learn how issue status and review choices affect the work history.
-  </Card>
-  <Card title="Agents" icon="bot" href="/concepts/agents">
-    Understand the agent runs Calendar can reflect.
-  </Card>
-</CardGroup>
+For repeated schedules, read [Automations](/concepts/automations). For attention
+recovery, read [Chat and Messenger](/concepts/chat-messenger).

@@ -1,105 +1,76 @@
 ---
-title: "Workspaces"
-description: "Use Rudder workspaces to keep project Library files, agent-private files, skills, and runtime state in predictable locations."
+title: "Workspaces and Library"
+description: "Place project context, durable files, execution changes, and backups in their intended filesystem boundaries."
 icon: "folder-tree"
 keywords:
-  - "agent workspace"
-  - "AI agent files"
-  - "agent outputs"
-  - "Rudder workspaces"
+  - "Rudder Workspaces"
+  - "Rudder Library"
+  - "Agent Run workspace"
 canonical: "https://docs.rudderhq.dev/concepts/workspaces"
 "og:url": "https://docs.rudderhq.dev/concepts/workspaces"
 hreflang_en: "https://docs.rudderhq.dev/concepts/workspaces"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/workspaces"
-
 ---
 
-Rudder gives agents predictable filesystem locations for shared project Library files, skills, runtime work, and agent-private state.
+<a id="definition" />
+
+## Definition
+
+Rudder uses several file boundaries because background context, durable output,
+and mutable execution work have different jobs.
+
+| Location | Purpose |
+| --- | --- |
+| Library | Durable organization files that people and Agents can reference |
+| Project resources | A curated set of Library or external resources eligible as starting context for project-linked runs |
+| Project workspace | The repository or folder where project work takes place |
+| Run workspace | The concrete filesystem and branch boundary used by one run |
+| Agent home | Managed instructions, memory, life, and Skill state for one Agent |
+| Workspace backup | A version of the organization workspace for inspection, restore, or download |
+
+Project resources are an admission list, not every file in the organization.
+An output should remain connected to the Chat, Issue, Run, or project that
+produced it instead of existing only inside a transcript.
+
+<a id="case" />
+
+## One illustrative case
+
+A consulting team prepares a client brief. Source notes live in Library and are
+attached to the project as curated resources. The Agent works in the project's
+repository through a run workspace, then saves the final brief in the project
+Library folder and links it from the review Issue. A later run can find the
+accepted brief without inheriting every scratch file from the first attempt.
 
 ![Workspaces and resources](../images/workspaces-resources.png)
 
-## Which workspace should I use?
+<a id="when-useful" />
 
-| Use case | Location |
-| --- | --- |
-| Source code or project repo work | Project workspace |
-| Durable reports, screenshots, exports, plans, and handoff files | Project folder in Library |
-| Cross-project references and reusable docs | Shared Library files |
-| Agent-private instructions, memory, and local state | Agent home |
-| Temporary scratch validation | `/tmp` or system temp |
+## When each location is useful
 
-## Workspace boundaries
+Use Library for files that should remain part of the organization record. Add a
+file as a project resource only when project-linked runs should receive it as
+starting context. Use a project workspace for repository work and a run
+workspace when changes need an explicit isolation strategy. Keep temporary
+artifacts outside Library unless they are part of the final evidence.
 
-Use managed workspace paths instead of ad-hoc folders:
+On the default local Desktop layout, organization files live in a mapped folder
+under `~/Documents/Rudder`. The mapping uses organization identity, so renaming
+the organization does not silently move its files.
 
-- project repositories stay in their attached project resource locations
-- durable project files belong under that project's Library folder
-- agent-private memory, instructions, and skills stay under that agent's home directory
+<a id="operating-boundaries" />
 
-## Durable outputs
+## Operating boundaries
 
-When a project is created, Rudder creates a matching folder under Library:
+Protected Agent instructions, Skills, managed runtime directories, and cache
+paths are not ordinary Library content. Desktop launch actions still pass
+through workspace and real-path validation; they do not grant browser or server
+deployments access to local applications.
 
-```text
-projects/<project-slug>/
-  README.md
-```
+The highest-risk boundary is destructive filesystem work. A missing mapped
+organization folder is treated as a recovery problem, not replaced with an
+empty folder. Run workspaces cannot be archived while open Issues still depend
+on them, and restoring a backup creates a pre-restore safety version first.
 
-Agents should place durable project work files inside that project folder. They can create subfolders as the work naturally requires, such as `research/`, `screenshots/`, `proposals/`, `evals/`, or `handoff/`. Rudder does not require a fixed `plans/` folder.
-
-Use `/tmp` only for transient scratch files and verification artifacts.
-
-## Project resources
-
-When a run is linked to a project, Rudder injects the explicitly attached Project Context resources into the runtime context. These resources can be external references or Library files. Library-backed resources use safe paths relative to the organization workspace root, so agents can read the file-native knowledge directly without treating protected system folders as project resources.
-
-The Library tree also shows attached Project Context resources under the matching `projects/<project-slug>/resources/` folder. Those entries are virtual references back to the resource catalog; external repositories, URLs, and connector objects are not copied into Library.
-
-Project Context is the curated starting point, not the full knowledge boundary. Agents can still inspect broader Library files when the attached context is not enough.
-
-## Inspect and edit Library files
-
-Library references can open in Rudder's Side Panel so you can inspect a file
-without replacing the current Chat, issue, or Messenger route. Supported files,
-including PDFs, render inline. Use **Open in Library** when you need the full
-Library work surface.
-
-Markdown files are editable in the Side Panel. Rudder autosaves against the last
-confirmed version instead of silently overwriting a newer change. If another
-writer changed the file first, your draft stays visible and you choose **Keep
-mine** or **Use latest**.
-
-In Rudder Desktop, the file **Open** menu can send the validated file to its
-default application or a detected IDE. Folder and terminal actions use the
-file's containing directory. These are local Desktop conveniences and are not
-available to browser or remote deployments that cannot open files on your
-machine.
-
-## Local Desktop folders
-
-In the default local Desktop layout, organization files live in a readable
-folder under `~/Documents/Rudder/<org-folder>`. Rudder keeps the folder mapped to
-the organization's stable identity, so changing the display name does not
-silently move or replace the folder. If an established folder is missing,
-restore it or a workspace backup instead of creating an empty replacement.
-
-## Local development
-
-The Rudder repository itself uses `pnpm dev` for local development. Codex-managed worktrees are auto-isolated by the dev runner; manually created worktrees should initialize an isolated worktree instance before running a second local server.
-
-## Next steps
-
-<CardGroup cols={2}>
-  <Card title="Skills" icon="book-open" href="/concepts/skills">
-    Package repeatable operating knowledge for agents.
-  </Card>
-  <Card title="Issues" icon="circle-check" href="/concepts/issues">
-    Keep execution, evidence, and review attached to the work.
-  </Card>
-  <Card title="Manage Workspaces and Library" icon="folder-tree" href="/how-to/manage-workspaces-and-library">
-    Put resources, outputs, and backups in the right place.
-  </Card>
-  <Card title="Workspace boundaries" icon="list-checks" href="/reference/workspace-boundaries">
-    Check where files and runtime state should live.
-  </Card>
-</CardGroup>
+See [Workspace boundaries](/reference/workspace-boundaries) for the lookup
+rules, then follow [Manage Workspaces and Library](/how-to/manage-workspaces-and-library).

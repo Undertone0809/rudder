@@ -16,6 +16,43 @@ import {
   writeArtifactsAtomically,
 } from "./docs-content-map.mjs";
 
+const BATCH_2_CONCEPT_IDS = [
+  "agents",
+  "automations",
+  "built-in-browser",
+  "calendar",
+  "goals-projects-issues",
+  "plugins",
+  "reviews-feedback-learning",
+  "skills",
+  "workspaces",
+];
+
+const BATCH_2_HOW_TO_IDS = [
+  "configure-agent-runtime",
+  "configure-feishu-integration",
+  "create-agent",
+  "create-automation",
+  "export-import-organization",
+  "issue-lifecycle",
+  "manage-plugins",
+  "manage-workspaces-and-library",
+  "review-agent-work",
+];
+
+function readLocalizedPages(manifest, pageIds) {
+  return pageIds.flatMap((pageId) => {
+    const page = manifest.pages.find((candidate) => candidate.id === pageId);
+    assert.ok(page, `manifest is missing ${pageId}`);
+    return Object.entries(page.files).map(([locale, relativeFile]) => ({
+      locale,
+      page,
+      relativeFile,
+      source: fs.readFileSync(path.join(REPO_ROOT, relativeFile), "utf8"),
+    }));
+  });
+}
+
 test("manifest parses and covers every current navigation page", () => {
   const manifest = loadManifest();
   const docsJson = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "docs/docs.json"), "utf8"));
@@ -93,6 +130,128 @@ test("llms generation covers every active canonical Concept, How-to, Reference, 
     }
   }
   assert.ok(!llms.includes("/concepts/messenger-approvals"));
+});
+
+test("Batch 2 concepts and how-to guides keep their case-led retrieval structure", () => {
+  const manifest = loadManifest();
+  const conceptAnchors = ["definition", "case", "when-useful", "operating-boundaries"];
+  const howToAnchors = ["completed-state", "prerequisites", "case-backed-steps", "success-signal", "recovery"];
+
+  for (const pageId of BATCH_2_CONCEPT_IDS) {
+    const page = manifest.pages.find((candidate) => candidate.id === pageId);
+    assert.equal(page.kind, "concept");
+    assert.equal(page.example_ids.length, 1, `${pageId} must declare one continuing case`);
+    assert.ok(page.source_docs.some((source) => source.endsWith(".md")), `${pageId} must cite at least one concrete source document`);
+    assert.ok(page.contracts.primary.length + page.contracts.supporting.length > 0, `${pageId} must declare its owning contracts`);
+    for (const anchors of Object.values(page.anchors)) assert.deepEqual(anchors, conceptAnchors, `${pageId} anchors`);
+  }
+
+  for (const pageId of BATCH_2_HOW_TO_IDS) {
+    const page = manifest.pages.find((candidate) => candidate.id === pageId);
+    assert.equal(page.kind, "how_to");
+    assert.equal(page.example_ids.length, 1, `${pageId} must declare one case-backed procedure`);
+    assert.ok(page.source_docs.some((source) => source.endsWith(".md")), `${pageId} must cite at least one concrete source document`);
+    assert.ok(page.contracts.primary.length + page.contracts.supporting.length > 0, `${pageId} must declare its owning contracts`);
+    for (const anchors of Object.values(page.anchors)) assert.deepEqual(anchors, howToAnchors, `${pageId} anchors`);
+  }
+});
+
+test("Batch 2 prose preserves the core run, review, and governance distinctions", () => {
+  const manifest = loadManifest();
+  const pages = readLocalizedPages(manifest, [...BATCH_2_CONCEPT_IDS, ...BATCH_2_HOW_TO_IDS]);
+  for (const { locale, relativeFile, source } of pages) {
+    if (locale === "en") {
+      assert.doesNotMatch(source, /[\u2013\u2014]/u, `${relativeFile} contains an en or em dash`);
+      assert.doesNotMatch(source, /\b(?:roadmap|coming soon|planned feature)\b/iu, `${relativeFile} contains roadmap copy`);
+    }
+  }
+
+  const agents = fs.readFileSync(path.join(REPO_ROOT, "docs/concepts/agents.mdx"), "utf8");
+  assert.match(agents, /Agent Run/u);
+  assert.match(agents, /runtime/u);
+  assert.match(agents, /cost/u);
+  assert.match(agents, /output/u);
+  assert.match(agents, /raw evidence/u);
+
+  const reviews = fs.readFileSync(path.join(REPO_ROOT, "docs/concepts/reviews-feedback-learning.mdx"), "utf8");
+  assert.match(reviews, /Review[^\n]+Approval|Approval[^\n]+Review/u);
+  const reviewsZh = fs.readFileSync(path.join(REPO_ROOT, "docs/zh/concepts/reviews-feedback-learning.mdx"), "utf8");
+  assert.match(reviewsZh, /评审[^\n]+审批|审批[^\n]+评审/u);
+});
+
+test("Batch 2 keeps the mandatory Issue definition and the Agent Detail runtime label", () => {
+  const issueDefinitionEn = "An issue is a durable task record with an explicit status and lifecycle. Use one when work needs a named owner, dependencies, or a review path; comments, agent runs, artifacts, and review decisions can stay with the same record.";
+  const issueDefinitionZh = "Issue（任务单）是带有明确状态和生命周期的任务记录。需要指定负责人、跟踪依赖或安排评审时使用；评论、Agent 运行、产物和评审结论可以留在同一条记录中。";
+  const goals = fs.readFileSync(path.join(REPO_ROOT, "docs/concepts/goals-projects-issues.mdx"), "utf8").replace(/\s+/gu, " ");
+  const goalsZh = fs.readFileSync(path.join(REPO_ROOT, "docs/zh/concepts/goals-projects-issues.mdx"), "utf8");
+  assert.ok(goals.includes(issueDefinitionEn), "English Goal/Project/Issue concept must use the mandatory Issue definition");
+  assert.ok(goalsZh.includes(issueDefinitionZh), "Chinese Goal/Project/Issue concept must use the mandatory Issue（任务单） definition");
+
+  for (const relativeFile of [
+    "docs/how-to/configure-agent-runtime.mdx",
+    "docs/zh/how-to/configure-agent-runtime.mdx",
+  ]) {
+    const source = fs.readFileSync(path.join(REPO_ROOT, relativeFile), "utf8");
+    assert.match(source, /\*\*Test runtime chain\*\*/u, `${relativeFile} must use the Agent Detail runtime test label`);
+    assert.doesNotMatch(source, /\*\*Test now\*\*/u, `${relativeFile} must not use the onboarding runtime test label`);
+  }
+});
+
+test("Batch 2 procedures do not promise unsupported controls, statuses, or portable entities", () => {
+  const readNormalized = (relativeFile) => fs
+    .readFileSync(path.join(REPO_ROOT, relativeFile), "utf8")
+    .replace(/\s+/gu, " ");
+
+  const createAgent = readNormalized("docs/how-to/create-agent.mdx");
+  const createAgentZh = readNormalized("docs/zh/how-to/create-agent.mdx");
+  assert.match(createAgent, /After creating the Agent, open \*\*Configuration\*\*.*\*\*Capabilities\*\*.*\*\*Permissions\*\*.*\*\*Budget\*\*/u);
+  assert.match(createAgentZh, /创建 Agent 后.*\*\*Configuration\*\*.*\*\*Capabilities\*\*.*\*\*Permissions\*\*.*\*\*Budget\*\*/u);
+  assert.doesNotMatch(createAgent, /Review budget and permission settings, then create/u);
+  assert.doesNotMatch(createAgentZh, /检查预算和权限设置，再创建 Agent/u);
+
+  const createAutomation = readNormalized("docs/how-to/create-automation.mdx");
+  const createAutomationZh = readNormalized("docs/zh/how-to/create-automation.mdx");
+  assert.match(createAutomation, /browser's local timezone/u);
+  assert.match(createAutomationZh, /浏览器本地时区/u);
+  assert.doesNotMatch(createAutomation, /choose a schedule and timezone/iu);
+  assert.doesNotMatch(createAutomationZh, /选择日程和时区/u);
+
+  const automations = readNormalized("docs/concepts/automations.mdx");
+  const automationsZh = readNormalized("docs/zh/concepts/automations.mdx");
+  assert.match(automations, /active.*paused|paused.*active/u);
+  assert.match(automationsZh, /启用.*暂停|暂停.*启用/u);
+  assert.doesNotMatch(automations, /archiv/iu);
+  assert.doesNotMatch(automationsZh, /归档/u);
+
+  const portability = readNormalized("docs/how-to/export-import-organization.mdx");
+  const portabilityZh = readNormalized("docs/zh/how-to/export-import-organization.mdx");
+  assert.match(portability, /organization, Agents, projects, Issues, Automations, and Skills/u);
+  assert.match(portability, /Goals, Library files, and organization resources are not included/u);
+  assert.match(portability, /`goalId` is `null`/u);
+  assert.doesNotMatch(portability, /Library files open/u);
+  assert.match(portabilityZh, /组织、Agent、项目、Issue、自动化和技能/u);
+  assert.match(portabilityZh, /目标、Library 文件和组织资料不会包含在软件包中/u);
+  assert.match(portabilityZh, /`goalId` 为 `null`/u);
+  assert.doesNotMatch(portabilityZh, /Library 文件可以打开/u);
+
+  const manifest = loadManifest();
+  const sourceExpectations = new Map([
+    ["automations", ["ui/src/pages/Automations.tsx"]],
+    ["create-agent", ["ui/src/pages/NewAgent.tsx", "ui/src/components/AgentConfigForm.tsx", "ui/src/pages/AgentDetail.tsx"]],
+    ["create-automation", ["ui/src/pages/Automations.tsx"]],
+    ["export-import-organization", [
+      "packages/shared/src/types/organization-portability.ts",
+      "server/src/services/knowledge-portability/organization-portability.export.ts",
+      "server/src/services/knowledge-portability/organization-portability.import.ts",
+    ]],
+  ]);
+  for (const [pageId, expectedSources] of sourceExpectations) {
+    const page = manifest.pages.find((candidate) => candidate.id === pageId);
+    for (const source of expectedSources) assert.ok(page.source_docs.includes(source), `${pageId} must track ${source}`);
+  }
+  const example = manifest.examples.find((candidate) => candidate.id === "organization-client-move");
+  assert.match(example.starting_request, /Agents, projects, Issues, Automations, and Skills/u);
+  assert.doesNotMatch(`${example.starting_request} ${example.intervention} ${example.artifacts.join(" ")}`, /Goals|Library files|organization resources/u);
 });
 
 test("generated artifacts are deterministic", () => {
@@ -265,29 +424,33 @@ test("canonical route collision exemptions only recognize the approved legacy ho
   assert.ok(collectIntegrityErrors({ manifest }).some((error) => error === "host-hijack: active redirect source collides with canonical URL /about"));
 });
 
-test("Chinese UI label allowlist is sorted, unique, and covers pilot pages", () => {
+test("Chinese UI label allowlist is sorted, unique, and covers Batch 1 and Batch 2 pages", () => {
   const allowlist = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "doc/engineering/public-docs/ui-label-allowlist.json"), "utf8"));
   assert.deepEqual(allowlist.labels, [...new Set(allowlist.labels)].sort());
-  const pilotFiles = [
+  const manifest = loadManifest();
+  const checkedFiles = [
     "docs/zh.mdx",
     "docs/zh/concepts/overview.mdx",
     "docs/zh/get-started/installation.mdx",
     "docs/zh/get-started/first-organization.mdx",
     "docs/zh/concepts/issues.mdx",
     "docs/zh/concepts/chat-messenger.mdx",
+    ...[...BATCH_2_CONCEPT_IDS, ...BATCH_2_HOW_TO_IDS]
+      .map((pageId) => manifest.pages.find((page) => page.id === pageId).files.zh),
   ];
-  const uiLabels = pilotFiles.flatMap((relativeFile) => {
+  const uiLabels = checkedFiles.flatMap((relativeFile) => {
     const source = fs.readFileSync(path.join(REPO_ROOT, relativeFile), "utf8");
     const emphasized = [...source.matchAll(/\*\*([^*]+)\*\*/g)].map((match) => match[1]);
     const inlineCodeLabels = [...source.matchAll(/`([^`\n]+)`/g)]
       .map((match) => match[1])
-      .filter((label) => /^[A-Z][A-Za-z0-9]*(?: [A-Za-z0-9]+)*$/u.test(label));
+      .filter((label) => /^(?=.*[a-z])[A-Z][A-Za-z0-9]*(?: [A-Za-z0-9]+)*$/u.test(label));
     return [...emphasized, ...inlineCodeLabels]
       .filter((label) => /^[\x20-\x7e]+$/u.test(label));
   });
-  assert.ok(uiLabels.includes("Inbox"), "pilot extraction must cover the inline Inbox UI label");
-  assert.ok(uiLabels.includes("Getting Started"), "pilot extraction must cover backticked multiword UI labels");
+  assert.ok(uiLabels.includes("Inbox"), "extraction must cover the inline Inbox UI label");
+  assert.ok(uiLabels.includes("Getting Started"), "extraction must cover backticked multiword UI labels");
   assert.ok(!uiLabels.includes("todo"), "lowercase status values are code, not UI-label exceptions");
+  assert.ok(!uiLabels.includes("PATH"), "all-uppercase syntax is not a UI-label exception");
   for (const label of uiLabels) {
     assert.ok(allowlist.labels.includes(label), `allowlist is missing ${label}`);
   }

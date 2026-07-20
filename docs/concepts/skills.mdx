@@ -1,84 +1,71 @@
 ---
 title: "Skills"
-description: "Use Rudder skills to package reusable operating instructions for repeated AI agent workflows and governed team learning."
-icon: "sparkles"
+description: "Package reusable operating procedures while keeping discovery, enablement, loading, and proven use distinct."
+icon: "book-open"
 keywords:
-  - "agent skills"
-  - "reusable AI workflows"
-  - "agent instructions"
-  - "Rudder skills"
+  - "Rudder Skills"
+  - "agent operating procedure"
+  - "skill evidence"
 canonical: "https://docs.rudderhq.dev/concepts/skills"
 "og:url": "https://docs.rudderhq.dev/concepts/skills"
 hreflang_en: "https://docs.rudderhq.dev/concepts/skills"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/skills"
-
 ---
 
-Skills package reusable instructions, references, scripts, and assets for agents. They help agents perform repeated workflows consistently without copying long prompts into every task.
+<a id="definition" />
 
-![Organization skills library](../images/skills-library.png)
+## Definition
 
-## Built-in skills
+A Skill is a reusable operating procedure that an Agent can consult for a
+class of work. Skills can come from Rudder's bundled set, an organization
+library, an Agent home, a user-level source, or an adapter-native directory.
 
-Rudder ships a curated set of built-in skills. They are managed by Rudder and projected into compatible agent runtimes when the required capability is available.
+Four states matter:
 
-| Skill | What it helps an agent do |
+| State | Meaning |
 | --- | --- |
-| `visualize` | Turn analysis into safe inline charts, timelines, comparisons, and decision dashboards in Chat. |
-| `browser` | Inspect and interact with websites through Rudder's built-in Browser. |
-| `rudder-docs` | Look up Rudder CLI, API, Rudder, skill, and operating guidance from the bundled documentation. |
-| `para-memory-files` | Maintain durable file-based memory using the PARA method. |
-| `skill-creator` | Create and evaluate reusable agent skills. |
-| `rudder-create-agent` | Draft and submit governance-aware agent configurations. |
-| `rudder-create-plugin` | Scaffold and verify Rudder plugins against the current runtime contract. |
+| Discovered | Rudder can show the Skill as a candidate |
+| Enabled | Rudder selected it for an Agent or invocation |
+| Loaded | The runtime received or materialized it |
+| Used | Run evidence shows the runtime actually applied it |
 
-The Visualize skill creates scriptless HTML, SVG, and CSS artifacts with no external assets or network dependencies. Rudder captures the artifact from the agent's thread-scoped output and renders it inline as a message-owned attachment.
+These states are not interchangeable. A loaded Skill is not proof of use.
 
-Visualize is best for charts and compact decision views; it uses Mermaid when a static node-and-edge diagram is the clearer format.
+<a id="case" />
 
-## When to create a skill
+## One illustrative case
 
-Create a skill when the same workflow keeps appearing across issues or agents:
-release checks, preview setup, transcript debugging, mock data, memory
-maintenance, or other repeatable operating procedures.
+A release team repeats the same checks for notes, packages, and rollback
+details. After several reviewed releases, it turns the stable procedure into a
+release-check Skill. A release Agent can then use the same instructions on the
+next release, while each Run still records whether evidence shows that the
+Skill was actually used.
 
-Keep one-off task instructions on the issue. Promote them into a skill only
-after the workflow is stable enough to reuse.
+![Skills library](../images/skills-library.png)
 
-## What belongs in a skill
+<a id="when-useful" />
 
-A skill should be narrow enough to be useful at the moment it is triggered. Typical examples include:
+## When it is useful
 
-- debugging a specific class of run transcript
-- maintaining mock data
-- running a preview server
-- organizing memory files
+Create a Skill when a procedure has repeated, has a clear trigger, and should be
+reused across future work. Keep task-specific facts in the Chat, Issue, project
+resources, or Library. Keep durable role expectations in Agent instructions.
 
-## Personal and organization skills
+Rudder includes a small always-available bundled baseline for product guidance,
+memory files, Skill creation, and visualization. Availability lets a runtime
+discover a Skill when relevant; it does not instruct the model to use every
+Skill on every turn.
 
-Personal skills live under an agent's home directory. Organization skills live in the shared organization skills directory and can be enabled for agents.
+<a id="operating-boundaries" />
 
-When promoting a personal skill for organization use, copy it into the organization skills directory and sync that shared path so future runs are not tied to one agent's private copy.
+## Operating boundaries
 
-![Agent detail with enabled skills](../images/agent-detail.png)
+Rudder resolves the Skill set for each invocation. Provider-native, stale,
+project, or user-home Skills do not become Rudder-loaded Agent Skills merely
+because a runtime can see their directories. Adapters must remove, isolate, or
+ignore entries outside the selected set.
 
-Agents can manage their own working memory and personal skills inside their agent home. Use personal skills for agent-specific habits, local notes, and workflows that are still being tested. Promote the skill to the organization library only when multiple agents should rely on the same instructions.
-
-## Skill loading
-
-Runtime skill loading comes from the agent's enabled-skills configuration in Rudder. Installing files on disk is not the same as enabling a skill for future runs.
-
-Rudder keeps skill selection on the agent's own Skills page, not inside the adapter. Even when an agent runs through Codex, Claude Code, or another runtime adapter, the Rudder agent skills loaded for that run should come only from the skills enabled for that agent in Rudder.
-
-That boundary matters: the adapter hands Rudder's run request to a concrete tool; Rudder decides the agent identity, issue context, workspace, and enabled skills. An adapter should not automatically load skills from its own environment in a way that overrides or bypasses the agent configuration in Rudder.
-
-## Next steps
-
-<CardGroup cols={2}>
-  <Card title="Agents" icon="bot" href="/concepts/agents">
-    Enable skills on agents that need the workflow.
-  </Card>
-  <Card title="Workspaces" icon="folder-tree" href="/concepts/workspaces">
-    Keep shared inputs and outputs in predictable locations.
-  </Card>
-</CardGroup>
+The highest-risk boundary is silent behavior change. Feedback does not rewrite
+a Skill automatically. Promote a lesson only after its evidence, scope, review,
+and rollback or evaluation path are clear. Read [Reviews, feedback, and
+learning](/concepts/reviews-feedback-learning) for that distinction.

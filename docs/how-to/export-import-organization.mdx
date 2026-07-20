@@ -1,81 +1,87 @@
 ---
 title: "Export and import an organization"
-description: "Move Rudder organization knowledge with previewable, scoped export and import steps."
+description: "Build a portable organization bundle, preview dependencies and collisions, then import it with fresh identity and no secret leakage."
 icon: "package-open"
 keywords:
-  - "Rudder export"
-  - "Rudder import"
+  - "export Rudder organization"
+  - "import Rudder organization"
   - "organization portability"
 canonical: "https://docs.rudderhq.dev/how-to/export-import-organization"
 "og:url": "https://docs.rudderhq.dev/how-to/export-import-organization"
 hreflang_en: "https://docs.rudderhq.dev/how-to/export-import-organization"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/export-import-organization"
-
 ---
 
-Use export and import when you need to move organization knowledge between Rudder instances or preserve a copy of the operating record.
+<a id="completed-state" />
 
-## What export is for
+## Completed state
 
-Export is for organization portability. It should preserve the knowledge and structure needed to understand the organization later.
+At the end of this guide, a selected organization package has been exported and
+previewed before import. The current package supports organization, Agents,
+projects, Issues, Automations, and Skills. The imported copy has a fresh
+organization UUID, canonical route key, and Issue Key.
 
-Depending on the current product surface, an export may include organization settings, goals, projects, agents, issues, resources, Library metadata, and related records. Treat it as organization data, not as a full machine backup.
+<a id="prerequisites" />
 
-## Before export
+## Prerequisites
 
-Check:
+You need board access to the source and destination instances, enough local
+space for the bundle, and an inventory limited to the supported entity types.
+Goals, Library files, and organization resources are not included in the
+package. Prepare replacement secrets and environment values separately. Export
+is a portable bundle with a `.rudder.yaml` manifest, not an unrestricted
+database dump, and it must not leak stored secrets.
 
-- the organization is the one you intend to move
-- important work is closed or named as in progress
-- durable files are in Library or project workspaces
-- sensitive data is understood before sharing the archive
+Imported Issues do not retain Goal links; their `goalId` is `null`. Plan to
+recreate Goals, Goal links, Library files, and organization resources separately
+after import when the destination needs them.
 
-## Import safely
+The illustrative case moves a consulting team's client-brief project to a new
+local instance.
 
-Import should be previewable and scoped. Before applying an import, inspect what it will create or update.
+<a id="case-backed-steps" />
 
-Use the preview to check:
+## Move the client-brief project
 
-- target organization
-- object counts
-- conflicts or missing references
-- settings that may change behavior
-- resources or files that need follow-up
+1. Open the source organization's export surface and select the organization,
+   relevant Agents, the client-brief project, its Issues and Automation, and
+   the Skills those Agents need.
+2. Start the export job. Wait for it to finish, then download the resulting
+   bundle and keep its generated manifest and README together.
+3. Open the destination import surface and select the bundle.
+4. Review the preview before applying anything. Check the selected organization,
+   Agents, projects, Issues, Automations, and Skills, plus collisions and secret
+   or environment requirements. Confirm separately which unsupported Goals,
+   Library files, and organization resources you will recreate.
+5. Choose a new-organization import. Enter the new display name and inspect its
+   proposed Issue Key independently. Correct a conflicting Issue Key instead of
+   changing the imported display name to work around it.
+6. Supply required destination secrets through the destination's secret flow.
+7. Apply the import through the previewed plan.
+8. Open an imported Agent, project, Issue, Automation, and Skill. Confirm their
+   supported links resolve inside the new organization, and confirm the imported
+   Issue has no Goal link before recreating it deliberately.
 
-Do not apply an import if the preview does not match the organization you expect.
+<a id="success-signal" />
 
-### Check the imported organization identity
+## Success signal
 
-When importing into a new organization, review the new organization name and
-Issue Key separately. Changing the proposed Issue Key does not rename the
-imported organization. The target Rudder instance rejects an Issue Key that
-conflicts with another organization's current URL, current Issue Key, or
-historical Issue Key, so resolve the conflict in the preview before applying.
+The destination shows a new organization identity, not a reused source UUID or
+historical route alias. The selected Agents, projects, Issues, Automations, and
+Skills are present; imported Issues have `goalId` set to `null`; and no
+credential value appears in the package preview or imported content.
 
-A new-organization import receives a fresh internal identity and stable URL.
-Historical Issue Key aliases from the source instance are not copied to the new
-organization.
+<a id="recovery" />
 
-## After import
+## Recovery
 
-Open the imported organization and inspect:
+If preview reports a missing supported dependency, return to export and include
+it, or remove the dependent entity from the import. Recreate unsupported Goals,
+Goal links, Library files, and organization resources outside this package
+flow. If the Issue Key conflicts, choose an explicit alternative. If secrets
+are missing, stop before apply and create the destination values through its
+secret controls.
 
-- goals and projects
-- agents and runtime settings
-- issues and review state
-- the new Issue Key and readable issue references
-- Library files and resources
-- automations or integrations that may need credentials
-
-External credentials and local runtime paths may need to be configured again on the target machine.
-
-## Next steps
-
-<CardGroup cols={2}>
-  <Card title="Core Concepts" icon="book-open" href="/concepts/overview">
-    Review the organization model.
-  </Card>
-  <Card title="Manage Workspaces and Library" icon="folder-tree" href="/how-to/manage-workspaces-and-library">
-    Check durable files before export.
-  </Card>
-</CardGroup>
+Do not bypass preview with raw database writes. If apply fails, keep the bundle
+and preview evidence, inspect the destination for any entities the import
+reports as applied, then resolve the named conflict before retrying.

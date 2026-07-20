@@ -1,88 +1,53 @@
 ---
-title: "管理 Workspaces 和 Library"
-description: "把项目资源、Library files、持久输出、backups 和 run workspaces 放在正确位置。"
+title: "管理工作区和 Library"
+description: "筛选项目上下文，把持久产物留在 Library，安全检查文件，并恢复组织工作区。"
 icon: "folder-tree"
 keywords:
-  - "Rudder Library"
-  - "agent workspace"
-  - "project resources"
+  - "管理 Rudder 工作区"
+  - "Rudder Library 文件"
+  - "项目资料"
 canonical: "https://docs.rudderhq.dev/zh/how-to/manage-workspaces-and-library"
 "og:url": "https://docs.rudderhq.dev/zh/how-to/manage-workspaces-and-library"
 hreflang_en: "https://docs.rudderhq.dev/how-to/manage-workspaces-and-library"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/manage-workspaces-and-library"
-
 ---
 
-Workspaces 和 Library 的作用是让 agent context 和输出可查找。未来的 run 应该知道去哪里读，人也应该知道哪些文件是持久产物。
+<a id="completed-state" />
 
-## 选择正确位置
+## 完成后的状态
 
-| 内容 | 放到这里 |
-| --- | --- |
-| 项目仓库工作 | Project workspace |
-| 持久报告、计划、截图、handoff | Library 里的项目文件夹 |
-| 共享参考资料 | Library files |
-| 精选 run context | Project Context resources |
-| Agent 私有 memory 和 skills | Agent home |
-| 临时文件 | `/tmp` 或系统临时目录 |
+完成本页后，客户简报项目会有一个主要项目工作区、少量精选资料、Library 中的持久简报、待评审 Issue 上的产物链接，以及一份负责人可以检查的工作区备份。
 
-## 添加 Library files
+<a id="prerequisites" />
 
-Library 适合保存应该留在组织记录里的文件。Library files 可以被 issues、resources 和 agent context 引用。
+## 开始前
 
-适合放进 Library 的文件包括：
+准备项目代码仓库或文件夹、项目运行应该得到的源笔记，以及最终产物要求。通过[工作区边界](/zh/reference/workspace-boundaries)判断内容应进入 Library、项目工作区、Agent 文件夹还是临时存储。
 
-- research brief
-- decision note
-- source document
-- reusable checklist
-- project report
-- handoff packet
+<a id="case-backed-steps" />
 
-临时截图、local cache 或 scratch files 不要放进 Library，除非它们是最终 evidence 的一部分。
+## 设置客户简报项目
 
-## 绑定 project resources
+1. 打开项目工作区设置，添加代码仓库或文件夹。如果项目运行应默认使用它，就设为主要工作区。
+2. 把需要长期保存的源笔记加入 Library。Agent 操作说明、托管技能、缓存、凭据和草稿输出不能放进普通 Library 路径。
+3. 只把本次简报需要的笔记附加为项目资料，并填写用途或说明，让 Agent 知道每项资料为什么相关。
+4. 运行客户简报 Issue。确认 Agent 运行解析到项目工作区和精选资料引用，而不是组织中的全部文件。
+5. 把接受后的简报保存到项目 Library 文件夹，并从待评审 Issue 链接为本次产物。
+6. 从 Chat、Messenger 或 Issue 打开文件。受支持的预览和 Markdown 编辑可以留在 `Side Panel`，需要完整工作页面时选择 **Open in Library**。
+7. 手动创建一份工作区备份，打开生成的版本并检查其中一个文件，确认它可以用于恢复。
 
-Project Context resources 是 project-linked runs 的起始上下文。把 agent 默认应该看到的 files、URLs、repositories 或 connector objects 绑定进去。
+Desktop 的文件打开和所在目录操作通过受校验的本地桥接完成。它们只是负责人的本地便利入口，不会扩大 Agent 工作区，也不会让浏览器部署打开本地应用。
 
-不要把所有 organization resources 都绑定进去。默认 context 应该小到 agent 能真正使用。
+<a id="success-signal" />
 
-## 用 project folder 保存持久输出
+## 成功信号
 
-Rudder 会为每个 project 创建 Library folder。持久项目文件放在那里。Agent 可以自然增加 `research/`、`screenshots/`、`handoff/` 或 `evals/` 等子目录。
+项目只显示一个预期主要工作区和选中的起始资料。最终简报既能从 Library 打开，也能从评审 Issue 打开；Agent 运行记录了工作区上下文；手动备份则显示为一份可以检查的具体版本。
 
-用 issue comments 或 review notes 指向 reviewer 需要看的文件。
+<a id="recovery" />
 
-## 在当前工作旁边检查和编辑文件
+## 恢复
 
-从 Chat、Messenger 或 issue 打开 Library 引用时，可以先在 Side Panel 中检查，不必离开当前工作面。PDF 等支持的文件会直接内联预览。
+已经映射的组织文件夹丢失时，停止操作并恢复记录中的文件夹，或使用工作区备份。不要在映射路径创建空文件夹。如果 Markdown 编辑出现旧写入冲突，在比较最新服务端内容时保留本地草稿，再明确选择 **Keep mine** 或 **Use latest**。
 
-编辑 Markdown 文件时：
-
-1. 直接在 Side Panel 中修改，并留意 save state。
-2. 如果 Rudder 提示 stale-write conflict，先检查仍然保留的本地草稿。
-3. 选择 **Keep mine**，用你的草稿基于最新版本重试；或者选择 **Use latest**，换成 server 当前版本。
-
-不要把 conflict 当作已经保存成功。只有 guarded save 成功，或者你明确选择 latest version 后，这个本地草稿才算处理完。
-
-在 Desktop 里，可以通过文件 **Open** 菜单用系统默认应用或检测到的 IDE 打开文件，在文件管理器中定位它，在 terminal 中打开所在目录，或者用 **Open in Library** 进入完整 Library 工作面。
-
-## 谨慎使用 backups
-
-Workspace backups 是 operator 的恢复和检查工具：
-
-- restore 前先浏览 backup versions
-- 只有理解会改变什么时才 restore
-- 旧 backup 没用了就删除
-- 需要在 Rudder 外检查或保存时再 download
-
-## 下一步
-
-<CardGroup cols={2}>
-  <Card title="工作区" icon="folder-tree" href="/zh/concepts/workspaces">
-    理解 workspace boundaries。
-  </Card>
-  <Card title="Workspace boundaries" icon="list-checks" href="/zh/reference/workspace-boundaries">
-    检查文件应该放在哪里。
-  </Card>
-</CardGroup>
+恢复备份前，先检查所选版本，确认哪些文件会改变。Rudder 会创建恢复前安全备份。仍有未完成 Issue 依赖某个运行工作区时，不能归档；应先完成或迁移这些依赖。

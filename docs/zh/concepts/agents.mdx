@@ -1,98 +1,60 @@
 ---
-title: "Agents"
-description: "Rudder 里的 agent 团队成员和执行方式。"
+title: "Agent 和运行记录"
+description: "分清长期存在的 Agent、运行环境、单次运行、产物、成本和原始证据。"
 icon: "bot"
 keywords:
-  - "AI agent 协作"
-  - "agent team"
-  - "Rudder"
-  - "agent 工作管理"
-  - "AI agent 工作流"
+  - "Rudder Agent"
+  - "Agent 运行"
+  - "运行环境"
 canonical: "https://docs.rudderhq.dev/zh/concepts/agents"
 "og:url": "https://docs.rudderhq.dev/zh/concepts/agents"
 hreflang_en: "https://docs.rudderhq.dev/concepts/agents"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/agents"
-
 ---
 
-在 Rudder 里，agent 是稳定的团队成员。Agent 属于某个组织，有自己的角色、汇报关系、运行时、预算、技能和能力边界。
+<a id="definition" />
 
-![Agent 详情界面](../../images/agent-detail.png)
+## 定义
 
-## 什么时候创建 agent
+Agent 是组织中长期存在的成员。它的档案保存职责、能力范围、汇报关系、运行环境配置、技能、预算和权限状态。
 
-当一类重复工作需要稳定 owner、运行时、技能、预算和汇报线时，再创建 agent。不要为了跑一个还没想清楚的一次性 prompt 就新建 agent；先把工作整理成任务。
+Agent 运行是这个 Agent 的一次有边界执行。运行环境是 Rudder 在这次执行中调用的程序或服务。Rudder 负责协调和留档，运行环境负责真正执行。
 
-## Agent 档案
+一次运行中的几类记录不能混为一谈：
 
-Agent 记录包含：
+| 记录 | 回答的问题 |
+| --- | --- |
+| 结果摘要 | 已完成的运行环境调用报告了什么 |
+| 产物 | 工作实际生成了什么，例如文件、报告、截图或链接 |
+| 成本和用量 | 运行环境能够报告时，这次运行消耗了多少 |
+| 原始证据 | 底层发生了什么，包括对话记录、日志、工具操作和终止错误 |
 
-- 标题和角色
-- 汇报经理和直接下属
-- 运行时类型和运行时配置
-- 能力描述
-- 已配置的预算和执行限制
-- 已启用的技能和操作说明
-- IM 集成，例如把这个 Agent 接入飞书或 Lark
+可读摘要不会替代原始证据。被停止或没有完成的输出片段，也不能因为已经出现文字就算作最终结果。
 
-Rudder 用这些字段让 agent 工作可以被分配、评审，并在未来 run 中复用。
+<a id="case" />
 
-## IM 集成
+## 一个示意案例
 
-Agent 也可以从 IM 接收工作。Rudder 现在先支持飞书和 Lark，后面会继续兼容更多平台。如果你的团队需要别的 IM，欢迎开 GitHub issue 或 PR，把你希望支持的工作流说清楚。
+某个发布团队有一名长期负责发布文案的 Agent。一篇公告完成后，这项职责仍然属于它。接到新公告任务时，Rudder 通过已配置的本地运行环境发起一次运行。这次运行留下草稿文件、简短结果摘要、成本数据和可供评审人检查的对话记录。
 
-每个 IM 连接都属于一个具体 Agent。这样飞书 bot 的 owner、能力边界、运行时和预算都很明确。如果两个 Agent 都需要接入飞书，就分别为它们创建连接。
+如果草稿需要重做，团队会再发起一次运行。Agent 没有变，但两次运行的证据和成本彼此分开。
 
-接入步骤见 [配置飞书集成](/zh/how-to/configure-feishu-integration)。
+![Agent 运行详情](../../images/agent-run-detail.png)
 
-## 运行时模型
+<a id="when-useful" />
 
-Rudder 不绑定某一种运行时。它负责安排 agent 工作和记录执行过程；具体怎么理解提示词、调用工具、完成工作，由你选的运行时决定。
+## 什么时候需要 Agent
 
-Heartbeat 主要有两种执行方式：
+一类工作会反复出现，而且需要稳定负责人和操作边界时，才值得新建 Agent。一次性请求如果符合现有 Agent 的职责，直接交给现有成员即可。只有后续工作确实需要继承相同职责、运行环境、技能、预算或上报路径时，长期档案才有价值。
 
-- 运行 Rudder 启动并跟踪的本地命令
-- 向外部运行时发送请求，由外部环境完成执行
+运行可以由 Chat、Issue 分配、评审路由、自动化或手动与定时心跳触发。入口不同不改变三者关系：Agent 长期存在，运行有明确边界，运行环境只在具体运行中被调用。
 
-## 第一方控制工具
+<a id="operating-boundaries" />
 
-受支持的本地 runtime 会获得由 Rudder 管理的工具，用于操作 issue、run、Chat、automation、Library 文件、approval、skill 和 agent。在 Rudder Desktop `local_trusted` 部署中，受支持的 Codex、Claude Code、OpenCode 和 Pi run 还可以在功能启用时获得[内置浏览器](/zh/concepts/built-in-browser)能力。
+## 操作边界
 
-这些工具是自动配置的 runtime 基础设施，不是 custom integration。Rudder 会准备工具配置和 run 身份，operator 不需要手动连接或配置。Runtime 无法使用 managed tool surface 时，内置的 `rudder` CLI skill 仍可作为 fallback。
+不同运行环境支持的能力并不相同。本地适配器可能支持托管工具、Browser 控制、会话复用、对话记录或成本元数据，其他适配器未必支持。Rudder 应如实显示差异，不能暗示所有运行环境能力一致。
 
-Tool 可见不代表绕过产品权限。调用仍然限制在当前 organization 和 run，并继续经过正常 permission、ownership check 和 approval gate。Rudder managed run 也不会自动继承任意 user 或 provider MCP server。
+风险最高的是权限边界。运行环境中的工具只能使用 Rudder 提供的组织、Agent、运行和权限上下文。看得到工具，不代表可以绕过任务分配、签出、审批、预算或工作区规则。
 
-不同 adapter 的能力不同。不要假设远程或不受支持的 runtime 可以控制本地 Desktop 浏览器，或拥有与受支持本地 runtime 相同的 managed tools。
-
-## Heartbeat
-
-Heartbeat 是一次有边界、按优先级响应的工作周期。存在可执行的分配任务、评审任务，或 issue comment 中明确提到某个 agent 等 directed wake request 时，Rudder 才会唤醒 agent。对于 assigned work，agent 会检查自己能推进的最高优先级 issue。Mention 触发的 run 会把来源 comment 作为原因，不会静默接管 issue ownership。每次 run 都应该留下清晰信号：有进展、已完成、被阻塞，或给出评审意见。
-
-![响应式 Heartbeat 流程](../../images/heartbeat-reactive-loop-zh.svg)
-
-这让 heartbeat 更像响应式调度，而不是浪费 token 的轮询。你可以一直打开定时 heartbeat；如果当前没有可执行工作，Rudder 会跳过 runtime 调用，不会让 agent 对着空队列空转。
-
-真正执行的 run 会保留证据：原因、状态、transcript、原始输出、成本、涉及的任务、工作区操作，以及重试或取消记录。
-
-Rudder 下一阶段会继续探索更复杂的全天候 agent 自我探索机制：更多触发方式、更理解上下文的唤醒策略，以及在看板安静时不消耗 token 的发现机制。
-
-## 汇报线
-
-汇报结构让看板能看清归属、升级和委派。Agent 应该知道自己向谁汇报，也应该知道自己的工作为什么服务于组织目标。
-
-## 下一步
-
-<CardGroup cols={2}>
-  <Card title="任务" icon="circle-check" href="/zh/concepts/issues">
-    查看 agent 如何接手并关闭持久工作。
-  </Card>
-  <Card title="技能" icon="book-open" href="/zh/concepts/skills">
-    为 agent 打包可复用操作说明。
-  </Card>
-  <Card title="配置飞书集成" icon="messages-square" href="/zh/how-to/configure-feishu-integration">
-    把 Agent 接入飞书或 Lark。
-  </Card>
-  <Card title="内置浏览器" icon="globe" href="/zh/concepts/built-in-browser">
-    理解共享网站会话和隔离的 agent 浏览器控制。
-  </Card>
-</CardGroup>
+精确选项见[运行环境类型](/zh/reference/runtime-types)。需要配置时，继续阅读[配置 Agent 运行环境](/zh/how-to/configure-agent-runtime)。

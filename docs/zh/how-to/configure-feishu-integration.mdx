@@ -1,129 +1,55 @@
 ---
-title: "配置飞书集成"
-description: "把 Rudder Agent 接入飞书或 Lark，让团队可以直接在 IM 里和 Agent 对话。"
+title: "配置飞书或 Lark"
+description: "把一个 Rudder Agent 连接到飞书或 Lark 机器人，并验证外部对话和运行证据。"
 icon: "messages-square"
 keywords:
-  - "飞书 agent 集成"
-  - "Lark agent 集成"
-  - "Rudder IM 集成"
-  - "agent chat 集成"
+  - "飞书 Agent 集成"
+  - "Lark 机器人"
+  - "Rudder Messenger"
 canonical: "https://docs.rudderhq.dev/zh/how-to/configure-feishu-integration"
 "og:url": "https://docs.rudderhq.dev/zh/how-to/configure-feishu-integration"
 hreflang_en: "https://docs.rudderhq.dev/how-to/configure-feishu-integration"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/configure-feishu-integration"
-
 ---
 
-Rudder Agent 可以接到 Rudder 之外的 IM 里。飞书和 Lark 是第一条路径：团队成员给 Agent bot 发消息，Rudder 把消息写入 Messenger，然后由对应的 Agent 接着处理。
+<a id="completed-state" />
 
-我们还在继续补更多 IM 平台。如果你的团队需要 Slack、Microsoft Teams、Discord、钉钉、企业微信，或者别的聊天工具，欢迎开 GitHub issue 或 PR。最好带上真实使用场景，这样我们能判断下一个该接什么。
+## 完成后的状态
 
-## 连接机制
+完成本页后，一个 Rudder Agent 已连接并启用飞书或 Lark 集成。普通文本消息会进入绑定服务商的 Messenger 对话，Agent 能够回复，来源对话和 Agent 运行也会显示飞书来源证据。
 
-在 Rudder 里，每个 Agent 都需要单独创建一个飞书连接。可以把它理解成：一个 Rudder Agent 对应一个飞书 bot。这样归属更清楚，消息、运行记录、来源标记和聊天绑定都能回到同一个 Agent。
-
-```mermaid
-flowchart LR
-  A["飞书里的团队成员"] --> B["飞书或 Lark bot"]
-  B --> C["Rudder Agent 集成"]
-  C --> D["Rudder Messenger 对话"]
-  D --> E["对应 Agent"]
-  E --> F["回复或运行结果"]
-  F --> B
-```
-
-接入过程不复杂。Rudder 创建一个 setup session，打开飞书或 Lark 授权页，授权完成后保存 app credential，然后开始接收这个 bot 的消息。
-
-![Agent 详情页](../../images/agent-detail.png)
-
-先打开你想接入飞书的 Agent 详情页。飞书连接挂在具体 Agent 上，不是挂在整个组织上。
+<a id="prerequisites" />
 
 ## 开始前
 
-先确认这几件事：
+先准备一个可以工作的 Agent，并确认你有权在目标飞书中国版或 Lark 国际版工作区授权或创建应用。如果希望安装人的外部身份自动绑定到 Rudder，还需要确保这个人是当前 Rudder 组织的有效成员。
 
-- Rudder 已经启动，并且你在一个组织里
-- 要接入飞书的 Agent 已经创建
-- 你能访问飞书中国区或 Lark Global
-- 你有权限为工作区授权或创建飞书、Lark app
+下面用一个示意流程，把发布文案 Agent 连接到团队发布群。一项集成只属于一个组织和一个 Agent。
 
-如果 Agent 还没创建，先看 [如何创建 Agent](/zh/how-to/create-agent)。
+<a id="case-backed-steps" />
 
-## 连接 Agent
+## 连接发布文案 Agent
 
-1. 在 Rudder 里打开这个 Agent。
-2. 进入 `Integrations`。
-3. 选择 `Feishu CN` 或 `Lark Global`。
-4. 点击 `Connect`。
-5. 飞书或 Lark 会打开授权页，bot 名字会提前填好。确认授权。
-6. 回到 Rudder，等 setup 状态变成已连接。
+1. 打开发布文案 Agent 详情页，再进入 **Integrations**。
+2. 启动飞书设置，并按照实际工作区选择 **Feishu CN** 或 **Lark Global**。
+3. Rudder 会打开服务商的应用授权页面，并填入安全的机器人建议名称。检查机器人、消息、表情回应、命令和接收事件等权限后，完成授权。
+4. 回到 Rudder。设置页面会持续检查，直到凭据以组织机密保存，Agent 集成启用。
+5. 在发布群里向机器人发送一条普通文本请求。群聊中需要明确提及机器人。
+6. 打开 Messenger，找到带有 **Feishu** 来源标记的对话；再打开对应 Agent 运行，确认显示 **Source: Feishu**。
+7. 想让下一条消息进入新的 Rudder 对话时，使用 `/new`。Agent 正在回复而你需要停止时，使用 `/stop`。
 
-Rudder 会在授权时请求 bot 和消息相关权限。Bot 名字只是建议值，如果你的工作区有命名规范，可以在飞书里改。
+每日会话默认按 24 小时窗口滚动，而且只在窗口结束后的下一条外部消息到达时发生。安静的群聊不会在后台创建空会话。
 
-## 添加两个飞书命令
+<a id="success-signal" />
 
-授权完成后，在飞书或 Lark 里添加两个 slash command：
+## 成功信号
 
-| 命令 | 作用 |
-| --- | --- |
-| `/new` | 为当前飞书聊天开启一个新的 Rudder 对话 |
-| `/stop` | 如果 Agent 正在回复，请求停止当前回复 |
+发送人的消息和 Agent 回复都留在飞书或 Lark。Rudder 中绑定服务商的对话可以审计同一次交流，来源运行也带有飞书元数据。只有服务商明确拒绝富文本卡片时，Rudder 才会把同一正文降级为纯文本，避免在交付状态不确定时重复发送。
 
-飞书侧需要配置的命令就是这两个。普通文本消息不需要命令，直接发给 bot 就行。Rudder 会把消息写入这个 Agent 对应的 Messenger 对话。
+<a id="recovery" />
 
-Rudder 目前还不会自动创建飞书 quick command 菜单。如果飞书里没有出现菜单，请在 app console 里手动创建 `/new` 和 `/stop`，命令名保持一致。
+## 恢复
 
-## 验证连接
+Rudder 重启后，如果授权仍停在等待状态，请重新开始设置，因为未完成的设置不会跨重启保留。如果打开了错误的服务商页面，重新开始并选择正确区域。发送人收到身份绑定说明时，先把飞书身份绑定到有效的 Rudder 组织成员，再次发送消息。
 
-从飞书或 Lark 给 bot 发送一条普通文本消息。回到 Rudder 后，你应该能看到带 Feishu source badge 的 Messenger 或 Chat 对话。这个消息会进入刚才连接的 Agent。
-
-也可以试一下两个命令：
-
-```text
-/new
-```
-
-这会为当前飞书聊天开启一个新 session。
-
-```text
-/stop
-```
-
-如果 Agent 正在生成回复，这会请求 Rudder 停止当前回复。
-
-## Daily session
-
-Daily session rollover 默认开启，窗口为 24 小时。外部飞书 chat 不会改变；超过窗口后，下一条 inbound message 到达时，Rudder 才会创建并绑定一条新的对话。这个切换是惰性的，安静的飞书 chat 不会在后台产生空 session。
-
-如果 Agent reply 仍在运行或收尾，这条 inbound message 会继续留在当前 session，rollover 等后续消息再处理。你可以选择是否向飞书发送一条简短的 `New daily session started.` 通知。需要立即开始新的 Rudder 对话时，直接使用 `/new`，不用等待 daily boundary。
-
-## Rudder 里的行为
-
-飞书绑定的对话在 Rudder 本地 Chat 里是只读的。回复应该从飞书侧进入，或者由 Agent 的 outbound work 发回去。如果你想在 Rudder 里继续作为普通本地对话处理，可以 fork 这条飞书对话。Fork 会保留来源关系，但不会继续绑定飞书 provider chat。
-
-## 常见问题
-
-| 现象 | 检查点 |
-| --- | --- |
-| Setup 过期 | 回到 Agent 的 `Integrations` 页面重新开始。Setup session 有有效期。 |
-| 打开了不对的产品 | 检查你选的是 `Feishu CN` 还是 `Lark Global`。 |
-| 群聊里的消息没有进入 Rudder | 在群里提到 bot。Rudder 会忽略没有指向 bot 的群消息。 |
-| 用户收到绑定提示 | 先把飞书用户绑定到 Rudder 组织成员，再重新发送消息。 |
-| 非文本消息没有处理 | 先用文本消息验证。文件和富媒体处理还在扩展中。 |
-
-## 下一步
-
-<CardGroup cols={2}>
-  <Card title="Agents" icon="bot" href="/zh/concepts/agents">
-    理解 Agent 如何承载角色、运行时、技能、预算和集成。
-  </Card>
-  <Card title="创建 Agent" icon="bot" href="/zh/how-to/create-agent">
-    先创建 Agent，再把它接入飞书或 Lark。
-  </Card>
-  <Card title="Chat 和 Messenger" icon="messages-square" href="/zh/concepts/chat-messenger">
-    看飞书消息进入 Rudder 后会落在哪里。
-  </Card>
-  <Card title="联系与反馈" icon="message-circle" href="/contact">
-    申请新的 IM 集成，或者把你的工作流建议发给我们。
-  </Card>
-</CardGroup>
+群消息被忽略时，先确认已经提及机器人。回复失败时，检查绑定服务商的对话、外发状态和 Agent 运行。如果要在 Rudder 本地继续同一上下文，只能创建这段飞书对话的分支；来源对话在 Rudder 中只读，分支之后也不会再向飞书回写。

@@ -1,82 +1,54 @@
 ---
 title: "技能"
-description: "给 agent 复用的操作说明。"
-icon: "sparkles"
+description: "把可复用的操作步骤整理成技能，同时分清发现、启用、加载和确实使用。"
+icon: "book-open"
 keywords:
-  - "AI agent 协作"
-  - "agent team"
-  - "Rudder"
-  - "agent 工作管理"
-  - "AI agent 工作流"
+  - "Rudder 技能"
+  - "Agent 操作步骤"
+  - "技能使用证据"
 canonical: "https://docs.rudderhq.dev/zh/concepts/skills"
 "og:url": "https://docs.rudderhq.dev/zh/concepts/skills"
 hreflang_en: "https://docs.rudderhq.dev/concepts/skills"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/skills"
-
 ---
 
-技能把说明、参考资料、脚本和资产打包给 agent 使用。重复工作不需要每次复制一大段 prompt。
+<a id="definition" />
 
-![组织技能库](../../images/skills-library.png)
+## 定义
 
-## 内置技能
+技能是一套可复用的操作步骤，Agent 可以在处理某类工作时查阅。技能来源可以是 Rudder 内置集合、组织技能库、Agent 文件夹、用户级来源或运行环境自己的目录。
 
-Rudder 自带一组经过维护的内置技能。当运行时具备对应 capability 时，Rudder 会管理这些技能并把它们注入兼容的 agent runtime。
+四种状态需要分开理解：
 
-| 技能 | 能帮助 agent 完成什么 |
+| 状态 | 含义 |
 | --- | --- |
-| `visualize` | 在 Chat 中把分析转换为安全的 inline charts、timelines、comparisons 和 decision dashboards。 |
-| `browser` | 通过 Rudder 内置 Browser 查看和操作网站。 |
-| `rudder-docs` | 从内置文档中查询 Rudder CLI、API、技能和操作规范。 |
-| `para-memory-files` | 使用 PARA 方法维护持久化的文件记忆。 |
-| `skill-creator` | 创建并评估可复用的 agent skills。 |
-| `rudder-create-agent` | 起草并提交符合治理要求的 agent 配置。 |
-| `rudder-create-plugin` | 按照当前 runtime contract 创建并验证 Rudder plugin。 |
+| 已发现 | Rudder 可以把技能显示为候选项 |
+| 已启用 | Rudder 为某个 Agent 或某次运行选中了它 |
+| 已加载 | 运行环境已经收到或挂载了它 |
+| 已使用 | 运行证据表明运行环境确实应用了它 |
 
-Visualize 技能使用不含脚本的 HTML、SVG 和 CSS，不依赖外部资产或网络请求。Rudder 从 agent 的 thread-scoped 输出中捕获 artifact，并把它作为 message-owned attachment 渲染在 Chat 内。
+这些状态不能互相替代。技能已加载，不等于已经使用。
 
-Visualize 适合 charts 和紧凑的 decision views；如果静态 node-and-edge diagram 更清晰，它会使用 Mermaid。
+<a id="case" />
 
-## 什么时候创建技能
+## 一个示意案例
 
-当同一套流程反复出现在多个任务或多个 agent 身上，就应该创建技能。常见例子包括发布检查、预览环境、transcript 调试、mock 数据和记忆维护。
+某个发布团队每次都要检查发布说明、软件包和回滚信息。经过几次评审后，团队把稳定步骤整理成发布检查技能。发布 Agent 在下次任务中可以沿用同一套说明，但每次运行仍要分别记录是否有证据表明它真正使用了该技能。
 
-一次性说明留在任务里。流程稳定、值得复用时，再提升为技能。
+![技能库](../../images/skills-library.png)
 
-## 什么适合放进技能
+<a id="when-useful" />
 
-技能应该足够聚焦，触发后能直接用。常见示例包括：
+## 什么时候有用
 
-- 调试某一类运行 transcript
-- 维护 mock 数据
-- 运行预览 server
-- 整理记忆文件
+一套步骤已经重复出现，触发条件清楚，而且以后还要复用时，可以整理成技能。只属于当前任务的事实应留在 Chat、Issue、项目资料或 Library 中；长期职责要求应留在 Agent 操作说明中。
 
-## 个人技能和组织技能
+Rudder 提供一组数量有限、始终可发现的内置技能，用于产品说明、记忆文件、技能创建和可视化。可发现只是为了让运行环境在相关任务中找到它，并不要求模型每轮都使用全部技能。
 
-个人技能保存在 agent 的 home 目录下。组织技能保存在共享组织技能目录中，可以为 agent 启用。
+<a id="operating-boundaries" />
 
-把个人技能提升为组织技能时，复制到组织技能目录并同步共享路径。未来运行不应该依赖某个 agent 的私有副本。
+## 操作边界
 
-![Agent 详情中的技能](../../images/agent-detail.png)
+Rudder 会为每次运行解析技能集合。运行环境能够看到某个目录，并不代表其中的平台内置技能、旧技能、项目技能或用户目录技能自动成为这个 Agent 已加载的 Rudder 技能。适配器必须移除、隔离或忽略不在选中集合中的条目。
 
-Agent 可以在自己的 agent home 中管理个人技能和工作记忆。个人技能适合自己的习惯、本地笔记和还在试验的流程。只有当多个 agent 都应该依赖同一套说明时，才把它提升到组织技能库。
-
-## 技能加载
-
-运行时会根据 Rudder 里 agent 的 enabled-skills 配置加载技能。把文件安装到磁盘上，不等于未来运行已经启用它。
-
-Rudder 把技能选择权放在 agent 自己的 Skills 页面，而不是放在 adapter 里。即使这个 agent 使用 Codex、Claude Code 或其他运行时 adapter，运行时要加载哪些 Rudder agent skills，也只应该由这个 agent 在 Skills 页面启用的技能决定。
-
-这条边界很重要：adapter 负责把 Rudder 的运行请求交给具体工具执行；Rudder 负责决定 agent 身份、issue 上下文、工作区和 enabled skills。不要让某个 adapter 自动装载它自己环境里的技能，覆盖或绕过 Rudder 里的 agent 配置。
-
-## 下一步
-
-<CardGroup cols={2}>
-  <Card title="Agents" icon="bot" href="/zh/concepts/agents">
-    为需要该工作流的 agent 启用技能。
-  </Card>
-  <Card title="工作区" icon="folder-tree" href="/zh/concepts/workspaces">
-    把共享输入和输出放在可预测的位置。
-  </Card>
-</CardGroup>
+风险最高的是行为被悄悄改写。反馈不会自动修改技能。只有证据、适用范围、评审以及回滚或评估方式都清楚后，才应把经验写入技能。相关区别见[评审、反馈和学习](/zh/concepts/reviews-feedback-learning)。

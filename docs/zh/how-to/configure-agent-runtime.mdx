@@ -1,266 +1,58 @@
 ---
-title: "如何配置自己的 Agent Runtime"
-description: "把本地 Codex、Claude Code 或其他 coding agent 接入 Rudder。"
+title: "配置 Agent 运行环境"
+description: "配置并测试 Rudder 为一个 Agent 调用的执行环境，再用真实的低风险运行确认结果。"
 icon: "terminal"
 keywords:
-  - "AI agent 协作"
-  - "agent team"
-  - "Rudder"
-  - "agent 工作管理"
-  - "AI agent 工作流"
+  - "配置 Agent 运行环境"
+  - "Rudder 运行环境测试"
+  - "本地 Agent CLI"
 canonical: "https://docs.rudderhq.dev/zh/how-to/configure-agent-runtime"
 "og:url": "https://docs.rudderhq.dev/zh/how-to/configure-agent-runtime"
 hreflang_en: "https://docs.rudderhq.dev/how-to/configure-agent-runtime"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/configure-agent-runtime"
-
 ---
 
-简单说，Agent Runtime 就是 Rudder 要调用哪个 agent 工具来干活。
+<a id="completed-state" />
 
-Rudder 负责组织、issue、heartbeat 和运行记录。真正去读代码、改文件、跑命令的，还是 Codex、Claude Code 这类本地 coding agent。你把它们接到 Rudder 里，它们就可以成为 Rudder 里的 agent runtime。
+## 完成后的状态
 
-最推荐的方式是：
+完成本页后，一个 Agent 已保存运行环境配置，环境测试结果已经得到解释，并且一次低风险 Agent 运行留下了可见结果或阻塞，以及对话记录或原始输出证据。
 
-- 你本地已经有 Codex，就选 Codex local runtime。
-- 你本地已经有 Claude Code，就选 Claude Code local runtime。
-- 你只有一个 model API key，也建议先把这个 key 配到 Claude Code 里，再让 Rudder 调用 Claude Code。
+Agent、Agent 运行和运行环境仍是三个对象。Agent 承担职责，运行记录一次尝试，运行环境执行这次尝试。面向负责人的可选项见[运行环境类型](/zh/reference/runtime-types)。
 
-Shell Process、HTTP Webhook 和 Gateway 更适合进阶用法。刚开始不需要先碰它们。
+<a id="prerequisites" />
 
 ## 开始前
 
-先确认这几件事：
+你需要有权编辑 Agent，还要在 Rudder 实际调用的位置准备好运行环境。本地运行环境应先在同一台主机安装并登录对应 CLI；外部服务则要准备可访问端点和凭据。机密信息放在主机环境或 Rudder 的机密字段中，不要写进版本库配置。
 
-- Rudder 已经跑起来。
-- 你有一个可以创建或编辑 agent 的组织。
-- Rudder 所在的这台机器上，已经安装并登录了 Codex、Claude Code 或其他 coding agent。
-- 如果你只有 model API key，先用这个 key 配好 Claude Code，再回到 Rudder 里选择 Claude Code。
+下面用一个示意发布文案 Agent 和本地 Codex 说明。其他面向负责人的运行环境也沿用同样的验证思路，但能力并不完全相同。
 
-本地开发可以这样启动 Rudder：
+<a id="case-backed-steps" />
 
-```sh
-npx @rudderhq/cli@latest start
-```
+## 配置发布文案 Agent
 
-然后打开组织，创建或编辑 agent，在 agent 表单的 Runtime 区域配置执行后端。
+1. 打开发布文案 Agent 的详情页，编辑 `Runtime` 配置。
+2. 选择 **Codex (local)**。默认 CLI 缺失时，Rudder 会显示设置说明，但支持自定义命令的运行环境仍可以继续填写。
+3. 选择该模型支持的模型和思考强度。切换模型后，如果原强度不受支持，Rudder 会清除它。
+4. 只有职责确实需要时才添加专用操作说明文件，并填写 Rudder 主机可读取的绝对路径。
+5. 检查网页搜索、绕过沙箱等宽权限选项，只为确实需要这些能力的可信本地工作启用。
+6. 运行 **Test runtime chain**。`pass` 表示准备完成；`warn` 是必须理解的可见提示；`fail` 表示探测失败，需要先修复。
+7. 保存 Agent，再到 Chat 请它起草两行发布标题。
+8. 打开对应 Agent 运行，检查实际运行环境、结果、对话记录或原始输出，以及可用的用量或成本证据。
 
-## 选择 runtime
+受支持的本地运行环境会自动得到 Rudder 第一方控制工具，不要再手动添加第二套 Rudder MCP 服务。只有内置 Browser 已启用，而且这次本地运行符合条件时，Browser 工具才会出现。
 
-先看你现在手里有什么：
+<a id="success-signal" />
 
-| 你的情况 | 在 Rudder 里选什么 | 需要准备什么 |
-| --- | --- | --- |
-| 你已经在本地用 Codex | Codex (local) | Codex 已安装、已登录 |
-| 你已经在本地用 Claude Code | Claude Code (local) | Claude Code 已安装、已登录 |
-| 你只有 model API key | Claude Code (local) | 先把 API key 配到 Claude Code 里 |
-| 你在用 Gemini CLI、OpenCode、Pi 或 Cursor | 对应的 local runtime | 对应 CLI 已安装、已登录 |
-| 你有自己的脚本或 wrapper | Shell Process | 一个可以执行的命令 |
-| 你有自己的远程服务 | HTTP Webhook | 一个 Rudder 能访问的 URL |
-| 你已经有 OpenClaw Gateway | OpenClaw Gateway | Gateway URL 和认证信息 |
+## 成功信号
 
-如果不确定，先选 Codex 或 Claude Code。它们最接近大家平时手动使用 coding agent 的方式，也最适合新手开始。
+环境测试应为 `pass`，或是限制已经理解的 `warn`。真实运行确实使用所选环境，Chat 显示完整回答或明确阻塞，Agent 运行详情则保留底层证据。只有探测通过、没有真实运行，还不能证明配置可用。
 
-## 配置本地 CLI runtime
+<a id="recovery" />
 
-Codex、Claude Code、Gemini CLI、OpenCode、Pi、Cursor 这类本地 CLI agent 都走这个路径。你可以把它理解成：Rudder 帮你按规则叫醒这个本地 agent，让它去处理 issue。
+## 恢复
 
-![Codex 本地 runtime 配置](../../images/agent-runtime-codex-config.png)
+如果探测报告找不到命令，确认 CLI 已安装在 Rudder 主机，并且位于进程的 `PATH` 中；也可以填写受支持的自定义命令。身份验证失败时，先在 Rudder 外登录对应运行环境，再重新测试。操作说明文件或工作区不可读时，修正绝对路径和主机权限后再试。
 
-上图是 agent 表单里的 Runtime 区域。这里的重点是告诉 Rudder：这个 agent 被叫醒时，要用 Codex local 来执行。
-
-1. 创建或编辑 agent。
-2. 在 Runtime type 里选择 Codex (local)、Claude Code (local)，或你正在用的本地 CLI。
-3. 选择 model。如果你不知道选哪个，先用默认值。
-4. 如果这个 agent 需要固定角色说明，再填写 agent instructions file。没有就先空着。
-5. 运行环境测试。
-6. 跑一次低风险 Chat turn，或者分配一个低风险 issue 并跑一次 heartbeat。
-
-Instructions file 是给 agent 的额外说明文件。要填就填绝对路径，例如：
-
-```text
-/Users/alice/work/rudder-agents/SOUL.md
-```
-
-Rudder 会另外注入自己的运行规则。对于 Codex，如果 agent 在某个仓库里工作，Codex 仍然可能读取这个仓库里的 `AGENTS.md`。
-
-Codex 常见选项里有 web search、sandbox bypass 和订阅用量计费估算。刚开始可以先不改。
-只有 agent 确实需要联网搜索时，再开 search；只有你信任这个 agent，并且它确实需要更宽的文件系统或网络权限时，再开 sandbox bypass。
-**Estimate subscription usage cost** 默认开启。本地 ChatGPT/Codex 订阅登录产生的用量会在 Rudder 里显示为 API 等价成本，而不是 `$0.00`。
-Rudder 会根据模型 token 用量和内置 OpenAI/Codex 价格表估算费用；已知模型的估算费用会计入 Rudder spend 和预算 hard stop。只有当某个 agent 的订阅用量仍应保持 `$0.00` 时，才需要关掉它。
-
-Claude Code 常见选项包括 Chrome 访问、权限行为和每次运行最大 turns。日常工作先保持收紧，等你确认 agent 需要这些能力时再放开。Claude Code 自己的 Chrome 选项与 Rudder Desktop 内置浏览器是两项不同的能力。
-
-### Rudder 管理的控制工具
-
-对于受支持的本地 runtime，Rudder 会为每次 run 自动准备第一方控制工具。不要创建 custom MCP integration，也不要手动给 agent 添加 Rudder MCP server：
-
-- Codex、Claude Code 和 OpenCode local 会获得 Rudder 管理的 MCP 配置。
-- Pi local 会获得功能等价的 Rudder 管理的原生工具 bridge。
-- Managed tools 不可用时，内置的 `rudder` CLI skill 仍可作为 fallback。
-
-这些工具覆盖 issue、run、Chat、automation、Library 文件、approval、skill 和 agent 等 Rudder 操作。在 Desktop `local_trusted` 部署中，启用实例能力后，受支持的本地 run 还可以获得[内置浏览器](/zh/concepts/built-in-browser)工具。
-
-看到 managed tool 不代表 agent 获得了额外权限。每次调用仍然限制在当前 organization 和 run，并继续经过对应操作原有的 permission、ownership 和 approval 检查。Rudder 也不会把任意 user 或 provider MCP server 自动继承到这套 managed run surface。
-
-工具可用性取决于具体 runtime。远程、gateway、generic process 和不受支持的 runtime 不会自动获得 managed tools 或本地 Desktop Browser 控制能力。请用环境测试和一次真实 run 验证你所选 runtime 的实际能力。
-
-## 如果你只有 model API key
-
-如果你手里只有 OpenAI、Anthropic 或其他模型供应商的 API key，不建议一开始就写 Shell Process 或 Webhook。
-
-更简单的做法是：
-
-1. 先安装 Claude Code。
-2. 按 Claude Code 的方式把你的 model API key 配进去。
-3. 确认你可以在终端里正常使用 Claude Code。
-4. 回到 Rudder，给 agent 选择 Claude Code (local) runtime。
-5. 点环境测试，再跑一次低风险 heartbeat。
-
-这样 Rudder 调用的是 Claude Code，Claude Code 再去调用你的模型。你不用一开始就自己处理 prompt、工具调用、文件修改和日志格式。
-
-## 配置 Shell Process runtime
-
-如果你已经有脚本或 wrapper 能完成一次 agent 工作循环，才需要 Shell Process。新手一般不用先看这一段。
-
-在 agent 表单中设置：
-
-| 设置 | 含义 |
-| --- | --- |
-| `command` | 要启动的可执行命令，例如 `node`、`python` 或绝对二进制路径 |
-| `args` | 传给命令的参数 |
-| `cwd` | 进程工作目录 |
-| `timeoutSec` | 可选的运行超时时间，单位秒 |
-| `graceSec` | 可选的关闭宽限时间 |
-| `env` | 可选的字符串环境变量 |
-
-示例配置：
-
-```json
-{
-  "command": "node",
-  "args": ["scripts/my-agent-runtime.js"],
-  "cwd": "/Users/alice/work/my-runtime",
-  "timeoutSec": 900,
-  "graceSec": 15,
-  "env": {
-    "MY_RUNTIME_MODE": "rudder"
-  }
-}
-```
-
-Rudder 调用进程时，也会提供 Rudder runtime 环境变量。不要把密钥提交到配置文件里；凭据放在主机环境变量或部署密钥管理里。
-
-环境测试会检查：
-
-- `command` 是否存在
-- `cwd` 是否是绝对目录
-- 命令能否从配置的工作目录和 `PATH` 里找到
-
-![Shell Process runtime 环境测试](../../images/agent-runtime-process-test.png)
-
-## 配置 HTTP Webhook runtime
-
-当 agent 在 Rudder 进程之外运行，比如托管服务、队列 worker 或内部编排层时，才使用 HTTP Webhook。刚开始接入本地 coding agent，不需要用它。
-
-最小配置：
-
-```json
-{
-  "url": "https://agent-runtime.example.com/rudder/heartbeat",
-  "method": "POST",
-  "timeoutMs": 15000
-}
-```
-
-可选字段包括 `headers` 和 `payloadTemplate`。
-
-调用时，Rudder 会发送 JSON body，把你的 `payloadTemplate` 与 agent id、run id 和 Rudder run context 合并：
-
-```json
-{
-  "agentId": "agent_...",
-  "runId": "run_...",
-  "context": {
-    "reason": "..."
-  }
-}
-```
-
-环境测试会校验 URL、记录 method，并发送一次 `HEAD` 探测。如果 endpoint 禁用了 `HEAD`，探测失败可能只是 warning，不一定是硬失败。但第一次真实 heartbeat 仍然要结合 run transcript 和你的服务日志验证。
-
-## 配置 OpenClaw Gateway runtime
-
-当 Rudder 需要把执行交给兼容 OpenClaw 的 gateway 时，才使用 OpenClaw Gateway。
-
-关键设置包括：
-
-| 设置 | 含义 |
-| --- | --- |
-| Gateway URL | WebSocket endpoint，例如 `ws://127.0.0.1:18789` |
-| Payload template | 合并到 gateway payload 的 JSON |
-| Runtime services | 可选的 gateway 服务接线 |
-| Rudder API URL override | gateway 不能访问默认地址时，填写公开 Rudder API URL |
-| Session strategy | 固定 session、按 issue 建 session，或按 run 建 session |
-| Gateway auth token | 作为 `x-openclaw-token` header 存储 |
-| Role 和 scopes | Gateway 侧的授权上下文 |
-| Wait timeout | Rudder 等待 gateway 完成的时间 |
-
-长期 operator 身份适合 fixed session。更重视隔离时，使用 per-issue 或 per-run session。
-
-## 如果你看到这些字段
-
-有些页面或 API 里会出现这些名字。刚开始不用记，只要知道它们分别管什么：
-
-| 字段 | 人话解释 | 示例 |
-| --- | --- | --- |
-| `agentRuntimeType` | 这个 agent 被叫醒时，用哪个工具干活 | `codex_local`、`claude_local`、`process`、`http` |
-| `agentRuntimeConfig` | 这个工具自己的设置 | model、instructions file、command、URL、headers |
-| `runtimeConfig` | Rudder 怎么调度这个 agent | heartbeat 节奏、预算、workspace 设置 |
-
-大多数情况下，你只是在 agent 表单里改 Runtime 区域。不要一开始就纠结这些字段名。
-
-## 测试和迭代
-
-分配真实工作前，先点环境测试。它会检查 Rudder 能不能找到 Codex、Claude Code、脚本或 URL。
-
-环境测试通过，只说明 Rudder 大概率能叫醒 runtime。真正的证明是一次 Chat turn 或 issue heartbeat 留下可检查证据：
-
-- run 使用了预期 runtime
-- run 上出现 transcript 条目或原始输出
-- 来源 Chat 或 issue 收到可见 result、progress、blocked、review 或 done 信号
-- agent 不依赖只存在于你交互式 shell 里的凭据或权限
-
-## 操作检查表
-
-把 runtime 用于重复工作前，确认：
-
-- agent 的角色和能力边界清楚
-- Codex、Claude Code 或其他 runtime 安装在运行 Rudder 的同一台机器上
-- runtime 已经登录，或者 API key 已经配置到对应工具里
-- model 和 instructions 设置匹配要做的工作
-- 宽权限只给可信任的 agent 开启
-- 环境测试通过，或每个 warning 都有明确解释
-- 第一次真实 Chat turn 或 issue heartbeat 在来源 Chat 或 issue 中留下证据
-
-## 下一步
-
-<CardGroup cols={2}>
-  <Card title="Agents" icon="bot" href="/zh/concepts/agents">
-    查看 agent 模型和 heartbeat 循环。
-  </Card>
-  <Card title="创建 Agent" icon="bot" href="/zh/how-to/create-agent">
-    新增有独立职责和 runtime 的 agent。
-  </Card>
-  <Card title="第一个组织" icon="building-2" href="/zh/get-started/first-organization">
-    用默认 agent 跑通第一条真实工作循环。
-  </Card>
-  <Card title="Issue 生命周期" icon="circle-check" href="/zh/how-to/issue-lifecycle">
-    理解 runtime 的工作如何在 issue 上关闭。
-  </Card>
-  <Card title="技能" icon="book-open" href="/zh/concepts/skills">
-    为 agent 打包可复用操作说明。
-  </Card>
-  <Card title="内置浏览器" icon="globe" href="/zh/concepts/built-in-browser">
-    查看 Browser 可用性和信任边界。
-  </Card>
-</CardGroup>
+如果 `warn` 在真实运行中变成失败，检查运行的终止错误和原始证据，针对具体的服务商、模型、端点或权限修复。在低风险运行成功前，不要让这个 Agent 承担周期性正式工作。

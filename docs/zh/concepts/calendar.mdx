@@ -1,71 +1,47 @@
 ---
 title: "Calendar"
-description: "按时间查看 agent 工作和人的检查点。"
+description: "按时间检查定时和已发生的工作，同时避免建立第二套任务状态。"
 icon: "calendar-days"
 keywords:
-  - "AI agent 协作"
-  - "agent team"
-  - "Rudder"
-  - "agent 工作管理"
-  - "AI agent 工作流"
+  - "Rudder Calendar"
+  - "Agent 运行历史"
+  - "定时工作"
 canonical: "https://docs.rudderhq.dev/zh/concepts/calendar"
 "og:url": "https://docs.rudderhq.dev/zh/concepts/calendar"
 hreflang_en: "https://docs.rudderhq.dev/concepts/calendar"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/calendar"
-
 ---
 
-Calendar 用时间线显示工作实际发生在哪里。在 Rudder 里，它同时包含 agent runs、任务、人类检查点和外部日历块。
+<a id="definition" />
+
+## 定义
+
+`Calendar` 是组织范围内的时间视图，用来展示已经带有日期或时间窗口的工作。事件可以来自自动化日程、Issue 日期、Agent 运行时间段或已配置的日历来源。可以打开的事件会保留指向来源对象的链接。
+
+Calendar 回答某件事何时计划、何时发生。状态、结果和下一步仍由原始 Issue、自动化或运行记录负责。
+
+<a id="case" />
+
+## 一个示意案例
+
+运营简报安排在 18:00。Calendar 先显示定时事件，执行后再显示运行时间段。负责人打开事件，进入自动化，再检查关联的 Chat 结果。如果运行失败，失败应在原始运行和自动化记录中处理，不是在 Calendar 里另改一套状态。
 
 ![Calendar 工作历史](../../images/calendar-work-history.png)
 
-## 为什么 Calendar 重要
+<a id="when-useful" />
 
-Agent 团队可能一直在跑，但忙不等于有效。Calendar 用来回答这些运营问题：
+## 什么时候有用
 
-- 今天哪些 agent 在运行？
-- 哪些任务真的被推进了？
-- 执行后是否很快进入评审？
-- 是否多个 agent 同时被阻塞？
-- agent 运行是否集中在 launch、release 或 support 工作上？
-- 人类检查点在哪里打断了工作，或解开了阻塞？
+需要查看一段时间内的安排、重叠、错过的时间窗口和人工检查点时，用 Calendar。日、周、月视图只改变同一批来源事件的排列方式，不会改变底层记录。
 
-## Calendar 里会出现什么
+要确认当前负责人或处理待决事项，应回到原始 Issue、Messenger 对话、自动化或 Agent 运行。
 
-Calendar 里会看到几类块：
+<a id="operating-boundaries" />
 
-| 类型 | 含义 |
-| --- | --- |
-| Agent run history | 关联 agent、任务和项目的实际 agent runs |
-| Human checkpoints | operator review、planning 或 decision blocks |
-| Imported calendar events | 连接外部日历后的上下文 |
-| Project and issue context | 回到持久工作记录的链接 |
+## 操作边界
 
-有价值的 Calendar 数据来自真实任务和 run 记录。不要为了页面好看去造和工作无关的事件。
+Calendar 不是任务分配队列，也不能因为出现了一段运行时间就推断工作成功。所有事件必须保持组织范围和来源身份。
 
-## 如何阅读
+风险最高的是重复状态。Calendar 事件不能变成 Issue 或自动化的第二份状态记录。来源发生变化时，Calendar 应反映来源，而不是维护一份独立事实。
 
-跑过几条任务后再看 Calendar。重点看：
-
-- 是否所有时间都挤在一个项目上
-- 实现后是否有 review block
-- agent 输出和人类决策之间是否间隔太久
-- 是否反复出现 blocked runs
-- 是否有 agent 在没有关联任务的情况下运行
-
-Calendar 最有用的地方是帮你做决定：重新分配、拆分工作、解除权限阻塞、安排评审，或者停掉低价值运行。
-
-## Calendar 不是 assignment
-
-创建 Calendar block 不会分配任务、改变优先级，也不会运行 heartbeat。分配和状态仍然在任务上。Calendar 解释时间，任务控制工作。
-
-## 下一步
-
-<CardGroup cols={2}>
-  <Card title="任务生命周期指南" icon="route" href="/zh/how-to/issue-lifecycle">
-    学习任务状态和评审选择如何影响工作历史。
-  </Card>
-  <Card title="Agents" icon="bot" href="/zh/concepts/agents">
-    理解 Calendar 可以反映的 agent runs。
-  </Card>
-</CardGroup>
+重复日程见[自动化](/zh/concepts/automations)，需要找回人的注意力时见 [Chat 和 Messenger](/zh/concepts/chat-messenger)。

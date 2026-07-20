@@ -1,82 +1,54 @@
 ---
 title: "创建自动化"
-description: "创建带触发方式、owner、runtime context 和输出路径的可重复 Rudder agent 工作。"
+description: "创建一项负责人、触发方式、上下文、并发策略和结果去向都稳定的自动化，并验证真实结果。"
 icon: "workflow"
 keywords:
   - "创建 Rudder 自动化"
-  - "AI agent 定时任务"
-  - "automation output"
+  - "定时 Agent 工作"
+  - "自动化结果去向"
 canonical: "https://docs.rudderhq.dev/zh/how-to/create-automation"
 "og:url": "https://docs.rudderhq.dev/zh/how-to/create-automation"
 hreflang_en: "https://docs.rudderhq.dev/how-to/create-automation"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/create-automation"
-
 ---
 
-当一个任务会重复运行，并且 owner、触发方式和输出路径稳定时，把它做成自动化。
+<a id="completed-state" />
+
+## 完成后的状态
+
+完成本页后，一项处于启用状态的每周运营简报已经保存负责 Agent、项目上下文、日程、并发策略和 Chat 结果去向。一次手动测试会生成一段关联对话，并留下可检查的运行证据。
+
+<a id="prerequisites" />
 
 ## 开始前
 
-先确定四件事：
+准备一个可以工作的 Agent，以及输入和结果形态已经稳定的重复请求。先决定由谁处理失败、什么条件触发工作，以及每次结果应进入新 Chat 还是跟踪为 Issue。精确差异见[自动化结果去向参考](/zh/reference/automation-output-routing)。
 
-| 问题 | 为什么重要 |
-| --- | --- |
-| 要跑什么 | 自动化需要稳定任务，不是开放讨论 |
-| 谁负责 | owner 决定谁检查失败和结果 |
-| 什么触发它 | 选择 schedule、manual、API 或 webhook |
-| 输出去哪里 | 选择 chat output 或 tracked issue output |
+<a id="case-backed-steps" />
 
-如果这些答案还不清楚，先在 Chat 或 issue 中把工作整理好，再做成 automation。两者都是一等任务界面，按场景选择合适结构。
+## 创建运营简报
 
-## 创建自动化
+1. 打开 **Automations**，新建自定义定义。
+2. 命名为“每周运营简报”，选择报告 Agent 和运营项目。
+3. 写清报告周期、来源记录、期望章节，以及数据缺失时应该如何说明。
+4. 把日程设置为每周一 09:00。当前界面没有时区选择器；日程会按浏览器本地时区保存和显示。
+5. 保留 **Send to chat**，让每次真正执行都创建一段独立 Messenger 对话。结果需要明确负责人、状态、依赖或评审时，改为跟踪 Issue。
+6. 选择运行重叠时的并发方式。重复报告会造成问题时，选择跳过或合并。
+7. 保存自动化，然后手动分派一次。
+8. 打开运行历史并进入关联 Chat，检查输入消息、Agent 回复、来源 Agent 运行和终止状态。
 
-1. 打开 Automations。
-2. 新建 automation。
-3. 用普通语言命名这个重复任务。
-4. 选择 owner 和执行它的 agent 或 runtime。
-5. 写 prompt 或 job definition。
-6. 选择 trigger。
-7. 保留默认的 chat output，或显式切换到 tracked issue output。
-8. 保存 automation。
+选择内置模板只会填充一份可编辑草稿。提交定义之前，Rudder 不会创建自动化。
 
-名称应该描述实际工作，例如 "Prepare weekly agent work report" 或 "Check failed run backlog"。
+<a id="success-signal" />
 
-## 选择 trigger
+## 成功信号
 
-例行工作用 schedule。需要 operator 决定什么时候跑，用 manual dispatch。由其他系统启动时，用 API 或 webhook。
+自动化详情显示已经保存的定义、下次计划时间、结果模式和测试运行。测试运行创建一段新的关联 Chat，其中有可用结果，或清楚可见的失败证据。
 
-## 选择输出模式
+<a id="recovery" />
 
-新建 custom automation 默认使用 chat output。希望 operator 通过对话接收并继续推进每次结果时，保留这个默认值。
+## 恢复
 
-结果需要明确 assignment、status、review、artifacts 或 follow-up 时，切换到 issue output。任务的重要程度、成本或时长不会强制这个选择，但受治理的团队策略可以要求填写 issue 字段。
+没有出现工作时，先检查自动化运行。跳过或合并的记录应写明并发原因，而且不能创建空 Chat。如果 Chat 结果已经开始后执行失败，应进入关联对话和 Agent 运行查看部分结果或后备证据。
 
-## 理解每次 Run 会创建什么
-
-每次真正执行 chat output，都会创建一条与该 automation run 关联的独立 Messenger conversation。Rudder 不会让每次 run 都复用某个已有 Chat。
-
-被跳过或 coalesced 的 run 不会创建空对话。如果 chat output 开始后执行失败，对话会保留可见的部分结果或 fallback 证据，避免失败被藏在空的未读线程后面。Tracked issue output 会创建 execution issue，之后进入正常的 issue assignment、run 和 review lifecycle。
-
-## 测试自动化
-
-正式依赖前先跑一次。
-
-检查：
-
-- run 是否由预期 trigger 启动
-- agent 或 runtime 是否收到正确 context
-- 结果是否出现在预期 issue 或 chat
-- 失败是否能在 run history 里看到
-- 失败的 chat-output run 是否留下可检查证据，而不是空线程
-- owner 是否知道以后在哪里检查结果
-
-## 下一步
-
-<CardGroup cols={2}>
-  <Card title="自动化" icon="workflow" href="/zh/concepts/automations">
-    理解 automation model。
-  </Card>
-  <Card title="自动化输出路由" icon="route" href="/zh/reference/automation-output-routing">
-    选择 issue output 或 chat output。
-  </Card>
-</CardGroup>
+修正负责人、上下文、日程、运行环境或结果去向，再手动测试一次。修复期间先暂停自动化，避免定时触发继续制造新尝试。

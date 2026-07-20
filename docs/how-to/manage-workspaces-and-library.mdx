@@ -1,94 +1,80 @@
 ---
 title: "Manage Workspaces and Library"
-description: "Keep project resources, Library files, durable outputs, backups, and run workspaces in the right Rudder locations."
+description: "Curate project context, keep durable output in Library, inspect files safely, and recover organization workspace state."
 icon: "folder-tree"
 keywords:
-  - "Rudder Library"
-  - "agent workspace management"
+  - "manage Rudder Workspaces"
+  - "Rudder Library files"
   - "project resources"
 canonical: "https://docs.rudderhq.dev/how-to/manage-workspaces-and-library"
 "og:url": "https://docs.rudderhq.dev/how-to/manage-workspaces-and-library"
 hreflang_en: "https://docs.rudderhq.dev/how-to/manage-workspaces-and-library"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/manage-workspaces-and-library"
-
 ---
 
-Use Workspaces and Library to keep agent context and outputs findable. The goal is simple: a future run should know where to look, and a human should know which files are durable.
+<a id="completed-state" />
 
-## Choose the right location
+## Completed state
 
-| Content | Put it here |
-| --- | --- |
-| Project repository work | Project workspace |
-| Durable reports, plans, screenshots, and handoffs | Project folder in Library |
-| Shared references | Library files |
-| Curated run context | Project Context resources |
-| Agent-private memory and skills | Agent home |
-| Scratch files | `/tmp` or the system temp directory |
+At the end of this guide, a client-brief project has a primary project
+workspace, a small set of curated resources, a durable brief in Library, a link
+from its review Issue, and a workspace backup that the operator can inspect.
 
-## Add Library files
+<a id="prerequisites" />
 
-Use Library for files that should remain part of the organization record. Library files can be referenced from issues, resources, and agent context.
+## Prerequisites
 
-Good Library files include:
+Prepare the project's repository or folder, the source notes that should be
+eligible for project-linked runs, and the expected final output. Use
+[Workspace boundaries](/reference/workspace-boundaries) to decide what belongs
+in Library, a project workspace, an Agent home, or temporary storage.
 
-- research briefs
-- decision notes
-- source documents
-- reusable checklists
-- project reports
-- handoff packets
+<a id="case-backed-steps" />
 
-Avoid putting temporary screenshots, local caches, or generated scratch files in Library unless they are part of the final evidence.
+## Set up the client brief
 
-## Attach project resources
+1. Open the project workspace settings and add the repository or folder. Make
+   it primary if project-linked runs should use it by default.
+2. Add the durable source notes to Library. Do not place Agent instructions,
+   managed Skills, caches, credentials, or scratch output in ordinary Library
+   paths.
+3. Attach only the notes needed for this brief as project resources. Add a role
+   or note that tells the Agent why each resource is relevant.
+4. Run the client-brief Issue. Confirm the Agent Run resolves the project
+   workspace and curated resource references rather than every organization
+   file.
+5. Save the accepted brief in the project's Library folder and link it from the
+   review Issue as the produced output.
+6. Open the file from Chat, Messenger, or the Issue. Use the Side Panel for
+   supported inline previews and Markdown editing, or **Open in Library** for
+   the full work surface.
+7. Create a manual workspace backup and open the resulting version to inspect a
+   file before relying on it for recovery.
 
-Project Context resources are the curated starting context for project-linked runs. Attach the files, URLs, repositories, or connector objects the agent should see by default.
+On Desktop, file-open and containing-directory actions use validated local
+bridges. They are conveniences for the operator and do not broaden the Agent's
+workspace or expose local apps to a browser deployment.
 
-Do not attach every organization resource. Keep the default context small enough that the agent can use it.
+<a id="success-signal" />
 
-## Use project folders for durable output
+## Success signal
 
-Rudder creates a Library folder for each project. Put durable project work there. Agents may add natural subfolders such as `research/`, `screenshots/`, `handoff/`, or `evals/`.
+The project shows one intended primary workspace and only the selected starting
+resources. The final brief opens from Library and from the review Issue, while
+the Agent Run records its workspace context. The manual backup appears as a
+concrete inspectable version.
 
-Use issue comments or review notes to point reviewers to the relevant file.
+<a id="recovery" />
 
-## Inspect and edit files beside your work
+## Recovery
 
-Open a Library reference from Chat, Messenger, or an issue to inspect it in the
-Side Panel. The panel keeps the current work surface visible and supports inline
-previews for files such as PDFs.
+If a mapped organization folder is missing, stop and restore the recorded
+folder or use a workspace backup. Do not create an empty replacement at the
+mapped path. If a Markdown edit reports a stale-write conflict, keep the local
+draft while comparing it with the latest server content; choose **Keep mine**
+or **Use latest** deliberately.
 
-For Markdown files:
-
-1. Edit directly in the Side Panel and watch the save state.
-2. If Rudder reports a stale-write conflict, review the preserved local draft.
-3. Choose **Keep mine** to retry your draft against the latest version, or
-   **Use latest** to replace it with the current server version.
-
-Do not close the conflict as if the save succeeded. The draft remains local
-until a guarded save succeeds or you explicitly choose the latest version.
-
-On Desktop, use the file **Open** menu to open it in the system default app or a
-detected IDE, reveal it in the file browser, open its containing directory in a
-terminal, or move to the full Library surface with **Open in Library**.
-
-## Use backups deliberately
-
-Workspace backups help recover organization workspace state. Treat them as operator tools:
-
-- browse backup versions before restoring
-- restore only when you understand what will change
-- delete old backups when they are no longer useful
-- download a backup when you need to inspect or preserve it outside Rudder
-
-## Next steps
-
-<CardGroup cols={2}>
-  <Card title="Workspaces" icon="folder-tree" href="/concepts/workspaces">
-    Understand workspace boundaries.
-  </Card>
-  <Card title="Workspace boundaries" icon="list-checks" href="/reference/workspace-boundaries">
-    Check where files should live.
-  </Card>
-</CardGroup>
+Before restoring a backup, inspect the selected version and understand which
+files will change. Rudder creates a pre-restore safety backup. A Run workspace
+cannot be archived while open Issues still depend on it; close or move those
+dependencies first.

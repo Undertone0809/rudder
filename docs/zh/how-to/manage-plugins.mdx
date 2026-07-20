@@ -1,70 +1,51 @@
 ---
-title: "管理 plugins"
-description: "安装、启用、检查、更新和移除 Rudder plugins，同时保留核心工作流边界。"
+title: "管理插件"
+description: "安装、启用、检查、更新和卸载可信插件，同时保留 Rudder 核心记录。"
 icon: "plug"
 keywords:
-  - "manage Rudder plugins"
-  - "Rudder plugin install"
-  - "plugin capabilities"
+  - "管理 Rudder 插件"
+  - "安装插件"
+  - "插件工作进程日志"
 canonical: "https://docs.rudderhq.dev/zh/how-to/manage-plugins"
 "og:url": "https://docs.rudderhq.dev/zh/how-to/manage-plugins"
 hreflang_en: "https://docs.rudderhq.dev/how-to/manage-plugins"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/manage-plugins"
-
 ---
 
-用 plugins 为 Rudder 的内置工作流增加能力。
+<a id="completed-state" />
 
-## 安装前
+## 完成后的状态
 
-先检查 plugin 声明了什么：
+完成本页后，一个可信 CRM 插件已经从受支持来源安装，声明的能力和配置经过检查，工作进程保持健康，而且一次测试同步留下了插件自己的日志和状态。
 
-- capabilities
-- jobs
-- webhooks
-- UI slots
-- configuration fields
-- 需要的 external services
+<a id="prerequisites" />
 
-只安装你信任来源的 plugins。Plugin 可以增加 integration 能力，但不应该替代 Rudder 对 organizations、issues、approvals、budgets 或 runs 的核心规则。
+## 开始前
 
-## 安装和启用
+你需要访问 `Plugin Manager`，准备软件包或来源、配置与外部服务要求，以及回滚或卸载节点。插件会运行已经安装的工作进程和前端代码。能力检查会限制宿主桥接操作，但它不是运行不可信软件包的安全沙箱。
 
-1. 打开 plugin manager。
-2. 选择 plugin package 或 source。
-3. 检查 declared capabilities。
-4. 填写必要 configuration。
-5. 安装 plugin。
-6. 配置完成后 activate。
+<a id="case-backed-steps" />
 
-启用后，先检查 worker health 和 logs，再把它用于真实工作。
+## 安装 CRM 插件
 
-## 检查 plugin 行为
+1. 打开 **Plugin Manager**，选择 CRM 插件受支持的软件包或来源。
+2. 检查插件身份、版本、工作进程和界面软件包、配置字段、外部服务、工具、事件、后台任务、webhook 和申请的宿主能力。
+3. 确认每个工具名称都带插件命名空间，而且插件没有声称拥有核心 Issue、审批、预算、身份验证或签出规则。
+4. 通过插件设置填写必要配置，不要把凭据写进软件包或日志。
+5. 安装并启用插件。使用项目面板前，先检查工作进程健康状态和启动日志。
+6. 触发一次账户同步，检查插件任务记录、日志、状态和任何关联的 Rudder 工作。
+7. 更新前比较版本、能力、配置变化和迁移说明。卸载前先停止依赖它的工作。
 
-当 plugin 触发了变化，检查：
+<a id="success-signal" />
 
-- worker status
-- recent jobs
-- webhook delivery
-- logs
-- output links
-- plugin-owned UI surfaces
+## 成功信号
 
-如果 plugin 通过 webhook 或 scheduled job 启动工作，确认结果仍然能在 Rudder 里看到。
+Plugin Manager 显示预期版本和健康工作进程。测试同步明确归属于该插件，状态、日志和插件数据都可以检查。核心 Issue、运行、审批和预算仍沿用 Rudder 原有页面和规则。
 
-## 更新或移除
+<a id="recovery" />
 
-更新前检查 plugin 是否改变 capabilities 或 configuration。移除前检查 active jobs、webhooks 或 UI surfaces 是否依赖它。
+## 恢复
 
-移除 plugin 不应该删除核心 Rudder records，例如 issues、approvals、budgets 或 run history。
+启用失败时，让插件保持关闭，检查清单校验、配置、工作进程健康和日志。先修复明确指出的软件包或能力问题，再重试。桥接操作被禁止时，应当失败并留在日志中，不能改走内部路由绕过限制。
 
-## 下一步
-
-<CardGroup cols={2}>
-  <Card title="Plugins" icon="plug" href="/zh/concepts/plugins">
-    理解 plugin boundaries。
-  </Card>
-  <Card title="Rudder" icon="sliders-horizontal" href="/zh/concepts/approvals-budgets-activity">
-    查看哪些规则仍由核心 Rudder 拥有。
-  </Card>
-</CardGroup>
+更新破坏插件时，停止它的任务和 webhook。如果安装来源支持恢复，就回到上一个经过评审的软件包；否则通过 Plugin Manager 卸载。卸载应停止插件工作进程并整理插件自有状态，不能删除 Rudder 核心记录。

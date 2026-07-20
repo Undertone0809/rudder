@@ -1,86 +1,51 @@
 ---
-title: "目标、项目和任务"
-description: "把策略变成能执行、能追踪的 agent 工作。"
-icon: "list-tree"
+title: "目标、项目和 Issue"
+description: "把组织的长期方向连接到成组工作和可以直接执行的 Issue。"
+icon: "target"
 keywords:
-  - "AI agent 协作"
-  - "agent team"
-  - "Rudder"
-  - "agent 工作管理"
-  - "AI agent 工作流"
+  - "Rudder 目标"
+  - "Rudder 项目"
+  - "Rudder Issue"
 canonical: "https://docs.rudderhq.dev/zh/concepts/goals-projects-issues"
 "og:url": "https://docs.rudderhq.dev/zh/concepts/goals-projects-issues"
 hreflang_en: "https://docs.rudderhq.dev/concepts/goals-projects-issues"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/goals-projects-issues"
-
 ---
 
-Rudder 里的每项工作都应该回答一个问题：为什么要做？
+<a id="definition" />
 
-目标、项目和任务把这个答案留在执行现场。
+## 定义
 
-![按项目切分的任务看板](../../images/issue-flow.png)
+目标说明一条工作线为什么存在。同一组织内的目标可以形成层级，让组织使命逐步连接到更具体的结果。
 
-## 什么时候用哪个对象
+项目用来汇总相关工作和上下文。它可以把目标、Chat、Issue、资料、工作区、负责 Agent 和目标日期放在一起。项目状态只描述这组工作的整体情况，不能替代 Issue 或自动化各自的状态。
 
-| 对象 | 适合用于... | 不适合用于... |
-| --- | --- | --- |
-| 目标 | 解释工作为什么重要 | 一次性实现 checklist |
-| 项目 | 多个任务共享交付上下文、资源或工作区 | 一个很小的单点任务 |
-| 任务 | 有人需要执行、评审或追踪一项工作 | 没有下一步动作的宽泛策略 |
-| 子任务 | 一个任务需要多个 owner 或多个步骤 | 把无关工作藏在同一个父任务下 |
+Issue（任务单）是带有明确状态和生命周期的任务记录。需要指定负责人、跟踪依赖或安排评审时使用；评论、Agent 运行、产物和评审结论可以留在同一条记录中。
 
-## 目标
+完整模型见 [Issue 概念](/zh/concepts/issues)，状态含义以 [Issue 状态参考](/zh/reference/issue-statuses)为准。
 
-目标表达方向。目标可以属于组织、团队、agent 或任务。它让工作不只是下一条 prompt。
+<a id="case" />
 
-目标应当用于结果，而不是每一个小任务。
+## 一个示意案例
 
-## 项目
+一个小团队准备发布公告。组织目标是让新用户理解这次发布。团队建立一个发布项目，把公告、截图和发布说明放在一起，再创建一条 Issue，请文案 Agent 交付 Markdown 草稿，并指定评审人。
 
-项目把相关执行放在一起。一个项目可以包含：
+目标解释原因，项目汇总共用上下文，Issue 则写清下一步由谁交付什么结果。
 
-- 关联目标
-- 关联 Chat 和 issue
-- 负责人 agent
-- 目标日期
-- 附加资源
-- 一个或多个项目工作区
-- 预算上下文
+<a id="when-useful" />
 
-当工作有持续范围、共享上下文或代码库时，使用项目。
+## 各自适合什么时候使用
 
-## 任务
+一项工作的原因需要跨越多次任务长期保留时，用目标。多件工作共享上下文、资料或结果时，用项目。下一项工作需要明确协作状态时，用 Issue。简短的对话式任务可以一直留在 Chat，不必建立任务单。
 
-Issue 是结构化工作单元。它支持：
+只有关系确实能帮助别人理解或执行工作时，才添加链接。不是每条 Issue 都需要单独项目，也不是每个项目都需要新目标。
 
-- backlog、todo、in progress、in review、done、blocked、cancelled 等状态
-- 优先级、assignee 和 reviewer
-- 父任务和子任务
-- 项目和目标链接
-- 评论、活动、文档和附件
-- 审批
-- checkout 和当前执行锁
+<a id="operating-boundaries" />
 
-![包含归属和上下文的任务详情](../../images/issue-detail.png)
+## 操作边界
 
-使用 `todo` 表示需求已经确定、下一步清楚、assignee 可以开始执行且不需要重新讨论产品判断。使用 `backlog` 表示问题值得保留，但范围、验收标准、优先级或负责人仍需讨论。
+目标、项目和 Issue 都不能跨越组织边界。目标层级不能形成循环，项目链接本身不会让工作进入可执行状态，一条 Issue 也只能有一位负责人。
 
-Reviewer 和 follow-up 让关闭过程可检查。Reviewer 判断实现质量；当前运行无法干净关闭时，follow-up 要写清剩下谁负责、还缺哪个决定、需要哪些证据。
+风险最高的是删除或解除关联。只要项目、Issue、自动化或其他工作仍依赖某个目标，Rudder 就会阻止删除，避免现有工作的理由被悄悄移走。
 
-## 结构化 issue 执行增加了什么
-
-Chat 和 issue 都可以承载真实任务。Chat 通过持续对话组织执行；issue 把归属、状态、优先级、依赖、历史和评审上下文变成明确结构。Agent 从 issue 工作时，其他人以后可以直接扫描这些结构，不需要重放整段对话。
-
-需要结构化协作或团队策略要求时，使用 issue 模型。时间、预算或任务重要性本身不会强制 Chat 工作转成 issue；两种界面都应该保留可检查的 run 和输出证据。
-
-## 下一步
-
-<CardGroup cols={2}>
-  <Card title="任务" icon="circle-check" href="/zh/concepts/issues">
-    学习状态模型、checkout 语义和关闭信号。
-  </Card>
-  <Card title="Agents" icon="bot" href="/zh/concepts/agents">
-    查看 assignee 如何通过 heartbeat 执行任务工作。
-  </Card>
-</CardGroup>
+任务需要结构化执行时，继续阅读[让 Issue 从接收走到完成](/zh/how-to/issue-lifecycle)。
