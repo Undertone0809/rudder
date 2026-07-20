@@ -6,6 +6,7 @@ import {
   getAgentAvatarBackgroundPreset,
   getAgentAvatarBackgroundStyle,
   getAgentAvatarImageSrc,
+  getAgentAvatarStyle,
   getAgentFallbackAvatarImageSrc,
   normalizeAgentAvatarIconValue,
 } from "../lib/agent-avatar";
@@ -40,13 +41,17 @@ export function AgentIcon({ icon, role, fallbackSeed, className, style }: AgentI
   const effectiveIcon = normalized ?? getDefaultAgentIconForRole(role);
   const imageSrc = getAgentAvatarImageSrc(effectiveIcon) ?? getAgentFallbackAvatarImageSrc(fallbackSeed);
   if (imageSrc) {
+    const avatarStyle = getAgentAvatarStyle(effectiveIcon);
     return (
       <img
         src={imageSrc}
         alt=""
         className={cn("inline-flex rounded-full object-cover", className)}
         style={{
-          background: getAgentAvatarBackgroundPreset(effectiveIcon).background,
+          background:
+            avatarStyle === "oreo"
+              ? undefined
+              : getAgentAvatarBackgroundPreset(effectiveIcon).background,
           ...getAgentAvatarBackgroundStyle(effectiveIcon),
           ...style,
         }}

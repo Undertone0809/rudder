@@ -449,6 +449,7 @@ export function AgentDetail() {
   });
 
   const updateIcon = useMutation({
+    scope: { id: `agent-avatar:${agentLookupRef}` },
     mutationFn: (icon: string | null) => agentsApi.update(agentLookupRef, { icon }, resolvedCompanyId ?? undefined),
     onSuccess: () => {
       setActionError(null);
@@ -464,6 +465,7 @@ export function AgentDetail() {
   });
 
   const uploadAvatar = useMutation({
+    scope: { id: `agent-avatar:${agentLookupRef}` },
     mutationFn: (file: File) => agentsApi.uploadAvatar(agentLookupRef, file, resolvedCompanyId ?? undefined),
     onSuccess: () => {
       setActionError(null);

@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 import { createAgentHireSchema, createAgentSchema, updateAgentSchema } from "./agent.js";
 
 describe("agent avatar validation", () => {
-  it("accepts DiceBear Notionists and uploaded image avatar references", () => {
+  it("accepts Oreo, DiceBear Notionists, and uploaded image avatar references", () => {
+    expect(
+      createAgentSchema.parse({
+        name: "Builder",
+        icon: "oreo:nova:vanilla-sky:cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      }).icon,
+    ).toBe("oreo:nova:vanilla-sky:cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+
     expect(
       createAgentSchema.parse({
         name: "Builder",
@@ -23,6 +30,18 @@ describe("agent avatar validation", () => {
     expect(() => updateAgentSchema.parse({
       icon: "asset:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?bg=neon",
     })).toThrow();
+  });
+
+  it.each([
+    "oreo:unknown:rose-milk:cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    "oreo:bloom:unknown:cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    "oreo:bloom:rose-milk:not-a-uuid",
+    "oreo:bloom:rose-milk",
+    "oreo::rose-milk:cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    "oreo:bloom::cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    "oreo:bloom:rose-milk:cccccccc-cccc-4ccc-8ccc-cccccccccccc?bg=sky",
+  ])("rejects malformed Oreo avatar reference %s", (icon) => {
+    expect(() => updateAgentSchema.parse({ icon })).toThrow("Invalid Oreo avatar reference");
   });
 });
 

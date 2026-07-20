@@ -532,7 +532,7 @@ issue. Use the full UUID when a short ref is ambiguous.
 
 `agent config index`, `agent config doc`, and `agent icons` print plain-text reference docs by default.
 Pass `--json` if you want the raw text wrapped as a JSON string.
-`agent icons` is a legacy compatibility/debugging reference; normal hire and create payloads should omit `icon` so Rudder generates a DiceBear Notionists avatar.
+`agent icons` is a legacy compatibility/debugging reference; normal hire and create payloads should omit `icon` so Rudder generates an Oreo avatar. Explicit supported Oreo, DiceBear Notionists, and uploaded `asset:<uuid>` references remain valid when preserving an operator-selected identity.
 
 `agent update` modifies an agent's identity fields. When `[agent-id]` is omitted it defaults to `RUDDER_AGENT_ID`, so an agent can update its own visible name, title, role, capabilities/description, and manager relationship after an operating-contract change. `--description` is a CLI alias for the stored `capabilities` field; `--clear-title`, `--clear-description`, and `--clear-reports-to` clear nullable fields.
 
@@ -546,7 +546,7 @@ Pass `--json` if you want the raw text wrapped as a JSON string.
 - creates the agent directly when the organization does not require approval
 - returns both `agent` and `approval` when board approval is required
 - accepts the same payload shape as the hire API, including `desiredSkills`, `sourceIssueId`, and `sourceIssueIds`
-- should omit `icon` for normal hires; only pass an explicit DiceBear reference or uploaded `asset:<uuid>` avatar reference supplied by the board/UI
+- should omit `icon` for normal hires; only pass an explicit `oreo:<shape>:<palette>:<uuid>`, DiceBear Notionists, or uploaded `asset:<uuid>` avatar reference supplied by the board/UI
 
 `agent local-cli` is the quickest way to run local Claude/Codex manually as a Rudder agent:
 

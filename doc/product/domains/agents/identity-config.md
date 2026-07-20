@@ -14,17 +14,23 @@ related_code:
   - packages/agent-runtimes/opencode-local/src/server/execute.ts
   - packages/agent-runtimes/pi-local/src/server/execute.ts
   - packages/db/src/schema/agents.ts
+  - packages/shared/src/constants.ts
   - packages/shared/src/types/agent.ts
+  - packages/shared/src/validators/agent.ts
   - server/src/agent-runtimes/codex-models.ts
   - server/src/services/agents.ts
   - server/src/routes/agents.ts
   - server/src/routes/agents.management-routes.ts
+  - server/src/routes/llms.ts
   - server/resources/bundled-skills/rudder-docs/references/agent-creation.md
   - server/src/agent-runtimes/registry.ts
   - server/src/services/runtime-kernel/heartbeat.execute.ts
   - ui/src/components/AgentConfigForm.environment.tsx
   - ui/src/components/AgentConfigForm.helpers.tsx
+  - ui/src/components/AgentAvatar.tsx
+  - ui/src/components/AgentIconPicker.tsx
   - ui/src/components/NewIssueDialog.tsx
+  - ui/src/lib/agent-avatar.ts
   - ui/src/lib/runtime-models.ts
   - ui/src/lib/runtime-thinking-effort.ts
 related_tests:
@@ -34,18 +40,24 @@ related_tests:
   - server/src/__tests__/pi-local-execute.test.ts
   - server/src/__tests__/adapter-models.test.ts
   - server/src/__tests__/agent-permissions-routes.test.ts
+  - server/src/__tests__/agent-shortname-collision.test.ts
+  - server/src/__tests__/agent-skills-routes.test.ts
   - server/src/__tests__/agent-startup-context.test.ts
   - server/src/__tests__/agent-run-context.test.ts
   - ui/src/components/agent-config-defaults.test.ts
+  - ui/src/components/AgentAvatar.test.tsx
+  - ui/src/components/AgentIconPicker.test.tsx
   - ui/src/components/AgentConfigForm.helpers.test.ts
   - ui/src/components/AgentConfigForm.model-dropdown.test.tsx
   - ui/src/components/OnboardingWizard.runtime-config.test.tsx
   - ui/src/lib/runtime-models.test.ts
   - tests/e2e/agent-config-advanced-options.spec.ts
+  - tests/e2e/agent-avatar.spec.ts
   - tests/e2e/codex-model-order.spec.ts
   - tests/e2e/onboarding.spec.ts
   - server/src/__tests__/bundled-rudder-skill-docs.test.ts
 related_plans:
+  - doc/plans/2026-07-20-oreo-agent-avatar-style.md
   - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
 edit_policy: user_confirmed_only
 ---
@@ -66,6 +78,20 @@ Product model:
 - Agent identity includes name, role, title, capabilities, status, reporting
   line, runtime type/config, desired skills, budget, and permission/config
   state.
+- Agent avatar identity uses the existing `agents.icon` field. Supported
+  persisted generated references are deterministic Oreo
+  `oreo:<shape>:<palette>:<uuid>` values and DiceBear Notionists values;
+  uploaded `asset:<uuid>` references remain supported.
+- New direct-created and hired agents default to a server-generated Oreo
+  reference when `icon` is omitted or a legacy named icon is supplied. The
+  persisted UUID is Oreo's stable variant identity across refreshes, restarts,
+  and every shared avatar rendering surface.
+- Existing agents are not migrated. Persisted Oreo, DiceBear, uploaded-image,
+  legacy named-icon, and missing-icon display behavior remains intact.
+- Agent Detail exposes a compact Oreo/DiceBear avatar picker. Oreo provides its
+  six shapes, 40 palettes, and style-scoped Random; DiceBear retains
+  Notionists Random and six background presets; image upload is shared across
+  both tabs.
 - Pending approval, paused, terminated, or revoked-access states constrain
   whether the agent can be woken or configured.
 - Config changes are operator-visible product changes when they alter runtime,
@@ -74,8 +100,10 @@ Product model:
 Flow:
 
 1. Board creates or hires an agent with role and runtime configuration.
-2. Server normalizes runtime config, secrets, default instructions, and desired
-   skills.
+2. Server normalizes runtime config, secrets, avatar identity, default
+   instructions, and desired skills. A valid explicit generated/uploaded
+   avatar is preserved; an omitted or incoming legacy named icon becomes a new
+   Oreo default reference.
 3. Approval or permission policy may gate the final active state.
 4. Updates create visible config state so later runs can be traced back to the
    operating frame active at invocation time.
@@ -87,11 +115,23 @@ Invariants:
 - Agent identity and manager relationships do not cross organization boundary.
 - Terminated or pending-approval agents are not ordinary invokable agents.
 - Runtime config is not only UI preference; it is execution contract.
+- Oreo shape, palette, and UUID segments must match the IDs and UUID grammar
+  tied to the pinned renderer version. Unknown or malformed Oreo references
+  are rejected at the API boundary.
+- Random changes only the active generated style. Selecting or randomizing an
+  avatar persists the complete reference; rendering never substitutes a new
+  variant for an existing valid reference.
+- Avatar upload continues to enforce organization ownership, compression, and
+  activity-log behavior independently of the generated style picker.
 
 Evidence:
 
 - Agent management routes enforce org-scoped updates.
 - Agent Detail shows the config surface used by operators to inspect an agent.
+- Shared validation, server creation tests, renderer/picker component tests,
+  and the Agent avatar E2E workflow prove strict references, Oreo defaults,
+  cross-style persistence, refresh stability, upload compatibility, and mobile
+  viewport containment.
 - Runtime execution stores enough context to reconstruct the agent's operating
   frame for a run.
 - The bundled `rudder-docs` Agent creation reference routes explicit creation
