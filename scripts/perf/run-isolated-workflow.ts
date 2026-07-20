@@ -40,7 +40,7 @@ async function availablePort() {
 }
 
 async function run() {
-  const dataDir = mkdtempSync(path.join(os.tmpdir(), "rudder-control-plane-perf-"));
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "rudder-workflow-perf-"));
   const port = await availablePort();
   const postgresDiagnostics: string[] = [];
   const recordPostgresDiagnostic = (message: unknown) => {
@@ -78,7 +78,7 @@ async function run() {
       process.execPath,
       [
         "cli/node_modules/tsx/dist/cli.mjs",
-        "scripts/perf/control-plane-baseline.ts",
+        "scripts/perf/workflow-baseline.ts",
         ...process.argv.slice(2),
       ],
       {

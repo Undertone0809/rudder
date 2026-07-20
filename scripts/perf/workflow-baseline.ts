@@ -40,7 +40,7 @@ import {
   workloadManifestHash,
   type ScaleName,
   type TimingSample,
-} from "./control-plane-baseline.helpers.js";
+} from "./workflow-baseline.helpers.js";
 
 function parseArgs(argv: string[]) {
   let scale: ScaleName = "smoke";
@@ -498,8 +498,8 @@ async function main() {
     if (neighborOrgId) {
       await db.insert(organizations).values({
         id: neighborOrgId,
-        name: `Control Plane Neighbor ${neighborOrgId.slice(0, 8)}`,
-        urlKey: `control-plane-neighbor-${neighborOrgId.slice(0, 8)}`,
+        name: `Workflow Neighbor ${neighborOrgId.slice(0, 8)}`,
+        urlKey: `workflow-neighbor-${neighborOrgId.slice(0, 8)}`,
         issuePrefix: `N${neighborOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
         budgetMonthlyCents: 500_000,
         requireBoardApprovalForNewAgents: false,

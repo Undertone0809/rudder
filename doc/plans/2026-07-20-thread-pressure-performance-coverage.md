@@ -5,7 +5,7 @@ kind: implementation
 status: completed
 area: benchmarks
 entities:
-  - control_plane_performance
+  - workflow_performance
   - messenger_chat
   - issue_comments
   - agent_runs
@@ -15,9 +15,9 @@ related_plans:
   - 2026-07-12-behavior-preserving-architecture-performance-hardening.md
 supersedes: []
 related_code:
-  - scripts/perf/control-plane-baseline.ts
-  - scripts/perf/control-plane-baseline.test.ts
-  - scripts/perf/run-isolated-control-plane.ts
+  - scripts/perf/workflow-baseline.ts
+  - scripts/perf/workflow-baseline.test.ts
+  - scripts/perf/run-isolated-workflow.ts
   - tests/e2e/thread-pressure.spec.ts
   - server/src/services/chats.ts
   - server/src/services/issues.comments-attachments.ts
@@ -37,7 +37,7 @@ updated_at: 2026-07-20
 
 ## Summary
 
-Extend the control-plane benchmark from broad, shallow row counts to
+Extend the workflow benchmark from broad, shallow row counts to
 production-shaped single-entity pressure. The first delivery slice adds a
 deterministic `thread-heavy` workload containing one very long Chat and one
 Issue with many comments and linked agent runs, measures the real service/query
@@ -132,7 +132,7 @@ The implementation must preserve:
    running states deterministically.
 4. Seed an isolation sentinel in a second organization.
 5. Add warm-up execution and measure Chat history, Issue comments, and linked
-   runs in addition to the existing control-plane paths.
+   runs in addition to the existing workflow paths.
 6. Emit a workload manifest, p95, bytes, memory evidence, and named gate
    results; exit non-zero when a hard gate fails.
 7. Run focused tests, the real PostgreSQL benchmark, and black-box browser

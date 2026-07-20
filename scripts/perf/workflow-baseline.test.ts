@@ -5,9 +5,9 @@ import {
   summarizeTimingSamples,
   THREAD_PRESSURE_RECIPE,
   workloadManifestHash,
-} from "./control-plane-baseline.helpers.js";
+} from "./workflow-baseline.helpers.js";
 
-describe("control-plane performance workload", () => {
+describe("workflow performance workload", () => {
   it("defines a single-entity whale without removing broad scales", () => {
     expect(getScenarioScale("smoke").chats).toBe(40);
     expect(getScenarioScale("medium").issues).toBe(1_500);
