@@ -19,11 +19,16 @@ import {
   heartbeatRuns,
 } from "@rudderhq/db";
 import {
-  AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX,
+  AGENT_OREO_DEFAULT_PALETTE_ID,
+  AGENT_OREO_DEFAULT_SHAPE_ID,
+  AGENT_OREO_ICON_PREFIX,
+  diceBearNotionistsAgentIconSchema,
   isUuidLike,
   normalizeAgentUrlKey,
+  oreoAgentIconSchema,
   parseShortRef,
   shortRefFor,
+  uploadedAgentIconSchema,
 } from "@rudderhq/shared";
 import { and, desc, eq, gte, inArray, isNull, lt, ne, sql } from "drizzle-orm";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -139,15 +144,16 @@ function readNonEmptyString(value: unknown): string | null {
 }
 
 export function createDefaultAgentAvatarIcon() {
-  return `${AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX}${randomUUID()}`;
+  return `${AGENT_OREO_ICON_PREFIX}${AGENT_OREO_DEFAULT_SHAPE_ID}:${AGENT_OREO_DEFAULT_PALETTE_ID}:${randomUUID()}`;
 }
 
 export function normalizeCreatedAgentAvatarIcon(icon: unknown) {
   if (typeof icon !== "string") return createDefaultAgentAvatarIcon();
   const trimmed = icon.trim();
   if (
-    trimmed.startsWith(AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX)
-    || trimmed.startsWith("asset:")
+    oreoAgentIconSchema.safeParse(trimmed).success
+    || diceBearNotionistsAgentIconSchema.safeParse(trimmed).success
+    || uploadedAgentIconSchema.safeParse(trimmed).success
   ) {
     return trimmed;
   }

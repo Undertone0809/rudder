@@ -138,6 +138,65 @@ export const AGENT_ICON_NAMES = [
 ] as const;
 export type AgentIconName = (typeof AGENT_ICON_NAMES)[number];
 
+export const AGENT_OREO_ICON_PREFIX = "oreo:" as const;
+
+export const AGENT_OREO_SHAPE_IDS = [
+  "bloom",
+  "silk",
+  "flare",
+  "nova",
+  "void",
+  "jade",
+] as const;
+export type AgentOreoShapeId = (typeof AGENT_OREO_SHAPE_IDS)[number];
+
+export const AGENT_OREO_PALETTE_IDS = [
+  "rose-milk",
+  "peach-cream",
+  "mint-milk",
+  "aurora-pink",
+  "lilac-silk",
+  "blue-cream",
+  "jade-cream",
+  "coral-mist",
+  "lemon-mint",
+  "violet-peach",
+  "magenta-void",
+  "teal-void",
+  "amber-dusk",
+  "sky-melon",
+  "grapefruit",
+  "lavender-lime",
+  "aqua-orchid",
+  "honeydew",
+  "plum-gold",
+  "ice-berry",
+  "apricot-mint",
+  "candy-blue",
+  "raspberry-cream",
+  "spring-glow",
+  "sunset-punch",
+  "moon-pearl",
+  "seafoam-rose",
+  "blueberry-milk",
+  "mango-iris",
+  "forest-neon",
+  "cotton-candy",
+  "lime-sorbet",
+  "cherry-cola",
+  "opal-mint",
+  "peach-lilac",
+  "cyan-flame",
+  "orchid-night",
+  "pistachio-blush",
+  "lagoon-gold",
+  "vanilla-sky",
+] as const;
+export type AgentOreoPaletteId = (typeof AGENT_OREO_PALETTE_IDS)[number];
+
+export const AGENT_OREO_DEFAULT_SHAPE_ID: AgentOreoShapeId = "bloom";
+export const AGENT_OREO_DEFAULT_PALETTE_ID: AgentOreoPaletteId = "rose-milk";
+
 export const AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX = "dicebear:notionists:" as const;
 
 export const AGENT_AVATAR_BACKGROUND_PRESET_IDS = [

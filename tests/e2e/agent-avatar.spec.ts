@@ -51,8 +51,23 @@ async function expectAvatarAndNameLayout(page: Page, avatar: Locator, name: Loca
   expect(nameBox!.x).toBeGreaterThan(avatarBox!.x + avatarBox!.width);
 }
 
+async function updateAgentIcon(
+  page: Page,
+  agentId: string,
+  action: () => Promise<void>,
+) {
+  const responsePromise = page.waitForResponse((response) =>
+    response.request().method() === "PATCH"
+    && response.url().includes(`/api/agents/${agentId}`),
+  );
+  await action();
+  const response = await responsePromise;
+  expect(response.ok()).toBe(true);
+  return await response.json() as { icon: string | null };
+}
+
 test.describe("Agent avatar", () => {
-  test("uses a DiceBear avatar by default and lets users upload a compressed image avatar", async ({ page }) => {
+  test("persists Oreo and DiceBear styles and lets users upload a compressed image avatar", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Agent-Avatar-${Date.now()}`,
@@ -74,11 +89,13 @@ test.describe("Agent avatar", () => {
     });
     expect(agentRes.ok()).toBe(true);
     const agent = await agentRes.json();
-    expect(agent.icon).toMatch(/^dicebear:notionists:/);
+    expect(agent.icon).toMatch(/^oreo:bloom:rose-milk:/);
+    const initialVariantId = String(agent.icon).split(":").at(-1);
 
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.theme", "light");
     }, organization.id);
 
     await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/dashboard`);
@@ -91,6 +108,107 @@ test.describe("Agent avatar", () => {
     await avatarButton.click();
     await expect(page.getByRole("textbox", { name: "Emoji" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Random" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Oreo" })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("button", { name: /^Oreo shape / })).toHaveCount(6);
+    await expect(page.getByRole("button", { name: /^Oreo palette / })).toHaveCount(40);
+
+    let interceptedAvatarPatchCount = 0;
+    const avatarPatchPattern = `**/api/agents/${agent.id}*`;
+    await page.route(avatarPatchPattern, async (route) => {
+      if (route.request().method() !== "PATCH") {
+        await route.continue();
+        return;
+      }
+      interceptedAvatarPatchCount += 1;
+      if (interceptedAvatarPatchCount === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 750));
+      }
+      await route.continue();
+    });
+    await page.getByRole("button", { name: "Oreo shape Nova" }).click();
+    const vanillaSky = page.getByRole("button", { name: "Oreo palette Vanilla Sky" });
+    await vanillaSky.scrollIntoViewIfNeeded();
+    await vanillaSky.click();
+    await expect.poll(async () => {
+      const response = await page.request.get(`/api/agents/${agent.id}?orgId=${organization.id}`);
+      expect(response.ok()).toBe(true);
+      return String((await response.json()).icon);
+    }).toBe(`oreo:nova:vanilla-sky:${initialVariantId}`);
+    expect(interceptedAvatarPatchCount).toBe(2);
+    await page.unroute(avatarPatchPattern);
+    await page.keyboard.press("Escape");
+    await page.reload();
+    await expect(avatarButton.locator('img[src^="data:image/svg+xml"]')).toBeVisible();
+
+    await avatarButton.click();
+    await page.getByRole("tab", { name: "DiceBear" }).click();
+    await expect(page.getByRole("tab", { name: "DiceBear" })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("button", { name: /^DiceBear background / })).toHaveCount(6);
+    const diceBearAgent = await updateAgentIcon(page, agent.id, async () => {
+      await page.getByRole("button", { name: "Random" }).click();
+    });
+    expect(diceBearAgent.icon).toMatch(/^dicebear:notionists:/);
+    await page.reload();
+    await expect(avatarButton.locator('img[src^="data:image/svg+xml"]')).toBeVisible();
+
+    await avatarButton.click();
+    await expect(page.getByRole("tab", { name: "Oreo" })).toHaveAttribute("aria-selected", "true");
+    const jadeAgent = await updateAgentIcon(page, agent.id, async () => {
+      await page.getByRole("button", { name: "Oreo shape Jade" }).click();
+    });
+    expect(jadeAgent.icon).toMatch(/^oreo:jade:rose-milk:/);
+    const opalMint = page.getByRole("button", { name: "Oreo palette Opal Mint" });
+    await opalMint.scrollIntoViewIfNeeded();
+    const restoredOreoAgent = await updateAgentIcon(page, agent.id, async () => {
+      await opalMint.click();
+    });
+    expect(restoredOreoAgent.icon).toMatch(/^oreo:jade:opal-mint:/);
+    const restoredVariantId = String(restoredOreoAgent.icon).split(":").at(-1);
+    expect(restoredVariantId).toBe(String(jadeAgent.icon).split(":").at(-1));
+    await page.keyboard.press("Escape");
+    await page.reload();
+    await expect(avatarButton.locator('img[src^="data:image/svg+xml"]')).toBeVisible();
+
+    await avatarButton.click();
+    const desktopPicker = page.getByTestId("agent-avatar-picker");
+    await expect(desktopPicker).toBeVisible();
+    await expectLocatorWithinViewport(page, desktopPicker);
+    await page.waitForTimeout(250);
+    await page.screenshot({ path: "/tmp/rudder-agent-avatar-picker-desktop-light.png", fullPage: true });
+    await page.keyboard.press("Escape");
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/dashboard`);
+    await closeMobileSidebar(page);
+    await avatarButton.click();
+    const mobilePicker = page.getByTestId("agent-avatar-picker");
+    await expect(mobilePicker).toBeVisible();
+    await expectLocatorWithinViewport(page, mobilePicker);
+    await expect(page.getByTestId("agent-avatar-oreo-palettes")).toHaveCSS("overflow-y", "auto");
+    await page.waitForTimeout(250);
+    await page.screenshot({ path: "/tmp/rudder-agent-avatar-picker-mobile-light.png", fullPage: true });
+    await page.keyboard.press("Escape");
+
+    await page.evaluate(() => {
+      window.localStorage.setItem("rudder.theme", "dark");
+    });
+    await page.reload();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    await closeMobileSidebar(page);
+    await avatarButton.click();
+    await expect(mobilePicker).toBeVisible();
+    await expectLocatorWithinViewport(page, mobilePicker);
+    await page.waitForTimeout(250);
+    await page.screenshot({ path: "/tmp/rudder-agent-avatar-picker-mobile-dark.png", fullPage: true });
+    await page.keyboard.press("Escape");
+
+    await page.setViewportSize({ width: 1280, height: 820 });
+    await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/dashboard`);
+    await avatarButton.click();
+    await expect(desktopPicker).toBeVisible();
+    await expectLocatorWithinViewport(page, desktopPicker);
+    await page.waitForTimeout(250);
+    await page.screenshot({ path: "/tmp/rudder-agent-avatar-picker-desktop-dark.png", fullPage: true });
 
     const uploadResponse = page.waitForResponse((response) =>
       response.request().method() === "POST" &&

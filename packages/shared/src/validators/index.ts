@@ -84,7 +84,7 @@ export {
 } from "./resource.js";
 
 export {
-  agentIconSchema, agentInstructionsBundleModeSchema, agentPermissionsSchema, createAgentHireSchema, createAgentKeySchema, createAgentSchema, diceBearNotionistsAgentIconSchema, resetAgentSessionSchema,
+  agentIconSchema, agentInstructionsBundleModeSchema, agentPermissionsSchema, createAgentHireSchema, createAgentKeySchema, createAgentSchema, diceBearNotionistsAgentIconSchema, oreoAgentIconSchema, resetAgentSessionSchema,
   testAgentRuntimeEnvironmentSchema, updateAgentInstructionsBundleSchema, updateAgentInstructionsPathSchema, updateAgentPermissionsSchema, updateAgentSchema,
   uploadedAgentIconSchema, upsertAgentInstructionsFileSchema, wakeAgentSchema, type CreateAgent,
   type CreateAgentHire, type CreateAgentKey, type ResetAgentSession,

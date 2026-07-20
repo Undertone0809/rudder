@@ -45,7 +45,7 @@ export function llmRoutes(db: Db) {
       "Notes:",
       "- Sensitive values are redacted in configuration read APIs.",
       "- New hires may be created in pending_approval state depending on organization settings.",
-      "- Omit `icon` for normal hires and creates; Rudder generates a DiceBear Notionists avatar.",
+      "- Omit `icon` for normal hires and creates; Rudder generates an Oreo avatar.",
       "",
     ];
     res.type("text/plain").send(lines.join("\n"));
@@ -56,9 +56,9 @@ export function llmRoutes(db: Db) {
     const lines = [
       "# Rudder Legacy Agent Icon Names",
       "",
-      "Do not set `icon` on normal hire/create payloads. Rudder generates a DiceBear Notionists avatar automatically.",
+      "Do not set `icon` on normal hire/create payloads. Rudder generates an Oreo avatar automatically.",
       "",
-      "Only set `icon` when preserving an explicit DiceBear Notionists reference or an uploaded `asset:<uuid>` avatar reference supplied by the board/UI.",
+      "Only set `icon` when preserving an explicit `oreo:<shape>:<palette>:<uuid>`, DiceBear Notionists, or uploaded `asset:<uuid>` avatar reference supplied by the board/UI.",
       "",
       "The following named icons remain accepted only for legacy compatibility and debugging:",
       ...AGENT_ICON_NAMES.map((name) => `- ${name}`),

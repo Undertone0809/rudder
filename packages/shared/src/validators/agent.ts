@@ -11,6 +11,9 @@ import {
   AGENT_AVATAR_BACKGROUND_PRESET_IDS,
   AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX,
   AGENT_ICON_NAMES,
+  AGENT_OREO_ICON_PREFIX,
+  AGENT_OREO_PALETTE_IDS,
+  AGENT_OREO_SHAPE_IDS,
   AGENT_ROLES,
   AGENT_RUNTIME_TYPES,
   AGENT_STATUSES,
@@ -86,6 +89,17 @@ export const diceBearNotionistsAgentIconSchema = z.string().regex(
   "Invalid DiceBear avatar reference",
 );
 
+export const oreoAgentIconSchema = z.string().regex(
+  new RegExp(
+    `^${AGENT_OREO_ICON_PREFIX}`
+      + `(?:${AGENT_OREO_SHAPE_IDS.join("|")}):`
+      + `(?:${AGENT_OREO_PALETTE_IDS.join("|")}):`
+      + "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    "i",
+  ),
+  "Invalid Oreo avatar reference",
+);
+
 export const agentIconSchema = z.preprocess(
   (value) => {
     if (typeof value !== "string") return value;
@@ -94,6 +108,7 @@ export const agentIconSchema = z.preprocess(
   },
   z.union([
     z.enum(AGENT_ICON_NAMES),
+    oreoAgentIconSchema,
     uploadedAgentIconSchema,
     diceBearNotionistsAgentIconSchema,
   ]).nullable(),

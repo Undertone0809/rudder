@@ -99,25 +99,39 @@ describe("pickUniqueAgentName", () => {
 });
 
 describe("createDefaultAgentAvatarIcon", () => {
-  it("creates a DiceBear Notionists avatar reference", () => {
+  it("creates an Oreo avatar reference with the default shape and palette", () => {
     expect(createDefaultAgentAvatarIcon()).toMatch(
-      /^dicebear:notionists:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      /^oreo:bloom:rose-milk:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
   });
 });
 
 describe("normalizeCreatedAgentAvatarIcon", () => {
-  it("replaces legacy named icons with a generated DiceBear avatar", () => {
+  it("replaces omitted and legacy named icons with a generated Oreo avatar", () => {
+    expect(normalizeCreatedAgentAvatarIcon(undefined)).toMatch(
+      /^oreo:bloom:rose-milk:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
     expect(normalizeCreatedAgentAvatarIcon("code")).toMatch(
-      /^dicebear:notionists:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      /^oreo:bloom:rose-milk:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
   });
 
   it("preserves explicit generated and uploaded image avatar references", () => {
+    const oreo = "oreo:jade:opal-mint:cccccccc-cccc-4ccc-8ccc-cccccccccccc";
     const generated = "dicebear:notionists:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb?bg=sky";
     const uploaded = "asset:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?bg=mint";
 
+    expect(normalizeCreatedAgentAvatarIcon(oreo)).toBe(oreo);
     expect(normalizeCreatedAgentAvatarIcon(generated)).toBe(generated);
     expect(normalizeCreatedAgentAvatarIcon(uploaded)).toBe(uploaded);
+  });
+
+  it("replaces malformed persisted references instead of trusting their prefix", () => {
+    expect(normalizeCreatedAgentAvatarIcon(
+      "oreo:unknown:rose-milk:cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    )).toMatch(/^oreo:bloom:rose-milk:/);
+    expect(normalizeCreatedAgentAvatarIcon("asset:not-a-uuid")).toMatch(
+      /^oreo:bloom:rose-milk:/,
+    );
   });
 });

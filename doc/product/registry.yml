@@ -386,18 +386,32 @@ contracts:
       - doc/product/domains/agents/identity-config.md
     related_code:
       - packages/db/src/schema/agents.ts
+      - packages/shared/src/constants.ts
       - packages/shared/src/types/agent.ts
+      - packages/shared/src/validators/agent.ts
       - server/src/services/agents.ts
       - server/src/routes/agents.ts
       - server/src/routes/agents.management-routes.ts
+      - server/src/routes/llms.ts
       - server/resources/bundled-skills/rudder-docs/references/agent-creation.md
+      - ui/src/lib/agent-avatar.ts
+      - ui/src/components/AgentAvatar.tsx
+      - ui/src/components/AgentIconPicker.tsx
     related_tests:
       - server/src/__tests__/agent-permissions-routes.test.ts
+      - server/src/__tests__/agent-shortname-collision.test.ts
+      - server/src/__tests__/agent-skills-routes.test.ts
       - server/src/__tests__/agent-startup-context.test.ts
       - server/src/__tests__/bundled-rudder-skill-docs.test.ts
+      - server/src/__tests__/llms-routes.test.ts
+      - packages/shared/src/validators/agent.test.ts
+      - ui/src/components/AgentAvatar.test.tsx
+      - ui/src/components/AgentIconPicker.test.tsx
+      - tests/e2e/agent-avatar.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-06-24-agent-run-scene-runtime-contract.md
+      - doc/plans/2026-07-20-oreo-agent-avatar-style.md
       - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
   AGENT.RUNTIME.ADAPTERS.001:
     owner: product

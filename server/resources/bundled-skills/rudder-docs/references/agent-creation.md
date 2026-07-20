@@ -80,8 +80,10 @@ defines its organizational responsibility and runnable configuration:
 - `desiredSkills` contains only skills already available to the organization
   and actually needed for the role.
 - `sourceIssueId` or `sourceIssueIds` links the hire to the originating work.
-- Omit `icon` for a normal hire so Rudder assigns its default avatar. Supply an
-  icon only when the operator provided an explicit supported reference.
+- Omit `icon` for a normal hire so Rudder generates and persists its default
+  Oreo avatar. Supply an icon only when the operator provided an explicit
+  supported `oreo:<shape>:<palette>:<uuid>`, DiceBear Notionists, or uploaded
+  `asset:<uuid>` reference.
 
 For supported local runtimes, `agentRuntimeConfig.promptTemplate` becomes the
 managed `SOUL.md`. Write durable role/persona guidance rather than a one-line

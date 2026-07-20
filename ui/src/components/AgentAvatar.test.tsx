@@ -64,6 +64,21 @@ describe("AgentIdentity", () => {
     expect(container.textContent).toContain("Alice Smith");
   });
 
+  it("renders Oreo avatar references through the shared identity surface", () => {
+    const container = render(
+      <AgentIdentity
+        name="Alice Smith"
+        icon="oreo:jade:opal-mint:cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+        size="sm"
+      />,
+    );
+
+    const img = container.querySelector("img");
+    expect(img?.getAttribute("src")).toMatch(/^data:image\/svg\+xml/);
+    expect(img?.getAttribute("style") ?? "").not.toContain("background");
+    expect(container.textContent).toContain("Alice Smith");
+  });
+
   it("renders a generated avatar instead of fallback initials when no custom icon is set", () => {
     const container = render(<AgentIdentity name="Penelope (CEO)" role="ceo" size="sm" />);
 

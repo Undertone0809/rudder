@@ -695,7 +695,7 @@ describe("agent skill routes", () => {
     expect(mockAgentService.update).not.toHaveBeenCalled();
   });
 
-  it("generates a DiceBear avatar instead of preserving legacy named icons during direct creation", async () => {
+  it("generates an Oreo avatar instead of preserving legacy named icons during direct creation", async () => {
     const res = await request(createApp())
       .post("/api/orgs/organization-1/agents")
       .send({
@@ -708,7 +708,26 @@ describe("agent skill routes", () => {
 
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     const createInput = mockAgentService.create.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined;
-    expect(createInput?.icon).toMatch(/^dicebear:notionists:/);
+    expect(createInput?.icon).toMatch(/^oreo:bloom:rose-milk:/);
+  });
+
+  it.each([
+    "oreo:unknown:rose-milk:cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    "oreo:bloom:unknown:cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    "oreo:bloom:rose-milk:not-a-uuid",
+  ])("rejects an invalid Oreo avatar reference at the API boundary: %s", async (icon) => {
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/agents")
+      .send({
+        name: "QA Agent",
+        role: "qa",
+        icon,
+        agentRuntimeType: "claude_local",
+        agentRuntimeConfig: {},
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
+    expect(mockAgentService.create).not.toHaveBeenCalled();
   });
 
   it("materializes a managed SOUL.md for directly created local agents", async () => {
@@ -842,7 +861,7 @@ describe("agent skill routes", () => {
     );
   });
 
-  it("generates a DiceBear avatar during hires when the request omits icon", async () => {
+  it("generates an Oreo avatar during hires when the request omits icon", async () => {
     const res = await request(createApp(createDb(true)))
       .post("/api/orgs/organization-1/agent-hires")
       .send({
@@ -854,18 +873,18 @@ describe("agent skill routes", () => {
 
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     const createInput = mockAgentService.create.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined;
-    expect(createInput?.icon).toMatch(/^dicebear:notionists:/);
+    expect(createInput?.icon).toMatch(/^oreo:bloom:rose-milk:/);
     expect(mockApprovalService.create).toHaveBeenCalledWith(
       "organization-1",
       expect.objectContaining({
         payload: expect.objectContaining({
-          icon: expect.stringMatching(/^dicebear:notionists:/),
+          icon: expect.stringMatching(/^oreo:bloom:rose-milk:/),
         }),
       }),
     );
   });
 
-  it("generates a DiceBear avatar instead of preserving legacy named icons during hires", async () => {
+  it("generates an Oreo avatar instead of preserving legacy named icons during hires", async () => {
     const res = await request(createApp(createDb(true)))
       .post("/api/orgs/organization-1/agent-hires")
       .send({
@@ -878,12 +897,12 @@ describe("agent skill routes", () => {
 
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     const createInput = mockAgentService.create.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined;
-    expect(createInput?.icon).toMatch(/^dicebear:notionists:/);
+    expect(createInput?.icon).toMatch(/^oreo:bloom:rose-milk:/);
     expect(mockApprovalService.create).toHaveBeenCalledWith(
       "organization-1",
       expect.objectContaining({
         payload: expect.objectContaining({
-          icon: expect.stringMatching(/^dicebear:notionists:/),
+          icon: expect.stringMatching(/^oreo:bloom:rose-milk:/),
         }),
       }),
     );

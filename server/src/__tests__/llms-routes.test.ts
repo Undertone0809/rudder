@@ -28,6 +28,8 @@ describe("llm routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.text).toContain("Do not set `icon` on normal hire/create payloads");
+    expect(res.text).toContain("generates an Oreo avatar");
+    expect(res.text).toContain("oreo:<shape>:<palette>:<uuid>");
     expect(res.text).toContain("DiceBear Notionists");
     expect(res.text).toContain("legacy compatibility");
     expect(res.text).toContain('{ "name": "SearchOps", "role": "researcher" }');
