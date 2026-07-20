@@ -1084,6 +1084,7 @@ contracts:
       - ui/src/api/chats.ts
       - ui/src/lib/side-chat.ts
       - ui/src/lib/side-panel-targets.ts
+      - ui/src/components/ui/context-menu.tsx
       - ui/src/components/side-panel/SideChatPanelView.tsx
       - ui/src/pages/Chat.tsx
       - ui/src/pages/Chat.messages.tsx
@@ -1093,6 +1094,7 @@ contracts:
       - ui/src/lib/side-chat.test.ts
       - ui/src/lib/side-panel-targets.test.ts
       - ui/src/pages/Chat.messages.test.tsx
+      - ui/src/pages/Chat.attachment-preview.test.tsx
       - tests/e2e/chat-side-chat.spec.ts
     related_plans:
       - doc/plans/2026-07-19-side-chat.md
@@ -1196,6 +1198,7 @@ contracts:
       - ui/src/components/Layout.tsx
       - ui/src/components/WorkspaceFilePreview.tsx
       - ui/src/components/WorkspacePdfPreview.tsx
+      - ui/src/components/ui/context-menu.tsx
       - ui/src/pages/Chat.side-panel.tsx
       - ui/src/pages/Chat.tsx
       - ui/src/pages/IssueDetail.tsx
@@ -1226,6 +1229,7 @@ contracts:
       - doc/plans/2026-07-07-messenger-side-panel-session-state.md
       - doc/plans/2026-06-30-chat-side-panel.md
       - doc/plans/2026-07-12-built-in-browser.md
+      - doc/plans/2026-07-19-side-chat.md
       - doc/plans/2026-07-20-messenger-saved-views.md
   MESSENGER.ATTENTION.001:
     owner: product

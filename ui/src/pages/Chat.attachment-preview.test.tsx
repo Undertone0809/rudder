@@ -34,6 +34,8 @@ const mockState = vi.hoisted(() => ({
   conversationId: "chat-1" as string | null,
   conversations: [] as ChatConversation[],
   messagesByChatId: {} as Record<string, ChatMessage[]>,
+  fetchingChatDetailIds: new Set<string>(),
+  failedChatDetailIds: new Set<string>(),
   pendingChatDetailIds: new Set<string>(),
   issues: {} as Record<string, Issue>,
   issueComments: {} as Record<string, IssueComment[]>,
@@ -65,6 +67,8 @@ const mockState = vi.hoisted(() => ({
   pushToast: vi.fn(),
   queryKeys: [] as unknown[][],
   getQueryData: vi.fn(),
+  refetchChatDetail: vi.fn(),
+  keepSideChat: vi.fn(),
   updateWorkspaceFile: vi.fn(),
   sendInFlightByChatId: {} as Record<string, true>,
   setChatSendInFlight: vi.fn(),
@@ -95,25 +99,63 @@ const mockState = vi.hoisted(() => ({
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey, enabled = true }: { queryKey: readonly unknown[]; enabled?: boolean }) => {
-    if (!enabled) return { data: undefined, isPending: false, isLoading: false, error: null };
+    if (!enabled) {
+      return {
+        data: undefined,
+        isPending: false,
+        isLoading: false,
+        error: null,
+        refetch: mockState.refetchChatDetail,
+      };
+    }
     mockState.queryKeys.push([...queryKey]);
     if (queryKey[0] === "chats" && queryKey[2] === "active") {
       return { data: mockState.conversations, isPending: false, isLoading: false, error: null };
     }
     if (queryKey[0] === "chats" && queryKey[2] === "detail") {
+      const chatId = String(queryKey[3]);
+      const data = mockState.conversations.find((chat) => chat.id === chatId) ?? null;
       if (mockState.pendingChatDetailIds.has(String(queryKey[3]))) {
         return {
           data: undefined,
           isPending: true,
           isLoading: true,
+          isFetching: true,
+          isError: false,
           error: null,
+          refetch: mockState.refetchChatDetail,
+        };
+      }
+      if (mockState.fetchingChatDetailIds.has(chatId)) {
+        return {
+          data,
+          isPending: false,
+          isLoading: false,
+          isFetching: true,
+          isError: false,
+          error: null,
+          refetch: mockState.refetchChatDetail,
+        };
+      }
+      if (mockState.failedChatDetailIds.has(chatId)) {
+        return {
+          data,
+          isPending: false,
+          isLoading: false,
+          isFetching: false,
+          isError: true,
+          error: new Error("Side Chat status failed to load"),
+          refetch: mockState.refetchChatDetail,
         };
       }
       return {
-        data: mockState.conversations.find((chat) => chat.id === queryKey[3]) ?? null,
+        data,
         isPending: false,
         isLoading: false,
+        isFetching: false,
+        isError: false,
         error: null,
+        refetch: mockState.refetchChatDetail,
       };
     }
     if (queryKey[0] === "chats" && queryKey[2] === "messages") {
@@ -269,7 +311,11 @@ vi.mock("@tanstack/react-query", () => ({
     }
     return { data: [], isPending: false, isLoading: false, error: null };
   },
-  useMutation: (options?: { mutationFn?: (variables: unknown) => unknown | Promise<unknown>; onSuccess?: (data: unknown, variables: unknown) => void | Promise<void> }) => ({
+  useMutation: (options?: {
+    mutationFn?: (variables: unknown) => unknown | Promise<unknown>;
+    onSuccess?: (data: unknown, variables: unknown) => void | Promise<void>;
+    onError?: (error: unknown, variables: unknown) => void | Promise<void>;
+  }) => ({
     isPending: false,
     mutate: (variables: unknown) => {
       mockState.mutations.push(variables);
@@ -277,10 +323,15 @@ vi.mock("@tanstack/react-query", () => ({
     },
     mutateAsync: async (variables: unknown) => {
       mockState.mutations.push(variables);
-      const data = await Promise.resolve(options?.mutationFn?.(variables) ?? variables);
-      mockState.markRead(variables);
-      await options?.onSuccess?.(data, variables);
-      return data;
+      try {
+        const data = await Promise.resolve(options?.mutationFn?.(variables) ?? variables);
+        mockState.markRead(variables);
+        await options?.onSuccess?.(data, variables);
+        return data;
+      } catch (error) {
+        await options?.onError?.(error, variables);
+        throw error;
+      }
     },
   }),
   useQueryClient: () => ({
@@ -399,6 +450,7 @@ vi.mock("@/api/chats", () => ({
     checkpointMessageStream: mockState.checkpointMessageStream,
     stopMessageStream: mockState.stopMessageStream,
     sendMessageStream: mockState.sendMessageStream,
+    keepSideChat: mockState.keepSideChat,
     listQueue: vi.fn(async () => mockState.queueSnapshot),
     createQueuedMessage: mockState.createQueuedMessage,
     updateQueuedMessage: mockState.updateQueuedMessage,
@@ -1306,6 +1358,8 @@ beforeEach(() => {
   mockState.updateQueuedMessage.mockImplementation(async (_chatId: string, itemId: string, data: { payload: ChatQueuedMessage["payload"] }) =>
     queuedMessage({ id: itemId, payload: data.payload })
   );
+  mockState.fetchingChatDetailIds = new Set();
+  mockState.failedChatDetailIds = new Set();
   mockState.pendingChatDetailIds = new Set();
   mockState.invalidateQueries.mockReset();
   mockState.markRead.mockReset();
@@ -1314,6 +1368,8 @@ beforeEach(() => {
   mockState.pushToast.mockReset();
   mockState.queryKeys = [];
   mockState.getQueryData.mockReset();
+  mockState.refetchChatDetail.mockReset();
+  mockState.keepSideChat.mockReset();
   mockState.sendInFlightByChatId = {};
   mockState.setChatSendInFlight.mockReset();
   mockState.createConversation.mockReset();
@@ -1375,6 +1431,11 @@ beforeEach(() => {
     return 0;
   });
   vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  vi.stubGlobal("ResizeObserver", class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  });
   vi.stubGlobal("matchMedia", vi.fn(() => ({
     matches: false,
     media: "(prefers-color-scheme: dark)",
@@ -1516,6 +1577,429 @@ describe("Chat Side Panel link handling", () => {
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(1);
     expect(container.querySelector("[data-testid='chat-side-panel-tabs']")).not.toBeNull();
     expect(mockState.navigate).not.toHaveBeenCalledWith("/messenger/chat/chat-2");
+  });
+
+  it("closes any Side Panel tab from its context menu", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: "assistant-side-panel-context-menu",
+          role: "assistant",
+          body: `Inspect [Other chat](${buildChatMentionHref("chat-2")}) before replying.`,
+          replyingAgentId: "agent-1",
+        }),
+      ],
+      "chat-2": [message({ id: "other-message-1", conversationId: "chat-2", body: "Other chat side panel content" })],
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      container.querySelector<HTMLAnchorElement>('a[data-mention-kind="chat"]')?.click();
+      await Promise.resolve();
+    });
+
+    const tabShell = container.querySelector<HTMLElement>("[data-side-panel-tab-key]");
+    await act(async () => {
+      tabShell?.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        clientX: 40,
+        clientY: 40,
+      }));
+      await Promise.resolve();
+    });
+
+    const menu = document.querySelector<HTMLElement>("[data-testid='chat-side-panel-tab-context-menu']");
+    expect(menu?.getAttribute("role")).toBe("menu");
+    const closeItem = Array.from(menu?.querySelectorAll<HTMLElement>("[role='menuitem']") ?? [])
+      .find((candidate) => candidate.textContent?.trim() === "Close");
+    expect(closeItem).not.toBeNull();
+
+    await act(async () => {
+      closeItem?.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(0);
+  });
+
+  it("explains why a draft Side Chat cannot move to Messenger", async () => {
+    mockState.conversations = [chat({ id: "chat-1", title: "Source chat" })];
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+
+    await act(async () => {
+      root.render(
+        <ThemeProvider>
+          <SidePanelProvider>
+            <ChatSidePanel
+              selectedOrganizationId="org-1"
+              target={{
+                kind: "side_chat",
+                sourceConversationId: "chat-1",
+                sourceMessageId: "assistant-source",
+                sourcePreview: "Source answer",
+                conversationId: null,
+                clientMutationId: "side-chat-draft",
+                label: "Side Chat",
+              }}
+            />
+          </SidePanelProvider>
+        </ThemeProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    const tabShell = container.querySelector<HTMLElement>("[data-side-panel-tab-key]");
+    await act(async () => {
+      tabShell?.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        clientX: 40,
+        clientY: 40,
+      }));
+      await Promise.resolve();
+    });
+
+    const moveItem = Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"))
+      .find((candidate) => candidate.textContent?.trim() === "Move to Messenger");
+    expect(moveItem?.getAttribute("aria-disabled")).toBe("true");
+
+    await act(async () => {
+      moveItem?.focus();
+      await new Promise((resolve) => window.setTimeout(resolve, 350));
+    });
+    expect(document.querySelector<HTMLElement>("[role='tooltip']")?.textContent).toContain(
+      "Send a message first to create this Side Chat.",
+    );
+  });
+
+  it("moves an active Side Chat to Messenger with the same conversation id", async () => {
+    const sideChat = chat({
+      id: "side-chat-1",
+      title: "Side Chat",
+      conversationKind: "side_chat",
+      sideChatState: "active",
+      sideChatExpiresAt: new Date("2099-07-20T10:00:00.000Z"),
+      messengerVisible: false,
+    });
+    const keptSideChat = chat({
+      ...sideChat,
+      sideChatState: "kept",
+      sideChatExpiresAt: null,
+      messengerVisible: true,
+    });
+    mockState.conversations = [chat({ id: "chat-1", title: "Source chat" }), sideChat];
+    mockState.keepSideChat.mockResolvedValue(keptSideChat);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+
+    await act(async () => {
+      root.render(
+        <ThemeProvider>
+          <SidePanelProvider>
+            <ChatSidePanel
+              selectedOrganizationId="org-1"
+              target={{
+                kind: "side_chat",
+                sourceConversationId: "chat-1",
+                sourceMessageId: "assistant-source",
+                sourcePreview: "Source answer",
+                conversationId: "side-chat-1",
+                clientMutationId: "side-chat-active",
+                label: "Side Chat",
+              }}
+            />
+          </SidePanelProvider>
+        </ThemeProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    const tabShell = container.querySelector<HTMLElement>("[data-side-panel-tab-key]");
+    await act(async () => {
+      tabShell?.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        clientX: 40,
+        clientY: 40,
+      }));
+      await Promise.resolve();
+    });
+
+    const moveItem = Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"))
+      .find((candidate) => candidate.textContent?.trim() === "Move to Messenger");
+    expect(moveItem?.hasAttribute("aria-disabled")).toBe(false);
+    expect(container.textContent).not.toContain("Keep in Messenger");
+
+    await act(async () => {
+      moveItem?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockState.keepSideChat).toHaveBeenCalledWith("side-chat-1");
+    expect(mockState.pushToast).toHaveBeenCalledWith({
+      title: "Moved to Messenger",
+      body: "This is now a normal Messenger chat.",
+      tone: "success",
+    });
+    expect(mockState.navigate).toHaveBeenCalledWith("/messenger/chat/side-chat-1");
+    expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(0);
+  });
+
+  it("keeps the Side Chat tab open when moving to Messenger fails", async () => {
+    const sideChat = chat({
+      id: "side-chat-failed",
+      title: "Side Chat",
+      conversationKind: "side_chat",
+      sideChatState: "active",
+      sideChatExpiresAt: new Date("2099-07-20T10:00:00.000Z"),
+      messengerVisible: false,
+    });
+    mockState.conversations = [chat({ id: "chat-1", title: "Source chat" }), sideChat];
+    mockState.keepSideChat.mockRejectedValue(new Error("Promotion failed"));
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+
+    await act(async () => {
+      root.render(
+        <ThemeProvider>
+          <SidePanelProvider>
+            <ChatSidePanel
+              selectedOrganizationId="org-1"
+              target={{
+                kind: "side_chat",
+                sourceConversationId: "chat-1",
+                sourceMessageId: "assistant-source",
+                sourcePreview: "Source answer",
+                conversationId: "side-chat-failed",
+                clientMutationId: "side-chat-failed",
+                label: "Side Chat",
+              }}
+            />
+          </SidePanelProvider>
+        </ThemeProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    const tabShell = container.querySelector<HTMLElement>("[data-side-panel-tab-key]");
+    await act(async () => {
+      tabShell?.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        clientX: 40,
+        clientY: 40,
+      }));
+      await Promise.resolve();
+    });
+    const moveItem = Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"))
+      .find((candidate) => candidate.textContent?.trim() === "Move to Messenger");
+
+    await act(async () => {
+      moveItem?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(1);
+    expect(mockState.navigate).not.toHaveBeenCalled();
+    expect(mockState.pushToast).toHaveBeenCalledWith({
+      title: "Could not move Side Chat",
+      body: "Promotion failed",
+      tone: "error",
+    });
+  });
+
+  it("explains why an expired Side Chat cannot move to Messenger", async () => {
+    const sideChat = chat({
+      id: "side-chat-expired",
+      title: "Side Chat",
+      conversationKind: "side_chat",
+      sideChatState: "active",
+      sideChatExpiresAt: new Date("2020-07-20T10:00:00.000Z"),
+      messengerVisible: false,
+    });
+    mockState.conversations = [chat({ id: "chat-1", title: "Source chat" }), sideChat];
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+
+    await act(async () => {
+      root.render(
+        <ThemeProvider>
+          <SidePanelProvider>
+            <ChatSidePanel
+              selectedOrganizationId="org-1"
+              target={{
+                kind: "side_chat",
+                sourceConversationId: "chat-1",
+                sourceMessageId: "assistant-source",
+                sourcePreview: "Source answer",
+                conversationId: "side-chat-expired",
+                clientMutationId: "side-chat-expired",
+                label: "Side Chat",
+              }}
+            />
+          </SidePanelProvider>
+        </ThemeProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    const tabShell = container.querySelector<HTMLElement>("[data-side-panel-tab-key]");
+    await act(async () => {
+      tabShell?.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        clientX: 40,
+        clientY: 40,
+      }));
+      await Promise.resolve();
+    });
+    const moveItem = Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"))
+      .find((candidate) => candidate.textContent?.trim() === "Move to Messenger");
+    expect(moveItem?.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => {
+      moveItem?.focus();
+      await new Promise((resolve) => window.setTimeout(resolve, 350));
+    });
+    expect(document.querySelector<HTMLElement>("[role='tooltip']")?.textContent).toContain(
+      "This Side Chat can no longer be moved. Close it instead.",
+    );
+  });
+
+  it("keeps Move to Messenger disabled while a cached Side Chat status refreshes", async () => {
+    const cachedSideChat = chat({
+      id: "side-chat-loading",
+      title: "Side Chat",
+      conversationKind: "side_chat",
+      sideChatState: "active",
+      sideChatExpiresAt: new Date("2099-07-20T10:00:00.000Z"),
+      messengerVisible: false,
+    });
+    mockState.conversations = [chat({ id: "chat-1", title: "Source chat" }), cachedSideChat];
+    mockState.fetchingChatDetailIds.add("side-chat-loading");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+
+    await act(async () => {
+      root.render(
+        <ThemeProvider>
+          <SidePanelProvider>
+            <ChatSidePanel
+              selectedOrganizationId="org-1"
+              target={{
+                kind: "side_chat",
+                sourceConversationId: "chat-1",
+                sourceMessageId: "assistant-source",
+                sourcePreview: "Source answer",
+                conversationId: "side-chat-loading",
+                clientMutationId: "side-chat-loading",
+                label: "Side Chat",
+              }}
+            />
+          </SidePanelProvider>
+        </ThemeProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    const tabShell = container.querySelector<HTMLElement>("[data-side-panel-tab-key]");
+    await act(async () => {
+      tabShell?.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        clientX: 40,
+        clientY: 40,
+      }));
+      await Promise.resolve();
+    });
+    const moveItem = Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"))
+      .find((candidate) => candidate.textContent?.trim() === "Move to Messenger");
+    expect(moveItem?.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => {
+      moveItem?.focus();
+      await new Promise((resolve) => window.setTimeout(resolve, 350));
+    });
+    expect(document.querySelector<HTMLElement>("[role='tooltip']")?.textContent).toContain(
+      "Checking whether this Side Chat can be moved…",
+    );
+  });
+
+  it("does not enable Move to Messenger from stale cache when lifecycle refresh fails", async () => {
+    const cachedSideChat = chat({
+      id: "side-chat-status-error",
+      title: "Side Chat",
+      conversationKind: "side_chat",
+      sideChatState: "active",
+      sideChatExpiresAt: new Date("2099-07-20T10:00:00.000Z"),
+      messengerVisible: false,
+    });
+    mockState.conversations = [chat({ id: "chat-1", title: "Source chat" }), cachedSideChat];
+    mockState.failedChatDetailIds.add("side-chat-status-error");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+
+    await act(async () => {
+      root.render(
+        <ThemeProvider>
+          <SidePanelProvider>
+            <ChatSidePanel
+              selectedOrganizationId="org-1"
+              target={{
+                kind: "side_chat",
+                sourceConversationId: "chat-1",
+                sourceMessageId: "assistant-source",
+                sourcePreview: "Source answer",
+                conversationId: "side-chat-status-error",
+                clientMutationId: "side-chat-status-error",
+                label: "Side Chat",
+              }}
+            />
+          </SidePanelProvider>
+        </ThemeProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    const tabShell = container.querySelector<HTMLElement>("[data-side-panel-tab-key]");
+    await act(async () => {
+      tabShell?.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        clientX: 40,
+        clientY: 40,
+      }));
+      await Promise.resolve();
+    });
+    const moveItem = Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"))
+      .find((candidate) => candidate.textContent?.trim() === "Move to Messenger");
+    expect(moveItem?.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => {
+      moveItem?.focus();
+      await new Promise((resolve) => window.setTimeout(resolve, 350));
+    });
+    expect(document.querySelector<HTMLElement>("[role='tooltip']")?.textContent).toContain(
+      "This Side Chat can no longer be moved. Close it instead.",
+    );
   });
 
   it("opens an automation mention in the Side Panel without navigating away", async () => {
@@ -1980,6 +2464,26 @@ describe("Chat Side Panel link handling", () => {
     expect(tabs[1]?.textContent).toContain("Third chat");
     expect(tabs[1]?.getAttribute("aria-selected")).toBe("true");
     expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Third chat side panel content");
+
+    await act(async () => {
+      tabs[0]?.parentElement?.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        clientX: 40,
+        clientY: 40,
+      }));
+      await Promise.resolve();
+    });
+    tabs = Array.from(container.querySelectorAll<HTMLElement>("[data-testid='chat-side-panel-tab']"));
+    expect(tabs[0]?.getAttribute("aria-selected")).toBe("false");
+    expect(tabs[1]?.getAttribute("aria-selected")).toBe("true");
+    expect(document.querySelector("[data-testid='chat-side-panel-tab-context-menu']")).not.toBeNull();
+    expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Third chat side panel content");
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
+      await Promise.resolve();
+    });
 
     const refreshedChatReferences = Array.from(container.querySelectorAll<HTMLAnchorElement>('a[data-mention-kind="chat"]'));
     await act(async () => {

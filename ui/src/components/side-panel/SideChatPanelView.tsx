@@ -7,15 +7,13 @@ import { AgentIcon } from "@/components/AgentIconPicker";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
-import { Button } from "@/components/ui/button";
 import type { ChatStreamDraftState } from "@/context/ChatGenerationContext";
-import { useToast } from "@/context/ToastContext";
 import { queryKeys } from "@/lib/queryKeys";
 import { latestSideChatAnchor, sideChatConversationMessages, sideChatIsReadOnly } from "@/lib/side-chat";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { AssistantDraftItem, ChatMessageItem, StreamTranscriptItem } from "@/pages/Chat.messages";
 import type { Agent, ChatConversation, ChatMessage } from "@rudderhq/shared";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, CirclePlus, Clock3, Folder, Loader2, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -52,16 +50,13 @@ export function SideChatPanelView({
   target,
   onRegisterCloseHandler,
   onReplaceTarget,
-  onKept,
 }: {
   organizationId: string;
   target: SideChatTarget;
   onRegisterCloseHandler: (clientMutationId: string, handler: (() => Promise<string | null>) | null) => void;
   onReplaceTarget: (key: string, target: SidePanelTarget) => void;
-  onKept: (conversation: ChatConversation) => void;
 }) {
   const queryClient = useQueryClient();
-  const { pushToast } = useToast();
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -163,27 +158,6 @@ export function SideChatPanelView({
     queryClient.setQueryData(queryKeys.chats.detail(organizationId, updated.id), updated);
   };
 
-  const keepMutation = useMutation({
-    mutationFn: () => chatsApi.keepSideChat(target.conversationId!),
-    onSuccess: (updated) => {
-      setConversationCache(updated);
-      void queryClient.invalidateQueries({ queryKey: ["messenger", organizationId] });
-      pushToast({
-        title: "Kept in Messenger",
-        body: "This is now a normal Messenger chat.",
-        tone: "success",
-      });
-      onKept(updated);
-    },
-    onError: (error) => {
-      pushToast({
-        title: "Could not keep Side Chat",
-        body: error instanceof Error ? error.message : "Try again.",
-        tone: "error",
-      });
-    },
-  });
-
   const appendMessage = (conversationId: string, message: ChatMessage) => {
     queryClient.setQueryData<ChatMessage[]>(
       queryKeys.chats.messages(organizationId, conversationId),
@@ -280,7 +254,6 @@ export function SideChatPanelView({
 
   const anchorLoading = (!target.sourceMessageId || !target.sourcePreview) && sourceMessagesQuery.isPending;
   const noAnchor = !anchorLoading && !sourceMessageId;
-  const canKeep = Boolean(target.conversationId && conversation?.sideChatState === "active" && !readOnly);
   const agents = agentsQuery.data as Agent[] | undefined;
 
   return (
@@ -417,14 +390,6 @@ export function SideChatPanelView({
               </button>
             </div>
           </div>
-          {canKeep ? (
-            <div className="mx-auto mt-2 flex w-full max-w-4xl justify-end">
-              <Button type="button" variant="outline" size="sm" disabled={sending || keepMutation.isPending} onClick={() => keepMutation.mutate()}>
-                {keepMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                Keep in Messenger
-              </Button>
-            </div>
-          ) : null}
         </div>
       ) : (
         <div className="shrink-0 border-t border-[color:var(--border-soft)] px-4 py-3 text-sm text-muted-foreground" data-testid="side-chat-read-only">

@@ -868,7 +868,7 @@ Side Chat is an operator-owned, ephemeral branch from a completed assistant
 answer. It runs in the global Side Panel, uses the ordinary Chat runtime path,
 and preserves the parent Chat's transcript, draft, scroll position, and active
 generation. It is hidden from ordinary Chat and Messenger discovery until the
-operator explicitly keeps it.
+operator explicitly moves it into Messenger.
 
 ### Intent / User Job
 
@@ -886,7 +886,7 @@ before the exploration proves useful.
   out of ordinary lists unless the operator promotes it.
 - Temporary means disposable: closing the Side Chat tab destroys its client
   draft or hidden persisted conversation. The operator promotes useful work
-  with `Keep in Messenger` before closing it.
+  with `Move to Messenger` from its tab menu before closing it.
 
 ### Actors / Objects / State
 
@@ -915,7 +915,8 @@ before the exploration proves useful.
   mutation id to `POST /api/chats/:sourceId/side-chats`, then uses the normal
   Chat message stream route.
 - Closing a persisted Side Chat posts to `DELETE /api/chats/:id/side-chat`.
-- `Keep in Messenger` posts to `/api/chats/:id/side-chat/keep`.
+- `Move to Messenger` in the Side Chat tab context menu posts to the
+  compatibility endpoint `/api/chats/:id/side-chat/keep`.
 
 ### Product Logic Flow
 
@@ -940,7 +941,7 @@ before the exploration proves useful.
    persisted temporary tab cancels any active generation, deletes the hidden
    Side Chat and its owned rows, and closes the tab. Close failures stay visible
    and do not silently remove the tab.
-8. `Keep in Messenger` changes an `active` Side Chat to `kept`, preserves the
+8. `Move to Messenger` changes an `active` Side Chat to `kept`, preserves the
    same conversation id, removes expiry, and makes it visible. If the source
    Chat already belongs to the operator's custom group, the kept Side Chat is
    appended to that group; otherwise it remains an ungrouped Messenger Chat.
@@ -964,7 +965,7 @@ before the exploration proves useful.
 | Close provisional | No persisted conversation id | Discard the client draft and close the tab | Create or retain a server record | UI and E2E tests |
 | Close persisted | Hidden Side Chat belongs to operator | Cancel any live generation, delete the temporary conversation, and close the tab | Leave a hidden recoverable thread or delete a kept Messenger Chat | Service, route, and E2E tests |
 | Expire | Active send window has elapsed | Transition to expired and reject mutation | Create a user message, generation, or other mutation side effect | Service and route tests |
-| Keep | State is active | Preserve id, transition to kept, expose in Messenger, and reuse source group only when it exists | Create a replacement Chat, invent a custom group, or keep a completed/expired Side Chat | Service, route, and E2E tests |
+| Move to Messenger | State is active | Preserve id, transition to kept, expose in Messenger, and reuse source group only when it exists | Create a replacement Chat, invent a custom group, or move a completed/expired Side Chat | Service, route, and E2E tests |
 | Unauthorized access | Wrong organization, non-board actor, or different user | Return not found/denied without revealing the record | Leak Side Chat existence or content | Service and route tests |
 
 ### Actor-Visible Input
@@ -977,12 +978,21 @@ before the exploration proves useful.
   Chat context exists.
 - Every Side Chat entry point and header uses the circle-plus Side icon. The
   sparkle icon is not the Side Chat identity.
-- Apart from its source-answer preview and expiry/Keep controls, the Side Chat
+- Apart from its source-answer preview and expiry state, the Side Chat
   transcript and composer use the normal Chat visual and interaction grammar:
   normal user messages, assistant attribution, process transcript, streaming
   answer, editor, send affordance, and visible Project, Agent, and Skills chips.
 - The Side Chat composer does not show the redundant `Enter to send ·
   Shift+Enter for a new line` helper, and there is no Done action.
+- The Side Chat tab context menu shows `Move to Messenger`, a separator, and
+  `Close`. The Move item is enabled only for a persisted, unexpired `active`
+  Side Chat whose lifecycle has finished loading. It remains focusable with
+  `aria-disabled` in every other state so its tooltip can explain the result:
+  `Send a message first to create this Side Chat.` for a provisional draft,
+  `Checking whether this Side Chat can be moved…` while loading,
+  `Make this Side Chat a regular Messenger chat. This tab will close.` while
+  enabled, and `This Side Chat can no longer be moved. Close it instead.` for
+  expired or otherwise unavailable records.
 
 ### Operator-Visible Output
 
@@ -990,12 +1000,12 @@ before the exploration proves useful.
 - While active, the operator sees user/assistant turns and a remaining-time
   label without any new row in Messenger.
 - Expiry replaces the composer with a read-only explanation.
-- Keep closes the Side Chat tab, makes the same conversation available in the
+- Move closes the Side Chat tab, makes the same conversation available in the
   normal Messenger list, and opens it with the normal Chat UI.
 - In the kept conversation, the Side Chat source boundary is a direct return
   link to the source Chat rather than an adjacent Side Panel preview.
-- Send, close, and keep failures surface as visible errors or toasts; they are
-  not silently ignored.
+- Send, close, and move failures surface as visible errors or toasts; they are
+  not silently ignored. A failed Move retains the Side Chat tab for retry.
 
 ### Persisted Evidence
 
@@ -1021,7 +1031,7 @@ before the exploration proves useful.
    - Evidence: `tests/e2e/chat-side-chat.spec.ts` close/destroy flow.
 2. Useful tangent promoted to Messenger:
    - Trigger: Type `/side`, enter through the composer menu, send, then choose
-     `Keep in Messenger`.
+     `Move to Messenger` from the Side Chat tab menu.
    - Expected state/action: The hidden record becomes `kept` with the same id
      and joins the source custom group only when one already exists.
    - Visible output: The Side Panel tab closes and the same id opens as a normal
@@ -1051,7 +1061,7 @@ before the exploration proves useful.
 - Temporary Side Chat records are disposable and are destroyed through the
   Side Chat close endpoint. The normal Chat delete path accepts kept Side Chats
   because they are ordinary Messenger Chats after promotion.
-- Keeping preserves the same conversation id and does not create a custom group
+- Moving preserves the same conversation id and does not create a custom group
   when the source has none.
 - Side Chat does not promise a history/archive UI or cross-device recovery of
   an unsent provisional draft.
@@ -1559,6 +1569,12 @@ Product model:
   changing the active target. The close affordance stays visually quiet until
   its tab is hovered or receives keyboard focus, while its reserved width keeps
   tab labels from shifting when the affordance appears.
+- Every Side Panel tab exposes a context menu through right-click,
+  `Shift+F10`/Menu, and touch long-press. The menu always includes `Close`,
+  which invokes the same target-aware close behavior as the existing inline
+  close affordance and active-tab keyboard shortcut. Opening a non-active tab's
+  menu must not activate it or replace the current panel body. Menu handling
+  must not regress tab drag reorder.
 - In Messenger, panel tab state is session-scoped to the active work item when
   the item has a stable chat or issue identity. Chat conversations and concrete
   issue threads each keep their own in-memory Side Panel tabs and active tab
@@ -1847,7 +1863,7 @@ Evidence:
   status, and assignee inside the panel; browsing a Library directory tree;
   opening the global empty panel from Dashboard; and keeping the desktop/web
   panel gutter compact against the main workspace.
-- Side Chat E2E covers the source-boundary exception by keeping a Side Chat,
+- Side Chat E2E covers the source-boundary exception by moving a Side Chat to Messenger,
   opening it in Messenger, and navigating directly back to the source Chat
   without opening a Side Panel Chat target.
 - Side Panel E2E covers expanding an issue target and rendering the embedded
