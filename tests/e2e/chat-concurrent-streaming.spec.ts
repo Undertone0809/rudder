@@ -291,7 +291,14 @@ test("runs Stop-then-Steer feedback as a server-owned continuation", async ({ pa
   await createQueuedFollowUp(page, chatId, "This should stay parked after stop", 1);
   await createQueuedFollowUp(page, chatId, "Second parked follow-up", 2);
   await createQueuedFollowUp(page, chatId, "Third parked follow-up", 3);
+  await createQueuedFollowUp(page, chatId, "Cancelled follow-up must never run", 4);
   await expect(page.getByTestId("chat-running-queue")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("chat-running-queue-item")).toHaveCount(4, { timeout: 15_000 });
+  await page
+    .getByTestId("chat-running-queue-item")
+    .nth(3)
+    .getByRole("button", { name: "Delete queued message" })
+    .click();
   await expect(page.getByTestId("chat-running-queue-item")).toHaveCount(3, { timeout: 15_000 });
   await expect(page.getByTestId("chat-running-queue")).not.toContainText("more queued follow-ups");
   await expect(page.getByTestId("chat-running-queue-item").nth(0)).toContainText("Up next");
@@ -317,6 +324,7 @@ test("runs Stop-then-Steer feedback as a server-owned continuation", async ({ pa
   await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Third parked follow-up" })).toBeVisible({
     timeout: 45_000,
   });
+  await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Cancelled follow-up must never run" })).toHaveCount(0);
   await expect(page.getByTestId("chat-running-queue")).toHaveCount(0, { timeout: 45_000 });
 
   const finalQueueRes = await page.request.get(`/api/chats/${chatId}/queue`);

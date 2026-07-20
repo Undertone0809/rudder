@@ -1202,6 +1202,399 @@ describe("messengerService and issue follows", () => {
     expect(actorlessItem).toMatchObject({ status: "queued", requestActor: null });
   });
 
+  it("skips durably cancelled queue rows even if their status regresses to queued", async () => {
+    const orgId = randomUUID();
+    const cancelledConversationId = randomUUID();
+    const eligibleConversationId = randomUUID();
+    const cancelledItemId = randomUUID();
+    const eligibleItemId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Cancel Fence Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Cancel Fence Org"),
+      issuePrefix: `C${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values([
+      {
+        id: cancelledConversationId,
+        orgId,
+        title: "Cancelled queue regression chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+      {
+        id: eligibleConversationId,
+        orgId,
+        title: "Eligible queue chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    ]);
+    await db.insert(chatQueuedMessages).values([
+      {
+        id: cancelledItemId,
+        orgId,
+        conversationId: cancelledConversationId,
+        position: 1,
+        status: "queued",
+        clientMutationId: "cancelled-status-regression",
+        payload: { body: "This cancelled follow-up must never run" },
+        requestActor: boardQueueRequestActor(orgId),
+        cancelledAt: new Date("2026-07-20T09:52:46.951Z"),
+      },
+      {
+        id: eligibleItemId,
+        orgId,
+        conversationId: eligibleConversationId,
+        position: 2,
+        status: "queued",
+        clientMutationId: "eligible-after-cancelled-row",
+        payload: { body: "This follow-up remains eligible" },
+        requestActor: boardQueueRequestActor(orgId),
+      },
+    ]);
+
+    const claim = await chatSvc.claimNextServerQueuedMessage({
+      workerId: "cancel-fence-worker",
+      leaseMs: 30_000,
+    });
+
+    expect(claim?.item.id).toBe(eligibleItemId);
+    const [cancelledItem] = await db
+      .select()
+      .from(chatQueuedMessages)
+      .where(eq(chatQueuedMessages.id, cancelledItemId));
+    expect(cancelledItem).toMatchObject({
+      status: "queued",
+      cancelledAt: new Date("2026-07-20T09:52:46.951Z"),
+      deliveryAttempts: 0,
+      continuationGenerationId: null,
+    });
+  });
+
+  it("keeps durable cancellation terminal when a stale server claim is released", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const generationId = randomUUID();
+    const itemId = randomUUID();
+    const leaseToken = randomUUID();
+    const cancelledAt = new Date("2026-07-20T09:52:46.951Z");
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Cancelled Claim Release Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Cancelled Claim Release Org"),
+      issuePrefix: `R${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Cancelled server claim chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      id: generationId,
+      orgId,
+      conversationId,
+      status: "active",
+      attemptEpoch: 0,
+    });
+    await db.insert(chatQueuedMessages).values({
+      id: itemId,
+      orgId,
+      conversationId,
+      position: 1,
+      status: "dequeue_claimed",
+      clientMutationId: "cancelled-stale-server-claim",
+      payload: { body: "This cancelled claim must not be requeued" },
+      requestActor: boardQueueRequestActor(orgId),
+      continuationGenerationId: generationId,
+      deliveryLeaseToken: leaseToken,
+      deliveryLeaseEpoch: 4,
+      deliveryLeaseOwner: "stale-worker",
+      deliveryLeaseExpiresAt: new Date(Date.now() + 30_000),
+      cancelledAt,
+    });
+
+    const released = await chatSvc.releaseServerQueuedMessageClaim({
+      itemId,
+      generationId,
+      leaseToken,
+      leaseEpoch: 4,
+      reason: "queued_continuation_completion_unconfirmed",
+    });
+
+    expect(released).toMatchObject({
+      id: itemId,
+      status: "cancelled",
+      deliveryDisposition: "cancelled",
+      cancelledAt,
+      lastDeliveryReason: "operator_cancelled",
+      deliveryLeaseToken: null,
+      deliveryLeaseOwner: null,
+      deliveryLeaseExpiresAt: null,
+    });
+  });
+
+  it("does not abort a generation when a stale release loses the queue-item CAS", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const generationId = randomUUID();
+    const itemId = randomUUID();
+    const leaseToken = randomUUID();
+    const triggerSuffix = randomUUID().replace(/-/g, "").slice(0, 12);
+    const functionName = `rudder_test_delay_completion_${triggerSuffix}`;
+    const triggerName = `rudder_test_delay_completion_trigger_${triggerSuffix}`;
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Queue CAS Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Queue CAS Org"),
+      issuePrefix: `C${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Queue completion and release race chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      id: generationId,
+      orgId,
+      conversationId,
+      status: "active",
+      attemptEpoch: 0,
+    });
+    await db.insert(chatQueuedMessages).values({
+      id: itemId,
+      orgId,
+      conversationId,
+      position: 1,
+      status: "dequeue_claimed",
+      clientMutationId: "queue-completion-release-race",
+      payload: { body: "Complete this continuation once" },
+      requestActor: boardQueueRequestActor(orgId),
+      continuationGenerationId: generationId,
+      deliveryLeaseToken: leaseToken,
+      deliveryLeaseEpoch: 1,
+      deliveryLeaseOwner: "completion-worker",
+      deliveryLeaseExpiresAt: new Date(Date.now() + 30_000),
+    });
+
+    await db.execute(sql.raw(`
+      create function ${functionName}() returns trigger language plpgsql as $$
+      begin
+        if new.status = 'completed' then
+          perform pg_sleep(0.5);
+        end if;
+        return new;
+      end;
+      $$
+    `));
+    await db.execute(sql.raw(`
+      create trigger ${triggerName}
+      before update on chat_queued_messages
+      for each row execute function ${functionName}()
+    `));
+
+    try {
+      const completion = chatSvc.completeServerQueuedMessageDelivery({
+        itemId,
+        generationId,
+        leaseToken,
+        leaseEpoch: 1,
+        status: "completed",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const release = chatSvc.releaseServerQueuedMessageClaim({
+        itemId,
+        generationId,
+        leaseToken,
+        leaseEpoch: 1,
+        reason: "server_continuation_lease_expired",
+      });
+      const [completed, released] = await Promise.all([completion, release]);
+
+      expect(completed).toMatchObject({ id: itemId, status: "completed" });
+      expect(released).toBeNull();
+      const [generation] = await db
+        .select()
+        .from(chatGenerations)
+        .where(eq(chatGenerations.id, generationId));
+      expect(generation).toMatchObject({
+        status: "active",
+        terminalReason: null,
+        completedAt: null,
+      });
+    } finally {
+      await db.execute(sql.raw(`drop trigger if exists ${triggerName} on chat_queued_messages`));
+      await db.execute(sql.raw(`drop function if exists ${functionName}()`));
+    }
+  });
+
+  it("keeps durable cancellation terminal when legacy claim recovery scans it", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const cancelledItemId = randomUUID();
+    const eligibleItemId = randomUUID();
+    const cancelledAt = new Date("2026-07-20T09:52:46.951Z");
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Legacy Cancel Fence Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Legacy Cancel Fence Org"),
+      issuePrefix: `L${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Legacy cancelled claim recovery chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatQueuedMessages).values([
+      {
+        id: cancelledItemId,
+        orgId,
+        conversationId,
+        position: 1,
+        status: "dequeue_claimed",
+        clientMutationId: "legacy-cancelled-stale-claim",
+        payload: { body: "This cancelled legacy claim must never run" },
+        requestActor: boardQueueRequestActor(orgId),
+        cancelledAt,
+        updatedAt: new Date("2020-01-01T00:00:00.000Z"),
+      },
+      {
+        id: eligibleItemId,
+        orgId,
+        conversationId,
+        position: 2,
+        status: "queued",
+        clientMutationId: "legacy-eligible-after-cancelled-claim",
+        payload: { body: "This legacy follow-up remains eligible" },
+        requestActor: boardQueueRequestActor(orgId),
+      },
+    ]);
+
+    const claimed = await chatSvc.claimNextQueuedMessage(conversationId);
+
+    expect(claimed?.id).toBe(eligibleItemId);
+    const [cancelledItem] = await db
+      .select()
+      .from(chatQueuedMessages)
+      .where(eq(chatQueuedMessages.id, cancelledItemId));
+    expect(cancelledItem).toMatchObject({
+      status: "cancelled",
+      deliveryDisposition: "cancelled",
+      cancelledAt,
+      lastDeliveryReason: "operator_cancelled",
+      deliveryAttempts: 0,
+    });
+  });
+
+  it("leaves stale server claims to server recovery when the legacy queue scans", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const generationId = randomUUID();
+    const serverItemId = randomUUID();
+    const eligibleItemId = randomUUID();
+    const leaseToken = randomUUID();
+    const cancelledAt = new Date("2026-07-20T09:52:46.951Z");
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Server Claim Ownership Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Server Claim Ownership Org"),
+      issuePrefix: `O${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Server claim recovery ownership chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      id: generationId,
+      orgId,
+      conversationId,
+      status: "active",
+      attemptEpoch: 0,
+    });
+    await db.insert(chatQueuedMessages).values([
+      {
+        id: serverItemId,
+        orgId,
+        conversationId,
+        position: 1,
+        status: "dequeue_claimed",
+        clientMutationId: "cancelled-stale-server-claim-for-recovery",
+        payload: { body: "Only server recovery may close this claim" },
+        requestActor: boardQueueRequestActor(orgId),
+        continuationGenerationId: generationId,
+        deliveryLeaseToken: leaseToken,
+        deliveryLeaseEpoch: 2,
+        deliveryLeaseOwner: "expired-server-worker",
+        deliveryLeaseExpiresAt: new Date("2020-01-01T00:00:00.000Z"),
+        cancelledAt,
+        updatedAt: new Date("2020-01-01T00:00:00.000Z"),
+      },
+      {
+        id: eligibleItemId,
+        orgId,
+        conversationId,
+        position: 2,
+        status: "queued",
+        clientMutationId: "legacy-eligible-beside-server-claim",
+        payload: { body: "This legacy follow-up remains eligible" },
+        requestActor: boardQueueRequestActor(orgId),
+      },
+    ]);
+
+    const claimed = await chatSvc.claimNextQueuedMessage(conversationId);
+
+    expect(claimed?.id).toBe(eligibleItemId);
+    const [beforeServerRecovery] = await db
+      .select()
+      .from(chatQueuedMessages)
+      .where(eq(chatQueuedMessages.id, serverItemId));
+    expect(beforeServerRecovery).toMatchObject({
+      status: "dequeue_claimed",
+      continuationGenerationId: generationId,
+      deliveryLeaseToken: leaseToken,
+      cancelledAt,
+    });
+
+    const recovered = await chatSvc.recoverExpiredServerQueueClaims();
+
+    expect(recovered).toEqual({ inspected: 1, requeued: 0, ambiguous: 1 });
+    const [afterServerRecovery] = await db
+      .select()
+      .from(chatQueuedMessages)
+      .where(eq(chatQueuedMessages.id, serverItemId));
+    expect(afterServerRecovery).toMatchObject({
+      status: "cancelled",
+      deliveryDisposition: "cancelled",
+      continuationGenerationId: null,
+      deliveryLeaseToken: null,
+      lastDeliveryReason: "operator_cancelled",
+    });
+    const [generation] = await db
+      .select()
+      .from(chatGenerations)
+      .where(eq(chatGenerations.id, generationId));
+    expect(generation).toMatchObject({
+      status: "aborted",
+      terminalReason: "operator_cancelled",
+      controlState: "terminal",
+    });
+  });
+
   it("paginates Messenger thread summaries with stable cursors", async () => {
     const orgId = randomUUID();
     const userId = "board-user-thread-pagination";
