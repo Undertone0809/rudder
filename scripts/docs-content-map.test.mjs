@@ -687,6 +687,25 @@ test("canonical route collision exemptions only recognize the approved legacy ho
   assert.ok(collectIntegrityErrors({ manifest }).some((error) => error === "host-hijack: active redirect source collides with canonical URL /about"));
 });
 
+test("conditional host redirects are Vercel-only and never lose host scope in Mintlify", () => {
+  const manifest = structuredClone(loadManifest());
+  manifest.redirects.push({
+    id: "mintlify-host-hijack",
+    source: "/about",
+    destination: "/contact",
+    permanent: true,
+    targets: ["mintlify", "vercel"],
+    status: "active",
+    owner_page: "contact",
+    locale: "en",
+    has: [{ type: "host", value: "doc.rudder.zeeland.studio" }],
+  });
+  manifest.pages.find((page) => page.id === "contact").aliases.push("mintlify-host-hijack");
+  const errors = collectIntegrityErrors({ manifest });
+  assert.ok(errors.some((error) => error === "mintlify-host-hijack: conditional redirects may target only vercel"));
+  assert.ok(errors.some((error) => error === "mintlify-host-hijack: active redirect source collides with canonical URL /about"));
+});
+
 test("Chinese UI label allowlist is sorted, unique, and covers all rewritten pages", () => {
   const allowlist = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "doc/engineering/public-docs/ui-label-allowlist.json"), "utf8"));
   assert.deepEqual(allowlist.labels, [...new Set(allowlist.labels)].sort());
@@ -809,6 +828,12 @@ test("alignment classifications suppress only the reviewed content fingerprint",
       classifications: [{ ...record, classification: "intentional", reviewed_revision: "test-revision" }],
     };
     assert.ok(!runAlignment({ root, manifest, reviews }).warnings.includes(record.reminder));
+    const emptyRevision = structuredClone(reviews);
+    emptyRevision.classifications[0].reviewed_revision = "";
+    assert.ok(runAlignment({ root, manifest, reviews: emptyRevision }).warnings.includes(record.reminder));
+    const whitespaceRevision = structuredClone(reviews);
+    whitespaceRevision.classifications[0].reviewed_revision = "   ";
+    assert.ok(runAlignment({ root, manifest, reviews: whitespaceRevision }).warnings.includes(record.reminder));
     fs.writeFileSync(path.join(root, "source/fact.md"), "changed fact\n");
     assert.ok(runAlignment({ root, manifest, reviews }).warnings.includes(record.reminder));
   } finally {
@@ -828,6 +853,20 @@ test("real examples require existing permission and evidence locators", () => {
   const missingAnchor = structuredClone(loadManifest());
   missingAnchor.examples.find((example) => example.id === "steer-fix").evidence.push("docs/releases.mdx#not-real");
   assert.ok(collectIntegrityErrors({ manifest: missingAnchor }).some((error) => error.includes("missing anchor #not-real")));
+
+  const directoryLocator = structuredClone(loadManifest());
+  directoryLocator.examples.find((example) => example.id === "steer-fix").evidence.push(".#x");
+  assert.ok(collectIntegrityErrors({ manifest: directoryLocator }).some((error) => error.includes("locator must reference a file")));
+
+  const traversalLocator = structuredClone(loadManifest());
+  traversalLocator.examples.find((example) => example.id === "steer-fix").evidence.push(path.relative(REPO_ROOT, process.execPath));
+  assert.ok(collectIntegrityErrors({ manifest: traversalLocator }).some((error) => error.includes("locator must stay within the repository root")));
+
+  for (const invalidLocator of ["#anchor", "docs/releases.mdx#"]) {
+    const invalid = structuredClone(loadManifest());
+    invalid.examples.find((example) => example.id === "steer-fix").evidence.push(invalidLocator);
+    assert.ok(collectIntegrityErrors({ manifest: invalid }).some((error) => error.includes("optional nonempty anchor")));
+  }
 });
 
 function faultInjectedFileSystem({ renameSync, unlinkSync } = {}) {

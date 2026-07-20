@@ -744,7 +744,14 @@ function collectRedirectErrors(manifest, canonicalUrls, declaredUrls = canonical
       errors.push(`${label}: invalid active redirect destination ${redirect.destination}`);
     }
 
-    if (redirect.status === "active" && hasSource && canonicalUrls.has(redirect.source) && (!hostCondition || !allowedLegacyHosts.has(hostCondition))) {
+    const hasApprovedVercelHostScope = Boolean(hostCondition)
+      && allowedLegacyHosts.has(hostCondition)
+      && targets.length > 0
+      && targets.every((target) => target === "vercel");
+    if (hostCondition && targets.some((target) => target !== "vercel")) {
+      errors.push(`${label}: conditional redirects may target only vercel`);
+    }
+    if (redirect.status === "active" && hasSource && canonicalUrls.has(redirect.source) && !hasApprovedVercelHostScope) {
       errors.push(`${label}: active redirect source collides with canonical URL ${redirect.source}`);
     }
 
@@ -1016,10 +1023,26 @@ export function collectIntegrityErrors({ root = REPO_ROOT, manifest = loadManife
       if (!["rudder-0-5-0-release", "steer-fix"].includes(example.id)) errors.push(`${example.id}: is not approved as a real case`);
       for (const field of ["permission_evidence", "evidence"]) {
         for (const locator of example[field]) {
-          const [relativeFile, anchor] = locator.split("#", 2);
-          const absoluteFile = path.join(root, relativeFile);
+          const hashIndex = locator.indexOf("#");
+          const relativeFile = hashIndex === -1 ? locator : locator.slice(0, hashIndex);
+          const anchor = hashIndex === -1 ? null : locator.slice(hashIndex + 1);
+          if (!relativeFile || (hashIndex !== -1 && !anchor)) {
+            errors.push(`${example.id}: ${field} locator must be a file path with an optional nonempty anchor: ${locator}`);
+            continue;
+          }
+          const absoluteRoot = path.resolve(root);
+          const absoluteFile = path.resolve(absoluteRoot, relativeFile);
+          const relativeToRoot = path.relative(absoluteRoot, absoluteFile);
+          if (relativeToRoot === ".." || relativeToRoot.startsWith(`..${path.sep}`) || path.isAbsolute(relativeToRoot)) {
+            errors.push(`${example.id}: ${field} locator must stay within the repository root: ${locator}`);
+            continue;
+          }
           if (!fs.existsSync(absoluteFile)) {
             errors.push(`${example.id}: ${field} locator is missing ${relativeFile}`);
+            continue;
+          }
+          if (!fs.statSync(absoluteFile).isFile()) {
+            errors.push(`${example.id}: ${field} locator must reference a file: ${relativeFile}`);
             continue;
           }
           if (anchor && !hasAnchor(fs.readFileSync(absoluteFile, "utf8"), anchor)) {
@@ -1140,16 +1163,19 @@ export function runAlignment({ root = REPO_ROOT, manifest = loadManifest(root), 
   const reviewPath = path.join(root, manifest.alignment_reviews);
   const reviews = suppliedReviews ?? JSON.parse(fs.readFileSync(reviewPath, "utf8"));
   const warnings = [];
+  const isNonblankString = (value) => typeof value === "string" && value.trim().length > 0;
   for (const item of reviews.classifications) {
     if (!reviews.allowed_classifications.includes(item.classification)) {
       warnings.push(`review classification for ${item.reminder} must be fixed, intentional, or false-positive`);
     }
-    if (typeof item.fingerprint !== "string" || typeof item.reviewed_revision !== "string") {
+    if (!isNonblankString(item.fingerprint) || !isNonblankString(item.reviewed_revision)) {
       warnings.push(`review classification for ${item.reminder} requires fingerprint and reviewed_revision`);
     }
   }
   const classified = new Set(reviews.classifications
-    .filter((item) => reviews.allowed_classifications.includes(item.classification))
+    .filter((item) => reviews.allowed_classifications.includes(item.classification)
+      && isNonblankString(item.fingerprint)
+      && isNonblankString(item.reviewed_revision))
     .map((item) => `${item.reminder}\0${item.fingerprint}`));
   const records = alignmentReminderRecords({ root, manifest });
   warnings.push(...records
