@@ -535,6 +535,7 @@ describe("applyPendingMigrations", () => {
           "0104_unusual_mister_fear.sql",
           "0105_chat_queue_actor_reconciliation.sql",
           "0106_damp_amphibian.sql",
+          "0107_daffy_luke_cage.sql",
         ],
         reason: "pending-migrations",
       });
@@ -661,6 +662,7 @@ describe("applyPendingMigrations", () => {
           "0103_cute_colonel_america.sql",
           "0105_chat_queue_actor_reconciliation.sql",
           "0106_damp_amphibian.sql",
+          "0107_daffy_luke_cage.sql",
         ],
         reason: "pending-migrations",
       });
