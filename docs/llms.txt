@@ -30,10 +30,15 @@ Rudder is useful when agent work needs to be assigned, run, reviewed, budgeted, 
 - [Configure Feishu Or Lark For A Rudder Agent](https://docs.rudderhq.dev/how-to/configure-feishu-integration): Connect one Rudder agent to one Feishu or Lark bot and add the `/new` and `/stop` commands.
 - [Configure Codex, Claude Code, Or Another Agent Runtime](https://docs.rudderhq.dev/how-to/configure-agent-runtime): Connect local CLI, shell process, webhook, or gateway-backed runtimes.
 
+## Benchmarks
+
+- [GDPval Harness Benchmark](https://docs.rudderhq.dev/benchmarks/gdpval-harness): Protocol, correction, score definition, case-level results, and limitations from a recovered 10-task exploratory comparison of Rudder, Codex CLI, and Claude Code.
+
 ## Chinese docs
 
 - [Rudder 中文首页](https://docs.rudderhq.dev/zh): 中文产品介绍和入口。
 - [快速开始](https://docs.rudderhq.dev/zh/get-started/installation): 用 CLI 安装并启动 Rudder Desktop。
 - [创建第一个组织](https://docs.rudderhq.dev/zh/get-started/first-organization): 用真实任务走通第一条人类-agent 协作循环。
 - [内置 Browser](https://docs.rudderhq.dev/zh/concepts/built-in-browser): 理解共享网站 session、agent 控制隔离和本地平台边界。
+- [GDPval Harness Benchmark](https://docs.rudderhq.dev/zh/benchmarks/gdpval-harness): Rudder、Codex CLI 和 Claude Code 的 10 任务探索性对比协议、修正、评分与限制。
 - [版本发布](https://docs.rudderhq.dev/zh/releases): Rudder 稳定版本发布记录和升级说明。
