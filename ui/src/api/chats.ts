@@ -9,6 +9,7 @@ import type {
   ChatQueueSnapshot,
   ChatQueuedMessage,
   ChatQueuedMessagePayload,
+  ChatRuntimeDescriptor,
   ChatSteerResponse,
   ChatStreamEvent,
   ChatStreamTranscriptEntry,
@@ -42,6 +43,63 @@ export type ChatSteerQueuedMessageRequest = {
   renderedBodyHash?: string;
 };
 
+export type ChatDraftRequest = {
+  preferredAgentId: string;
+  issueCreationMode: ChatIssueCreationMode;
+  planMode: boolean;
+  contextLinks: Array<{ entityType: "issue" | "project" | "agent"; entityId: string }>;
+};
+
+export type ChatFirstMessageStreamOptions = ChatDraftRequest & {
+  signal?: AbortSignal;
+  files?: File[];
+  onEvent: (event: ChatStreamEvent) => Promise<void> | void;
+};
+
+async function consumeChatStreamResponse(
+  res: Response,
+  onEvent: (event: ChatStreamEvent) => Promise<void> | void,
+) {
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => null);
+    throw new ApiError(
+      (errorBody as { error?: string } | null)?.error ?? `Request failed: ${res.status}`,
+      res.status,
+      errorBody,
+    );
+  }
+
+  if (!res.body) {
+    throw new Error("Streaming response body was unavailable");
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const emitLine = async (line: string) => {
+    if (!line.trim()) return;
+    await onEvent(JSON.parse(line) as ChatStreamEvent);
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      await emitLine(line);
+    }
+
+    if (done) break;
+  }
+
+  if (buffer.trim()) {
+    await emitLine(buffer);
+  }
+}
+
 export const chatsApi = {
   list: (
     orgId: string,
@@ -67,6 +125,8 @@ export const chatsApi = {
       contextLinks?: Array<{ entityType: "issue" | "project" | "agent"; entityId: string }>;
     },
   ) => api.post<ChatConversation>(`/orgs/${orgId}/chats`, data),
+  preflightDraft: (orgId: string, data: ChatDraftRequest) =>
+    api.post<ChatRuntimeDescriptor>(`/orgs/${orgId}/chats/preflight`, data),
   get: (chatId: string) => api.get<ChatConversation>(`/chats/${chatId}`),
   getWorkManifest: (chatId: string) =>
     api.get<ChatWorkManifestResponse>(`/chats/${chatId}/work-manifest`),
@@ -114,6 +174,42 @@ export const chatsApi = {
     ),
   sendMessage: (chatId: string, body: string) =>
     api.post<{ messages: ChatMessage[] }>(`/chats/${chatId}/messages`, { body }),
+  sendFirstMessageStream: async (
+    orgId: string,
+    body: string,
+    options: ChatFirstMessageStreamOptions,
+  ) => {
+    const files = options.files ?? [];
+    const requestBody = files.length > 0
+      ? (() => {
+        const form = new FormData();
+        form.append("body", body);
+        form.append("preferredAgentId", options.preferredAgentId);
+        form.append("issueCreationMode", options.issueCreationMode);
+        form.append("planMode", String(options.planMode));
+        form.append("contextLinks", JSON.stringify(options.contextLinks));
+        for (const file of files) {
+          form.append("files", file, file.name || "attachment");
+        }
+        return form;
+      })()
+      : JSON.stringify({
+        body,
+        preferredAgentId: options.preferredAgentId,
+        issueCreationMode: options.issueCreationMode,
+        planMode: options.planMode,
+        contextLinks: options.contextLinks,
+      });
+    const res = await fetch(`/api/orgs/${orgId}/chats/messages/stream`, {
+      method: "POST",
+      credentials: "include",
+      headers: files.length > 0 ? undefined : { "Content-Type": "application/json" },
+      body: requestBody,
+      signal: options.signal,
+    });
+
+    await consumeChatStreamResponse(res, options.onEvent);
+  },
   listQueue: (chatId: string) =>
     api.get<ChatQueueSnapshot>(`/chats/${chatId}/queue`),
   createQueuedMessage: (
