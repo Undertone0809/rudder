@@ -41,5 +41,6 @@ edit_policy: user_confirmed_only
 - `ORG.SETTINGS.001`: settings persist instance/operator/organization behavior
   without crossing scopes.
 - `ORG.ONBOARDING.001`: onboarding guides a fresh user to a real work surface.
-- `ORG.PORTABILITY.001`: export/import moves organization knowledge with
-  previewable, scoped mutations.
+- `ORG.PORTABILITY.001`: export/import moves the explicitly supported
+  organization configuration and work records with previewable, scoped
+  mutations.

@@ -40,7 +40,8 @@ Product model:
 
 - An automation belongs to one organization.
 - It may bind to project, goal, parent issue, and assignee agent.
-- It has status such as active, paused, or archived.
+- Its current lifecycle statuses are active and paused. The product does not
+  expose an archived Automation state or Archive action.
 - Output mode is either tracked issue or chat output.
 - The create composer defaults custom automations to chat output and lets the
   operator explicitly switch between chat output and tracked issue output.
