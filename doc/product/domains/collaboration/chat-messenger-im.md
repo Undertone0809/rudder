@@ -175,6 +175,9 @@ Product model:
 - Entry points that only establish context, such as Project `Chat`, open an
   unpersisted new-chat draft. They must not create an empty conversation merely
   because the operator opened the composer.
+- No Chat may persist without at least one durable message or structured system
+  event. The first accepted message is the atomic creation boundary across UI,
+  API, CLI, MCP, automation, and IM entry points.
 - Messages have role, status, body, attachments, rich references, structured
   payloads, and optional run attribution.
 - A conversation Work manifest reconciles inspectable Outputs, Sources, and
@@ -260,40 +263,46 @@ Flow:
    then a complete prompt suggestion before editing or sending the draft.
 3. Composer includes a selected agent and may include attachments, mentions,
    rich references, selected skills, and structured proposal payloads.
-4. On the first send, the server persists the agent-backed conversation, user
-   message, and context links. Direct create callers that omit the agent receive
-   the organization's first available agent; creation fails when none exists.
-5. If a runtime assistant is invoked, Rudder creates a chat Agent Run and
+4. Before the first send, the server performs a side-effect-free preflight for
+   organization access, Agent/runtime/model support, context ownership, and
+   attachment validity. A failure keeps the complete unpersisted draft.
+5. On the first accepted send, the server atomically persists the agent-backed
+   conversation, context links, first message, title, and activity before
+   acknowledging the turn. Direct create callers must supply a non-empty first
+   message; the server derives its role from the authenticated actor.
+6. If assistant startup or generation fails after acceptance, Rudder retains
+   the accepted user message and durable, visible failure evidence.
+7. If a runtime assistant is invoked, Rudder creates a chat Agent Run and
    streams/persists assistant messages.
-6. Chat can continue executing the task conversationally or create/link an
+8. Chat can continue executing the task conversationally or create/link an
    issue, automation, or approval when the operator asks for that additional
    structure. The assistant must not emit an issue proposal merely because the
    work is large, durable, assignable, or issue-shaped.
-7. When the operator refreshes a completed assistant answer, Rudder reuses the
+9. When the operator refreshes a completed assistant answer, Rudder reuses the
    original turn context, creates a new turn variant, and surfaces branch
    controls for moving between variants.
-8. While the refreshed or edited variant is still streaming, the operator may
+10. While the refreshed or edited variant is still streaming, the operator may
    switch the visible turn branch back to an earlier variant to inspect prior
    user and assistant content. The current stream continues in the background,
    generation controls remain available, and returning to the active/latest
    variant shows the live stream draft again.
-9. If the operator sends another local follow-up while the selected chat has an
+11. If the operator sends another local follow-up while the selected chat has an
    active generation, Rudder creates a queued follow-up with the current draft,
    attachments, selected project, skills, model/effort, access mode, and
    expected active generation id.
-10. The queue renders beside the composer with stable ordering. The first queued
+12. The queue renders beside the composer with stable ordering. The first queued
    item is marked as next, later items show their queue position, and editable
    queued items expose edit/delete controls.
-11. When the operator chooses Steer, Rudder atomically persists the durable
+13. When the operator chooses Steer, Rudder atomically persists the durable
    control action, one normal user message, their queue linkage, and message
    activity evidence before attempting provider delivery. That
    message stays in the conversation whether delivery is native, deferred,
    unknown, or actionable failure; delivery status remains separate evidence.
-12. When the current reply completes, a server-owned worker claims the next
+14. When the current reply completes, a server-owned worker claims the next
    eligible queued follow-up, sends it as the next chat turn, and hides the
    queued row after it is linked to the delivered user message. Delivery does
    not depend on the originating page remaining open.
-13. If the current reply is stopped, fails, or is otherwise not completed,
+15. If the current reply is stopped, fails, or is otherwise not completed,
    ordinary queued follow-ups stay parked and are not silently flushed. The
    operator may explicitly Steer retained feedback; Rudder then persists a
    continuation, waits for the prior owner to terminate, and starts that
@@ -302,6 +311,17 @@ Flow:
 Invariants:
 
 - Chat messages must remain tied to their conversation and organization.
+- A Chat transaction must not commit a conversation before its first message or
+  structured system event. Preflight, validation, permission, context,
+  attachment-preparation, Agent, runtime, and model failures are side-effect
+  free and must not add Messenger rows, activities, or bindings.
+- After the first message is accepted, runtime startup and generation failures
+  are real work evidence: the Chat, accepted message, and durable visible error
+  remain inspectable.
+- Production code may create `chat_conversations` only through approved
+  lifecycle services. Automation and IM bindings must share the atomic first
+  event transaction; Fork and Side Chat must copy history or add a system event
+  before commit.
 - A locally created native conversation must not persist without a preferred
   organization agent, and an existing native conversation cannot clear that
   assignment through the Chat update API. Agent-organized Messenger views must
@@ -394,6 +414,12 @@ Invariants:
 
 Evidence:
 
+- Atomic first-turn route/UI tests cover side-effect-free preflight, required
+  initial bodies, multipart context normalization, no pre-ack navigation or
+  clearing, one ack-created Chat, and durable startup-failure evidence.
+- Automation, Feishu, lifecycle architecture, and migration tests cover atomic
+  internal first events, prohibited direct conversation inserts, orphan
+  deletion, bound-row recovery, Messenger hiding, and IM binding invalidation.
 - Chat E2E covers rich references, skill picker, duplicate-free agent-enabled
   skill mentions, attachments, draft persistence, and attribution navigation.
 - Chat scroll-map focused tests cover the visible-message filter, the 64-marker
