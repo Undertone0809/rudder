@@ -5636,6 +5636,141 @@ describe("messengerService and issue follows", () => {
       .where(eq(activityLog.entityType, "messenger_saved_view"));
     expect(placementActions.some((event) => event.action === "messenger.saved_view_group_assigned")).toBe(true);
     expect(placementActions.some((event) => event.action === "messenger.saved_view_group_reordered")).toBe(true);
+
+    const reorderActivityCount = placementActions.filter((event) => (
+      event.action === "messenger.saved_view_group_reordered"
+    )).length;
+    await messengerSvc.reorderCustomGroupEntries(orgId, userId, groupId, [
+      `saved-view:${c.id}`,
+      `saved-view:${b.id}`,
+      `saved-view:${a.id}`,
+    ]);
+    const noOpReorderActivityCount = (await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "messenger.saved_view_group_reordered"))).length;
+    expect(noOpReorderActivityCount).toBe(reorderActivityCount);
+  });
+
+  it("serializes Saved View deletion against group assignment without leaving orphan membership", async () => {
+    const orgId = randomUUID();
+    const userId = "saved-view-delete-assign-user";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Saved View Delete Assign Org",
+      urlKey: deriveOrganizationUrlKey("Saved View Delete Assign Org"),
+      issuePrefix: `DA${orgId.replace(/-/g, "").slice(0, 4).toUpperCase()}`,
+    });
+    const savedView = await savedViewsSvc.create(orgId, userId, {
+      target: { kind: "browser", tabId: "delete-assign", url: "https://example.test/delete-assign" },
+      title: "Delete assign race",
+    });
+    const group = await messengerSvc.createCustomGroup(orgId, userId, "Race group");
+
+    await Promise.allSettled([
+      savedViewsSvc.remove(orgId, userId, savedView.id),
+      messengerSvc.assignThreadToCustomGroup(orgId, userId, group.id, `saved-view:${savedView.id}`),
+    ]);
+
+    expect(await db
+      .select()
+      .from(messengerCustomGroupEntries)
+      .where(eq(messengerCustomGroupEntries.threadKey, `saved-view:${savedView.id}`))).toEqual([]);
+    await expect(savedViewsSvc.get(orgId, userId, savedView.id)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("serializes concurrent mixed Saved View and thread assignments into unique stable group slots", async () => {
+    const orgId = randomUUID();
+    const userId = "saved-view-mixed-placement-user";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Saved View Mixed Placement Org",
+      urlKey: deriveOrganizationUrlKey("Saved View Mixed Placement Org"),
+      issuePrefix: `MP${orgId.replace(/-/g, "").slice(0, 4).toUpperCase()}`,
+    });
+    const savedViews = [];
+    for (const index of Array.from({ length: 6 }, (_, value) => value)) {
+      savedViews.push(await savedViewsSvc.create(orgId, userId, {
+        target: { kind: "browser", tabId: `mixed-${index}`, url: `https://example.test/mixed/${index}` },
+        title: `Mixed saved ${index}`,
+      }));
+    }
+    const conversationIds = Array.from({ length: 6 }, () => randomUUID());
+    await db.insert(chatConversations).values(conversationIds.map((id, index) => ({
+      id,
+      orgId,
+      title: `Mixed chat ${index}`,
+      issueCreationMode: "manual_approval" as const,
+      planMode: false,
+      createdByUserId: userId,
+    })));
+    const group = await messengerSvc.createCustomGroup(orgId, userId, "Mixed group");
+    const itemKeys = [
+      ...savedViews.map((savedView) => `saved-view:${savedView.id}`),
+      ...conversationIds.map((id) => `chat:${id}`),
+    ];
+
+    await Promise.all(itemKeys.map((itemKey) => (
+      messengerSvc.assignThreadToCustomGroup(orgId, userId, group.id, itemKey)
+    )));
+
+    const firstRead = await db
+      .select()
+      .from(messengerCustomGroupEntries)
+      .where(eq(messengerCustomGroupEntries.groupId, group.id))
+      .orderBy(messengerCustomGroupEntries.sortOrder);
+    const secondRead = await db
+      .select()
+      .from(messengerCustomGroupEntries)
+      .where(eq(messengerCustomGroupEntries.groupId, group.id))
+      .orderBy(messengerCustomGroupEntries.sortOrder);
+    expect(firstRead).toHaveLength(itemKeys.length);
+    expect(firstRead.map((entry) => entry.sortOrder)).toEqual(itemKeys.map((_, index) => index));
+    expect(secondRead.map((entry) => entry.id)).toEqual(firstRead.map((entry) => entry.id));
+  });
+
+  it("audits Saved membership removed by group deletion and omits no-op removal evidence", async () => {
+    const orgId = randomUUID();
+    const userId = "saved-view-removal-audit-user";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Saved View Removal Audit Org",
+      urlKey: deriveOrganizationUrlKey("Saved View Removal Audit Org"),
+      issuePrefix: `RA${orgId.replace(/-/g, "").slice(0, 4).toUpperCase()}`,
+    });
+    const grouped = await savedViewsSvc.create(orgId, userId, {
+      target: { kind: "automation", automationId: randomUUID() },
+      title: "Grouped removal audit",
+    });
+    const ungrouped = await savedViewsSvc.create(orgId, userId, {
+      target: { kind: "automation", automationId: randomUUID() },
+      title: "Ungrouped no-op",
+    });
+    const group = await messengerSvc.createCustomGroup(orgId, userId, "Delete audit group");
+    await messengerSvc.assignThreadToCustomGroup(orgId, userId, group.id, `saved-view:${grouped.id}`);
+
+    await messengerSvc.deleteCustomGroup(orgId, userId, group.id);
+    const groupedRemovalEvents = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.entityId, grouped.id));
+    expect(groupedRemovalEvents.filter((event) => event.action === "messenger.saved_view_group_removed")).toHaveLength(1);
+    expect(groupedRemovalEvents.find((event) => event.action === "messenger.saved_view_group_removed")?.details)
+      .toMatchObject({ groupId: group.id, source: "group_delete" });
+
+    await messengerSvc.removeThreadFromCustomGroups(orgId, userId, `saved-view:${ungrouped.id}`);
+    const missingSavedViewId = randomUUID();
+    await expect(messengerSvc.removeThreadFromCustomGroups(
+      orgId,
+      userId,
+      `saved-view:${missingSavedViewId}`,
+    )).rejects.toMatchObject({ status: 404 });
+    const noOpRemovalEvents = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.entityId, ungrouped.id));
+    expect(noOpRemovalEvents.some((event) => event.action === "messenger.saved_view_group_removed")).toBe(false);
+    expect(await db.select().from(activityLog).where(eq(activityLog.entityId, missingSavedViewId))).toEqual([]);
   });
 
   it("bounds Saved View pages and reports production-shaped pagination", async () => {

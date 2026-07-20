@@ -23,6 +23,32 @@ export type MessengerSavedViewListOptions = {
   offset?: number;
 };
 
+function savedViewPlacementLockKey(orgId: string, userId: string) {
+  return `messenger-saved-views:${orgId}:${userId}`;
+}
+
+function customGroupPlacementLockKey(orgId: string, userId: string, groupId: string) {
+  return `messenger-custom-group:${orgId}:${userId}:${groupId}`;
+}
+
+/**
+ * Serializes all Saved View identity and placement mutations for one owner.
+ * Callers that also need a group lock must acquire this lock first.
+ */
+export async function lockMessengerSavedViewPlacement(database: Db, orgId: string, userId: string) {
+  await database.execute(sql`select pg_advisory_xact_lock(hashtext(${savedViewPlacementLockKey(orgId, userId)}))`);
+}
+
+/** Serializes entry allocation and mutation within one custom group. */
+export async function lockMessengerCustomGroupPlacement(
+  database: Db,
+  orgId: string,
+  userId: string,
+  groupId: string,
+) {
+  await database.execute(sql`select pg_advisory_xact_lock(hashtext(${customGroupPlacementLockKey(orgId, userId, groupId)}))`);
+}
+
 function assertSavedViewId(id: string) {
   const parsed = messengerSavedViewIdSchema.safeParse(id);
   if (!parsed.success) throw badRequest("Invalid Messenger Saved View id");
@@ -61,12 +87,6 @@ export function messengerSavedViewsService(db: Db) {
     eq(messengerSavedViews.orgId, orgId),
     eq(messengerSavedViews.userId, userId),
   );
-  const placementLockKey = (orgId: string, userId: string) => `messenger-saved-views:${orgId}:${userId}`;
-
-  async function lockPlacement(database: Db, orgId: string, userId: string) {
-    await database.execute(sql`select pg_advisory_xact_lock(hashtext(${placementLockKey(orgId, userId)}))`);
-  }
-
   async function logMutation(
     database: Db,
     orgId: string,
@@ -147,7 +167,7 @@ export function messengerSavedViewsService(db: Db) {
     const resourceKey = messengerSavedViewResourceKey(target);
     return db.transaction(async (tx) => {
       const txDb = tx as unknown as Db;
-      await lockPlacement(txDb, orgId, userId);
+      await lockMessengerSavedViewPlacement(txDb, orgId, userId);
       const existing = await txDb
         .select()
         .from(messengerSavedViews)
@@ -212,7 +232,7 @@ export function messengerSavedViewsService(db: Db) {
     const target = patch.target ? validatedTarget(patch.target) : undefined;
     return db.transaction(async (tx) => {
       const txDb = tx as unknown as Db;
-      await lockPlacement(txDb, orgId, userId);
+      await lockMessengerSavedViewPlacement(txDb, orgId, userId);
       const existing = await getWithDb(txDb, orgId, userId, validId);
       if (target && messengerSavedViewResourceKey(target) !== existing.resourceKey) {
         throw badRequest("Saved View target identity cannot be changed");
@@ -248,7 +268,7 @@ export function messengerSavedViewsService(db: Db) {
     const validIds = ids.map(assertSavedViewId);
     await db.transaction(async (tx) => {
       const txDb = tx as unknown as Db;
-      await lockPlacement(txDb, orgId, userId);
+      await lockMessengerSavedViewPlacement(txDb, orgId, userId);
       const placements = await txDb
         .select({
           id: messengerSavedViews.id,
@@ -287,8 +307,19 @@ export function messengerSavedViewsService(db: Db) {
     const validId = assertSavedViewId(id);
     return db.transaction(async (tx) => {
       const txDb = tx as unknown as Db;
-      await lockPlacement(txDb, orgId, userId);
+      await lockMessengerSavedViewPlacement(txDb, orgId, userId);
       const existing = await getWithDb(txDb, orgId, userId, validId);
+      const memberships = await txDb
+        .select({ groupId: messengerCustomGroupEntries.groupId })
+        .from(messengerCustomGroupEntries)
+        .where(and(
+          eq(messengerCustomGroupEntries.orgId, orgId),
+          eq(messengerCustomGroupEntries.userId, userId),
+          eq(messengerCustomGroupEntries.threadKey, messengerSavedViewItemKey(validId)),
+        ));
+      for (const groupId of [...new Set(memberships.map((membership) => membership.groupId))].sort()) {
+        await lockMessengerCustomGroupPlacement(txDb, orgId, userId, groupId);
+      }
       await txDb
         .delete(messengerCustomGroupEntries)
         .where(and(
