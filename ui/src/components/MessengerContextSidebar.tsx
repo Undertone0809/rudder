@@ -5,6 +5,7 @@ import { ApiError } from "@/api/client";
 import { messengerApi } from "@/api/messenger";
 import { organizationsApi } from "@/api/orgs";
 import { projectsApi } from "@/api/projects";
+import { AgentIcon } from "@/components/AgentAvatar";
 import {
   composeCustomGroupIconValue,
   CUSTOM_GROUP_COLOR_OPTIONS,
@@ -1888,6 +1889,12 @@ export function MessengerContextSidebar() {
     draggingSection = false,
   ) => {
     const isManagedSection = isManagedThreadGroupRule(effectiveThreadOrganizationRule);
+    const sectionAgentId = effectiveThreadOrganizationRule === "agent"
+      && section.key.startsWith("agent:")
+      && section.key !== "agent:none"
+      ? section.key.slice("agent:".length)
+      : null;
+    const sectionAgent = sectionAgentId ? agentsById.get(sectionAgentId) ?? null : null;
     const customGroup = effectiveThreadOrganizationRule === "custom" ? customGroupBySectionKey.get(section.key) ?? null : null;
     const customGroupTitleGenerating = Boolean(customGroup && generatingGroupTitleIds.has(customGroup.id));
     const displayedCustomGroup = customGroup;
@@ -2269,6 +2276,20 @@ export function MessengerContextSidebar() {
                     iconClassName="h-3.5 w-3.5"
                     testId={`messenger-thread-section-${sanitizeThreadKey(section.key)}-project-icon`}
                   />
+                ) : null}
+                {sectionAgentId ? (
+                  <span
+                    data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}-agent-avatar`}
+                    aria-hidden="true"
+                    className="flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-active)_78%,transparent)]"
+                  >
+                    <AgentIcon
+                      icon={sectionAgent?.icon}
+                      role={sectionAgent?.role}
+                      fallbackSeed={sectionAgent?.id ?? sectionAgentId}
+                      className="h-full w-full rounded-full"
+                    />
+                  </span>
                 ) : null}
                 <span className="min-w-0 flex-1 truncate">{section.label}</span>
                 {attentionCount > 0 ? (

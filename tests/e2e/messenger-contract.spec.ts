@@ -642,6 +642,7 @@ test.describe("Messenger unified threads contract", () => {
       data: {
         name: "Holden Reviewer",
         role: "qa",
+        icon: "dicebear:notionists:cccccccc-cccc-4ccc-8ccc-cccccccccccc",
         agentRuntimeType: "process",
         agentRuntimeConfig: {},
       },
@@ -710,9 +711,28 @@ test.describe("Messenger unified threads contract", () => {
     const looseChatTestId = threadTestId(`chat:${looseChat.id}`);
     const assignedIssueTestId = threadTestId(`issue:${assignedIssue.id}`);
     await expect(page.getByTestId(agentSectionTestId)).toBeVisible({ timeout: 15_000 });
+    const agentSectionAvatar = page.getByTestId(`${agentSectionTestId}-agent-avatar`);
+    await expect(agentSectionAvatar).toBeVisible();
+    await expect(agentSectionAvatar.locator("img")).toBeVisible();
+    await expect.poll(async () => {
+      return await page.evaluate(({ sectionTestId, avatarTestId, agentName }) => {
+        const section = document.querySelector(`[data-testid="${sectionTestId}"]`);
+        const avatar = document.querySelector(`[data-testid="${avatarTestId}"]`);
+        const name = Array.from(section?.querySelectorAll("span") ?? [])
+          .find((element) => element.textContent === agentName);
+        if (!avatar || !name) return false;
+        return Boolean(avatar.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING);
+      }, {
+        sectionTestId: agentSectionTestId,
+        avatarTestId: `${agentSectionTestId}-agent-avatar`,
+        agentName: agent.name,
+      });
+    }).toBe(true);
     await expect(page.getByTestId(projectChatTestId)).toContainText("Project agent thread");
     await expect(page.getByTestId(assignedIssueTestId)).toContainText("Assigned split issue thread");
     await expect(page.getByTestId("messenger-thread-section-agent-none")).toBeVisible();
+    await expect(page.getByTestId("messenger-thread-section-agent-none-agent-avatar")).toHaveCount(0);
+    await expect(page.getByTestId("messenger-thread-section-system-agent-avatar")).toHaveCount(0);
     await expect(page.getByTestId(looseChatTestId)).toContainText("Loose no-agent thread");
     for (const rowTestId of [projectChatTestId, assignedIssueTestId]) {
       await expect.poll(async () => {
@@ -728,6 +748,7 @@ test.describe("Messenger unified threads contract", () => {
         return Boolean(section?.parentElement?.querySelector(`[data-testid="${rowTestId}"]`));
       }, { sectionTestId: "messenger-thread-section-agent-none", rowTestId: looseChatTestId });
     }).toBe(true);
+    await page.screenshot({ path: "/tmp/rudder-messenger-agent-group-avatar.png", fullPage: true });
 
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "project" }));
