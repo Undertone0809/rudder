@@ -6,8 +6,8 @@ import { queryKeys } from "@/lib/queryKeys";
 import { useLocation } from "@/lib/router";
 import type {
   MessengerApprovalThreadItem,
-  MessengerEvent,
   MessengerIssueThreadItem,
+  MessengerSystemThreadItem,
   MessengerSystemThreadKind,
   MessengerThreadDetail,
   MessengerThreadSummary,
@@ -33,7 +33,7 @@ export interface MessengerModel {
   loadMoreThreadSummaries: () => Promise<unknown>;
   issueThreadDetail: MessengerThreadDetail<MessengerIssueThreadItem> | null;
   approvalThreadDetail: MessengerThreadDetail<MessengerApprovalThreadItem> | null;
-  systemThreadDetail: MessengerThreadDetail<MessengerEvent> | null;
+  systemThreadDetail: MessengerThreadDetail<MessengerSystemThreadItem> | null;
   isLoading: boolean;
   error: Error | null;
 }

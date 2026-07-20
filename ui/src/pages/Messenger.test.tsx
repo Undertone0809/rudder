@@ -380,13 +380,28 @@ describe("Messenger page headers", () => {
           latestActivityAt: "2026-04-11T10:00:00.000Z",
           actions: [
             { label: "Retry", href: "/api/agent-runs/run-1/retry", method: "POST" },
+            { label: "Open issue", href: "/issues/issue-1", method: "GET" },
             { label: "Open run", href: "/heartbeats/run-1", method: "GET" },
           ],
           metadata: {
-            contextSnapshot: {
-              issueId: "issue-1",
-              issue: { title: "Recover the failed workspace bootstrap", status: "blocked" },
-            },
+            status: "failed",
+          },
+          origin: {
+            runId: "run-1",
+            scene: "issue",
+            targetType: "issue",
+            targetId: "issue-1",
+            triggerKind: "issue_comment",
+            invocationSource: "assignment",
+            conversationId: null,
+            messageId: null,
+            issueId: "issue-1",
+            automationId: null,
+            automationRunId: null,
+            wakeupRequestId: "wakeup-1",
+            targetLabel: "RUD-1 · Recover the failed workspace bootstrap",
+            targetStatus: "blocked",
+            sourceState: "available",
           },
         },
       ],
@@ -397,14 +412,138 @@ describe("Messenger page headers", () => {
     expect(html).toContain("Failed runs");
     expect(html).toContain("Recent failed agent runs");
     expect(html).toContain("Run failed for Messenger worker");
+    expect(html).toContain("Issue Run");
+    expect(html).toContain("Run run-1");
     expect(html).toContain("Recover the failed workspace bootstrap");
-    expect(html).toContain('data-testid="messenger-failed-run-issue-status-run-1"');
     expect(html).toContain("blocked");
     expect(html).toContain('href="/issues/issue-1"');
+    expect(html).toContain("Origin metadata");
+    expect(html).toContain("Wakeup request ID");
+    expect(html).toContain('aria-label="Copy full run ID run-1"');
     expect(html).toContain('data-variant="outline"');
-    expect(html).not.toContain("Open issue");
-    expect(html).not.toContain("Issue issue-1");
+    expect(html).toContain("Open issue");
     expect(html).not.toContain("1 items");
+  });
+
+  it("renders exact Chat deep links, heartbeat details, and missing-source fallbacks", () => {
+    messengerModel.systemThreadDetail = {
+      title: "Failed runs",
+      description: "Recent failed agent runs",
+      unreadCount: 3,
+      items: [
+        {
+          id: "chat-run-12345678",
+          kind: "failed-runs",
+          title: "Chat agent · Failed run",
+          subtitle: "failed",
+          body: "The run hit a system-level execution problem.",
+          preview: "The run hit a system-level execution problem.",
+          href: "/agents/agent-1/runs/chat-run-12345678",
+          latestActivityAt: "2026-04-11T08:00:00.000Z",
+          actions: [
+            {
+              label: "Open chat message",
+              href: "/messenger/chat/chat-1?messageId=message-1",
+              method: "GET",
+            },
+            { label: "Open run", href: "/agents/agent-1/runs/chat-run-12345678", method: "GET" },
+          ],
+          metadata: { status: "failed" },
+          origin: {
+            runId: "chat-run-12345678",
+            scene: "chat",
+            targetType: "chat_conversation",
+            targetId: "chat-1",
+            triggerKind: "chat_assistant_reply_stream",
+            invocationSource: "chat",
+            conversationId: "chat-1",
+            messageId: "message-1",
+            issueId: null,
+            automationId: null,
+            automationRunId: null,
+            wakeupRequestId: null,
+            targetLabel: "Failed deployment chat",
+            targetStatus: null,
+            sourceState: "available",
+          },
+        },
+        {
+          id: "heartbeat-run-12345678",
+          kind: "failed-runs",
+          title: "Ops agent · Failed run",
+          subtitle: "failed",
+          body: "The run hit a system-level execution problem.",
+          preview: "The run hit a system-level execution problem.",
+          href: "/agents/agent-1/runs/heartbeat-run-12345678",
+          latestActivityAt: "2026-04-11T09:00:00.000Z",
+          actions: [
+            {
+              label: "Open heartbeat details",
+              href: "/messenger/system/failed-runs?originRunId=heartbeat-run-12345678#run-origin-heartbeat-run-12345678",
+              method: "GET",
+            },
+          ],
+          metadata: { status: "failed" },
+          origin: {
+            runId: "heartbeat-run-12345678",
+            scene: "heartbeat",
+            targetType: "wakeup_request",
+            targetId: "wakeup-1",
+            triggerKind: "system",
+            invocationSource: "timer",
+            conversationId: null,
+            messageId: null,
+            issueId: null,
+            automationId: null,
+            automationRunId: null,
+            wakeupRequestId: "wakeup-1",
+            targetLabel: "Timer self-check",
+            targetStatus: null,
+            sourceState: "available",
+          },
+        },
+        {
+          id: "legacy-run-12345678",
+          kind: "failed-runs",
+          title: "Old agent · Failed run",
+          subtitle: "failed",
+          body: "The run hit a system-level execution problem.",
+          preview: "The run hit a system-level execution problem.",
+          href: "/agents/agent-1/runs/legacy-run-12345678",
+          latestActivityAt: "2026-04-11T10:00:00.000Z",
+          actions: [],
+          metadata: { status: "failed" },
+          origin: {
+            runId: "legacy-run-12345678",
+            scene: "issue",
+            targetType: "issue",
+            targetId: "deleted-issue",
+            triggerKind: "system",
+            invocationSource: "assignment",
+            conversationId: null,
+            messageId: null,
+            issueId: "deleted-issue",
+            automationId: null,
+            automationRunId: null,
+            wakeupRequestId: null,
+            targetLabel: null,
+            targetStatus: null,
+            sourceState: "source_unavailable",
+          },
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(<MessengerSystemView threadKind="failed-runs" />);
+
+    expect(html).toContain("Chat Run");
+    expect(html).toContain("Chat turn");
+    expect(html).toContain('href="/messenger/chat/chat-1?messageId=message-1"');
+    expect(html).toContain("Heartbeat Run");
+    expect(html).toContain("Timer self-check");
+    expect(html).toContain("Open heartbeat details");
+    expect(html).toContain("Source unavailable");
+    expect(html).not.toContain("contextSnapshot");
   });
 
   it("keeps failed run cards in chronological order so the newest message stays at the bottom", () => {

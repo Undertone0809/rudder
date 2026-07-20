@@ -3,10 +3,13 @@ import {
   agentIntegrationChatBindings,
   agentIntegrations,
   agents,
+  agentWakeupRequests,
   applyPendingMigrations,
   approvalComments,
   approvals,
   assets,
+  automationRuns,
+  automations,
   chatContextLinks,
   chatControlActions,
   chatConversations,
@@ -166,7 +169,10 @@ describe("messengerService and issue follows", () => {
     await db.delete(assets);
     await db.delete(approvalComments);
     await db.delete(approvals);
+    await db.delete(automationRuns);
+    await db.delete(automations);
     await db.delete(heartbeatRuns);
+    await db.delete(agentWakeupRequests);
     await db.delete(joinRequests);
     await db.delete(invites);
     await db.delete(activityLog);
@@ -5084,14 +5090,344 @@ describe("messengerService and issue follows", () => {
     );
     expect(failedRunsSummary?.unreadCount).toBe(1);
     expect(failedRunsSummary?.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
-    expect(thread.detail.items[1]?.metadata.contextSnapshot).toEqual(expect.objectContaining({
-      resumeFromRunId: "source-run-id",
+    expect(thread.detail.items[0]?.origin).toEqual(expect.objectContaining({
+      runId: olderRunId,
+      scene: "heartbeat",
+      sourceState: "legacy_unknown",
     }));
-    expect(thread.detail.items[1]?.run.contextSnapshot).toEqual(
-      thread.detail.items[1]?.metadata.contextSnapshot,
-    );
+    expect(thread.detail.items[1]?.origin).toEqual(expect.objectContaining({
+      runId: newerRunId,
+      scene: "issue",
+      issueId: expect.any(String),
+      sourceState: "source_unavailable",
+    }));
+    expect(thread.detail.items[1]?.metadata).not.toHaveProperty("contextSnapshot");
+    expect(thread.detail.items[1]).not.toHaveProperty("run");
     expect(JSON.stringify(thread.detail.items[1])).not.toMatch(
-      /private-display-id|nested-private-session|nested\/private\/cwd|private-workspace|private\.example|private-ref/,
+      /contextSnapshot|resumeFromRunId|source-run-id|private-display-id|nested-private-session|nested\/private\/cwd|private-workspace|private\.example|private-ref/,
+    );
+  });
+
+  it("normalizes and organization-safely hydrates failed Chat, Heartbeat, Issue, Review, and Automation origins", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    const agentId = randomUUID();
+    const conversationId = randomUUID();
+    const messageId = randomUUID();
+    const issueId = randomUUID();
+    const reviewIssueId = randomUUID();
+    const crossOrgIssueId = randomUUID();
+    const deletedIssueId = randomUUID();
+    const automationId = randomUUID();
+    const automationRunId = randomUUID();
+    const heartbeatWakeupRequestId = randomUUID();
+    const crossOrgWakeupRequestId = randomUUID();
+    const runIds = {
+      chat: randomUUID(),
+      heartbeat: randomUUID(),
+      heartbeatCrossOrg: randomUUID(),
+      issue: randomUUID(),
+      review: randomUUID(),
+      automation: randomUUID(),
+      deleted: randomUUID(),
+      crossOrg: randomUUID(),
+      legacy: randomUUID(),
+    };
+
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Messenger Run Origins Org",
+        urlKey: deriveOrganizationUrlKey("Messenger Run Origins Org"),
+        issuePrefix: `RO${orgId.replace(/-/g, "").slice(0, 4).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Messenger Run Origins Other Org",
+        urlKey: deriveOrganizationUrlKey("Messenger Run Origins Other Org"),
+        issuePrefix: `RX${otherOrgId.replace(/-/g, "").slice(0, 4).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Origin bot",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Investigate deploy failure",
+    });
+    await db.insert(chatMessages).values({
+      id: messageId,
+      orgId,
+      conversationId,
+      role: "assistant",
+      body: "Deployment failed.",
+    });
+    await db.insert(issues).values([
+      {
+        id: issueId,
+        orgId,
+        title: "Repair the deployment",
+        identifier: `RO-${Math.floor(Math.random() * 100_000)}`,
+        status: "blocked",
+      },
+      {
+        id: reviewIssueId,
+        orgId,
+        title: "Review the repair",
+        identifier: `RO-${Math.floor(Math.random() * 100_000) + 100_000}`,
+        status: "in_review",
+      },
+      {
+        id: crossOrgIssueId,
+        orgId: otherOrgId,
+        title: "Private other-organization issue",
+        identifier: `RX-${Math.floor(Math.random() * 100_000)}`,
+        status: "todo",
+      },
+    ]);
+    await db.insert(automations).values({
+      id: automationId,
+      orgId,
+      title: "Nightly deployment check",
+      assigneeAgentId: agentId,
+    });
+    await db.insert(automationRuns).values({
+      id: automationRunId,
+      orgId,
+      automationId,
+      source: "schedule",
+      status: "failed",
+    });
+    await db.insert(agentWakeupRequests).values([
+      {
+        id: heartbeatWakeupRequestId,
+        orgId,
+        agentId,
+        source: "timer",
+        triggerDetail: "system",
+        reason: "heartbeat_timer",
+        status: "failed",
+      },
+      {
+        id: crossOrgWakeupRequestId,
+        orgId: otherOrgId,
+        agentId,
+        source: "timer",
+        triggerDetail: "system",
+        reason: "heartbeat_timer",
+        status: "failed",
+      },
+    ]);
+
+    const baseTime = new Date("2026-07-20T08:00:00.000Z").getTime();
+    const at = (index: number) => new Date(baseTime + index * 60_000);
+    await db.insert(heartbeatRuns).values([
+      {
+        id: runIds.chat,
+        orgId,
+        agentId,
+        invocationSource: "chat",
+        triggerDetail: "chat_assistant_reply_stream",
+        chatConversationId: conversationId,
+        status: "failed",
+        contextSnapshot: { scene: "chat", assistantMessageId: messageId, credentials: "private-chat-secret" },
+        createdAt: at(0),
+        updatedAt: at(0),
+      },
+      {
+        id: runIds.heartbeat,
+        orgId,
+        agentId,
+        invocationSource: "timer",
+        triggerDetail: "system",
+        wakeupRequestId: heartbeatWakeupRequestId,
+        status: "failed",
+        contextSnapshot: { workspacePath: "/private/heartbeat/workspace" },
+        createdAt: at(1),
+        updatedAt: at(1),
+      },
+      {
+        id: runIds.issue,
+        orgId,
+        agentId,
+        invocationSource: "assignment",
+        triggerDetail: "system",
+        status: "failed",
+        contextSnapshot: {
+          issueId,
+          commentId: randomUUID(),
+          wakeReason: "issue_commented",
+          wakeSource: "issue.comment",
+          apiKey: "private-issue-key",
+        },
+        createdAt: at(2),
+        updatedAt: at(2),
+      },
+      {
+        id: runIds.review,
+        orgId,
+        agentId,
+        invocationSource: "review",
+        triggerDetail: "system",
+        status: "failed",
+        contextSnapshot: { issueId: reviewIssueId, triggerKind: "review_routing" },
+        createdAt: at(3),
+        updatedAt: at(3),
+      },
+      {
+        id: runIds.automation,
+        orgId,
+        agentId,
+        invocationSource: "automation",
+        triggerDetail: "system",
+        status: "failed",
+        contextSnapshot: { automationId, automationRunId, triggerKind: "schedule" },
+        createdAt: at(4),
+        updatedAt: at(4),
+      },
+      {
+        id: runIds.deleted,
+        orgId,
+        agentId,
+        invocationSource: "assignment",
+        triggerDetail: "system",
+        status: "failed",
+        contextSnapshot: { issueId: deletedIssueId },
+        createdAt: at(5),
+        updatedAt: at(5),
+      },
+      {
+        id: runIds.crossOrg,
+        orgId,
+        agentId,
+        invocationSource: "assignment",
+        triggerDetail: "system",
+        status: "failed",
+        contextSnapshot: { issueId: crossOrgIssueId },
+        createdAt: at(6),
+        updatedAt: at(6),
+      },
+      {
+        id: runIds.heartbeatCrossOrg,
+        orgId,
+        agentId,
+        invocationSource: "timer",
+        triggerDetail: "system",
+        status: "failed",
+        contextSnapshot: { scene: "heartbeat", wakeupRequestId: crossOrgWakeupRequestId },
+        createdAt: at(7),
+        updatedAt: at(7),
+      },
+      {
+        id: runIds.legacy,
+        orgId,
+        agentId,
+        invocationSource: "on_demand",
+        triggerDetail: null,
+        status: "failed",
+        contextSnapshot: { cwd: "/private/legacy/workspace", token: "private-legacy-token" },
+        createdAt: at(8),
+        updatedAt: at(8),
+      },
+    ]);
+
+    const thread = await messengerSvc.getSystemThread(orgId, "run-origin-user", "failed-runs");
+    const items = new Map(thread.detail.items.map((item) => [item.id, item]));
+
+    expect(items.get(runIds.chat)?.origin).toEqual(expect.objectContaining({
+      scene: "chat",
+      conversationId,
+      messageId,
+      targetLabel: "Investigate deploy failure",
+      sourceState: "available",
+    }));
+    expect(items.get(runIds.chat)?.actions).toContainEqual({
+      label: "Open chat message",
+      href: `/messenger/chat/${conversationId}?messageId=${messageId}`,
+      method: "GET",
+    });
+    expect(items.get(runIds.heartbeat)?.origin).toEqual(expect.objectContaining({
+      scene: "heartbeat",
+      triggerKind: "timer",
+      wakeupRequestId: heartbeatWakeupRequestId,
+      targetLabel: "Timer self-check",
+      sourceState: "available",
+    }));
+    expect(items.get(runIds.heartbeat)?.actions).toContainEqual(expect.objectContaining({
+      label: "Open heartbeat details",
+    }));
+    expect(items.get(runIds.issue)?.origin).toEqual(expect.objectContaining({
+      scene: "issue",
+      issueId,
+      targetLabel: expect.stringContaining("Repair the deployment"),
+      targetStatus: "blocked",
+      sourceState: "available",
+    }));
+    expect(items.get(runIds.issue)?.actions).toContainEqual({
+      label: "Open issue",
+      href: `/issues/${issueId}`,
+      method: "GET",
+    });
+    expect(items.get(runIds.review)?.origin).toEqual(expect.objectContaining({
+      scene: "review",
+      issueId: reviewIssueId,
+      targetLabel: expect.stringContaining("Review the repair"),
+      sourceState: "available",
+    }));
+    expect(items.get(runIds.review)?.actions).toContainEqual({
+      label: "Open review",
+      href: `/issues/${reviewIssueId}`,
+      method: "GET",
+    });
+    expect(items.get(runIds.automation)?.origin).toEqual(expect.objectContaining({
+      scene: "automation",
+      automationId,
+      automationRunId,
+      targetLabel: "Nightly deployment check",
+      sourceState: "available",
+    }));
+    expect(items.get(runIds.automation)?.actions).toContainEqual({
+      label: "Open automation",
+      href: `/automations/${automationId}`,
+      method: "GET",
+    });
+    expect(items.get(runIds.deleted)?.origin).toEqual(expect.objectContaining({
+      scene: "issue",
+      targetLabel: null,
+      sourceState: "source_unavailable",
+    }));
+    expect(items.get(runIds.crossOrg)?.origin).toEqual(expect.objectContaining({
+      scene: "issue",
+      targetLabel: null,
+      sourceState: "source_unavailable",
+    }));
+    expect(items.get(runIds.crossOrg)?.actions).not.toContainEqual(expect.objectContaining({ label: "Open issue" }));
+    expect(items.get(runIds.heartbeatCrossOrg)?.origin).toEqual(expect.objectContaining({
+      scene: "heartbeat",
+      wakeupRequestId: crossOrgWakeupRequestId,
+      sourceState: "source_unavailable",
+    }));
+    expect(items.get(runIds.heartbeatCrossOrg)?.actions).not.toContainEqual(
+      expect.objectContaining({ label: "Open heartbeat details" }),
+    );
+    expect(items.get(runIds.legacy)?.origin).toEqual(expect.objectContaining({
+      scene: "heartbeat",
+      targetLabel: null,
+      sourceState: "legacy_unknown",
+    }));
+    expect(JSON.stringify(thread.detail.items)).not.toMatch(
+      /contextSnapshot|private-chat-secret|private\/heartbeat\/workspace|private-issue-key|private\/legacy\/workspace|private-legacy-token|Private other-organization issue/,
     );
   });
 

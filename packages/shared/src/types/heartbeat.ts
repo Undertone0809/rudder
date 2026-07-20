@@ -96,6 +96,7 @@ export interface AgentRun extends HeartbeatRun {
   targetId: string | null;
   conversationId: string | null;
   messageId: string | null;
+  issueId: string | null;
   automationRunId: string | null;
   automationId: string | null;
   wakeupRequestId: string | null;
