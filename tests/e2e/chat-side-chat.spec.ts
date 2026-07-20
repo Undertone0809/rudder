@@ -73,6 +73,14 @@ function sideComposerEditor(panel: Locator) {
   return panel.getByTestId("side-chat-composer").locator(".rudder-mdxeditor-content").first();
 }
 
+async function openSideChatTabContextMenu(page: Page, panel: Locator) {
+  const sideChatTab = panel.locator('[data-side-panel-tab-key^="side-chat:"]');
+  await sideChatTab.click({ button: "right" });
+  const menu = page.getByTestId("chat-side-panel-tab-context-menu");
+  await expect(menu).toBeVisible();
+  return { menu, sideChatTab };
+}
+
 async function sendFirstSideChatMessage(page: Page, panel: Locator, sourceConversationId: string) {
   const createResponsePromise = page.waitForResponse((response) => (
     response.request().method() === "POST"
@@ -125,9 +133,8 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
     response.request().method() === "DELETE"
     && response.url().includes(`/api/chats/${sideChat.id}/side-chat`)
   ));
-  const sideChatTab = panel.locator('[data-side-panel-tab-key^="side-chat:"]');
-  await sideChatTab.hover();
-  await sideChatTab.getByRole("button", { name: "Close Side Chat tab" }).click();
+  const { menu } = await openSideChatTabContextMenu(page, panel);
+  await menu.getByRole("menuitem", { name: "Close" }).click();
   const destroyResponse = await destroyResponsePromise;
   expect(destroyResponse.ok(), await destroyResponse.text()).toBe(true);
   await expect(panel).toBeHidden();
@@ -136,7 +143,7 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   await page.screenshot({ path: testInfo.outputPath("03-side-chat-destroyed.png"), fullPage: true });
 });
 
-test("the /side menu matches composer popovers and can keep the same Side Chat in Messenger", async ({ page }, testInfo) => {
+test("the /side menu matches composer popovers and can move the same Side Chat to Messenger", async ({ page }, testInfo) => {
   const source = await seedSideChatSource(page, `Side-Chat-Keep-${Date.now()}`);
   const mainComposer = page.getByTestId("chat-composer-editor-scroll").locator(".rudder-mdxeditor-content").first();
   await mainComposer.click();
@@ -157,12 +164,56 @@ test("the /side menu matches composer popovers and can keep the same Side Chat i
   await expect(panel.getByTestId("side-chat-panel-view")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("06-side-slash-draft.png"), fullPage: true });
 
+  const draftTab = panel.locator('[data-side-panel-tab-key^="side-chat:"]');
+  await draftTab.getByRole("tab").focus();
+  await page.keyboard.press("Shift+F10");
+  const keyboardMenu = page.getByTestId("chat-side-panel-tab-context-menu");
+  await expect(keyboardMenu).toBeVisible();
+  await expect(keyboardMenu.getByRole("menuitem", { name: "Move to Messenger" })).toBeFocused();
+  await expect(page.getByRole("tooltip")).toContainText("Send a message first to create this Side Chat.");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("ContextMenu");
+  await expect(page.getByTestId("chat-side-panel-tab-context-menu")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  const draftTabBox = await draftTab.boundingBox();
+  expect(draftTabBox).not.toBeNull();
+  await draftTab.dispatchEvent("pointerdown", {
+    pointerType: "touch",
+    isPrimary: true,
+    button: 0,
+    clientX: draftTabBox!.x + draftTabBox!.width / 2,
+    clientY: draftTabBox!.y + draftTabBox!.height / 2,
+  });
+  await page.waitForTimeout(750);
+  await expect(page.getByTestId("chat-side-panel-tab-context-menu")).toBeVisible();
+  await draftTab.dispatchEvent("pointerup", { pointerType: "touch", isPrimary: true, button: 0 });
+  await page.keyboard.press("Escape");
+
+  const { menu: draftMenu } = await openSideChatTabContextMenu(page, panel);
+  const disabledDraftMove = draftMenu.getByRole("menuitem", { name: "Move to Messenger" });
+  await expect(disabledDraftMove).toHaveAttribute("aria-disabled", "true");
+  await disabledDraftMove.hover();
+  await expect(page.getByRole("tooltip")).toContainText("Send a message first to create this Side Chat.");
+  await page.screenshot({ path: testInfo.outputPath("07-side-chat-draft-menu.png"), fullPage: true });
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("tooltip")).toBeHidden();
+  await page.keyboard.press("Escape");
+  await expect(draftMenu).toBeHidden();
+
   const sideChat = await sendFirstSideChatMessage(page, panel, source.conversationId);
   const keepResponsePromise = page.waitForResponse((response) => (
     response.request().method() === "POST"
     && response.url().includes(`/api/chats/${sideChat.id}/side-chat/keep`)
   ));
-  await panel.getByRole("button", { name: "Keep in Messenger" }).click();
+  const { menu: activeMenu } = await openSideChatTabContextMenu(page, panel);
+  const moveItem = activeMenu.getByRole("menuitem", { name: "Move to Messenger" });
+  await expect(moveItem).not.toHaveAttribute("aria-disabled", "true");
+  await moveItem.hover();
+  await expect(page.getByRole("tooltip")).toContainText("Make this Side Chat a regular Messenger chat. This tab will close.");
+  await page.screenshot({ path: testInfo.outputPath("08-side-chat-active-menu.png"), fullPage: true });
+  await moveItem.click();
   const keepResponse = await keepResponsePromise;
   expect(keepResponse.ok(), await keepResponse.text()).toBe(true);
   expect(await keepResponse.json()).toMatchObject({ id: sideChat.id, messengerVisible: true, sideChatState: "kept" });
@@ -181,7 +232,7 @@ test("the /side menu matches composer popovers and can keep the same Side Chat i
   expect(await visibleMessengerThread.json()).toMatchObject({
     conversation: { id: sideChat.id, messengerVisible: true, sideChatState: "kept" },
   });
-  await page.screenshot({ path: testInfo.outputPath("07-kept-in-messenger.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("09-moved-to-messenger.png"), fullPage: true });
 
   await page.goto(`/${source.organization.issuePrefix}/messenger/chat/${sideChat.id}`);
   const sourceChatLink = page.getByRole("link", { name: "Open source chat Main strategy chat" });
@@ -190,7 +241,7 @@ test("the /side menu matches composer popovers and can keep the same Side Chat i
   await expect(page).toHaveURL(new RegExp(`/messenger/chat/${source.conversationId}$`));
   await expect(page.getByTestId("chat-side-panel")).toBeHidden();
   await expect(page.getByTestId("chat-assistant-message").filter({ hasText: "narrow cohort" })).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath("08-source-chat-direct-navigation.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("10-source-chat-direct-navigation.png"), fullPage: true });
 });
 
 test("the Side Panel empty state opens the same provisional Side Chat flow", async ({ page }, testInfo) => {
@@ -211,6 +262,99 @@ test("the Side Panel empty state opens the same provisional Side Chat flow", asy
   await sideChatTab.hover();
   await sideChatTab.getByRole("button", { name: "Close Side Chat tab" }).click();
   await expect(panel).toBeHidden();
+});
+
+test("the Side Chat tab menu and disabled explanation fit a narrow viewport", async ({ page }, testInfo) => {
+  const source = await seedSideChatSource(page, `Side-Chat-Narrow-${Date.now()}`);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+  const { menu } = await openSideChatTabContextMenu(page, panel);
+  const moveItem = menu.getByRole("menuitem", { name: "Move to Messenger" });
+  await expect(moveItem).toHaveAttribute("aria-disabled", "true");
+  await moveItem.focus();
+  const tooltip = page.getByRole("tooltip");
+  await expect(tooltip).toContainText("Send a message first to create this Side Chat.");
+  const [menuBox, tooltipBox] = await Promise.all([menu.boundingBox(), tooltip.boundingBox()]);
+  expect(menuBox).not.toBeNull();
+  expect(tooltipBox).not.toBeNull();
+  expect(menuBox!.x).toBeGreaterThanOrEqual(0);
+  expect(menuBox!.x + menuBox!.width).toBeLessThanOrEqual(390);
+  expect(tooltipBox!.x).toBeGreaterThanOrEqual(0);
+  expect(tooltipBox!.x + tooltipBox!.width).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: testInfo.outputPath("12-side-chat-narrow-menu.png"), fullPage: true });
+});
+
+test("a failed Move to Messenger keeps the Side Chat tab and can be retried", async ({ page }) => {
+  const source = await seedSideChatSource(page, `Side-Chat-Move-Retry-${Date.now()}`);
+  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+  const sideChat = await sendFirstSideChatMessage(page, panel, source.conversationId);
+  let moveAttempts = 0;
+  await page.route(`**/api/chats/${sideChat.id}/side-chat/keep`, async (route) => {
+    moveAttempts += 1;
+    if (moveAttempts === 1) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Promotion temporarily unavailable." }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  const firstMenu = (await openSideChatTabContextMenu(page, panel)).menu;
+  await firstMenu.getByRole("menuitem", { name: "Move to Messenger" }).click();
+  await expect(page.getByText("Could not move Side Chat", { exact: true })).toBeVisible();
+  await expect(page.getByText("Promotion temporarily unavailable.", { exact: true })).toBeVisible();
+  await expect(panel.locator('[data-side-panel-tab-key^="side-chat:"]')).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/messenger/chat/${source.conversationId}$`));
+
+  const retryResponsePromise = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+    && response.url().includes(`/api/chats/${sideChat.id}/side-chat/keep`)
+    && response.status() < 500
+  ));
+  const retryMenu = (await openSideChatTabContextMenu(page, panel)).menu;
+  await retryMenu.getByRole("menuitem", { name: "Move to Messenger" }).click();
+  const retryResponse = await retryResponsePromise;
+  expect(retryResponse.ok(), await retryResponse.text()).toBe(true);
+  expect(moveAttempts).toBe(2);
+  await expect(page).toHaveURL(new RegExp(`/messenger/chat/${sideChat.id}$`));
+  await expect(page.getByTestId("side-chat-panel-view")).toHaveCount(0);
+});
+
+test("a Side Chat expiring after its menu opens stays in place and disables Move on refresh", async ({ page }) => {
+  const source = await seedSideChatSource(page, `Side-Chat-Move-Race-${Date.now()}`);
+  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+  const sideChat = await sendFirstSideChatMessage(page, panel, source.conversationId);
+  const firstMenu = (await openSideChatTabContextMenu(page, panel)).menu;
+  const firstMove = firstMenu.getByRole("menuitem", { name: "Move to Messenger" });
+  await expect(firstMove).not.toHaveAttribute("aria-disabled", "true");
+
+  await e2eDb
+    .update(chatConversations)
+    // This test database is isolated to the Playwright run; preceding Side
+    // Chats are already kept, expired, or destroyed before this active row.
+    .set({ sideChatExpiresAt: new Date(Date.now() - 1_000) });
+  const raceResponsePromise = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+    && response.url().includes(`/api/chats/${sideChat.id}/side-chat/keep`)
+  ));
+  await firstMove.click();
+  const raceResponse = await raceResponsePromise;
+  expect(raceResponse.status()).toBe(409);
+  await expect(page.getByText("Could not move Side Chat", { exact: true })).toBeVisible();
+  await expect(page.getByText("Side Chat expired", { exact: true })).toBeVisible();
+  await expect(panel.locator('[data-side-panel-tab-key^="side-chat:"]')).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/messenger/chat/${source.conversationId}$`));
+
+  const refreshedMenu = (await openSideChatTabContextMenu(page, panel)).menu;
+  const refreshedMove = refreshedMenu.getByRole("menuitem", { name: "Move to Messenger" });
+  await expect(refreshedMove).toHaveAttribute("aria-disabled", "true");
+  await refreshedMove.hover();
+  await expect(page.getByRole("tooltip")).toContainText(
+    "This Side Chat can no longer be moved. Close it instead.",
+  );
 });
 
 test("an elapsed Side Chat becomes non-editable and can still be destroyed", async ({ page }, testInfo) => {
@@ -236,13 +380,18 @@ test("an elapsed Side Chat becomes non-editable and can still be destroyed", asy
   await expect(panel.getByTestId("side-chat-composer")).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("10-side-chat-expired-read-only.png"), fullPage: true });
 
+  const { menu } = await openSideChatTabContextMenu(page, panel);
+  const expiredMove = menu.getByRole("menuitem", { name: "Move to Messenger" });
+  await expect(expiredMove).toHaveAttribute("aria-disabled", "true");
+  await expiredMove.hover();
+  await expect(page.getByRole("tooltip")).toContainText("This Side Chat can no longer be moved. Close it instead.");
+  await page.screenshot({ path: testInfo.outputPath("11-side-chat-expired-menu.png"), fullPage: true });
+
   const destroyResponsePromise = page.waitForResponse((response) => (
     response.request().method() === "DELETE"
     && response.url().includes(`/api/chats/${sideChat.id}/side-chat`)
   ));
-  const sideChatTab = panel.locator('[data-side-panel-tab-key^="side-chat:"]');
-  await sideChatTab.hover();
-  await sideChatTab.getByRole("button", { name: "Close Side Chat tab" }).click();
+  await menu.getByRole("menuitem", { name: "Close" }).click();
   expect((await destroyResponsePromise).ok()).toBe(true);
   expect((await page.request.get(`/api/chats/${sideChat.id}`)).status()).toBe(404);
 });

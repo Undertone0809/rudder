@@ -20,6 +20,13 @@ import {
 import { SideChatPanelView } from "@/components/side-panel/SideChatPanelView";
 import { Button } from "@/components/ui/button";
 import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -41,6 +48,7 @@ import { readDesktopShell, type DesktopFileLaunchTargetId, type DesktopWorkspace
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath, getOrganizationRouteKey } from "@/lib/organization-routes";
 import { queryKeys } from "@/lib/queryKeys";
 import { useLocation, useNavigate } from "@/lib/router";
+import { sideChatIsReadOnly } from "@/lib/side-chat";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
 import { isWorkspaceHtmlFilePath } from "@/lib/workspace-html-preview";
@@ -48,11 +56,10 @@ import {
   resolveBrowserShortcutInput,
   type Agent,
   type BrowserShortcutAction,
-  type ChatConversation,
   type Issue,
   type IssueComment,
   type OrganizationWorkspaceFileDetail,
-  type OrganizationWorkspaceFileEntry,
+  type OrganizationWorkspaceFileEntry
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -132,6 +139,8 @@ const CHAT_SIDE_PANEL_MARKDOWN_CONFLICT_MESSAGE = "This file changed while you w
 const CHAT_SIDE_PANEL_BROWSER_ZOOM_FACTORS = [
   0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5,
 ] as const;
+
+type SideChatTarget = Extract<SidePanelTarget, { kind: "side_chat" }>;
 
 type ChatSidePanelMarkdownDraft = {
   baseContent: string;
@@ -1995,6 +2004,108 @@ function ChatSidePanelBrowserView({
   );
 }
 
+function ChatSidePanelTabContextMenu({
+  children,
+  isMobile,
+  movingSideChat,
+  organizationId,
+  tab,
+  onClose,
+  onMoveSideChat,
+}: {
+  children: ReactElement;
+  isMobile: boolean;
+  movingSideChat: boolean;
+  organizationId: string | null | undefined;
+  tab: SidePanelTarget;
+  onClose: (tab: SidePanelTarget) => void;
+  onMoveSideChat: (tab: SideChatTarget) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const sideChat = tab.kind === "side_chat" ? tab : null;
+  const conversationQuery = useQuery({
+    queryKey: queryKeys.chats.detail(organizationId ?? "__none__", sideChat?.conversationId ?? "__side-chat-draft__"),
+    queryFn: () => chatsApi.get(sideChat!.conversationId!),
+    enabled: open && Boolean(organizationId && sideChat?.conversationId),
+  });
+  const conversation = conversationQuery.data ?? null;
+  const conversationStatusLoading = Boolean(
+    sideChat?.conversationId
+    && (conversationQuery.isPending || conversationQuery.isFetching),
+  );
+  const canMoveSideChat = Boolean(
+    sideChat?.conversationId
+    && !movingSideChat
+    && !conversationStatusLoading
+    && !conversationQuery.isError
+    && conversation?.sideChatState === "active"
+    && !sideChatIsReadOnly(conversation),
+  );
+  const moveTooltip = !sideChat?.conversationId
+    ? "Send a message first to create this Side Chat."
+    : movingSideChat || conversationStatusLoading
+        ? "Checking whether this Side Chat can be moved…"
+        : canMoveSideChat
+          ? "Make this Side Chat a regular Messenger chat. This tab will close."
+          : "This Side Chat can no longer be moved. Close it instead.";
+
+  return (
+    <ContextMenu
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (nextOpen && sideChat?.conversationId) {
+          void conversationQuery.refetch();
+        }
+      }}
+    >
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent
+        data-testid="chat-side-panel-tab-context-menu"
+        className="surface-overlay z-[70] w-48 text-foreground"
+        onContextMenu={(event) => event.preventDefault()}
+      >
+        {sideChat ? (
+          <>
+            <TooltipProvider delayDuration={300}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <ContextMenuItem
+                    aria-disabled={canMoveSideChat ? undefined : "true"}
+                    data-disabled={canMoveSideChat ? undefined : ""}
+                    onSelect={(event) => {
+                      if (!canMoveSideChat) {
+                        event.preventDefault();
+                        return;
+                      }
+                      onMoveSideChat(sideChat);
+                    }}
+                  >
+                    <MessageSquare />
+                    Move to Messenger
+                  </ContextMenuItem>
+                </TooltipTrigger>
+                <TooltipContent
+                  side={isMobile ? "bottom" : "left"}
+                  align={isMobile ? "start" : "center"}
+                  collisionPadding={8}
+                  className="z-[80] max-w-[calc(100vw-1rem)] whitespace-normal sm:max-w-xs"
+                >
+                  {moveTooltip}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <ContextMenuSeparator />
+          </>
+        ) : null}
+        <ContextMenuItem onSelect={() => onClose(tab)}>
+          <X />
+          Close
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
 export function ChatSidePanel({
   contextReady = true,
   expanded = false,
@@ -2295,10 +2406,39 @@ export function ChatSidePanel({
 
   useEffect(() => sidePanel.registerCloseRequestHandler(closeSidePanelTab), [closeSidePanelTab, sidePanel]);
 
-  const keepSideChatInMessenger = (conversation: ChatConversation) => {
-    if (sideChatTarget) sidePanel.closeTarget(sidePanelTargetKey(sideChatTarget));
-    const prefix = extractOrganizationPrefixFromPath(location.pathname);
-    navigate(applyOrganizationPrefix(`/messenger/chat/${conversation.id}`, prefix));
+  const moveSideChatMutation = useMutation({
+    mutationFn: (tab: SideChatTarget) => chatsApi.keepSideChat(tab.conversationId!),
+    onSuccess: (updated, tab) => {
+      queryClient.setQueryData(
+        queryKeys.chats.detail(selectedOrganizationId ?? "__none__", updated.id),
+        updated,
+      );
+      void queryClient.invalidateQueries({ queryKey: ["messenger", selectedOrganizationId] });
+      sidePanel.closeTarget(sidePanelTargetKey(tab));
+      pushToast({
+        title: "Moved to Messenger",
+        body: "This is now a normal Messenger chat.",
+        tone: "success",
+      });
+      const prefix = extractOrganizationPrefixFromPath(location.pathname);
+      navigate(applyOrganizationPrefix(`/messenger/chat/${updated.id}`, prefix));
+    },
+    onError: (error, tab) => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.chats.detail(
+          selectedOrganizationId ?? "__none__",
+          tab.conversationId ?? "__side-chat-draft__",
+        ),
+      });
+      pushToast({
+        title: "Could not move Side Chat",
+        body: error instanceof Error ? error.message : "Try again.",
+        tone: "error",
+      });
+    },
+  });
+  const moveSideChatToMessenger = (tab: SideChatTarget) => {
+    void moveSideChatMutation.mutateAsync(tab).catch(() => undefined);
   };
 
   const libraryDirectoryEntries = libraryDirectory?.entries ?? [];
@@ -2337,77 +2477,86 @@ export function ChatSidePanel({
               const selected = tabKey === activeTargetKey;
               const dragging = draggedTabKey === tabKey;
               return (
-                <div
+                <ChatSidePanelTabContextMenu
                   key={tabKey}
-                  role="presentation"
-                  data-side-panel-tab-key={tabKey}
-                  data-dragging={dragging ? "true" : undefined}
-                  data-drop-position={tabDropTarget?.key === tabKey ? tabDropTarget.position : undefined}
-                  onDragStart={(event) => {
-                    setDraggedTabKey(tabKey);
-                    event.dataTransfer.effectAllowed = "move";
-                    event.dataTransfer.setData(CHAT_SIDE_PANEL_TAB_DND_MIME, tabKey);
-                  }}
-                  onDragOver={(event) => {
-                    const sourceKey = draggedTabKey ?? event.dataTransfer.getData(CHAT_SIDE_PANEL_TAB_DND_MIME);
-                    if (!sourceKey || sourceKey === tabKey) return;
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = "move";
-                    const bounds = event.currentTarget.getBoundingClientRect();
-                    const position = event.clientX < bounds.left + bounds.width / 2 ? "before" : "after";
-                    setTabDropTarget({ key: tabKey, position });
-                  }}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    const sourceKey = draggedTabKey ?? event.dataTransfer.getData(CHAT_SIDE_PANEL_TAB_DND_MIME);
-                    if (sourceKey && sourceKey !== tabKey) {
+                  isMobile={isMobile}
+                  movingSideChat={moveSideChatMutation.isPending}
+                  organizationId={selectedOrganizationId}
+                  tab={tab}
+                  onClose={(target) => void closeSidePanelTab(target)}
+                  onMoveSideChat={moveSideChatToMessenger}
+                >
+                  <div
+                    role="presentation"
+                    data-side-panel-tab-key={tabKey}
+                    data-dragging={dragging ? "true" : undefined}
+                    data-drop-position={tabDropTarget?.key === tabKey ? tabDropTarget.position : undefined}
+                    onDragStart={(event) => {
+                      setDraggedTabKey(tabKey);
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData(CHAT_SIDE_PANEL_TAB_DND_MIME, tabKey);
+                    }}
+                    onDragOver={(event) => {
+                      const sourceKey = draggedTabKey ?? event.dataTransfer.getData(CHAT_SIDE_PANEL_TAB_DND_MIME);
+                      if (!sourceKey || sourceKey === tabKey) return;
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
                       const bounds = event.currentTarget.getBoundingClientRect();
                       const position = event.clientX < bounds.left + bounds.width / 2 ? "before" : "after";
-                      sidePanel.reorderTarget(sourceKey, tabKey, position);
-                    }
-                    setDraggedTabKey(null);
-                    setTabDropTarget(null);
-                  }}
-                  onDragEnd={() => {
-                    setDraggedTabKey(null);
-                    setTabDropTarget(null);
-                  }}
-                  className={cn(
-                    "group relative flex h-7 max-w-[12.5rem] shrink-0 items-center rounded-full border pr-1 transition-[color,background-color,border-color,box-shadow,opacity]",
-                    tab.kind === "browser" && "w-[12.5rem]",
-                    selected
-                      ? "border-[color:var(--border-strong)] bg-[color:var(--surface-active)] text-foreground"
-                      : "border-transparent text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground",
-                    dragging && "opacity-50",
-                    tabDropTarget?.key === tabKey && tabDropTarget.position === "before" && "shadow-[-3px_0_0_0_var(--accent)]",
-                    tabDropTarget?.key === tabKey && tabDropTarget.position === "after" && "shadow-[3px_0_0_0_var(--accent)]",
-                  )}
-                >
-                  <button
-                    type="button"
-                    role="tab"
-                    draggable={!isMobile && visibleTabs.length > 1}
-                    aria-selected={selected}
-                    data-testid="chat-side-panel-tab"
-                    className="min-w-0 flex-1 cursor-grab truncate rounded-l-full px-2.5 py-1 text-left text-xs active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                    onClick={() => sidePanel.setActiveKey(tabKey)}
-                  >
-                    {tab.label}
-                  </button>
-                  <button
-                    type="button"
-                    draggable={false}
-                    data-testid="chat-side-panel-tab-close"
-                    aria-label={`Close ${tab.label} tab`}
-                    className="pointer-events-none inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-[color,background-color,opacity] group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 hover:bg-[color:var(--surface-panel)] hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void closeSidePanelTab(tab);
+                      setTabDropTarget({ key: tabKey, position });
                     }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const sourceKey = draggedTabKey ?? event.dataTransfer.getData(CHAT_SIDE_PANEL_TAB_DND_MIME);
+                      if (sourceKey && sourceKey !== tabKey) {
+                        const bounds = event.currentTarget.getBoundingClientRect();
+                        const position = event.clientX < bounds.left + bounds.width / 2 ? "before" : "after";
+                        sidePanel.reorderTarget(sourceKey, tabKey, position);
+                      }
+                      setDraggedTabKey(null);
+                      setTabDropTarget(null);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedTabKey(null);
+                      setTabDropTarget(null);
+                    }}
+                    className={cn(
+                      "group relative flex h-7 max-w-[12.5rem] shrink-0 items-center rounded-full border pr-1 transition-[color,background-color,border-color,box-shadow,opacity]",
+                      tab.kind === "browser" && "w-[12.5rem]",
+                      selected
+                        ? "border-[color:var(--border-strong)] bg-[color:var(--surface-active)] text-foreground"
+                        : "border-transparent text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground",
+                      dragging && "opacity-50",
+                      tabDropTarget?.key === tabKey && tabDropTarget.position === "before" && "shadow-[-3px_0_0_0_var(--accent)]",
+                      tabDropTarget?.key === tabKey && tabDropTarget.position === "after" && "shadow-[3px_0_0_0_var(--accent)]",
+                    )}
                   >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
+                    <button
+                      type="button"
+                      role="tab"
+                      draggable={!isMobile && visibleTabs.length > 1}
+                      aria-selected={selected}
+                      data-testid="chat-side-panel-tab"
+                      className="min-w-0 flex-1 cursor-grab truncate rounded-l-full px-2.5 py-1 text-left text-xs active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                      onClick={() => sidePanel.setActiveKey(tabKey)}
+                    >
+                      {tab.label}
+                    </button>
+                    <button
+                      type="button"
+                      draggable={false}
+                      data-testid="chat-side-panel-tab-close"
+                      aria-label={`Close ${tab.label} tab`}
+                      className="pointer-events-none inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-[color,background-color,opacity] group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 hover:bg-[color:var(--surface-panel)] hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void closeSidePanelTab(tab);
+                      }}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                </ChatSidePanelTabContextMenu>
               );
             })}
             <button
@@ -2530,7 +2679,6 @@ export function ChatSidePanel({
               target={sideChatTarget}
               onRegisterCloseHandler={registerSideChatCloseHandler}
               onReplaceTarget={replaceSidePanelTarget}
-              onKept={keepSideChatInMessenger}
             />
           ) : chatTarget ? (
             <div className="space-y-4" data-testid="chat-side-panel-chat-view">

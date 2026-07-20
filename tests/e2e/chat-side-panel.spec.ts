@@ -1898,6 +1898,7 @@ test.describe("Chat Side Panel", () => {
         title: "Side Panel Browser host chat",
         issueCreationMode: "manual_approval",
         planMode: false,
+        initialMessage: { body: "Open a browser beside this chat." },
       },
     });
     expect(hostChatRes.ok(), await hostChatRes.text()).toBe(true);
@@ -2025,6 +2026,38 @@ test.describe("Chat Side Panel", () => {
     await expect(closeButtons.first()).toHaveCSS("opacity", "1");
 
     const browserTabs = sidePanel.getByTestId("chat-side-panel-tab");
+    await browserTabs.first().locator("..").click({ button: "right" });
+    const inactiveTabMenu = page.getByTestId("chat-side-panel-tab-context-menu");
+    await expect(inactiveTabMenu).toBeVisible();
+    await expect(inactiveTabMenu.getByRole("menuitem", { name: "Move to Messenger" })).toHaveCount(0);
+    await expect(browserTabs.first()).toHaveAttribute("aria-selected", "false");
+    await expect(browserTabs.last()).toHaveAttribute("aria-selected", "true");
+    await expect(sidePanel.getByTestId("chat-side-panel-browser-start")).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    const inactiveTabShell = browserTabs.first().locator("..");
+    const inactiveTabBox = await inactiveTabShell.boundingBox();
+    expect(inactiveTabBox).not.toBeNull();
+    await inactiveTabShell.dispatchEvent("pointerdown", {
+      pointerType: "touch",
+      isPrimary: true,
+      button: 0,
+      clientX: inactiveTabBox!.x + inactiveTabBox!.width / 2,
+      clientY: inactiveTabBox!.y + inactiveTabBox!.height / 2,
+    });
+    await page.waitForTimeout(750);
+    await expect(page.getByTestId("chat-side-panel-tab-context-menu")).toBeVisible();
+    await inactiveTabShell.dispatchEvent("pointerup", {
+      pointerType: "touch",
+      isPrimary: true,
+      button: 0,
+    });
+    await browserTabs.first().dispatchEvent("click", { button: 0 });
+    await expect(browserTabs.first()).toHaveAttribute("aria-selected", "false");
+    await expect(browserTabs.last()).toHaveAttribute("aria-selected", "true");
+    await expect(sidePanel.getByTestId("chat-side-panel-browser-start")).toBeVisible();
+    await page.keyboard.press("Escape");
+
     await browserTabs.last().dragTo(browserTabs.first(), {
       targetPosition: { x: 2, y: 14 },
     });
@@ -2039,6 +2072,20 @@ test.describe("Chat Side Panel", () => {
     await expect(browserTabs.last()).toContainText("New tab");
     await expect(browserTabs.last()).toHaveAttribute("aria-selected", "true");
     await page.screenshot({ path: "/tmp/rudder-side-panel-tab-reorder.png", fullPage: true });
+
+    await browserTabs.last().locator("..").click({ button: "right" });
+    const activeTabMenu = page.getByTestId("chat-side-panel-tab-context-menu");
+    await expect(activeTabMenu).toBeVisible();
+    await activeTabMenu.getByRole("menuitem", { name: "Close" }).click();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(1);
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toContainText("localhost");
+
+    await sidePanel.getByLabel("Browser URL").focus();
+    await dispatchBrowserShortcut("t", "KeyT");
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
+    await page.keyboard.press("ControlOrMeta+W");
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(1);
+    expect(page.isClosed()).toBe(false);
 
     const closeSamples = await sampleSidePanelMotion(
       page,
