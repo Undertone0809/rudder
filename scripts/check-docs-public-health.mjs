@@ -13,10 +13,11 @@ const DEFAULT_HOSTS = [
   "rudder-docs-zeelands-projects.vercel.app",
 ];
 const CANONICAL_ORIGIN = "https://docs.rudderhq.dev";
+const LEGACY_HOST = "doc.rudder.zeeland.studio";
 const REQUIRED_PATHS = [
   { path: "/", status: 200, bodyIncludes: ["Rudder"], canonical: CANONICAL_ORIGIN },
   { path: "/about", status: 200, bodyIncludes: ["Rudder", "Rudder"], canonical: `${CANONICAL_ORIGIN}/about` },
-  { path: "/contact", status: 200, bodyIncludes: ["GitHub", "Report a bug"], canonical: `${CANONICAL_ORIGIN}/contact` },
+  { path: "/contact", status: 200, bodyIncludes: ["GitHub", "Bug reports"], canonical: `${CANONICAL_ORIGIN}/contact` },
   { path: "/home", status: 200, bodyIncludes: ["Rudder"], canonical: CANONICAL_ORIGIN, finalPath: "/" },
   { path: "/en", status: 200, bodyIncludes: ["Rudder"], canonical: CANONICAL_ORIGIN, finalPath: "/" },
   { path: "/get-started/installation", status: 200, bodyIncludes: ["Rudder"], canonical: `${CANONICAL_ORIGIN}/get-started/installation` },
@@ -44,6 +45,16 @@ const REQUIRED_PATHS = [
   { path: "/apple-touch-icon-precomposed.png", status: 200 },
   { path: "/site.webmanifest", status: 200, bodyIncludes: ["Rudder Docs", "/apple-touch-icon.png"] },
   { path: "/manifest.json", status: 200, bodyIncludes: ["Rudder Docs", "/apple-touch-icon.png"], finalPath: "/site.webmanifest" },
+];
+const REQUIRED_REDIRECTS = [
+  { source: "/concepts/control-plane", destination: "/reference/approvals-budgets-activity" },
+  { source: "/zh/concepts/control-plane", destination: "/zh/reference/approvals-budgets-activity" },
+  { source: "/concepts/approvals-budgets-activity", destination: "/reference/approvals-budgets-activity" },
+  { source: "/zh/concepts/approvals-budgets-activity", destination: "/zh/reference/approvals-budgets-activity" },
+  { source: "/concepts/chat", destination: "/concepts/chat-messenger" },
+  { source: "/concepts/messenger", destination: "/concepts/chat-messenger" },
+  { source: "/zh/concepts/chat", destination: "/zh/concepts/chat-messenger" },
+  { source: "/zh/concepts/messenger", destination: "/zh/concepts/chat-messenger" },
 ];
 
 function parseArgs(argv) {
@@ -145,16 +156,47 @@ function assertCanonical(html, expected) {
   }
 }
 
-async function fetchText(url, timeoutMs) {
+async function fetchText(url, timeoutMs, redirect = "follow") {
   const response = await fetch(url, {
     headers: {
       "user-agent": "rudder-docs-health/1.0",
     },
-    redirect: "follow",
+    redirect,
     signal: AbortSignal.timeout(timeoutMs),
   });
   const text = await response.text();
   return { response, text };
+}
+
+async function checkRedirect(host, check, timeoutMs) {
+  const url = `https://${host}${check.source}`;
+  const { response } = await fetchText(url, timeoutMs, "manual");
+  if (![301, 308].includes(response.status)) {
+    throw new Error(`${url} returned ${response.status}, expected one 301 or 308 redirect`);
+  }
+
+  const location = response.headers.get("location");
+  if (!location) throw new Error(`${url} did not return a Location header`);
+  const destinationUrl = new URL(location, url);
+  const expectedUrl = new URL(
+    check.destination,
+    host === LEGACY_HOST ? CANONICAL_ORIGIN : `https://${host}`,
+  );
+  if (destinationUrl.href !== expectedUrl.href) {
+    throw new Error(`${url} redirected to ${destinationUrl.href}, expected ${expectedUrl.href}`);
+  }
+
+  const { response: finalResponse } = await fetchText(destinationUrl, timeoutMs, "manual");
+  if (finalResponse.status !== 200 || finalResponse.url !== expectedUrl.href) {
+    throw new Error(`${url} did not resolve in one redirect to a 200 ${expectedUrl.href}`);
+  }
+
+  return {
+    cache: response.headers.get("x-vercel-cache"),
+    contentType: response.headers.get("content-type"),
+    path: check.source,
+    status: response.status,
+  };
 }
 
 async function checkLucideIcon(icon, timeoutMs) {
@@ -243,6 +285,14 @@ async function checkHost(hostInput, timeoutMs) {
       results.push(await checkPath(host, check, timeoutMs));
     } catch (error) {
       failures.push(`${check.path}: ${error.message}`);
+    }
+  }
+
+  for (const check of REQUIRED_REDIRECTS) {
+    try {
+      results.push(await checkRedirect(host, check, timeoutMs));
+    } catch (error) {
+      failures.push(`${check.source}: ${error.message}`);
     }
   }
 

@@ -29,9 +29,11 @@ an explicit choice when repeated work needs Issue fields and lifecycle state.
 | `chat_output` | A new Messenger conversation for that execution | `linkedChatConversationId` |
 | `track_issue` | A new execution Issue that enters the normal assignment and review path | `linkedIssueId` |
 
-An Automation Run records whether dispatch was received, started, completed,
-failed, skipped, or coalesced. The exact terminal state remains on the Run even
-when no new Chat or Issue is created.
+An Automation Run uses the exact states `received`, `running`, `coalesced`,
+`skipped`, `issue_created`, `completed`, and `failed`. `issue_created` records
+that tracked Issue output was created before that Issue follows its own
+lifecycle. The exact terminal state remains on the Run even when no new Chat or
+Issue is created.
 
 <a id="constraints" />
 

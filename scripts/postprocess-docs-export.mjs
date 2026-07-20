@@ -31,6 +31,7 @@ const CHINESE_FOOTER_PATHS = [
   "/how-to/issue-lifecycle",
   "/how-to/configure-agent-runtime",
   "/concepts/chat-messenger",
+  "/concepts/built-in-browser",
   "/concepts/calendar",
   "/about",
   "/contact",
@@ -47,6 +48,11 @@ const CHINESE_FOOTER_LABELS = new Map([
   ["About", "关于"],
   ["Contact", "联系方式"],
   ["Changelog", "更新日志"],
+]);
+const CHINESE_FOOTER_HEADERS = new Map([
+  ["Docs", "文档"],
+  ["Product", "产品"],
+  ["Project", "项目"],
 ]);
 
 function collectPageFiles(exportDir) {
@@ -257,6 +263,9 @@ function localizeFooterMarkup(html) {
   for (const [englishLabel, chineseLabel] of CHINESE_FOOTER_LABELS) {
     footer = footer.replaceAll(`>${englishLabel}<`, `>${chineseLabel}<`);
   }
+  for (const [englishHeader, chineseHeader] of CHINESE_FOOTER_HEADERS) {
+    footer = footer.replaceAll(`>${englishHeader}<`, `>${chineseHeader}<`);
+  }
   return before + footer + after;
 }
 
@@ -284,6 +293,12 @@ function localizeSerializedFooter(html) {
       footer = footer.replaceAll(
         `\\"label\\":\\"${englishLabel}\\"`,
         `\\"label\\":\\"${chineseLabel}\\"`,
+      );
+    }
+    for (const [englishHeader, chineseHeader] of CHINESE_FOOTER_HEADERS) {
+      footer = footer.replaceAll(
+        `\\"header\\":\\"${englishHeader}\\"`,
+        `\\"header\\":\\"${chineseHeader}\\"`,
       );
     }
     html = html.slice(0, start) + footer + html.slice(end);

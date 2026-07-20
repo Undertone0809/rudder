@@ -49,6 +49,19 @@ decision, and application result together. An accepted request applies through
 the service that owns the action. Application is idempotent and remains scoped
 to the organization.
 
+| Status | Meaning and next transition |
+| --- | --- |
+| `pending` | Waiting for a decision; it can be approved, rejected, or returned for revision |
+| `revision_requested` | Changes are required; the requester can resubmit it to `pending`, and it remains resolvable |
+| `approved` | The action was authorized; the owning service applies it idempotently |
+| `rejected` | The action was declined and is not applied |
+| `cancelled` | The request ended without a decision or application |
+
+Only `pending` can move to `revision_requested`. Approval or rejection can
+resolve `pending` and `revision_requested`; resubmission is available only from
+`revision_requested`. `approved`, `rejected`, and `cancelled` are terminal for
+that Approval record.
+
 <a id="budgets-and-cost" />
 
 ### Budgets and cost

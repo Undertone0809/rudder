@@ -158,5 +158,105 @@
     "expected_public_path": "https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity",
     "expected_anchor": null,
     "illustrative_case_sufficient": false
+  },
+  {
+    "query": "What are all valid Issue statuses, including cancelled and review states?",
+    "locale": "en",
+    "query_mode": "current",
+    "expected_source_class": "official_public_docs_primary",
+    "required_contract_ids": ["ISSUE.STATE.001"],
+    "expected_public_path": "https://docs.rudderhq.dev/reference/issue-statuses",
+    "expected_anchor": "states",
+    "illustrative_case_sufficient": false
+  },
+  {
+    "query": "Where can I compare local Agent runtime choices and readiness labels?",
+    "locale": "en",
+    "query_mode": "current",
+    "expected_source_class": "official_public_docs_primary",
+    "required_contract_ids": ["AGENT.RUNTIME.ADAPTERS.001", "AGENT.RUNTIME.PERMISSIONS.001"],
+    "expected_public_path": "https://docs.rudderhq.dev/reference/runtime-types",
+    "expected_anchor": "states",
+    "illustrative_case_sufficient": false
+  },
+  {
+    "query": "Which paths belong to Library, Project Context, run workspaces, and backups?",
+    "locale": "en",
+    "query_mode": "current",
+    "expected_source_class": "official_public_docs_primary",
+    "required_contract_ids": ["WORKSPACE.PROJECT.001", "WORKSPACE.RUN.001", "WORKSPACE.BACKUP.001"],
+    "expected_public_path": "https://docs.rudderhq.dev/reference/workspace-boundaries",
+    "expected_anchor": "states",
+    "illustrative_case_sufficient": false
+  },
+  {
+    "query": "How do chat_output and track_issue route Automation results?",
+    "locale": "en",
+    "query_mode": "current",
+    "expected_source_class": "official_public_docs_primary",
+    "required_contract_ids": ["AUTOMATION.OUTPUT.001", "AUTOMATION.RUN.001"],
+    "expected_public_path": "https://docs.rudderhq.dev/reference/automation-output-routing",
+    "expected_anchor": "states",
+    "illustrative_case_sufficient": false
+  },
+  {
+    "query": "What are Rudder's platform, credential, browser, and local trust boundaries?",
+    "locale": "en",
+    "query_mode": "current",
+    "expected_source_class": "official_public_docs_primary",
+    "required_contract_ids": ["AGENT.RUNTIME.PERMISSIONS.001", "AGENT.BROWSER.001"],
+    "expected_public_path": "https://docs.rudderhq.dev/reference/permissions-and-platforms",
+    "expected_anchor": "boundaries",
+    "illustrative_case_sufficient": false
+  },
+  {
+    "query": "哪里可以查到包括 cancelled 和评审状态在内的全部 Issue 状态？",
+    "locale": "zh",
+    "query_mode": "current",
+    "expected_source_class": "official_public_docs_primary",
+    "required_contract_ids": ["ISSUE.STATE.001"],
+    "expected_public_path": "https://docs.rudderhq.dev/zh/reference/issue-statuses",
+    "expected_anchor": "states",
+    "illustrative_case_sufficient": false
+  },
+  {
+    "query": "在哪里比较本地 Agent 运行环境选项和就绪提示？",
+    "locale": "zh",
+    "query_mode": "current",
+    "expected_source_class": "official_public_docs_primary",
+    "required_contract_ids": ["AGENT.RUNTIME.ADAPTERS.001", "AGENT.RUNTIME.PERMISSIONS.001"],
+    "expected_public_path": "https://docs.rudderhq.dev/zh/reference/runtime-types",
+    "expected_anchor": "states",
+    "illustrative_case_sufficient": false
+  },
+  {
+    "query": "Library、Project Context、运行工作区和备份各自放什么？",
+    "locale": "zh",
+    "query_mode": "current",
+    "expected_source_class": "official_public_docs_primary",
+    "required_contract_ids": ["WORKSPACE.PROJECT.001", "WORKSPACE.RUN.001", "WORKSPACE.BACKUP.001"],
+    "expected_public_path": "https://docs.rudderhq.dev/zh/reference/workspace-boundaries",
+    "expected_anchor": "states",
+    "illustrative_case_sufficient": false
+  },
+  {
+    "query": "chat_output 和 track_issue 会把自动化结果分别送到哪里？",
+    "locale": "zh",
+    "query_mode": "current",
+    "expected_source_class": "official_public_docs_primary",
+    "required_contract_ids": ["AUTOMATION.OUTPUT.001", "AUTOMATION.RUN.001"],
+    "expected_public_path": "https://docs.rudderhq.dev/zh/reference/automation-output-routing",
+    "expected_anchor": "states",
+    "illustrative_case_sufficient": false
+  },
+  {
+    "query": "Rudder 的平台、凭据、浏览器和本地信任边界在哪里查？",
+    "locale": "zh",
+    "query_mode": "current",
+    "expected_source_class": "official_public_docs_primary",
+    "required_contract_ids": ["AGENT.RUNTIME.PERMISSIONS.001", "AGENT.BROWSER.001"],
+    "expected_public_path": "https://docs.rudderhq.dev/zh/reference/permissions-and-platforms",
+    "expected_anchor": "boundaries",
+    "illustrative_case_sufficient": false
   }
 ]

@@ -41,12 +41,13 @@ entries only. Cite the canonical routes in new answers.
 
 Other lookup pages are similarly narrow:
 
-- Issue states: `https://docs.rudderhq.dev/reference/issue-statuses`
-- Runtime choices and readiness: `https://docs.rudderhq.dev/reference/runtime-types`
-- Workspace and file placement: `https://docs.rudderhq.dev/reference/workspace-boundaries`
-- Automation result destinations: `https://docs.rudderhq.dev/reference/automation-output-routing`
-- Deployment trust, credentials, Browser, and platform behavior:
-  `https://docs.rudderhq.dev/reference/permissions-and-platforms`
+| User topic | English | 简体中文 |
+| --- | --- | --- |
+| Issue states | `https://docs.rudderhq.dev/reference/issue-statuses` | `https://docs.rudderhq.dev/zh/reference/issue-statuses` |
+| Runtime choices and readiness | `https://docs.rudderhq.dev/reference/runtime-types` | `https://docs.rudderhq.dev/zh/reference/runtime-types` |
+| Workspace and file placement | `https://docs.rudderhq.dev/reference/workspace-boundaries` | `https://docs.rudderhq.dev/zh/reference/workspace-boundaries` |
+| Automation result destinations | `https://docs.rudderhq.dev/reference/automation-output-routing` | `https://docs.rudderhq.dev/zh/reference/automation-output-routing` |
+| Deployment trust, credentials, Browser, and platform behavior | `https://docs.rudderhq.dev/reference/permissions-and-platforms` | `https://docs.rudderhq.dev/zh/reference/permissions-and-platforms` |
 
 ## Product Logic Registry
 

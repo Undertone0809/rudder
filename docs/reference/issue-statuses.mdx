@@ -32,6 +32,7 @@ review, unblocking, or no further action.
 | `blocked` | A named dependency or decision prevents progress | The person who can clear the blocker; this is also a reviewable state |
 | `in_review` | Output and evidence are ready for judgment | The reviewer |
 | `done` | The result is accepted and no required work remains | Nobody, unless the Issue is explicitly reopened |
+| `cancelled` | Work was intentionally stopped without an accepted result | Nobody, unless the Issue is explicitly reopened |
 
 <a id="constraints" />
 
@@ -43,8 +44,8 @@ review, unblocking, or no further action.
   `in_review` or `blocked`.
 - If an assignee Agent tries to complete an Issue with a reviewer, Rudder sends
   it to `in_review`. Only an accepted reviewer decision can finish that path.
-- A comment can reopen a closed Issue only when it carries explicit reopen
-  intent.
+- `done` and `cancelled` are closed states. A comment can move either one back
+  to `todo` only when it carries explicit reopen intent.
 
 <a id="boundaries" />
 
@@ -55,6 +56,8 @@ does not move an Issue into `in_review`, and writing "approved" in a free-form
 comment does not create a structured reviewer decision.
 
 Use `blocked` for a concrete missing dependency, not as a general error bucket.
+Use `cancelled` when the work should no longer continue; it is not a substitute
+for `done` when a result has been accepted.
 Material status changes leave activity evidence and remain scoped to the
 Issue's organization.
 
@@ -69,6 +72,9 @@ Issue's organization.
   gets the next action.
 - Work cannot continue until a customer supplies a file. Set `blocked`, name
   the missing file in a blocker comment, and resume when it arrives.
+- A request is withdrawn before an accepted result exists. Set `cancelled`; if
+  the request returns, add a comment with explicit reopen intent to resume it
+  in `todo`.
 
 <CardGroup cols={2}>
   <Card title="Issue lifecycle guide" icon="route" href="/how-to/issue-lifecycle">

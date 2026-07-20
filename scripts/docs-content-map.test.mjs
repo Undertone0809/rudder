@@ -343,6 +343,62 @@ test("Batch 3 references expose definition, state, constraint, boundary, and exa
       assert.ok(governance.anchors[locale].includes(topicAnchor));
     }
   }
+
+  const sharedConstants = fs.readFileSync(
+    path.join(REPO_ROOT, "packages/shared/src/constants.ts"),
+    "utf8",
+  );
+  const issueStatusBlock = sharedConstants.match(
+    /export const ISSUE_STATUSES = \[([\s\S]*?)\] as const;/u,
+  );
+  assert.ok(issueStatusBlock, "shared ISSUE_STATUSES must remain discoverable");
+  const issueStatuses = [...issueStatusBlock[1].matchAll(/"([^"]+)"/gu)].map(
+    (match) => match[1],
+  );
+  for (const relativeFile of [
+    "docs/reference/issue-statuses.mdx",
+    "docs/zh/reference/issue-statuses.mdx",
+  ]) {
+    const source = fs.readFileSync(path.join(REPO_ROOT, relativeFile), "utf8");
+    for (const status of issueStatuses) {
+      assert.ok(source.includes(`\`${status}\``), `${relativeFile} must document ${status}`);
+    }
+    assert.match(source, /`cancelled`[\s\S]*`todo`/u, `${relativeFile} must explain how cancelled work reopens`);
+  }
+
+  const automationStatusBlock = sharedConstants.match(
+    /export const AUTOMATION_RUN_STATUSES = \[([\s\S]*?)\] as const;/u,
+  );
+  assert.ok(automationStatusBlock, "shared AUTOMATION_RUN_STATUSES must remain discoverable");
+  const automationStatuses = [...automationStatusBlock[1].matchAll(/"([^"]+)"/gu)].map(
+    (match) => match[1],
+  );
+  for (const relativeFile of [
+    "docs/reference/automation-output-routing.mdx",
+    "docs/zh/reference/automation-output-routing.mdx",
+  ]) {
+    const source = fs.readFileSync(path.join(REPO_ROOT, relativeFile), "utf8");
+    for (const status of automationStatuses) {
+      assert.ok(source.includes(`\`${status}\``), `${relativeFile} must document ${status}`);
+    }
+  }
+
+  const approvalStatusBlock = sharedConstants.match(
+    /export const APPROVAL_STATUSES = \[([\s\S]*?)\] as const;/u,
+  );
+  assert.ok(approvalStatusBlock, "shared APPROVAL_STATUSES must remain discoverable");
+  const approvalStatuses = [...approvalStatusBlock[1].matchAll(/"([^"]+)"/gu)].map(
+    (match) => match[1],
+  );
+  for (const relativeFile of [
+    "docs/reference/approvals-budgets-activity.mdx",
+    "docs/zh/reference/approvals-budgets-activity.mdx",
+  ]) {
+    const source = fs.readFileSync(path.join(REPO_ROOT, relativeFile), "utf8");
+    for (const status of approvalStatuses) {
+      assert.ok(source.includes(`\`${status}\``), `${relativeFile} must document ${status}`);
+    }
+  }
 });
 
 test("Batch 3 governance topic map routes legacy topics to current owning pages", () => {
@@ -668,15 +724,30 @@ test("Chinese UI label allowlist is sorted, unique, and covers all rewritten pag
     assert.ok(allowlist.labels.includes(label), `allowlist is missing ${label}`);
   }
 
-  const forbiddenOrdinaryEnglish = new Map([
-    ["docs/zh/contact.mdx", [/\bAPI key\b/u, /\bcommit\b/u]],
-    ["docs/zh/reference/issue-statuses.mdx", [/\bcheckout\b/u]],
-    ["docs/zh/reference/permissions-and-platforms.mdx", [/\bjunction\b/u]],
+  const allowedBareEnglishTokens = new Set([
+    "API", "Agent", "Brave", "Browser", "CDP", "CLI", "CRM", "Calendar", "Chat", "Chrome",
+    "Claude", "Code", "Codex", "Cookie", "Cursor", "Dashboard", "Desktop", "Edge",
+    "Gemini", "GitHub", "HTTP", "Inbox", "Issue", "Issues", "JavaScript", "Jira", "Lark", "Library",
+    "Linux", "MCP", "Markdown", "Messenger", "Microsoft", "OpenCode", "PATH", "Pi",
+    "Releases", "Rudder", "UTC", "UUID", "Windows", "macOS", "webhook",
   ]);
-  for (const [relativeFile, terms] of forbiddenOrdinaryEnglish) {
-    const source = fs.readFileSync(path.join(REPO_ROOT, relativeFile), "utf8");
-    for (const term of terms) {
-      assert.doesNotMatch(source, term, `${relativeFile} must translate ordinary English ${term}`);
+  for (const relativeFile of new Set(checkedFiles)) {
+    const source = fs.readFileSync(path.join(REPO_ROOT, relativeFile), "utf8")
+      .replace(/^---\n[\s\S]*?\n---\n/u, "")
+      .replace(/```[\s\S]*?```/gu, "")
+      .replace(/`[^`\n]+`/gu, "")
+      .replace(/\*\*[^*]+\*\*/gu, "")
+      .replace(/https?:\/\/\S+/gu, "")
+      .replace(/<[\s\S]*?>/gu, "")
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/gu, "$1");
+    const bareEnglishTokens = new Set(
+      [...source.matchAll(/[A-Za-z][A-Za-z0-9+.-]*/gu)].map((match) => match[0]),
+    );
+    for (const token of bareEnglishTokens) {
+      assert.ok(
+        allowedBareEnglishTokens.has(token),
+        `${relativeFile} must translate ordinary English token ${token} or format an allowlisted exact UI label`,
+      );
     }
   }
 });

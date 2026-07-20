@@ -28,8 +28,10 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/reference/automation-output-routing"
 | `chat_output` | 为这次执行新建一段 Messenger 对话 | `linkedChatConversationId` |
 | `track_issue` | 新建执行 Issue，进入正常的分配和评审流程 | `linkedIssueId` |
 
-自动化运行会记录任务是已接收、已开始、已完成、失败、跳过还是合并。即使没有
-新建 Chat 或 Issue，最终状态也会保留在运行记录上。
+自动化运行使用精确状态 `received`、`running`、`coalesced`、`skipped`、
+`issue_created`、`completed` 和 `failed`。`issue_created` 表示已经创建用于跟踪
+结果的 Issue，之后由该 Issue 自己的生命周期继续推进。即使没有新建 Chat 或
+Issue，最终状态也会保留在运行记录上。
 
 <a id="constraints" />
 

@@ -47,6 +47,18 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity"
 请求被接受后，由该动作所属的服务执行。应用过程可以安全重试，并始终受组织
 范围约束。
 
+| 状态 | 含义和下一步 |
+| --- | --- |
+| `pending` | 等待结论；可以接受、拒绝或要求修改 |
+| `revision_requested` | 需要修改；申请人可以重新提交到 `pending`，期间仍可作出结论 |
+| `approved` | 动作已获授权；所属服务以可安全重试的方式应用 |
+| `rejected` | 动作被拒绝，不会应用 |
+| `cancelled` | 请求在没有结论、也没有应用动作的情况下结束 |
+
+只有 `pending` 可以进入 `revision_requested`。`pending` 和
+`revision_requested` 都可以被接受或拒绝；只有 `revision_requested` 可以重新
+提交。`approved`、`rejected` 和 `cancelled` 是这条审批记录的终态。
+
 <a id="budgets-and-cost" />
 
 ### 预算和成本

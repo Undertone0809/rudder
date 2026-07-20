@@ -26,7 +26,7 @@ commit_refs:
   - "docs: establish first-principles documentation foundation"
   - "docs: rewrite concepts and how-to guides"
   - "docs: complete first-principles documentation migration"
-updated_at: 2026-07-20
+updated_at: 2026-07-21
 ---
 
 # Restructure the bilingual official documentation around first principles
@@ -301,9 +301,16 @@ and compatibility anchors.
 
 ## Open issues and rollout gates
 
-All three repository implementation batches are complete and validated. The
-plan remains `in_progress` because rollout still depends on the external
-first-reader study and an explicitly authorized production publication.
+All three repository implementation batches and deterministic repository gates
+are complete. The plan remains `in_progress` because rollout still depends on
+live Agent retrieval evaluation, the external first-reader study, and an
+explicitly authorized production publication.
+
+- The retrieval fixtures now cover every bilingual Reference route, declare
+  source class and required contracts, and validate those declarations against
+  the content map. A live Agent run must still execute the fixtures and reach
+  the 90 percent primary-URL target before retrieval rollout is considered
+  validated; schema and ownership checks are not an accuracy measurement.
 
 - The first-reader study requires ten eligible external participants. The
   repository can include the protocol and results template, but implementation

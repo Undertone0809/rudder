@@ -427,7 +427,7 @@ describe("bundled rudder docs skill", () => {
     ).toBeGreaterThanOrEqual(6);
   });
 
-  it("routes governance retrieval to current public owners without changing the main router", async () => {
+  it("declares bilingual retrieval authority fixtures without changing the main router", async () => {
     const evalPath = path.join(root, "evals", "retrieval-authority-evals.json");
     const evals = JSON.parse(await fs.readFile(evalPath, "utf8")) as Array<{
       query: string;
@@ -445,9 +445,11 @@ describe("bundled rudder docs skill", () => {
     ) as {
       base_url: string;
       pages: Array<{
+        kind: string;
         status: string;
         urls: Record<"en" | "zh", string>;
-        contracts: { primary: string[] };
+        anchors: Record<"en" | "zh", string[]>;
+        contracts: { primary: string[]; supporting: string[] };
       }>;
     };
 
@@ -458,7 +460,7 @@ describe("bundled rudder docs skill", () => {
       evals.filter((item) => item.query_mode === "legacy_compatibility").map((item) => item.locale).sort(),
     ).toEqual(["en", "zh"]);
 
-    let primaryMatches = 0;
+    let manifestAuthorityMatches = 0;
     for (const item of evals) {
       expect(Object.keys(item).sort()).toEqual([
         "expected_anchor",
@@ -481,14 +483,33 @@ describe("bundled rudder docs skill", () => {
           candidate.status === "active" &&
           `${contentMap.base_url}${candidate.urls[item.locale]}` === item.expected_public_path,
       );
+      const declaredContracts = [
+        ...(page?.contracts.primary ?? []),
+        ...(page?.contracts.supporting ?? []),
+      ];
+      if (item.expected_anchor) {
+        expect(page?.anchors[item.locale] ?? [], item.expected_public_path).toContain(
+          item.expected_anchor,
+        );
+      }
       if (
         page &&
-        item.required_contract_ids.every((contractId) => page.contracts.primary.includes(contractId))
+        item.required_contract_ids.every((contractId) => declaredContracts.includes(contractId))
       ) {
-        primaryMatches += 1;
+        manifestAuthorityMatches += 1;
       }
     }
-    expect(primaryMatches / evals.length).toBeGreaterThanOrEqual(0.9);
+    expect(manifestAuthorityMatches).toBe(evals.length);
+    const expectedBilingualReferencePaths = contentMap.pages
+      .filter((page) => page.kind === "reference" && page.status === "active")
+      .flatMap((page) => [
+        `${contentMap.base_url}${page.urls.en}`,
+        `${contentMap.base_url}${page.urls.zh}`,
+      ]);
+    const fixturePaths = new Set(evals.map((item) => item.expected_public_path));
+    for (const expectedPath of expectedBilingualReferencePaths) {
+      expect(fixturePaths.has(expectedPath), expectedPath).toBe(true);
+    }
     for (const anchor of ["approvals", "budgets-and-cost", "activity"]) {
       expect(evals.some((item) => item.expected_anchor === anchor)).toBe(true);
     }

@@ -39,12 +39,16 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
     'const runtime={ENV:"cli"};let o=false;o||(console.warn("Connected to Socket.io"),connect());let i=false;i||(console.warn("Connected to Socket.io"),connect());',
   );
   const footer = [
+    "<h3>Docs</h3>",
     '<a href="/get-started/installation">Quick Start</a>',
+    "<h3>Product</h3>",
+    '<a href="/concepts/built-in-browser">Built-in Browser</a>',
     '<a href="/concepts/calendar">Calendar</a>',
+    "<h3>Project</h3>",
     '<a href="/about">About</a>',
     '<a href="/contact">Contact</a>',
     '<a href="/releases">Changelog</a>',
-    '<script>self.__next_f.push([1,"\\\"footer\\\":{\\\"links\\\":[{\\\"items\\\":[{\\\"label\\\":\\\"Quick Start\\\",\\\"href\\\":\\\"/get-started/installation\\\"},{\\\"label\\\":\\\"Calendar\\\",\\\"href\\\":\\\"/concepts/calendar\\\"},{\\\"label\\\":\\\"About\\\",\\\"href\\\":\\\"/about\\\"},{\\\"label\\\":\\\"Contact\\\",\\\"href\\\":\\\"/contact\\\"},{\\\"label\\\":\\\"Changelog\\\",\\\"href\\\":\\\"/releases\\\"}]}]}"])</script>',
+    '<script>self.__next_f.push([1,"\\\"footer\\\":{\\\"links\\\":[{\\\"header\\\":\\\"Docs\\\",\\\"items\\\":[{\\\"label\\\":\\\"Quick Start\\\",\\\"href\\\":\\\"/get-started/installation\\\"}]},{\\\"header\\\":\\\"Product\\\",\\\"items\\\":[{\\\"label\\\":\\\"Built-in Browser\\\",\\\"href\\\":\\\"/concepts/built-in-browser\\\"},{\\\"label\\\":\\\"Calendar\\\",\\\"href\\\":\\\"/concepts/calendar\\\"}]},{\\\"header\\\":\\\"Project\\\",\\\"items\\\":[{\\\"label\\\":\\\"About\\\",\\\"href\\\":\\\"/about\\\"},{\\\"label\\\":\\\"Contact\\\",\\\"href\\\":\\\"/contact\\\"},{\\\"label\\\":\\\"Changelog\\\",\\\"href\\\":\\\"/releases\\\"}]}]}"])</script>',
   ].join("");
 
   const englishPath = writePage(exportDir, "/", fixturePage("/index.md", footer));
@@ -111,12 +115,18 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
   assert.match(chineseGuide, /hreflang="x-default" href="https:\/\/docs\.rudderhq\.dev\/get-started\/installation"/);
   assert.doesNotMatch(unpaired, /hreflang=/);
 
+  assert.match(chinese, />文档<.*>产品<.*>项目</s);
   assert.match(chinese, /href="\/zh\/get-started\/installation">快速开始/);
+  assert.match(chinese, /href="\/zh\/concepts\/built-in-browser">内置浏览器/);
   assert.match(chinese, /href="\/zh\/concepts\/calendar">日历/);
   assert.match(chinese, /href="\/zh\/about">关于/);
   assert.match(chinese, /href="\/zh\/contact">联系方式/);
   assert.match(chinese, /href="\/zh\/releases">更新日志/);
   assert.match(chinese, /\\"label\\":\\"快速开始\\",\\"href\\":\\"\/zh\/get-started\/installation\\"/);
+  assert.match(chinese, /\\"header\\":\\"文档\\"/);
+  assert.match(chinese, /\\"header\\":\\"产品\\"/);
+  assert.match(chinese, /\\"header\\":\\"项目\\"/);
+  assert.match(chinese, /\\"label\\":\\"内置浏览器\\",\\"href\\":\\"\/zh\/concepts\/built-in-browser\\"/);
   assert.match(chinese, /\\"label\\":\\"日历\\",\\"href\\":\\"\/zh\/concepts\/calendar\\"/);
   assert.match(chinese, /\\"label\\":\\"关于\\",\\"href\\":\\"\/zh\/about\\"/);
   assert.match(chinese, /\\"label\\":\\"联系方式\\",\\"href\\":\\"\/zh\/contact\\"/);
@@ -235,6 +245,23 @@ test("public health, package scripts, CI, and staging cover static docs search",
   assert.match(healthCheck, /path: "\/rudder-search\.js"/);
   assert.match(healthCheck, /path: "\/zh\/about"/);
   assert.match(healthCheck, /path: "\/zh\/contact"/);
+  assert.match(healthCheck, /bodyIncludes: \["GitHub", "Bug reports"\]/);
+  assert.match(healthCheck, /fetchText\(url, timeoutMs, "manual"\)/);
+  assert.match(healthCheck, /const LEGACY_HOST = "doc\.rudder\.zeeland\.studio"/);
+  assert.match(healthCheck, /destinationUrl\.href !== expectedUrl\.href/);
+  assert.match(healthCheck, /fetchText\(destinationUrl, timeoutMs, "manual"\)/);
+  for (const alias of [
+    "/concepts/control-plane",
+    "/zh/concepts/control-plane",
+    "/concepts/approvals-budgets-activity",
+    "/zh/concepts/approvals-budgets-activity",
+    "/concepts/chat",
+    "/concepts/messenger",
+    "/zh/concepts/chat",
+    "/zh/concepts/messenger",
+  ]) {
+    assert.ok(healthCheck.includes(`source: "${alias}"`), `${alias} must be checked after deployment`);
+  }
 
   const packageJson = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
   assert.equal(

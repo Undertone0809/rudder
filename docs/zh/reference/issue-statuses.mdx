@@ -31,6 +31,7 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/reference/issue-statuses"
 | `blocked` | 某项明确的依赖或决策阻止了进展 | 能解除阻塞的人；这也是可评审状态 |
 | `in_review` | 已有可判断的产物和证据 | 评审人 |
 | `done` | 结果已接受，没有剩余必要工作 | 无，除非明确重新打开 Issue |
+| `cancelled` | 工作被有意停止，且没有已接受的结果 | 无，除非明确重新打开 Issue |
 
 <a id="constraints" />
 
@@ -41,7 +42,8 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/reference/issue-statuses"
 - 评审结论必须带评论，而且只能在 Issue 为 `in_review` 或 `blocked` 时提交。
 - 负责人 Agent 尝试完成带评审人的 Issue 时，Rudder 会把状态改为
   `in_review`。这条路径只能通过评审人接受结论后完成。
-- 关闭后的 Issue 只有在评论带有明确的重新打开意图时才会恢复。
+- `done` 和 `cancelled` 都是关闭状态。只有评论带有明确的重新打开意图时，
+  Rudder 才会把它们恢复到 `todo`。
 
 <a id="boundaries" />
 
@@ -50,7 +52,8 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/reference/issue-statuses"
 状态不能替代负责人、任务领取或评审。添加评审人不会自动把 Issue
 移到 `in_review`；在普通评论中写“通过”也不会生成结构化评审结论。
 
-`blocked` 应对应一项具体缺失条件，不是普通错误的收纳箱。重要的状态
+`blocked` 应对应一项具体缺失条件，不是普通错误的收纳箱。工作不应继续时使用
+`cancelled`；已有结果被接受时应使用 `done`。重要的状态
 变更会留下活动记录，并始终受 Issue 所属组织的边界限制。
 
 <a id="examples" />
@@ -63,6 +66,8 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/reference/issue-statuses"
   请求修改后，下一步回到负责人。
 - 工作必须等待客户提供文件。设为 `blocked`，在阻塞评论中写明缺少的
   文件，收到后再继续。
+- 一项请求在结果被接受前撤回。把它设为 `cancelled`；请求恢复时，通过带有
+  明确重新打开意图的评论让它回到 `todo`。
 
 <CardGroup cols={2}>
   <Card title="Issue 生命周期指南" icon="route" href="/zh/how-to/issue-lifecycle">
