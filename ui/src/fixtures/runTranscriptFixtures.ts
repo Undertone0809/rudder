@@ -88,7 +88,7 @@ export const runTranscriptFixtureEntries: TranscriptEntry[] = [
     kind: "tool_result",
     ts: "2026-03-11T15:21:19.035Z",
     toolUseId: "item_2",
-    content: "command: sed -n '1,320p' doc/archive/SPEC-implementation.md\nstatus: completed\nexit_code: 0\n\n# Rudder V1 Implementation Spec\n\nPaperclip V1 must provide a full control-plane loop for autonomous agents.",
+    content: "command: sed -n '1,320p' doc/archive/SPEC-implementation.md\nstatus: completed\nexit_code: 0\n\n# Rudder V1 Implementation Spec\n\nPaperclip V1 must provide a full operating-layer loop for autonomous agents.",
     isError: false,
   },
   {

@@ -55,7 +55,7 @@ The product should make that loop concrete without overclaiming automation. Rudd
 
 Two layers:
 
-### 1. Control Plane (this software)
+### 1. Operating Layer (this software)
 
 The central nervous system. Manages:
 
@@ -68,14 +68,14 @@ The central nervous system. Manages:
 
 ### 2. Execution Services (agent runtimes)
 
-Agents run through local or external runtimes and report into the control plane. Agent runtimes connect Rudder to different execution environments:
+Agents run through local or external runtimes and report into the operating layer. Agent runtimes connect Rudder to different execution environments:
 
 - local coding CLIs and processes
 - HTTP/webhook-based agents
 - gateway-backed agent systems
 - any runtime that can be called, can report progress, or can leave evidence through the API
 
-The control plane coordinates work and preserves the record. Runtimes do the actual work.
+The operating layer coordinates work and preserves the record. Runtimes do the actual work.
 
 ## Core Principle
 

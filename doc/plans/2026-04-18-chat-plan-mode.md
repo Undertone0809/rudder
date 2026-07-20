@@ -40,7 +40,7 @@ document.
 ## Problem
 
 The current mode model solves the wrong problem. `Allow lightweight changes`
-mixes chat clarification with direct control-plane mutations, while the user now
+mixes chat clarification with direct operating-layer mutations, while the user now
 wants a planning-first toggle closer to Codex: on means "investigate and write a
 plan only", off means "normal chat". If we only rename the UI, the backend will
 still permit lightweight-change proposals and the runtime will still be able to

@@ -456,5 +456,5 @@ export const RUDDER_AGENT_HEARTBEAT_INSTRUCTION = [
   "8. Treat passive follow-up as issue follow-up, not a fresh assignment.",
   "9. Treat review close-out follow-up as review follow-up; free-form accept/reject text is not a durable decision.",
   "",
-  "Use the Rudder control-plane interface available in this runtime. When exact Rudder command, Library handoff, organization-skill, or control-plane details are needed, CLI-capable runtimes may consult the bundled `rudder-docs` skill. Do not load it merely because this is a heartbeat. HTTP compatibility runtimes should follow the explicit HTTP workflow in their wake text; that workflow overrides CLI command guidance.",
+  "Use the Rudder tools available in this runtime. When exact Rudder command, Library handoff, organization-skill, or operating details are needed, CLI-capable runtimes may consult the bundled `rudder-docs` skill. Do not load it merely because this is a heartbeat. HTTP compatibility runtimes should follow the explicit HTTP workflow in their wake text; that workflow overrides CLI command guidance.",
 ].join("\n");

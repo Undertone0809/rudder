@@ -1,5 +1,5 @@
 ---
-title: Agent Control Plane Tools
+title: Agent Operating Layer Tools
 domain: agents
 status: active
 coverage: current
@@ -43,24 +43,24 @@ related_plans:
 edit_policy: user_confirmed_only
 ---
 
-# Agent Control Plane Tools
+# Agent Operating Layer Tools
 
 ## AGENT.CONTROL.TOOLS.001
 
 ### Contract Summary
 
-Rudder exposes a first-party `rudder-control-plane` MCP server for supported
+Rudder exposes a first-party `rudder-operating-layer` MCP server for supported
 agent runtimes. The server presents the stable `agent-v1` command contract as
 typed MCP tools using `rudder_<capability_id>` names, conditionally projects
 the Built-in Browser tool set from trusted runtime capability state, dispatches
-core control-plane tools directly through Rudder's runtime API context when
+core operating-layer tools directly through Rudder's runtime API context when
 supported, falls back to the existing Rudder CLI command path for remaining
 capabilities, and gets organization, agent, run, API, and project-library
 identity only from runtime-owned environment.
 
 ### Intent / User Job
 
-Runtime agents need a reliable control-plane tool surface for issue, run,
+Runtime agents need a reliable operating-layer tool surface for issue, run,
 chat, automation, library, approval, skill, agent, and bounded Browser
 operations. Operators need this surface to be typed, auditable, and scoped to
 the current run instead
@@ -75,7 +75,7 @@ an agent must read it on every run. MCP gives the model a typed schema, stable
 tool names, and a clear transport boundary while preserving CLI compatibility
 for capabilities that have not moved to direct runtime API dispatch.
 
-The control-plane server is runtime infrastructure, not a custom integration.
+The operating-layer server is runtime infrastructure, not a custom integration.
 The operator does not configure its URL, credentials, binding, or allowlist from
 Agent Detail. Rudder injects it only when a supported runtime can receive
 managed MCP config or an equivalent runtime-managed native tool bridge for the
@@ -88,7 +88,7 @@ current run.
   Agent Detail Integrations Manage when runtime metadata exposes them.
 - `agent-v1` capability: stable Rudder agent command contract entry.
 - MCP tool manifest: `rudder.agent-mcp-tools/v1` manifest for
-  `rudder-control-plane`.
+  `rudder-operating-layer`.
 - Managed MCP runtime config: adapter-owned MCP server config injected for the
   current run.
 - Managed native tool bridge: adapter-owned tool exposure that presents the same
@@ -105,7 +105,7 @@ current run.
 
 - `rudder mcp-server` runs the first-party MCP server over stdio.
 - `tools/list` returns the `agent-v1` MCP tool manifest for
-  `rudder-control-plane`.
+  `rudder-operating-layer`.
 - When Built-in Browser is enabled for a supported local run, the manifest also
   exposes `rudder_browser_tabs`, `rudder_browser_open`,
   `rudder_browser_navigate`, `rudder_browser_read`, `rudder_browser_click`,
@@ -129,7 +129,7 @@ current run.
    name such as `rudder_issue_checkout`; it includes the eight Browser tools
    only when trusted run context marks Built-in Browser enabled.
 3. A supported runtime invocation prepares managed MCP server config or a
-   runtime-managed native tool bridge for `rudder-control-plane`.
+   runtime-managed native tool bridge for `rudder-operating-layer`.
 4. Runtime-owned environment supplies API URL, agent token, organization id,
    agent id, run id, and project library path when available.
 5. The model calls MCP tools with only the capability's task arguments.
@@ -154,7 +154,7 @@ current run.
 
 | Case | Result |
 | --- | --- |
-| Supported runtime has managed MCP config | Runtime receives `rudder-control-plane` with runtime-owned env and `rudder mcp-server` command. |
+| Supported runtime has managed MCP config | Runtime receives `rudder-operating-layer` with runtime-owned env and `rudder mcp-server` command. |
 | Runtime supports first-party native tool bridging instead of managed MCP config | Runtime receives an adapter-managed native bridge exposing the same `rudder_<capability_id>` tool names with runtime-owned env. |
 | Runtime does not support managed MCP config and exact command guidance is needed | Agent consults the bundled `rudder-docs` skill/reference and uses the CLI compatibility path. |
 | Model supplies `orgId`, `agentId`, `runId`, `apiKey`, `apiBase`, or authorization fields | Tool call is rejected with `rudder_mcp_reserved_identity_argument`. |
@@ -181,7 +181,7 @@ Rudder-managed runtime environment.
 ### Operator-Visible Output
 
 Operators may see `Rudder MCP tools` on Agent Detail Integrations Manage with
-the `rudder-control-plane` server name, runtime-managed auth label, tool count,
+the `rudder-operating-layer` server name, runtime-managed auth label, tool count,
 tool-name list, and runtime transport metadata. This row is informational and
 has no configure or disconnect action.
 
@@ -191,8 +191,8 @@ Evidence can include:
 
 - adapter command notes stating that first-party Rudder MCP tools were
   configured
-- managed runtime config files that include the `rudder-control-plane` server
-- managed native tool extension files that expose `rudder-control-plane` tools
+- managed runtime config files that include the `rudder-operating-layer` server
+- managed native tool extension files that expose `rudder-operating-layer` tools
   for runtimes without direct MCP config support
 - CLI/MCP server tests proving the manifest, schemas, runtime identity
   rejection, missing-context errors, stdio handling, and direct runtime API
@@ -207,15 +207,15 @@ Evidence can include:
 ### Canonical Scenarios
 
 - A Codex local run starts with Rudder-managed MCP config. The runtime receives
-  `rudder-control-plane`, calls an `agent-v1` MCP tool such as
+  `rudder-operating-layer`, calls an `agent-v1` MCP tool such as
   `rudder_issue_context`, and the server uses runtime-owned auth to dispatch the
   tool through the direct API path when supported or the CLI fallback path when
   needed.
 - A Claude local run starts with inherited user MCP config present. Rudder
   strips inherited MCP/plugin config from the run surface, then injects only
-  the first-party `rudder-control-plane` server with runtime-owned env.
+  the first-party `rudder-operating-layer` server with runtime-owned env.
 - A Pi local run starts without a supported MCP server config surface. Rudder
-  writes an adapter-managed `rudder-control-plane` Pi extension, exposes the
+  writes an adapter-managed `rudder-operating-layer` Pi extension, exposes the
   same `rudder_<capability_id>` tool names to the model, and records
   `rudderNativeTools` metadata with `transport: "pi_extension"`.
 - A Browser-enabled local run receives the conditional Browser skill and eight

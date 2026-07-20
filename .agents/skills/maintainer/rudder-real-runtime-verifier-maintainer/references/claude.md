@@ -2,7 +2,7 @@
 
 Claude should use a managed MCP config with strict config behavior. User-supplied
 `--mcp-config` or disabling strict MCP config should not override the Rudder
-control-plane server.
+operating-layer server.
 
 ## Transcript Shape
 
@@ -13,7 +13,7 @@ Look inside assistant messages:
   "type": "assistant",
   "message": {
     "content": [
-      {"type": "tool_use", "name": "mcp__rudder-control-plane__rudder_agent_me"},
+      {"type": "tool_use", "name": "mcp__rudder-operating-layer__rudder_agent_me"},
       {"type": "tool_result", "is_error": false}
     ]
   }
@@ -22,11 +22,11 @@ Look inside assistant messages:
 
 Tool names usually look like:
 
-- `mcp__rudder-control-plane__rudder_agent_me`
-- `mcp__rudder-control-plane__rudder_issue_context`
-- `mcp__rudder-control-plane__rudder_issue_checkout`
-- `mcp__rudder-control-plane__rudder_issue_comment`
-- `mcp__rudder-control-plane__rudder_issue_done`
+- `mcp__rudder-operating-layer__rudder_agent_me`
+- `mcp__rudder-operating-layer__rudder_issue_context`
+- `mcp__rudder-operating-layer__rudder_issue_checkout`
+- `mcp__rudder-operating-layer__rudder_issue_comment`
+- `mcp__rudder-operating-layer__rudder_issue_done`
 
 ## Known Traps
 
@@ -43,8 +43,8 @@ Tool names usually look like:
 Claude workflow proof should include:
 
 - strict managed MCP config active
-- expected `mcp__rudder-control-plane__...` tool uses
-- no `Bash` fallback for Rudder control-plane work
+- expected `mcp__rudder-operating-layer__...` tool uses
+- no `Bash` fallback for Rudder operating-layer work
 - no `tool_result.is_error`
 - persisted issue/comment/readback evidence
 - clean terminal run status, or an explicit finalizer failure classification

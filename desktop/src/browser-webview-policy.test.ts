@@ -107,7 +107,7 @@ describe("Rudder Browser session policy", () => {
     };
 
     installBrowserSessionPolicy(browserSession, {
-      getControlPlaneOrigins: () => ["http://127.0.0.1:3100"],
+      getOperatingLayerOrigins: () => ["http://127.0.0.1:3100"],
     });
 
     expect(permissionCheckHandler?.()).toBe(false);
@@ -165,7 +165,7 @@ describe("Rudder Browser guest policy", () => {
     let browserAvailable = true;
     installBrowserWebviewPolicy(hostContents, {
       partition: "persist:rudder-browser-v1-safe",
-      getControlPlaneOrigins: () => ["http://127.0.0.1:3100"],
+      getOperatingLayerOrigins: () => ["http://127.0.0.1:3100"],
       isBrowserAvailable: () => browserAvailable,
       registerGuest: registry.register,
       openBrowserPopup,
@@ -230,12 +230,12 @@ describe("Rudder Browser guest policy", () => {
     const fileRedirect = { preventDefault: vi.fn() };
     guestHandlers.get("will-redirect")?.(fileRedirect, "file:///tmp/private.txt");
     expect(fileRedirect.preventDefault).toHaveBeenCalledTimes(1);
-    const controlPlaneRedirect = { preventDefault: vi.fn() };
-    guestHandlers.get("will-redirect")?.(controlPlaneRedirect, "http://127.0.0.1:3100/api/orgs");
-    expect(controlPlaneRedirect.preventDefault).toHaveBeenCalledTimes(1);
-    const controlPlaneSubframe = { url: "http://localhost:3100/", preventDefault: vi.fn() };
-    guestHandlers.get("will-frame-navigate")?.(controlPlaneSubframe);
-    expect(controlPlaneSubframe.preventDefault).toHaveBeenCalledTimes(1);
+    const operatingLayerRedirect = { preventDefault: vi.fn() };
+    guestHandlers.get("will-redirect")?.(operatingLayerRedirect, "http://127.0.0.1:3100/api/orgs");
+    expect(operatingLayerRedirect.preventDefault).toHaveBeenCalledTimes(1);
+    const operatingLayerSubframe = { url: "http://localhost:3100/", preventDefault: vi.fn() };
+    guestHandlers.get("will-frame-navigate")?.(operatingLayerSubframe);
+    expect(operatingLayerSubframe.preventDefault).toHaveBeenCalledTimes(1);
     const allowedLegacyFrameNavigation = { preventDefault: vi.fn() };
     guestHandlers.get("will-frame-navigate")?.(
       allowedLegacyFrameNavigation,

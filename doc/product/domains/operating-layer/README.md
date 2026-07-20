@@ -1,6 +1,6 @@
 ---
-title: Control Plane Domain
-domain: control-plane
+title: Operating Layer Domain
+domain: operating-layer
 status: active
 coverage: detailed
 contract_ids: []
@@ -22,7 +22,7 @@ related_tests:
 edit_policy: user_confirmed_only
 ---
 
-# Control Plane Domain
+# Operating Layer Domain
 
 ## Owns
 

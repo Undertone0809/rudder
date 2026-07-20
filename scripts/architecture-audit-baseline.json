@@ -140,7 +140,7 @@
     {
       "path": "server/src/services/runtime-kernel/heartbeat.ts",
       "lines": 1687,
-      "owner": "control-plane-runtime",
+      "owner": "operating-layer-runtime",
       "rationale": "The runtime kernel facade still owns legacy execution branches while admission and recovery are extracted.",
       "target": "Complete named runtime use-case extraction and reduce the facade below 1500 lines.",
       "expiry": "2026-12-31"

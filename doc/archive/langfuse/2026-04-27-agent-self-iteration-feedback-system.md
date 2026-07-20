@@ -42,7 +42,7 @@ The system should turn real execution into a controlled improvement loop:
 heartbeat run -> outcome feedback -> retrospective -> improvement proposal -> eval gate -> approval -> canary/promotion -> rollback if needed
 ```
 
-This proposal does not make agents silently rewrite themselves. It makes improvement visible, reviewable, testable, and reversible inside Rudder's existing control plane.
+This proposal does not make agents silently rewrite themselves. It makes improvement visible, reviewable, testable, and reversible inside Rudder's existing operating layer.
 
 The first version should focus on Rudder-owned execution signals: heartbeat runs, issues, issue comments, approvals, cost/budget events, work products, run events, benchmark results, and board feedback. Later versions can import richer traces from Langfuse or external agent runtimes.
 
@@ -59,7 +59,7 @@ Today, when an agent succeeds or fails, the result is mostly operational history
 - Should the fix be a prompt change, a skill change, a workflow change, a memory entry, a tool-policy change, or a new eval?
 - Did the proposed fix improve real outcomes without increasing cost or risk?
 
-Without this layer, agent improvement remains manual, anecdotal, and hard to audit. With it, Rudder can become the control plane for self-improving agent teams.
+Without this layer, agent improvement remains manual, anecdotal, and hard to audit. With it, Rudder can become the operating layer for self-improving agent teams.
 
 ## What Will Be Changed?
 
@@ -557,7 +557,7 @@ The system adds new records and optional UI surfaces. Existing heartbeat runs, i
 
 ## Security
 
-This feature directly affects agent behavior and must preserve Rudder's control-plane invariants.
+This feature directly affects agent behavior and must preserve Rudder's operating-layer invariants.
 
 Rules:
 
@@ -575,7 +575,7 @@ Rules:
 
 ### Goal
 
-Prove that Rudder can capture structured feedback, derive retrospectives, create proposals, enforce approval/eval gates, and promote or rollback changes without violating organization boundaries or control-plane invariants.
+Prove that Rudder can capture structured feedback, derive retrospectives, create proposals, enforce approval/eval gates, and promote or rollback changes without violating organization boundaries or operating-layer invariants.
 
 ### Prerequisites
 
@@ -654,7 +654,7 @@ To be filled during implementation verification.
 
 Update:
 
-- `doc/PRODUCT.md`: add self-iteration feedback as part of the control-plane learning loop
+- `doc/PRODUCT.md`: add self-iteration feedback as part of the operating-layer learning loop
 - `doc/SPEC-implementation.md`: define V1 behavior for run feedback, retrospectives, proposals, eval gates, approvals, and rollback
 - `doc/spec/agent-runs.md`: document run completion hook and feedback derivation
 - `doc/TASKS.md`: describe issue-level feedback and learning linkage if issue UI changes

@@ -10,7 +10,7 @@ views over the same month of real work.
 ## Scenario Spine
 
 Persona: founder/operator running a small agent team that is building Rudder,
-shipping releases, improving the control plane, and trying to grow usage among
+shipping releases, improving the operating layer, and trying to grow usage among
 builders who already run coding agents.
 
 Problem: agents can produce code and content, but the operator needs one place
@@ -111,7 +111,7 @@ After seeding, open the printed dashboard URL. The org should show:
 - pending approvals for Product Hunt gating and budget override
 - Calendar density from derived heartbeat run events, plus a few human reviews
 - Messenger conversations that explain why the scenario is organized this way
-- Rudder control-plane practice cases that teach good and bad agent behavior
+- Rudder operating-layer practice cases that teach good and bad agent behavior
   from actual Studio records, not from an isolated tutorial page
 
 ## Rudder Practice Cases

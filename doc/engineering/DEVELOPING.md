@@ -58,12 +58,12 @@ Prompt authoring rule of thumb:
 - examples of conditional injections: `planMode`, recovery mode, operator profile, selected project context, project-attached resources, wake-source-specific context
 - do not inject the full organization resource catalog by default; project-attached
   resources are the default run/chat context, while org resources stay queryable
-  through the control plane when an agent needs broader background
+  through the operating layer when an agent needs broader background
 
 ## Data Volume and Render Performance
 
 Treat production-shaped data volume as a development constraint from the start,
-not as a late polish pass. Rudder is an operational control plane; pages must
+not as a late polish pass. Rudder is an operational operating layer; pages must
 stay usable when an organization has many issues, runs, comments, agents,
 resources, conversations, or activity entries.
 
@@ -148,7 +148,7 @@ unchanged historical debt blocks CI; baseline regressions remain visible in the
 report as burn-down inventory.
 
 `scripts/architecture-boundaries.json` intentionally uses
-`scope: declared-only`. Declared Collaboration, Execution, and Control Plane
+`scope: declared-only`. Declared Collaboration, Execution, and Operating Layer
 modules have enforced cycle and public-facade rules. Paths listed under
 `observed` are migration inventory only; a green check does not claim that
 those undeclared areas or the whole repository have zero bypasses. Add a domain

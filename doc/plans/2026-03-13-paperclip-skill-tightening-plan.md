@@ -6,7 +6,7 @@ Deferred follow-up. Do not include in the current token-optimization PR beyond d
 
 ## Why This Is Deferred
 
-The `rudder` skill is part of the critical control-plane safety surface. Tightening it may reduce fresh-session token use, but it also carries prompt-regression risk. We do not yet have evals that would let us safely prove behavior preservation across assignment handling, checkout rules, comment etiquette, approval workflows, and escalation paths.
+The `rudder` skill is part of the critical operating-layer safety surface. Tightening it may reduce fresh-session token use, but it also carries prompt-regression risk. We do not yet have evals that would let us safely prove behavior preservation across assignment handling, checkout rules, comment etiquette, approval workflows, and escalation paths.
 
 The current PR should ship the lower-risk infrastructure wins first:
 
@@ -31,7 +31,7 @@ That structure is safe but expensive.
 ## Goals
 
 - reduce first-run instruction tokens without weakening agent safety
-- preserve all current Rudder control-plane capabilities
+- preserve all current Rudder operating-layer capabilities
 - keep common heartbeat behavior explicit and easy for agents to follow
 - move rare workflows and reference material out of the hot path
 - create a structure that can later be evaluated systematically
@@ -167,14 +167,14 @@ Do not change this loading policy without validation.
 
 ## Risks
 
-- prompt degradation on control-plane safety rules
+- prompt degradation on operating-layer safety rules
 - agents forgetting rare but important workflows
 - accidental removal of repeated wording that was carrying useful behavior
 - introducing ambiguous instruction precedence between the core skill and companion materials
 
 ## Preconditions Before Implementation
 
-- define acceptance scenarios for control-plane correctness
+- define acceptance scenarios for operating-layer correctness
 - add at least lightweight eval or scripted scenario coverage for key Rudder flows
 - confirm how adapter/bootstrap layering should load skill content versus references
 

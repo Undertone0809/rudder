@@ -6,13 +6,13 @@ This document summarizes the memory systems referenced in task `PAP-530` and ext
 
 ## What Rudder Needs From This Survey
 
-Rudder is not trying to become a single opinionated memory engine. The more useful target is a control-plane memory surface that:
+Rudder is not trying to become a single opinionated memory engine. The more useful target is a operating-layer memory surface that:
 
 - stays company-scoped
 - lets each company choose a default memory provider
 - lets specific agents override that default
 - keeps provenance back to Rudder runs, issues, comments, and documents
-- records memory-related cost and latency the same way the rest of the control plane records work
+- records memory-related cost and latency the same way the rest of the operating layer records work
 - works with plugin-provided providers, not only built-ins
 
 The question is not "which memory project wins?" The question is "what is the smallest Rudder contract that can sit above several very different memory systems without flattening away the useful differences?"
@@ -51,9 +51,9 @@ These emphasize local persistence, inspectability, and low operational overhead.
 | [mem0](https://github.com/mem0ai/mem0) | hosted + OSS SDK | `add`, `search`, `getAll`, `get`, `update`, `delete`, `deleteAll`; entity partitioning via `user_id`, `agent_id`, `run_id`, `app_id` | closest to a clean provider API with identities and metadata filters | provider owns extraction heavily; Rudder should not assume every backend behaves like mem0 |
 | [MemOS](https://github.com/MemTensor/MemOS) | memory OS / framework | unified add-retrieve-edit-delete, memory cubes, multimodal memory, tool memory, async scheduler, feedback/correction | strong source for optional capabilities beyond plain search | much broader than the minimal contract Rudder should standardize first |
 | [supermemory](https://github.com/supermemoryai/supermemory) | hosted memory + context API | `add`, `profile`, `search.memories`, `search.documents`, document upload, settings; automatic profile building and forgetting | strong example of "context bundle" rather than raw search results | heavily productized around its own ontology and hosted flow |
-| [memU](https://github.com/NevaMind-AI/memU) | proactive agent memory framework | file-system metaphor, proactive loop, intent prediction, always-on companion model | good source for when memory should trigger agent behavior, not just retrieval | proactive assistant framing is broader than Rudder's task-centric control plane |
+| [memU](https://github.com/NevaMind-AI/memU) | proactive agent memory framework | file-system metaphor, proactive loop, intent prediction, always-on companion model | good source for when memory should trigger agent behavior, not just retrieval | proactive assistant framing is broader than Rudder's task-centric operating layer |
 | [Memori](https://github.com/MemoriLabs/Memori) | hosted memory fabric + SDK wrappers | registers against LLM SDKs, attribution via `entity_id` + `process_id`, sessions, cloud + BYODB | strong example of automatic capture around model clients | wrapper-centric design does not map 1:1 to Rudder's run / issue / comment lifecycle |
-| [EverMemOS](https://github.com/EverMind-AI/EverMemOS) | conversational long-term memory system | MemCell extraction, structured narratives, user profiles, hybrid retrieval / reranking | useful model for provenance-rich structured memories and evolving profiles | focused on conversational memory rather than generalized control-plane events |
+| [EverMemOS](https://github.com/EverMind-AI/EverMemOS) | conversational long-term memory system | MemCell extraction, structured narratives, user profiles, hybrid retrieval / reranking | useful model for provenance-rich structured memories and evolving profiles | focused on conversational memory rather than generalized operating-layer events |
 | [memsearch](https://github.com/zilliztech/memsearch) | markdown-first local memory index | markdown as source of truth, `index`, `search`, `watch`, transcript parsing, plugin hooks | excellent baseline for a local built-in provider and inspectable provenance | intentionally simple; no hosted service semantics or rich correction workflow |
 | [OpenViking](https://github.com/volcengine/OpenViking) | context database | filesystem-style organization of memories/resources/skills, tiered loading, visualized retrieval trajectories | strong source for browse/inspect UX and context provenance | treats "context database" as a larger product surface than Rudder should own |
 
@@ -128,7 +128,7 @@ Rudder needs both direct request/response operations and background maintenance 
 - contradiction resolution and forgetting logic
 - storage engine details
 
-### The control-plane contract should stay small
+### The operating-layer contract should stay small
 
 Rudder does not need to standardize every feature from every provider. It needs:
 
@@ -140,7 +140,7 @@ Rudder does not need to standardize every feature from every provider. It needs:
 
 Rudder should adopt a two-layer memory model:
 
-1. `Memory binding + control plane layer`
+1. `Memory binding + operating layer layer`
    Rudder decides which provider key is in effect for a company, agent, or project, and it logs every memory operation with provenance and usage.
 
 2. `Provider adapter layer`

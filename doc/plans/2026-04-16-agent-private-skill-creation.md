@@ -25,10 +25,10 @@ updated_at: 2026-04-17
 # Agent-Private Skill Creation
 
 ## What Is Actually Wrong
-Agent-private skills already exist as a runtime concept: Rudder discovers them from `AGENT_HOME/skills` and agents can enable them once they are present. The missing piece is the authored control-plane surface. There is no first-party create flow for agent-owned skill packages, so the product contract says "agent skills exist" while the mutation surface still behaves as if only organization skills are authorable.
+Agent-private skills already exist as a runtime concept: Rudder discovers them from `AGENT_HOME/skills` and agents can enable them once they are present. The missing piece is the authored operating-layer surface. There is no first-party create flow for agent-owned skill packages, so the product contract says "agent skills exist" while the mutation surface still behaves as if only organization skills are authorable.
 
 ## Diagnosis
-- Primary layer: control-plane product/API gap
+- Primary layer: operating-layer product/API gap
 - Secondary layer: UI workflow gap
 - Why: runtime discovery is already implemented, but the only built-in create/edit workflow targets organization skills under `/api/orgs/:orgId/skills`
 

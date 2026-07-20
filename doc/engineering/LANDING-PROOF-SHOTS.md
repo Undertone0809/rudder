@@ -5,7 +5,7 @@ README-style marketing surfaces.
 
 The job of these images is not to show that the product exists.
 The job is to prove that Rudder completes real agent-work loops inside a clear
-control plane.
+operating layer.
 
 ## What These Shots Need To Prove
 
@@ -94,7 +94,7 @@ last two as secondary feature shots.
 
 | Shot | Surface | Product claim | Landing use |
 | --- | --- | --- | --- |
-| `dashboard-control-plane` | Dashboard | The organization is alive and legible | hero or top feature |
+| `dashboard-operating-layer` | Dashboard | The organization is alive and legible | hero or top feature |
 | `chat-create-issue` | Messenger chat | Chat can execute directly or add issue structure | feature block |
 | `issue-execution-loop` | Issue detail / issue thread | One issue closes end to end | feature block |
 | `approval-review` | Approval review block | Humans stay in control | feature block |
@@ -104,7 +104,7 @@ last two as secondary feature shots.
 
 ## Detailed Shot Briefs
 
-### 1. Dashboard Control Plane
+### 1. Dashboard Operating Layer
 
 - Claim:
   Rudder lets the operator understand what the organization is doing right now.
@@ -331,7 +331,7 @@ will read as stitched together.
 
 Capture in this order:
 
-1. `dashboard-control-plane`
+1. `dashboard-operating-layer`
 2. `chat-create-issue`
 3. `issue-execution-loop`
 4. `approval-review`
@@ -348,4 +348,4 @@ This order forces the highest-value proof shots to be designed first.
 - Are the metrics and issue IDs coherent across the set?
 - Is the chat screenshot clearly about creating tracked work?
 - Are at least three screenshots visibly tied to concrete outputs or approvals?
-- Would a new visitor understand that Rudder is a control plane, not a generic chat app?
+- Would a new visitor understand that Rudder is a operating layer, not a generic chat app?

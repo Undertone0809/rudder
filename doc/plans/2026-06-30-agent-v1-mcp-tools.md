@@ -26,7 +26,7 @@ updated_at: 2026-06-30
 
 ## Summary
 
-Rudder should move agent control-plane work away from shell-first `rudder`
+Rudder should move agent operating-layer work away from shell-first `rudder`
 commands and toward first-party typed tools. The CLI remains a human/admin
 surface and compatibility fallback, but runtime agents should prefer Rudder MCP
 tools when the adapter exposes them.
@@ -70,13 +70,13 @@ Logic Registry requires explicit user approval for that delta.
   `/tmp/rudder-mcp-real2` with `RUDDER_INSTANCE_ID=mcp-real2` and disposable
   organization `62a219ba-d2b7-461d-bef5-406cfbcf48c6`.
 - Codex local run `91d46da7-40de-4ad7-8192-1a8dd47bf568` used
-  `rudder-control-plane` MCP tools to run `rudder_issue_context`,
+  `rudder-operating-layer` MCP tools to run `rudder_issue_context`,
   `rudder_issue_checkout`, `rudder_issue_comment`, and `rudder_issue_done` for
   issue `MCP-1`; the issue ended `done` with both marker comments.
 - Claude local run `173120da-ea9d-4b7b-be8c-94bd250d37df` used the same MCP
   workflow for issue `MCP-2`; the issue ended `done` with both marker comments.
 - Direct transcript inspection found no shell `rudder ...` command executions
-  in either accepted run; the control-plane writes came through MCP tool calls.
+  in either accepted run; the operating-layer writes came through MCP tool calls.
 - Both managed runtime configs contained runtime-owned MCP identity environment:
   `RUDDER_API_URL`, `RUDDER_API_KEY`, `RUDDER_ORG_ID`, `RUDDER_AGENT_ID`, and
   `RUDDER_RUN_ID`.

@@ -1,7 +1,7 @@
 import {
   isAllowedBrowserBootstrapUrl,
   isAllowedBrowserNavigationUrl,
-  isBlockedBrowserControlPlaneUrl,
+  isBlockedBrowserOperatingLayerUrl,
   isLocalAbsoluteFileUrl,
 } from "./browser-profile.js";
 
@@ -101,7 +101,7 @@ function isAllowedMainFrameRequestUrl(target: string): boolean {
 }
 
 export function installBrowserSessionPolicy(browserSession: BrowserSessionPolicyTarget, options: {
-  getControlPlaneOrigins(): string[];
+  getOperatingLayerOrigins(): string[];
 }): void {
   browserSession.setPermissionCheckHandler(denyBrowserPermissionCheck);
   browserSession.setPermissionRequestHandler((_webContents, _permission, callback: (granted: boolean) => void) => {
@@ -118,7 +118,7 @@ export function installBrowserSessionPolicy(browserSession: BrowserSessionPolicy
       return;
     }
     callback({
-      cancel: isBlockedBrowserControlPlaneUrl(details.url, options.getControlPlaneOrigins()),
+      cancel: isBlockedBrowserOperatingLayerUrl(details.url, options.getOperatingLayerOrigins()),
     });
   });
 }
@@ -150,7 +150,7 @@ export function createBrowserGuestRegistry(): {
 
 export function installBrowserWebviewPolicy(hostContents: BrowserWebviewHost, options: {
   partition: string;
-  getControlPlaneOrigins(): string[];
+  getOperatingLayerOrigins(): string[];
   isBrowserAvailable(): boolean;
   registerGuest(guest: BrowserGuest): void;
   openBrowserPopup?(url: string): void;
@@ -164,7 +164,7 @@ export function installBrowserWebviewPolicy(hostContents: BrowserWebviewHost, op
     hardenBrowserWebviewParams(params, options.partition);
     const initialUrl = params.src || "about:blank";
     if (!options.isBrowserAvailable()
-      || !isAllowedBrowserBootstrapUrl(initialUrl, options.getControlPlaneOrigins())) {
+      || !isAllowedBrowserBootstrapUrl(initialUrl, options.getOperatingLayerOrigins())) {
       event.preventDefault();
     }
   });
@@ -178,13 +178,13 @@ export function installBrowserWebviewPolicy(hostContents: BrowserWebviewHost, op
     options.registerGuest(guest);
     guest.setWindowOpenHandler(({ url }) => {
       if (options.isBrowserAvailable()
-        && isAllowedBrowserNavigationUrl(url, options.getControlPlaneOrigins())) {
+        && isAllowedBrowserNavigationUrl(url, options.getOperatingLayerOrigins())) {
         setImmediate(() => options.openBrowserPopup?.(url));
       }
       return { action: "deny" };
     });
     const preventUnsafeNavigation = (event: PreventableEvent, targetUrl: string) => {
-      if (!isAllowedBrowserNavigationUrl(targetUrl, options.getControlPlaneOrigins())) {
+      if (!isAllowedBrowserNavigationUrl(targetUrl, options.getOperatingLayerOrigins())) {
         event.preventDefault();
       }
     };

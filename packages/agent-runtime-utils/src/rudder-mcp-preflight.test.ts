@@ -95,7 +95,7 @@ for await (const line of lines) {
         coreContractHash: ${JSON.stringify(RUDDER_CORE_MCP_CONTRACT_HASH)},
         browserContractHash: hash,
       } } },
-      serverInfo: { name: mode === "server" || desktopCliEntryLeaked ? "not-rudder" : "rudder-control-plane", version },
+      serverInfo: { name: mode === "server" || desktopCliEntryLeaked ? "not-rudder" : "rudder-operating-layer", version },
     } }));
   }
   if (request.method === "tools/list") {

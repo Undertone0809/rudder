@@ -21,7 +21,7 @@ The main product risk is overloading one concept to do too much:
 - making subissues do the job of branches or PRs
 - making projects too infrastructure-heavy
 - making workspaces so hidden that users cannot form a mental model
-- making Rudder feel like a code review tool instead of a control plane
+- making Rudder feel like a code review tool instead of a operating layer
 
 ## Goals
 

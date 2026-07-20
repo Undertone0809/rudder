@@ -1607,7 +1607,7 @@ async function captureDashboard(page: Page, orgPrefix: string) {
   await expect(page.locator("#main-content")).toContainText("Fixed macOS 15 packaged-startup crash", { timeout: 30_000 });
   await page.waitForTimeout(2400);
   const main = page.locator("#main-content");
-  await captureLocator(page, main.locator("div.space-y-6").first(), "dashboard-control-plane.png", { x: 18, y: 18 });
+  await captureLocator(page, main.locator("div.space-y-6").first(), "dashboard-operating-layer.png", { x: 18, y: 18 });
   await captureViewport(page, "board-overview.png");
 }
 
@@ -1876,7 +1876,7 @@ async function main() {
       dbUrl: runtime.dbUrl,
       seed,
       screenshots: [
-        "dashboard-control-plane.png",
+        "dashboard-operating-layer.png",
         "board-overview.png",
         "mobile-dashboard.png",
         "chat-create-issue-proposal.png",

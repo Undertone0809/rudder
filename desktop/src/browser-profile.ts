@@ -86,11 +86,11 @@ function isLoopbackOrUnspecifiedHostname(hostname: string): boolean {
     || /^::ffff:7f[0-9a-f]{2}:/.test(hostname);
 }
 
-export function isBlockedBrowserControlPlaneUrl(target: string, controlPlaneOrigins: string[]): boolean {
+export function isBlockedBrowserOperatingLayerUrl(target: string, operatingLayerOrigins: string[]): boolean {
   const targetEndpoint = normalizeNetworkEndpoint(target);
   if (!targetEndpoint) return false;
 
-  return controlPlaneOrigins.some((origin) => {
+  return operatingLayerOrigins.some((origin) => {
     const controlEndpoint = normalizeNetworkEndpoint(origin);
     if (!controlEndpoint
       || targetEndpoint.protocol !== controlEndpoint.protocol
@@ -102,11 +102,11 @@ export function isBlockedBrowserControlPlaneUrl(target: string, controlPlaneOrig
   });
 }
 
-export function isAllowedBrowserNavigationUrl(target: string, controlPlaneOrigins: string[]): boolean {
+export function isAllowedBrowserNavigationUrl(target: string, operatingLayerOrigins: string[]): boolean {
   try {
     const parsed = new URL(target);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-    return !isBlockedBrowserControlPlaneUrl(target, controlPlaneOrigins);
+    return !isBlockedBrowserOperatingLayerUrl(target, operatingLayerOrigins);
   } catch {
     return false;
   }
@@ -126,14 +126,14 @@ export function isLocalAbsoluteFileUrl(target: string): boolean {
   }
 }
 
-export function isAllowedOperatorBrowserNavigationUrl(target: string, controlPlaneOrigins: string[]): boolean {
+export function isAllowedOperatorBrowserNavigationUrl(target: string, operatingLayerOrigins: string[]): boolean {
   if (isLocalAbsoluteFileUrl(target)) return true;
-  return isAllowedBrowserNavigationUrl(target, controlPlaneOrigins);
+  return isAllowedBrowserNavigationUrl(target, operatingLayerOrigins);
 }
 
-export function isAllowedBrowserBootstrapUrl(target: string, controlPlaneOrigins: string[]): boolean {
+export function isAllowedBrowserBootstrapUrl(target: string, operatingLayerOrigins: string[]): boolean {
   if (target === "about:blank") return true;
-  return isAllowedOperatorBrowserNavigationUrl(target, controlPlaneOrigins);
+  return isAllowedOperatorBrowserNavigationUrl(target, operatingLayerOrigins);
 }
 
 export function createBrowserProfileController(options: {

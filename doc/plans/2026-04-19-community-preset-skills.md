@@ -47,7 +47,7 @@ There is no first-class source for "recommended preset skills we ship with the
 product but do not own as core runtime contract". Copying these skills into
 repo `.agents/skills/` would leave them in a maintainer-only lane, while moving
 them into bundled Rudder skills would incorrectly imply they are part of the
-mandatory control-plane baseline.
+mandatory operating-layer baseline.
 
 ## Decisions
 

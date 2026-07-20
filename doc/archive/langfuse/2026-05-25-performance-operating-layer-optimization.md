@@ -1,11 +1,11 @@
 ---
-title: Performance control-plane optimization
+title: Performance operating-layer optimization
 date: 2026-05-25
 kind: implementation
 status: in_progress
 area: api
 entities:
-  - control_plane_performance
+  - operating_layer_performance
   - sidebar_badges
   - messenger_chat
   - issue_search
@@ -29,11 +29,11 @@ commit_refs: []
 updated_at: 2026-05-25
 ---
 
-# Performance Control-Plane Optimization
+# Performance Operating-Layer Optimization
 
 ## Summary
 
-Optimize Rudder's high-traffic control-plane paths without changing the current
+Optimize Rudder's high-traffic operating-layer paths without changing the current
 operator experience or breaking existing API contracts. The first delivery slice
 focuses on measurement scaffolding and the narrowest safe backend change:
 making sidebar badge counts use aggregate queries instead of hydrating full
@@ -45,7 +45,7 @@ later become opt-in paginated or lazily loaded.
 
 ## Problem
 
-Rudder's current control-plane paths often compute small summaries by loading
+Rudder's current operating-layer paths often compute small summaries by loading
 large object sets:
 
 - `/orgs/:orgId/sidebar-badges` calls dashboard summary, full unread issue list,
@@ -333,8 +333,8 @@ Phase 8 evidence:
 ## Phase 9 Result
 
 The ninth slice added a repeatable seeded timing harness for the optimized
-control-plane paths. `pnpm perf:control-plane` now runs
-`scripts/perf/control-plane-baseline.ts` against an explicit `DATABASE_URL`,
+operating-layer paths. `pnpm perf:operating-layer` now runs
+`scripts/perf/operating-layer-baseline.ts` against an explicit `DATABASE_URL`,
 seeds a synthetic organization, times the hot service paths, emits JSON timing
 summaries, and removes its seeded rows by default.
 
@@ -352,7 +352,7 @@ org.
 
 Phase 9 evidence:
 
-- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale smoke --iterations 2`
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:operating-layer -- --scale smoke --iterations 2`
 - `pnpm --filter @rudderhq/server typecheck`
 
 ## Phase 10 Result
@@ -373,7 +373,7 @@ checking whether the newly added indexes are actually selected on seeded data.
 
 Phase 10 evidence:
 
-- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale smoke --iterations 1 --explain`
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:operating-layer -- --scale smoke --iterations 1 --explain`
 - `pnpm --filter @rudderhq/server typecheck`
 - `git diff --check`
 
@@ -411,7 +411,7 @@ Phase 11 evidence:
   with `RUDDER_MESSENGER_SERVICE_TEST_DATABASE_URL` pointed at a temporary
   isolated database on the already-running local Rudder Postgres instance
   including multi-comment approval summary coverage
-- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale medium --iterations 1 --explain`
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:operating-layer -- --scale medium --iterations 1 --explain`
 
 ## Phase 12 Result
 
@@ -447,7 +447,7 @@ Phase 12 evidence:
   database on the already-running local Rudder Postgres instance, including
   read-after-external-comment, self-reply-after-external-comment, creator,
   reviewer, read-state-only, comment-only, and hidden-issue coverage
-- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale medium --iterations 1 --explain`
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:operating-layer -- --scale medium --iterations 1 --explain`
 
 ## Phase 13 Result
 
@@ -481,7 +481,7 @@ Phase 13 evidence:
 - `pnpm --filter @rudderhq/server exec vitest run src/__tests__/messenger-service.test.ts --reporter=verbose`
   with `RUDDER_MESSENGER_SERVICE_TEST_DATABASE_URL` pointed at a temporary
   isolated database on the already-running local Rudder Postgres instance
-- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale medium --iterations 2 --explain`
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:operating-layer -- --scale medium --iterations 2 --explain`
 
 ## Phase 14 Result
 
@@ -514,8 +514,8 @@ Phase 14 evidence:
 - `pnpm --filter @rudderhq/server exec vitest run src/__tests__/messenger-service.test.ts --reporter=verbose`
   with `RUDDER_MESSENGER_SERVICE_TEST_DATABASE_URL` pointed at a temporary
   isolated database on the already-running local Rudder Postgres instance
-- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale medium --iterations 2 --explain`
-- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale medium --iterations 5`
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:operating-layer -- --scale medium --iterations 2 --explain`
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:operating-layer -- --scale medium --iterations 5`
 
 ## Phase 15 Plan
 
@@ -546,7 +546,7 @@ Phase 15 validation target:
 - focused cost service tests for same-month increment, out-of-month events, and
   existing Langfuse/budget behavior
 - `pnpm --filter @rudderhq/server typecheck`
-- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale medium --iterations 5`
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:operating-layer -- --scale medium --iterations 5`
 
 ## Phase 15 Result
 
@@ -589,8 +589,8 @@ Phase 15 evidence:
 - `pnpm --filter @rudderhq/server exec vitest run src/__tests__/costs-langfuse.test.ts src/__tests__/monthly-spend-service.test.ts --reporter=verbose`
 - `RUDDER_COSTS_ROLLUPS_TEST_DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm --filter @rudderhq/server exec vitest run src/__tests__/costs-rollups-service.test.ts --reporter=verbose`
 - `pnpm --filter @rudderhq/server exec vitest run src/__tests__/orgs-service.test.ts --reporter=verbose`
-- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale cost-heavy --iterations 5 --explain`
-- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale medium --iterations 5`
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:operating-layer -- --scale cost-heavy --iterations 5 --explain`
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:operating-layer -- --scale medium --iterations 5`
 - `pnpm build`
 
 ## Open Issues

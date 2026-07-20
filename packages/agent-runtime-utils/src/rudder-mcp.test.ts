@@ -14,7 +14,7 @@ describe("Rudder MCP Browser capability", () => {
   it("adds provenance and contract diagnostics only after a real preflight", () => {
     expect(rudderMcpRuntimeMetadata({ browserEnabled: false })).toEqual({
       available: true,
-      serverName: "rudder-control-plane",
+      serverName: "rudder-operating-layer",
       toolCount: RUDDER_MCP_TOOL_COUNT,
       fallbackReason: null,
     });

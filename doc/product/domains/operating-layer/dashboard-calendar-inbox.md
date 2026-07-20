@@ -1,6 +1,6 @@
 ---
 title: Dashboard Calendar And Inbox
-domain: control-plane
+domain: operating-layer
 status: active
 coverage: detailed
 contract_ids:

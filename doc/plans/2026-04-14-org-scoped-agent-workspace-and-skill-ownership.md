@@ -27,7 +27,7 @@ updated_at: 2026-04-17
 
 ## Summary
 
-Adopt the org-scoped workspace tree as the canonical runtime filesystem contract, and move runtime skill ownership fully into Rudder's control plane.
+Adopt the org-scoped workspace tree as the canonical runtime filesystem contract, and move runtime skill ownership fully into Rudder's operating layer.
 
 Canonical paths:
 

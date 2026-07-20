@@ -51,7 +51,7 @@ leaving the current review context by accident.
 ## Why / Design Reasoning
 
 A single-file `srcDoc` cannot faithfully render multi-file output, while serving
-agent-authored HTML from Rudder's control-plane origin would give untrusted code
+agent-authored HTML from Rudder's operating-layer origin would give untrusted code
 access to operator credentials and APIs. Rudder therefore uses a separate
 Preview Host plus an opaque sandbox origin. Connected is the default because a
 runnable website is the primary review job; Offline remains an explicit local-
@@ -96,7 +96,7 @@ separate document sections.
    that capability. Main-host API routes and preview capabilities on the main
    host remain unavailable.
 6. Connected permits artifact scripts and external HTTPS resources inside the
-   sandbox, while control-plane requests, credentials, top navigation, popups,
+   sandbox, while operating-layer requests, credentials, top navigation, popups,
    downloads, connection APIs, and parent DOM access remain blocked.
 7. Offline serves local assets with scripts and external requests blocked.
    Selecting a different network mode creates a new session; reload creates a

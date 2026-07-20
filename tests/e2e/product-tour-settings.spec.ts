@@ -54,7 +54,7 @@ test.describe("Product tour", () => {
     });
     await page.reload();
 
-    await expect(page.getByRole("dialog", { name: "Rudder is the control plane for agent work" })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Rudder keeps agent work connected" })).toBeVisible();
     await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/dashboard$`));
 
     for (const title of [
@@ -107,7 +107,7 @@ test.describe("Product tour", () => {
     await modal.getByRole("button", { name: "Start tour" }).click();
 
     await expect(modal).toHaveCount(0);
-    await expect(page.getByRole("dialog", { name: "Rudder is the control plane for agent work" })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Rudder keeps agent work connected" })).toBeVisible();
     await expect(page.getByText("Complete your first work loop")).toBeVisible();
     await expect(page.getByText("1 / 5")).toBeVisible();
     await expectTourChromeSeparated(page);
@@ -117,7 +117,7 @@ test.describe("Product tour", () => {
     await expectTourChromeSeparated(page);
 
     await page.getByRole("button", { name: "Back" }).click();
-    await expect(page.getByRole("dialog", { name: "Rudder is the control plane for agent work" })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Rudder keeps agent work connected" })).toBeVisible();
     await expectTourChromeSeparated(page);
 
     for (const title of [

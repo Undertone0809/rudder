@@ -32,7 +32,7 @@ function createHarness() {
     partition: "persist:rudder-browser-v1-test",
     createWindow,
     registerGuest,
-    getControlPlaneOrigins: () => ["http://127.0.0.1:3100"],
+    getOperatingLayerOrigins: () => ["http://127.0.0.1:3100"],
   });
   return {
     browserWindow,

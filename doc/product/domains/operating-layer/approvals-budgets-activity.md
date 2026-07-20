@@ -1,6 +1,6 @@
 ---
 title: Approvals Budgets Activity And Run Intelligence
-domain: control-plane
+domain: operating-layer
 status: active
 coverage: detailed
 contract_ids:

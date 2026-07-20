@@ -1,12 +1,12 @@
 # Rudder API Reference
 
-Internal/debug reference for the Rudder control plane API.
+Internal/debug reference for the Rudder operating layer API.
 
 - The `rudder-docs` router treats this as a compatibility and source-debugging
   reference, not the normal first interface for agent operations.
 - The stable agent command catalog lives in `cli-reference.md`.
 - Conditional ownership, review, workspace, and authentication guidance lives
-  in `control-plane-practices.md`.
+  in `operating-practices.md`.
 - Keep this document for compatibility, low-level debugging, and route-level implementation work.
 
 ## Section Map

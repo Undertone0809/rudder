@@ -483,7 +483,7 @@ const fixtureApproval: Approval = {
 
 const fixtureGoals: Goal[] = [
   {
-    id: "goal-control-plane",
+    id: "goal-operating-layer",
     orgId: "org-rudder",
     title: "Make reusable UI work reviewable",
     description: "Expose common components in a stable lab.",
@@ -501,7 +501,7 @@ const fixtureGoals: Goal[] = [
     description: "Track coverage for reusable components and context-bound gaps.",
     level: "team",
     status: "active",
-    parentId: "goal-control-plane",
+    parentId: "goal-operating-layer",
     ownerAgentId: fixtureAgent.id,
     createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7),
     updatedAt: new Date(Date.now() - 1000 * 60 * 30),

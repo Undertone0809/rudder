@@ -1,6 +1,6 @@
 ---
 name: rudder-real-runtime-verifier-maintainer
-description: "Use when verifying Rudder agent runtime behavior in a real local environment, especially MCP/native control-plane tools across Codex, Claude, OpenCode, Pi, or user-named runtimes. Trigger for requests like 真是/真实环境跑过吗, 排查所有 rudder tools, transcript/fallback verification, runtime MCP availability, provider matrix proof, or checking whether agents used Rudder tools instead of rudder CLI/Bash/curl fallback."
+description: "Use when verifying Rudder agent runtime behavior in a real local environment, especially MCP/native operating-layer tools across Codex, Claude, OpenCode, Pi, or user-named runtimes. Trigger for requests like 真是/真实环境跑过吗, 排查所有 rudder tools, transcript/fallback verification, runtime MCP availability, provider matrix proof, or checking whether agents used Rudder tools instead of rudder CLI/Bash/curl fallback."
 ---
 
 # Rudder Real Runtime Verifier Maintainer
@@ -86,7 +86,7 @@ A runtime passes only when all are true:
    run was inspected with enough raw transcript/log evidence.
 3. The transcript shows the expected Rudder MCP/native tool calls.
 4. There is no model-visible fallback to shell, Bash, curl, or `rudder` CLI for
-   Rudder control-plane work.
+   Rudder operating-layer work.
 5. Tool results are not internally failed (`isError`, structured error,
    `rudder_cli_command_failed`, missing required argument, auth/org failure).
 6. The terminal product effect was read back: issue status, comments, run
@@ -130,7 +130,7 @@ Use the smallest probe that answers the question, then escalate only as needed:
 - Internal runtime-owned bridges may execute a server process. That is
   acceptable only if the model-visible action is a typed Rudder tool and
   runtime env owns identity. It is not acceptable if the model uses Bash/curl or
-  runs `rudder ...` itself for control-plane work.
+  runs `rudder ...` itself for operating-layer work.
 
 ## Output
 

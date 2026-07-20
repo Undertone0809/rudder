@@ -19,14 +19,14 @@ returns a transport or configuration error.
 ## Operating Policy Owners
 
 Keep this file focused on commands and CLI-specific I/O. Consult the exact
-control-plane owner for operating behavior:
+operating-practices guide for operating behavior:
 
-- [Interface and Chat/issue scope](control-plane-practices.md#interface-and-scope)
-- [Ownership, checkout, and wake scope](control-plane-practices.md#ownership-checkout-and-wake-scope)
-- [Comments, mentions, and evidence](control-plane-practices.md#comments-mentions-and-evidence)
-- [Review and close-out](control-plane-practices.md#review-and-close-out)
-- [Durable Library artifacts](control-plane-practices.md#durable-library-artifacts)
-- [Git identity and attribution](control-plane-practices.md#git-identity-and-attribution)
+- [Interface and Chat/issue scope](operating-practices.md#interface-and-scope)
+- [Ownership, checkout, and wake scope](operating-practices.md#ownership-checkout-and-wake-scope)
+- [Comments, mentions, and evidence](operating-practices.md#comments-mentions-and-evidence)
+- [Review and close-out](operating-practices.md#review-and-close-out)
+- [Durable Library artifacts](operating-practices.md#durable-library-artifacts)
+- [Git identity and attribution](operating-practices.md#git-identity-and-attribution)
 
 ## Defaults
 
@@ -48,7 +48,7 @@ control-plane owner for operating behavior:
 | `rudder_agent_me` | `rudder agent me` | Show the authenticated agent identity, budget, and chain of command. | no | no | no | no |
 | `rudder_agent_inbox` | `rudder agent inbox` | List the compact assignee and reviewer work inbox for the authenticated agent. | no | no | no | no |
 | `rudder_agent_capabilities` | `rudder agent capabilities` | List the stable Rudder agent command contract. | no | no | no | no |
-| `rudder_agent_update` | `rudder agent update [agent-id] [--title <title>] [--description <text>]` | Update an agent's control-plane identity fields; defaults to the authenticated agent. | yes | no | no | attached when available |
+| `rudder_agent_update` | `rudder agent update [agent-id] [--title <title>] [--description <text>]` | Update an agent's identity fields; defaults to the authenticated agent. | yes | no | no | attached when available |
 | `rudder_agent_skills_create` | `rudder agent skills create [agent-id] --name <name> [--enable]` | Create an agent-private skill package under AGENT_HOME/skills. | yes | no | no | attached when available |
 | `rudder_agent_skills_enable` | `rudder agent skills enable <agent-id> <selection-ref...>` | Add skill selections to an agent without replacing existing enabled skills. | yes | no | no | attached when available |
 | `rudder_agent_skills_sync` | `rudder agent skills sync <agent-id>` | Sync the desired enabled skill set for an agent. | yes | no | no | attached when available |
@@ -125,7 +125,7 @@ control-plane owner for operating behavior:
 
 ## Issue Command I/O And Shapes
 
-Operating rules live in [ownership, checkout, and wake scope](control-plane-practices.md#ownership-checkout-and-wake-scope), [comments and evidence](control-plane-practices.md#comments-mentions-and-evidence), and [review and close-out](control-plane-practices.md#review-and-close-out). The CLI close-out shapes are:
+Operating rules live in [ownership, checkout, and wake scope](operating-practices.md#ownership-checkout-and-wake-scope), [comments and evidence](operating-practices.md#comments-mentions-and-evidence), and [review and close-out](operating-practices.md#review-and-close-out). The CLI close-out shapes are:
 
 - progress: `rudder issue comment <issue> --body-file <path> [--image <path>]`
 - done: `rudder issue done <issue> --comment-file <path> [--image <path>]`
@@ -139,7 +139,7 @@ Issue comment responses include `shortRef` when available. `rudder issue comment
 
 ## Renderable Library CLI Output
 
-File placement and handoff policy lives in [Durable Library artifacts](control-plane-practices.md#durable-library-artifacts). Request a renderable reference with `rudder library file ref <library-relative-path> --json`.
+File placement and handoff policy lives in [Durable Library artifacts](operating-practices.md#durable-library-artifacts). Request a renderable reference with `rudder library file ref <library-relative-path> --json`.
 
 The relevant JSON fields are:
 
@@ -151,7 +151,7 @@ The `ref` argument is Library-relative, not an absolute filesystem path. CLI fal
 
 ## Reviewer Decision Command Shapes
 
-Reviewer policy lives in [Review and close-out](control-plane-practices.md#review-and-close-out). Supported decision command shapes are:
+Reviewer policy lives in [Review and close-out](operating-practices.md#review-and-close-out). Supported decision command shapes are:
 
 - `rudder issue review <issue> --decision approve --comment-file <path>`
 - `rudder issue review <issue> --decision request_changes --comment-file <path>`

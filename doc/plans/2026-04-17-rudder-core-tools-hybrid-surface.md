@@ -33,7 +33,7 @@ updated_at: 2026-04-17
 
 ## Overview
 
-Introduce a built-in Rudder core-tool surface for high-frequency control-plane
+Introduce a built-in Rudder core-tool surface for high-frequency operating-layer
 actions during agent runs, while keeping the bundled `rudder` skill as the
 workflow-policy layer and keeping the `rudder` CLI as a debug/manual/fallback
 surface.
@@ -47,7 +47,7 @@ run.
 Current agent runs use the bundled `rudder` skill to teach the model to call
 `rudder ... --json` through shell tools.
 
-That works, but it creates a poor boundary for core control-plane actions:
+That works, but it creates a poor boundary for core operating-layer actions:
 
 - run-scoped auth is already injected by the runtime, but each action still
   replays the full `CLI process -> HTTP request -> server route` path
@@ -113,7 +113,7 @@ It is a host-capability problem being expressed through prompt instructions.
   - core Rudder actions must remain host-owned and must not weaken existing
     organization or agent scoping rules
   - plugin tools must not gain authority over checkout, approval, or other
-    control-plane invariants through this proposal
+    operating-layer invariants through this proposal
 - maintainability:
   - the same server-side service methods should back both CLI commands and
     core tools where possible
@@ -129,7 +129,7 @@ It is a host-capability problem being expressed through prompt instructions.
 
 1. A heartbeat starts and Rudder injects the normal run context.
 2. The bundled `rudder` skill tells the agent to follow the heartbeat workflow
-   and use Rudder core tools for standard control-plane actions.
+   and use Rudder core tools for standard operating-layer actions.
 3. The agent asks for `issue.checkout` through the built-in tool surface.
 4. The host executes the action directly against Rudder services using trusted
    run context.
@@ -212,7 +212,7 @@ It should primarily describe:
 
 #### 5. Transcript Semantics
 
-Add a Rudder-specific semantic block so the operator sees control-plane work as
+Add a Rudder-specific semantic block so the operator sees operating-layer work as
 platform actions, not shell trivia.
 
 Examples:
@@ -247,7 +247,7 @@ Keep these on CLI fallback in phase one:
 
 ### Goal
 
-Prove that the common heartbeat control-plane path uses built-in Rudder tools,
+Prove that the common heartbeat operating-layer path uses built-in Rudder tools,
 preserves current governance behavior, and improves transcript semantics.
 
 ### Prerequisites

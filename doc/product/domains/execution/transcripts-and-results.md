@@ -86,7 +86,7 @@ Invariant:
 
 Rationale:
 
-- Rudder is a control plane. Agent execution is not trustworthy unless result,
+- Rudder is a operating layer. Agent execution is not trustworthy unless result,
   cost, transcript, and session evidence remain attached to the run.
 
 Related code:

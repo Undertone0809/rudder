@@ -1374,9 +1374,9 @@ contracts:
       - doc/plans/2026-07-09-feishu-daily-session-rollover.md
   CONTROL.APPROVALS.001:
     owner: product
-    domain: control-plane
+    domain: operating-layer
     docs:
-      - doc/product/domains/control-plane/approvals-budgets-activity.md
+      - doc/product/domains/operating-layer/approvals-budgets-activity.md
     related_code:
       - packages/db/src/schema/approvals.ts
       - packages/db/src/schema/approval_comments.ts
@@ -1389,9 +1389,9 @@ contracts:
       - doc/plans/2026-06-21-product-logic-registry.md
   CONTROL.BUDGETS.001:
     owner: product
-    domain: control-plane
+    domain: operating-layer
     docs:
-      - doc/product/domains/control-plane/approvals-budgets-activity.md
+      - doc/product/domains/operating-layer/approvals-budgets-activity.md
     related_code:
       - packages/db/src/schema/cost_events.ts
       - server/src/services/budgets.ts
@@ -1405,9 +1405,9 @@ contracts:
       - doc/plans/2026-06-21-product-logic-registry.md
   CONTROL.ACTIVITY.001:
     owner: product
-    domain: control-plane
+    domain: operating-layer
     docs:
-      - doc/product/domains/control-plane/approvals-budgets-activity.md
+      - doc/product/domains/operating-layer/approvals-budgets-activity.md
     related_code:
       - server/src/services/activity.ts
     related_tests:
@@ -1416,9 +1416,9 @@ contracts:
       - doc/plans/2026-06-21-product-logic-registry.md
   CONTROL.RUN.INTELLIGENCE.001:
     owner: product
-    domain: control-plane
+    domain: operating-layer
     docs:
-      - doc/product/domains/control-plane/approvals-budgets-activity.md
+      - doc/product/domains/operating-layer/approvals-budgets-activity.md
     related_code:
       - server/src/services/run-intelligence.ts
       - server/src/routes/run-intelligence.ts
@@ -1440,10 +1440,10 @@ contracts:
       - doc/plans/2026-07-14-run-intelligence-summary-and-bounded-evidence.md
   CONTROL.SERVER.LIFECYCLE.001:
     owner: product
-    domain: control-plane
+    domain: operating-layer
     spec_depth: logic_contract
     docs:
-      - doc/product/domains/control-plane/server-runtime-lifecycle.md
+      - doc/product/domains/operating-layer/server-runtime-lifecycle.md
     related_code:
       - server/src/index.ts
       - server/src/app.ts
@@ -1468,10 +1468,10 @@ contracts:
       - doc/plans/2026-07-17-safe-change-throughput-architecture-optimization.md
   CONTROL.DESKTOP.STARTUP.RECOVERY.001:
     owner: product
-    domain: control-plane
+    domain: operating-layer
     spec_depth: logic_contract
     docs:
-      - doc/product/domains/control-plane/desktop-startup-recovery.md
+      - doc/product/domains/operating-layer/desktop-startup-recovery.md
     related_code:
       - desktop/src/boot-screen.ts
       - desktop/src/boot-preload.ts
@@ -1544,9 +1544,9 @@ contracts:
       - doc/plans/2026-05-19-library-project-context-workspace-proposal.md
   CONTROL.DASHBOARD.001:
     owner: product
-    domain: control-plane
+    domain: operating-layer
     docs:
-      - doc/product/domains/control-plane/dashboard-calendar-inbox.md
+      - doc/product/domains/operating-layer/dashboard-calendar-inbox.md
     related_code:
       - server/src/routes/dashboard.ts
       - server/src/services/dashboard.ts
@@ -1557,9 +1557,9 @@ contracts:
       - doc/plans/2026-06-21-product-logic-registry.md
   CONTROL.CALENDAR.001:
     owner: product
-    domain: control-plane
+    domain: operating-layer
     docs:
-      - doc/product/domains/control-plane/dashboard-calendar-inbox.md
+      - doc/product/domains/operating-layer/dashboard-calendar-inbox.md
     related_code:
       - packages/db/src/schema/calendar_events.ts
       - packages/db/src/schema/calendar_sources.ts
@@ -1573,9 +1573,9 @@ contracts:
       - doc/plans/2026-06-21-product-logic-registry.md
   CONTROL.INBOX.001:
     owner: product
-    domain: control-plane
+    domain: operating-layer
     docs:
-      - doc/product/domains/control-plane/dashboard-calendar-inbox.md
+      - doc/product/domains/operating-layer/dashboard-calendar-inbox.md
     related_code:
       - server/src/routes/sidebar-badges.ts
       - server/src/services/messenger.ts

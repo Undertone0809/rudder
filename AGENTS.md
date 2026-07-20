@@ -144,7 +144,7 @@ If you change schema/API behavior, update all impacted layers:
 - `server` routes/services
 - `ui` API clients and pages
 
-1. Preserve control-plane invariants.
+1. Preserve operating-layer invariants.
 
 - Single-assignee task model
 - Atomic issue checkout semantics

@@ -57,7 +57,7 @@ describe("managed Codex home config sync", () => {
 
     const { config } = await prepareWithSharedConfig('model = "gpt-5.5"\n', mcpEnv);
 
-    expect(config).toContain(`[mcp_servers.rudder-control-plane.env]`);
+    expect(config).toContain(`[mcp_servers.rudder-operating-layer.env]`);
     expect(config).toContain(`RUDDER_BROWSER_ENABLED = "${expected}"`);
   });
 

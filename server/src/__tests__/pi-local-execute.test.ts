@@ -369,7 +369,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
       const extensionIndex = capture.argv.indexOf("--extension");
       expect(extensionIndex).toBeGreaterThanOrEqual(0);
       const extensionPath = capture.argv[extensionIndex + 1];
-      expect(extensionPath).toBe(path.join(managedPiAgentDir, "extensions", "rudder-control-plane", "index.ts"));
+      expect(extensionPath).toBe(path.join(managedPiAgentDir, "extensions", "rudder-operating-layer", "index.ts"));
       const extensionSource = await fs.readFile(extensionPath, "utf8");
       expect(extensionSource).toContain("rudder_agent_me");
       expect(extensionSource).toContain("rudder_issue_checkout");
@@ -457,7 +457,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
         coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
         contractVersion: RUDDER_MCP_CONTRACT_VERSION,
         diagnosticCode: null,
-        serverName: "rudder-control-plane",
+        serverName: "rudder-operating-layer",
         toolCount: 69,
         provenance: "repo",
         version: "0.5.0",
@@ -466,7 +466,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(rudderNativeTools).toEqual({
         available: true,
         transport: "pi_extension",
-        serverName: "rudder-control-plane",
+        serverName: "rudder-operating-layer",
         toolCount: 69,
         toolNames: expect.arrayContaining(["rudder_agent_me", "rudder_issue_checkout", "rudder_library_file_list"]),
         authMode: "runtime_managed",

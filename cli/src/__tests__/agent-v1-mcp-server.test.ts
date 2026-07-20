@@ -442,7 +442,7 @@ describe("agent-v1 MCP server", () => {
             },
           },
         },
-        serverInfo: { name: "rudder-control-plane", version: "0.5.0" },
+        serverInfo: { name: "rudder-operating-layer", version: "0.5.0" },
       },
     });
   });

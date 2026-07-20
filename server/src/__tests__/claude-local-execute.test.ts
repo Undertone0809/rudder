@@ -744,7 +744,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
       expect(managedSettings.enabledPlugins).toBeUndefined();
       expect(managedSettings.hooks).toBeUndefined();
       expect(managedSettings.mcpServers).toMatchObject({
-        "rudder-control-plane": {
+        "rudder-operating-layer": {
           command: expect.any(String),
           args: expect.arrayContaining(["mcp-server"]),
         },
@@ -753,7 +753,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
         mcpServers?: Record<string, { env?: Record<string, string> }>;
       };
       expect(managedMcpConfig.mcpServers).toMatchObject({
-        "rudder-control-plane": {
+        "rudder-operating-layer": {
           type: "stdio",
           command: expect.any(String),
           args: expect.arrayContaining(["mcp-server"]),
@@ -762,7 +762,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
           },
         },
       });
-      expect(managedMcpConfig.mcpServers?.["rudder-control-plane"]?.env).toMatchObject({
+      expect(managedMcpConfig.mcpServers?.["rudder-operating-layer"]?.env).toMatchObject({
         RUDDER_API_URL: "http://localhost:3100",
         RUDDER_API_KEY: "run-jwt-token",
         RUDDER_ORG_ID: "organization-1",
@@ -1263,10 +1263,10 @@ describe("claude execute", { timeout: 20_000 }, () => {
         };
         expect(managedConfig).toMatchObject({
           mcpServers: {
-            "rudder-control-plane": { env: { RUDDER_BROWSER_ENABLED: "false" } },
+            "rudder-operating-layer": { env: { RUDDER_BROWSER_ENABLED: "false" } },
           },
         });
-        const generatedMcpConfig = managedConfig.mcpServers["rudder-control-plane"];
+        const generatedMcpConfig = managedConfig.mcpServers["rudder-operating-layer"];
         expect(generatedMcpConfig.command).toBe(installedDesktopMcp.command);
         expect(generatedMcpConfig.args).toEqual(installedDesktopMcp.args);
         expect(await readMcpToolNames({

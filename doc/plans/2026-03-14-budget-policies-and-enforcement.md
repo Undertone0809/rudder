@@ -2,7 +2,7 @@
 
 ## Context
 
-Rudder already treats budgets as a core control-plane responsibility:
+Rudder already treats budgets as a core operating-layer responsibility:
 
 - `doc/SPEC.md` gives the Board authority to set budgets, pause agents, pause work, and override any budget.
 - `doc/SPEC-implementation.md` says V1 must support monthly UTC budget windows, soft alerts, and hard auto-pause.

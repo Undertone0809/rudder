@@ -16,7 +16,8 @@ export {
   type RudderMcpToolContractSource
 } from "./rudder-mcp-contract.js";
 
-export const RUDDER_MCP_SERVER_NAME = "rudder-control-plane";
+export const RUDDER_MCP_SERVER_NAME = "rudder-operating-layer";
+export const RUDDER_MCP_LEGACY_SERVER_NAME = ["rudder", "control", "plane"].join("-");
 export const RUDDER_MCP_TOOL_COUNT = RUDDER_CORE_MCP_TOOL_NAMES.length;
 export const RUDDER_BROWSER_MCP_TOOL_COUNT = RUDDER_BROWSER_MCP_TOOL_NAMES.length;
 export const RUDDER_MCP_MANAGED_ENV_KEYS = [

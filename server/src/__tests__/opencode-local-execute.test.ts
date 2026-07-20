@@ -1067,8 +1067,8 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         provider?: Record<string, unknown>;
       };
       expect(managedConfig.autoupdate).toBe(false);
-      expect(Object.keys(managedConfig.mcp ?? {})).toEqual(["rudder-control-plane"]);
-      expect(managedConfig.mcp?.["rudder-control-plane"]).toMatchObject({
+      expect(Object.keys(managedConfig.mcp ?? {})).toEqual(["rudder-operating-layer"]);
+      expect(managedConfig.mcp?.["rudder-operating-layer"]).toMatchObject({
         type: "local",
         enabled: true,
         environment: {
@@ -1085,7 +1085,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       expect(JSON.stringify(managedConfig)).not.toContain("forbidden-org");
       expect(JSON.stringify(managedConfig)).not.toContain("forbidden/project-library");
       expect(JSON.stringify(managedConfig)).not.toContain("forbidden-run");
-      expect(managedConfig.mcp?.["rudder-control-plane"]?.command).toEqual(
+      expect(managedConfig.mcp?.["rudder-operating-layer"]?.command).toEqual(
         expect.arrayContaining(["mcp-server"]),
       );
       expect(managedConfig.provider).toMatchObject({
@@ -1134,7 +1134,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         contractVersion: RUDDER_MCP_CONTRACT_VERSION,
         diagnosticCode: null,
         provenance: "repo",
-        serverName: "rudder-control-plane",
+        serverName: "rudder-operating-layer",
         toolCount: 69,
         version: "0.5.0",
         fallbackReason: null,
@@ -1568,8 +1568,8 @@ describe("opencode execute", { timeout: 20_000 }, () => {
             environment?: Record<string, string>;
           }>;
         };
-        expect(managedConfig.mcp?.["rudder-control-plane"]?.environment?.RUDDER_BROWSER_ENABLED).toBe("false");
-        const generatedMcpConfig = managedConfig.mcp?.["rudder-control-plane"];
+        expect(managedConfig.mcp?.["rudder-operating-layer"]?.environment?.RUDDER_BROWSER_ENABLED).toBe("false");
+        const generatedMcpConfig = managedConfig.mcp?.["rudder-operating-layer"];
         expect(generatedMcpConfig?.command?.[0]).toBe(installedDesktopMcp.command);
         expect(generatedMcpConfig?.command?.slice(1)).toEqual(installedDesktopMcp.args);
         expect(await readMcpToolNames({

@@ -80,7 +80,7 @@ history or line-by-line code copies.
   concurrency, and output routing.
 - `domains/collaboration/`: Chat, Messenger, issue threads, readable
   references, unread state, and IM/agent-integration bridges.
-- `domains/control-plane/`: approvals, budgets, costs, activity, dashboard
+- `domains/operating-layer/`: approvals, budgets, costs, activity, dashboard
   rollups, operator-observability signals, and server process lifecycle.
 - `domains/review-feedback-learning/`: review decisions, feedback capture,
   issue/review follow-up, and learning-promotion paths.

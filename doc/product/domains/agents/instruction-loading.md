@@ -87,7 +87,7 @@ The key tradeoff is explicit ordering over template convenience. Rudder moves
 resource context into the shared instruction prefix, then clears duplicate
 template aliases so adapters do not re-inject the same resource block later.
 Heartbeat instructions are runtime-owned instead of read from legacy
-`HEARTBEAT.md` because heartbeat behavior is a control-plane contract, not an
+`HEARTBEAT.md` because heartbeat behavior is a operating-layer contract, not an
 agent-local note. They are loaded only for `rudderScene=heartbeat`. Issue,
 review, chat, and automation runs are excluded so task assignment, review,
 comment mention, chat, and automation work are not framed as a generic
@@ -250,7 +250,7 @@ The runtime agent sees a provider-specific prompt surface, but the instruction
 stack must preserve this semantic order:
 
 1. Rudder runtime operating contract. It identifies the agent as operating
-   inside Rudder's control plane and is always injected from runtime code.
+   inside Rudder's operating layer and is always injected from runtime code.
 2. Configured entry instruction file, if readable and not legacy
    `HEARTBEAT.md`. The section includes a path directive that tells the agent
    where the file was loaded from and how to resolve relative references.
@@ -353,7 +353,7 @@ The contract is evidenced by:
      scene context, agent files, resources, current time, and runtime heartbeat
      instruction before the heartbeat prompt. `rudder-docs` remains
      discoverable and is consulted only if the heartbeat needs exact Rudder
-     command, Library, organization-skill, or control-plane detail.
+     command, Library, organization-skill, or operating-layer detail.
    - Visible output: command notes list the heartbeat instruction; prompt
      metrics show non-zero runtime heartbeat chars.
    - Evidence: scene derivation and prompt-order tests.

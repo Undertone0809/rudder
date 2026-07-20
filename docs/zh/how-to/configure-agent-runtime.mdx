@@ -96,7 +96,7 @@ Claude Code 常见选项包括 Chrome 访问、权限行为和每次运行最大
 - Pi local 会获得功能等价的 Rudder 管理的原生工具 bridge。
 - Managed tools 不可用时，内置的 `rudder` CLI skill 仍可作为 fallback。
 
-这些工具覆盖 issue、run、Chat、automation、Library 文件、approval、skill 和 agent 等 Rudder control-plane 操作。在 Desktop `local_trusted` 部署中，启用实例能力后，受支持的本地 run 还可以获得[内置浏览器](/zh/concepts/built-in-browser)工具。
+这些工具覆盖 issue、run、Chat、automation、Library 文件、approval、skill 和 agent 等 Rudder 操作。在 Desktop `local_trusted` 部署中，启用实例能力后，受支持的本地 run 还可以获得[内置浏览器](/zh/concepts/built-in-browser)工具。
 
 看到 managed tool 不代表 agent 获得了额外权限。每次调用仍然限制在当前 organization 和 run，并继续经过对应操作原有的 permission、ownership 和 approval 检查。Rudder 也不会把任意 user 或 provider MCP server 自动继承到这套 managed run surface。
 

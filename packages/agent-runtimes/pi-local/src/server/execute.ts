@@ -1,4 +1,5 @@
 import {
+  RUDDER_MCP_LEGACY_SERVER_NAME,
   RUDDER_MCP_MANAGED_ENV_KEYS,
   RUDDER_MCP_SERVER_NAME,
   applyRudderBrowserCapabilityEnv,
@@ -303,7 +304,7 @@ export function resolvePiRudderMcpToolEntries(
     ? manifestTools
     : RUDDER_AGENT_V1_MCP_TOOL_NAMES.map((name) => ({
         name,
-        description: `Rudder Agent V1 control-plane tool ${name}. Runtime identity and authorization are injected by Rudder; do not pass orgId, agentId, runId, apiBase, or apiKey.`,
+        description: `Rudder Agent V1 operating-layer tool ${name}. Runtime identity and authorization are injected by Rudder; do not pass orgId, agentId, runId, apiBase, or apiKey.`,
         inputSchema: {
           type: "object",
           additionalProperties: true,
@@ -328,7 +329,9 @@ async function ensurePiRudderToolsExtension(input: {
   rudderMcpPreflight: Awaited<ReturnType<typeof preflightRudderMcpServer>>;
 }> {
   const rudderMcp = await resolveRudderMcpCliCommand(input.moduleDir);
-  const extensionDir = path.join(resolvePiExtensionsDir(input.homeDir), RUDDER_MCP_SERVER_NAME);
+  const extensionsDir = resolvePiExtensionsDir(input.homeDir);
+  await fs.rm(path.join(extensionsDir, RUDDER_MCP_LEGACY_SERVER_NAME), { recursive: true, force: true });
+  const extensionDir = path.join(extensionsDir, RUDDER_MCP_SERVER_NAME);
   const extensionPath = path.join(extensionDir, "index.ts");
   const command = rudderMcp.command;
   const commandArgs = rudderMcp.args;
@@ -435,15 +438,15 @@ function invokeRudderMcpTool(toolName: string, params: Record<string, unknown>, 
   });
 }
 
-export default function rudderControlPlaneTools(pi: ExtensionAPI) {
+export default function rudderOperatingLayerTools(pi: ExtensionAPI) {
   for (const tool of RUDDER_MCP_TOOLS) {
     const toolName = tool.name;
     pi.registerTool({
       name: toolName,
       label: toolName,
-      description: tool.description || \`Rudder Agent V1 control-plane tool \${toolName}. Runtime identity and authorization are injected by Rudder; do not pass orgId, agentId, runId, apiBase, or apiKey.\`,
-      promptSnippet: \`Call Rudder control-plane tool \${toolName} with runtime-managed authentication.\`,
-      promptGuidelines: ["Prefer Rudder tools for Rudder control-plane work. Do not call the rudder CLI from bash for control-plane operations."],
+      description: tool.description || \`Rudder Agent V1 operating-layer tool \${toolName}. Runtime identity and authorization are injected by Rudder; do not pass orgId, agentId, runId, apiBase, or apiKey.\`,
+      promptSnippet: \`Call Rudder operating-layer tool \${toolName} with runtime-managed authentication.\`,
+      promptGuidelines: ["Prefer Rudder tools for Rudder operating-layer work. Do not call the rudder CLI from bash for operating-layer operations."],
       parameters: tool.inputSchema ?? Type.Object({}, { additionalProperties: true }),
       async execute(_toolCallId, params, signal) {
         const result = await invokeRudderMcpTool(toolName, params as Record<string, unknown>, signal);

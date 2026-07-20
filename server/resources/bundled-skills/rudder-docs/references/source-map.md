@@ -50,7 +50,7 @@ Common domain routes include:
 - Chat, Messenger, comments, and integrations:
   `doc/product/domains/collaboration/`
 - approvals, budgets, costs, and activity:
-  `doc/product/domains/control-plane/`
+  `doc/product/domains/operating-layer/`
 - reviews, feedback, and learning:
   `doc/product/domains/review-feedback-learning/`
 - automations: `doc/product/domains/automations/`
@@ -114,7 +114,7 @@ Within this package:
 
 - `cli-reference.md` preserves the typed capability and CLI fallback catalog;
 - `api-reference.md` preserves internal/debug compatibility endpoints;
-- `control-plane-practices.md` preserves conditional operating semantics; and
+- `operating-practices.md` preserves conditional operating semantics; and
 - `organization-skills.md` preserves organization skill workflows.
 
 Use only the relevant section. These references are version-adjacent fallback

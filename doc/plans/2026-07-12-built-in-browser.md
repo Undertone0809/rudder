@@ -158,7 +158,7 @@ all organizations and agents in the current Rudder instance.
 - Make `Browser` a capability-gated bundled skill that is read-only, projected
   for every organization in an enabled `local_trusted` instance, and loaded only
   for supported Claude/Codex/OpenCode/Pi local runs.
-- Extend the first-party `rudder-control-plane` MCP/native bridge with high-level
+- Extend the first-party `rudder-operating-layer` MCP/native bridge with high-level
   Browser tools rather than creating a second duplicated transport.
 - Derive organization, agent, and run identity from runtime-owned context. Tool
   arguments cannot override identity or broker credentials.
@@ -211,7 +211,7 @@ all organizations and agents in the current Rudder instance.
 
 - Browser profile storage must not share the default Rudder UI/API session.
 - Only `http:` and `https:` navigation is allowed. `file:`, `javascript:`,
-  `data:`, `devtools:`, Rudder control-plane origins, and arbitrary custom
+  `data:`, `devtools:`, Rudder operating-layer origins, and arbitrary custom
   protocols are rejected.
 - Browser guests run with sandboxing, context isolation, no Node integration,
   no untrusted preload, no unrestricted popup creation, and denied permissions
@@ -339,7 +339,7 @@ Rudder link click
   -> instance-scoped Electron partition
 
 Agent Browser tool
-  -> rudder-control-plane MCP/native bridge
+  -> rudder-operating-layer MCP/native bridge
   -> authenticated Rudder Browser API
   -> in-memory Desktop Broker registration
   -> run-owned hidden Browser tab
@@ -424,7 +424,7 @@ V1 tool names:
 - `rudder_browser_screenshot`
 - `rudder_browser_close`
 
-The tools reuse the existing first-party `rudder-control-plane` transport.
+The tools reuse the existing first-party `rudder-operating-layer` transport.
 `codex_local`, `claude_local`, `opencode_local`, and `pi_local` receive the same
 managed identity boundary. Other adapters and remote runtimes do not receive the
 Browser skill, capability flag, or tools, and stale unsupported-runtime calls

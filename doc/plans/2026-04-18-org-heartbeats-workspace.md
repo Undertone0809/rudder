@@ -43,7 +43,7 @@ split is wrong for normal org operations:
 - agent detail shows one agent's run history and run detail
 - dashboard and agents pages show partial run summaries
 
-What is missing is the org-scoped control plane view that answers:
+What is missing is the org-scoped operating layer view that answers:
 
 - which agents in this org are scheduled
 - which are configured but inactive

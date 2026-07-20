@@ -173,4 +173,4 @@ historical context only.
    Auto mode is allowed; hidden token burn is not.
 
 8. **Thin core, rich edges**
-   Put optional knowledge and special-purpose surfaces into plugins/extensions rather than bloating the control plane.
+   Put optional knowledge and special-purpose surfaces into plugins/extensions rather than bloating the operating layer.

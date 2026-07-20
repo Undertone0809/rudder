@@ -30,7 +30,7 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
   {
     "capabilityId": "agent.update",
     "name": "rudder_agent_update",
-    "description": "Update an agent's control-plane identity fields; defaults to the authenticated agent.",
+    "description": "Update an agent's identity fields; defaults to the authenticated agent.",
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
@@ -694,5 +694,5 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": true
   }
 ] as const;
-export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "85436ea9893ad336e449cef31a0d43ee34387e5955e836578f27828d2e576e17";
+export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "c773870c046e7ebb8b9d8ca4eccf54e58efb460a1392f2d9f38a5e5c21c7e6d1";
 export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "c4d41b5aaa22d76e528877c17cee84e0fb363b38ebe9d2ff4e1c36a46edecfbe";

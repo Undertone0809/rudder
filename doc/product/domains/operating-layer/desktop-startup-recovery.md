@@ -1,6 +1,6 @@
 ---
 title: Desktop Startup Recovery
-domain: control-plane
+domain: operating-layer
 status: active
 coverage: logic_contract
 spec_depth: logic_contract

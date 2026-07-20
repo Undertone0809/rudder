@@ -85,7 +85,7 @@ launch follow-through, support coverage, and budget visibility.
 
 The data should communicate:
 
-- Rudder is a control plane for agent teams
+- Rudder is a operating layer for agent teams
 - issues are actively moving through execution and review
 - approvals and budgets matter for governed work
 - chat can turn operator requests into durable issues

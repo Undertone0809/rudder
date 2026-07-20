@@ -215,7 +215,7 @@ describe("parseOpenCodeJsonl", () => {
       "- Task complete - runtime validation successful.",
       "",
       "## Critical Context",
-      "- 69 Rudder tools available via `rudder-control-plane`.",
+      "- 69 Rudder tools available via `rudder-operating-layer`.",
       "",
       "## Relevant Files",
       "- /tmp/rudder-prompt.md",

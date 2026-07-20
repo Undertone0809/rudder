@@ -2,7 +2,7 @@
  * @fileoverview Approval lifecycle service for governed actions, comments,
  * hire-agent activation, budget setup, and decision records.
  *
- * @see doc/product/domains/control-plane/approvals-budgets-activity.md - approval gates and activity evidence
+ * @see doc/product/domains/operating-layer/approvals-budgets-activity.md - approval gates and activity evidence
  * @see doc/product/domains/review-feedback-learning/review-closeout-learning.md - review decisions and follow-up
  * @see doc/product/domains/agents/identity-config.md - pending-approval agent activation
  */

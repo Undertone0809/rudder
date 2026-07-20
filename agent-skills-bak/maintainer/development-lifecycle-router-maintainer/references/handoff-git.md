@@ -34,7 +34,7 @@ Do not hand off as complete when any of these are true:
 - "review" only means the author reread the diff
 - reviewers duplicate author-claimed validation without terminal proof
 - user-visible UI lacks rendered or screenshot evidence when required
-- agent-visible, CLI, runtime, Desktop, release, or control-plane workflow lacks
+- agent-visible, CLI, runtime, Desktop, release, or operating-layer workflow lacks
   terminal product proof or a named blocked/substituted proof
 - feature/workflow changes skip required E2E coverage without explicit approval
 - Desktop/release/package work lacks required packaged or live checks

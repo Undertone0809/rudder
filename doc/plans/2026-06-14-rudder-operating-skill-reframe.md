@@ -48,7 +48,7 @@ this change, not as the artifact being optimized.
 The current bundled `rudder` skill contains the right behavioral rules, but its
 top-level framing is still tool-first:
 
-- Frontmatter says the skill is for interacting with the control plane through
+- Frontmatter says the skill is for interacting with the operating layer through
   the CLI.
 - The opening states "This skill is now CLI-first."
 - Main sections mix heartbeat judgment, organization skill management, Library

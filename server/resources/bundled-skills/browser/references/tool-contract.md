@@ -1,6 +1,6 @@
 # Rudder Browser Tool Contract
 
-Browser tools are exposed by the first-party `rudder-control-plane` transport
+Browser tools are exposed by the first-party `rudder-operating-layer` transport
 only when the deployment is `local_trusted`, the instance Browser capability is
 enabled, and the current adapter is `claude_local`, `codex_local`,
 `opencode_local`, or `pi_local`. Runtime fallback recomputes this gate and removes
@@ -50,7 +50,7 @@ run header is only a matching assertion.
 - `browser_ref_not_found` (`404`): the element ref is stale, changed, hidden,
   covered, disabled, or no longer belongs to the latest snapshot. Read again;
   refs are intentionally invalidated after every click or type action.
-- `browser_unsafe_url` (`422`): the URL, protocol, or Rudder control-plane
+- `browser_unsafe_url` (`422`): the URL, protocol, or Rudder operating-layer
   origin is not allowed. Correct the URL instead of retrying it unchanged.
 - `browser_invalid_argument` (`400` or `422`): a tool argument is malformed or
   outside its bound. Correct the request before retrying.

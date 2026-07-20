@@ -11,11 +11,11 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import type {
-  AgentControlPlaneIntegrationSummary,
   AgentDetail,
   AgentIntegrationProviderRegion,
   AgentIntegrationSetupSession,
   AgentIntegrationSummary,
+  AgentOperatingLayerIntegrationSummary,
   CreateCustomIntegration,
   CustomIntegrationKind,
   CustomIntegrationScope,
@@ -247,8 +247,8 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
   });
   const integrations = integrationsQuery.data ?? [];
   const customIntegrations = customIntegrationsQuery.data ?? [];
-  const controlPlaneIntegrations = agent.controlPlaneIntegrations ?? [];
-  const rudderMcpIntegration = controlPlaneIntegrations.find((integration) => integration.kind === "rudder_mcp") ?? null;
+  const operatingLayerIntegrations = agent.operatingLayerIntegrations ?? [];
+  const rudderMcpIntegration = operatingLayerIntegrations.find((integration) => integration.kind === "rudder_mcp") ?? null;
   const feishuIntegration = integrations.find((integration) => integration.provider === "feishu") ?? null;
   const state = getFeishuIntegrationState(feishuIntegration);
   const isActive = state === "active";
@@ -782,7 +782,7 @@ function UpcomingIntegrationCard({ integration }: UpcomingIntegrationCardProps) 
   );
 }
 
-function RudderMcpManageRow({ integration }: { integration: AgentControlPlaneIntegrationSummary }) {
+function RudderMcpManageRow({ integration }: { integration: AgentOperatingLayerIntegrationSummary }) {
   return (
     <div className="grid gap-3 rounded-md border border-border bg-background/40 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
       <div className="flex min-w-0 items-start gap-3">

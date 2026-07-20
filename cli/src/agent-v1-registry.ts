@@ -57,7 +57,7 @@ export interface AgentV1McpToolManifestEntry extends AgentCliCapabilitiesManifes
 export interface AgentV1McpToolsManifest {
   schema: "rudder.agent-mcp-tools/v1";
   contract: AgentCliCapabilityContract | "all";
-  serverName: "rudder-control-plane";
+  serverName: "rudder-operating-layer";
   tools: AgentV1McpToolManifestEntry[];
 }
 
@@ -127,7 +127,7 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     command: "rudder agent update [agent-id] [--title <title>] [--description <text>]",
     category: "agent",
     description:
-      "Update an agent's control-plane identity fields; defaults to the authenticated agent.",
+      "Update an agent's identity fields; defaults to the authenticated agent.",
     mutating: true,
     contract: "agent-v1",
     requiresOrgId: false,
@@ -1201,7 +1201,7 @@ export function buildAgentV1McpToolsManifest(
   return {
     schema: "rudder.agent-mcp-tools/v1",
     contract,
-    serverName: "rudder-control-plane",
+    serverName: "rudder-operating-layer",
     tools: capabilities.map((entry) => {
       const semanticContract = semanticContractByCapability.get(entry.id);
       if (!semanticContract) {
@@ -1245,14 +1245,14 @@ export function renderAgentCliReferenceMarkdown(): string {
     "## Operating Policy Owners",
     "",
     "Keep this file focused on commands and CLI-specific I/O. Consult the exact",
-    "control-plane owner for operating behavior:",
+    "operating-practices guide for operating behavior:",
     "",
-    "- [Interface and Chat/issue scope](control-plane-practices.md#interface-and-scope)",
-    "- [Ownership, checkout, and wake scope](control-plane-practices.md#ownership-checkout-and-wake-scope)",
-    "- [Comments, mentions, and evidence](control-plane-practices.md#comments-mentions-and-evidence)",
-    "- [Review and close-out](control-plane-practices.md#review-and-close-out)",
-    "- [Durable Library artifacts](control-plane-practices.md#durable-library-artifacts)",
-    "- [Git identity and attribution](control-plane-practices.md#git-identity-and-attribution)",
+    "- [Interface and Chat/issue scope](operating-practices.md#interface-and-scope)",
+    "- [Ownership, checkout, and wake scope](operating-practices.md#ownership-checkout-and-wake-scope)",
+    "- [Comments, mentions, and evidence](operating-practices.md#comments-mentions-and-evidence)",
+    "- [Review and close-out](operating-practices.md#review-and-close-out)",
+    "- [Durable Library artifacts](operating-practices.md#durable-library-artifacts)",
+    "- [Git identity and attribution](operating-practices.md#git-identity-and-attribution)",
     "",
     "## Defaults",
     "",
@@ -1288,7 +1288,7 @@ export function renderAgentCliReferenceMarkdown(): string {
     "",
     "## Issue Command I/O And Shapes",
     "",
-    "Operating rules live in [ownership, checkout, and wake scope](control-plane-practices.md#ownership-checkout-and-wake-scope), [comments and evidence](control-plane-practices.md#comments-mentions-and-evidence), and [review and close-out](control-plane-practices.md#review-and-close-out). The CLI close-out shapes are:",
+    "Operating rules live in [ownership, checkout, and wake scope](operating-practices.md#ownership-checkout-and-wake-scope), [comments and evidence](operating-practices.md#comments-mentions-and-evidence), and [review and close-out](operating-practices.md#review-and-close-out). The CLI close-out shapes are:",
     "",
     "- progress: `rudder issue comment <issue> --body-file <path> [--image <path>]`",
     "- done: `rudder issue done <issue> --comment-file <path> [--image <path>]`",
@@ -1302,7 +1302,7 @@ export function renderAgentCliReferenceMarkdown(): string {
     "",
     "## Renderable Library CLI Output",
     "",
-    "File placement and handoff policy lives in [Durable Library artifacts](control-plane-practices.md#durable-library-artifacts). Request a renderable reference with `rudder library file ref <library-relative-path> --json`.",
+    "File placement and handoff policy lives in [Durable Library artifacts](operating-practices.md#durable-library-artifacts). Request a renderable reference with `rudder library file ref <library-relative-path> --json`.",
     "",
     "The relevant JSON fields are:",
     "",
@@ -1314,7 +1314,7 @@ export function renderAgentCliReferenceMarkdown(): string {
     "",
     "## Reviewer Decision Command Shapes",
     "",
-    "Reviewer policy lives in [Review and close-out](control-plane-practices.md#review-and-close-out). Supported decision command shapes are:",
+    "Reviewer policy lives in [Review and close-out](operating-practices.md#review-and-close-out). Supported decision command shapes are:",
     "",
     "- `rudder issue review <issue> --decision approve --comment-file <path>`",
     "- `rudder issue review <issue> --decision request_changes --comment-file <path>`",

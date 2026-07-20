@@ -1,6 +1,6 @@
 # Pi Runtime Notes
 
-Pi may expose Rudder control-plane tools through a managed native extension
+Pi may expose Rudder operating-layer tools through a managed native extension
 instead of a standard MCP config path. From the model's perspective, the action
 must still be a typed Rudder tool, not Bash/curl/CLI fallback.
 
@@ -27,7 +27,7 @@ Healthy setup logs may include:
 - adapter-managed Pi runtime state
 - managed Pi model compatibility config
 - managed Rudder tool extension path such as
-  `.pi/agent/extensions/rudder-control-plane/index.ts`
+  `.pi/agent/extensions/rudder-operating-layer/index.ts`
 - loaded tool manifest/schema count when available
 
 This setup evidence alone is not a pass. The transcript still needs actual

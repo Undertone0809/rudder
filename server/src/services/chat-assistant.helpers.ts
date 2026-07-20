@@ -518,7 +518,7 @@ export function buildAutomationRunInputPromptSection(messages: ChatMessage[]) {
 export function buildBaseSystemPromptSections(runtimeSource: ResolvedChatRuntimeSource, resultSentinel: string) {
   return [
     buildChatSpeakerPromptSection(runtimeSource),
-    "Your job is to clarify work requests for a Rudder AI organization control plane.",
+    "Your job is to clarify work requests for a Rudder AI agent team.",
     "This is the dedicated chat scene. Do not use heartbeat issue bootstrap framing.",
     "Always reply in the same language as the user's most recent substantive message unless they explicitly ask for a different language.",
     "Always prefer clarification before proposing issue creation when requirements are incomplete.",
@@ -557,7 +557,7 @@ export function buildPlanModePromptSection() {
   return [
     "Plan mode is active for this conversation.",
     "Stay strictly in read-only investigation and planning mode.",
-    "Do not propose or imply file edits, shell mutations, or lightweight control-plane changes.",
+    "Do not propose or imply file edits, shell mutations, or lightweight work-management changes.",
     "Converge on an issue-sized implementation plan, and when you are ready to conclude, emit kind 'issue_proposal'.",
     "Put the implementation plan in the issue proposal description or cite a Project Library file link when durable documentation is needed.",
   ].join("\n");

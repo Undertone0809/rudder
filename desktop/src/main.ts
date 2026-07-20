@@ -716,7 +716,7 @@ function assertStartupRecoveryFrame(event: IpcMainInvokeEvent, action: string): 
   }
 }
 
-function collectBrowserControlPlaneOrigins(...additionalOrigins: Array<string | null | undefined>): string[] {
+function collectBrowserOperatingLayerOrigins(...additionalOrigins: Array<string | null | undefined>): string[] {
   const configuredPort = process.env.PORT?.trim();
   const configuredOrigin = configuredPort ? `http://127.0.0.1:${configuredPort}` : null;
   return collectDesktopNavigationOrigins(
@@ -766,7 +766,7 @@ function initializeBrowserProfile(instanceRoot: string): void {
 
   const browserSession = session.fromPartition(partition);
   installBrowserSessionPolicy(browserSession, {
-    getControlPlaneOrigins: collectBrowserControlPlaneOrigins,
+    getOperatingLayerOrigins: collectBrowserOperatingLayerOrigins,
   });
   const controller = createBrowserProfileController({
     partition,
@@ -784,9 +784,9 @@ function initializeBrowserProfile(instanceRoot: string): void {
       partition,
       createWindow: (windowOptions) => new BrowserWindow(windowOptions),
       registerGuest: browserGuestRegistry.register,
-      getControlPlaneOrigins: collectBrowserControlPlaneOrigins,
+      getOperatingLayerOrigins: collectBrowserOperatingLayerOrigins,
     }),
-    getControlPlaneOrigins: collectBrowserControlPlaneOrigins,
+    getOperatingLayerOrigins: collectBrowserOperatingLayerOrigins,
   });
   browserAgentTabController = agentTabs;
   browserRuntimeLifecycle = createDesktopBrowserRuntimeLifecycle({
@@ -1128,7 +1128,7 @@ async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Pr
     const browserProfile = requireBrowserProfileController();
     installBrowserWebviewPolicy(window.webContents, {
       partition: browserProfile.getPartition(),
-      getControlPlaneOrigins: () => collectBrowserControlPlaneOrigins(initialUrl),
+      getOperatingLayerOrigins: () => collectBrowserOperatingLayerOrigins(initialUrl),
       isBrowserAvailable: () => browserProfile.isOperatorAvailable(),
       registerGuest: (guest) => {
         browserGuestRegistry.register(guest);

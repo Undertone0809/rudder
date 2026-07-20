@@ -46,7 +46,7 @@ Why:
   different from enabling it for a specific agent/runtime invocation.
 - Global/user and adapter-native skill sources may be discovered so the Agent
   Skills page can show candidates, but discovery is not runtime enablement.
-- Bundled Rudder skills define core control-plane operations and must remain
+- Bundled Rudder skills define core operating-layer operations and must remain
   discoverable and available even when optional skills are disabled. Availability
   does not instruct the agent to load or use a skill on every run.
 - Capability-bundled skills are distinct from that always-enabled baseline:

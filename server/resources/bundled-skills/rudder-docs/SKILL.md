@@ -136,7 +136,7 @@ Read only the reference needed for the request:
    configuration, governed hiring, approval, revision, and evidence workflow.
 4. [Plugin authoring](references/plugin-authoring.md) — current scaffold,
    manifest, worker, UI, capability, route, and verification workflow.
-5. [Control-plane practices](references/control-plane-practices.md) — exact
+5. [Operating-layer practices](references/operating-practices.md) — exact
    conditional behavior for ownership, reviews, approvals, budgets,
    workspaces, Library handoff, authentication, and safe git use.
 6. [Organization skills](references/organization-skills.md) — discover,

@@ -142,7 +142,7 @@ More specifically:
 
 This keeps Rudder honest about what it is:
 
-- the control plane stays issue-centric
+- the operating layer stays issue-centric
 - chat is a better way to interact with issue work, not a new collaboration product
 
 ### Onboarding and CEO conversations

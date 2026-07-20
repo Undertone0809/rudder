@@ -144,7 +144,7 @@ changes, skills, agent-visible contracts, UI/product journeys, architecture,
 release readiness, Desktop/runtime/CLI decisions, prior failed handoffs, or any
 task where the user explicitly asks for adversarial or heuristic pressure:
 
-- functional trust: contracts, evidence, validation, org scoping, control-plane
+- functional trust: contracts, evidence, validation, org scoping, operating-layer
   invariants, implementation feasibility, and handoff trust
 - adversarial: hidden assumptions, wrong abstraction level, weak proof,
   overfitting, conflicting docs, untested actor paths, and product-wrong
@@ -175,7 +175,7 @@ Functional trust reviewer:
 Use .agents/skills/maintainer/agent-work-reviewer-maintainer/SKILL.md.
 
 Review this artifact as the functional trust reviewer. Focus on contracts,
-evidence, validation, org scoping, control-plane invariants, implementation
+evidence, validation, org scoping, operating-layer invariants, implementation
 feasibility, rollback/recovery, and handoff trust. Separate author-claimed proof
 from proof you inspected. Give accept / conditional accept / needs more
 evidence / reject, blocking gaps, and the smallest changes needed to pass.

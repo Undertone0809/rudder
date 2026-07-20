@@ -50,7 +50,7 @@ updated_at: 2026-05-06
 Add a first-class optional reviewer to issues, and make that reviewer an
 attention target when work is ready for review.
 
-This is not an approval workflow. It is the smallest durable control-plane
+This is not an approval workflow. It is the smallest durable operating-layer
 primitive that answers: when an assignee finishes work, who is responsible for
 checking the result?
 

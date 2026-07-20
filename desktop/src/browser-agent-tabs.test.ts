@@ -88,7 +88,7 @@ function createHarness(options: {
   const controller = createBrowserAgentTabController({
     createId: () => `tab-${nextId++}`,
     createSnapshotId: () => "snapshot-1",
-    getControlPlaneOrigins: () => ["http://127.0.0.1:3100"],
+    getOperatingLayerOrigins: () => ["http://127.0.0.1:3100"],
     createTab: vi.fn(async () => {
       const tab = new FakeTab();
       tabs.push(tab);
@@ -132,7 +132,7 @@ describe("Browser Agent tab controller", () => {
     })).rejects.toMatchObject<Partial<BrowserAgentError>>({ code: "browser_tab_forbidden" });
   });
 
-  it("blocks non-web and Rudder control-plane navigation before creating a tab", async () => {
+  it("blocks non-web and Rudder operating-layer navigation before creating a tab", async () => {
     const { controller, tabs } = createHarness();
 
     await expect(controller.execute({

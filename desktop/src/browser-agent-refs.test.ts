@@ -37,7 +37,7 @@ function createHarness() {
       return () => `snapshot-${++id}`;
     })(),
     createTab: async () => tab,
-    getControlPlaneOrigins: () => ["http://127.0.0.1:3100"],
+    getOperatingLayerOrigins: () => ["http://127.0.0.1:3100"],
   });
   return { controller, tab };
 }

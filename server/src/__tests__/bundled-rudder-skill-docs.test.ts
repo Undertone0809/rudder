@@ -13,7 +13,7 @@ describe("bundled rudder docs skill", () => {
     "cli-reference.md",
     "agent-creation.md",
     "plugin-authoring.md",
-    "control-plane-practices.md",
+    "operating-practices.md",
     "organization-skills.md",
     "source-map.md",
   ] as const;
@@ -107,10 +107,10 @@ describe("bundled rudder docs skill", () => {
     expect(contents).toMatch(/exact source[\s\S]*near the claim[\s\S]*host supports links/);
   });
 
-  it("keeps the main body a router rather than a command catalog or control-plane manual", async () => {
+  it("keeps the main body a router rather than a command catalog or operating-layer manual", async () => {
     const contents = await readSkill();
 
-    expect(contents).not.toMatch(/## (?:Essential Commands|Control-Plane Rails|Heartbeat Operating Loop|Heartbeat Procedure|Agent V1 Commands)/);
+    expect(contents).not.toMatch(/## (?:Essential Commands|Operating-Layer Rails|Heartbeat Operating Loop|Heartbeat Procedure|Agent V1 Commands)/);
     expect(contents).not.toMatch(/\|\s*`rudder (?:agent|approval|automation|chat|issue|library|project|runs|skill)/);
     expect(contents).not.toContain("Goal -> Plan -> Chat or Issue -> Agent run");
     expect((contents.match(/^```/gm) ?? []).length).toBe(0);
@@ -280,7 +280,7 @@ describe("bundled rudder docs skill", () => {
       "durable-library-artifacts",
       "git-identity-and-attribution",
     ]) {
-      expect(cli).toContain(`control-plane-practices.md#${anchor}`);
+      expect(cli).toContain(`operating-practices.md#${anchor}`);
     }
 
     for (const duplicatedPolicy of [
@@ -311,7 +311,7 @@ describe("bundled rudder docs skill", () => {
     }
   });
 
-  it("preserves conditional control-plane safety, review, and authentication facts", async () => {
+  it("preserves conditional operating-layer safety, review, and authentication facts", async () => {
     const contents = await readReferences();
 
     const requiredPatterns = [
@@ -355,7 +355,7 @@ describe("bundled rudder docs skill", () => {
 
   it("uses canonical renderable entity links instead of legacy prefix paths", async () => {
     const practices = await fs.readFile(
-      path.join(root, "references", "control-plane-practices.md"),
+      path.join(root, "references", "operating-practices.md"),
       "utf8",
     );
 

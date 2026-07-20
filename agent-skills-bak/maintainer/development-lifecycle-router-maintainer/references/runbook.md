@@ -72,7 +72,7 @@ Route first, then execute.
 State the lifecycle stage and acceptance bar before implementation. Any routed
 development task enters `spawn-required` mode by default. This applies when the
 task changes user-visible, agent-visible, Desktop, release, runtime, CLI,
-workflow, or control-plane behavior, even if the user only says "fix",
+workflow, or operating-layer behavior, even if the user only says "fix",
 "optimize", or "推进". The normal implementation sandwich is:
 
 ```text
@@ -99,7 +99,7 @@ Separate verification from review:
 
 For development routes, do not treat the loop as optional just because the user
 said "fix", "优化", "推进", or omitted the word review. User-visible,
-agent-visible, Desktop, release, runtime, CLI, workflow, and control-plane
+agent-visible, Desktop, release, runtime, CLI, workflow, and operating-layer
 changes need the verifier plus final reviewer loop before complete handoff. If a
 route truly does not need that loop, say why it is `not applicable` rather than
 silently skipping it.
@@ -202,7 +202,7 @@ For this route:
 ## Verification And Review Defaults
 
 For user-visible, agent-visible, Desktop, release, runtime, CLI, workflow, or
-control-plane changes, identify the terminal product surface before calling
+operating-layer changes, identify the terminal product surface before calling
 verification complete. Use `product-acceptance-verifier-maintainer` for a
 distinct black-box acceptance pass. If the product path is too expensive or
 unsafe to exercise, record verifier `blocked` or `substituted` with the exact

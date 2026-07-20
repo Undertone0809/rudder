@@ -40,7 +40,7 @@ test.describe("Agent detail integrations tab", () => {
     await expect(page.getByRole("heading", { name: "Productivity" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Developer" })).toBeVisible();
     await expect(page.getByText("Rudder MCP tools", { exact: true })).toHaveCount(0);
-    await expect(page.getByText("rudder-control-plane · 77 tools · runtime-managed auth")).toHaveCount(0);
+    await expect(page.getByText("rudder-operating-layer · 77 tools · runtime-managed auth")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Rudder MCP tools are built in" })).toHaveCount(0);
     await expect(page.getByText("Custom API", { exact: true })).toBeVisible();
     await expect(page.getByText("MCP Server", { exact: true })).toBeVisible();

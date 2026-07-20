@@ -12,7 +12,7 @@ OpenCode raw logs are JSONL. Tool calls look like:
 {
   "type": "tool_use",
   "part": {
-    "tool": "rudder-control-plane_rudder_agent_me",
+    "tool": "rudder-operating-layer_rudder_agent_me",
     "state": {
       "status": "completed",
       "input": {}
@@ -52,7 +52,7 @@ Do not hide the default-model failure behind the alternate-model pass.
 
 OpenCode workflow proof should include:
 
-- expected `rudder-control-plane_rudder_*` tool calls
+- expected `rudder-operating-layer_rudder_*` tool calls
 - no shell/curl/rudder CLI fallback in structured `tool_use`
 - no internal tool errors
 - final issue status and comments when running issue workflow

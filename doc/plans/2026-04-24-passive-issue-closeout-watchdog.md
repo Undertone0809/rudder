@@ -62,7 +62,7 @@ The core product guarantee becomes:
 
 ### Current state
 
-Rudder already enforces important control-plane invariants around issue
+Rudder already enforces important operating-layer invariants around issue
 execution:
 
 - only one active execution owner per issue via `issues.executionRunId`
@@ -702,4 +702,4 @@ implementation:
 4. Should human comments or board edits automatically reset watchdog attempt
    counters, or only cancel the current watchdog?
 5. Should passive closeout be feature-flagged at org level for staged rollout,
-   or shipped as an unconditional control-plane guarantee?
+   or shipped as an unconditional operating-layer guarantee?

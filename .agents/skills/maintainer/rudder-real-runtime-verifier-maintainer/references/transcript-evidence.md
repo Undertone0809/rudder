@@ -15,17 +15,17 @@ Count structured runtime events, not prompt text:
 - Run-intelligence parsed transcript entries when backed by raw log.
 
 Record the exact tool names. Preserve server-qualified names when present, such
-as `rudder-control-plane_rudder_issue_context`.
+as `rudder-operating-layer_rudder_issue_context`.
 
 ## Fallback Detection
 
 Flag fallback when a model-visible tool call invokes shell-like tools for Rudder
-control-plane work:
+operating-layer work:
 
 - tool names like `Bash`, `bash`, `shell`, `terminal`, `exec`, `curl`
 - command/input containing `rudder agent`, `rudder issue`, `rudder runs`,
   `rudder library`, `rudder chat`, `rudder automation`
-- command/input containing `curl` plus Rudder API key or control-plane route
+- command/input containing `curl` plus Rudder API key or operating-layer route
 
 Do not flag mere prompt text saying "Do not use Bash/curl/rudder CLI". That is
 instruction text, not a tool call.

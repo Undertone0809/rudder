@@ -29,7 +29,7 @@ Seed domains:
 - `library-and-context`: resources, project Library, file references, and
   context eligibility.
 - `automations`: triggers, schedules, output modes, and automation run records.
-- `control-plane`: approvals, budgets, activity log, metrics, observability,
+- `operating-layer`: approvals, budgets, activity log, metrics, observability,
   and dashboard-derived signals.
 - `organizations-and-goals`: organization identity, goals, projects, and org
   lifecycle.
@@ -46,9 +46,9 @@ Seed domains:
   integration from `issues` to `execution`.
 - Comment/thread semantics belong to `collaboration`; issue-visible comment
   slots belong to `issues`.
-- Activity log semantics belong to `control-plane`; issue-visible timeline
+- Activity log semantics belong to `operating-layer`; issue-visible timeline
   placement belongs to `issues`.
-- Dashboard metrics belong to `control-plane`; metric source behavior belongs
+- Dashboard metrics belong to `operating-layer`; metric source behavior belongs
   to the owning domain that emits the underlying state.
 - UI page maps belong to `surfaces/`; button/state behavior belongs to the
   owning domain contract.

@@ -89,7 +89,7 @@ function renderApiAccessNote(env: Record<string, string>): string {
   if (!hasNonEmptyEnvValue(env, "RUDDER_API_URL") || !hasNonEmptyEnvValue(env, "RUDDER_API_KEY")) return "";
   return [
     "Rudder CLI access note:",
-    "Use run_shell_command with the `rudder` CLI for Rudder control-plane work.",
+    "Use run_shell_command with the `rudder` CLI for Rudder operating-layer work.",
     "Read example:",
     `  run_shell_command({ command: "rudder agent me --json" })`,
     "Mutating example:",

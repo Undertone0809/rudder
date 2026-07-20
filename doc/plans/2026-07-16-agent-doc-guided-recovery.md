@@ -92,7 +92,7 @@ These are not yet a document-guided recovery loop:
   configuration error;
 - Project Resources are rendered as a catalog, but Rudder does not resolve a
   failure to the most relevant trusted source or record which source was used;
-- the adapter interface has no control-plane callback that can inject new
+- the adapter interface has no operating-layer callback that can inject new
   guidance into an already-running provider loop after a tool failure;
 - a terminated run's recovery prompt carries only a short failure summary and
   does not begin with `rudder runs errors` plus documentation lookup;
@@ -152,7 +152,7 @@ safe commands, verification step, and mutation boundaries explicit and
 available to the model at the moment it needs them.
 
 Rudder must also preserve a different architectural boundary: it is the
-runtime-neutral control plane, while Hermes, Codex, Claude, Gemini, OpenCode,
+runtime-neutral operating layer, while Hermes, Codex, Claude, Gemini, OpenCode,
 Pi, and Cursor are execution runtimes with different capabilities.
 
 ### Hermes adapter caveat in this repository
@@ -398,7 +398,7 @@ When an adapter cannot expose a stable tool/action reference, the record is
 stored with `evidenceStatus=declared_unverified`. It remains useful diagnostic
 context but cannot satisfy verified-recovery acceptance or the success metric.
 
-Control-plane-owned events remain appropriate for decisions the model does not
+Operating-layer-owned events remain appropriate for decisions the model does not
 make:
 
 - `recovery.failure_classified`
@@ -430,7 +430,7 @@ opportunistically after finalization.
 When the terminal compare-and-set owner finalizes a run:
 
 1. require terminal status `failed` and an issue-backed scene;
-2. classify from the control-plane terminal reason plus validated adapter
+2. classify from the operating-layer terminal reason plus validated adapter
    `failurePhase`, `failureClassHint`, `recoverabilityHint`, and
    `failedOperationRef` fields;
 3. use failed tool transcript entries only as supporting evidence, never as the
@@ -649,7 +649,7 @@ Initial product metrics:
   string matching copied across runtimes.
 - Adapters may contribute documentation descriptors and bounded
   `failurePhase`/`failureClassHint`/`recoverabilityHint` metadata, but the
-  control plane validates hints and owns eligibility and budgets.
+  operating layer validates hints and owns eligibility and budgets.
 - Detailed operating guidance stays in the bundled skill/references; the
   runtime-owned prompt remains compact and testable.
 
@@ -759,7 +759,7 @@ type DocsRecoveryDecision = {
 
 The classifier should prefer, in order:
 
-1. control-plane terminal reason;
+1. operating-layer terminal reason;
 2. workspace/admission failure type;
 3. validated adapter `failurePhase`, `failureClassHint`,
    `recoverabilityHint`, and `failedOperationRef`;

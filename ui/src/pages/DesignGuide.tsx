@@ -194,7 +194,7 @@ export function DesignGuide() {
       <div>
         <h2 className="font-display text-3xl text-foreground sm:text-[2.6rem]">Design Guide</h2>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-          Vega-derived stone surfaces, Montserrat display typography, and the control-plane primitives that now define Rudder.
+          Vega-derived stone surfaces, Montserrat display typography, and the operating primitives that now define Rudder.
         </p>
       </div>
 
