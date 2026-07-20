@@ -3478,6 +3478,44 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(document.querySelector('[data-testid="messenger-thread-section-system"]')).toBeNull();
   });
 
+  it("persists nested custom-group collapse state in Project mode without making the group sortable", async () => {
+    installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "project" }),
+    });
+    customGroupList = [
+      {
+        id: "project-group",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Project group",
+        icon: "folder::amber",
+        sortOrder: 0,
+        collapsed: false,
+        pinnedAt: null,
+        createdAt: "2026-04-11T09:40:00.000Z",
+        updatedAt: "2026-04-11T09:40:00.000Z",
+        entries: [],
+      },
+    ];
+    messengerModel = { ...baseModel(), threadSummaries: [] };
+
+    renderSidebar();
+
+    const groupSection = document.querySelector<HTMLElement>(
+      '[data-testid="messenger-thread-section-custom-group-project-group"]',
+    );
+    const groupHeader = groupSection?.querySelector<HTMLButtonElement>('button[aria-expanded="true"]');
+    expect(groupHeader).toBeTruthy();
+    expect(mockUseSortable).not.toHaveBeenCalledWith(expect.objectContaining({ id: "custom-group:project-group" }));
+
+    await act(async () => {
+      groupHeader?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockUpdateCustomGroup).toHaveBeenCalledWith("org-1", "project-group", { collapsed: true });
+  });
+
   it("preserves a dragged top-level section size instead of flattening the preview", () => {
     installLocalStorage({
       "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "project" }),

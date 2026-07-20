@@ -96,6 +96,7 @@ import {
   locallyReadThreadSummary,
   nextDefaultThreadOrderKeysAfterMove,
   organizeCustomThreadDirectory,
+  organizeProjectThreadDirectory,
   organizeThreadEntries,
   projectIdFromSectionKey,
   resolveChatAgentId,
@@ -980,26 +981,26 @@ export function MessengerContextSidebar() {
     const threadSummaries = splitIssueNotifications
       ? visibleThreadSummaries.filter((thread) => thread.threadKey !== "issues")
       : visibleThreadSummaries;
+    const groupInputs = customGroups.map((group) => ({
+      id: group.id,
+      name: group.name,
+      icon: group.icon,
+      pinned: Boolean(group.pinnedAt),
+      entries: group.entries.filter(isThreadCustomGroupEntry).map((entry) => {
+        const conversationId = threadConversationId(entry.threadKey);
+        const pendingTitle = conversationId ? pendingChatRenameTitles[conversationId] : undefined;
+        const readThread = locallyReadThreadSummary(entry.thread, locallyReadThreadWatermarks);
+        const displayThread = pendingTitle ? { ...readThread, title: pendingTitle } : readThread;
+        return {
+          thread: displayThread,
+          conversation: model.selectedOrganizationId
+            ? chatConversationForThreadSummary(displayThread, model.selectedOrganizationId, conversationsById.get(conversationId ?? "") ?? null)
+            : null,
+          customGroupId: group.id,
+        } satisfies OrganizedThreadEntry;
+      }),
+    }));
     if (effectiveThreadOrganizationRule === "custom") {
-      const groupInputs = customGroups.map((group) => ({
-        id: group.id,
-        name: group.name,
-        icon: group.icon,
-        pinned: Boolean(group.pinnedAt),
-        entries: group.entries.filter(isThreadCustomGroupEntry).map((entry) => {
-          const conversationId = threadConversationId(entry.threadKey);
-          const pendingTitle = conversationId ? pendingChatRenameTitles[conversationId] : undefined;
-          const readThread = locallyReadThreadSummary(entry.thread, locallyReadThreadWatermarks);
-          const displayThread = pendingTitle ? { ...readThread, title: pendingTitle } : readThread;
-          return {
-            thread: displayThread,
-            conversation: model.selectedOrganizationId
-              ? chatConversationForThreadSummary(displayThread, model.selectedOrganizationId, conversationsById.get(conversationId ?? "") ?? null)
-              : null,
-            customGroupId: group.id,
-          } satisfies OrganizedThreadEntry;
-        }),
-      }));
       const looseEntries = threadSummaries.map((thread) => {
           const conversationId = threadConversationId(thread.threadKey);
           const loadedConversation = conversationId ? conversationsById.get(conversationId) ?? null : null;
@@ -1027,13 +1028,15 @@ export function MessengerContextSidebar() {
           : null,
       };
     });
-    const sections = organizeThreadEntries(
-      entries,
-      effectiveThreadOrganizationRule,
-      agentsById,
-      projectsById,
-      messengerThreadKindLabel,
-    );
+    const sections = effectiveThreadOrganizationRule === "project"
+      ? organizeProjectThreadDirectory(entries, groupInputs, projectsById)
+      : organizeThreadEntries(
+        entries,
+        effectiveThreadOrganizationRule,
+        agentsById,
+        projectsById,
+        messengerThreadKindLabel,
+      );
     return isManagedThreadGroupRule(effectiveThreadOrganizationRule)
       ? sortManagedThreadSections(sections, effectiveThreadOrganizationRule, projectOrderIds, threadSectionOrderIds)
       : sections;
@@ -1378,12 +1381,10 @@ export function MessengerContextSidebar() {
   }, [clearCollapsedGroupOpenTimer, customEntryGroupByThreadKey, customGroups, effectiveThreadOrganizationRule, resolveCustomDragIntent, updateCustomGroupMutation, updateDragIntent, updateDragOverId]);
 
   const handleThreadGroupToggle = (groupKey: string) => {
-    if (effectiveThreadOrganizationRule === "custom") {
-      const group = customGroupBySectionKey.get(groupKey);
-      if (group) {
-        updateCustomGroupMutation.mutate({ groupId: group.id, data: { collapsed: !group.collapsed } });
-        return;
-      }
+    const group = customGroupBySectionKey.get(groupKey);
+    if (group) {
+      updateCustomGroupMutation.mutate({ groupId: group.id, data: { collapsed: !group.collapsed } });
+      return;
     }
     if (!isLocallyCollapsedThreadGroupRule(effectiveThreadOrganizationRule)) return;
     setCollapsedThreadGroupKeys((current) => {
@@ -1894,7 +1895,7 @@ export function MessengerContextSidebar() {
       ? section.key.slice("agent:".length)
       : null;
     const sectionAgent = sectionAgentId ? agentsById.get(sectionAgentId) ?? null : null;
-    const customGroup = effectiveThreadOrganizationRule === "custom" ? customGroupBySectionKey.get(section.key) ?? null : null;
+    const customGroup = customGroupBySectionKey.get(section.key) ?? null;
     const customGroupTitleGenerating = Boolean(customGroup && generatingGroupTitleIds.has(customGroup.id));
     const displayedCustomGroup = customGroup;
     const collapsed = customGroup ? customGroup.collapsed : isManagedSection && collapsedThreadGroupKeys.has(section.key);
@@ -1971,9 +1972,11 @@ export function MessengerContextSidebar() {
       && !customGroup
       && (section.label === null || isPinnedCustomSection)
       && visibleEntries.length === 1;
-    const childSectionKeys = section.childSections
-      ?.filter((childSection) => Boolean(customGroupIdFromSectionKey(childSection.key)))
-      .map((childSection) => childSection.key) ?? [];
+    const childSectionKeys = effectiveThreadOrganizationRule === "custom"
+      ? section.childSections
+        ?.filter((childSection) => Boolean(customGroupIdFromSectionKey(childSection.key)))
+        .map((childSection) => childSection.key) ?? []
+      : [];
     const renderedChildSections = section.childSections?.length ? (
       <SortableContext items={childSectionKeys} strategy={verticalListSortingStrategy}>
         <div className="flex flex-col gap-1">

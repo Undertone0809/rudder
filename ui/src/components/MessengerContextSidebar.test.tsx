@@ -1108,6 +1108,176 @@ describe("MessengerContextSidebar", () => {
     }));
   });
 
+  it("renders custom groups atomically inside Project sections without group drag handles", () => {
+    localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "project" });
+    localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": false });
+    const projectContextLinks = [{
+      entityType: "project",
+      entityId: "project-1",
+      entity: { label: "Website launch", identifier: null },
+    }];
+    const thread = (threadKey: string, title: string, isPinned = false) => ({
+      threadKey,
+      kind: "chat",
+      title,
+      preview: `${title} preview`,
+      subtitle: null,
+      href: `/messenger/chat/${threadKey.slice("chat:".length)}`,
+      latestActivityAt: "2026-04-11T09:40:00.000Z",
+      lastReadAt: null,
+      unreadCount: 0,
+      needsAttention: false,
+      isPinned,
+    });
+    const groupEntry = (id: string, groupId: string, groupedThread: ReturnType<typeof thread>) => hydratedThreadEntry({
+      id,
+      orgId: "org-1",
+      userId: "local-board",
+      groupId,
+      threadKey: groupedThread.threadKey,
+      sortOrder: 0,
+      createdAt: "2026-04-11T08:00:00.000Z",
+      updatedAt: "2026-04-11T08:00:00.000Z",
+      thread: groupedThread,
+    });
+    const pinnedGrouped = thread("chat:pinned-grouped", "Pinned grouped chat");
+    const unpinnedGrouped = thread("chat:unpinned-grouped", "Individually pinned grouped chat", true);
+    const loosePinned = thread("chat:loose-pinned", "Loose pinned chat", true);
+    const looseProject = thread("chat:loose-project", "Loose project chat");
+    const looseNone = thread("chat:loose-none", "Loose no-project chat");
+    customGroupList = [
+      {
+        id: "pinned-project-group",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Pinned project group",
+        icon: "rocket::amber",
+        pinnedAt: "2026-04-11T08:00:00.000Z",
+        sortOrder: 0,
+        collapsed: false,
+        createdAt: "2026-04-11T08:00:00.000Z",
+        updatedAt: "2026-04-11T08:00:00.000Z",
+        entries: [groupEntry("entry-pinned", "pinned-project-group", pinnedGrouped)],
+      },
+      {
+        id: "regular-project-group",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Regular project group",
+        icon: "folder::slate",
+        pinnedAt: null,
+        sortOrder: 1,
+        collapsed: false,
+        createdAt: "2026-04-11T08:00:00.000Z",
+        updatedAt: "2026-04-11T08:00:00.000Z",
+        entries: [
+          groupEntry("entry-regular", "regular-project-group", unpinnedGrouped),
+          hydratedThreadEntry({
+            id: "entry-hydrated-only",
+            orgId: "org-1",
+            userId: "local-board",
+            groupId: "regular-project-group",
+            threadKey: "issue:hydrated-only",
+            sortOrder: 1,
+            createdAt: "2026-04-11T08:00:00.000Z",
+            updatedAt: "2026-04-11T08:00:00.000Z",
+            thread: {
+              ...thread("issue:hydrated-only", "Hydrated-only issue"),
+              kind: "issues",
+              href: "/messenger/issues/HYD-1",
+            },
+          }),
+        ],
+      },
+      {
+        id: "empty-project-group",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Empty project group",
+        icon: "folder::slate",
+        pinnedAt: null,
+        sortOrder: 2,
+        collapsed: false,
+        createdAt: "2026-04-11T08:00:00.000Z",
+        updatedAt: "2026-04-11T08:00:00.000Z",
+        entries: [],
+      },
+    ];
+    chatList = [
+      ...[pinnedGrouped, unpinnedGrouped, loosePinned, looseProject].map((item) => ({
+        id: item.threadKey.slice("chat:".length),
+        title: item.title,
+        summary: item.preview,
+        latestReplyPreview: item.preview,
+        latestUserMessagePreview: null,
+        userMessageCount: 0,
+        updatedAt: item.latestActivityAt,
+        lastMessageAt: item.latestActivityAt,
+        unreadCount: 0,
+        needsAttention: false,
+        isUnread: false,
+        isPinned: item.isPinned,
+        primaryIssue: null,
+        contextLinks: projectContextLinks,
+      })),
+      {
+        id: "loose-none",
+        title: looseNone.title,
+        summary: looseNone.preview,
+        latestReplyPreview: looseNone.preview,
+        latestUserMessagePreview: null,
+        userMessageCount: 0,
+        updatedAt: looseNone.latestActivityAt,
+        lastMessageAt: looseNone.latestActivityAt,
+        unreadCount: 0,
+        needsAttention: false,
+        isUnread: false,
+        isPinned: false,
+        primaryIssue: null,
+        contextLinks: [],
+      },
+    ];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [pinnedGrouped, unpinnedGrouped, loosePinned, looseProject, looseNone],
+    };
+    projectList = [{ id: "project-1", name: "Website launch", icon: "rocket", color: "#0ea5e9" }];
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+    const pinnedSectionIndex = html.indexOf('data-testid="messenger-thread-section-project-pinned"');
+    const pinnedGroupIndex = html.indexOf('data-testid="messenger-thread-section-custom-group-pinned-project-group"');
+    const loosePinnedIndex = html.indexOf('data-messenger-thread-key="chat:loose-pinned"');
+    const projectSectionIndex = html.indexOf('data-testid="messenger-thread-section-project-project-1"');
+    const noProjectSectionIndex = html.indexOf('data-testid="messenger-thread-section-project-none"');
+    const regularGroupIndex = html.indexOf('data-testid="messenger-thread-section-custom-group-regular-project-group"');
+    const emptyGroupIndex = html.indexOf('data-testid="messenger-thread-section-custom-group-empty-project-group"');
+    const looseNoneIndex = html.indexOf('data-messenger-thread-key="chat:loose-none"');
+
+    expect([
+      pinnedSectionIndex,
+      pinnedGroupIndex,
+      loosePinnedIndex,
+      projectSectionIndex,
+      noProjectSectionIndex,
+      regularGroupIndex,
+      emptyGroupIndex,
+      looseNoneIndex,
+    ]).not.toContain(-1);
+    expect(pinnedSectionIndex).toBeLessThan(pinnedGroupIndex);
+    expect(pinnedGroupIndex).toBeLessThan(loosePinnedIndex);
+    expect(loosePinnedIndex).toBeLessThan(projectSectionIndex);
+    expect(projectSectionIndex).toBeLessThan(noProjectSectionIndex);
+    expect(noProjectSectionIndex).toBeLessThan(regularGroupIndex);
+    expect(regularGroupIndex).toBeLessThan(emptyGroupIndex);
+    expect(emptyGroupIndex).toBeLessThan(looseNoneIndex);
+    expect(html.match(/Pinned grouped chat/g)).toHaveLength(1);
+    expect(html.match(/Individually pinned grouped chat/g)).toHaveLength(1);
+    expect(html.match(/Hydrated-only issue/g)).toHaveLength(1);
+    expect(html).toContain('aria-label="Group actions"');
+    expect(html).not.toContain('aria-label="Drag group Pinned project group"');
+    expect(html).not.toContain('aria-label="Drag group Regular project group"');
+  });
+
   it("renders pinned Messenger threads in a dedicated section above project groups", () => {
     localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "project" });
     localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": false });
