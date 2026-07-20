@@ -165,7 +165,7 @@ That lets local plugins and local custom tools import dependencies.
 
 This is excellent for local developer ergonomics.
 
-It is not a safe default for an operator-controlled operating layer server.
+It is not a safe default for an operator-controlled Rudder server.
 
 ## 5. Error handling
 
@@ -297,7 +297,7 @@ That is the correct mindset for Rudder too.
 
 `opencode` is basically a local agent runtime, so unsandboxed plugin execution is acceptable for its audience.
 
-Rudder is a operating layer for an operator-managed instance with company objects.
+Rudder is a shared workspace for an operator-managed instance with company objects.
 The risk profile is different:
 
 - secrets matter
@@ -364,7 +364,7 @@ For Rudder it would be risky because it combines:
 - code loading
 - execution
 
-inside the operating-layer server startup path.
+inside the Rudder server startup path.
 
 Rudder should require an explicit operator install step.
 
@@ -376,7 +376,7 @@ The products are solving different problems.
 |---|---|---|
 | Primary unit | local project/worktree | single-tenant operator instance with company objects |
 | Trust assumption | local power user on own machine | operator managing one trusted Rudder instance |
-| Failure blast radius | local session/runtime | entire company operating layer |
+| Failure blast radius | local session/runtime | entire Rudder instance |
 | Extension style | mutate runtime behavior freely | preserve governance and auditability |
 | UI model | local app can load local behavior | board UI must stay coherent and safe |
 | Security model | host-trusted local plugins | needs capability boundaries and auditability |
@@ -769,7 +769,7 @@ The host does not wrap or proxy these operations. This keeps the core lean — n
 
 ## Governance And Safety Requirements
 
-Any Rudder plugin system has to preserve core operating-layer invariants from the repo docs.
+Any Rudder plugin system has to preserve core product invariants from the repo docs.
 
 That means:
 

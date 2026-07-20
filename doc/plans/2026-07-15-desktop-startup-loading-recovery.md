@@ -152,7 +152,7 @@ is the visible expression of the fix, not the product decision by itself.
   or workspace contents.
 - Detecting or cancelling a managed startup operation that never settles. This
   is an existing lifecycle gap that needs a rollback-safe watchdog design under
-  `CONTROL.SERVER.LIFECYCLE.001`; this proposal handles explicit rejection only.
+  `SERVER.LIFECYCLE.001`; this proposal handles explicit rejection only.
 - Failures before the boot window and IPC registration exist, including some
   environment and Browser-profile initialization failures. This iteration
   guarantees recovery for managed local server startup after the boot window is
@@ -240,7 +240,7 @@ is the visible expression of the fix, not the product decision by itself.
   to recovery IPC.
 - Add a main-process retry single-flight and update the existing failure window
   in place before starting another managed local server attempt.
-- Keep server lifecycle behavior aligned with `CONTROL.SERVER.LIFECYCLE.001`.
+- Keep server lifecycle behavior aligned with `SERVER.LIFECYCLE.001`.
   This proposal changes presentation and support recovery only.
 
 ### Breaking Change
@@ -357,7 +357,7 @@ semantics otherwise remain outside this managed startup feature.
 - Update `doc/engineering/DESKTOP.md` to document quiet startup, failure-only
   disclosure, detailed reporting guidance, fixed email/GitHub handoffs, public
   issue visibility, and attachment limitations.
-- Add `CONTROL.DESKTOP.STARTUP.RECOVERY.001` to the guarded Product Logic
+- Add `DESKTOP.STARTUP.RECOVERY.001` to the guarded Product Logic
   Registry with explicit user authorization.
 
 ## Open Issues

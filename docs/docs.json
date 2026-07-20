@@ -2,7 +2,7 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "Rudder",
-  "description": "Rudder is an open-source operating layer for AI agent teams. It coordinates goals, conversational Chat, structured issues, agent runs, reviews, budgets, workspaces, and feedback loops.",
+  "description": "Rudder is open-source software for assigning, running, reviewing, and improving AI agent work. It connects goals, conversational Chat, structured issues, runs, reviews, budgets, workspaces, and feedback loops.",
   "logo": "/logo.png",
   "favicon": "/favicon.svg",
   "icons": {
@@ -68,7 +68,7 @@
               "concepts/skills",
               "concepts/automations",
               "concepts/reviews-feedback-learning",
-              "concepts/operating-layer",
+              "concepts/approvals-budgets-activity",
               "concepts/plugins"
             ]
           },
@@ -136,7 +136,7 @@
               "zh/concepts/skills",
               "zh/concepts/automations",
               "zh/concepts/reviews-feedback-learning",
-              "zh/concepts/operating-layer",
+              "zh/concepts/approvals-budgets-activity",
               "zh/concepts/plugins"
             ]
           },

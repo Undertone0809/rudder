@@ -29,7 +29,7 @@ updated_at: 2026-07-01
 ## Overview
 
 Rudder needs product adoption signal from self-hosted deployments, but the app is
-an agent operating layer and will often contain sensitive task, prompt, repository,
+an agent Rudder and will often contain sensitive task, prompt, repository,
 agent, run, and organization context. Front-end Google Analytics is not the right
 primitive for this problem: it measures browser traffic, is commonly blocked or
 unreachable in self-hosted/internal environments, and creates avoidable trust
@@ -69,7 +69,7 @@ Problem:
 - We cannot reliably know self-hosted adoption, retention, version distribution,
   or whether installations reach meaningful agent-work usage.
 - Adding GA directly inside the Rudder app would create a privacy/trust mismatch
-  for an OSS/self-hosted agent operating layer.
+  for an OSS/self-hosted agent Rudder.
 
 Impact:
 
@@ -577,7 +577,7 @@ If implemented, update:
 
 Potential product contract area:
 
-- a new deployment/telemetry contract or a operating-layer observability contract
+- a new deployment/telemetry contract or a Rudder observability contract
   stating that self-hosted telemetry is anonymous, content-free, transparent, and
   disableable.
 

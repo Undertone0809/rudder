@@ -40,7 +40,7 @@
     "smoke:openclaw-sse-standalone": "./scripts/smoke/openclaw-sse-standalone.sh",
     "test:e2e": "npx playwright test --config tests/e2e/playwright.config.ts",
     "test:e2e:headed": "npx playwright test --config tests/e2e/playwright.config.ts --headed",
-    "perf:operating-layer": "node cli/node_modules/tsx/dist/cli.mjs scripts/perf/operating-layer-baseline.ts",
+    "perf:workflows": "node cli/node_modules/tsx/dist/cli.mjs scripts/perf/workflow-baseline.ts",
     "docs:dev": "cd docs && npx -y mint@4.2.637 dev",
     "docs:validate": "cd docs && PUPPETEER_SKIP_DOWNLOAD=1 npx -y mint@4.2.637 validate",
     "docs:health": "node scripts/check-docs-public-health.mjs",

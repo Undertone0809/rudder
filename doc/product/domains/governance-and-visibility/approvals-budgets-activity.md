@@ -1,13 +1,12 @@
 ---
-title: Approvals Budgets Activity And Run Intelligence
-domain: operating-layer
+title: Approvals Budgets And Activity
+domain: governance-and-visibility
 status: active
 coverage: detailed
 contract_ids:
-  - CONTROL.APPROVALS.001
-  - CONTROL.BUDGETS.001
-  - CONTROL.ACTIVITY.001
-  - CONTROL.RUN.INTELLIGENCE.001
+  - APPROVAL.GOVERNED.ACTIONS.001
+  - BUDGET.ENFORCEMENT.001
+  - ACTIVITY.AUDIT.001
 related_code:
   - packages/db/src/schema/approvals.ts
   - packages/db/src/schema/approval_comments.ts
@@ -17,7 +16,6 @@ related_code:
   - server/src/services/budgets.ts
   - server/src/services/costs.ts
   - server/src/services/activity.ts
-  - server/src/services/run-intelligence.ts
 related_tests:
   - server/src/__tests__/approvals-service.test.ts
   - server/src/__tests__/approval-routes-chat-application.test.ts
@@ -29,9 +27,9 @@ related_tests:
 edit_policy: user_confirmed_only
 ---
 
-# Approvals Budgets Activity And Run Intelligence
+# Approvals Budgets And Activity
 
-## CONTROL.APPROVALS.001
+## APPROVAL.GOVERNED.ACTIONS.001
 
 Why:
 
@@ -60,7 +58,7 @@ Evidence:
 - `server/src/__tests__/approval-routes-chat-application.test.ts` covers chat
   approval application paths.
 
-## CONTROL.BUDGETS.001
+## BUDGET.ENFORCEMENT.001
 
 Why:
 
@@ -89,7 +87,7 @@ Evidence:
   service behavior.
 - `tests/e2e/cost-trend.spec.ts` covers visible cost trend behavior.
 
-## CONTROL.ACTIVITY.001
+## ACTIVITY.AUDIT.001
 
 Why:
 
@@ -117,61 +115,3 @@ Evidence:
   and reference behavior.
 - Issue, automation, approval, and Messenger tests verify domain-specific
   activity consumers where those flows are visible.
-
-## CONTROL.RUN.INTELLIGENCE.001
-
-Why:
-
-- Run intelligence surfaces help operators understand a run without reading raw
-  logs first. They summarize status, transcript, result, cost, skill usage, and
-  target context while preserving links to raw evidence.
-
-Flow:
-
-1. Execution records run result, transcript, events, cost, context snapshot, and
-   references.
-2. Organization-scoped list reads default to an allowlisted summary projection
-   with stable `(createdAt, id)` keyset cursors. Summary rows include identity,
-   status, timing, agent/runtime, target/issue reference, bounded outcome/error,
-   normalized usage/cost, skill evidence, and log availability without loading
-   full result/context JSON, excerpts, sessions, process data, or config
-   fingerprints.
-3. Official CLI list consumers use the summary projection by default and expose
-   `--full` for the compatibility export shape.
-4. Single-run detail retains the full diagnostic view. Events page by
-   `afterSeq`/`limit`; logs page by byte `offset`/`limitBytes` and report the next
-   offset plus EOF.
-5. Transcript output returns only the requested page instead of appending a
-   second complete transcript payload. Raw transcript/log evidence remains
-   available underneath the summary.
-
-Invariants:
-
-- Summary must not replace raw run evidence.
-- Derived insight must remain traceable to run, target, and transcript data.
-- Run and hydrated issue metadata must remain organization-scoped even when an
-  untrusted runtime context snapshot contains an issue id from another
-  organization.
-- Summary pagination must be stable for equal timestamps and must not use deep
-  offset pagination.
-- Summary rows and human outcome/error fields stay bounded independently of raw
-  result and log size.
-- Event and log reads enforce their server-side bounds, authorization, and
-  redaction rules.
-- Errors and transcript pages still load and parse one selected run's complete
-  log before slicing. Removing that single-run memory/latency boundary requires
-  normalized persisted transcript data and is not implied by bounded output.
-
-Evidence:
-
-- `server/src/__tests__/run-intelligence-summary-service.test.ts` covers the
-  allowlist, payload budget, keyset pagination, and cross-organization issue
-  hydration boundary.
-- `server/src/__tests__/run-intelligence-routes.test.ts` and
-  `server/src/__tests__/run-intelligence-service.test.ts` cover summary/full
-  compatibility plus bounded event/log authorization and redaction.
-- `server/src/__tests__/run-intelligence-e2e.test.ts` covers the real embedded
-  PostgreSQL and Express workflow; run-intelligence core/CLI tests cover summary
-  defaults and explicit full output.
-- `tests/e2e/run-transcript-detail.spec.ts` covers the terminal run transcript
-  detail surface.

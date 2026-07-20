@@ -4,7 +4,7 @@ Guidance for human and AI contributors working in this repository.
 
 ## 1. Purpose
 
-Rudder is an orchestration and control platform for agent work, and the operating layer for agent teams. It organizes goals, tasks, knowledge, and workflows into an executable structure, enabling agents to work within clear boundaries, collaborate, and move work forward.
+Rudder is open-source software for assigning, running, reviewing, and improving agent work. It connects goals, tasks, knowledge, runs, reviews, budgets, and workflows so agents can work within clear boundaries, collaborate, and move work forward.
 The current product behavior contract is the guarded Product Logic Registry in `doc/product/`.
 The product north-star metric is the weekly count of real agent-work loops successfully completed through Rudder end-to-end.
 
@@ -144,7 +144,7 @@ If you change schema/API behavior, update all impacted layers:
 - `server` routes/services
 - `ui` API clients and pages
 
-1. Preserve operating-layer invariants.
+1. Preserve product invariants.
 
 - Single-assignee task model
 - Atomic issue checkout semantics

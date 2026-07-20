@@ -43,8 +43,8 @@ export type AgentIntegrationSummary = Omit<AgentIntegration, "appCredentialSecre
   hasCredentialSecret: boolean;
 };
 
-export interface AgentOperatingLayerIntegrationSummary {
-  id: "rudder-operating-layer";
+export interface AgentRudderToolSummary {
+  id: "rudder-tools";
   displayName: "Rudder MCP tools";
   kind: "rudder_mcp";
   status: "available";

@@ -394,7 +394,7 @@ export function createHeartbeatRecoveryHandlers(context: any) {
     }
 
     // Timer admission must match the compact inbox contract. Otherwise hidden
-    // operating-layer rows can wake an agent that immediately sees no work.
+    // Rudder rows can wake an agent that immediately sees no work.
     // Traceability: doc/plans/2026-05-30-heartbeat-inbox-admission.md
     const reviewerIssues = await issuesSvc.list(agent.orgId, {
       reviewerAgentId: agent.id,

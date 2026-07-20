@@ -70,7 +70,7 @@ Evidence from Codex session `019e023c-82a7-7581-b881-5785621c2f65`:
 
 The first-principles issue is that Rudder cannot assume agents will remember to
 translate a review judgment into a workflow mutation. Reviewer work needs the
-same operating-layer safety net as assignee closeout.
+same Rudder safety net as assignee closeout.
 
 ## Scope
 
@@ -117,7 +117,7 @@ Out of scope:
 ## Design Notes
 
 Reviewer closeout must not depend on interpreting prose. A comment that says
-"reject" is evidence for humans, but it is not a durable operating-layer outcome.
+"reject" is evidence for humans, but it is not a durable Rudder outcome.
 The structured decision is the source of truth for whether the reviewer has
 closed the review run.
 

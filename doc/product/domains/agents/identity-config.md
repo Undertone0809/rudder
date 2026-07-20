@@ -113,7 +113,7 @@ Product model:
 - The runtime registry maps an agent runtime type to adapter capabilities.
 - Adapter capabilities can include execute, test environment, model listing,
   skill listing/sync, local auth token support, session codec, transcript
-  parser, quota/cost metadata, and managed MCP/native operating-layer tool
+  parser, quota/cost metadata, and managed MCP/native Rudder tool
   projection.
 - Interactive chat capabilities are attempt-scoped. An active adapter may
   register a fenced control handle that declares native or fallback Steer and

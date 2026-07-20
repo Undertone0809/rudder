@@ -51,7 +51,7 @@ Signals:
 - Logs, trace warnings, and runtime RSS/CPU spikes are performance signals even
   when endpoint timings look acceptable.
 
-## ZStudio-Scale Operating-Layer Overfetch
+## ZStudio-Scale Rudder Overfetch
 
 Threads:
 

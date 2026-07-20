@@ -58,7 +58,7 @@ issue as the only durable or real execution path.
 ## Scope
 
 1. Add English and Chinese Built-in Browser pages and navigation.
-2. Explain Rudder-managed MCP/native operating-layer tools in runtime and
+2. Explain Rudder-managed MCP/native Rudder tools in runtime and
    permissions documentation.
 3. Expand Chat and Messenger documentation with Work manifest classification,
    running follow-up queues, failure recovery, and Side Panel behavior.

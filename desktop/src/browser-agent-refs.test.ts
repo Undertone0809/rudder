@@ -37,7 +37,7 @@ function createHarness() {
       return () => `snapshot-${++id}`;
     })(),
     createTab: async () => tab,
-    getOperatingLayerOrigins: () => ["http://127.0.0.1:3100"],
+    getRudderAppOrigins: () => ["http://127.0.0.1:3100"],
   });
   return { controller, tab };
 }

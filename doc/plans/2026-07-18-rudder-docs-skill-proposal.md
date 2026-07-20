@@ -114,7 +114,7 @@ The recommended design is:
 3. Use a precise frontmatter description as the primary implicit-activation
    contract.
 4. Remove the broad always-injected prompt sentence that tells every run it can
-   use the current `rudder` skill for nearly every operating-layer object.
+   use the current `rudder` skill for nearly every Rudder object.
 5. Make the main `SKILL.md` a compact request classifier and source router.
 6. Keep detailed operating, CLI, API, Library, workspace, and organization
    skill guidance in sibling references loaded only when relevant.
@@ -136,7 +136,7 @@ The current frontmatter says:
 
 ```yaml
 name: rudder
-description: Use Rudder operating-layer best practices and CLI-backed references for ownership, checkout, comments, reviews, Library handoff, and organization skills. Runtime-owned heartbeat prompts provide the fixed heartbeat execution flow.
+description: Use Rudder best practices and CLI-backed references for ownership, checkout, comments, reviews, Library handoff, and organization skills. Runtime-owned heartbeat prompts provide the fixed heartbeat execution flow.
 ```
 
 The opening body then says the skill applies to heartbeat, issue, review, chat,
@@ -463,7 +463,7 @@ This description deliberately includes:
 - ownership: authoritative Rudder help and self-knowledge;
 - positive triggers: use, configuration, extension, operation,
   troubleshooting, exact behavior, and source questions;
-- domain coverage: major Rudder product and operating-layer surfaces;
+- domain coverage: major Rudder product areas and user surfaces;
 - near-miss exclusions: greetings, hosted-but-unrelated work, and routine
   actions already explained by current tools.
 
@@ -746,7 +746,7 @@ in the current `SKILL.md`:
 | Exact conditional Rudder behavior | `rudder-docs` reference | Preserve in the relevant detailed reference. |
 | Command syntax | CLI reference or generated capability catalog | Remove duplicate main-body syntax and retain a pointer. |
 | API compatibility fallback | API reference plus short main-body boundary | Preserve as internal/debug only. |
-| Workspace and Library explanation | Public docs or operating-layer practices reference | Route by user-facing vs contributor question. |
+| Workspace and Library explanation | Public docs or work-practices reference | Route by user-facing vs contributor question. |
 | Organization skill administration | Organization skills reference | Preserve and load only for that request class. |
 | Historical or duplicated instruction | No owner | Remove after tests prove no behavior dependency. |
 
@@ -1306,7 +1306,7 @@ following guarded contracts:
 ### `AGENT.INSTRUCTIONS.001`
 
 - Remove the broad always-injected sentence recommending the current `rudder`
-  skill for nearly every operating-layer surface.
+  skill for nearly every Rudder surface.
 - State that generic host skill matching uses the Rudder-selected metadata and
   intent-matches and activates `rudder-docs` only when relevant on native hosts;
   prompt-injected hosts rely on the compact body's self-gate until their adapter
@@ -1346,7 +1346,7 @@ validated with `pnpm product-logic:check`.
 - Rename and rewrite
   `server/resources/bundled-skills/rudder/SKILL.md` as
   `server/resources/bundled-skills/rudder-docs/SKILL.md`.
-- Move and update its sibling references, adding the operating-layer practices
+- Move and update its sibling references, adding the work-practices
   and source map only when the ownership audit supports that split.
 - Update `doc/engineering/CLI.md` examples to use the canonical new skill key
   while noting legacy input compatibility where relevant.

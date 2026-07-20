@@ -15,7 +15,7 @@ const DEFAULT_HOSTS = [
 const CANONICAL_ORIGIN = "https://docs.rudderhq.dev";
 const REQUIRED_PATHS = [
   { path: "/", status: 200, bodyIncludes: ["Rudder"], canonical: CANONICAL_ORIGIN },
-  { path: "/about", status: 200, bodyIncludes: ["Rudder", "operating layer"], canonical: `${CANONICAL_ORIGIN}/about` },
+  { path: "/about", status: 200, bodyIncludes: ["Rudder", "Rudder"], canonical: `${CANONICAL_ORIGIN}/about` },
   { path: "/contact", status: 200, bodyIncludes: ["GitHub", "Report a bug"], canonical: `${CANONICAL_ORIGIN}/contact` },
   { path: "/home", status: 200, bodyIncludes: ["Rudder"], canonical: CANONICAL_ORIGIN, finalPath: "/" },
   { path: "/en", status: 200, bodyIncludes: ["Rudder"], canonical: CANONICAL_ORIGIN, finalPath: "/" },

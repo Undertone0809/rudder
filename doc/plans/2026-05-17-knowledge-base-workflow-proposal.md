@@ -1,5 +1,5 @@
 ---
-title: Knowledge Base Operating Layer Proposal
+title: Knowledge Base Workflow Proposal
 date: 2026-05-17
 kind: proposal
 status: proposed
@@ -21,11 +21,11 @@ commit_refs: []
 updated_at: 2026-05-17
 ---
 
-# Knowledge Base Operating Layer Proposal
+# Knowledge Base Workflow Proposal
 
 ## Overview
 
-Add a manual-first, provenance-first Knowledge Base operating-layer surface for
+Add a manual-first, provenance-first Knowledge Base Rudder surface for
 Rudder organizations.
 
 This proposal does not turn Rudder into a general wiki or a monolithic memory
@@ -36,12 +36,12 @@ selectively injected into future agent runs.
 
 The first iteration should make knowledge explicit, reviewable, and
 explainable. More automatic capture, provider-backed memory, and richer
-maintenance workflows can follow after the operating-layer contract is stable.
+maintenance workflows can follow after the Rudder contract is stable.
 
 ## What Is The Problem?
 
 Rudder's long-term product direction names organization knowledge as a core
-operating-layer capability, but `SPEC-implementation.md` keeps a full Knowledge
+Rudder capability, but `SPEC-implementation.md` keeps a full Knowledge
 Base subsystem out of V1 scope. At the same time, the product already has
 adjacent surfaces that create and consume reusable knowledge:
 

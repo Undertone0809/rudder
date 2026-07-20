@@ -280,7 +280,7 @@ async function preflightRudderMcpServerOnce(
     return failed(
       input.command,
       "browser_bundle_handshake_failed",
-      `Rudder MCP initialize/tools-list handshake failed: ${detail}; core operating-layer tools are unavailable.`,
+      `Rudder MCP initialize/tools-list handshake failed: ${detail}; core Rudder tools are unavailable.`,
     );
   }
 
@@ -290,7 +290,7 @@ async function preflightRudderMcpServerOnce(
     return failed(
       input.command,
       "browser_bundle_handshake_failed",
-      "Rudder MCP initialize/tools-list returned a protocol error; core operating-layer tools are unavailable.",
+      "Rudder MCP initialize/tools-list returned a protocol error; core Rudder tools are unavailable.",
     );
   }
 
@@ -307,7 +307,7 @@ async function preflightRudderMcpServerOnce(
     return failed(
       input.command,
       "browser_bundle_handshake_failed",
-      "Rudder MCP tools/list returned an invalid manifest; core operating-layer tools are unavailable.",
+      "Rudder MCP tools/list returned an invalid manifest; core Rudder tools are unavailable.",
       { version, contractVersion, coreContractHash, contractHash },
     );
   }
@@ -333,7 +333,7 @@ async function preflightRudderMcpServerOnce(
     return failed(
       input.command,
       "browser_bundle_server_mismatch",
-      "Rudder MCP server identity did not match the managed bundle; core operating-layer tools are unavailable.",
+      "Rudder MCP server identity did not match the managed bundle; core Rudder tools are unavailable.",
       partial,
     );
   }
@@ -350,7 +350,7 @@ async function preflightRudderMcpServerOnce(
     return failed(
       input.command,
       "browser_bundle_handshake_failed",
-      "Rudder MCP tools/list did not match the canonical core operating-layer manifest; core MCP is unavailable.",
+      "Rudder MCP tools/list did not match the canonical core Rudder manifest; core MCP is unavailable.",
       partial,
     );
   }

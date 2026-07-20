@@ -5,14 +5,14 @@ kind: implementation
 status: completed
 area: api
 entities:
-  - operating_layer_performance
+  - rudder_workflows_performance
   - messenger_chat
   - module_boundaries
   - architecture_fitness
 issue:
 related_plans:
   - 2026-05-19-source-file-size-boundary-refactor.md
-  - 2026-05-25-performance-operating-layer-optimization.md
+  - 2026-05-25-performance-workflow-optimization.md
   - 2026-06-18-architecture-fitness-and-hotspot-extraction.md
   - 2026-06-24-messenger-render-performance.md
 supersedes: []
@@ -25,7 +25,7 @@ related_code:
   - server/src/__tests__/chat-assistant-runtime-batch.test.ts
   - server/src/__tests__/chat-assistant.test.ts
   - server/src/__tests__/chat-routes.test.ts
-  - scripts/perf/operating-layer-baseline.ts
+  - scripts/perf/workflow-baseline.ts
 commit_refs:
   - "perf: deduplicate chat runtime enrichment"
 updated_at: 2026-07-12
@@ -381,7 +381,7 @@ HTTP/service contract.
 
 - [x] **Step 3: Run final spawned reviewer gates**
 
-Use three lenses because Chat/runtime/operating-layer behavior is consequential:
+Use three lenses because Chat/runtime/product behavior is consequential:
 
 - functional trust: compatibility, org isolation, tests, and claimed work-count
   improvement;

@@ -138,7 +138,7 @@ historical context only.
 - Treat **agency / internal team / startup** as templates over the same underlying organization abstraction.
 - Make outputs first-class: files, docs, reports, previews, links, screenshots.
 - Provide hooks into engineering workflows: worktrees, preview servers, PR links, external review tools.
-- Use plugins for edge cases beyond the built-in operating layer, including richer chat, knowledge, or integration surfaces.
+- Use plugins for edge cases beyond the built-in Rudder, including richer chat, knowledge, or integration surfaces.
 
 **Do not**
 
@@ -173,4 +173,4 @@ historical context only.
    Auto mode is allowed; hidden token burn is not.
 
 8. **Thin core, rich edges**
-   Put optional knowledge and special-purpose surfaces into plugins/extensions rather than bloating the operating layer.
+   Put optional knowledge and special-purpose surfaces into plugins/extensions rather than bloating Rudder.

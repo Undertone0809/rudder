@@ -2,7 +2,7 @@
 
 ## Objective
 
-Replace the current Rudder shell with a Feishu-like three-column layout while preserving current route semantics and core operating-layer behaviors.
+Replace the current Rudder shell with a Feishu-like three-column layout while preserving current route semantics and core product behaviors.
 
 ## Scope (Confirmed)
 

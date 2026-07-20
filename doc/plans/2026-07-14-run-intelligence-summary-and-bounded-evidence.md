@@ -42,7 +42,7 @@ the canonical Agent Runs routes already support bounded reads.
 
 The affected Product Logic Registry contracts are:
 
-- `CONTROL.RUN.INTELLIGENCE.001`: summarized run intelligence with traceable raw
+- `RUN.INTELLIGENCE.001`: summarized run intelligence with traceable raw
   evidence.
 - `RUN.RESULT.001`: durable result, transcript, usage, session, and log evidence.
 - `RUN.AGENT.UNIFICATION.001`: one Agent Run identity across work surfaces.

@@ -45,7 +45,7 @@ bundled `rudder` skill.
 
 Rudder Studio also needs stronger example data. Its purpose is not only to make
 screens non-empty; it should teach agents what good and bad Rudder practice
-looks like across realistic operating-layer scenarios.
+looks like across realistic Rudder scenarios.
 
 ## Route
 
@@ -66,7 +66,7 @@ review -> handoff`.
    operating protocol.
 6. Thin the bundled `rudder` skill so it no longer carries the full heartbeat
    flow. It should point heartbeat-scene execution to the runtime prompt and
-   retain detailed Rudder operating-layer best practices, reference pointers,
+   retain detailed Rudder best practices, reference pointers,
    Library handoff rules, reviewer decision semantics, and organization-skill
    workflow rules.
 7. Add Rudder Studio best-practice Good/Bad cases as causal scenario data
@@ -124,14 +124,14 @@ Observability contract:
 - Passive follow-up: dynamic passive prompt names the close-out gap; runtime
   heartbeat prompt keeps it as governance, not new work discovery.
 - Non-heartbeat chat or manual CLI context: runtime heartbeat prompt is absent;
-  `rudder` skill still provides operating-layer guidance when explicitly used.
+  `rudder` skill still provides Rudder guidance when explicitly used.
 
 ## Source Of Truth Split
 
 - Runtime operating contract: cross-scene path, Library, renderable-link,
   memory, and safety invariants.
 - Runtime heartbeat instruction prompt: heartbeat-scene pipeline and ordering.
-- Bundled `rudder` skill: detailed Rudder operating-layer best practices and
+- Bundled `rudder` skill: detailed Rudder best practices and
   reference guidance that can be used from heartbeat, chat, or manual CLI
   contexts. It should not duplicate the full heartbeat scene pipeline once the
   runtime heartbeat prompt owns that flow.

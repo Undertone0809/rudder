@@ -50,7 +50,7 @@ Common domain routes include:
 - Chat, Messenger, comments, and integrations:
   `doc/product/domains/collaboration/`
 - approvals, budgets, costs, and activity:
-  `doc/product/domains/operating-layer/`
+  `doc/product/domains/governance-and-visibility/`
 - reviews, feedback, and learning:
   `doc/product/domains/review-feedback-learning/`
 - automations: `doc/product/domains/automations/`

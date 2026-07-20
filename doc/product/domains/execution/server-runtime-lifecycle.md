@@ -1,11 +1,11 @@
 ---
 title: Server Runtime Lifecycle
-domain: operating-layer
+domain: execution
 status: active
 coverage: logic_contract
 spec_depth: logic_contract
 contract_ids:
-  - CONTROL.SERVER.LIFECYCLE.001
+  - SERVER.LIFECYCLE.001
 related_code:
   - server/src/index.ts
   - server/src/app.ts
@@ -33,7 +33,7 @@ edit_policy: user_confirmed_only
 
 # Server Runtime Lifecycle
 
-## CONTROL.SERVER.LIFECYCLE.001
+## SERVER.LIFECYCLE.001
 
 ## Contract Summary
 

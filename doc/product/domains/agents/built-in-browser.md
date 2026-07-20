@@ -140,7 +140,7 @@ shared cookies do not imply shared tab ownership.
 The Browser skill and tools are one capability resolved from the live instance
 setting. Rudder projects them at run time rather than writing permanent skill
 assignments to every organization. High-level tools reuse the first-party
-`rudder-operating-layer` transport so authentication, runtime identity, and
+`rudder-tools` transport so authentication, runtime identity, and
 auditing remain inside existing boundaries.
 
 ### Actors / Objects / State

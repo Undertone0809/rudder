@@ -47,8 +47,8 @@
       }
     },
     {
-      "id": "operating-layer-run-intelligence",
-      "area": "operating-layer",
+      "id": "run-intelligence",
+      "area": "execution",
       "include": ["packages/run-intelligence-core/src/**/*.ts"],
       "publicEntrypoints": ["packages/run-intelligence-core/src/index.ts"],
       "specifierRoot": {
@@ -72,7 +72,7 @@
       "reason": "Runtime adapters expose several intentional environment-specific entrypoints and are not yet one enforceable domain."
     },
     {
-      "area": "operating-layer",
+      "area": "execution",
       "paths": ["server/src/services/runtime-kernel/**", "server/src/bootstrap/**", "desktop/src/**"],
       "reason": "Lifecycle ownership is under active extraction; declaring a single facade now would misrepresent current dependencies."
     }

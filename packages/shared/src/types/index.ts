@@ -28,7 +28,7 @@ export type {
   AgentIntegrationSetupSessionStatus,
   AgentIntegrationSetupUrl,
   AgentIntegrationSummary,
-  AgentIntegrationUserBinding, AgentOperatingLayerIntegrationSummary, FeishuIntegrationSettings
+  AgentIntegrationUserBinding, AgentRudderToolSummary, FeishuIntegrationSettings
 } from "./agent-integration.js";
 export type {
   Agent,

@@ -23,5 +23,5 @@ Path:
    `RUN.ADMISSION.001`.
 6. Chat output enters `CHAT.LIFECYCLE.001`, `RUN.CHAT.AGENT.001`,
    `RUN.AGENT.UNIFICATION.001`, and `RUN.RESULT.001`.
-7. Spend, activity, and intelligence readbacks use `CONTROL.BUDGETS.001`,
-   `CONTROL.ACTIVITY.001`, and `CONTROL.RUN.INTELLIGENCE.001`.
+7. Spend, activity, and intelligence readbacks use `BUDGET.ENFORCEMENT.001`,
+   `ACTIVITY.AUDIT.001`, and `RUN.INTELLIGENCE.001`.

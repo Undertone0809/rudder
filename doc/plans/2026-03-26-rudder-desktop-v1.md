@@ -4,7 +4,7 @@
 
 Build Rudder Desktop V1 as an **Electron-based desktop shell** around the existing **local_trusted** product, targeting **macOS + Windows + Linux** for **internal alpha** use.
 
-The first version should preserve the current **full board UI** and existing REST/WebSocket behavior. It should not introduce a second client model, remote-instance support, or a separate native operating layer. The desktop app’s job is to make Rudder installable and locally runnable: launch, start embedded state, show the board UI, and package the app for the three desktop platforms.
+The first version should preserve the current **full board UI** and existing REST/WebSocket behavior. It should not introduce a second client model, remote-instance support, or a separate native Rudder. The desktop app’s job is to make Rudder installable and locally runnable: launch, start embedded state, show the board UI, and package the app for the three desktop platforms.
 
 ## Implementation Changes
 

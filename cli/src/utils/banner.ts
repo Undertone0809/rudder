@@ -9,10 +9,10 @@ const RUDDER_ART = [
   "╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝",
 ] as const;
 
-const TAGLINE = "Orchestration and control platform for agent work";
+const TAGLINE = "Assign, run, review, and improve agent work";
 const DESCRIPTION = [
-  "Operating layer for agent teams",
-  "Goals, tasks, knowledge, and workflows in an executable structure",
+  "Connect goals, tasks, runs, budgets, feedback, and learning",
+  "Keep agent work visible, reviewable, and tied to real outcomes",
 ] as const;
 
 export function printRudderCliBanner(): void {

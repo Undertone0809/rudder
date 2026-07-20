@@ -40,14 +40,14 @@ function parseCodexRudderMcpConfig(content: string): {
     if (separator < 0) continue;
     const key = line.slice(0, separator).trim();
     const value = JSON.parse(line.slice(separator + 1).trim()) as unknown;
-    if (section === "[mcp_servers.rudder-operating-layer]") {
+    if (section === "[mcp_servers.rudder-tools]") {
       if (key === "command" && typeof value === "string") command = value;
       if (key === "args" && Array.isArray(value) && value.every((entry) => typeof entry === "string")) {
         args = value as string[];
       }
     }
     if (
-      section === "[mcp_servers.rudder-operating-layer.env]"
+      section === "[mcp_servers.rudder-tools.env]"
       && typeof value === "string"
     ) {
       env[key] = value;
@@ -289,7 +289,7 @@ async function writeMcpProcessCleanupNoiseCodexCommand(commandPath: string): Pro
   const script = `#!/usr/bin/env node
 process.stdin.resume();
 process.stdin.on("end", () => {
-  process.stderr.write("2026-07-01T06:12:02.158754Z  WARN codex_rmcp_client::stdio_server_launcher: Failed to kill MCP process group for server rudder-operating-layer: No such process (os error 3)\\n");
+  process.stderr.write("2026-07-01T06:12:02.158754Z  WARN codex_rmcp_client::stdio_server_launcher: Failed to kill MCP process group for server rudder-tools: No such process (os error 3)\\n");
   console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-1" }));
   console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "hello" } }));
   console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
@@ -303,7 +303,7 @@ async function writeExternalMcpProcessCleanupNoiseCodexCommand(commandPath: stri
   const script = `#!/usr/bin/env node
 process.stdin.resume();
 process.stdin.on("end", () => {
-  process.stderr.write("2026-07-01T06:12:02.158754Z  WARN codex_rmcp_client::stdio_server_launcher: Failed to kill MCP process group for server external-operating-layer: No such process (os error 3)\\n");
+  process.stderr.write("2026-07-01T06:12:02.158754Z  WARN codex_rmcp_client::stdio_server_launcher: Failed to kill MCP process group for server external-Rudder: No such process (os error 3)\\n");
   console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-1" }));
   console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "hello" } }));
   console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
@@ -767,7 +767,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
           coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
           diagnosticCode: "browser_bundle_version_mismatch",
           provenance: "desktop_bundle",
-          serverName: "rudder-operating-layer",
+          serverName: "rudder-tools",
           toolCount: 69,
           version: "0.4.5",
         });
@@ -2004,10 +2004,10 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(managedConfigContents).toContain("enabled = false");
       expect(managedConfigContents).toContain("[features]");
       expect(managedConfigContents).toContain("plugins = false");
-      expect(managedConfigContents).toContain("[mcp_servers.rudder-operating-layer]");
+      expect(managedConfigContents).toContain("[mcp_servers.rudder-tools]");
       expect(managedConfigContents).toContain("command =");
       expect(managedConfigContents).toContain('"mcp-server"');
-      expect(managedConfigContents).toContain("[mcp_servers.rudder-operating-layer.env]");
+      expect(managedConfigContents).toContain("[mcp_servers.rudder-tools.env]");
       expect(managedConfigContents).toContain("RUDDER_MCP_RUDDER_BIN =");
       expect(managedConfigContents).toContain('RUDDER_API_URL = "http://localhost:3100"');
       expect(managedConfigContents).toContain('RUDDER_API_KEY = "run-jwt-token"');
@@ -2117,7 +2117,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
         contractVersion: RUDDER_MCP_CONTRACT_VERSION,
         diagnosticCode: null,
         provenance: "repo",
-        serverName: "rudder-operating-layer",
+        serverName: "rudder-tools",
         toolCount: 77,
         version: "0.5.0",
       });
@@ -3240,8 +3240,8 @@ describe("codex execute", { timeout: 20_000 }, () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
-      expect(result.resultJson?.stderr).toContain("external-operating-layer");
-      expect(logs.some((entry) => entry.stream === "stderr" && entry.chunk.includes("external-operating-layer"))).toBe(true);
+      expect(result.resultJson?.stderr).toContain("external-Rudder");
+      expect(logs.some((entry) => entry.stream === "stderr" && entry.chunk.includes("external-Rudder"))).toBe(true);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

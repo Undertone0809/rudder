@@ -379,7 +379,7 @@ No source invokes adapters directly.
 
 ## 8.4 Agent heartbeat policy fields
 
-Agent-level operating-layer settings (not adapter-specific):
+Agent-level Rudder settings (not adapter-specific):
 
 ```json
 {
@@ -421,7 +421,7 @@ All tables remain organization-scoped.
 
 1. Extend `adapter_type` domain to include `claude_local` and `codex_local` (alongside existing `process`, `http`).
 2. Keep `adapter_config` as adapter-owned config (CLI flags, cwd, prompt templates, env overrides).
-3. Add `runtime_config` jsonb for operating-layer scheduling policy:
+3. Add `runtime_config` jsonb for Rudder scheduling policy:
    - heartbeat enable/interval
    - wake-on-assignment
    - wake-on-on-demand
@@ -671,7 +671,7 @@ Primary transport: websocket channel per organization.
 On server startup:
 
 1. Find stale `queued`/`running` runs.
-2. Mark as `failed` with `error_code=operating_layer_restart`.
+2. Mark as `failed` with `error_code=rudder_workflows_restart`.
 3. Set affected non-paused/non-terminated agents to `error` (or `idle` based on policy).
 4. Emit recovery events to websocket and activity log.
 

@@ -30,7 +30,7 @@ updated_at: 2026-04-19
 ## Summary
 
 This change closes the contract gap where the bundled `rudder` skill had
-already moved to a CLI-first operating-layer workflow, but
+already moved to a CLI-first Rudder workflow, but
 `rudder-create-agent` still taught raw `curl` calls against `/llms/...`,
 `/api/orgs/:orgId/agent-hires`, and approval endpoints. The implemented end
 state is a CLI-first create-agent path with dedicated hire/config/icon
@@ -43,7 +43,7 @@ debt, not the intended workflow.
 ## Problem
 
 - `rudder-create-agent` was still transport-first while the rest of Rudder's
-  core operating-layer guidance had already standardized on `rudder ... --json`
+  core Rudder guidance had already standardized on `rudder ... --json`
 - the skill exposed low-level API sequencing instead of the canonical hiring
   behavior owned by `POST /api/orgs/:orgId/agent-hires`
 - there was no first-class CLI wrapper for agent hiring, redacted config
@@ -122,7 +122,7 @@ debt, not the intended workflow.
 ## Open Issues
 
 - `rudder-create-agent` is now CLI-first, but Rudder still has a broader open
-  question about whether high-frequency operating-layer actions should stay CLI
+  question about whether high-frequency Rudder actions should stay CLI
   mediated or move to host-owned core tools as proposed in
   `2026-04-17-rudder-core-tools-hybrid-surface.md`.
 - This plan record was written after the implementation shipped. Future work in

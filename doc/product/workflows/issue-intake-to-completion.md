@@ -22,7 +22,7 @@ new product rules.
 - Load instructions and context: `AGENT.INSTRUCTIONS.001`,
   `CONTEXT.RESOURCES.001`, `WORKSPACE.PROJECT.001`.
 - Persist run evidence: `RUN.RESULT.001`,
-  `CONTROL.RUN.INTELLIGENCE.001`.
+  `RUN.INTELLIGENCE.001`.
 - Enter review when required: `ISSUE.STATE.001`,
   `ROUTING.REVIEWER.001`, `REVIEW.DECISION.001`.
 - Release, follow-up, or learning: `RUN.ADMISSION.001`,

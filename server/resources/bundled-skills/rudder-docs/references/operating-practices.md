@@ -1,4 +1,4 @@
-# Rudder Operating-Layer Practices
+# Rudder Work Practices
 
 Consult this reference only for questions about exact Rudder operating
 behavior. It is conditional documentation, not a trigger and not an always-run
@@ -22,7 +22,7 @@ workflow. For exact tool and CLI syntax, pair the relevant rule with
 
 ## Interface And Scope
 
-- Prefer exposed first-party Rudder typed tools for normal operating-layer work.
+- Prefer exposed first-party Rudder typed tools for normal Rudder work.
   Use the installed `rudder ... --json` CLI as the compatibility fallback when
   MCP is unavailable or a Rudder tool has a transport or configuration error.
 - Use `rudder agent capabilities --json` to discover the current capability
@@ -119,7 +119,7 @@ report the status and required follow-up rather than bypassing it.
   `chainOfCommand` for escalation.
 - Above 80% spend, focus on critical work only and avoid expanding scope.
 - Use [Agent creation](agent-creation.md) for the canonical governed hiring
-  workflow rather than assembling a raw operating-layer payload.
+  workflow rather than assembling a raw Rudder API payload.
 
 ## Git Identity And Attribution
 

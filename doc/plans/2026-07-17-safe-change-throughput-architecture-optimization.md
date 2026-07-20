@@ -106,7 +106,7 @@ about, and slow focused verification.
 
 Optimize for all four properties together:
 
-1. **Behavior safety:** product and operating-layer invariants remain explicit,
+1. **Behavior safety:** product and product invariants remain explicit,
    tested, and traceable to Product Logic Registry contracts.
 2. **Change locality:** a product change is primarily owned by one domain module;
    cross-domain effects occur through named contracts or workflow orchestrators.
@@ -157,7 +157,7 @@ and end-to-end failure rate.
 - preserve protected agent-managed paths, organization scope, draft recovery,
   and Desktop launch behavior through E2E coverage.
 
-### Phase 3: Execution And Operating-Layer Ownership
+### Phase 3: Execution And Product Ownership
 
 - continue the RuntimeSupervisor direction so HTTP, WebSocket, schedulers,
   plugins, child processes, local PostgreSQL, and DB pools have one owner and
@@ -165,7 +165,7 @@ and end-to-end failure rate.
 - split runtime admission, execution, evidence persistence, recovery, and
   operator-facing run intelligence behind stable facades;
 - keep Desktop and CLI as adapters over shared lifecycle contracts rather than
-  alternate owners of operating-layer policy.
+  alternate owners of product policy.
 
 ### Phase 4: Remaining Hotspots And Final Ratchet
 
@@ -179,7 +179,7 @@ and end-to-end failure rate.
 
 ## Target Architecture
 
-Rudder stays in one deployable operating-layer process by default:
+Rudder stays in one deployable Rudder process by default:
 
 ```text
 UI route / HTTP route / CLI / Desktop adapter

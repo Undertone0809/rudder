@@ -38,7 +38,7 @@ Rudder should preview an HTML website artifact as a directory-scoped runnable
 output instead of rendering only the text of one HTML file. Opening an HTML file
 in Library or the Messenger Side Panel should preserve browser-native relative
 paths for sibling CSS, JavaScript, images, fonts, and nested assets while keeping
-agent-authored code isolated from the Rudder operating layer.
+agent-authored code isolated from the Rudder.
 
 The first delivery slice is a static website preview runtime on a distinct
 Preview Host. It supports local website assets, starts in a disclosed Connected
@@ -403,7 +403,7 @@ the organization root, other directories, mutation endpoints, or board APIs.
 
 Prove rendering fidelity for a production-shaped multi-file website and prove
 that the new execution surface cannot cross organization, artifact-root,
-filesystem, or Rudder-operating-layer boundaries.
+filesystem, or Rudder-Rudder boundaries.
 
 ### Prerequisites
 
@@ -465,7 +465,7 @@ E2E/black box:
 
 All supported local resources render in both surfaces. Connected resources load
 only in Connected mode. Boundary attempts fail without data disclosure or
-operating-layer mutation. Existing non-HTML previews remain unchanged.
+Rudder mutation. Existing non-HTML previews remain unchanged.
 
 ### Pass / Fail
 

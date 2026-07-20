@@ -40,7 +40,7 @@ owning domain contract.
 - Assigned and reviewable issue attention: `ROUTING.ASSIGNMENT.001`,
   `ROUTING.REVIEWER.001`, `ROUTING.ATTENTION.001`.
 - Integrations tab for Feishu/IM setup, custom agent integrations, built-in
-  Rudder MCP operating-layer visibility, and Feishu source badges on chat-origin
+  Rudder MCP tool visibility, and Feishu source badges on chat-origin
   run details: `IM.FEISHU.001`, `AGENT.CUSTOM.INTEGRATIONS.001`,
   `AGENT.CONTROL.TOOLS.001`.
 
@@ -124,19 +124,19 @@ owning domain contract.
 - Unified Agent Run facts and result/transcript evidence:
   `RUN.AGENT.UNIFICATION.001`, `RUN.RESULT.001`.
 - Derived summaries and dashboard-style run intelligence:
-  `CONTROL.RUN.INTELLIGENCE.001`.
+  `RUN.INTELLIGENCE.001`.
 
 ## Dashboard Costs And Activity
 
-- Cost, budget, and spend trend facts: `CONTROL.BUDGETS.001`.
-- Activity/audit timeline facts: `CONTROL.ACTIVITY.001`.
-- Dashboard-derived run summaries: `CONTROL.RUN.INTELLIGENCE.001`.
-- Dashboard aggregation: `CONTROL.DASHBOARD.001`.
+- Cost, budget, and spend trend facts: `BUDGET.ENFORCEMENT.001`.
+- Activity/audit timeline facts: `ACTIVITY.AUDIT.001`.
+- Dashboard-derived run summaries: `RUN.INTELLIGENCE.001`.
+- Dashboard aggregation: `DASHBOARD.SUMMARY.001`.
 
 ## Calendar And Inbox
 
-- Calendar event source identity and navigation: `CONTROL.CALENDAR.001`.
-- Human operator attention aggregation: `CONTROL.INBOX.001`.
+- Calendar event source identity and navigation: `CALENDAR.SOURCE.001`.
+- Human operator attention aggregation: `INBOX.ATTENTION.001`.
 
 ## Settings Onboarding Export Import
 

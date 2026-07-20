@@ -441,7 +441,7 @@ The generation actor serializes both commands. Only two outcomes are legal:
   `continuation_pending` and runs exactly once after terminal cleanup.
 
 If provider receipt cannot be proven, `acceptance_unknown` is the third honest
-operating-layer disposition. It is not a delivery outcome and cannot be silently
+Rudder disposition. It is not a delivery outcome and cannot be silently
 converted into a continuation.
 
 `unsupported`, `stale_generation`, and `closing` are internal routing facts,

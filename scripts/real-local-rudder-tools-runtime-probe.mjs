@@ -233,7 +233,7 @@ async function main() {
 
   const promptTemplate = [
     "You are validating Rudder runtime tools.",
-    "Do not use shell, Bash, curl, or the rudder CLI for Rudder operating-layer work.",
+    "Do not use shell, Bash, curl, or the rudder CLI for Rudder work.",
     "Call exactly one Rudder runtime tool first: rudder_agent_me.",
     "Then reply with compact JSON only: {\"path\":\"mcp\",\"tools\":[\"rudder_agent_me\"],\"note\":\"...\"}.",
     "If the tool is unavailable, reply with {\"path\":\"none\",\"tools\":[],\"note\":\"tool unavailable\"}.",
@@ -288,7 +288,7 @@ async function main() {
       title: `${marker} issue workflow Rudder tool validation`,
       description: [
         `Marker: ${marker}.`,
-        "Use Rudder runtime tools only. Do not use shell, Bash, curl, or the rudder CLI for Rudder operating-layer work.",
+        "Use Rudder runtime tools only. Do not use shell, Bash, curl, or the rudder CLI for Rudder work.",
         "Required workflow:",
         "1. Call rudder_issue_context for this issue.",
         "2. Call rudder_issue_checkout for this issue.",

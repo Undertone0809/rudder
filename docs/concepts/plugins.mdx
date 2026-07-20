@@ -1,6 +1,6 @@
 ---
 title: "Plugins"
-description: "Use Rudder plugins to add capabilities, jobs, webhooks, and UI surfaces without changing the core operating layer."
+description: "Use Rudder plugins to add capabilities, jobs, webhooks, and UI surfaces without changing Rudder's core workflows."
 icon: "plug"
 keywords:
   - "Rudder plugins"
@@ -23,7 +23,7 @@ Use a plugin when an integration or workflow should live outside the core produc
 - adding a specialized tool or capability
 - showing plugin-owned state in the UI
 
-The plugin should add capability. It should not override core operating-layer invariants.
+The plugin should add capability. It should not override core product invariants.
 
 ## Lifecycle
 
@@ -47,7 +47,7 @@ Plugin jobs and webhooks should be observable. When a plugin runs work, the oper
   <Card title="Manage plugins" icon="plug" href="/how-to/manage-plugins">
     Install, activate, inspect, and remove plugins.
   </Card>
-  <Card title="Operating layer" icon="sliders-horizontal" href="/concepts/operating-layer">
+  <Card title="Rudder" icon="sliders-horizontal" href="/concepts/approvals-budgets-activity">
     Understand the core invariants plugins must not bypass.
   </Card>
 </CardGroup>

@@ -5,11 +5,11 @@ Related discussion: https://github.com/Undertone0809/rudder/discussions/449
 
 ## Goal
 
-Reduce token consumption materially without reducing agent capability, operating-layer visibility, or task completion quality.
+Reduce token consumption materially without reducing agent capability, Rudder visibility, or task completion quality.
 
 This plan is based on:
 
-- the current V1 operating-layer design
+- the current V1 Rudder design
 - the current adapter and heartbeat implementation
 - the linked user discussion
 - local runtime data from the default Rudder instance on 2026-03-13

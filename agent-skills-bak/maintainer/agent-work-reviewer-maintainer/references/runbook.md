@@ -177,7 +177,7 @@ reviewer actually inspected during the review pass.
 
 Do not convert author-claimed proof into reviewer-verified proof. It can support
 the review, but it cannot close a final handoff gap for UI, workflow, release,
-Desktop, runtime, or operating-layer behavior when the reviewer could cheaply
+Desktop, runtime, or product behavior when the reviewer could cheaply
 verify the real surface.
 
 Record which evidence exists:
@@ -292,7 +292,7 @@ cannot be `accept`. Use `conditional accept` for a sound implementation slice,
 or `needs more evidence` when the missing scenario is required to judge the
 change.
 
-For agent-visible or operating-layer work, do not accept direct database
+For agent-visible or Rudder work, do not accept direct database
 assertions, unit tests, or docs updates as the whole proof when a realistic
 actor-run-chain could cheaply exercise the behavior. Missing terminal product
 proof should usually make the verdict `conditional accept` or

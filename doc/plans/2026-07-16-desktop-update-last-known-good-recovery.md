@@ -413,11 +413,11 @@ coverage passes for the full candidate-to-rollback sequence.
 When implementation lands:
 
 - add `CONTROL.DESKTOP.UPDATE.ROLLBACK.001` under
-  `doc/product/domains/operating-layer/` and register it in
+  `doc/product/domains/governance-and-visibility/` and register it in
   `doc/product/registry.yml`;
 - make `ORG.DESKTOP.UPDATE.001` reference candidate probation, commit,
   quarantine, and rollback ownership;
-- make `CONTROL.DESKTOP.STARTUP.RECOVERY.001` reference update rollback while
+- make `DESKTOP.STARTUP.RECOVERY.001` reference update rollback while
   retaining ownership of failure presentation and feedback;
 - update Desktop engineering, release, and public troubleshooting docs with the
   supported recovery matrix and exact limitations.

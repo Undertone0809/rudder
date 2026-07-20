@@ -62,7 +62,7 @@ test.describe("Settings appearance", () => {
     await expect(modal.getByRole("heading", { name: "Appearance" })).toBeVisible();
     await expect(modal.getByText("Design style")).toBeVisible();
     await expect(page.locator("html")).toHaveAttribute("data-style", "luma");
-    await expect(modal.getByRole("button", { name: /^Rudder Rudder low-glare surfaces$/ })).toBeVisible();
+    await expect(modal.getByRole("button", { name: /^Rudder low-glare surfaces$/ })).toBeVisible();
     await expect(modal.getByRole("button", { name: /^Luma Soft spacious controls$/ })).toHaveAttribute("aria-pressed", "true");
 
     await modal.getByRole("button", { name: /^Light Warm paper surfaces$/ }).click();

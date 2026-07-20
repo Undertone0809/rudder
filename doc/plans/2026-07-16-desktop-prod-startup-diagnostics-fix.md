@@ -43,7 +43,7 @@ The recovery surface also fails the operator in two ways:
 - `URLSearchParams` serializes mailto spaces as `+`, which Apple Mail displays
   literally instead of decoding as spaces.
 
-This is a restoration of `CONTROL.DESKTOP.STARTUP.RECOVERY.001`, not a product
+This is a restoration of `DESKTOP.STARTUP.RECOVERY.001`, not a product
 logic change. The contract already requires a plain-language failure summary,
 shared bounded diagnostics, and an encoded editable support draft.
 

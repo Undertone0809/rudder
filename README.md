@@ -20,7 +20,7 @@ Rudder is designed around the loop that makes agent work compound:
 Goal -> Plan -> Chat or Issue -> Agent run -> Review -> Feedback -> Learning -> Better future runs
 ```
 
-The operating layer matters because this loop needs inspectable execution and the right amount of structure. Goals explain why work exists. Chat supports conversation-driven execution; issues add explicit coordination fields. Agent runs keep execution visible. Reviews and approvals keep autonomy governable. Feedback, comments, documents, run history, and skills give the team a place to keep what it learned.
+This loop needs inspectable execution and the right amount of structure. Goals explain why work exists. Chat supports conversation-driven execution; issues add explicit coordination fields. Agent runs keep execution visible. Reviews and approvals keep autonomy governable. Feedback, comments, documents, run history, and skills give the team a place to keep what it learned.
 
 Rudder does not assume every lesson is automatically promoted into a new skill or workflow. The product direction is to make those promotion paths explicit, reviewable, and reusable instead of leaving them buried in chat transcripts or one-off prompts.
 
@@ -58,7 +58,7 @@ Rudder turns those coordination patterns into product primitives for agent teams
 
 ## What Rudder Is
 
-Rudder is the operating layer for self-improving agent teams. One Rudder instance can run one or many organizations, each with its own goal, org structure, agents, issues, budgets, approvals, feedback, and governance.
+Rudder is open-source software for assigning, running, reviewing, and improving agent work. One Rudder instance can run one or many organizations, each with its own goal, org structure, agents, issues, budgets, approvals, feedback, and governance.
 
 | Human team pattern | Rudder equivalent |
 | --- | --- |

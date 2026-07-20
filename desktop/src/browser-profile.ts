@@ -86,11 +86,11 @@ function isLoopbackOrUnspecifiedHostname(hostname: string): boolean {
     || /^::ffff:7f[0-9a-f]{2}:/.test(hostname);
 }
 
-export function isBlockedBrowserOperatingLayerUrl(target: string, operatingLayerOrigins: string[]): boolean {
+export function isBlockedRudderAppUrl(target: string, rudderAppOrigins: string[]): boolean {
   const targetEndpoint = normalizeNetworkEndpoint(target);
   if (!targetEndpoint) return false;
 
-  return operatingLayerOrigins.some((origin) => {
+  return rudderAppOrigins.some((origin) => {
     const controlEndpoint = normalizeNetworkEndpoint(origin);
     if (!controlEndpoint
       || targetEndpoint.protocol !== controlEndpoint.protocol
@@ -102,11 +102,11 @@ export function isBlockedBrowserOperatingLayerUrl(target: string, operatingLayer
   });
 }
 
-export function isAllowedBrowserNavigationUrl(target: string, operatingLayerOrigins: string[]): boolean {
+export function isAllowedBrowserNavigationUrl(target: string, rudderAppOrigins: string[]): boolean {
   try {
     const parsed = new URL(target);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-    return !isBlockedBrowserOperatingLayerUrl(target, operatingLayerOrigins);
+    return !isBlockedRudderAppUrl(target, rudderAppOrigins);
   } catch {
     return false;
   }
@@ -126,14 +126,14 @@ export function isLocalAbsoluteFileUrl(target: string): boolean {
   }
 }
 
-export function isAllowedOperatorBrowserNavigationUrl(target: string, operatingLayerOrigins: string[]): boolean {
+export function isAllowedOperatorBrowserNavigationUrl(target: string, rudderAppOrigins: string[]): boolean {
   if (isLocalAbsoluteFileUrl(target)) return true;
-  return isAllowedBrowserNavigationUrl(target, operatingLayerOrigins);
+  return isAllowedBrowserNavigationUrl(target, rudderAppOrigins);
 }
 
-export function isAllowedBrowserBootstrapUrl(target: string, operatingLayerOrigins: string[]): boolean {
+export function isAllowedBrowserBootstrapUrl(target: string, rudderAppOrigins: string[]): boolean {
   if (target === "about:blank") return true;
-  return isAllowedOperatorBrowserNavigationUrl(target, operatingLayerOrigins);
+  return isAllowedOperatorBrowserNavigationUrl(target, rudderAppOrigins);
 }
 
 export function createBrowserProfileController(options: {

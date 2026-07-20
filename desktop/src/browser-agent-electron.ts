@@ -56,7 +56,7 @@ export function createElectronBrowserAgentTabFactory(options: {
   partition: string;
   createWindow(windowOptions: BrowserAgentWindowOptions): BrowserAgentWindow;
   registerGuest(guest: BrowserAgentWebContents): void;
-  getOperatingLayerOrigins(): string[];
+  getRudderAppOrigins(): string[];
 }): BrowserAgentTabFactory {
   return async () => {
     const browserWindow = options.createWindow({
@@ -81,7 +81,7 @@ export function createElectronBrowserAgentTabFactory(options: {
     contents.setWindowOpenHandler(() => ({ action: "deny" }));
 
     const preventUnsafeNavigation = (event: PreventableEvent, targetUrl: string | undefined) => {
-      if (!targetUrl || !isAllowedBrowserNavigationUrl(targetUrl, options.getOperatingLayerOrigins())) {
+      if (!targetUrl || !isAllowedBrowserNavigationUrl(targetUrl, options.getRudderAppOrigins())) {
         event.preventDefault();
       }
     };

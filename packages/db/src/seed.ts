@@ -54,7 +54,7 @@ const [goal] = await db
   .values({
     orgId: organization!.id,
     title: "Ship V1",
-    description: "Deliver first operating layer release",
+    description: "Deliver first Rudder release",
     level: "organization",
     status: "active",
     ownerAgentId: ceo!.id,
@@ -66,7 +66,7 @@ const [project] = await db
   .values({
     orgId: organization!.id,
     goalId: goal!.id,
-    name: "Operating Layer MVP",
+    name: "Rudder MVP",
     description: "Implement core board + agent loop",
     status: "in_progress",
     leadAgentId: ceo!.id,

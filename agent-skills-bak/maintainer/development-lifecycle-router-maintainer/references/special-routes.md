@@ -59,7 +59,7 @@ and the remaining task is a concrete rendered-state fix.
 
 ## Performance Benchmark
 
-For app benchmark, operating-layer optimization, or "做一下 Rudder 性能优化分析",
+For app benchmark, Rudder optimization, or "做一下 Rudder 性能优化分析",
 start with `performance_benchmark` unless the user names an already-proven
 bottleneck.
 

@@ -630,11 +630,11 @@ function parseManagedMcpConfig(configPath) {
   const result = { command: null, args: null, env: {} };
   for (const rawLine of lines) {
     const line = rawLine.trim();
-    if (line === "[mcp_servers.rudder-operating-layer]") {
+    if (line === "[mcp_servers.rudder-tools]") {
       section = "server";
       continue;
     }
-    if (line === "[mcp_servers.rudder-operating-layer.env]") {
+    if (line === "[mcp_servers.rudder-tools.env]") {
       section = "env";
       continue;
     }

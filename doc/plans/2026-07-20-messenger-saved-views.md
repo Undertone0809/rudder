@@ -204,7 +204,7 @@ the dedicated Browser partition. It can therefore use partition cookies that
 still exist, but it must not claim to restore navigation history, scroll/form
 state, POST state, or page memory. A Browser-data reset may also have removed
 those cookies. Normal Browser URL, sandbox, popup, permission, download, file,
-and operating-layer-origin policies remain unchanged.
+and Rudder-app-origin policies remain unchanged.
 
 Browser guest ownership moves into an App-level `BrowserRuntimeProvider` with
 a stable guest layer keyed by `tabId`. The normal and expanded global Side

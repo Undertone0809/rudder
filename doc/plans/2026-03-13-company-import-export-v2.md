@@ -609,7 +609,7 @@ Docs to update later as implementation lands:
 
 - `doc/SPEC-implementation.md`
 - `docs/api/companies.md`
-- `docs/cli/operating-layer-commands.md`
+- `docs/cli/Rudder-commands.md`
 - board operator docs for Company Settings import/export
 
 ## 16. Open Questions
