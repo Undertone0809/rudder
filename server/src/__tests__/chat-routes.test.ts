@@ -28,6 +28,7 @@ const mockChatService = vi.hoisted(() => ({
   list: vi.fn(),
   getById: vi.fn(),
   create: vi.fn(),
+  createWithInitialMessage: vi.fn(),
   forkConversation: vi.fn(),
   update: vi.fn(),
   listAttachmentsForConversation: vi.fn(),
@@ -85,7 +86,7 @@ const mockChatService = vi.hoisted(() => ({
 
 const mockSideChatService = vi.hoisted(() => ({
   create: vi.fn(),
-  complete: vi.fn(),
+  destroy: vi.fn(),
   keepInMessenger: vi.fn(),
   assertAccessible: vi.fn(),
   assertMutable: vi.fn(),
@@ -141,6 +142,7 @@ const mockChatAssistantService = vi.hoisted(() => ({
   enrichConversation: vi.fn(),
   enrichConversations: vi.fn(),
   getChatAssistantAvailability: vi.fn(),
+  getDraftChatAssistantAvailability: vi.fn(),
   generateChatAssistantReply: vi.fn(),
   streamChatAssistantReply: vi.fn(),
 }));
@@ -397,6 +399,15 @@ describe("chat routes", () => {
       project: null,
     });
     mockChatAssistantService.getChatAssistantAvailability.mockResolvedValue({
+      available: true,
+      sourceType: "agent",
+      sourceLabel: "Chat Specialist",
+      runtimeAgentId: "agent-1",
+      agentRuntimeType: "codex_local",
+      model: "gpt-5",
+      error: null,
+    });
+    mockChatAssistantService.getDraftChatAssistantAvailability.mockResolvedValue({
       available: true,
       sourceType: "agent",
       sourceLabel: "Chat Specialist",
@@ -882,27 +893,35 @@ describe("chat routes", () => {
     }));
   });
 
-  it("completes a Side Chat into an immediate read-only state", async () => {
+  it("destroys an unkept Side Chat when its tab is closed", async () => {
     const sideConversation = createConversation({
       id: "chat-side",
       conversationKind: "side_chat",
       messengerVisible: false,
-      sideChatState: "completed",
-      sideChatCompletedAt: new Date("2026-03-26T08:30:00.000Z"),
+      sideChatState: "active",
     });
     mockChatService.getById.mockResolvedValue(sideConversation);
-    mockSideChatService.complete.mockResolvedValue(sideConversation);
+    mockChatService.listAttachmentsForConversation.mockResolvedValue([]);
+    mockSideChatService.destroy.mockResolvedValue({ id: "chat-side" });
 
     const res = await request(createApp())
-      .post("/api/chats/chat-side/side-chat/complete")
-      .send({});
+      .delete("/api/chats/chat-side/side-chat");
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ id: "chat-side", sideChatState: "completed" });
-    expect(mockSideChatService.complete).toHaveBeenCalledWith({
+    expect(res.body).toEqual({ id: "chat-side" });
+    expect(mockSideChatService.destroy).toHaveBeenCalledWith({
       conversationId: "chat-side",
       userId: "user-1",
     });
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "chat.side_chat_destroyed",
+      entityId: "chat-side",
+    }));
+
+    const legacyComplete = await request(createApp())
+      .post("/api/chats/chat-side/side-chat/complete")
+      .send({});
+    expect(legacyComplete.status).toBe(404);
   });
 
   it("keeps a Side Chat in Messenger without changing its conversation id", async () => {
@@ -1095,22 +1114,113 @@ describe("chat routes", () => {
   });
 
   it("creates a conversation with the organization default agent and issue creation mode", async () => {
-    mockChatService.create.mockResolvedValue(createConversation());
+    const conversation = createConversation();
+    const message = createMessage("message-first", "user", "message", "Start with evidence");
+    mockChatService.createWithInitialMessage.mockResolvedValue({ conversation, message });
 
     const res = await request(createApp())
       .post("/api/orgs/organization-1/chats")
-      .send({});
+      .send({ initialMessage: { body: "Start with evidence" } });
 
     expect(res.status).toBe(201);
-    expect(mockChatService.create).toHaveBeenCalledWith(
+    expect(mockChatService.createWithInitialMessage).toHaveBeenCalledWith(
       "organization-1",
       expect.objectContaining({
         preferredAgentId: "agent-1",
         issueCreationMode: "manual_approval",
         planMode: false,
         contextLinks: [],
+        initialMessage: expect.objectContaining({ role: "user", body: "Start with evidence" }),
       }),
     );
+  });
+
+  it("rejects direct chat creation without an initial message", async () => {
+    const res = await request(createApp()).post("/api/orgs/organization-1/chats").send({});
+    expect(res.status).toBe(400);
+    expect(mockChatService.createWithInitialMessage).not.toHaveBeenCalled();
+  });
+
+  it("preflights a draft without creating a conversation", async () => {
+    const preferredAgentId = "10000000-0000-4000-8000-000000000001";
+    const unavailable = { available: false, sourceType: "agent", sourceLabel: "Unsupported agent", runtimeAgentId: preferredAgentId, agentRuntimeType: "process", model: null, error: "The current user has not configured a chat model yet." };
+    mockAgentService.getById.mockResolvedValue({ id: preferredAgentId, orgId: "organization-1", status: "idle" });
+    mockChatAssistantService.getDraftChatAssistantAvailability.mockResolvedValue(unavailable);
+    const res = await request(createApp()).post("/api/orgs/organization-1/chats/preflight").send({ preferredAgentId });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(unavailable);
+    expect(mockChatService.createWithInitialMessage).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unavailable first turn before persistence", async () => {
+    mockChatAssistantService.getDraftChatAssistantAvailability.mockResolvedValue({ available: false, sourceType: "agent", sourceLabel: "Unsupported agent", runtimeAgentId: "agent-1", agentRuntimeType: "process", model: null, error: "The current user has not configured a chat model yet." });
+    const res = await request(createApp()).post("/api/orgs/organization-1/chats/messages/stream").send({ body: "Do not create an empty chat" });
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: "The current user has not configured a chat model yet." });
+    expect(mockChatService.createWithInitialMessage).not.toHaveBeenCalled();
+  });
+
+  it("atomically accepts a first turn and includes the conversation in the stream ack", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Start atomically");
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", "Ready.");
+    mockChatService.createWithInitialMessage.mockResolvedValue({ conversation, message: userMessage });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addMessage.mockResolvedValue(assistantMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "Ready.",
+      replyingAgentId: "agent-1",
+      reply: { kind: "message", body: "Ready.", structuredPayload: null, replyingAgentId: "agent-1" },
+    });
+
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/chats/messages/stream")
+      .send({ body: "Start atomically" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    const events = String(res.body).trim().split("\n").map((line) => JSON.parse(line));
+    expect(events[0]).toEqual(expect.objectContaining({
+      type: "ack",
+      conversation: expect.objectContaining({ id: "chat-1" }),
+      userMessage: expect.objectContaining({ id: "message-user", body: "Start atomically" }),
+    }));
+    expect(mockChatService.createWithInitialMessage).toHaveBeenCalledTimes(1);
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps the accepted first message and records failure evidence when generation startup fails", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Start despite runtime failure");
+    const failedMessage = { ...createMessage("message-failed", "assistant", "message", "The assistant reply could not be completed."), status: "failed" };
+    mockChatService.createWithInitialMessage.mockResolvedValue({ conversation, message: userMessage });
+    mockChatService.createGeneration.mockRejectedValueOnce(new Error("generation insert failed"));
+    mockChatService.addMessage.mockResolvedValueOnce(failedMessage);
+
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/chats/messages/stream")
+      .send({ body: "Start despite runtime failure" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    const events = String(res.body).trim().split("\n").map((line) => JSON.parse(line));
+    expect(events[0]).toEqual(expect.objectContaining({ type: "ack", conversation: expect.objectContaining({ id: "chat-1" }), userMessage: expect.objectContaining({ id: "message-user" }) }));
+    expect(events[1]).toEqual(expect.objectContaining({ type: "error", messageId: "message-failed" }));
+    expect(mockChatService.addMessage).toHaveBeenCalledWith("chat-1", expect.objectContaining({ role: "assistant", status: "failed" }));
   });
 
   it("rejects chat creation when the organization has no available agent", async () => {
@@ -1118,7 +1228,7 @@ describe("chat routes", () => {
 
     const res = await request(createApp())
       .post("/api/orgs/organization-1/chats")
-      .send({});
+      .send({ initialMessage: { body: "Start" } });
 
     expect(res.status).toBe(422);
     expect(res.body).toEqual({ error: "Chat requires an available agent" });
@@ -1131,7 +1241,7 @@ describe("chat routes", () => {
 
     const res = await request(createApp())
       .post("/api/orgs/organization-1/chats")
-      .send({ preferredAgentId });
+      .send({ preferredAgentId, initialMessage: { body: "Start" } });
 
     expect(res.status).toBe(422);
     expect(res.body).toEqual({ error: "Preferred agent must be available in the same organization" });
@@ -1149,7 +1259,7 @@ describe("chat routes", () => {
 
     const res = await request(createApp())
       .post("/api/orgs/organization-1/chats")
-      .send({ preferredAgentId });
+      .send({ preferredAgentId, initialMessage: { body: "Start" } });
 
     expect(res.status).toBe(422);
     expect(res.body).toEqual({ error: "Preferred agent must be available in the same organization" });
@@ -1167,7 +1277,7 @@ describe("chat routes", () => {
 
     const res = await request(createApp())
       .post("/api/orgs/organization-1/chats")
-      .send({ preferredAgentId });
+      .send({ preferredAgentId, initialMessage: { body: "Start" } });
 
     expect(res.status).toBe(422);
     expect(res.body).toEqual({ error: "Preferred agent must be available in the same organization" });

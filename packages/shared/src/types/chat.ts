@@ -553,6 +553,8 @@ export interface ChatStreamTranscriptTodoItem {
 export interface ChatStreamAckEvent {
   type: "ack";
   userMessage: ChatMessage;
+  /** Present only when this acknowledgement atomically accepted a draft's first turn. */
+  conversation?: ChatConversation;
   generationId?: string;
   attemptEpoch?: number;
   generationSeq?: number;

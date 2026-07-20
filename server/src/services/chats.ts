@@ -18,7 +18,7 @@ import {
   messengerCustomGroups,
   organizations
 } from "@rudderhq/db";
-import { chatInlineVisualMappingsFromStructuredPayload, MESSENGER_FORK_GROUP_DEFAULT_ICON, sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatConversationMutability, type ChatProviderControlDisposition, type ChatQueuedMessage, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
+import { chatInlineVisualMappingsFromStructuredPayload, MESSENGER_FORK_GROUP_DEFAULT_ICON, sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatConversation, type ChatConversationMutability, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessage, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
 import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
@@ -2969,6 +2969,154 @@ export function chatService(db: Db) {
       return getById(created.id);
   }
 
+  async function createWithInitialMessage(orgId: string, data: {
+      title?: string;
+      summary?: string | null;
+      preferredAgentId?: string | null;
+      issueCreationMode: "manual_approval" | "auto_create";
+      planMode: boolean;
+      createdByUserId: string | null;
+      contextLinks?: Array<{ entityType: "issue" | "project" | "agent"; entityId: string; metadata?: Record<string, unknown> | null }>;
+      initialMessage: {
+        role: "user" | "assistant" | "system";
+        kind: "message" | "ask_user" | "issue_proposal" | "operation_proposal" | "system_event";
+        status: "streaming" | "completed" | "stopped" | "failed" | "interrupted";
+        body: string;
+        structuredPayload?: Record<string, unknown> | null;
+        replyingAgentId?: string | null;
+        chatTurnId?: string | null;
+      };
+      activity?: {
+        actorType: "agent" | "user" | "system";
+        actorId: string;
+        agentId?: string | null;
+        runId?: string | null;
+      };
+    }, executor?: Db): Promise<{ conversation: ChatConversation; message: ChatMessage }> {
+      const persist = async (client: Db) => {
+        const now = new Date();
+        const normalizedBody = data.initialMessage.body.trim();
+        if (!normalizedBody) throw unprocessable("Initial chat message body is required");
+        const deterministicTitle = normalizedBody.replace(/\s+/g, " ").slice(0, CHAT_TITLE_MAX_LENGTH);
+        const [conversationRow] = await client
+          .insert(chatConversations)
+          .values({
+            orgId,
+            title: data.title?.trim() || deterministicTitle,
+            summary: data.summary ?? null,
+            preferredAgentId: data.preferredAgentId ?? null,
+            issueCreationMode: data.issueCreationMode,
+            planMode: data.planMode,
+            createdByUserId: data.createdByUserId,
+            lastMessageAt: now,
+            updatedAt: now,
+          })
+          .returning();
+        if (!conversationRow) throw new Error("Failed to create chat conversation");
+
+        const contextLinks = data.contextLinks ?? [];
+        let contextRows: ContextLinkRow[] = [];
+        if (contextLinks.length > 0) {
+          contextRows = await client
+            .insert(chatContextLinks)
+            .values(contextLinks.map((link) => ({
+              orgId,
+              conversationId: conversationRow.id,
+              entityType: link.entityType,
+              entityId: link.entityId,
+              metadata: link.metadata ?? null,
+            })))
+            .onConflictDoNothing()
+            .returning();
+        }
+
+        const structuredPayload = sanitizeChatStructuredPayload(data.initialMessage.structuredPayload ?? null);
+        const [messageRow] = await client
+          .insert(chatMessages)
+          .values({
+            orgId,
+            conversationId: conversationRow.id,
+            role: data.initialMessage.role,
+            kind: data.initialMessage.kind,
+            status: data.initialMessage.status,
+            body: normalizedBody,
+            structuredPayload,
+            replyingAgentId: data.initialMessage.replyingAgentId ?? null,
+            chatTurnId: data.initialMessage.chatTurnId ?? (data.initialMessage.role === "user" ? randomUUID() : null),
+            turnVariant: 0,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning();
+        if (!messageRow) throw new Error("Failed to create initial chat message");
+
+        if (data.activity) {
+          const activity = data.activity;
+          await logActivity(client, {
+            orgId,
+            actorType: activity.actorType,
+            actorId: activity.actorId,
+            agentId: activity.agentId ?? null,
+            runId: activity.runId ?? null,
+            action: "chat.created",
+            entityType: "chat",
+            entityId: conversationRow.id,
+            details: {
+              title: conversationRow.title,
+              contextLinkCount: contextLinks.length,
+            },
+          });
+          await logActivity(client, {
+            orgId,
+            actorType: activity.actorType,
+            actorId: activity.actorId,
+            agentId: activity.agentId ?? null,
+            runId: activity.runId ?? null,
+            action: "chat.message_added",
+            entityType: "chat",
+            entityId: conversationRow.id,
+            details: {
+              messageId: messageRow.id,
+              role: messageRow.role,
+              kind: messageRow.kind,
+              status: messageRow.status,
+              preview: messageRow.body.slice(0, 280),
+            },
+          });
+        }
+
+        const conversation = {
+          ...conversationRow,
+          primaryIssue: null,
+          latestReplyPreview: messageRow.role === "assistant" ? messageRow.body.slice(0, 280) : null,
+          latestUserMessagePreview: messageRow.role === "user" ? messageRow.body.slice(0, 280) : null,
+          userMessageCount: messageRow.role === "user" ? 1 : 0,
+          contextLinks: contextRows.map((row) => ({ ...row, entity: null })),
+          sourceMetadata: null,
+          mutability: "native_chat" as const,
+          lastReadAt: null,
+          isPinned: false,
+          isUnread: false,
+          unreadCount: 0,
+          needsAttention: false,
+        } as ChatConversation;
+        const message = {
+          ...messageRow,
+          role: messageRow.role as ChatMessage["role"],
+          kind: messageRow.kind as ChatMessage["kind"],
+          status: messageRow.status as ChatMessage["status"],
+          structuredPayload,
+          approval: null,
+          attachments: [],
+          transcript: [],
+        } as ChatMessage;
+        return { conversation, message };
+      };
+
+      if (executor) return persist(executor);
+      return db.transaction(async (tx) => persist(tx as unknown as Db));
+  }
+
   function forkSystemEventBody(sourceConversation: ConversationRow, sourceMessageId: string | null) {
     const messageSuffix = sourceMessageId ? " at message" : "";
     return `Forked from [${sourceConversation.title}](chat://${sourceConversation.id})${messageSuffix}.`;
@@ -4526,6 +4674,7 @@ export function chatService(db: Db) {
     listSummariesByIds,
     getById,
     create,
+    createWithInitialMessage,
     update,
     updateDefaultTitle,
     replaceSystemGeneratedTitle,

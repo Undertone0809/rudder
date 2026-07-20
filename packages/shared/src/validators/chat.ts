@@ -122,7 +122,7 @@ export const createChatContextLinkSchema = z.object({
   metadata: z.record(z.unknown()).optional().nullable(),
 });
 
-export const createChatConversationSchema = z.object({
+export const chatDraftSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   summary: z.string().trim().max(5000).optional().nullable(),
   preferredAgentId: z.string().uuid().optional().nullable(),
@@ -131,11 +131,21 @@ export const createChatConversationSchema = z.object({
   contextLinks: z.array(createChatContextLinkSchema).optional().default([]),
 });
 
+export const createChatConversationSchema = chatDraftSchema.extend({
+  initialMessage: z.object({
+    body: z.string().trim().min(1).max(20000),
+  }),
+});
+
+export const createChatFirstTurnSchema = chatDraftSchema.extend({
+  body: z.string().trim().min(1).max(20000),
+});
+
 export const setChatProjectContextSchema = z.object({
   projectId: z.string().uuid().optional().nullable(),
 });
 
-export const updateChatConversationSchema = createChatConversationSchema
+export const updateChatConversationSchema = chatDraftSchema
   .partial()
   .extend({
     status: chatConversationStatusSchema.optional(),
@@ -559,6 +569,8 @@ export type ChatMessageStatus = z.infer<typeof chatMessageStatusSchema>;
 export type ChatContextEntityType = z.infer<typeof chatContextEntityTypeSchema>;
 export type CreateChatContextLink = z.infer<typeof createChatContextLinkSchema>;
 export type CreateChatConversation = z.infer<typeof createChatConversationSchema>;
+export type ChatDraft = z.infer<typeof chatDraftSchema>;
+export type CreateChatFirstTurn = z.infer<typeof createChatFirstTurnSchema>;
 export type ForkChatConversation = z.infer<typeof forkChatConversationSchema>;
 export type CreateSideChat = z.infer<typeof createSideChatSchema>;
 export type SetChatProjectContext = z.infer<typeof setChatProjectContextSchema>;
