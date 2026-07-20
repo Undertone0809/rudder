@@ -1,7 +1,20 @@
 import { expect, test } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import {
+  activityLog,
+  createDb,
+  heartbeatRunEvents,
+  heartbeatRuns,
+} from "../../packages/db/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
+import { E2E_DATABASE_URL } from "./support/e2e-env";
 
 const ORG_NAME = `Issue-Activity-${Date.now()}`;
+const e2eDb = createDb(E2E_DATABASE_URL);
+
+test.afterAll(async () => {
+  await (e2eDb as unknown as { $client?: { end: () => Promise<void> } }).$client?.end();
+});
 
 test.describe("Issue activity", () => {
   test("hides low-signal updates and names assignment changes", async ({ page }) => {
@@ -123,6 +136,116 @@ test.describe("Issue activity", () => {
     await expect(activity).toBeVisible();
     await expect(activity.getByText("changed the goal", { exact: false })).toBeVisible();
     await expect(activity.getByText("updated the issue", { exact: false })).toHaveCount(0);
+  });
+
+  test("hides internal execution release audits from Messenger issue activity", async ({ page }) => {
+    await page.goto("/");
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `${ORG_NAME}-InternalExecutionAudit` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Internal execution release should stay hidden",
+        description: "The durable audit remains available to backend diagnostics only.",
+        status: "todo",
+        priority: "medium",
+      },
+    });
+    expect(issueRes.ok()).toBe(true);
+    const issue = await issueRes.json();
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Internal Audit Runner",
+        role: "engineer",
+        agentRuntimeType: "process",
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json();
+    const runId = randomUUID();
+    const startedAt = new Date("2026-07-21T04:00:00.000Z");
+    const finishedAt = new Date("2026-07-21T04:01:00.000Z");
+
+    await e2eDb.insert(heartbeatRuns).values({
+      id: runId,
+      orgId: organization.id,
+      agentId: agent.id,
+      invocationSource: "assignment",
+      triggerDetail: "system",
+      status: "succeeded",
+      startedAt,
+      finishedAt,
+      contextSnapshot: { issueId: issue.id },
+      createdAt: startedAt,
+      updatedAt: finishedAt,
+    });
+
+    await e2eDb.insert(heartbeatRunEvents).values([
+      {
+        orgId: organization.id,
+        runId,
+        agentId: agent.id,
+        seq: 1,
+        eventType: "issue.execution_released",
+        stream: "system",
+        level: "info",
+        message: "Issue execution released after terminal run",
+        createdAt: finishedAt,
+      },
+      {
+        orgId: organization.id,
+        runId,
+        agentId: agent.id,
+        seq: 2,
+        eventType: "lifecycle",
+        stream: "system",
+        level: "info",
+        message: "Visible terminal lifecycle evidence",
+        createdAt: finishedAt,
+      },
+    ]);
+
+    await e2eDb.insert(activityLog).values({
+      orgId: organization.id,
+      actorType: "system",
+      actorId: "terminal_effects",
+      action: "issue.execution_released",
+      entityType: "issue",
+      entityId: issue.id,
+      runId,
+      details: { issueId: issue.id, sourceRunId: runId },
+    });
+
+    const publicEventsRes = await page.request.get(`/api/agent-runs/${runId}/events?limit=1`);
+    expect(publicEventsRes.ok()).toBe(true);
+    const publicEvents = await publicEventsRes.json();
+    expect(publicEvents.map((event: { eventType: string }) => event.eventType)).toEqual(["lifecycle"]);
+
+    const intelligenceEventsRes = await page.request.get(`/api/run-intelligence/runs/${runId}/events?limit=1`);
+    expect(intelligenceEventsRes.ok()).toBe(true);
+    const intelligenceEvents = await intelligenceEventsRes.json();
+    expect(intelligenceEvents.items.map((event: { eventType: string }) => event.eventType)).toEqual(["lifecycle"]);
+    expect(intelligenceEvents.page.hasMore).toBe(false);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/issues/${issue.identifier ?? issue.id}`);
+    const activity = page.getByRole("region", { name: "Activity" });
+    await expect(activity).toBeVisible();
+    await expect(activity.getByText("created the issue", { exact: false })).toBeVisible();
+    await expect(activity.getByText("issue execution released", { exact: false })).toHaveCount(0);
+    await page.screenshot({
+      path: "/tmp/rudder-hidden-internal-execution-audit.png",
+      fullPage: true,
+    });
+
+    await page.goto(`/agents/${agent.id}/runs/${runId}`);
+    const runDetail = page.getByTestId("agent-runs-detail-pane");
+    await expect(runDetail.getByText("Visible terminal lifecycle evidence", { exact: false })).toBeVisible();
+    await expect(runDetail.getByText("Issue execution released after terminal run", { exact: false })).toHaveCount(0);
   });
 
   test("shows chat conversations that created or linked an issue", async ({ page }) => {

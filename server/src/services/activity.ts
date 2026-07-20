@@ -22,6 +22,10 @@ import {
 import { and, asc, desc, eq, gte, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import { badRequest } from "../errors.js";
 import { issueLowSignalContentOnlyActivitySql } from "./issue-activity-filters.js";
+import {
+  isOperatorHiddenEventType,
+  ISSUE_EXECUTION_RELEASED_EVENT_TYPE,
+} from "./operator-event-visibility.js";
 
 export interface ActivityFilters {
   orgId: string;
@@ -213,12 +217,14 @@ function isLowSignalContentOnlyIssueUpdate(event: typeof activityLog.$inferSelec
 }
 
 function shouldShowIssueActivity(event: typeof activityLog.$inferSelect): boolean {
+  if (isOperatorHiddenEventType(event.action)) return false;
   if (event.action === "issue.document_updated") return false;
   if (isLowSignalContentOnlyIssueUpdate(event)) return false;
   return true;
 }
 
 function shouldShowOrganizationActivity(event: typeof activityLog.$inferSelect): boolean {
+  if (isOperatorHiddenEventType(event.action)) return false;
   if (isLowSignalContentOnlyIssueUpdate(event)) return false;
   return true;
 }
@@ -229,6 +235,7 @@ export function activityService(db: Db) {
   const conversationIdAsText = sql<string>`${chatConversations.id}::text`;
   const organizationActivityVisibleCondition = and(
     ne(activityLog.action, "issue.read_marked"),
+    ne(activityLog.action, ISSUE_EXECUTION_RELEASED_EVENT_TYPE),
     sql`not (${issueLowSignalContentOnlyActivitySql("activity_log")})`,
   );
   const activityCursorCreatedAt = sql<string>`to_char(${activityLog.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;

@@ -20,7 +20,7 @@ import {
   type RunSummary,
   type RunSummaryPage,
 } from "@rudderhq/shared";
-import { and, asc, desc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt, ne, or, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { badRequest, forbidden, notFound } from "../errors.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
@@ -28,6 +28,7 @@ import { redactEventPayload } from "../redaction.js";
 import { resolveHeartbeatRunIdReference } from "./heartbeat-run-reference.js";
 import { heartbeatService } from "./heartbeat.js";
 import { instanceSettingsService } from "./instance-settings.js";
+import { ISSUE_EXECUTION_RELEASED_EVENT_TYPE } from "./operator-event-visibility.js";
 import { getRunLogStore } from "./run-log-store.js";
 
 function hashValue(value: unknown) {
@@ -670,7 +671,10 @@ async function loadRunEvents(db: Db, runId: string): Promise<HeartbeatRunEvent[]
   const rows = await db
     .select()
     .from(heartbeatRunEvents)
-    .where(eq(heartbeatRunEvents.runId, runId))
+    .where(and(
+      eq(heartbeatRunEvents.runId, runId),
+      ne(heartbeatRunEvents.eventType, ISSUE_EXECUTION_RELEASED_EVENT_TYPE),
+    ))
     .orderBy(heartbeatRunEvents.seq, heartbeatRunEvents.id);
   return rows.map((row) => ({
     ...row,
@@ -846,7 +850,10 @@ export async function getObservedRunEvents(
   const afterSeq = Math.max(0, Math.floor(input.afterSeq ?? 0));
   const cursor = input.cursor ? decodeRunEventCursor(input.cursor) : null;
   const limit = Math.max(1, Math.min(200, Math.floor(input.limit ?? 200)));
-  const conditions = [eq(heartbeatRunEvents.runId, resolvedRunId)];
+  const conditions = [
+    eq(heartbeatRunEvents.runId, resolvedRunId),
+    ne(heartbeatRunEvents.eventType, ISSUE_EXECUTION_RELEASED_EVENT_TYPE),
+  ];
   if (cursor) {
     conditions.push(or(
       gt(heartbeatRunEvents.seq, cursor.seq),

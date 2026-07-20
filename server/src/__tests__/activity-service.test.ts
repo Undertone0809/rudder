@@ -357,6 +357,64 @@ describe("activityService.forIssue", () => {
     expect(orgActivity[1]?.details).toMatchObject({ status: "in_progress" });
   });
 
+  it("keeps issue execution release audits out of operator activity surfaces", async () => {
+    const orgId = randomUUID();
+    const issueId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder",
+      urlKey: deriveOrganizationUrlKey("Rudder"),
+      issuePrefix: "RST",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      identifier: "RST-371",
+      title: "Hide internal execution bookkeeping",
+      status: "in_progress",
+      priority: "medium",
+    });
+
+    await db.insert(activityLog).values([
+      {
+        orgId,
+        actorType: "user",
+        actorId: "board",
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: issueId,
+        details: { status: "in_progress", _previous: { status: "todo" } },
+        createdAt: new Date("2026-04-01T10:00:00.000Z"),
+      },
+      {
+        orgId,
+        actorType: "system",
+        actorId: "terminal_effects",
+        action: "issue.execution_released",
+        entityType: "issue",
+        entityId: issueId,
+        details: { issueId, sourceRunId: randomUUID() },
+        createdAt: new Date("2026-04-01T10:01:00.000Z"),
+      },
+    ]);
+
+    const [issueActivity, organizationActivity, organizationPage, persistedAudit] = await Promise.all([
+      svc.forIssue(issueId),
+      svc.list({ orgId }),
+      svc.listPage({ orgId, limit: 1 }),
+      db.select().from(activityLog).where(sql`${activityLog.action} = 'issue.execution_released'`),
+    ]);
+
+    expect(issueActivity.map((event) => event.action)).toEqual(["issue.updated"]);
+    expect(organizationActivity.map((event) => event.action)).toEqual(["issue.updated"]);
+    expect(organizationPage.items.map((event) => event.action)).toEqual(["issue.updated"]);
+    expect(organizationPage.nextCursor).toBeNull();
+    expect(persistedAudit).toHaveLength(1);
+  });
+
   it("projects issue run context through the public allowlist", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();
