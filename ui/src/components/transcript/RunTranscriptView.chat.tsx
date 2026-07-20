@@ -546,7 +546,7 @@ export function trimTrailingWhitespace(value: string) {
   return value.replace(/\s+$/g, "");
 }
 
-function isInternalChatLifecycleEntry(entry: TranscriptEntry) {
+export function isInternalTranscriptLifecycleEntry(entry: TranscriptEntry) {
   if (entry.kind !== "system") return false;
   const text = compactWhitespace(entry.text).toLowerCase();
   return text === "reasoning started"
@@ -693,10 +693,10 @@ export function filterChatAssistantTranscriptEntries(
   },
 ) {
   if (options.hideAssistantMessages) {
-    return entries.filter((entry) => entry.kind !== "assistant" && !isInternalChatLifecycleEntry(entry));
+    return entries.filter((entry) => entry.kind !== "assistant" && !isInternalTranscriptLifecycleEntry(entry));
   }
   const withoutFinalAnswer = redactAssistantSuffixFromChatTranscript(entries, options.hiddenAssistantMessageText);
-  const withoutLifecycle = withoutFinalAnswer.filter((entry) => !isInternalChatLifecycleEntry(entry));
+  const withoutLifecycle = withoutFinalAnswer.filter((entry) => !isInternalTranscriptLifecycleEntry(entry));
   return stripInternalResultProtocolFromChatTranscript(withoutLifecycle, options.streaming === true);
 }
 

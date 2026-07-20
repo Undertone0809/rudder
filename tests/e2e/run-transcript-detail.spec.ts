@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { chatConversations, createDb, heartbeatRuns } from "../../packages/db/src/index.ts";
+import { chatConversations, createDb, heartbeatRunEvents, heartbeatRuns } from "../../packages/db/src/index.ts";
 import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
@@ -129,6 +129,31 @@ test.describe("Run transcript detail", () => {
     const run = await runRes.json();
     expect(run.id).toBeTruthy();
 
+    const transcriptStartedAt = Date.now() + 1_000;
+    const transcriptEntries = [
+      { kind: "system", text: "reasoning started" },
+      { kind: "assistant", text: "I read AG", delta: true },
+      { kind: "assistant", text: "ENTS", delta: true },
+      { kind: "assistant", text: ".md and added E", delta: true },
+      { kind: "assistant", text: "2E coverage.", delta: true },
+      { kind: "system", text: "reasoning completed" },
+    ];
+    await e2eDb.insert(heartbeatRunEvents).values(transcriptEntries.map((entry, index) => ({
+      orgId: organization.id,
+      runId: run.id,
+      agentId: agent.id,
+      seq: 10_000 + index,
+      eventType: "transcript.entry",
+      stream: "system",
+      level: "info",
+      message: "chat transcript entry",
+      payload: {
+        ...entry,
+        ts: new Date(transcriptStartedAt + index).toISOString(),
+      },
+      createdAt: new Date(transcriptStartedAt + index),
+    })));
+
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
@@ -163,6 +188,14 @@ test.describe("Run transcript detail", () => {
     await expect(transcriptTab).toHaveAttribute("data-state", "active");
     await expect(page.getByRole("button", { name: "nice" })).toBeVisible();
     await expect(page.getByText("adapter invocation", { exact: true })).toBeVisible();
+    await expect(detailPane.getByText("I read AGENTS.md and added E2E coverage.", { exact: true })).toBeVisible();
+    await expect(detailPane.getByText(/reasoning started/i)).toHaveCount(0);
+    await expect(detailPane.getByText(/reasoning completed/i)).toHaveCount(0);
+
+    await page.getByRole("button", { name: "raw" }).click();
+    await expect(detailPane.getByText(/reasoning started/i)).toBeVisible();
+    await expect(detailPane.getByText(/reasoning completed/i)).toBeVisible();
+    await page.getByRole("button", { name: "nice" }).click();
 
     await page.getByRole("button", { name: "Expand transcript" }).click();
     const transcriptDialog = page.getByRole("dialog", { name: "Transcript" });

@@ -105,6 +105,46 @@ describe("RunTranscriptView", () => {
     });
   });
 
+  it("joins persisted assistant and thinking deltas without injecting whitespace", () => {
+    const blocks = normalizeTranscript([
+      { kind: "assistant", ts: "2026-07-20T00:00:00.000Z", text: "I read AG", delta: true },
+      { kind: "assistant", ts: "2026-07-20T00:00:01.000Z", text: "ENTS", delta: true },
+      { kind: "assistant", ts: "2026-07-20T00:00:02.000Z", text: ".md and added E", delta: true },
+      { kind: "assistant", ts: "2026-07-20T00:00:03.000Z", text: "2E coverage.", delta: true },
+      { kind: "thinking", ts: "2026-07-20T00:00:04.000Z", text: "Checking the trans", delta: true },
+      { kind: "thinking", ts: "2026-07-20T00:00:05.000Z", text: "cript renderer.", delta: true },
+    ], false);
+
+    expect(blocks).toMatchObject([
+      { type: "message", role: "assistant", text: "I read AGENTS.md and added E2E coverage." },
+      { type: "thinking", text: "Checking the transcript renderer." },
+    ]);
+  });
+
+  it("hides empty reasoning lifecycle rows from nice run detail while retaining raw evidence", () => {
+    const entries: TranscriptEntry[] = [
+      { kind: "system", ts: "2026-07-20T00:00:00.000Z", text: "reasoning started" },
+      { kind: "assistant", ts: "2026-07-20T00:00:01.000Z", text: "Meaningful progress." },
+      { kind: "system", ts: "2026-07-20T00:00:02.000Z", text: "reasoning completed" },
+    ];
+    const niceHtml = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView presentation="detail" entries={entries} />
+      </ThemeProvider>,
+    );
+    const rawHtml = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView presentation="detail" mode="raw" entries={entries} />
+      </ThemeProvider>,
+    );
+
+    expect(niceHtml).toContain("Meaningful progress.");
+    expect(niceHtml).not.toContain("reasoning started");
+    expect(niceHtml).not.toContain("reasoning completed");
+    expect(rawHtml).toContain("reasoning started");
+    expect(rawHtml).toContain("reasoning completed");
+  });
+
   it("renders assistant and thinking content as markdown in compact mode", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
