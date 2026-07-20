@@ -20,17 +20,18 @@ test("keeps Chinese search scoped and shows a real empty state", async ({ page }
   await page.goto("/zh?search=预算");
 
   const input = page.locator('[data-component-part="search-input"]');
+  const searchList = page.locator('[data-component-part="search-list"]');
   const results = page.locator("a[data-rudder-search-result]");
   await expect(results.first()).toBeVisible();
 
   const hrefs = await results.evaluateAll((links) => links.map((link) => link.getAttribute("href")));
   expect(hrefs.length).toBeGreaterThan(0);
   expect(hrefs.every((href) => href?.startsWith("/zh"))).toBe(true);
-  await expect(page.getByText("文档", { exact: true })).toBeVisible();
+  await expect(searchList.getByText("文档", { exact: true })).toBeVisible();
 
   await input.fill("definitely-no-rudder-doc-matches-this-query");
   await expect(results).toHaveCount(0);
-  await expect(page.getByText("未找到结果", { exact: true })).toBeVisible();
+  await expect(searchList.getByText("未找到结果", { exact: true })).toBeVisible();
   await expect(page.locator('[role="status"]', { hasText: "结果：0" })).toHaveCount(1);
 });
 
