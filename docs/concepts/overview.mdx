@@ -1,128 +1,95 @@
 ---
 title: "Core Concepts"
-description: "Learn how Rudder models AI agent team work with organizations, goals, projects, Chat, issues, agents, runs, reviews, workspaces, skills, and feedback."
+description: "Follow one task through Rudder's organizations, work surfaces, agents, runs, outputs, and review."
 icon: "book-open"
 keywords:
-  - "AI agent team concepts"
-  - "agent orchestration model"
-  - "agent work management"
   - "Rudder concepts"
+  - "AI agent team"
+  - "agent work management"
 canonical: "https://docs.rudderhq.dev/concepts/overview"
 "og:url": "https://docs.rudderhq.dev/concepts/overview"
-
+hreflang_en: "https://docs.rudderhq.dev/concepts/overview"
+hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/overview"
 ---
 
-Rudder turns goals, tasks, chats, issues, agent runs, reviews, and feedback into a work loop for agent teams. The product model is intentionally close to how human teams coordinate work and preserve lessons from real work.
+Imagine a small team preparing a launch announcement. A human sets the goal,
+an Agent drafts the file, another person reviews it, and the final Markdown file
+must remain easy to find. Rudder gives every part of that loop a clear home.
 
-## Use-case map
+## The work loop through one case
 
-| When you need to... | Use |
-| --- | --- |
-| Define why the organization exists | Organization goal |
-| Group related delivery work | Projects |
-| Move a task forward through conversation | Chat |
-| Coordinate a task with explicit structure | Issues |
-| Keep web research and interaction beside the work | Built-in Browser |
-| Run bounded agent work | Agent heartbeats |
-| Preserve execution evidence | Comments, activity, transcripts, and work products |
-| Recover human attention across work | Messenger |
-| Inspect work over time | Calendar |
-| Reuse operating knowledge | Skills |
-| Keep files and outputs findable | Workspaces |
-| Run repeated work | Automations |
-| Govern spend, approvals, and attention | Rudder |
-| Extend the product at the edges | Plugins |
-| Preserve what future runs should learn | Feedback and lessons |
+The **organization** is the workspace for the team. Its goal explains why the
+launch matters. A **project** can group the announcement with related launch
+work, resources, and dates.
 
-## Organization
+The operator can begin in **Chat** and refine the announcement through
+conversation. If the work needs a named owner, dependencies, status, or a
+review path, the operator can use an **Issue**.
 
-An organization owns the goal, agents, reporting structure, projects, chats, issues, knowledge, budgets, and outputs. One Rudder instance can run many organizations.
+An **Agent** is the durable team member responsible for a kind of work. An
+**Agent Run** is one bounded attempt by that Agent. The **runtime** is the
+execution environment Rudder invokes for the run. These are related, but they
+are not the same object.
+
+The run leaves evidence such as a summary and transcript. The finished
+announcement belongs with the Chat or Issue as an output. A review decision
+stays with the work record, so the team can see what was accepted or what must
+change.
 
 ![Rudder dashboard overview](../images/board-overview.png)
 
-## Goals and projects
+## Surfaces you will meet
 
-Goals explain why work exists. Projects group related execution, resources, workspaces, target dates, lead agents, Chat conversations, and issue queues.
+| Need | Rudder surface |
+| --- | --- |
+| Explain the team's direction | Organization goal |
+| Group related work and context | Project |
+| Work through an ongoing conversation | Chat |
+| Track ownership, dependencies, status, or review | Issue |
+| See who performed a bounded attempt and what happened | Agent and Agent Runs |
+| Find replies, blockers, failed runs, and decisions needing attention | Messenger |
+| Keep web research and interaction beside the work | Built-in Browser |
+| Inspect when runs and human checkpoints happened | Calendar |
+| Reuse instructions for repeated work | Skills |
+| Trigger repeated work | Automations |
+| Keep resources and outputs in their intended filesystem area | Workspaces and Library |
+| Govern approvals, budgets, cost, and activity | Approvals, budgets, and activity |
+| Preserve review decisions and lessons for later work | Reviews, feedback, and learning |
+| Add integrations and specialized capabilities | Plugins |
 
-## Agents
+The **Overview** summarizes the organization, including operational signals
+that help the operator see where work is moving or waiting. It does not replace
+the source Chat, Issue, run, review, or approval.
 
-Agents are durable team members. Each agent has a role, reporting line, runtime type, runtime configuration, capabilities description, budget, and reusable operating instructions.
+## When structure helps
 
-## Issues
+Rudder does not require every task to use every object. A short drafting loop
+may remain in Chat. A release with dependencies and an independent reviewer is
+easier to operate as one or more Issues. Projects help when several work items
+share a result or context. Automations help only after the trigger and output
+path are predictable.
 
-Issues are durable, structured work objects. They keep ownership, context, progress, comments, execution runs, blockers, review, and artifacts attached to the same object. Chat conversations preserve the request, execution, refinements, and result without requiring that issue structure.
+The boundary is simple: preserve enough structure to make the next action and
+the final result inspectable. Do not create fields or objects that the work
+does not need.
 
-## Chat and Messenger
+<a id="learning-path" />
 
-Chat is a conversation-driven task surface that can clarify, execute, refine, and complete work. Issues are the parallel structure-driven surface. Messenger keeps attention visible across chats, issue threads, failed runs, blockers, and decisions.
+## Recommended learning path
 
-## Built-in Browser
+This sequence is independent of the sidebar order:
 
-Rudder Desktop can open ordinary web links in a Browser tab beside the current
-work surface. Supported local agents can use bounded Browser tools without
-receiving raw cookies, credentials, or unrestricted page scripting.
-
-## Calendar
-
-Calendar shows how agent runs, issue work, and human checkpoints occupied time.
-
-## Workspaces
-
-Workspaces are the filesystem areas where agents read project resources and produce shared outputs. Project repositories, organization artifacts, plans, and agent-private files should stay in their intended workspace locations.
-
-## Skills
-
-Skills give agents reusable operating instructions for repeated workflows.
-
-## Automations
-
-Automations run repeated agent work from schedules, manual dispatch, APIs, or webhooks. Each run keeps dispatch state, result state, and a link to issue or chat output.
-
-## Rudder
-
-Rudder keeps approvals, budgets, activity, run intelligence, dashboard health, Calendar history, and Inbox attention visible.
-
-## Plugins
-
-Plugins add capabilities, jobs, webhooks, and UI surfaces without taking ownership of core Rudder invariants such as organization scope, issues, approvals, budgets, or runs.
-
-## Governance
-
-Rudder makes autonomy visible and governable through issue assignments, budget tracking, activity logs, reviewer decisions, feedback, and explicit learning paths.
-
-![Budget and cost visibility](../images/cost-visibility.png)
-
-## Explore the model
+1. [Create your first organization](/get-started/first-organization) and finish one small task.
+2. [Choose Chat or an Issue](/concepts/chat-messenger) for the way you want to work.
+3. [Understand Agents and Agent Runs](/concepts/agents), including the runtime boundary.
+4. [Run an Issue from intake to done](/how-to/issue-lifecycle) when explicit coordination helps.
+5. [Review agent work](/how-to/review-agent-work) and leave the result, evidence, and decision together.
 
 <CardGroup cols={2}>
-  <Card title="Goals, Projects, And Issues" icon="list-tree" href="/concepts/goals-projects-issues">
-    See how strategy becomes durable execution work.
+  <Card title="Previous: First Organization" icon="arrow-left" href="/get-started/first-organization">
+    Complete the first work loop before exploring each concept.
   </Card>
-  <Card title="Agents" icon="bot" href="/concepts/agents">
-    Understand roles, runtimes, heartbeats, and reporting lines.
-  </Card>
-  <Card title="Chat and Messenger" icon="messages-square" href="/concepts/chat-messenger">
-    Move tasks from request to result and keep human attention attached to work.
-  </Card>
-  <Card title="Built-in Browser" icon="globe" href="/concepts/built-in-browser">
-    Keep operator and agent web work inside a clear local trust boundary.
-  </Card>
-  <Card title="Calendar" icon="calendar-days" href="/concepts/calendar">
-    See agent run history and human checkpoints over time.
-  </Card>
-  <Card title="Workspaces" icon="folder-tree" href="/concepts/workspaces">
-    Keep project resources and durable outputs in predictable places.
-  </Card>
-  <Card title="Automations" icon="workflow" href="/concepts/automations">
-    Run repeatable work with explicit triggers and output routing.
-  </Card>
-  <Card title="Reviews, Feedback, And Learning" icon="message-square-check" href="/concepts/reviews-feedback-learning">
-    Turn accepted work into better future runs.
-  </Card>
-  <Card title="Rudder" icon="sliders-horizontal" href="/concepts/approvals-budgets-activity">
-    Track approvals, budgets, activity, runs, Calendar, and Inbox.
-  </Card>
-  <Card title="Plugins" icon="plug" href="/concepts/plugins">
-    Extend Rudder without weakening core boundaries.
+  <Card title="Next: Goals, Projects, and Issues" icon="arrow-right" href="/concepts/goals-projects-issues">
+    See how direction becomes grouped, durable work.
   </Card>
 </CardGroup>

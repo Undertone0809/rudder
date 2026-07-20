@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "classifications": [],
+  "allowed_classifications": ["fixed", "intentional", "false-positive"]
+}

@@ -1,95 +1,93 @@
 ---
 title: "Quick Start"
-description: "Install Rudder Desktop and the Rudder CLI, then start the local app for AI agent work management."
+description: "Install Rudder Desktop, confirm a healthy local startup, and recover safely when startup fails."
 icon: "zap"
 keywords:
   - "install Rudder"
   - "Rudder CLI"
-  - "AI agent desktop app"
-  - "local agent work management"
+  - "Rudder Desktop"
 canonical: "https://docs.rudderhq.dev/get-started/installation"
 "og:url": "https://docs.rudderhq.dev/get-started/installation"
-
+hreflang_en: "https://docs.rudderhq.dev/get-started/installation"
+hreflang_zh: "https://docs.rudderhq.dev/zh/get-started/installation"
 ---
 
-The fastest path installs the per-user portable Rudder Desktop app and prepares the matching persistent CLI. This is the recommended setup when you want a local AI agent work app that can create organizations, assign issues, run agents, and keep review evidence on your machine.
+When this guide is complete, Rudder Desktop is open on your machine and the
+`rudder` CLI is ready for later starts.
 
-## What does the install command do?
+You need a supported desktop system, a terminal, internet access for the first
+download, and permission to install an app for your user account.
 
-`npx @rudderhq/cli@latest start` starts Rudder's public local setup flow. It prepares the Rudder CLI, opens the portable Desktop app, and keeps the installed app aligned with the selected release channel.
+## Install and open Rudder
 
-![Rudder CLI terminal workflow](../images/installation-cli.png)
-
-Run the public install command:
+Run the public setup command:
 
 ```bash
 npx @rudderhq/cli@latest start
 ```
 
-After the persistent CLI is available, the direct `rudder` form uses the same command surface.
+The command prepares the persistent Rudder CLI, downloads the portable Desktop
+app for the selected release channel, and opens it. It keeps the CLI and app on
+the same release.
+
+![Rudder CLI terminal workflow](../images/installation-cli.png)
+
+After setup, start the same local app directly:
 
 ```bash
 rudder start
 ```
 
-Use this path when your goal is to open the local app, create an organization,
-and run agent work. The command keeps the CLI and portable Desktop app aligned
-with the selected release.
+The setup succeeds when the Desktop window reaches Rudder's organization
+screen. You can now create your first organization.
 
-## Recover from a Desktop startup failure
+<a id="startup-recovery" />
 
-A healthy Desktop startup shows the Rudder identity and motion without
-technical stage names or percentage progress. That quiet screen is the normal
-waiting state.
+## If Desktop cannot start
 
-If the managed local server reports a startup failure, the same window reveals
-a plain-language error and recovery actions:
+A healthy startup shows the Rudder identity and motion. It does not expose
+technical stage names or percentage progress. A quiet waiting screen during
+startup is normal.
 
-- **Try again** starts one fresh startup attempt in the existing window.
-- **Technical details** reveals bounded diagnostics that you can copy when
-  investigating the failure.
-- **Email support** opens an editable draft. Rudder does not send the message,
-  upload local data, or attach workspace files automatically.
+If the managed local server reports a startup failure, the same window shows a
+plain-language error and recovery actions:
 
-Review technical details before sharing them, and do not add credentials,
+- **Try again** starts one fresh attempt in the existing window. Repeated clicks
+  do not start parallel runtimes or open more windows.
+- **Email support** opens an editable draft addressed to
+  `zeeland4work@gmail.com`. Rudder does not send it, upload local data, or
+  attach workspace files automatically. If the mail app cannot open, use
+  **Copy support email** and **Copy diagnostic**.
+- **Report on GitHub** opens Rudder's fixed
+  [public GitHub Issues bug-report form](https://github.com/Undertone0809/rudder/issues/new?template=bug_report.yml).
+  Rudder never submits the issue. If the browser cannot open, use **Copy issue
+  link**, open that fixed URL yourself, then use **Copy diagnostic** and review
+  the text before pasting it.
+- **Technical details** reveals only bounded, allowlisted fields and paths.
+  **Copy diagnostic** copies the same safe diagnostic used by the support
+  actions. **Open data folder** opens the failed instance folder when a path is
+  available; if the folder cannot open automatically, copy the visible
+  **Instance folder** path and open it in your file manager.
+
+Read the technical details before sharing them. Do not add credentials,
 databases, `.env` files, or private workspace contents to a support request.
 
-## Install updates without losing active work
+## If an update finds active runs
 
-Packaged Rudder Desktop can download a verified update while Agent Runs are
-still active. When active runs exist, choose deliberately:
+Packaged Rudder Desktop can download and verify an update while Agent Runs are
+active. Choose based on whether the current work may be interrupted:
 
-- **Update when idle** downloads the update and keeps current runs alive until
+- **Update when idle** keeps current runs alive and applies the update after
   they finish.
-- **Stop runs and update now** cancels active runs, quits Rudder, and applies the
-  update immediately.
+- **Stop runs and update now** cancels active runs, quits Rudder, and applies
+  the update immediately.
 - **Cancel** leaves the current version running.
 
-The deferred path does not cancel active work. If an update fails or expires,
-Rudder keeps the failure visible and offers retry and release-page actions.
-
-## Contributor setup
-
-Use the repository workflow when you are developing Rudder itself.
-
-```bash
-git clone https://github.com/Undertone0809/rudder
-cd rudder
-pnpm install
-pnpm dev
-```
-
-This starts the API server and UI at `http://localhost:3100`.
-
-Rudder defaults to embedded PostgreSQL in development. If `DATABASE_URL` is unset, no separate database is required.
-
-Use this path only when you are changing Rudder source code. It starts the local
-development server and does not install the public portable Desktop app.
-
-## Next steps
+If an update fails or expires, the failure remains visible with retry and
+release-page actions.
 
 <CardGroup cols={1}>
   <Card title="Create Your First Organization" icon="building-2" href="/get-started/first-organization">
-    Set up a goal, agents, issues, and review evidence.
+    Complete one task and inspect its result.
   </Card>
 </CardGroup>

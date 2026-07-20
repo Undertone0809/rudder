@@ -1,0 +1,202 @@
+{
+  "redirects": [
+    {
+      "source": "/en/home",
+      "destination": "https://docs.rudderhq.dev/",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/en/en",
+      "destination": "https://docs.rudderhq.dev/",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/en/manifest.json",
+      "destination": "https://docs.rudderhq.dev/site.webmanifest",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/en/concepts/messenger-approvals",
+      "destination": "https://docs.rudderhq.dev/concepts/chat-messenger",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/en/zh/concepts/messenger-approvals",
+      "destination": "https://docs.rudderhq.dev/zh/concepts/chat-messenger",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/home",
+      "destination": "https://docs.rudderhq.dev/",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/en",
+      "destination": "https://docs.rudderhq.dev/",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/en/:path*",
+      "destination": "https://docs.rudderhq.dev/:path*",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/manifest.json",
+      "destination": "https://docs.rudderhq.dev/site.webmanifest",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/concepts/messenger-approvals",
+      "destination": "https://docs.rudderhq.dev/concepts/chat-messenger",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/zh/concepts/messenger-approvals",
+      "destination": "https://docs.rudderhq.dev/zh/concepts/chat-messenger",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/",
+      "destination": "https://docs.rudderhq.dev/",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/:path*",
+      "destination": "https://docs.rudderhq.dev/:path*",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/en/home",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/en/en",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/en/manifest.json",
+      "destination": "/site.webmanifest",
+      "permanent": true
+    },
+    {
+      "source": "/en/concepts/messenger-approvals",
+      "destination": "/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
+      "source": "/en/zh/concepts/messenger-approvals",
+      "destination": "/zh/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
+      "source": "/home",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/en",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/en/:path*",
+      "destination": "/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/manifest.json",
+      "destination": "/site.webmanifest",
+      "permanent": true
+    },
+    {
+      "source": "/concepts/messenger-approvals",
+      "destination": "/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
+      "source": "/zh/concepts/messenger-approvals",
+      "destination": "/zh/concepts/chat-messenger",
+      "permanent": true
+    }
+  ]
+}

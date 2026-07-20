@@ -1,234 +1,92 @@
 ---
 title: "创建第一个组织"
-description: "用一个真实任务走通 Rudder 的第一条人类-agent 协作循环。"
+description: "完成一件可检查的任务，让请求、Agent 运行、产物和评审结论留在一起。"
 icon: "building-2"
 keywords:
-  - "AI agent 协作"
-  - "agent team"
-  - "Rudder"
-  - "agent 工作管理"
-  - "AI agent 工作流"
+  - "Rudder 组织"
+  - "第一个 Agent 任务"
+  - "Agent 工作循环"
 canonical: "https://docs.rudderhq.dev/zh/get-started/first-organization"
 "og:url": "https://docs.rudderhq.dev/zh/get-started/first-organization"
-
+hreflang_en: "https://docs.rudderhq.dev/get-started/first-organization"
+hreflang_zh: "https://docs.rudderhq.dev/zh/get-started/first-organization"
 ---
 
-组织是 Rudder 的第一层工作空间。人类在组织里定方向，通过 Chat 或 issue 推进任务，并用对话、评论、运行记录、评审和时间线留下可检查的工作记录。
+完成本页后，你会有一个组织、一个可以工作的 Agent，以及一份可以检查的结果。这里用一个示意案例说明流程：Agent 起草 Markdown 发布公告，人来评审结果。
 
-这篇指南不列功能清单。新组织会带一个默认 Operator Assistant，你可以先用它跑完第一条有用流程：创建组织、选择对话式或结构化工作方式、运行 agent、检查证据，再用 Messenger 查看哪里需要注意。
+开始前，请先[安装并打开 Rudder](/zh/get-started/installation)，准备好第一个 Agent 要使用的本地运行环境，以及保存公告的文件夹。
 
-![第一个组织工作循环](../../images/first-organization-loop-zh.svg)
+<a id="first-loop" />
 
-## 开始之前
+## 1. 给组织命名
 
-先在本地启动 Rudder：
+输入组织显示名称，例如“发布团队”。第一个页面只会询问名称，Rudder 会自动建立内部组织标识。目标和 Issue Key 不在新手流程里设置，之后可以在日常工作页面和设置中添加或查看。
 
-```bash
-npx @rudderhq/cli@latest start
+## 2. 配置第一个 Agent
+
+选择第一个 Agent 使用的运行环境，并完成环境检查。运行环境决定 Agent 每次运行时在哪里执行。只有必要检查通过后，Rudder 才会创建 Agent；如果页面报告配置问题，请先修复再继续。
+
+设置完成后，Rudder 会打开 Messenger。`Getting Started` 分组已经标记为已读，不会制造虚假的未读提醒。你可以先打开欢迎内容，也可以直接完成下面的示例。
+
+## 3. 选择 Chat 或 Issue
+
+如果你想在一段持续对话里起草和修改公告，用 Chat。
+
+Issue（任务单）是带有明确状态和生命周期的任务记录。需要指定负责人、跟踪依赖或安排评审时使用；评论、Agent 运行、产物和评审结论可以留在同一条记录中。
+
+本例有明确产物和评审人，所以使用 Issue。新建任务单，并写入：
+
+```md
+标题：起草发布公告
+
+期望结果：
+产出一份可以评审的 Markdown 公告。
+
+验收标准：
+- 有简短标题
+- 包含安装命令
+- 解释一个具体使用场景
+- 列出尚未解决的问题
 ```
-
-打开本地应用后，准备一个真实工作。不要用“测试 Rudder”这种空任务。第一条任务最好能产出结果、能分配、能评审：
-
-- “写一版 launch announcement，并产出可评审的 Markdown 文件。”
-- “检查这个仓库，总结前三个 onboarding 阻碍。”
-- “为优化文档截图写一个小型任务计划。”
-- “review 这个产品页面，列出发布前必须修改的点。”
-
-目标不是“点完所有按钮”。你要通过一个可检查的工作对象完成任务。在 Rudder 里，这个对象可以是 Chat 对话，也可以是 `issue`。
-
-## 1. 围绕真实目标创建组织
-
-创建组织时，把目标写成运营目标，不要写口号。好的目标会告诉 agent 团队：为什么要做、什么算进展、什么事情值得优先处理。
-
-好的第一目标：
-
-- “交付一个本地优先的 agent 工作看板，并跑通一条端到端产品循环。”
-- “运营 public beta launch，让 agent 工作可检查、可评审。”
-- “每周用 agents 维护发布质量、文档和用户反馈。”
-
-不建议这样写：
-
-- “使用 AI。”
-- “让 agent 更高效。”
-- “做个有意思的东西。”
-
-组织目标很重要，因为 issue、agent、项目和评审决定都应该能追溯到“为什么要做”。后面出现分歧时，目标会帮你判断：这是现在该推进的事，还是只是一个看起来不错的想法。
-
-创建组织前，检查一下 **Issue Key**。Rudder 会根据组织名称生成一个简短 key，并预览第一条可读 issue 编号，例如 `R6-1`。Issue Key 必须以字母开头，只能包含大写字母和数字，而且不能和当前实例里已有或历史使用过的 key 冲突。
-
-组织名称、稳定 URL 和 Issue Key 各自负责不同的身份。修改组织名称不会顺带改变 URL 或 issue 编号。以后可以在组织设置中明确修改 Issue Key；已有 issue number 不变，使用旧 Issue Key 的链接仍然可以打开同一条 issue。
-
-![Rudder 仪表盘概览](../../images/board-overview.png)
-
-## 2. 选择 Chat 或 issue
-
-Chat 和 issue 都可以把真实 agent 工作从请求推进到结果。Chat 由对话驱动；`issue` 增加结构化状态、owner、优先级、依赖和 review 状态。根据任务特点和你的偏好选择即可。
-
-这篇指南使用 issue 来讲解结构化流程。你也可以直接在 Chat 中运行同一个小任务；agent 花费时间或产出持久结果，并不意味着必须转换成 issue。
 
 ![Issue 看板](../../images/first-organization-issue-board.png)
 
-一个好的第一条 issue 应该包含：
+## 4. 让下一步可以直接执行
 
-- 清晰标题
-- 期望结果
-- 启动所需上下文
-- 验收标准
-- 准备好后有唯一执行者，也就是 assignee
-- 需要独立判断时有 reviewer
+只有当另一个人或 Agent 不需要追问任务含义就能开始时，才把 Issue 移到 `todo`。把第一个 Agent 设为唯一负责人。因为公告需要另一位成员判断质量，再指定一位评审人。把可以执行的 Issue 分配给 Agent 后，Rudder 会自动唤醒它，不需要另外点击启动。
 
-示例：
+如果范围、优先级或验收标准还没有定，就留在 `backlog`。多项独立工作应该拆成不同 Issue，不要把同一条任务单交给两个负责人。
 
-```md
-Title: Draft the public beta launch announcement
+## 5. 检查 Agent 运行
 
-Outcome:
-Create a reviewable Markdown announcement for the public beta.
+Rudder 会调用已经配置的运行环境，并把这次有边界的执行记为一次 Agent 运行。
 
-Context:
-The announcement should explain local-first setup, issue-based agent work,
-and why Rudder gives humans and agents a shared operating structure for real work loops.
+![Agent 运行详情](../../images/agent-run-detail.png)
 
-Acceptance:
-- includes a short headline
-- includes setup command
-- includes one concrete use case
-- leaves open questions as bullets
-```
+运行结束后，检查以下内容：
 
-## 3. 用 issue 状态表达下一步能不能做
+- 运行摘要或对话记录
+- Markdown 产物或它的链接
+- Agent 完成的验证
+- 如果未完成，是否写清阻塞原因
 
-这里说的是 issue 状态。状态不是装饰，它决定这件事现在能不能开始、由谁推进、是否在等评审，以及 agent heartbeat 能不能合理接手。
+看不到可检查的产物时，先让 Agent 补充文件或链接，再进入评审。
 
-| 状态 | 什么时候使用 |
-| --- | --- |
-| `backlog` | 请求是真实的，但范围、优先级或验收标准还没定 |
-| `todo` | 工作已经明确，分配执行者后就可以开始 |
-| `in_progress` | agent 或人已经 checkout 并正在执行 |
-| `blocked` | 下一步依赖权限、产品判断、外部输入或其他任务 |
-| `in_review` | assignee 认为已经有可评审输出 |
-| `done` | reviewer 或 owner 接受了结果和证据 |
+## 6. 评审结果
 
-第一个组织里先记住一个规则：另一个人不需要再追问“这是什么意思”就能开始时，issue 才应该进入 `todo`。
+产物准备好后，把 Issue 移到 `in_review`。评审人检查任务单、产物、运行证据和评论，然后选择明确的评审结论，并填写说明。通过后，Issue 会自动完成；要求修改时会回到负责人；选择阻塞时，原因会继续显示。
 
-## 4. 给 issue 分配执行者
+判断这条工作链是否完整，可以让另一位读者打开同一条 Issue。如果对方不用去别的工具拼凑过程，就能找到请求、Agent 运行、产物和评审结论，说明记录已经足够。
 
-当一个 agent 或人应该负责下一步时，再给 issue 分配 assignee。Rudder 里一个 issue 只有一个 assignee，这样大家才知道谁正在推进、谁该留下结果。
+## 出错后怎么恢复
 
-第一个组织可以直接使用默认 Operator Assistant。等你需要不同职责、不同 runtime，或不同能力边界时，再新建 agent。
-
-现在可以分配执行者的情况：
-
-- 结果足够具体
-- agent 有上下文和运行时权限
-- 重复执行会造成问题
-- 你希望 agent heartbeat 接手它
-
-先不要分配执行者的情况：
-
-- 问题还在探索阶段
-- 多个 agent 需要拆分不同部分
-- 这其实是一个决策，不是执行
-- 验收标准缺失
-
-一个 `todo` 状态的 issue 如果分配了 assignee，对应的 agent 就可以在下一次 heartbeat 中被唤醒，读取 issue 上下文并开始运行。反过来，如果 issue 还在 `backlog`、验收标准不清楚，或下一步其实是人类决策，就不要急着分给 agent。
-
-如果两个 agent 需要协作，把工作拆成多个 issue 或子 issue，而不是把同一个 issue 交给两个 owner。
-
-## 5. 输出质量重要时加 reviewer
-
-当输出需要别人判断是否可以关闭时，就给 issue 加 reviewer。Reviewer 看证据、判断质量，并留下明确结论。
-
-这些情况应该加 reviewer：
-
-- 工作会修改公开文档、发布说明、代码或客户可见内容
-- 输出需要产品或技术判断
-- assignee 是 agent，而你希望另一个 agent 或人检查
-- 关闭前需要明确的 approve/request changes 结论
-
-低风险小任务可以不加 reviewer，只要 issue 评论本身已经足够作为证据。
-
-工作准备好后，把 issue 移到 `in_review`。Reviewer 应留下结构化决定：approve、request changes、needs follow-up 或 blocked。
-
-## 6. 运行 agent 并检查证据
-
-Agent heartbeat 会唤醒 agent，让它检查分配给自己的 issue，推进工作并汇报结果。
-
-![Agent run 详情](../../images/agent-run-detail.png)
-
-运行结束后，检查证据：
-
-- transcript 或 run summary
-- issue 评论
-- 变更文件或产物链接
-- 验证命令
-- 截图或预览 URL
-- 剩余风险
-
-如果 run 结束但没有证据，这项工作就不可检查。让 agent 补一条关闭评论，或者把 issue 移到 `blocked`，写清下一步归谁。
-
-## 7. 把 Chat 作为任务工作方式
-
-偏好通过持续对话推进任务时，用 Chat。它可以解释请求、补上下文、选择 agent、运行工作、检查产物并继续调整结果，不要求先创建 issue。
-
-![Chat issue 提案](../../images/chat-create-issue-proposal.png)
-
-好的模式是：
-
-1. 在 Chat 里输入请求。
-2. 让选中的 agent 直接执行；需要澄清或调整时，继续在同一段对话里完成。
-3. 在对话中检查 run 和产物。
-4. 继续调整或完成任务。
-5. 只有需要结构化协作时，才创建或关联 issue。
-
-创建 issue 是增加字段和团队协作结构，不是让任务取得“真实工作”身份。团队策略仍然可以要求受治理流程使用 issue。
-
-## 8. 用 Messenger 恢复注意力
-
-Messenger 用来发现什么需要人类注意：回复、issue 线程、失败运行、阻塞、决策请求和系统提示。
-
-![Messenger 注意力界面](../../images/messenger-approvals.png)
-
-这些情况应该看 Messenger：
-
-- agent 提问
-- 失败 run 需要处理
-- 阻塞需要人类回答
-- review 决定在等待
-- Chat 创建的 issue 提案需要接受或编辑
-
-Messenger 应该把你带回原生承载下一步的对象，无论它是 Chat、issue、run、review 还是 approval。
-
-## 9. 把重复指令沉淀成技能
-
-跑过几条 issue 后，你会看到重复操作：发布检查、预览环境、transcript 调试、文档 review、mock 数据截图等。流程稳定后，把它们沉淀成技能。
-
-![技能库](../../images/skills-library.png)
-
-一次性说明留在 issue 里。可复用流程放进技能里，未来 agent 就不用每次复制长 prompt。
-
-## 第一条有用循环
-
-当你能追踪下面这条链路时，第一个组织就真的跑起来了：
-
-1. 人类提出目标。
-2. 任务通过 Chat 或 issue 推进。
-3. 选择的界面保留请求和上下文。
-4. agent run 留下证据。
-5. 需要时由 reviewer 或 owner 接受、阻塞或要求修改。
-6. Messenger 显示注意力需求。
-7. Chat 或 issue 保留最终记录和关联产物。
-
-## 下一步
+如果运行失败，保持 Issue 打开，检查运行证据，并写清下一步。缺少凭据或需要人做决定时，把任务移到 `blocked`，同时指出由谁解除阻塞。Messenger 会把这条注意力信号带回相应负责人。
 
 <CardGroup cols={2}>
-  <Card title="任务生命周期指南" icon="route" href="/zh/how-to/issue-lifecycle">
-    学习什么时候分配执行者、设置 reviewer 和更新 issue 状态。
-  </Card>
-  <Card title="创建 Agent" icon="bot" href="/zh/how-to/create-agent">
-    需要新角色时，再添加有清楚职责和 runtime 的 agent。
-  </Card>
   <Card title="Chat 和 Messenger" icon="messages-square" href="/zh/concepts/chat-messenger">
-    理解对话入口和注意力恢复如何配合。
+    判断哪些任务适合一直留在对话中。
+  </Card>
+  <Card title="任务生命周期" icon="route" href="/zh/how-to/issue-lifecycle">
+    进一步了解状态、分配、评审和关闭。
   </Card>
 </CardGroup>

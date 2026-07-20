@@ -1,245 +1,125 @@
 ---
 title: "Create Your First Organization"
-description: "Run the first Rudder work loop: create an organization, choose Chat or an issue, run an agent, review evidence, and preserve feedback."
+description: "Complete one inspectable task with a request, Agent Run, output, and review decision."
 icon: "building-2"
 keywords:
-  - "AI agent team workflow"
-  - "agent work loop"
   - "Rudder organization"
-  - "agent issue review"
+  - "first agent task"
+  - "agent work loop"
 canonical: "https://docs.rudderhq.dev/get-started/first-organization"
 "og:url": "https://docs.rudderhq.dev/get-started/first-organization"
-
+hreflang_en: "https://docs.rudderhq.dev/get-started/first-organization"
+hreflang_zh: "https://docs.rudderhq.dev/zh/get-started/first-organization"
 ---
 
-An organization is Rudder's first work surface. It is where humans set direction, move tasks forward through Chat or issues, and leave inspectable work records through conversations, comments, runs, reviews, and timelines.
+At the end of this guide, you will have an organization, a working Agent, and
+one small result you can inspect. The example is illustrative: an Agent drafts
+a Markdown launch announcement and a human reviews it.
 
-This guide is not a feature checklist. A new organization includes a default
-Operator Assistant, so you can use it to run the first useful loop: create the
-organization, choose a conversational or structured workflow, run the agent,
-inspect the evidence, and use Messenger to understand what needs attention.
+Before you begin, [install and open Rudder](/get-started/installation). Have a
+local runtime available for the first Agent and a folder where it can save the
+announcement.
 
-![First organization work loop](../images/first-organization-loop-en.svg)
+<a id="first-loop" />
 
-## Before you start
+## 1. Name the organization
 
-Start Rudder locally:
+Enter a display name, such as `Launch team`. This first screen asks only for
+the name. Rudder creates the organization's internal identity for you. You can
+add goals and inspect its Issue Key later from the normal work surfaces and
+settings.
 
-```bash
-npx @rudderhq/cli@latest start
-```
+## 2. Configure the first Agent
 
-Open the local app and keep one real piece of work in mind. A good first example is not "test Rudder." Use a concrete outcome:
+Choose the runtime for the first Agent and complete its environment check. A
+runtime is the local execution environment the Agent uses for a run. Rudder
+creates the Agent only after the required check succeeds, so fix any reported
+runtime problem before continuing.
 
-- "Draft the launch announcement and produce a reviewable Markdown file."
-- "Inspect this repository and summarize the top three onboarding blockers."
-- "Create a small issue plan for improving our docs screenshots."
-- "Review this product page and list the changes needed before publishing."
+When setup finishes, Rudder opens Messenger. The `Getting Started` group is
+already marked as read, so it teaches the workflow without creating false
+unread work. Open its welcome item, or start the example below.
 
-The goal is not to click every button. You are completing a task through an inspectable work object. In Rudder, that can be a Chat conversation or an `issue`.
+## 3. Choose Chat or an Issue
 
-## 1. Create the organization around a real goal
+Use Chat if you want to draft and refine the announcement through one ongoing
+conversation.
 
-When Rudder asks for the organization, write the goal as an operating target, not a slogan.
-Good goals tell the agent team why the work matters, what counts as progress, and what should be prioritized.
+An issue is a durable task record with an explicit status and lifecycle. Use
+one when work needs a named owner, dependencies, or a review path; comments,
+agent runs, artifacts, and review decisions can stay with the same record.
 
-Good first goals:
-
-- "Ship a local-first agent work dashboard that can run one product loop end to end."
-- "Operate the public beta launch and keep agent work reviewable."
-- "Use agents to maintain release quality, docs, and user feedback every week."
-
-Weak first goals:
-
-- "Use AI."
-- "Make agents productive."
-- "Build something cool."
-
-The organization goal matters because issues, agents, projects, and review decisions should all point back to why the work exists. When priorities conflict later, the goal helps decide whether something is the next right move or only a good-looking idea.
-
-Review the **Issue Key** before creating the organization. Rudder derives a
-short key from the organization name and previews the first readable issue id,
-such as `R6-1`. The key must begin with a letter, use only uppercase letters and
-digits, and be unique in the Rudder instance.
-
-The organization name, its stable URL, and its Issue Key have separate jobs.
-Renaming the organization does not silently change its URL or issue ids. You can
-change the Issue Key explicitly in organization settings later; existing issue
-numbers stay the same, and links that use an older Issue Key continue to resolve.
-
-![Rudder dashboard overview](../images/board-overview.png)
-
-## 2. Choose Chat or an issue
-
-Chat and issues can both carry real agent work from request to result. Chat is conversation-driven; an `issue` adds structured status, ownership, priority, dependencies, and review state. Choose the style that fits the task and your preference.
-
-This walkthrough uses an issue to teach the structured workflow. You can run the same small task in Chat instead, and you do not need to convert it merely because the agent spends time or produces a durable result.
-
-![Issue board](../images/first-organization-issue-board.png)
-
-A good first issue has:
-
-- a clear title
-- the desired outcome
-- enough context to start
-- acceptance criteria
-- a single assignee when ready
-- a reviewer when independent judgment is needed
-
-Example:
+This guide uses an Issue because the example has an output and a reviewer.
+Create one with this brief:
 
 ```md
-Title: Draft the public beta launch announcement
+Title: Draft the launch announcement
 
 Outcome:
-Create a reviewable Markdown announcement for the public beta.
-
-Context:
-The announcement should explain local-first setup, issue-based agent work,
-and why Rudder gives humans and agents a shared operating structure for real work loops.
+Create a reviewable Markdown announcement.
 
 Acceptance:
 - includes a short headline
-- includes setup command
-- includes one concrete use case
-- leaves open questions as bullets
+- includes the setup command
+- explains one concrete use case
+- lists unresolved questions
 ```
 
-## 3. Use issue status to communicate readiness
+![Issue board](../images/first-organization-issue-board.png)
 
-This section is about issue status. Status is not decoration; it determines whether the work can start, who should move it forward, whether it is waiting for review, and whether an agent heartbeat can reasonably pick it up.
+## 4. Make the next step executable
 
-| Status | Use it when |
-| --- | --- |
-| `backlog` | The request is real but still needs shaping, priority, or acceptance criteria |
-| `todo` | The work is clear enough to start once it has an assignee |
-| `in_progress` | An agent or human has checked it out and is working |
-| `blocked` | The next move depends on access, product judgment, external input, or another issue |
-| `in_review` | The assignee believes there is reviewable output |
-| `done` | The reviewer or owner accepts the result and evidence |
+Move the Issue to `todo` only when another person or Agent could start without
+asking what the request means. Assign the first Agent as the single owner and
+add a reviewer because another person will judge the announcement. Assigning
+actionable work wakes the Agent automatically, so there is no separate start
+step.
 
-For the first organization, keep one rule in mind: move the issue to `todo` only when another person could start without asking what it means.
+Leave work in `backlog` if scope, priority, or acceptance criteria still need a
+decision. Split independent work into separate Issues instead of assigning one
+Issue to two owners.
 
-## 4. Assign an owner to the issue
+## 5. Inspect the Agent Run
 
-Assign an issue only when one agent or human should own the next step. Rudder uses one assignee per issue so everyone knows who is moving it forward and who should leave the result.
-
-You can use the default Operator Assistant in the first organization. Create a
-new agent later when you need a different responsibility, runtime, or capability
-boundary.
-
-Assign now if:
-
-- the outcome is concrete
-- the agent has enough context and runtime access
-- duplicate execution would be harmful
-- you want heartbeat to pick it up
-
-Do not assign yet if:
-
-- you are still exploring the problem
-- several agents need separate parts of the work
-- the task is really a decision, not execution
-- the acceptance criteria are missing
-
-A `todo` issue with an assignee can wake the assigned agent on its next heartbeat. If the issue is still in `backlog`, the acceptance criteria are unclear, or the next step is a human decision, do not rush to assign it to an agent.
-
-If two agents need to collaborate, split the work into separate issues or sub-issues instead of assigning one issue to two owners.
-
-## 5. Add a reviewer when output quality matters
-
-Add a reviewer when someone else needs to decide whether the issue can be closed. A reviewer inspects the evidence, judges quality, and leaves a clear decision.
-
-Add a reviewer when:
-
-- the work changes public docs, release notes, code, or customer-facing copy
-- the output needs product or technical judgment
-- the assignee is an agent and you want a second agent or human to inspect it
-- you need an explicit approve/request-changes decision before closing
-
-Skip reviewer for tiny, low-risk tasks when the issue comment itself is enough evidence.
-
-When work is ready, move the issue to `in_review`. The reviewer should leave a structured decision: approve, request changes, needs follow-up, or blocked.
-
-## 6. Run the agent and inspect the evidence
-
-An agent heartbeat wakes the agent to inspect assigned issues, make progress, and report the outcome.
+Rudder invokes the configured runtime and records one Agent Run for this
+bounded attempt.
 
 ![Agent run detail](../images/agent-run-detail.png)
 
-After the run, check for evidence:
+When the run finishes, look for:
 
-- transcript or run summary
-- issue comment
-- changed files or artifact links
-- validation commands
-- screenshots or preview URLs
-- remaining risks
+- a run summary or transcript
+- the Markdown output or a link to it
+- validation or checks the Agent performed
+- a clear blocker if the result is incomplete
 
-If the run finished without evidence, the work is not inspectable. Ask the agent to add a close-out comment, or move the issue to `blocked` with a named next owner.
+If there is no inspectable output, ask the Agent to attach or link it before
+moving to review.
 
-## 7. Use Chat as a task workflow
+## 6. Review the result
 
-Use Chat when you prefer to move the task forward through an ongoing conversation. It supports explaining the request, attaching context, choosing an agent, running the work, inspecting outputs, and refining the result without requiring an issue.
+Move the Issue to `in_review` when the output is ready for judgment. The
+reviewer inspects the Issue, output, run evidence, and comments, then records a
+structured decision with a required comment. Approving completes the Issue
+automatically. Requesting changes routes it back to the assignee; a blocked
+decision stays visible with the reason.
 
-![Chat issue proposal](../images/chat-create-issue-proposal.png)
+The review is successful when a later reader can open the same Issue and find
+the request, Agent Run, output, and decision without reconstructing the story
+from another tool.
 
-A good pattern is:
+## Recovery
 
-1. Start in Chat with the request.
-2. Let the selected agent execute the task, clarifying or refining in the same conversation when needed.
-3. Inspect the run and outputs in the conversation.
-4. Refine or complete the task in Chat.
-5. Create or link an issue only when you want structured coordination.
-
-Creating an issue adds fields and team coordination; it does not make the task more real. A team policy may still require issue structure for governed workflows.
-
-## 8. Use Messenger to recover attention
-
-Messenger is the place to notice what needs human attention: replies, issue threads, failed runs, blockers, decision requests, and system prompts.
-
-![Messenger attention surface](../images/messenger-approvals.png)
-
-Use Messenger when:
-
-- an agent asks a question
-- a failed run needs attention
-- a blocker needs a human answer
-- an approval or review decision is waiting
-- a chat-created issue proposal needs to be accepted or edited
-
-Messenger should bring you back to the native object that owns the next action, whether that is a Chat, issue, run, review, or approval.
-
-## 9. Promote repeated instructions into skills
-
-After the first few issues, you will see repeated operating patterns: release checks, preview setup, transcript debugging, docs review, or mock data capture. Move stable repeatable procedures into skills.
-
-![Skills library](../images/skills-library.png)
-
-Use issue instructions for one-off work. Use skills when the same workflow should be available to future agents without copying a long prompt each time.
-
-## The first useful loop
-
-Your first organization is working when you can trace this loop:
-
-1. A human states a goal.
-2. A task moves forward through Chat or an issue.
-3. The chosen surface preserves the request and context.
-4. The agent run leaves evidence.
-5. A reviewer or owner accepts, blocks, or requests changes when needed.
-6. Messenger shows attention needs.
-7. The Chat or issue preserves the final record and linked outputs.
-
-## Next steps
+If the run fails, keep the Issue open, inspect the run evidence, and name the
+next action. If a missing credential or human decision blocks the task, move it
+to `blocked` and state who can unblock it. Messenger can bring that attention
+signal back to the responsible person.
 
 <CardGroup cols={2}>
-  <Card title="Issue Lifecycle Guide" icon="route" href="/how-to/issue-lifecycle">
-    Learn detailed assignment, reviewer, and status best practices.
-  </Card>
-  <Card title="Create an Agent" icon="bot" href="/how-to/create-agent">
-    Add a new agent when you need a clear new responsibility and runtime.
-  </Card>
   <Card title="Chat and Messenger" icon="messages-square" href="/concepts/chat-messenger">
-    Understand how conversational task work and attention recovery fit together.
+    Decide which tasks can remain conversational.
+  </Card>
+  <Card title="Issue Lifecycle" icon="route" href="/how-to/issue-lifecycle">
+    Operate status, assignment, review, and close-out in detail.
   </Card>
 </CardGroup>

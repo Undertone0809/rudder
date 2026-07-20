@@ -1,0 +1,494 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import test from "node:test";
+
+import {
+  REPO_ROOT,
+  collectIntegrityErrors,
+  expectedRedirects,
+  generatedArtifacts,
+  loadManifest,
+  renderLlms,
+  resolveRedirect,
+  runAlignment,
+  validateManifestSchema,
+  writeArtifactsAtomically,
+} from "./docs-content-map.mjs";
+
+test("manifest parses and covers every current navigation page", () => {
+  const manifest = loadManifest();
+  const docsJson = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "docs/docs.json"), "utf8"));
+  const routes = new Set(manifest.pages.flatMap((page) => Object.values(page.urls)));
+  const navigation = docsJson.navigation.languages.flatMap((language) =>
+    language.groups.flatMap((group) => group.pages.map((page) => page === "index" ? "/" : `/${page}`)),
+  );
+  for (const route of navigation) assert.ok(routes.has(route), `manifest is missing ${route}`);
+});
+
+test("redirect generation excludes Batch 3 reservations", () => {
+  const manifest = loadManifest();
+  const mintlify = expectedRedirects(manifest, "mintlify");
+  const vercel = expectedRedirects(manifest, "vercel");
+  assert.ok(mintlify.some((redirect) => redirect.source === "/home"));
+  assert.ok(vercel.some((redirect) => redirect.has?.[0]?.type === "host"));
+  assert.ok(!mintlify.some((redirect) => redirect.source === "/concepts/control-plane"));
+  assert.ok(!vercel.some((redirect) => redirect.source === "/concepts/chat"));
+});
+
+test("deployment redirect artifacts keep legacy hosts out of staging and resolve production aliases in one hop", () => {
+  const manifest = loadManifest();
+  const mintlify = expectedRedirects(manifest, "mintlify");
+  const staging = expectedRedirects(manifest, "vercel", { environment: "staging" });
+  const production = expectedRedirects(manifest, "vercel", { environment: "production" });
+  const legacyHost = "doc.rudder.zeeland.studio";
+  const canonicalHost = "docs.rudderhq.dev";
+  const prefixedAlias = "/en/concepts/messenger-approvals";
+  assert.ok(!staging.some((redirect) => redirect.has?.some((condition) => condition.value === legacyHost)));
+  assert.equal(resolveRedirect(mintlify, { host: canonicalHost, path: prefixedAlias }), "/concepts/chat-messenger");
+  assert.equal(resolveRedirect(staging, { host: canonicalHost, path: prefixedAlias }), "/concepts/chat-messenger");
+  assert.equal(
+    resolveRedirect(production, { host: legacyHost, path: prefixedAlias }),
+    "https://docs.rudderhq.dev/concepts/chat-messenger",
+  );
+  assert.equal(resolveRedirect(production, { host: canonicalHost, path: prefixedAlias }), "/concepts/chat-messenger");
+  for (const [requestPath, destination] of [
+    ["/", "https://docs.rudderhq.dev/"],
+    ["/home", "https://docs.rudderhq.dev/"],
+    ["/en", "https://docs.rudderhq.dev/"],
+    ["/en/concepts/issues", "https://docs.rudderhq.dev/concepts/issues"],
+    ["/manifest.json", "https://docs.rudderhq.dev/site.webmanifest"],
+    ["/concepts/messenger-approvals", "https://docs.rudderhq.dev/concepts/chat-messenger"],
+  ]) {
+    assert.equal(resolveRedirect(production, { host: legacyHost, path: requestPath }), destination);
+  }
+  assert.equal(resolveRedirect(production, { host: canonicalHost, path: "/concepts/issues" }), null);
+  assert.equal(resolveRedirect(staging, { host: legacyHost, path: "/concepts/issues" }), null);
+});
+
+test("manifest schema failures are path-qualified and integrity never dereferences malformed input", () => {
+  const cases = [
+    ["missing examples", (manifest) => { delete manifest.examples; }, "manifest.examples: expected array"],
+    ["null files", (manifest) => { manifest.pages[0].files = null; }, "manifest.pages[0].files: expected locale map object"],
+    ["missing contracts", (manifest) => { delete manifest.pages[0].contracts; }, "manifest.pages[0].contracts: expected object"],
+    ["unknown page status", (manifest) => { manifest.pages[0].status = "published"; }, "manifest.pages[0].status: unknown page status published"],
+    ["bad locale map", (manifest) => { manifest.pages[0].urls.fr = "/fr"; }, "manifest.pages[0].urls.fr: unknown locale"],
+    ["malformed redirect policy", (manifest) => { manifest.redirect_policy.legacy_host_redirects[0].environments = ["preview"]; }, "unknown deployment environment preview"],
+  ];
+  for (const [label, mutate, expected] of cases) {
+    const manifest = structuredClone(loadManifest());
+    mutate(manifest);
+    assert.ok(validateManifestSchema(manifest).some((error) => error.includes(expected)), label);
+    assert.ok(collectIntegrityErrors({ manifest }).some((error) => error.includes(expected)), label);
+  }
+});
+
+test("llms generation covers every active canonical Concept, How-to, Reference, and Project page", () => {
+  const manifest = loadManifest();
+  const llms = renderLlms(manifest);
+  const requiredKinds = new Set(["concept", "how_to", "reference", "project"]);
+  for (const page of manifest.pages.filter((item) => ["active", "transitional_active"].includes(item.status) && requiredKinds.has(item.kind))) {
+    for (const url of Object.values(page.urls)) {
+      assert.match(llms, new RegExp(`\\]\\(${manifest.base_url.replaceAll(".", "\\.")}${url === "/" ? "" : url}\\)`));
+    }
+  }
+  assert.ok(!llms.includes("/concepts/messenger-approvals"));
+});
+
+test("generated artifacts are deterministic", () => {
+  const manifest = loadManifest();
+  assert.deepEqual(generatedArtifacts(manifest), generatedArtifacts(manifest));
+});
+
+test("integrity reports deterministic missing-file failures", () => {
+  const manifest = structuredClone(loadManifest());
+  manifest.pages.find((page) => page.id === "home").files.en = "docs/does-not-exist.mdx";
+  const errors = collectIntegrityErrors({ manifest });
+  assert.ok(errors.some((error) => error.includes("missing file docs/does-not-exist.mdx")));
+});
+
+test("integrity reports URL, anchor, contract, and primary-owner failures", () => {
+  const manifest = structuredClone(loadManifest());
+  const home = manifest.pages.find((page) => page.id === "home");
+  home.urls.en = "/wrong-home";
+  home.anchors.en.push("missing-anchor");
+  home.contracts.supporting.push("NOT.A.REAL.CONTRACT.001");
+  manifest.contract_ownership.find((ownership) => ownership.id === "RUN.RESULT.001").supporting_pages.push("home");
+  manifest.contract_ownership.push({ ...manifest.contract_ownership[0] });
+  const errors = collectIntegrityErrors({ manifest });
+  assert.ok(errors.some((error) => error.includes("canonical must be")));
+  assert.ok(errors.some((error) => error.includes("missing stable anchor #missing-anchor")));
+  assert.ok(errors.some((error) => error.includes("unknown product contract NOT.A.REAL.CONTRACT.001")));
+  assert.ok(errors.some((error) => error.includes("multiple primary owners")));
+  assert.ok(errors.some((error) => error.includes("RUN.RESULT.001: supporting ownership does not match page declarations")));
+});
+
+test("public contract primary owners must be active", () => {
+  const manifest = structuredClone(loadManifest());
+  const contractId = "APPROVAL.GOVERNED.ACTIONS.001";
+  const activePage = manifest.pages.find((page) => page.id === "approvals-budgets-activity");
+  const reservedPage = manifest.pages.find((page) => page.id === "approvals-budgets-activity-reference");
+  activePage.contracts.primary = activePage.contracts.primary.filter((id) => id !== contractId);
+  reservedPage.contracts.primary.push(contractId);
+  manifest.contract_ownership.find((ownership) => ownership.id === contractId).primary_page = reservedPage.id;
+
+  const errors = collectIntegrityErrors({ manifest });
+  assert.ok(errors.some((error) => error === `${contractId}: primary page ${reservedPage.id} must be active or transitional_active`));
+});
+
+test("transitional files require current files and an active replacement", () => {
+  const missingFileManifest = structuredClone(loadManifest());
+  missingFileManifest.transitional_files[0].files.push("docs/concepts/not-real-chat.mdx");
+  assert.ok(collectIntegrityErrors({ manifest: missingFileManifest }).some(
+    (error) => error === "transitional_files[0]: missing transitional file docs/concepts/not-real-chat.mdx",
+  ));
+
+  const missingReplacementManifest = structuredClone(loadManifest());
+  missingReplacementManifest.transitional_files[0].replacement_page = "not-real-chat-replacement";
+  assert.ok(collectIntegrityErrors({ manifest: missingReplacementManifest }).some(
+    (error) => error === "transitional_files[0]: unknown replacement page not-real-chat-replacement",
+  ));
+
+  const reservedReplacementManifest = structuredClone(loadManifest());
+  reservedReplacementManifest.transitional_files[0].replacement_page = "approvals-budgets-activity-reference";
+  assert.ok(collectIntegrityErrors({ manifest: reservedReplacementManifest }).some(
+    (error) => error === "transitional_files[0]: replacement page approvals-budgets-activity-reference must be active or transitional_active",
+  ));
+});
+
+test("integrity rejects duplicate redirect IDs and active sources", () => {
+  const manifest = structuredClone(loadManifest());
+  manifest.redirects.push({
+    ...manifest.redirects.find((redirect) => redirect.id === "home"),
+    id: "duplicate-home-source",
+  });
+  manifest.redirects.push({
+    ...manifest.redirects.find((redirect) => redirect.id === "manifest"),
+    source: "/old-manifest.json",
+  });
+  manifest.redirects.push({
+    id: "canonical-collision",
+    source: "/about",
+    destination: "/contact",
+    permanent: true,
+    targets: ["mintlify"],
+    status: "active",
+  });
+  const errors = collectIntegrityErrors({ manifest });
+  assert.ok(errors.some((error) => error === "duplicate redirect id: manifest"));
+  assert.ok(errors.some((error) => error === "duplicate active redirect source for mintlify: /home"));
+  assert.ok(errors.some((error) => error === "duplicate active redirect source for vercel: /home"));
+  assert.ok(errors.some((error) => error === "canonical-collision: active redirect source collides with canonical URL /about"));
+});
+
+test("redirect schema rejects invalid status, targets, and permanence", () => {
+  const manifest = structuredClone(loadManifest());
+  manifest.redirects.find((redirect) => redirect.id === "home").targets = [];
+  manifest.redirects.find((redirect) => redirect.id === "en-root").targets = ["mintlify", "unknown-host"];
+  manifest.redirects.find((redirect) => redirect.id === "en-catchall").permanent = false;
+  manifest.redirects.find((redirect) => redirect.id === "manifest").status = "retired";
+  const errors = collectIntegrityErrors({ manifest });
+  assert.ok(errors.some((error) => error === "home: targets must be a nonempty array"));
+  assert.ok(errors.some((error) => error === "en-root: unknown redirect target unknown-host"));
+  assert.ok(errors.some((error) => error === "en-catchall: permanent must be true"));
+  assert.ok(errors.some((error) => error === "manifest: unknown redirect status retired"));
+});
+
+test("integrity rejects redirect chains, loops, and unknown destinations", () => {
+  const manifest = structuredClone(loadManifest());
+  manifest.redirects.push(
+    {id: "loop-a", source: "/old-a", destination: "/old-b", permanent: true, targets: ["mintlify"], status: "active"},
+    {id: "loop-b", source: "/old-b", destination: "/old-a", permanent: true, targets: ["mintlify"], status: "active"},
+    {id: "missing-destination", source: "/old-missing", destination: "/not-a-canonical-page", permanent: true, targets: ["mintlify"], status: "active"},
+    {id: "absent-destination", source: "/old-absent", permanent: true, targets: ["mintlify"], status: "active"},
+  );
+  const errors = collectIntegrityErrors({ manifest });
+  assert.ok(errors.some((error) => error === "redirect chain for mintlify: /old-a -> /old-b"));
+  assert.ok(errors.some((error) => error.startsWith("redirect loop for mintlify:")));
+  assert.ok(errors.some((error) => error === "missing-destination: invalid active redirect destination /not-a-canonical-page"));
+  assert.ok(errors.some((error) => error === "absent-destination: missing redirect destination"));
+});
+
+test("integrity expands wildcard witnesses when detecting redirect chains", () => {
+  const manifest = structuredClone(loadManifest());
+  manifest.redirects.push(
+    {id: "wildcard-chain-a", source: "/legacy/:path*", destination: "/middle/:path*", permanent: true, targets: ["mintlify"], status: "active"},
+    {id: "wildcard-chain-b", source: "/middle/:path*", destination: "/concepts/overview", permanent: true, targets: ["mintlify"], status: "active"},
+  );
+  const errors = collectIntegrityErrors({ manifest });
+  assert.ok(errors.some(
+    (error) => error === "redirect chain for mintlify: /legacy/__docs_chain_probe__ -> /middle/__docs_chain_probe__",
+  ));
+});
+
+test("integrity rejects alias ownership and language mismatches", () => {
+  const manifest = structuredClone(loadManifest());
+  const chatMessenger = manifest.pages.find((page) => page.id === "chat-messenger");
+  chatMessenger.aliases.push("missing-chat-alias");
+  manifest.redirects.find((redirect) => redirect.id === "messenger-approvals").destination = "/concepts/overview";
+  manifest.redirects.find((redirect) => redirect.id === "zh-messenger-approvals").destination = "/concepts/chat-messenger";
+  const errors = collectIntegrityErrors({ manifest });
+  assert.ok(errors.some((error) => error === "chat-messenger: alias missing-chat-alias must resolve to exactly one manifest redirect"));
+  assert.ok(errors.some((error) => error === "chat-messenger: alias messenger-approvals must redirect to /concepts/chat-messenger"));
+  assert.ok(errors.some((error) => error.includes("Chinese alias redirects across languages")));
+  assert.ok(errors.some((error) => error === "chat-messenger: alias zh-messenger-approvals must redirect to /zh/concepts/chat-messenger"));
+});
+
+test("reserved aliases keep explicit ownership, locale, destination, and activation semantics", () => {
+  const typoManifest = structuredClone(loadManifest());
+  typoManifest.redirects.find((redirect) => redirect.id === "retire-control-plane").destination = "/reference/not-real";
+  assert.ok(collectIntegrityErrors({ manifest: typoManifest }).some((error) => error.includes("invalid active redirect destination /reference/not-real")));
+
+  const ownerManifest = structuredClone(loadManifest());
+  ownerManifest.redirects.find((redirect) => redirect.id === "retire-chat").owner_page = "issues";
+  assert.ok(collectIntegrityErrors({ manifest: ownerManifest }).some((error) => error === "chat-messenger: alias retire-chat owner_page must be chat-messenger"));
+
+  const activatedManifest = structuredClone(loadManifest());
+  activatedManifest.redirects.find((redirect) => redirect.id === "retire-control-plane").status = "active";
+  assert.ok(!collectIntegrityErrors({ manifest: activatedManifest }).some((error) => error.includes("retire-control-plane") && error.includes("status")));
+});
+
+test("canonical route collision exemptions only recognize the approved legacy host", () => {
+  const manifest = structuredClone(loadManifest());
+  manifest.redirects.push({
+    id: "host-hijack",
+    source: "/about",
+    destination: "/contact",
+    permanent: true,
+    targets: ["vercel"],
+    status: "active",
+    owner_page: "contact",
+    locale: "en",
+    has: [{ type: "host", value: "untrusted.example" }],
+  });
+  manifest.pages.find((page) => page.id === "contact").aliases.push("host-hijack");
+  assert.ok(collectIntegrityErrors({ manifest }).some((error) => error === "host-hijack: active redirect source collides with canonical URL /about"));
+});
+
+test("Chinese UI label allowlist is sorted, unique, and covers pilot pages", () => {
+  const allowlist = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "doc/engineering/public-docs/ui-label-allowlist.json"), "utf8"));
+  assert.deepEqual(allowlist.labels, [...new Set(allowlist.labels)].sort());
+  const pilotFiles = [
+    "docs/zh.mdx",
+    "docs/zh/concepts/overview.mdx",
+    "docs/zh/get-started/installation.mdx",
+    "docs/zh/get-started/first-organization.mdx",
+    "docs/zh/concepts/issues.mdx",
+    "docs/zh/concepts/chat-messenger.mdx",
+  ];
+  const uiLabels = pilotFiles.flatMap((relativeFile) => {
+    const source = fs.readFileSync(path.join(REPO_ROOT, relativeFile), "utf8");
+    const emphasized = [...source.matchAll(/\*\*([^*]+)\*\*/g)].map((match) => match[1]);
+    const inlineCodeLabels = [...source.matchAll(/`([^`\n]+)`/g)]
+      .map((match) => match[1])
+      .filter((label) => /^[A-Z][A-Za-z0-9]*(?: [A-Za-z0-9]+)*$/u.test(label));
+    return [...emphasized, ...inlineCodeLabels]
+      .filter((label) => /^[\x20-\x7e]+$/u.test(label));
+  });
+  assert.ok(uiLabels.includes("Inbox"), "pilot extraction must cover the inline Inbox UI label");
+  assert.ok(uiLabels.includes("Getting Started"), "pilot extraction must cover backticked multiword UI labels");
+  assert.ok(!uiLabels.includes("todo"), "lowercase status values are code, not UI-label exceptions");
+  for (const label of uiLabels) {
+    assert.ok(allowlist.labels.includes(label), `allowlist is missing ${label}`);
+  }
+});
+
+test("integrity reports hreflang and locale-pair failures", () => {
+  const hreflangManifest = structuredClone(loadManifest());
+  hreflangManifest.pages.find((page) => page.id === "home").urls.zh = "/zh/changed-home";
+  const hreflangErrors = collectIntegrityErrors({ manifest: hreflangManifest });
+  assert.ok(hreflangErrors.some((error) => error.includes("home/en: hreflang_zh must be")));
+
+  const localeManifest = structuredClone(loadManifest());
+  delete localeManifest.pages.find((page) => page.id === "home").files.zh;
+  const localeErrors = collectIntegrityErrors({ manifest: localeManifest });
+  assert.ok(localeErrors.some((error) => error === "home: locale pair missing without pairing_exception"));
+});
+
+test("integrity reports navigation, sitemap, and stale llms failures", () => {
+  const routeManifest = structuredClone(loadManifest());
+  routeManifest.pages.find((page) => page.id === "overview").urls.en = "/concepts/unlisted-overview";
+  const routeErrors = collectIntegrityErrors({ manifest: routeManifest });
+  assert.ok(routeErrors.some((error) => error === "navigation/en: /concepts/overview has no active canonical page"));
+  assert.ok(routeErrors.some((error) => error === "overview/en: missing from sitemap.xml"));
+
+  const staleLlmsManifest = structuredClone(loadManifest());
+  staleLlmsManifest.base_url = "https://stale.example.test";
+  const staleLlmsErrors = collectIntegrityErrors({ manifest: staleLlmsManifest });
+  assert.ok(staleLlmsErrors.some((error) => error === "docs/llms.txt is stale"));
+});
+
+test("alignment is warning-only and explicitly non-semantic", () => {
+  const result = runAlignment();
+  assert.equal(result.exitCode, 0);
+  assert.ok(result.warnings.length > 0);
+});
+
+test("alignment classifications suppress only the reviewed content fingerprint", () => {
+  const root = fs.mkdtempSync(path.join(process.env.TMPDIR || "/tmp", "rudder-docs-alignment-"));
+  try {
+    fs.mkdirSync(path.join(root, "docs"));
+    fs.mkdirSync(path.join(root, "source"));
+    fs.writeFileSync(path.join(root, "docs/en.mdx"), "English\n");
+    fs.writeFileSync(path.join(root, "docs/zh.mdx"), "中文\n");
+    fs.writeFileSync(path.join(root, "source/fact.md"), "fact\n");
+    const manifest = {
+      alignment_reviews: "reviews.json",
+      pages: [{
+        id: "pair",
+        status: "active",
+        files: { en: "docs/en.mdx", zh: "docs/zh.mdx" },
+        source_docs: ["source/fact.md"],
+        contracts: { primary: [], supporting: [] },
+        pairing_exception: null,
+      }],
+    };
+    const first = runAlignment({ root, manifest, reviews: { allowed_classifications: ["intentional"], classifications: [] } });
+    const record = first.records[0];
+    const reviews = {
+      allowed_classifications: ["intentional"],
+      classifications: [{ ...record, classification: "intentional", reviewed_revision: "test-revision" }],
+    };
+    assert.ok(!runAlignment({ root, manifest, reviews }).warnings.includes(record.reminder));
+    fs.writeFileSync(path.join(root, "source/fact.md"), "changed fact\n");
+    assert.ok(runAlignment({ root, manifest, reviews }).warnings.includes(record.reminder));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("real examples require existing permission and evidence locators", () => {
+  const missingPermission = structuredClone(loadManifest());
+  missingPermission.examples.find((example) => example.id === "steer-fix").permission_evidence = [];
+  assert.ok(collectIntegrityErrors({ manifest: missingPermission }).some((error) => error.includes("permission_evidence")));
+
+  const missingFile = structuredClone(loadManifest());
+  missingFile.examples.find((example) => example.id === "steer-fix").evidence.push("docs/not-real.mdx#evidence");
+  assert.ok(collectIntegrityErrors({ manifest: missingFile }).some((error) => error.includes("evidence locator is missing docs/not-real.mdx")));
+
+  const missingAnchor = structuredClone(loadManifest());
+  missingAnchor.examples.find((example) => example.id === "steer-fix").evidence.push("docs/releases.mdx#not-real");
+  assert.ok(collectIntegrityErrors({ manifest: missingAnchor }).some((error) => error.includes("missing anchor #not-real")));
+});
+
+function faultInjectedFileSystem({ renameSync, unlinkSync } = {}) {
+  return new Proxy(fs, {
+    get(target, property) {
+      if (property === "renameSync" && renameSync) return (source, destination) => renameSync(target, source, destination);
+      if (property === "unlinkSync" && unlinkSync) return (filePath) => unlinkSync(target, filePath);
+      const value = Reflect.get(target, property);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+function atomicWriterFixture() {
+  const root = fs.mkdtempSync(path.join(process.env.TMPDIR || "/tmp", "rudder-docs-atomic-"));
+  fs.mkdirSync(path.join(root, "out"));
+  fs.writeFileSync(path.join(root, "out/a.txt"), "old-a");
+  fs.writeFileSync(path.join(root, "out/b.txt"), "old-b");
+  return root;
+}
+
+test("atomic writer keeps committed destinations when backup cleanup fails", () => {
+  const root = atomicWriterFixture();
+  try {
+    let injected = false;
+    const fileSystem = faultInjectedFileSystem({
+      unlinkSync(target, filePath) {
+        if (!injected && filePath.includes(".bak-")) {
+          injected = true;
+          throw new Error("injected backup cleanup failure");
+        }
+        target.unlinkSync(filePath);
+      },
+    });
+    const result = writeArtifactsAtomically(
+      root,
+      [["out/a.txt", "new-a"], ["out/b.txt", "new-b"]],
+      { fileSystem },
+    );
+    assert.equal(result.committed, true);
+    assert.ok(result.cleanupWarnings.some((warning) => warning.includes("injected backup cleanup failure")));
+    assert.equal(fs.readFileSync(path.join(root, "out/a.txt"), "utf8"), "new-a");
+    assert.equal(fs.readFileSync(path.join(root, "out/b.txt"), "utf8"), "new-b");
+    const retainedBackup = fs.readdirSync(path.join(root, "out")).find((entry) => entry.includes(".bak-"));
+    assert.ok(retainedBackup, "failed cleanup must retain its backup as recovery evidence");
+    assert.ok(result.recoveryArtifacts.some((filePath) => filePath.endsWith(retainedBackup)));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("atomic writer restores originals and preserves staged evidence when install fails", () => {
+  const root = atomicWriterFixture();
+  try {
+    const fileSystem = faultInjectedFileSystem({
+      renameSync(target, source, destination) {
+        if (source.includes(".tmp-") && destination.endsWith("b.txt")) {
+          throw new Error("injected install failure");
+        }
+        target.renameSync(source, destination);
+      },
+    });
+    let error;
+    try {
+      writeArtifactsAtomically(root, [["out/a.txt", "new-a"], ["out/b.txt", "new-b"]], { fileSystem });
+    } catch (caught) {
+      error = caught;
+    }
+    assert.equal(error?.phase, "install");
+    assert.equal(error?.committed, false);
+    assert.deepEqual(error?.rollbackErrors, []);
+    assert.equal(fs.readFileSync(path.join(root, "out/a.txt"), "utf8"), "old-a");
+    assert.equal(fs.readFileSync(path.join(root, "out/b.txt"), "utf8"), "old-b");
+    const temporaryFiles = fs.readdirSync(path.join(root, "out")).filter((entry) => entry.includes(".tmp-"));
+    assert.equal(temporaryFiles.length, 2);
+    assert.equal(new Set(temporaryFiles.map((entry) => fs.readFileSync(path.join(root, "out", entry), "utf8"))).size, 2);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("atomic writer reports restore failures and retains backup and temporary recovery paths", () => {
+  const root = atomicWriterFixture();
+  try {
+    const fileSystem = faultInjectedFileSystem({
+      renameSync(target, source, destination) {
+        if (source.includes(".tmp-") && destination.endsWith("b.txt")) {
+          throw new Error("injected install failure");
+        }
+        if (source.includes("a.txt.bak-") && destination.endsWith("a.txt")) {
+          throw new Error("injected restore failure");
+        }
+        target.renameSync(source, destination);
+      },
+    });
+    let error;
+    try {
+      writeArtifactsAtomically(root, [["out/a.txt", "new-a"], ["out/b.txt", "new-b"]], { fileSystem });
+    } catch (caught) {
+      error = caught;
+    }
+    assert.equal(error?.phase, "install");
+    assert.equal(error?.committed, false);
+    assert.ok(error?.rollbackErrors.some((message) => message.includes("a.txt.bak-") && message.includes("a.txt")));
+    const recoveryNames = error.recoveryArtifacts.map((filePath) => path.basename(filePath));
+    const backupName = recoveryNames.find((entry) => entry.includes("a.txt.bak-"));
+    const temporaryName = recoveryNames.find((entry) => entry.includes("a.txt.tmp-"));
+    assert.ok(backupName);
+    assert.ok(temporaryName);
+    assert.equal(fs.readFileSync(path.join(root, "out", backupName), "utf8"), "old-a");
+    assert.equal(fs.readFileSync(path.join(root, "out", temporaryName), "utf8"), "new-a");
+    assert.equal(fs.readFileSync(path.join(root, "out/b.txt"), "utf8"), "old-b");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("docs structure test is a gate in general CI and both docs deployment workflows", () => {
+  for (const workflow of ["ci.yml", "docs-staging.yml", "docs-production.yml"]) {
+    const source = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows", workflow), "utf8");
+    assert.match(source, /run: pnpm docs:structure:test/u, `${workflow} must run docs:structure:test`);
+  }
+});

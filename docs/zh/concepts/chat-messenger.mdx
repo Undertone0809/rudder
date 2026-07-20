@@ -1,106 +1,75 @@
 ---
 title: "Chat 和 Messenger"
-description: "用 Chat 通过对话推进任务，用 Messenger 找回分散在 Chat、issue、run、评审和决策里的注意力。"
+description: "先为任务选择 Chat 或 Issue，再用 Messenger 找回需要人处理的工作。"
 icon: "messages-square"
 keywords:
-  - "AI agent 协作"
-  - "agent team"
-  - "Rudder"
-  - "agent 工作管理"
-  - "AI agent 工作流"
+  - "Rudder Chat"
+  - "Rudder Messenger"
+  - "Chat 或 Issue"
 canonical: "https://docs.rudderhq.dev/zh/concepts/chat-messenger"
 "og:url": "https://docs.rudderhq.dev/zh/concepts/chat-messenger"
-
+hreflang_en: "https://docs.rudderhq.dev/concepts/chat-messenger"
+hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/chat-messenger"
 ---
 
-Chat 和 Messenger 是同一套沟通系统里的两个入口：Chat 通过持续对话把任务从请求推进到结果，Messenger 把人的注意力带回正确的 Chat、issue、run 或决策。
+Chat 用持续对话推进一件任务。Messenger 从整个 Rudder 中找出需要人回应的工作。两者属于同一套沟通系统，但职责不同。
 
-偏好通过持续对话工作时，用 Chat。整个工作系统里有事情需要你处理时，用 Messenger。
+以一份示例发布公告为例。负责人可以在 Chat 中请 Agent 起草，打开文件检查，再要求它缩短开头，最后直接接受结果。之后如果出现待评审事项、运行失败或阻塞，Messenger 会把负责人的注意力带回来。
 
-Chat 和 issue 是同等重要的一等任务界面。Chat 不只是正式工作开始前用来澄清需求的地方：你可以直接在对话中执行、调整并完成任务。从哪一个入口开始，取决于具体场景；把 Chat 转成 issue 始终是可选操作。
+<a id="chat-or-issue" />
+
+## 先选任务入口
+
+| 情况 | 从哪里开始 |
+| --- | --- |
+| 想在一段对话中探索、澄清、执行并不断调整 | Chat |
+| 需要指定负责人、跟踪依赖、显示状态或安排评审 | Issue |
+| 团队规则要求填写字段或进入共享队列 | Issue |
+| 一位负责人可以在同一段对话中判断结果 | Chat |
+
+Chat 和 Issue 是并列入口。Chat 不是正式工作开始前的候场区，任务耗时长或重要，也不代表必须创建 Issue。只有协作结构确实有用时，才创建或关联任务单。
+
+![Chat 中的 Issue 提案](../../images/chat-create-issue-proposal.png)
+
+## 让结果和证据留在任务旁边
+
+一段 Chat 可以保留请求、Agent 运行、后续修改和最终回答。文件与链接侧栏分成三类：
+
+- **Outputs**：Agent 确实创建，并且有附件或运行证据支持的产物
+- **Sources**：负责人提供的资料，以及本次运行可用的项目上下文
+- **References**：对话中引用或推荐，但并非 Agent 产出的外部内容
+
+回答里出现的普通链接属于参考资料，不会自动变成产物。侧栏只显示当前对话的内容，不会混入同一项目中其他 Chat 的文件。
+
+如果工作由 Issue 承载，产物和评审结论就应留在那条 Issue 上。Messenger 负责带人回到原记录，不再建立第二份决定记录。
+
+## Messenger 找回人的注意力
 
 ![Messenger 注意力界面](../../images/messenger-approvals.png)
 
-## 它们怎么配合
+Messenger 回答两个问题：现在什么需要我处理，我应该回到哪里行动？
 
-| 入口 | 用来做什么 | 下一步 |
-| --- | --- | --- |
-| Chat | 通过对话澄清、执行、调整并完成任务 | 继续留在 Chat，或在需要结构化协同时创建/关联 issue |
-| Messenger | 回复、issue 线程、失败运行、阻塞、评审、预算提醒和决策 | 回到关联 issue、run 或线程，留下清楚下一步 |
-
-边界很简单：Chat 推进工作。Messenger 让进行中的工作不丢失人的注意力。
-
-## 什么时候给 Chat 增加 issue 结构
-
-Chat 和 issue 是两种并列的任务工作方式，不是前后两个阶段。需要下面这些结构时，可以创建或关联 issue：
-
-- 明确 status、priority、dependencies 或 acceptance criteria
-- 下一步执行有一个可见 assignee
-- 有指定 reviewer 和结构化 review state
-- 团队可以筛选和管理的共享队列
-- 受治理流程要求填写的字段
-
-任务仍然可以继续在 Chat 中推进。创建 issue 是增加结构化协作能力，不是让任务取得“真实工作”身份。团队策略可以要求受治理的流程填写 issue 字段。
-
-Rudder 不会仅仅因为任务重要、耗时、成本高或已经可以执行，就建议把它转成 issue。需要 issue 提案时，请明确提出。
-
-![Chat issue 提案](../../images/chat-create-issue-proposal.png)
-
-## Agent 回复期间继续追问
-
-当前回复仍在运行时，如果你再发送消息，Rudder 会把它放进可见队列，而不是在同一个 Chat 里同时启动第二个回复。消息发送前，你可以编辑或删除队列里的追问。
-
-只有当前回复成功完成后，下一条追问才会自动发送。如果你停止回复或 run 失败，消息会继续留在队列中，供你检查、编辑或删除；Rudder 不会在一次中断的运行后静默执行它们。
-
-## 从 Chat 检查文件与链接
-
-Chat 的文件与链接侧栏是当前线程的紧凑索引，让你不用翻找消息记录也能看到。`Outputs`、`Sources` 和 `References` 是同级分类，统一使用图标、名称和数量组成的分类头。第一个可用分类固定在侧栏顶部，但不是父级，也不会再增加一层 `Work`：
-
-| 分类 | 包含什么 |
+| 提醒 | 应该回到 |
 | --- | --- |
-| Outputs | Agent 确实创建、并有附件或 run 证据支持的文件和 Library 产物 |
-| Sources | 你提供的文件、链接和 Library 资源，以及 project-scoped run 实际可用的 Project Context |
-| References | 对话中可见、被引用或推荐，但不是 agent 产出的外部网站 |
+| Agent 提问 | 原始 Chat 或关联 Issue |
+| Agent 运行失败 | 运行记录以及来源 Chat 或 Issue |
+| 工作阻塞 | 缺少输入或负责人的原始记录 |
+| 等待评审 | 带有产物的待评审 Issue |
+| 等待审批 | 对应操作所拥有的审批记录 |
 
-侧栏只显示当前对话里的工作，不会把同一 Project 下其他 Chat 的内容混进来。Agent 回复中的普通链接仍是 Reference，不会被宣称为 Output；Reference 也不会自动进入 Project Context。刷新或编辑回答后，过时的派生链接可以消失，但持久 Output 仍保持可检查。文件和链接仍从正常的 Chat 输入区添加；这个侧栏只负责检查和导航。
+人的注意力集中在 Messenger，但持久状态仍属于原始对象。Messenger 不是待办队列、通用聊天应用，也不能成为评审结论的唯一记录。
 
-你可以在 Side Panel 中打开支持的 issue、automation、Library 文件或目录、Chat 和 Browser 页面，在不离开当前页面的情况下检查或做轻量编辑。Side Panel 是 Rudder 共用的工作台，因此引用对象也可以在 Chat 或其他工作界面旁打开。
+## Agent 回复时又发了一条消息
 
-## Messenger 应该把你带回哪里
+当前回答还在运行时，新消息会进入可见队列，不会在同一个 Chat 中并行启动第二次回答。发送前，你可以编辑或删除这条消息。
 
-Messenger 回答一个很实际的问题：
-
-> 现在什么需要我的注意，它属于哪个原生工作对象？
-
-它应该把注意力信号变成下一步行动：
-
-| 注意力信号 | 持久下一步 |
-| --- | --- |
-| Agent 提问 | 回复，并把决定留在原始 Chat 或关联 issue 中 |
-| Run 失败 | 打开关联 Chat、issue 或 run，决定如何恢复 |
-| 工作阻塞 | 写清楚缺少什么输入或 owner |
-| 评审等待 | 接受、要求修改或标记 blocked |
-| Chat 生成 issue 提案 | 接受、编辑或拒绝这个可选的结构化工作项 |
-
-Messenger 不应该变成另一套任务系统。下一步应该回到原生承载它的 Chat、issue、run、review 或 approval。
-
-## 反模式
-
-不要把 Chat 或 Messenger 当成：
-
-- 隐藏 backlog
-- Chat、issue、run、review 或 approval 原生状态的替代品
-- 让执行证据失去持久来源对象的地方
-- 评审决定的唯一记录
-- 与 Rudder 工作对象脱节的通用聊天工具
-
-## 下一步
+只有当前回答成功结束，排队消息才会自动发送。如果你停止回答或运行失败，消息会留在队列中等待处理。这样，一次中断的运行不会悄悄执行后续指令。
 
 <CardGroup cols={2}>
-  <Card title="任务生命周期指南" icon="route" href="/zh/how-to/issue-lifecycle">
-    学习结构化状态、分配和评审如何工作。
+  <Card title="Issue（任务单）" icon="circle-check" href="/zh/concepts/issues">
+    理解持久状态、负责人、依赖和评审如何配合。
   </Card>
-  <Card title="任务" icon="circle-check" href="/zh/concepts/issues">
-    查看与 Chat 并列的结构化执行方式。
+  <Card title="创建第一个组织" icon="building-2" href="/zh/get-started/first-organization">
+    选择一个入口，完成一件小任务。
   </Card>
 </CardGroup>

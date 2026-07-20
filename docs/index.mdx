@@ -10,87 +10,70 @@ keywords:
   - "Rudder"
 canonical: "https://docs.rudderhq.dev"
 "og:url": "https://docs.rudderhq.dev"
-
+hreflang_en: "https://docs.rudderhq.dev"
+hreflang_zh: "https://docs.rudderhq.dev/zh"
 ---
 
-Agents that think, build, play, and learn from real work.
+<a id="example-release-work" />
 
-Rudder turns goals, tasks, chats, issues, agent runs, reviews, and feedback into a work loop for agent teams. It gives humans and agents a shared operating structure for moving work forward, running agents, reviewing outputs, controlling spend, and preserving the lessons that should make the next run better.
+Rudder's 0.5.0 release involved implementation, validation, review, and a final
+publication decision. The useful result was not just a finished agent run. The
+request, ownership, evidence, release artifacts, and review outcome remained
+connected, so a human could decide whether the release was ready.
 
-## What is Rudder?
+That is the kind of work Rudder organizes.
 
-Rudder helps teams assign, run, review, and improve AI agent work. It is for operators who want that work to remain connected to durable goals, tasks, evidence, budgets, and feedback instead of disappearing into one-off prompts.
+## A shared record for agent work
 
-Use Rudder when you need:
+Rudder is open-source software for assigning, running, reviewing, and improving
+AI agent work. It connects goals, Chat, Issues, agents, runs, outputs, reviews,
+budgets, and reusable instructions without replacing the runtime that performs
+the work.
 
-- conversational Chat and structured issue workflows for agent execution
-- local agent runtimes such as Codex, Claude Code, shell processes, or webhooks
-- reviewable transcripts, comments, artifacts, and close-out evidence
-- budget and run history visibility for agent work
-- reusable skills and feedback loops that make future runs better
+An Agent is a durable team member with a role and configuration. An Agent Run
+is one bounded attempt by that Agent. The runtime, such as Codex, Claude Code,
+a shell process, or a webhook, is the execution environment Rudder invokes.
 
 ![Rudder workspace dashboard](./images/board-overview.png)
 
-## Why Rudder exists
+## Why the work record matters
 
-Agent work stops being useful when it disappears into one long-running prompt. The hard part is not only getting an agent to do a task; it is knowing who owns the work, why it exists, what context the agent used, what changed, who reviewed it, and when a human needs to step in.
+A successful response is easy to lose in a terminal or a long conversation.
+Rudder keeps the surrounding decisions inspectable:
 
-Rudder turns the operating habits of human teams into product infrastructure for agent work: goals, projects, conversational Chat, structured issue ownership, Messenger attention, Calendar history, skills, budgets, and review loops.
+- the goal and project that explain why the work exists
+- the Chat or Issue where the request and context live
+- the Agent Run and transcript that show what happened
+- files, links, screenshots, or other outputs produced by the work
+- the review decision, blocker, approval, and next owner
 
-## Choose your path
+Use Chat when you want to clarify and complete a task through conversation.
+Use an Issue when the work needs a named owner, dependencies, explicit status,
+or a review path. Both can lead to a real result.
 
-Use these docs by the job you are trying to finish:
+## Start with one task
 
-| If you want to... | Start with |
-| --- | --- |
-| Install Rudder and open the app | [Quick Start](/get-started/installation) |
-| See the first end-to-end workflow | [Create Your First Organization](/get-started/first-organization) |
-| Understand the product model | [Core Concepts](/concepts/overview) |
-| Turn strategy into agent work | [Goals, Projects, And Issues](/concepts/goals-projects-issues) |
-| Understand how agents execute | [Agents](/concepts/agents) and [Issues](/concepts/issues) |
-| Move tasks forward conversationally and handle attention | [Chat and Messenger](/concepts/chat-messenger) |
-| Browse and operate web content without leaving Rudder | [Built-in Browser](/concepts/built-in-browser) |
-| See how agent work filled the week | [Calendar](/concepts/calendar) |
-| Run repeatable agent work | [Automations](/concepts/automations) |
-| Review outputs and preserve lessons | [Reviews, feedback, and learning](/concepts/reviews-feedback-learning) |
-| Extend Rudder at the edges | [Plugins](/concepts/plugins) |
+Install Rudder, then choose one bounded part of your work. Keep the first loop
+to one request, one run, one inspectable output, and one review decision. This is
+the same connected path that made the 0.5.0 release record useful.
 
-## What you can do
+```bash
+npx @rudderhq/cli@latest start
+```
 
-- Create an organization with a concrete goal.
-- Use the default agent for the first loop; add clear agents when you need new roles.
-- Move work through Chat or issues as parallel task surfaces; use issue structure when explicit ownership, state, dependencies, or review helps.
-- Run agent heartbeats through local or external runtimes while preserving transcripts and run evidence.
-- Use Chat to execute tasks conversationally and Messenger to keep replies, blockers, failed runs, and decision requests visible.
-- Use the Desktop Built-in Browser for adjacent web work and bounded agent browser actions without handing raw browser credentials to the runtime.
-- Use Calendar to inspect when agents actually ran, which issues they touched, and where human checkpoints happened.
-- Use Automations for repeatable work that starts from a schedule, manual dispatch, API, or webhook.
-- Use reviews and feedback to turn accepted work into better future runs.
-- Use plugins to add integrations and specialized capabilities without changing Rudder's core workflows.
-- Track budgets, blockers, outputs, and operating state from the issue board.
-
-## A typical flow
-
-1. Create an organization.
-2. Define the organization goal.
-3. Use the default agent, or create an agent with a clear role and runtime.
-4. Start the task in Chat or create an issue, depending on your preferred work style.
-5. Let agents work through chat turns or heartbeat invocations.
-6. Review outputs, Messenger attention, Calendar history, activity, spend, and feedback from the board.
-
-![Rudder issue board](./images/first-organization-issue-board.png)
-
-## Next steps
+Open the app, create an organization, and give the default Agent your request
+in Chat. If the work needs a named reviewer or tracked dependencies, create an
+Issue instead.
 
 <CardGroup cols={2}>
   <Card title="Quick Start" icon="download" href="/get-started/installation">
-    Start the local app and CLI.
+    Install the local app and recognize a healthy startup.
   </Card>
   <Card title="First Organization" icon="building-2" href="/get-started/first-organization">
-    Walk through the first useful human-agent work loop.
+    Complete one request, run, result, and review loop.
   </Card>
   <Card title="Core Concepts" icon="book-open" href="/concepts/overview">
-    Learn how Rudder models organizations, agents, issues, chat, Messenger, Calendar, and skills.
+    Learn the product model in a five-step path.
   </Card>
   <Card title="GDPval Harness Benchmark" icon="chart-bar" href="/benchmarks/gdpval-harness">
     Read the protocol and results from a 10-task exploratory comparison of Rudder, Codex CLI, and Claude Code.
@@ -109,5 +92,8 @@ Use these docs by the job you are trying to finish:
   </Card>
   <Card title="Approvals, budgets, and activity" icon="sliders-horizontal" href="/concepts/approvals-budgets-activity">
     Understand approvals, budget enforcement, activity history, run summaries, Calendar, and Inbox.
+  </Card>
+  <Card title="Chat and Messenger" icon="messages-square" href="/concepts/chat-messenger">
+    Choose a work surface and recover items needing attention.
   </Card>
 </CardGroup>

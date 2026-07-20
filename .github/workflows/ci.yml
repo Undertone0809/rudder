@@ -112,6 +112,10 @@ jobs:
       - name: Product logic registry tests
         run: pnpm product-logic:test
 
+      - name: Docs structure
+        if: matrix.os == 'ubuntu-latest' && matrix.test == 'full'
+        run: pnpm docs:structure:test
+
       - name: Unit tests
         if: matrix.test == 'full'
         run: pnpm test:run --maxWorkers=1

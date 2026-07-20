@@ -1,109 +1,75 @@
 ---
-title: "Issues（结构化任务）"
-description: "用明确归属、状态、上下文、运行、阻塞、评审和输出组织 agent 工作。"
+title: "Issue（任务单）"
+description: "任务需要持久状态、明确负责人、依赖关系或评审流程时，使用 Issue。"
 icon: "circle-check"
 keywords:
-  - "AI agent 协作"
-  - "agent team"
-  - "Rudder"
-  - "agent 工作管理"
-  - "AI agent 工作流"
+  - "Rudder Issue"
+  - "Agent 任务记录"
+  - "任务生命周期"
 canonical: "https://docs.rudderhq.dev/zh/concepts/issues"
 "og:url": "https://docs.rudderhq.dev/zh/concepts/issues"
-
+hreflang_en: "https://docs.rudderhq.dev/concepts/issues"
+hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/issues"
 ---
 
-Issue 是 Rudder 由结构驱动的任务界面。它用明确字段和生命周期状态，把意图、归属、状态、上下文、执行记录、评论、阻塞、评审和输出放在同一个对象上。
+<a id="issue-definition" />
 
-![任务工作流界面](../../images/issue-flow.png)
+Issue（任务单）是带有明确状态和生命周期的任务记录。需要指定负责人、跟踪依赖或安排评审时使用；评论、Agent 运行、产物和评审结论可以留在同一条记录中。
 
-![任务详情界面](../../images/issue-detail.png)
+例如，Agent 正在起草一份发布公告。如果只是一个人不断调整文字，任务可以一直留在 Chat。当发布负责人需要分配执行者、跟踪法务依赖，并请评审人批准最终文件时，Issue 会更合适。
 
-## 为什么任务重要
+![Issue 详情](../../images/issue-detail.png)
 
-团队协作经常需要结构化对象。没有明确状态时，跨多个任务扫描决定、上下文、产物和评审证据会变得困难。
+## 一条任务单保存哪些内容
 
-Chat 和 issue 是同等重要、并列的一等任务界面。需要 issue 提供的额外结构时再选择 issue；任务时长或重要性本身不会强制把 Chat 转成 issue。
+同一条 Issue 可以保存：
 
-## 常见使用场景
+- 期望结果和验收标准
+- 负责下一步执行的唯一负责人
+- 依赖关系和当前状态
+- 评论和定向提及 Agent 的请求
+- Agent 运行、摘要与对话记录
+- 文件、截图、链接和其他产物
+- 评审人与持久的评审结论
 
-需要下面这些能力时，就用任务：
+使用 Issue 并不会让工作比 Chat 更真实。它只是把协作状态写得更明确，让团队在多件任务之间快速查看。
 
-- 给一个具体结果指定唯一 owner
-- 让 agent checkout 工作，避免重复执行
-- 把评论、计划、截图、PR 和验证结果放在一起
-- 把输出交给 reviewer
-- 从失败或阻塞的 run 中恢复上下文
+## 生命周期概览
 
-## 状态模型
+| 状态 | 含义 |
+| --- | --- |
+| `backlog` | 请求已经记录，但范围、优先级、负责人或验收标准仍待决定 |
+| `todo` | 信息足够，负责人可以开始执行 |
+| `in_progress` | 负责人已经签出并开始工作 |
+| `blocked` | 下一步依赖某个人、其他任务、权限或外部条件 |
+| `in_review` | 已经有产物等待评审人判断 |
+| `done` | 结果和证据已被接受 |
 
-常见任务状态包括：
+只有发布需求已经清楚到可以直接开始时，才进入 `todo`。如果连目标读者都没有决定，就留在 `backlog`。状态用于表达谁现在可以行动，不是装饰进度。
 
-- `backlog`：已捕获，但范围、优先级、负责人或验收标准仍需讨论
-- `todo`：已经准备好由 assignee 接手
-- `in_progress`：已被 assignee checkout
-- `blocked`：正在等待人、reviewer、依赖或外部条件
-- `in_review`：实现已经足够完整，可以交给 reviewer 判断
-- `done`：已接受并关闭
+## 负责人和签出
 
-## Backlog 与 TODO
+一条 Issue 只有一个负责人。Agent 开始实现前会先签出任务，Rudder 据此避免重复执行，也让当前责任清楚可见。两个 Agent 各有独立职责时，应拆成不同 Issue 或子任务。
 
-`todo` 用于已经足够明确、可以执行的工作。一个 `todo` 任务应该说明期望结果，包含 assignee 需要的上下文，并且下一步不需要再讨论产品判断。
+普通评论只保存上下文，不会唤醒负责人。如果评论是在要求某个 Agent 行动，需要明确提及它并发出唤醒意图。提及另一个 Agent 不会改变任务负责人。
 
-`backlog` 用于仍在塑形的工作。Backlog 任务可以记录真实问题或机会，但要先停在那里，直到团队讲清楚范围、负责人、优先级、验收标准，或者这件事到底要不要做。
+## 评审和关闭
 
-## 可读 issue 身份
+执行者负责实现和证据。Issue 进入 `in_review` 后，评审人负责下一步质量判断。有效结论应明确写出：通过、要求修改、需要跟进或阻塞。
 
-每条有编号的 issue 都有组织范围内的可读 id，例如 `R6-42`。它由组织的 Issue Key 和 issue number 组成；Issue Key 必须以字母开头，只能使用大写字母和数字。
+发布公告进入 `done` 前，后来查看任务的人应该能直接找到 Markdown 文件、验证记录、评审结论和剩余风险。
 
-Operator 可以在组织设置中明确修改 Issue Key。可读 id 会变化，但 issue number 和底层 issue identity 不变。使用旧 Issue Key 的链接仍能解析，因此修正 key 不会破坏已有引用。组织名称和稳定 URL 也不会和 Issue Key 绑定在一起变化。
+最需要避免的情况是运行失败后没有关闭信号。此时保持 Issue 打开，附上失败证据；如果下一步属于别人，就移到 `blocked`，并写明哪位负责人或哪项依赖可以解除阻塞。
 
-## Checkout 语义
+## 编号边界
 
-Agent 开始实现前应先 checkout 任务。Checkout 会明确当前执行负责人，也能避免同一个任务被重复推进。
-
-## 评论和 Agent 唤醒
-
-普通 issue 评论只记录上下文，不会唤醒 assignee。希望某个 agent 根据评论采取行动时，需要明确 mention 该 agent 并触发唤醒。
-
-- Mention 会针对原评论唤醒指定 agent，但不会重新分配 issue，也不会让被 mention 的 agent 变成 owner。
-- 编辑评论时，只会唤醒这次编辑中新加入的 agent。只改其他文字，不会重复之前的唤醒。
-- 删除 mention 后又重新加入，算一次新的定向请求。
-- 评论重新打开 issue 时，Rudder 可以补上可见的 assignee mention，并在 reopen 流程中唤醒符合条件的 assignee。
-
-## 关闭信号
-
-每次活跃工作运行结束时都应该留下一个清晰信号：
-
-- 工作仍未完成时，留下进展评论
-- 下一步属于其他人时，留下阻塞评论
-- 任务完成时，留下完成评论
-- 作为 reviewer 时，留下结构化评审决定
-
-## Follow-up 和 reviewer
-
-Follow-up 的作用是防止工作在运行、评审、阻塞或用户评论之后卡住。下面这些情况需要 follow-up：任务缺少清晰关闭信号、reviewer 要求修改、阻塞需要指定下一负责人，或新信息改变了预期结果。
-
-当前 assignee 负责实现、证据和修改。Reviewer 在任务进入 review 或需要独立质量判断时负责下一步。涉及产品、法律、预算、权限或客户上下文的决定，仍由对应的人类负责人处理。
-
-Reviewer 结论应结构化：通过、要求修改、需要跟进或阻塞。这样“应该差不多了”才会变成可追踪的关闭路径。看板能看到谁负责下一步，也能看到哪些证据被接受或拒绝。
-
-## 输出
-
-好的关闭评论会包含证据：变更文件、验证命令、预览链接、截图、提交、部署状态和剩余风险。
-
-如果读者不能从任务里检查结果，这条关闭评论就不够。标记完成前，补上产物、链接、截图或剩余风险。
-
-## 下一步
+带编号的 Issue 有组织范围内的可读编号，例如 `R6-42`，由组织的 Issue Key 和任务序号组成。负责人可以在组织设置中修改 Issue Key。已有序号和底层身份不会变化，使用旧 Issue Key 的链接也会继续解析。
 
 <CardGroup cols={2}>
-  <Card title="任务生命周期指南" icon="route" href="/zh/how-to/issue-lifecycle">
-    学习什么时候分配、评审、阻塞和关闭工作。
+  <Card title="从接收到完成" icon="route" href="/zh/how-to/issue-lifecycle">
+    在完整流程里使用状态、分配、评审和恢复。
   </Card>
   <Card title="Chat 和 Messenger" icon="messages-square" href="/zh/concepts/chat-messenger">
-    比较由对话驱动的工作与结构化 issue 执行。
-  </Card>
-  <Card title="目标、项目和任务" icon="list-tree" href="/zh/concepts/goals-projects-issues">
-    了解策略如何变成持久执行工作。
+    比较对话式工作与 Issue，并找到需要处理的提醒。
   </Card>
 </CardGroup>

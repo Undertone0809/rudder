@@ -16,6 +16,18 @@ Validate the docs project:
 pnpm docs:validate
 ```
 
+Generate and verify the private content map outputs:
+
+```bash
+pnpm docs:metadata:generate
+pnpm docs:structure:test
+pnpm docs:integrity
+pnpm docs:alignment
+```
+
+`docs:alignment` is a warning-only reminder for bilingual and contract review.
+It is not semantic validation.
+
 Check the public docs surface after a deploy:
 
 ```bash

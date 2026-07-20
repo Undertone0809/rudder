@@ -1,127 +1,75 @@
 ---
 title: "核心概念"
-description: "Rudder 如何组织 agent 工作。"
+description: "通过一件任务理解 Rudder 中的组织、任务入口、Agent、运行记录、产物和评审。"
 icon: "book-open"
 keywords:
-  - "AI agent 协作"
-  - "agent team"
-  - "Rudder"
-  - "agent 工作管理"
-  - "AI agent 工作流"
+  - "Rudder 核心概念"
+  - "AI Agent 团队"
+  - "Agent 工作管理"
 canonical: "https://docs.rudderhq.dev/zh/concepts/overview"
 "og:url": "https://docs.rudderhq.dev/zh/concepts/overview"
-
+hreflang_en: "https://docs.rudderhq.dev/concepts/overview"
+hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/overview"
 ---
 
-Rudder 把目标、任务、Chat、issue、agent run、review 和 feedback 串成 agent team 的工作循环。它的产品模型贴近人类团队协调工作、沉淀经验的方式。
+假设一个小团队正在准备发布公告。人先定目标，Agent 起草文件，另一位成员评审，最后还要确保 Markdown 文件随时找得到。Rudder 给这条工作链上的每个环节安排了明确位置。
 
-## 场景地图
+## 一件任务如何穿过 Rudder
 
-| 当你需要... | 使用 |
+**组织**是团队的工作空间，组织目标说明这次发布为什么重要。**项目**可以把公告和同一次发布的其他任务、资料及日期放在一起。
+
+负责人可以先在 **Chat** 中提出要求，通过对话逐步修改公告。如果工作需要明确负责人、跟踪依赖、显示状态或安排评审，就使用 **Issue**。
+
+**Agent** 是长期承担某类职责的团队成员。**Agent 运行**是这个 Agent 的一次有边界执行。**运行环境**才是 Rudder 为这次执行调用的工具或服务。三者彼此相关，但不是一回事。
+
+一次运行会留下摘要和对话记录等证据。写好的公告作为产物留在 Chat 或 Issue 旁边。评审结论也回到同一条工作记录，团队因此能看见哪些内容已被接受、哪些内容还要改。
+
+![Rudder 总览](../../images/board-overview.png)
+
+## 常用入口各自解决什么问题
+
+| 需要解决的问题 | 对应入口 |
 | --- | --- |
-| 定义组织为什么存在 | 组织目标 |
-| 组织一组相关交付工作 | 项目 |
-| 通过持续对话推进任务 | Chat |
-| 用明确结构协调任务 | Issue |
+| 说明团队的方向 | 组织目标 |
+| 汇总相关任务和上下文 | 项目 |
+| 通过持续对话推进工作 | Chat |
+| 跟踪负责人、依赖、状态或评审 | Issue |
+| 查看谁执行了一次任务以及过程如何 | Agent 和运行记录 |
+| 找到等待回复、阻塞、失败运行和待决事项 | Messenger |
+| 按时间查看运行与人工检查点 | Calendar |
+| 复用稳定的工作步骤 | 技能 |
+| 定时或按事件重复执行工作 | 自动化 |
+| 把资料和产物放在合适的文件位置 | 工作区和 Library |
 | 在当前工作旁边完成网页研究和操作 | 内置 Browser |
-| 运行一次有边界的 agent 工作 | Agent heartbeat |
-| 保存执行证据 | 评论、活动、transcript 和工作产物 |
-| 找回分散在工作中的注意力 | Messenger |
-| 按时间检查工作 | Calendar |
-| 复用操作知识 | 技能 |
-| 让文件和输出可查找 | 工作区 |
-| 运行重复工作 | 自动化 |
-| 管理预算、approval 和注意力 | Rudder |
-| 在边缘扩展产品 | Plugins |
-| 保存未来 run 应该学习的东西 | Feedback 和 lessons |
+| 管理审批、预算、成本和活动记录 | 审批、预算和活动记录 |
+| 保存评审结论和以后可复用的经验 | 评审、反馈和学习 |
+| 添加集成和专门能力 | 插件 |
 
-## 组织
+**Overview** 汇总组织近况，让负责人看到工作在哪里推进、在哪里等待。它只是入口，不替代原始 Chat、Issue、运行记录、评审或审批。
 
-组织拥有目标、agent、汇报结构、项目、Chat、issue、知识、预算和输出。一个 Rudder 实例可以管理多个组织。
+## 什么时候值得增加结构
 
-![Rudder 仪表盘概览](../../images/board-overview.png)
+Rudder 不要求每件事都用上所有对象。一轮短文案修改可以一直留在 Chat。涉及多项依赖和独立评审人的发布工作，更适合拆成一个或多个 Issue。多件工作共享结果或资料时，再建立项目。只有触发条件和结果去向已经稳定时，才值得使用自动化。
 
-## 目标和项目
+判断标准很简单：保留足够的信息，让下一步和最终结果都能被检查；工作不需要的字段和对象，不必为了完整而创建。
 
-目标解释工作为什么存在。项目把相关执行、资源、工作区、目标日期、负责人 agent、Chat 对话和 issue 队列放在一起。
+<a id="learning-path" />
 
-## Agents
+## 建议阅读顺序
 
-Agent 是稳定的团队成员。每个 agent 都有角色、汇报线、运行时类型、运行时配置、能力描述、预算和可复用操作说明。
+这条路径不依赖侧边栏顺序：
 
-## 任务
-
-Chat 和 issue 都能承载任务。Chat 通过持续对话组织执行；`issue` 用明确字段把归属、上下文、进展、评论、运行、阻塞、评审和产物放在同一个结构化对象上。
-
-## Chat 和 Messenger
-
-Chat 是由对话驱动的任务界面，可以澄清、执行、调整并完成工作；issue 是与它并列的结构化任务界面。Messenger 把 Chat、issue 线程、失败运行、阻塞和决策请求放进同一个注意力入口。
-
-## 内置 Browser
-
-Rudder Desktop 可以把普通网页链接打开在当前工作旁边的 Browser tab。受支持的本地 agent 可以使用范围受限的 Browser tools，不会因此得到 raw cookies、credentials 或任意页面脚本能力。
-
-## Calendar
-
-Calendar 显示 agent runs、issue 工作和人类检查点如何占据时间。
-
-## 工作区
-
-工作区是 agent 读取项目资源、产出共享内容的文件系统位置。项目仓库、组织产物、计划和 agent 私有文件都应该放在对应位置。
-
-## 技能
-
-技能为 agent 提供可复用的操作说明，用来稳定执行重复工作流。
-
-## 自动化
-
-自动化从 schedule、manual dispatch、API 或 webhook 运行重复 agent 工作。每次 run 都保留 dispatch state、result state，以及 issue 或 chat output 的链接。
-
-## Rudder
-
-Rudder让 approvals、budgets、activity、run intelligence、dashboard health、Calendar history 和 Inbox attention 可见。
-
-## Plugins
-
-Plugins 添加 capabilities、jobs、webhooks 和 UI surfaces，但不接管 organization scope、issues、approvals、budgets 或 runs 等核心规则。
-
-## 治理
-
-Rudder 通过 issue 分配、预算追踪、活动日志、reviewer 交接、feedback 和显式学习路径，让自治工作可见、可管理。
-
-![预算和成本可见性](../../images/cost-visibility.png)
-
-## 继续了解模型
+1. [创建第一个组织](/zh/get-started/first-organization)，完成一件小任务。
+2. [选择 Chat 或 Issue](/zh/concepts/chat-messenger)，确定适合自己的推进方式。
+3. [理解 Agent 和 Agent 运行](/zh/concepts/agents)，分清运行环境的边界。
+4. 需要明确协作时，按[任务生命周期](/zh/how-to/issue-lifecycle)从接收推进到完成。
+5. [评审 Agent 工作](/zh/how-to/review-agent-work)，把结果、证据和结论留在一起。
 
 <CardGroup cols={2}>
-  <Card title="目标、项目和任务" icon="list-tree" href="/zh/concepts/goals-projects-issues">
-    了解策略如何变成持久执行工作。
+  <Card title="上一页：创建第一个组织" icon="arrow-left" href="/zh/get-started/first-organization">
+    先走完第一条工作链，再逐个理解概念。
   </Card>
-  <Card title="Agents" icon="bot" href="/zh/concepts/agents">
-    理解角色、运行时、heartbeat 和汇报线。
-  </Card>
-  <Card title="Chat 和 Messenger" icon="messages-square" href="/zh/concepts/chat-messenger">
-    从请求推进到结果，并把人的注意力带回对应工作。
-  </Card>
-  <Card title="内置 Browser" icon="globe" href="/zh/concepts/built-in-browser">
-    在清楚的本地信任边界内完成 operator 和 agent 网页工作。
-  </Card>
-  <Card title="Calendar" icon="calendar-days" href="/zh/concepts/calendar">
-    按时间查看 agent 运行历史和人的检查点。
-  </Card>
-  <Card title="工作区" icon="folder-tree" href="/zh/concepts/workspaces">
-    把项目资源和持久输出放在可预测的位置。
-  </Card>
-  <Card title="自动化" icon="workflow" href="/zh/concepts/automations">
-    用明确 trigger 和 output routing 运行重复工作。
-  </Card>
-  <Card title="Review、feedback 和 learning" icon="message-square-check" href="/zh/concepts/reviews-feedback-learning">
-    把已接受工作变成未来 run 的改进。
-  </Card>
-  <Card title="Rudder" icon="sliders-horizontal" href="/zh/concepts/approvals-budgets-activity">
-    查看 approvals、budgets、activity、runs、Calendar 和 Inbox。
-  </Card>
-  <Card title="Plugins" icon="plug" href="/zh/concepts/plugins">
-    在不削弱核心边界的前提下扩展 Rudder。
+  <Card title="下一页：目标、项目和任务" icon="arrow-right" href="/zh/concepts/goals-projects-issues">
+    了解方向如何变成一组可持续推进的工作。
   </Card>
 </CardGroup>

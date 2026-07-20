@@ -247,6 +247,26 @@
   },
   "redirects": [
     {
+      "source": "/en/home",
+      "destination": "/"
+    },
+    {
+      "source": "/en/en",
+      "destination": "/"
+    },
+    {
+      "source": "/en/manifest.json",
+      "destination": "/site.webmanifest"
+    },
+    {
+      "source": "/en/concepts/messenger-approvals",
+      "destination": "/concepts/chat-messenger"
+    },
+    {
+      "source": "/en/zh/concepts/messenger-approvals",
+      "destination": "/zh/concepts/chat-messenger"
+    },
+    {
       "source": "/home",
       "destination": "/"
     },

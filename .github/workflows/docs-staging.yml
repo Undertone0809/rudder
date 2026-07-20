@@ -8,6 +8,9 @@ on:
       - ".github/workflows/docs-staging.yml"
       - "docs/**"
       - "package.json"
+      - "scripts/docs-content-map.mjs"
+      - "scripts/docs-content-map.test.mjs"
+      - "scripts/docs-content-map.yml"
       - "scripts/docs-static-search.js"
       - "scripts/postprocess-docs-export.mjs"
   workflow_dispatch:
@@ -50,6 +53,12 @@ jobs:
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
 
+      - name: Test docs structure
+        run: pnpm docs:structure:test
+
+      - name: Verify generated docs metadata
+        run: node scripts/docs-content-map.mjs integrity
+
       - name: Validate docs
         working-directory: docs
         run: PUPPETEER_SKIP_DOWNLOAD=1 npx -y mint@4.2.637 validate
@@ -65,32 +74,7 @@ jobs:
           node scripts/postprocess-docs-export.mjs "$RUNNER_TEMP/rudder-docs-export"
           mkdir -p "$RUNNER_TEMP/rudder-docs-export/.vercel"
           printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > "$RUNNER_TEMP/rudder-docs-export/.vercel/project.json"
-          cat > "$RUNNER_TEMP/rudder-docs-export/vercel.json" <<'JSON'
-          {
-            "redirects": [
-              {
-                "source": "/home",
-                "destination": "/",
-                "permanent": true
-              },
-              {
-                "source": "/en",
-                "destination": "/",
-                "permanent": true
-              },
-              {
-                "source": "/en/:path*",
-                "destination": "/:path*",
-                "permanent": true
-              },
-              {
-                "source": "/manifest.json",
-                "destination": "/site.webmanifest",
-                "permanent": true
-              }
-            ]
-          }
-          JSON
+          cp docs/vercel.staging.redirects.json "$RUNNER_TEMP/rudder-docs-export/vercel.json"
 
       - name: Deploy to Vercel preview
         id: deploy

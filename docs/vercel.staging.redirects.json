@@ -1,0 +1,59 @@
+{
+  "redirects": [
+    {
+      "source": "/en/home",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/en/en",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/en/manifest.json",
+      "destination": "/site.webmanifest",
+      "permanent": true
+    },
+    {
+      "source": "/en/concepts/messenger-approvals",
+      "destination": "/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
+      "source": "/en/zh/concepts/messenger-approvals",
+      "destination": "/zh/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
+      "source": "/home",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/en",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/en/:path*",
+      "destination": "/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/manifest.json",
+      "destination": "/site.webmanifest",
+      "permanent": true
+    },
+    {
+      "source": "/concepts/messenger-approvals",
+      "destination": "/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
+      "source": "/zh/concepts/messenger-approvals",
+      "destination": "/zh/concepts/chat-messenger",
+      "permanent": true
+    }
+  ]
+}

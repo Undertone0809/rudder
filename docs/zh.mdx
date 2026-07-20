@@ -1,99 +1,82 @@
 ---
 title: "Rudder"
-description: "Rudder 是用于分配、运行、评审和改进 AI agent 工作的开源软件，把目标、Chat、issue、agent run、review、预算、工作区和 feedback 串成可复用的工作循环。"
+description: "Rudder 为人和 Agent 提供一个共同工作空间，让任务从目标走向可检查、可评审的结果。"
 icon: "/favicon.svg"
 keywords:
-  - "AI agent team"
+  - "AI Agent 协作"
+  - "Agent 工作管理"
   - "Rudder"
-  - "agent 工作管理"
-  - "agent 协作平台"
-  - "自我成长的 agent team"
 canonical: "https://docs.rudderhq.dev/zh"
 "og:url": "https://docs.rudderhq.dev/zh"
-
+hreflang_en: "https://docs.rudderhq.dev"
+hreflang_zh: "https://docs.rudderhq.dev/zh"
 ---
 
-让 Agent 像人类队友一样思考、创造、探索，并在真实工作中持续成长。
+<a id="example-release-work" />
 
-Rudder 把目标、任务、Chat、issue、agent run、review 和 feedback 串成 agent team 的工作循环。它给人和 agent 一套共享的工作结构，用来推进工作、运行 agent、评审输出、控制花费，并把能让下一次 run 变好的经验保留下来。
+Rudder 0.5.0 的发布经过了实现、验证、评审和最后的发布决定。真正有用的结果不只是某次 Agent 运行顺利结束，而是需求、负责人、验证证据、发布产物和评审结论都留在了一条可追溯的工作链上，人可以据此判断是否应该发布。
 
-## Rudder 为什么存在
+Rudder 组织的就是这类工作。
 
-当 agent 工作被塞进一条长 prompt 里，团队很快就看不清发生了什么。你需要知道谁负责、为什么做、用了哪些上下文、结果在哪里、谁评审过，以及什么时候该人介入。
+## Agent 工作需要共同记录
 
-Rudder 把这些协作习惯做成产品里的基础对象：目标、项目、issue、agent run、Chat、Messenger、Calendar、技能、预算、review 和 feedback。
+Rudder 是开源的 Agent 团队协作平台。它把目标、Chat、Issue、Agent、运行记录、产物、评审、预算和可复用指令连在一起，但不替代真正执行工作的运行环境。
 
-## 按场景选择入口
+Agent 是有固定职责和配置的团队成员。Agent 运行是它的一次有边界的执行。Codex、Claude Code、本地进程或 webhook 才是被 Rudder 调用的运行环境。
 
-先看你要做什么：
+![Rudder 工作空间概览](../images/board-overview.png)
 
-| 如果你想... | 从这里开始 |
-| --- | --- |
-| 安装 Rudder 并打开应用 | [快速开始](/zh/get-started/installation) |
-| 走通第一条端到端流程 | [创建第一个组织](/zh/get-started/first-organization) |
-| 理解产品模型 | [核心概念](/zh/concepts/overview) |
-| 把策略变成 agent 工作 | [目标、项目和任务](/zh/concepts/goals-projects-issues) |
-| 理解 agent 如何执行 | [Agents](/zh/concepts/agents) 和 [任务](/zh/concepts/issues) |
-| 通过对话推进任务并处理注意力 | [Chat 和 Messenger](/zh/concepts/chat-messenger) |
-| 不离开 Rudder 完成网页操作 | [内置 Browser](/zh/concepts/built-in-browser) |
-| 看 agent 一周实际做了什么 | [Calendar](/zh/concepts/calendar) |
-| 运行重复 agent 工作 | [自动化](/zh/concepts/automations) |
-| Review 输出并沉淀经验 | [Review、feedback 和 learning](/zh/concepts/reviews-feedback-learning) |
-| 在边缘扩展 Rudder | [Plugins](/zh/concepts/plugins) |
+## 为什么要保留工作链
 
-## 你可以做什么
+一次漂亮的回答很容易淹没在终端或长对话里。Rudder 会把前因后果放在可检查的位置：
 
-- 创建一个带有明确目标的组织。
-- 使用默认 agent 跑通第一条流程；需要新角色时，再创建职责清楚的 agent。
-- 把 Chat 和 issue 作为并列任务工作面；需要明确 owner、状态、依赖或 review 时，再使用 issue 结构。
-- 通过本地或外部运行时触发 agent heartbeat，保留 transcript 和运行证据。
-- 使用 Chat 通过对话执行任务，并用 Messenger 集中处理回复、阻塞、失败运行和决策请求。
-- 使用 Desktop 内置 Browser 在 Rudder 旁边处理网页工作，并让 agent 通过受限工具操作，而不是直接获得浏览器凭据。
-- 用 Calendar 查看 agent 实际运行了多久、做了哪些 issue、人的检查点在哪里。
-- 用 Automations 运行有明确 trigger 和 output path 的重复工作。
-- 用 review 和 feedback 把已接受输出变成未来 run 的改进。
-- 用 plugins 添加集成和专门能力，同时保留核心工作流边界。
-- 从 issue 看板跟踪预算、阻塞、输出和运行状态。
+- 目标和项目说明为什么要做
+- Chat 或 Issue 保存请求与上下文
+- Agent 运行和对话记录说明执行过程
+- 文件、链接、截图等产物呈现结果
+- 评审结论、阻塞、审批和下一位负责人说明接下来怎么办
 
-## 典型流程
+想通过持续对话澄清、调整并完成任务时，用 Chat。需要指定负责人、跟踪依赖、显示状态或安排评审时，用 Issue。两种入口都能完成真实工作。
 
-1. 创建组织。
-2. 定义组织目标。
-3. 使用默认 agent，或创建一个角色和 runtime 清楚的 agent。
-4. 根据偏好的工作方式，在 Chat 中开始任务或创建 issue。
-5. 让 agent 通过 Chat turn 或 heartbeat 推进工作。
-6. 从看板查看输出、Messenger 注意力、Calendar 历史、活动、花费和 feedback。
+## 从一件小事开始
 
-![Rudder issue 看板](../images/first-organization-issue-board.png)
+先安装 Rudder，再从自己的工作里选一个边界清楚的部分。第一次只走完一个请求、一次运行、一个可检查的产物和一次评审决定。这正是 0.5.0 发布记录能够发挥作用的同一条工作链。
 
-## 下一步
+```bash
+npx @rudderhq/cli@latest start
+```
+
+打开应用，创建组织，然后在 Chat 中把你的请求交给默认 Agent。如果这件事需要指定评审人或跟踪依赖，就创建 Issue。
 
 <CardGroup cols={2}>
   <Card title="快速开始" icon="download" href="/zh/get-started/installation">
-    启动本地应用并准备 CLI。
+    安装本地应用，并确认启动是否正常。
   </Card>
-  <Card title="第一个组织" icon="building-2" href="/zh/get-started/first-organization">
-    走通第一条有用的人类-agent 工作循环。
+  <Card title="创建第一个组织" icon="building-2" href="/zh/get-started/first-organization">
+    走完请求、运行、结果和评审组成的第一条工作链。
   </Card>
   <Card title="核心概念" icon="book-open" href="/zh/concepts/overview">
-    了解组织、agent、issue、Chat、Messenger、Calendar 和技能。
+    按五步阅读顺序建立产品整体认识。
   </Card>
   <Card title="GDPval Harness Benchmark" icon="chart-bar" href="/zh/benchmarks/gdpval-harness">
     查看 Rudder、Codex CLI 和 Claude Code 的 10 任务探索性对比协议与结果。
   </Card>
   <Card title="任务生命周期指南" icon="route" href="/zh/how-to/issue-lifecycle">
-    学会什么时候分配、评审、阻塞和关闭 agent 工作。
+    学会什么时候分配、评审、阻塞和关闭 Agent 工作。
   </Card>
   <Card title="自动化" icon="workflow" href="/zh/concepts/automations">
-    用明确 trigger 和 output path 运行重复 agent 工作。
+    用明确的触发方式和结果去向运行重复的 Agent 工作。
   </Card>
   <Card title="内置 Browser" icon="globe" href="/zh/concepts/built-in-browser">
-    在 Rudder 旁边处理网页工作，并理解共享 session 边界。
+    在 Rudder 旁边处理网页工作，并理解共享会话边界。
   </Card>
   <Card title="创建 Agent" icon="bot" href="/zh/how-to/create-agent">
-    需要新角色时，添加职责和能力边界清楚的 agent。
+    需要新角色时，添加职责和能力边界清楚的 Agent。
   </Card>
   <Card title="审批、预算和活动记录" icon="sliders-horizontal" href="/zh/concepts/approvals-budgets-activity">
-    理解审批、预算限制、活动记录、运行摘要、Calendar 和 Inbox。
+    理解审批、预算限制、活动记录、运行摘要、Calendar 和 `Inbox`。
+  </Card>
+  <Card title="Chat 和 Messenger" icon="messages-square" href="/zh/concepts/chat-messenger">
+    选择任务入口，并找回需要处理的工作。
   </Card>
 </CardGroup>

@@ -30,6 +30,7 @@
   <url><loc>https://docs.rudderhq.dev/reference/workspace-boundaries</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/reference/automation-output-routing</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/reference/permissions-and-platforms</loc><lastmod>2026-07-16</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/benchmarks/gdpval-harness</loc><lastmod>2026-07-20</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/about</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/contact</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/releases</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
@@ -63,5 +64,6 @@
   <url><loc>https://docs.rudderhq.dev/zh/reference/workspace-boundaries</loc><lastmod>2026-07-19</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/reference/automation-output-routing</loc><lastmod>2026-07-19</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/reference/permissions-and-platforms</loc><lastmod>2026-07-19</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://docs.rudderhq.dev/zh/benchmarks/gdpval-harness</loc><lastmod>2026-07-20</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://docs.rudderhq.dev/zh/releases</loc><lastmod>2026-07-09</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>
 </urlset>
