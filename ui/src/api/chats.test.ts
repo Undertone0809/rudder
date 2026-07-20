@@ -17,7 +17,7 @@ describe("atomic chat draft API", () => {
       available: false,
       error: "The current user has not configured a chat model yet.",
     };
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify(descriptor), {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify(descriptor), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     }));
@@ -63,7 +63,7 @@ describe("atomic chat draft API", () => {
       userMessage,
       generationId: "generation-1",
     };
-    const fetchMock = vi.fn(async () => new Response(`${JSON.stringify(ack)}\n`, {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(`${JSON.stringify(ack)}\n`, {
       status: 200,
       headers: { "Content-Type": "application/x-ndjson" },
     }));
@@ -96,7 +96,7 @@ describe("atomic chat draft API", () => {
   });
 
   it("keeps first-turn metadata beside staged attachments", async () => {
-    const fetchMock = vi.fn(async () => new Response("", {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response("", {
       status: 200,
       headers: { "Content-Type": "application/x-ndjson" },
     }));

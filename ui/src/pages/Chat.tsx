@@ -1207,6 +1207,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         const abortController = new AbortController();
         const startedAt = new Date();
         const streamKey = `new:${startedAt.getTime()}:${Math.random().toString(36).slice(2)}`;
+        const acceptedConversation = { current: null as ChatConversation | null };
         activeStreamKey = streamKey;
         await chatsApi.sendFirstMessageStream(selectedOrganizationId, body, {
           preferredAgentId: selectedDraftAgentId,
@@ -1225,6 +1226,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               }
               userMessageAcknowledged = true;
               conversation = event.conversation;
+              acceptedConversation.current = event.conversation;
               activeChatId = conversation.id;
               if (!acquireChatSendLock(conversation.id)) {
                 throw new Error("The accepted chat is already sending another message");
@@ -1293,13 +1295,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             }
           },
         });
-        if (!conversation) {
+        const createdConversation = acceptedConversation.current;
+        if (!createdConversation) {
           throw new Error("Chat stream ended before accepting the first message");
         }
         if (options?.clearPendingFilesOnSuccess) clearPendingFilesForCurrentScope();
-        await refreshChat(conversation.id);
-        await queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, conversation.id) });
-        setStreamDraftForChat(conversation.id, (current) => current?.streamKey === streamKey ? null : current);
+        await refreshChat(createdConversation.id);
+        await queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, createdConversation.id) });
+        setStreamDraftForChat(createdConversation.id, (current) => current?.streamKey === streamKey ? null : current);
         return;
       }
       const chatId = conversation.id; const activeDraftForChat = readChatScopedState(streamDrafts, chatId);

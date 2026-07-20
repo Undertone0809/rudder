@@ -5909,7 +5909,7 @@ describe("Atomic new-chat drafts", () => {
       () => [attachment],
     );
     mockState.sendFirstMessageStream.mockRejectedValueOnce(
-      new ApiError("Runtime rejected the first turn", 503),
+      new ApiError("Runtime rejected the first turn", 503, null),
     );
 
     const { container } = renderChat();
