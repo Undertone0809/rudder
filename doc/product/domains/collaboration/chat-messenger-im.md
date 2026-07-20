@@ -919,6 +919,10 @@ before the exploration proves useful.
 9. The first attempted mutation after the send window expires atomically marks
    the Side Chat `expired` and rejects the mutation without creating a message
    or run.
+10. When a kept Side Chat is open as an ordinary Messenger conversation, the
+    source title in its `side_chat_started` boundary event navigates directly
+    to the source Chat's main Messenger route. It does not open the source Chat
+    as a Side Panel target.
 
 ### Decision Table
 
@@ -952,6 +956,8 @@ before the exploration proves useful.
   read-only explanation.
 - Keep updates the state label to `Kept in Messenger` and makes the same
   conversation available in the normal Messenger list.
+- In the kept conversation, the Side Chat source boundary is a direct return
+  link to the source Chat rather than an adjacent Side Panel preview.
 - Send, complete, and keep failures surface as visible errors or toasts; they
   are not silently ignored.
 
@@ -1015,8 +1021,9 @@ before the exploration proves useful.
 ### Drift Boundaries
 
 - Changes to entry points, anchoring, persistence timing, owner scope, copied
-  context, TTL, lifecycle transitions, visibility, promotion grouping,
-  immutability, or audit retention require updating this contract.
+  context, TTL, lifecycle transitions, visibility, promotion grouping, source
+  return navigation, immutability, or audit retention require updating this
+  contract.
 - Pure visual tuning that preserves the shared composer-menu grammar and the
   interaction outcomes does not require a product-contract change.
 
@@ -1469,6 +1476,10 @@ Product model:
 - Supported internal references can open or focus tabs in the Side Panel without
   replacing the current route on ordinary clicks. Modifier-click and unsupported
   links preserve normal navigation behavior.
+- The `side_chat_started` boundary event is an explicit exception: its source
+  Chat title is return navigation, so an ordinary click replaces the current
+  route with the source Chat's main Messenger route instead of opening a Chat
+  target in the Side Panel.
 - Chat Work manifest internal targets use the same typed Side Panel target model;
   the manifest is an index and does not create a second preview drawer.
 - Chat and Work manifest image attachments are intentionally not Side Panel
@@ -1577,7 +1588,8 @@ Flow:
 
 1. The operator opens the Side Panel from the global right-edge trigger, the
    panel add-tab affordance, or a supported internal reference in
-   Chat/Messenger.
+   Chat/Messenger. Side Chat source-boundary links bypass this flow and navigate
+   directly to their source Chat.
 2. The side-panel target parser normalizes the object into a stable tab key.
 3. If the target is already open, Rudder focuses the existing tab instead of
    duplicating it.
@@ -1698,6 +1710,8 @@ Invariants:
 - Side Panel chat views must preserve chat lifecycle and Messenger attention
   semantics; opening a chat target in the panel is not a read-state or routing
   rewrite unless the owning Messenger/chat code performs that action.
+- A Side Chat source-boundary link must not create or focus a Side Panel Chat
+  target; it is direct navigation owned by the Side Chat lifecycle contract.
 - Side Panel Browser navigation must not grant file, organization, or
   application privileges beyond the embedded browser shell. Local non-control-
   plane web apps may be navigated, but Rudder board/API origins stay in the
@@ -1792,6 +1806,9 @@ Evidence:
   status, and assignee inside the panel; browsing a Library directory tree;
   opening the global empty panel from Dashboard; and keeping the desktop/web
   panel gutter compact against the main workspace.
+- Side Chat E2E covers the source-boundary exception by keeping a Side Chat,
+  opening it in Messenger, and navigating directly back to the source Chat
+  without opening a Side Panel Chat target.
 - Side Panel E2E covers expanding an issue target and rendering the embedded
   Issue Detail body, including issue content sections such as attachments,
   activity, and properties, without navigating away from Chat.
