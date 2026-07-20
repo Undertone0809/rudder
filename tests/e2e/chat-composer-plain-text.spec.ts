@@ -132,6 +132,87 @@ test("chat composer keeps the caret outside Rudder reference tokens", async ({ p
   });
 });
 
+test("chat composer keeps the caret in place while editing markdown-like text after references", async ({ page }) => {
+  const organization = await createOrganization(page, "Chat-Reference-Mid-Draft-Caret");
+  const agent = await createChatAgent(page, organization.id, "Caret Agent");
+
+  const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+    data: {
+      title: "Reference mid-draft caret",
+      preferredAgentId: agent.id,
+    },
+  });
+  expect(chatRes.ok()).toBe(true);
+  const chat = await chatRes.json() as { id: string };
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+
+  await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+  const composer = page.locator(".chat-composer .rudder-mdxeditor-content").first();
+  await expect(composer).toBeVisible({ timeout: 15_000 });
+
+  const canonicalReference = `[${agent.name}](agent://${agent.id})`;
+  const canonicalSkillReference = "[visualize](skill://org/e2e-visualize?ref=visualize)";
+  const draft = [
+    `${canonicalReference} and ${canonicalReference} use ${canonicalSkillReference} to build a plan`,
+    "",
+    "Milestones:",
+    "",
+    "- Aug 28: Approval policy signed.",
+    "- Sep 18: Evaluation gate.",
+    "- Oct 2: Pilot readout.",
+  ].join("\n");
+  await composer.fill(draft);
+  await expect(composer.locator("[data-mention-kind='agent']")).toHaveCount(2);
+  await expect(composer.locator("[data-skill-token='true']")).toHaveCount(1);
+
+  const initialSelectionOffset = await composer.evaluate((element) => {
+    element.focus();
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      const offset = node.textContent?.indexOf("Sep 18") ?? -1;
+      if (offset >= 0) {
+        const range = document.createRange();
+        range.setStart(node, offset);
+        range.collapse(true);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+
+        const prefix = document.createRange();
+        prefix.setStart(element, 0);
+        prefix.setEnd(node, offset);
+        return prefix.toString().length;
+      }
+      node = walker.nextNode();
+    }
+    return -1;
+  });
+  expect(initialSelectionOffset).toBeGreaterThan(0);
+
+  await page.keyboard.press("Backspace");
+  await expect(composer).toContainText("-Sep 18: Evaluation gate.");
+
+  const selectionOffsetAfterDelete = await composer.evaluate((element) => {
+    const selection = window.getSelection();
+    if (!selection?.anchorNode || !element.contains(selection.anchorNode)) return -1;
+    const prefix = document.createRange();
+    prefix.setStart(element, 0);
+    prefix.setEnd(selection.anchorNode, selection.anchorOffset);
+    return prefix.toString().length;
+  });
+  expect(selectionOffsetAfterDelete).toBe(initialSelectionOffset - 1);
+
+  await page.keyboard.type("X");
+  await expect(composer).toContainText("-XSep 18: Evaluation gate.");
+  await expect(composer).not.toContainText(`X${agent.name}`);
+});
+
 test("chat composer keeps text after Rudder reference tokens when sending", async ({ page }) => {
   const organization = await createOrganization(page, "Chat-Reference-Tail");
   const agent = await createChatAgent(page, organization.id, "Mira");

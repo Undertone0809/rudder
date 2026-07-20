@@ -218,12 +218,25 @@ function findCanonicalReferenceCandidates(markdown: string) {
   return Array.from(markdown.matchAll(/\[([^\]\n]+)\]\(([^)\n]+)\)/g));
 }
 
-function hasCanonicalRudderReference(markdown: string) {
-  return findCanonicalReferenceCandidates(markdown).some((match) => {
+function hasUnrenderedCanonicalRudderReference(markdown: string, editable: HTMLElement) {
+  let requiredMentionCount = 0;
+  let requiredSkillCount = 0;
+
+  for (const match of findCanonicalReferenceCandidates(markdown)) {
     const label = match[1] ?? "";
     const href = match[2] ?? "";
-    return Boolean(parseMentionChipHref(href) || parseSkillReference(href, label));
-  });
+    if (parseMentionChipHref(href)) {
+      requiredMentionCount += 1;
+    } else if (parseSkillReference(href, label)) {
+      requiredSkillCount += 1;
+    }
+  }
+
+  if (requiredMentionCount === 0 && requiredSkillCount === 0) return false;
+
+  const renderedMentionCount = editable.querySelectorAll("[data-mention-kind]").length;
+  const renderedSkillCount = editable.querySelectorAll("[data-skill-token='true']").length;
+  return requiredMentionCount > renderedMentionCount || requiredSkillCount > renderedSkillCount;
 }
 
 function getMdastSourceSlice(node: unknown, markdown: string) {
@@ -2199,6 +2212,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
         placeholder={translatedPlaceholder}
         onChange={(next) => {
           const normalizedNext = plainText ? normalizePlainTextComposerMarkdown(next) : next;
+          const editable = containerRef.current?.querySelector<HTMLElement>('[contenteditable="true"]');
           latestValueRef.current = normalizedNext;
           onChange(normalizedNext);
           const onlyRemovedCaretBoundary = plainText
@@ -2208,7 +2222,8 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
             plainText
             && normalizedNext !== next
             && !onlyRemovedCaretBoundary
-            && hasCanonicalRudderReference(normalizedNext)
+            && editable
+            && hasUnrenderedCanonicalRudderReference(normalizedNext, editable)
           ) {
             requestAnimationFrame(() => {
               ref.current?.setMarkdown(normalizedNext);

@@ -362,8 +362,7 @@ test("chat composer keeps typing after clicked chat references and aligns agent 
 
   await resetComposer(composer);
   const agentReference = `[${agent.name}](agent://${agent.id})`;
-  await composer.fill(agentReference);
-  await page.keyboard.type(" asdasdasd");
+  await composer.fill(`${agentReference} asdasdasd`);
 
   const agentToken = composer.locator("[data-mention-kind='agent']").filter({ hasText: agent.name }).first();
   await expect(agentToken).toBeVisible({ timeout: 15_000 });
@@ -377,6 +376,17 @@ test("chat composer keeps typing after clicked chat references and aligns agent 
     const iconWidth = Number.parseFloat(iconStyle.width);
     const iconHeight = Number.parseFloat(iconStyle.height);
     const beforeContent = iconStyle.content;
+    const tokenTextNode = Array.from(chip.childNodes).find((node) => node.nodeType === Node.TEXT_NODE);
+    const trailingTextNode = Array.from(chip.parentElement?.childNodes ?? []).find(
+      (node) => node !== chip && node.textContent?.includes("asdasdasd"),
+    );
+    const textCenter = (node: Node | undefined) => {
+      if (!node) return null;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const rect = range.getBoundingClientRect();
+      return rect.top + rect.height / 2;
+    };
     return {
       alignItems: style.alignItems,
       display: style.display,
@@ -387,6 +397,8 @@ test("chat composer keeps typing after clicked chat references and aligns agent 
       iconWidth,
       iconVisible: beforeContent !== "none" && beforeContent !== "normal",
       iconFontRatio: iconHeight / fontSize,
+      tokenTextCenter: textCenter(tokenTextNode),
+      trailingTextCenter: textCenter(trailingTextNode),
     };
   });
 
@@ -398,6 +410,9 @@ test("chat composer keeps typing after clicked chat references and aligns agent 
   expect(metrics.iconHeight).toBeGreaterThanOrEqual(17.5);
   expect(metrics.iconFontRatio).toBeGreaterThan(1);
   expect(metrics.chipHeight).toBeLessThanOrEqual(24);
+  expect(metrics.tokenTextCenter).not.toBeNull();
+  expect(metrics.trailingTextCenter).not.toBeNull();
+  expect(Math.abs(metrics.tokenTextCenter! - metrics.trailingTextCenter!)).toBeLessThanOrEqual(1);
 
   await page.screenshot({ path: testInfo.outputPath("chat-composer-reference-geometry.png"), fullPage: true });
 });

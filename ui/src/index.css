@@ -5496,6 +5496,7 @@ a.rudder-mention-chip[data-mention-kind="library_directory"]::before {
   max-width: none;
   overflow: visible;
   text-overflow: clip;
+  vertical-align: -0.28em;
   white-space: nowrap;
 }
 

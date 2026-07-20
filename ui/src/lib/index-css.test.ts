@@ -292,6 +292,8 @@ describe("index.css motion rules", () => {
       indexCss.match(/\n\.chat-composer \.rudder-mdxeditor-content \.rudder-mention-chip,[\s\S]*?\.chat-composer \.rudder-milkdown-content \.rudder-project-mention-chip \{[\s\S]*?\n\}/)?.[0] ?? "";
     const composerSkillTokenBlock =
       indexCss.match(/\n\.chat-composer \.rudder-mdxeditor-content \.rudder-skill-token,[\s\S]*?\.chat-composer \.rudder-milkdown-content \.rudder-skill-token \{[\s\S]*?\n\}/)?.[0] ?? "";
+    const composerAgentTokenBlock =
+      indexCss.match(/\n\.chat-composer \.rudder-mdxeditor-content \.rudder-mention-chip\[data-mention-kind="agent"\],[\s\S]*?\.chat-composer \.rudder-milkdown-content \.rudder-mention-chip\[data-mention-kind="agent"\] \{[\s\S]*?\n\}/)?.[0] ?? "";
 
     for (const tokenBlock of [composerMentionTokenBlock, composerSkillTokenBlock]) {
       if (tokenBlock === composerMentionTokenBlock) {
@@ -309,6 +311,8 @@ describe("index.css motion rules", () => {
       expect(tokenBlock).toContain("text-overflow: ellipsis");
       expect(tokenBlock).toContain("white-space: nowrap");
     }
+
+    expect(composerAgentTokenBlock).toContain("vertical-align: -0.28em");
 
     const composerMentionIconBlock =
       indexCss.match(/\n\.chat-composer \.rudder-mdxeditor-content \.rudder-mention-chip::before,[\s\S]*?\.chat-composer \.rudder-milkdown-content \.rudder-project-mention-chip::before \{[\s\S]*?\n\}/)?.[0] ?? "";
