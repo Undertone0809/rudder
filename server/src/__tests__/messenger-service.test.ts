@@ -5812,6 +5812,8 @@ describe("messengerService and issue follows", () => {
     await expect(savedViewsSvc.get(orgId, userId, "not-a-uuid")).rejects.toMatchObject({ status: 400 });
     await expect(messengerSvc.assignThreadToCustomGroup(orgId, userId, randomUUID(), "saved-view:not-a-uuid"))
       .rejects.toMatchObject({ status: 400 });
+    await expect(messengerSvc.reorderCustomGroupEntries(orgId, userId, randomUUID(), ["chat:duplicate", "chat:duplicate"]))
+      .rejects.toMatchObject({ status: 400 });
     await expect(savedViewsSvc.create(orgId, userId, {
       target: { kind: "library_file", filePath: "/absolute/path.md" },
       title: "Invalid",

@@ -120,4 +120,17 @@ describe("Messenger custom group item-key aliases", () => {
       threadKeys: ["chat:abc"],
     }).success).toBe(false);
   });
+
+  it("rejects duplicate reorder keys for canonical, legacy, and matching alias inputs", () => {
+    expect(reorderMessengerCustomGroupEntriesSchema.safeParse({
+      itemKeys: ["chat:abc", "chat:abc"],
+    }).success).toBe(false);
+    expect(reorderMessengerCustomGroupEntriesSchema.safeParse({
+      threadKeys: [savedViewItemKey, savedViewItemKey],
+    }).success).toBe(false);
+    expect(reorderMessengerCustomGroupEntriesSchema.safeParse({
+      itemKeys: ["chat:abc", "chat:abc"],
+      threadKeys: ["chat:abc", "chat:abc"],
+    }).success).toBe(false);
+  });
 });

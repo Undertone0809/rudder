@@ -1631,6 +1631,9 @@ export function messengerService(db: Db) {
   }
 
   async function reorderCustomGroupEntries(orgId: string, userId: string, groupId: string, threadKeys: string[]) {
+    if (new Set(threadKeys).size !== threadKeys.length) {
+      throw badRequest("Messenger custom group reorder keys must be unique");
+    }
     for (const itemKey of threadKeys) savedViewIdFromItemKey(itemKey);
     await db.transaction(async (tx) => {
       const txDb = tx as unknown as Db;

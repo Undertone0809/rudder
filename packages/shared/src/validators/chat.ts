@@ -541,6 +541,14 @@ export const reorderMessengerCustomGroupEntriesSchema = z.object({
   } else if (value.itemKeys && value.threadKeys && JSON.stringify(value.itemKeys) !== JSON.stringify(value.threadKeys)) {
     ctx.addIssue({ code: "custom", message: "itemKeys and threadKeys must match", path: ["itemKeys"] });
   }
+  const resolvedKeys = value.itemKeys ?? value.threadKeys;
+  if (resolvedKeys && new Set(resolvedKeys).size !== resolvedKeys.length) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Messenger custom group reorder keys must be unique",
+      path: [value.itemKeys ? "itemKeys" : "threadKeys"],
+    });
+  }
 }).transform((value) => ({ ...value, itemKeys: value.itemKeys ?? value.threadKeys! }));
 
 export type ChatConversationStatus = z.infer<typeof chatConversationStatusSchema>;
