@@ -4,6 +4,7 @@ import {
   createMessengerCustomGroupWithEntriesSchema,
   createMessengerSavedViewSchema,
   listMessengerSavedViewsQuerySchema,
+  messengerSavedViewIdSchema,
   reorderMessengerCustomGroupEntriesSchema,
   reorderMessengerSavedViewsSchema,
   updateMessengerSavedViewSchema,
@@ -11,6 +12,7 @@ import {
 
 const automationId = "11111111-1111-4111-8111-111111111111";
 const savedViewId = "22222222-2222-4222-8222-222222222222";
+const savedViewItemKey = `saved-view:${savedViewId}`;
 
 describe("Messenger Saved View validators", () => {
   it("accepts every supported target identity", () => {
@@ -19,8 +21,8 @@ describe("Messenger Saved View validators", () => {
       { kind: "automation", automationId },
       { kind: "library_document", documentId: automationId },
       { kind: "library_entry", entryId: automationId, path: "plans/launch.md" },
-      { kind: "library_file", filePath: "/workspace/README.md" },
-      { kind: "library_directory", directoryPath: "/workspace/docs" },
+      { kind: "library_file", filePath: "workspace/README.md" },
+      { kind: "library_directory", directoryPath: "workspace/docs" },
     ];
 
     for (const target of targets) {
@@ -46,11 +48,43 @@ describe("Messenger Saved View validators", () => {
     }).success).toBe(false);
   });
 
+  it("accepts only canonical portable Library paths, including the Library root", () => {
+    expect(createMessengerSavedViewSchema.safeParse({
+      target: { kind: "library_directory", directoryPath: "" },
+      title: "Library root",
+    }).success).toBe(true);
+
+    for (const invalidPath of [
+      "/absolute/path",
+      "folder\\file.md",
+      "~/private",
+      "file:secret.md",
+      ".",
+      "..",
+      "folder/./file.md",
+      "folder/../file.md",
+      "folder//file.md",
+      "folder/",
+    ]) {
+      expect(createMessengerSavedViewSchema.safeParse({
+        target: { kind: "library_file", filePath: invalidPath },
+        title: "Invalid path",
+      }).success).toBe(false);
+    }
+  });
+
   it("validates metadata updates, visibility, and complete reorder identities", () => {
     expect(updateMessengerSavedViewSchema.safeParse({ title: "Renamed", hidden: true }).success).toBe(true);
     expect(updateMessengerSavedViewSchema.safeParse({}).success).toBe(false);
-    expect(listMessengerSavedViewsQuerySchema.parse({})).toEqual({ visibility: "visible" });
-    expect(listMessengerSavedViewsQuerySchema.parse({ visibility: "hidden" })).toEqual({ visibility: "hidden" });
+    expect(listMessengerSavedViewsQuerySchema.parse({})).toEqual({ visibility: "visible", limit: 50, offset: 0 });
+    expect(listMessengerSavedViewsQuerySchema.parse({ visibility: "hidden", limit: "100", offset: "50" })).toEqual({
+      visibility: "hidden",
+      limit: 100,
+      offset: 50,
+    });
+    expect(listMessengerSavedViewsQuerySchema.safeParse({ limit: 101 }).success).toBe(false);
+    expect(messengerSavedViewIdSchema.safeParse(savedViewId).success).toBe(true);
+    expect(messengerSavedViewIdSchema.safeParse("not-a-uuid").success).toBe(false);
     expect(reorderMessengerSavedViewsSchema.safeParse({ ids: [savedViewId] }).success).toBe(true);
     expect(reorderMessengerSavedViewsSchema.safeParse({ ids: [savedViewId, savedViewId] }).success).toBe(false);
   });
@@ -58,8 +92,8 @@ describe("Messenger Saved View validators", () => {
 
 describe("Messenger custom group item-key aliases", () => {
   it("accepts canonical and legacy inputs and normalizes them to item fields", () => {
-    expect(assignMessengerCustomGroupEntrySchema.parse({ itemKey: "saved-view:abc" })).toEqual({
-      itemKey: "saved-view:abc",
+    expect(assignMessengerCustomGroupEntrySchema.parse({ itemKey: savedViewItemKey })).toEqual({
+      itemKey: savedViewItemKey,
     });
     expect(assignMessengerCustomGroupEntrySchema.parse({ threadKey: "chat:abc" })).toEqual({
       itemKey: "chat:abc",
@@ -71,17 +105,18 @@ describe("Messenger custom group item-key aliases", () => {
     });
     expect(createMessengerCustomGroupWithEntriesSchema.parse({
       name: "Mixed",
-      itemKeys: ["chat:abc", "saved-view:abc"],
-    })).toMatchObject({ itemKeys: ["chat:abc", "saved-view:abc"] });
+      itemKeys: ["chat:abc", savedViewItemKey],
+    })).toMatchObject({ itemKeys: ["chat:abc", savedViewItemKey] });
+    expect(assignMessengerCustomGroupEntrySchema.safeParse({ itemKey: "saved-view:not-a-uuid" }).success).toBe(false);
   });
 
   it("rejects disagreeing canonical and legacy aliases", () => {
     expect(assignMessengerCustomGroupEntrySchema.safeParse({
-      itemKey: "saved-view:abc",
+      itemKey: savedViewItemKey,
       threadKey: "chat:abc",
     }).success).toBe(false);
     expect(reorderMessengerCustomGroupEntriesSchema.safeParse({
-      itemKeys: ["saved-view:abc"],
+      itemKeys: [savedViewItemKey],
       threadKeys: ["chat:abc"],
     }).success).toBe(false);
   });

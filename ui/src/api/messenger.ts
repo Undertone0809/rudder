@@ -6,6 +6,7 @@ import type {
   MessengerEvent,
   MessengerIssueThreadItem,
   MessengerSavedView,
+  MessengerSavedViewPage,
   MessengerSavedViewTarget,
   MessengerSystemThreadKind,
   MessengerThreadDetail,
@@ -43,8 +44,15 @@ type SavedViewUpdateInput = Partial<Omit<SavedViewCreateInput, "target">> & {
 };
 
 export const messengerApi = {
-  listSavedViews: (orgId: string, visibility: SavedViewVisibility = "visible") =>
-    api.get<MessengerSavedView[]>(`/orgs/${orgId}/messenger/saved-views?visibility=${visibility}`),
+  listSavedViews: (
+    orgId: string,
+    options: { visibility?: SavedViewVisibility; limit?: number; offset?: number } = {},
+  ) => {
+    const params = new URLSearchParams({ visibility: options.visibility ?? "visible" });
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    if (options.offset !== undefined) params.set("offset", String(options.offset));
+    return api.get<MessengerSavedViewPage>(`/orgs/${orgId}/messenger/saved-views?${params.toString()}`);
+  },
   getSavedView: (orgId: string, savedViewId: string) =>
     api.get<MessengerSavedView>(`/orgs/${orgId}/messenger/saved-views/${savedViewId}`),
   createSavedView: (orgId: string, data: SavedViewCreateInput) =>
@@ -52,7 +60,7 @@ export const messengerApi = {
   updateSavedView: (orgId: string, savedViewId: string, data: SavedViewUpdateInput) =>
     api.patch<MessengerSavedView>(`/orgs/${orgId}/messenger/saved-views/${savedViewId}`, data),
   reorderSavedViews: (orgId: string, ids: string[]) =>
-    api.patch<MessengerSavedView[]>(`/orgs/${orgId}/messenger/saved-views/reorder`, { ids }),
+    api.patch<MessengerSavedViewPage>(`/orgs/${orgId}/messenger/saved-views/reorder`, { ids }),
   deleteSavedView: (orgId: string, savedViewId: string) =>
     api.delete<MessengerSavedView>(`/orgs/${orgId}/messenger/saved-views/${savedViewId}`),
   listThreads: (orgId: string) =>

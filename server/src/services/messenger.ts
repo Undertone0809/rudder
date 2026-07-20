@@ -28,6 +28,7 @@ import {
   formatMessengerPreview,
   formatMessengerTitle,
   issueUpdatedChangedKeys,
+  messengerSavedViewIdSchema,
   toPublicHeartbeatRunContextSnapshot,
   type Approval,
   type BudgetIncident,
@@ -51,6 +52,7 @@ import {
 import { and, asc, desc, eq, gt, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { badRequest, conflict, notFound } from "../errors.js";
 import { redactEventPayload } from "../redaction.js";
+import { logActivity } from "./activity-log.js";
 import { budgetService } from "./budgets.js";
 import { chatService } from "./chats.js";
 import { issueLowSignalContentOnlyActivitySql } from "./issue-activity-filters.js";
@@ -1036,7 +1038,31 @@ export function messengerService(db: Db) {
   }
 
   function savedViewIdFromItemKey(itemKey: string) {
-    return itemKey.startsWith("saved-view:") ? itemKey.slice("saved-view:".length) : null;
+    if (!itemKey.startsWith("saved-view:")) return null;
+    const parsed = messengerSavedViewIdSchema.safeParse(itemKey.slice("saved-view:".length));
+    if (!parsed.success) throw badRequest("Invalid Messenger Saved View item key");
+    return parsed.data;
+  }
+
+  async function logSavedViewPlacement(
+    database: Db,
+    orgId: string,
+    userId: string,
+    itemKey: string,
+    action: string,
+    details: Record<string, unknown>,
+  ) {
+    const savedViewId = savedViewIdFromItemKey(itemKey);
+    if (!savedViewId) return;
+    await logActivity(database, {
+      orgId,
+      actorType: "user",
+      actorId: userId,
+      action,
+      entityType: "messenger_saved_view",
+      entityId: savedViewId,
+      details: { itemKey, ...details },
+    });
   }
 
   async function getCustomGroupOrThrow(orgId: string, userId: string, groupId: string) {
@@ -1465,7 +1491,16 @@ export function messengerService(db: Db) {
   }
 
   async function assignThreadToCustomGroup(orgId: string, userId: string, groupId: string, threadKey: string) {
+    const savedViewId = savedViewIdFromItemKey(threadKey);
     await getCustomGroupOrThrow(orgId, userId, groupId);
+    if (savedViewId) {
+      return db.transaction(async (tx) => {
+        const txDb = tx as unknown as Db;
+        const entry = await assignThreadToCustomGroupWithClient(tx, orgId, userId, groupId, threadKey);
+        await logSavedViewPlacement(txDb, orgId, userId, threadKey, "messenger.saved_view_group_assigned", { groupId });
+        return entry;
+      });
+    }
     return assignThreadToCustomGroupWithClient(db, orgId, userId, groupId, threadKey);
   }
 
@@ -1473,15 +1508,34 @@ export function messengerService(db: Db) {
     const uniqueThreadKeys = [...new Set(threadKeys)];
     if (uniqueThreadKeys.length === 0) throw badRequest("At least one thread key is required");
     await db.transaction(async (tx) => {
+      const txDb = tx as unknown as Db;
       const group = await createCustomGroupWithClient(tx, orgId, userId, name, icon);
       for (const threadKey of uniqueThreadKeys) {
         await assignThreadToCustomGroupWithClient(tx, orgId, userId, group.id, threadKey);
+        await logSavedViewPlacement(txDb, orgId, userId, threadKey, "messenger.saved_view_group_assigned", {
+          groupId: group.id,
+          source: "group_create",
+        });
       }
     });
     return listCustomGroups(orgId, userId);
   }
 
   async function removeThreadFromCustomGroups(orgId: string, userId: string, threadKey: string) {
+    if (savedViewIdFromItemKey(threadKey)) {
+      await db.transaction(async (tx) => {
+        const txDb = tx as unknown as Db;
+        await txDb
+          .delete(messengerCustomGroupEntries)
+          .where(and(
+            eq(messengerCustomGroupEntries.orgId, orgId),
+            eq(messengerCustomGroupEntries.userId, userId),
+            eq(messengerCustomGroupEntries.threadKey, threadKey),
+          ));
+        await logSavedViewPlacement(txDb, orgId, userId, threadKey, "messenger.saved_view_group_removed", {});
+      });
+      return { itemKey: threadKey };
+    }
     await db
       .delete(messengerCustomGroupEntries)
       .where(and(
@@ -1489,39 +1543,65 @@ export function messengerService(db: Db) {
         eq(messengerCustomGroupEntries.userId, userId),
         eq(messengerCustomGroupEntries.threadKey, threadKey),
       ));
-    return savedViewIdFromItemKey(threadKey)
-      ? { itemKey: threadKey }
-      : { itemKey: threadKey, threadKey };
+    return { itemKey: threadKey, threadKey };
   }
 
   async function reorderCustomGroupEntries(orgId: string, userId: string, groupId: string, threadKeys: string[]) {
     await getCustomGroupOrThrow(orgId, userId, groupId);
-    const entries = await db
-      .select()
-      .from(messengerCustomGroupEntries)
-      .where(and(
-        eq(messengerCustomGroupEntries.orgId, orgId),
-        eq(messengerCustomGroupEntries.userId, userId),
-        eq(messengerCustomGroupEntries.groupId, groupId),
-      ))
-      .orderBy(asc(messengerCustomGroupEntries.sortOrder), asc(messengerCustomGroupEntries.createdAt));
-    const entryByThreadKey = new Map(entries.map((entry) => [entry.threadKey, entry]));
-    const orderedKeys = [
-      ...threadKeys.filter((threadKey) => entryByThreadKey.has(threadKey)),
-      ...entries.map((entry) => entry.threadKey).filter((threadKey) => !threadKeys.includes(threadKey)),
-    ];
-    const now = new Date();
+    for (const itemKey of threadKeys) savedViewIdFromItemKey(itemKey);
     await db.transaction(async (tx) => {
-      for (const [index, threadKey] of orderedKeys.entries()) {
-        await tx
+      const txDb = tx as unknown as Db;
+      const entries = await txDb
+        .select()
+        .from(messengerCustomGroupEntries)
+        .where(and(
+          eq(messengerCustomGroupEntries.orgId, orgId),
+          eq(messengerCustomGroupEntries.userId, userId),
+          eq(messengerCustomGroupEntries.groupId, groupId),
+        ))
+        .orderBy(asc(messengerCustomGroupEntries.sortOrder), asc(messengerCustomGroupEntries.createdAt));
+      const savedIds = entries
+        .map((entry) => savedViewIdFromItemKey(entry.threadKey))
+        .filter((id): id is string => Boolean(id));
+      const savedViews = savedIds.length > 0
+        ? await txDb
+          .select({ id: messengerSavedViews.id, hiddenAt: messengerSavedViews.hiddenAt })
+          .from(messengerSavedViews)
+          .where(and(
+            eq(messengerSavedViews.orgId, orgId),
+            eq(messengerSavedViews.userId, userId),
+            inArray(messengerSavedViews.id, savedIds),
+          ))
+        : [];
+      const hiddenSavedIds = new Set(savedViews.filter((view) => view.hiddenAt).map((view) => view.id));
+      const visibleEntries = entries.filter((entry) => {
+        const savedViewId = savedViewIdFromItemKey(entry.threadKey);
+        return !savedViewId || !hiddenSavedIds.has(savedViewId);
+      });
+      const visibleByKey = new Map(visibleEntries.map((entry) => [entry.threadKey, entry]));
+      const requested = new Set(threadKeys);
+      const orderedKeys = [
+        ...threadKeys.filter((itemKey) => visibleByKey.has(itemKey)),
+        ...visibleEntries.map((entry) => entry.threadKey).filter((itemKey) => !requested.has(itemKey)),
+      ];
+      const visibleSlots = visibleEntries.map((entry) => entry.sortOrder);
+      const now = new Date();
+      for (const [index, itemKey] of orderedKeys.entries()) {
+        await txDb
           .update(messengerCustomGroupEntries)
-          .set({ sortOrder: index, updatedAt: now })
+          .set({ sortOrder: visibleSlots[index], updatedAt: now })
           .where(and(
             eq(messengerCustomGroupEntries.orgId, orgId),
             eq(messengerCustomGroupEntries.userId, userId),
             eq(messengerCustomGroupEntries.groupId, groupId),
-            eq(messengerCustomGroupEntries.threadKey, threadKey),
+            eq(messengerCustomGroupEntries.threadKey, itemKey),
           ));
+      }
+      for (const itemKey of orderedKeys) {
+        await logSavedViewPlacement(txDb, orgId, userId, itemKey, "messenger.saved_view_group_reordered", {
+          groupId,
+          itemKeys: orderedKeys,
+        });
       }
     });
     return listCustomGroups(orgId, userId);

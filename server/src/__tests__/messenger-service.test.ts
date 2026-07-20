@@ -32,7 +32,7 @@ import {
   projects,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey, MESSENGER_FORK_GROUP_DEFAULT_ICON } from "@rudderhq/shared";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -5415,8 +5415,8 @@ describe("messengerService and issue follows", () => {
     expect(membershipBeforeHide).toHaveLength(1);
 
     await savedViewsSvc.update(orgId, userId, automation.id, { hidden: true });
-    expect((await savedViewsSvc.list(orgId, userId, "hidden")).map((view) => view.id)).toEqual([automation.id]);
-    expect((await savedViewsSvc.list(orgId, userId, "visible")).map((view) => view.id)).not.toContain(automation.id);
+    expect((await savedViewsSvc.list(orgId, userId, { visibility: "hidden" })).items.map((view) => view.id)).toEqual([automation.id]);
+    expect((await savedViewsSvc.list(orgId, userId, { visibility: "visible" })).items.map((view) => view.id)).not.toContain(automation.id);
     expect((await messengerSvc.listCustomGroups(orgId, userId)).groups[0]?.entries).toEqual([]);
     expect(await db.select().from(messengerCustomGroupEntries)).toHaveLength(1);
 
@@ -5440,7 +5440,7 @@ describe("messengerService and issue follows", () => {
 
     await expect(savedViewsSvc.get(orgId, "another-user", automation.id)).rejects.toMatchObject({ status: 404 });
     await expect(savedViewsSvc.get(otherOrgId, userId, automation.id)).rejects.toMatchObject({ status: 404 });
-    expect(await savedViewsSvc.list(orgId, "another-user", "all")).toEqual([]);
+    expect((await savedViewsSvc.list(orgId, "another-user", { visibility: "all" })).items).toEqual([]);
 
     const savedViewActivity = await db
       .select()
@@ -5460,11 +5460,11 @@ describe("messengerService and issue follows", () => {
       issuePrefix: `O${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
     });
     const first = await savedViewsSvc.create(orgId, userId, {
-      target: { kind: "library_file", filePath: "/missing/first.md" },
+      target: { kind: "library_file", filePath: "missing/first.md" },
       title: "First stale file",
     });
     const second = await savedViewsSvc.create(orgId, userId, {
-      target: { kind: "library_directory", directoryPath: "/missing/directory" },
+      target: { kind: "library_directory", directoryPath: "missing/directory" },
       title: "Missing directory",
     });
     const third = await savedViewsSvc.create(orgId, userId, {
@@ -5473,8 +5473,8 @@ describe("messengerService and issue follows", () => {
     });
 
     const reordered = await savedViewsSvc.reorder(orgId, userId, [third.id, first.id]);
-    expect(reordered.map((view) => view.id)).toEqual([third.id, first.id, second.id]);
-    expect(reordered.map((view) => view.sortOrder)).toEqual([0, 1, 2]);
+    expect(reordered.items.map((view) => view.id)).toEqual([third.id, first.id, second.id]);
+    expect(reordered.items.map((view) => view.sortOrder)).toEqual([0, 1, 2]);
 
     const group = await messengerSvc.createCustomGroup(orgId, userId, "Library");
     await messengerSvc.assignThreadToCustomGroup(orgId, userId, group.id, `saved-view:${first.id}`);
@@ -5507,12 +5507,12 @@ describe("messengerService and issue follows", () => {
         repeated: { kind: "library_entry" as const, entryId, path: "docs/new-name.md" },
       },
       {
-        initial: { kind: "library_file" as const, filePath: "/workspace/missing.md" },
-        repeated: { kind: "library_file" as const, filePath: "/workspace/missing.md" },
+        initial: { kind: "library_file" as const, filePath: "workspace/missing.md" },
+        repeated: { kind: "library_file" as const, filePath: "workspace/missing.md" },
       },
       {
-        initial: { kind: "library_directory" as const, directoryPath: "/workspace/missing" },
-        repeated: { kind: "library_directory" as const, directoryPath: "/workspace/missing" },
+        initial: { kind: "library_directory" as const, directoryPath: "workspace/missing" },
+        repeated: { kind: "library_directory" as const, directoryPath: "workspace/missing" },
       },
     ];
 
@@ -5549,12 +5549,192 @@ describe("messengerService and issue follows", () => {
       });
     }
 
-    expect(await savedViewsSvc.list(orgId, userId, "hidden")).toEqual([]);
-    expect((await savedViewsSvc.list(orgId, userId)).map((view) => view.targetKind)).toEqual([
+    expect((await savedViewsSvc.list(orgId, userId, { visibility: "hidden" })).items).toEqual([]);
+    expect((await savedViewsSvc.list(orgId, userId)).items.map((view) => view.targetKind)).toEqual([
       "library_document",
       "library_entry",
       "library_file",
       "library_directory",
     ]);
+  });
+
+  it("serializes concurrent Saved View creates with stable dedupe evidence and unique ordering", async () => {
+    const orgId = randomUUID();
+    const userId = "saved-view-concurrency-user";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Saved View Concurrency Org",
+      urlKey: deriveOrganizationUrlKey("Saved View Concurrency Org"),
+      issuePrefix: `C${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+    });
+
+    const distinct = await Promise.all(Array.from({ length: 12 }, (_, index) => savedViewsSvc.create(orgId, userId, {
+      target: { kind: "browser", tabId: `concurrent-${index}`, url: `https://example.test/${index}` },
+      title: `Concurrent ${index}`,
+    })));
+    expect(new Set(distinct.map((view) => view.sortOrder)).size).toBe(12);
+
+    const sameTarget = await Promise.all(Array.from({ length: 8 }, (_, index) => savedViewsSvc.create(orgId, userId, {
+      target: { kind: "browser", tabId: "same-live-tab", url: `https://example.test/same/${index}` },
+      title: `Same target ${index}`,
+    })));
+    expect(new Set(sameTarget.map((view) => view.id)).size).toBe(1);
+    const sameId = sameTarget[0]!.id;
+    const actions = (await db.select().from(activityLog).where(eq(activityLog.entityId, sameId))).map((event) => event.action);
+    expect(actions.filter((action) => action === "messenger.saved_view_created")).toHaveLength(1);
+    expect(actions.filter((action) => action === "messenger.saved_view_updated")).toHaveLength(7);
+  });
+
+  it("keeps hidden fixed and grouped Saved View slots stationary during reorder", async () => {
+    const orgId = randomUUID();
+    const userId = "saved-view-hidden-slot-user";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Saved View Hidden Slots Org",
+      urlKey: deriveOrganizationUrlKey("Saved View Hidden Slots Org"),
+      issuePrefix: `H${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+    });
+    const orderedViews = [];
+    for (const tabId of ["a", "b", "c", "d"]) {
+      orderedViews.push(await savedViewsSvc.create(orgId, userId, {
+        target: { kind: "browser", tabId, url: `https://example.test/${tabId}` },
+        title: tabId.toUpperCase(),
+      }));
+    }
+    const [a, b, c, d] = orderedViews as [typeof orderedViews[number], typeof orderedViews[number], typeof orderedViews[number], typeof orderedViews[number]];
+    await savedViewsSvc.update(orgId, userId, b.id, { hidden: true });
+    await savedViewsSvc.reorder(orgId, userId, [d.id, c.id, a.id]);
+    const hiddenPlacement = await db.select().from(messengerSavedViews).where(eq(messengerSavedViews.id, b.id));
+    expect(hiddenPlacement[0]?.sortOrder).toBe(1);
+    await savedViewsSvc.update(orgId, userId, b.id, { hidden: false });
+    expect((await savedViewsSvc.list(orgId, userId)).items.map((view) => view.title)).toEqual(["D", "B", "C", "A"]);
+
+    const group = await messengerSvc.createCustomGroupWithEntries(orgId, userId, "Saved order", null, [
+      `saved-view:${a.id}`,
+      `saved-view:${b.id}`,
+      `saved-view:${c.id}`,
+    ]);
+    const groupId = group.groups[0]!.id;
+    await savedViewsSvc.update(orgId, userId, b.id, { hidden: true });
+    await messengerSvc.reorderCustomGroupEntries(orgId, userId, groupId, [
+      `saved-view:${c.id}`,
+      `saved-view:${a.id}`,
+    ]);
+    const hiddenGroupPlacement = await db
+      .select()
+      .from(messengerCustomGroupEntries)
+      .where(eq(messengerCustomGroupEntries.threadKey, `saved-view:${b.id}`));
+    expect(hiddenGroupPlacement[0]?.sortOrder).toBe(1);
+    await savedViewsSvc.update(orgId, userId, b.id, { hidden: false });
+    expect((await messengerSvc.listCustomGroups(orgId, userId)).groups[0]?.entries.map((entry) => entry.item.title)).toEqual([
+      "C", "B", "A",
+    ]);
+
+    const placementActions = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.entityType, "messenger_saved_view"));
+    expect(placementActions.some((event) => event.action === "messenger.saved_view_group_assigned")).toBe(true);
+    expect(placementActions.some((event) => event.action === "messenger.saved_view_group_reordered")).toBe(true);
+  });
+
+  it("bounds Saved View pages and reports production-shaped pagination", async () => {
+    const orgId = randomUUID();
+    const userId = "saved-view-page-user";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Saved View Pagination Org",
+      urlKey: deriveOrganizationUrlKey("Saved View Pagination Org"),
+      issuePrefix: `G${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+    });
+    await db.insert(messengerSavedViews).values(Array.from({ length: 125 }, (_, index) => ({
+      orgId,
+      userId,
+      targetKind: "browser" as const,
+      targetPayload: { kind: "browser" as const, tabId: `page-${index}`, url: `https://example.test/page/${index}` },
+      resourceKey: `browser:page-${index}`,
+      title: `Page ${index.toString().padStart(3, "0")}`,
+      sortOrder: index,
+    })));
+
+    const first = await savedViewsSvc.list(orgId, userId);
+    expect(first.items).toHaveLength(50);
+    expect(first.pageInfo).toEqual({ limit: 50, offset: 0, total: 125, hasMore: true, nextOffset: 50 });
+    const second = await savedViewsSvc.list(orgId, userId, { limit: 100, offset: 50 });
+    expect(second.items).toHaveLength(75);
+    expect(second.pageInfo).toEqual({ limit: 100, offset: 50, total: 125, hasMore: false, nextOffset: null });
+  });
+
+  it("rejects malformed ids and noncanonical Library paths before database predicates", async () => {
+    const orgId = randomUUID();
+    const userId = "saved-view-validation-user";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Saved View Validation Org",
+      urlKey: deriveOrganizationUrlKey("Saved View Validation Org"),
+      issuePrefix: `N${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+    });
+    await expect(savedViewsSvc.get(orgId, userId, "not-a-uuid")).rejects.toMatchObject({ status: 400 });
+    await expect(messengerSvc.assignThreadToCustomGroup(orgId, userId, randomUUID(), "saved-view:not-a-uuid"))
+      .rejects.toMatchObject({ status: 400 });
+    await expect(savedViewsSvc.create(orgId, userId, {
+      target: { kind: "library_file", filePath: "/absolute/path.md" },
+      title: "Invalid",
+    })).rejects.toMatchObject({ status: 400 });
+    const root = await savedViewsSvc.create(orgId, userId, {
+      target: { kind: "library_directory", directoryPath: "" },
+      title: "Library root",
+    });
+    expect(root.resourceKey).toBe("library-directory:");
+  });
+
+  it("rolls back Saved View and placement mutations when their activity evidence cannot commit", async () => {
+    const orgId = randomUUID();
+    const userId = "saved-view-atomicity-user";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Saved View Atomicity Org",
+      urlKey: deriveOrganizationUrlKey("Saved View Atomicity Org"),
+      issuePrefix: `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+    });
+    const existing = await savedViewsSvc.create(orgId, userId, {
+      target: { kind: "browser", tabId: "atomic-existing", url: "https://example.test/existing" },
+      title: "Existing",
+    });
+    const group = await messengerSvc.createCustomGroup(orgId, userId, "Atomic group");
+
+    await db.execute(sql.raw(`
+      create or replace function fail_saved_view_activity_for_test() returns trigger as $$
+      begin
+        if new.action like 'messenger.saved_view_%' then
+          raise exception 'forced Saved View activity failure';
+        end if;
+        return new;
+      end;
+      $$ language plpgsql;
+    `));
+    await db.execute(sql.raw(`
+      create trigger fail_saved_view_activity_for_test_trigger
+      before insert on activity_log
+      for each row execute function fail_saved_view_activity_for_test();
+    `));
+    try {
+      await expect(savedViewsSvc.create(orgId, userId, {
+        target: { kind: "browser", tabId: "atomic-new", url: "https://example.test/new" },
+        title: "Must roll back",
+      })).rejects.toThrow();
+      expect((await savedViewsSvc.list(orgId, userId, { visibility: "all" })).pageInfo.total).toBe(1);
+
+      await expect(messengerSvc.assignThreadToCustomGroup(
+        orgId,
+        userId,
+        group.id,
+        `saved-view:${existing.id}`,
+      )).rejects.toThrow();
+      expect(await db.select().from(messengerCustomGroupEntries)).toEqual([]);
+    } finally {
+      await db.execute(sql.raw("drop trigger if exists fail_saved_view_activity_for_test_trigger on activity_log"));
+      await db.execute(sql.raw("drop function if exists fail_saved_view_activity_for_test()"));
+    }
   });
 });

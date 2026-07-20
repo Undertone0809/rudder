@@ -73,6 +73,19 @@ export interface MessengerSavedView {
   updatedAt: Date;
 }
 
+export interface MessengerSavedViewPageInfo {
+  limit: number;
+  offset: number;
+  total: number;
+  hasMore: boolean;
+  nextOffset: number | null;
+}
+
+export interface MessengerSavedViewPage {
+  items: MessengerSavedView[];
+  pageInfo: MessengerSavedViewPageInfo;
+}
+
 export type MessengerDirectoryItem =
   | {
     type: "thread";

@@ -5,19 +5,38 @@
  */
 import type { Db } from "@rudderhq/db";
 import { messengerCustomGroupEntries, messengerSavedViews } from "@rudderhq/db";
-import type {
-  CreateMessengerSavedView,
-  MessengerSavedViewTarget,
-  UpdateMessengerSavedView,
+import {
+  messengerSavedViewIdSchema,
+  messengerSavedViewTargetSchema,
+  type CreateMessengerSavedView,
+  type MessengerSavedViewTarget,
+  type UpdateMessengerSavedView,
 } from "@rudderhq/shared";
-import { and, asc, desc, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, count, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { badRequest, notFound } from "../errors.js";
 import { logActivity } from "./activity-log.js";
 
 export type MessengerSavedViewVisibility = "visible" | "hidden" | "all";
+export type MessengerSavedViewListOptions = {
+  visibility?: MessengerSavedViewVisibility;
+  limit?: number;
+  offset?: number;
+};
+
+function assertSavedViewId(id: string) {
+  const parsed = messengerSavedViewIdSchema.safeParse(id);
+  if (!parsed.success) throw badRequest("Invalid Messenger Saved View id");
+  return parsed.data;
+}
+
+function validatedTarget(target: MessengerSavedViewTarget) {
+  const parsed = messengerSavedViewTargetSchema.safeParse(target);
+  if (!parsed.success) throw badRequest("Invalid Messenger Saved View target", parsed.error.issues);
+  return parsed.data;
+}
 
 export function messengerSavedViewItemKey(id: string) {
-  return `saved-view:${id}`;
+  return `saved-view:${assertSavedViewId(id)}`;
 }
 
 export function messengerSavedViewResourceKey(target: MessengerSavedViewTarget) {
@@ -42,15 +61,21 @@ export function messengerSavedViewsService(db: Db) {
     eq(messengerSavedViews.orgId, orgId),
     eq(messengerSavedViews.userId, userId),
   );
+  const placementLockKey = (orgId: string, userId: string) => `messenger-saved-views:${orgId}:${userId}`;
+
+  async function lockPlacement(database: Db, orgId: string, userId: string) {
+    await database.execute(sql`select pg_advisory_xact_lock(hashtext(${placementLockKey(orgId, userId)}))`);
+  }
 
   async function logMutation(
+    database: Db,
     orgId: string,
     userId: string,
     action: string,
-    savedView: typeof messengerSavedViews.$inferSelect,
+    savedView: Pick<typeof messengerSavedViews.$inferSelect, "id" | "targetKind" | "resourceKey">,
     details?: Record<string, unknown>,
   ) {
-    await logActivity(db, {
+    await logActivity(database, {
       orgId,
       actorType: "user",
       actorId: userId,
@@ -65,171 +90,218 @@ export function messengerSavedViewsService(db: Db) {
     });
   }
 
-  async function list(orgId: string, userId: string, visibility: MessengerSavedViewVisibility = "visible") {
-    const visibilityWhere = visibility === "visible"
+  function visibilityWhere(visibility: MessengerSavedViewVisibility) {
+    return visibility === "visible"
       ? isNull(messengerSavedViews.hiddenAt)
       : visibility === "hidden"
         ? isNotNull(messengerSavedViews.hiddenAt)
         : undefined;
-    return db
-      .select()
-      .from(messengerSavedViews)
-      .where(and(ownerWhere(orgId, userId), visibilityWhere))
-      .orderBy(asc(messengerSavedViews.sortOrder), asc(messengerSavedViews.createdAt));
   }
 
-  async function get(orgId: string, userId: string, id: string) {
-    const [row] = await db
+  async function list(orgId: string, userId: string, options: MessengerSavedViewListOptions = {}) {
+    const visibility = options.visibility ?? "visible";
+    const limit = Math.min(Math.max(options.limit ?? 50, 1), 100);
+    const offset = Math.max(options.offset ?? 0, 0);
+    const where = and(ownerWhere(orgId, userId), visibilityWhere(visibility));
+    const [items, totalRows] = await Promise.all([
+      db
+        .select()
+        .from(messengerSavedViews)
+        .where(where)
+        .orderBy(asc(messengerSavedViews.sortOrder), asc(messengerSavedViews.createdAt))
+        .limit(limit)
+        .offset(offset),
+      db.select({ value: count() }).from(messengerSavedViews).where(where),
+    ]);
+    const total = totalRows[0]?.value ?? 0;
+    const hasMore = offset + items.length < total;
+    return {
+      items,
+      pageInfo: {
+        limit,
+        offset,
+        total,
+        hasMore,
+        nextOffset: hasMore ? offset + items.length : null,
+      },
+    };
+  }
+
+  async function getWithDb(database: Db, orgId: string, userId: string, id: string) {
+    const validId = assertSavedViewId(id);
+    const [row] = await database
       .select()
       .from(messengerSavedViews)
-      .where(and(ownerWhere(orgId, userId), eq(messengerSavedViews.id, id)))
+      .where(and(ownerWhere(orgId, userId), eq(messengerSavedViews.id, validId)))
       .limit(1);
     if (!row) throw notFound("Messenger Saved View not found");
     return row;
   }
 
-  async function create(orgId: string, userId: string, input: CreateMessengerSavedView) {
-    const resourceKey = messengerSavedViewResourceKey(input.target);
-    const existing = await db
-      .select()
-      .from(messengerSavedViews)
-      .where(and(ownerWhere(orgId, userId), eq(messengerSavedViews.resourceKey, resourceKey)))
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-    const now = new Date();
+  async function get(orgId: string, userId: string, id: string) {
+    return getWithDb(db, orgId, userId, id);
+  }
 
-    if (existing) {
-      const wasHidden = Boolean(existing.hiddenAt);
-      const [restored] = await db
-        .update(messengerSavedViews)
-        .set({
-          targetKind: input.target.kind,
-          targetPayload: input.target,
+  async function create(orgId: string, userId: string, input: CreateMessengerSavedView) {
+    const target = validatedTarget(input.target);
+    const resourceKey = messengerSavedViewResourceKey(target);
+    return db.transaction(async (tx) => {
+      const txDb = tx as unknown as Db;
+      await lockPlacement(txDb, orgId, userId);
+      const existing = await txDb
+        .select()
+        .from(messengerSavedViews)
+        .where(and(ownerWhere(orgId, userId), eq(messengerSavedViews.resourceKey, resourceKey)))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      const now = new Date();
+      if (existing) {
+        const wasHidden = Boolean(existing.hiddenAt);
+        const [updated] = await txDb
+          .update(messengerSavedViews)
+          .set({
+            targetKind: target.kind,
+            targetPayload: target,
+            title: input.title,
+            subtitle: input.subtitle ?? null,
+            favicon: input.favicon ?? null,
+            hiddenAt: null,
+            updatedAt: now,
+          })
+          .where(and(ownerWhere(orgId, userId), eq(messengerSavedViews.id, existing.id)))
+          .returning();
+        await logMutation(
+          txDb,
+          orgId,
+          userId,
+          wasHidden ? "messenger.saved_view_restored" : "messenger.saved_view_updated",
+          updated,
+          { source: "create" },
+        );
+        return updated;
+      }
+
+      const [last] = await txDb
+        .select({ sortOrder: messengerSavedViews.sortOrder })
+        .from(messengerSavedViews)
+        .where(ownerWhere(orgId, userId))
+        .orderBy(desc(messengerSavedViews.sortOrder))
+        .limit(1);
+      const [created] = await txDb
+        .insert(messengerSavedViews)
+        .values({
+          orgId,
+          userId,
+          targetKind: target.kind,
+          targetPayload: target,
+          resourceKey,
           title: input.title,
           subtitle: input.subtitle ?? null,
           favicon: input.favicon ?? null,
-          hiddenAt: null,
+          sortOrder: (last?.sortOrder ?? -1) + 1,
           updatedAt: now,
         })
-        .where(and(ownerWhere(orgId, userId), eq(messengerSavedViews.id, existing.id)))
         .returning();
-      await logMutation(orgId, userId, wasHidden ? "messenger.saved_view_restored" : "messenger.saved_view_updated", restored, {
-        source: "create",
-      });
-      return restored;
-    }
-
-    const [lastVisible] = await db
-      .select({ sortOrder: messengerSavedViews.sortOrder })
-      .from(messengerSavedViews)
-      .where(and(ownerWhere(orgId, userId), isNull(messengerSavedViews.hiddenAt)))
-      .orderBy(desc(messengerSavedViews.sortOrder))
-      .limit(1);
-    const [created] = await db
-      .insert(messengerSavedViews)
-      .values({
-        orgId,
-        userId,
-        targetKind: input.target.kind,
-        targetPayload: input.target,
-        resourceKey,
-        title: input.title,
-        subtitle: input.subtitle ?? null,
-        favicon: input.favicon ?? null,
-        sortOrder: (lastVisible?.sortOrder ?? -1) + 1,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: [
-          messengerSavedViews.orgId,
-          messengerSavedViews.userId,
-          messengerSavedViews.resourceKey,
-        ],
-        set: {
-          targetKind: input.target.kind,
-          targetPayload: input.target,
-          title: input.title,
-          subtitle: input.subtitle ?? null,
-          favicon: input.favicon ?? null,
-          hiddenAt: null,
-          updatedAt: now,
-        },
-      })
-      .returning();
-    await logMutation(orgId, userId, "messenger.saved_view_created", created);
-    return created;
+      await logMutation(txDb, orgId, userId, "messenger.saved_view_created", created);
+      return created;
+    });
   }
 
   async function update(orgId: string, userId: string, id: string, patch: UpdateMessengerSavedView) {
-    const existing = await get(orgId, userId, id);
-    if (patch.target && messengerSavedViewResourceKey(patch.target) !== existing.resourceKey) {
-      throw badRequest("Saved View target identity cannot be changed");
-    }
-    const wasHidden = Boolean(existing.hiddenAt);
-    const nextHiddenAt = patch.hidden === undefined
-      ? existing.hiddenAt
-      : patch.hidden
-        ? existing.hiddenAt ?? new Date()
-        : null;
-    const [updated] = await db
-      .update(messengerSavedViews)
-      .set({
-        ...(patch.target ? { targetKind: patch.target.kind, targetPayload: patch.target } : {}),
-        ...(patch.title !== undefined ? { title: patch.title } : {}),
-        ...(patch.subtitle !== undefined ? { subtitle: patch.subtitle } : {}),
-        ...(patch.favicon !== undefined ? { favicon: patch.favicon } : {}),
-        ...(patch.hidden !== undefined ? { hiddenAt: nextHiddenAt } : {}),
-        updatedAt: new Date(),
-      })
-      .where(and(ownerWhere(orgId, userId), eq(messengerSavedViews.id, id)))
-      .returning();
-    const isHidden = Boolean(updated.hiddenAt);
-    const action = wasHidden !== isHidden
-      ? isHidden ? "messenger.saved_view_hidden" : "messenger.saved_view_restored"
-      : "messenger.saved_view_updated";
-    await logMutation(orgId, userId, action, updated);
-    return updated;
+    const validId = assertSavedViewId(id);
+    const target = patch.target ? validatedTarget(patch.target) : undefined;
+    return db.transaction(async (tx) => {
+      const txDb = tx as unknown as Db;
+      await lockPlacement(txDb, orgId, userId);
+      const existing = await getWithDb(txDb, orgId, userId, validId);
+      if (target && messengerSavedViewResourceKey(target) !== existing.resourceKey) {
+        throw badRequest("Saved View target identity cannot be changed");
+      }
+      const wasHidden = Boolean(existing.hiddenAt);
+      const nextHiddenAt = patch.hidden === undefined
+        ? existing.hiddenAt
+        : patch.hidden
+          ? existing.hiddenAt ?? new Date()
+          : null;
+      const [updated] = await txDb
+        .update(messengerSavedViews)
+        .set({
+          ...(target ? { targetKind: target.kind, targetPayload: target } : {}),
+          ...(patch.title !== undefined ? { title: patch.title } : {}),
+          ...(patch.subtitle !== undefined ? { subtitle: patch.subtitle } : {}),
+          ...(patch.favicon !== undefined ? { favicon: patch.favicon } : {}),
+          ...(patch.hidden !== undefined ? { hiddenAt: nextHiddenAt } : {}),
+          updatedAt: new Date(),
+        })
+        .where(and(ownerWhere(orgId, userId), eq(messengerSavedViews.id, validId)))
+        .returning();
+      const isHidden = Boolean(updated.hiddenAt);
+      const action = wasHidden !== isHidden
+        ? isHidden ? "messenger.saved_view_hidden" : "messenger.saved_view_restored"
+        : "messenger.saved_view_updated";
+      await logMutation(txDb, orgId, userId, action, updated);
+      return updated;
+    });
   }
 
   async function reorder(orgId: string, userId: string, ids: string[]) {
-    if (ids.length === 0) return list(orgId, userId, "visible");
-    const visible = await list(orgId, userId, "visible");
-    const visibleById = new Map(visible.map((view) => [view.id, view]));
-    if (ids.some((id) => !visibleById.has(id))) {
-      throw notFound("Messenger Saved View not found");
-    }
-    const requested = new Set(ids);
-    const orderedIds = [...ids, ...visible.map((view) => view.id).filter((id) => !requested.has(id))];
-    const now = new Date();
+    const validIds = ids.map(assertSavedViewId);
     await db.transaction(async (tx) => {
-      for (const [sortOrder, savedViewId] of orderedIds.entries()) {
-        await tx
+      const txDb = tx as unknown as Db;
+      await lockPlacement(txDb, orgId, userId);
+      const placements = await txDb
+        .select({
+          id: messengerSavedViews.id,
+          sortOrder: messengerSavedViews.sortOrder,
+          hiddenAt: messengerSavedViews.hiddenAt,
+          targetKind: messengerSavedViews.targetKind,
+          resourceKey: messengerSavedViews.resourceKey,
+        })
+        .from(messengerSavedViews)
+        .where(ownerWhere(orgId, userId))
+        .orderBy(asc(messengerSavedViews.sortOrder), asc(messengerSavedViews.createdAt));
+      const visible = placements.filter((view) => !view.hiddenAt);
+      const visibleById = new Map(visible.map((view) => [view.id, view]));
+      if (validIds.some((savedViewId) => !visibleById.has(savedViewId))) {
+        throw notFound("Messenger Saved View not found");
+      }
+      const requested = new Set(validIds);
+      const orderedIds = [...validIds, ...visible.map((view) => view.id).filter((savedViewId) => !requested.has(savedViewId))];
+      const visibleSlots = visible.map((view) => view.sortOrder);
+      const now = new Date();
+      for (const [index, savedViewId] of orderedIds.entries()) {
+        await txDb
           .update(messengerSavedViews)
-          .set({ sortOrder, updatedAt: now })
+          .set({ sortOrder: visibleSlots[index], updatedAt: now })
           .where(and(ownerWhere(orgId, userId), eq(messengerSavedViews.id, savedViewId)));
       }
+      const evidence = validIds[0] ? visibleById.get(validIds[0]) : null;
+      if (evidence) {
+        await logMutation(txDb, orgId, userId, "messenger.saved_views_reordered", evidence, { ids: orderedIds });
+      }
     });
-    const first = visibleById.get(ids[0]!);
-    if (first) await logMutation(orgId, userId, "messenger.saved_views_reordered", first, { ids: orderedIds });
-    return list(orgId, userId, "visible");
+    return list(orgId, userId);
   }
 
   async function remove(orgId: string, userId: string, id: string) {
-    const existing = await get(orgId, userId, id);
-    await db.transaction(async (tx) => {
-      await tx
+    const validId = assertSavedViewId(id);
+    return db.transaction(async (tx) => {
+      const txDb = tx as unknown as Db;
+      await lockPlacement(txDb, orgId, userId);
+      const existing = await getWithDb(txDb, orgId, userId, validId);
+      await txDb
         .delete(messengerCustomGroupEntries)
         .where(and(
           eq(messengerCustomGroupEntries.orgId, orgId),
           eq(messengerCustomGroupEntries.userId, userId),
-          eq(messengerCustomGroupEntries.threadKey, messengerSavedViewItemKey(id)),
+          eq(messengerCustomGroupEntries.threadKey, messengerSavedViewItemKey(validId)),
         ));
-      await tx
+      await txDb
         .delete(messengerSavedViews)
-        .where(and(ownerWhere(orgId, userId), eq(messengerSavedViews.id, id)));
+        .where(and(ownerWhere(orgId, userId), eq(messengerSavedViews.id, validId)));
+      await logMutation(txDb, orgId, userId, "messenger.saved_view_deleted", existing);
+      return existing;
     });
-    await logMutation(orgId, userId, "messenger.saved_view_deleted", existing);
-    return existing;
   }
 
   return { list, get, create, update, reorder, remove };

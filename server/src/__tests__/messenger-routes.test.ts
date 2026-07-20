@@ -183,14 +183,19 @@ describe("Messenger Saved View and generic group routes", () => {
     mockSavedViewsService.update.mockResolvedValue({ id: "view-1" });
     mockSavedViewsService.reorder.mockResolvedValue([]);
     mockSavedViewsService.remove.mockResolvedValue({ id: "view-1" });
-    mockMessengerService.assignThreadToCustomGroup.mockResolvedValue({ itemKey: "saved-view:view-1" });
+    mockMessengerService.assignThreadToCustomGroup.mockResolvedValue({ itemKey: "saved-view:11111111-1111-4111-8111-111111111111" });
     mockMessengerService.reorderCustomGroupEntries.mockResolvedValue({ groups: [] });
   });
 
   it("scopes Saved View CRUD and list visibility to the current board user", async () => {
     const app = createApp();
-    expect((await request(app).get("/api/orgs/org-1/messenger/saved-views?visibility=hidden")).status).toBe(200);
-    expect(mockSavedViewsService.list).toHaveBeenCalledWith("org-1", "user-1", "hidden");
+    const savedViewId = "33333333-3333-4333-8333-333333333333";
+    expect((await request(app).get("/api/orgs/org-1/messenger/saved-views?visibility=hidden&limit=20&offset=40")).status).toBe(200);
+    expect(mockSavedViewsService.list).toHaveBeenCalledWith("org-1", "user-1", {
+      visibility: "hidden",
+      limit: 20,
+      offset: 40,
+    });
 
     const created = await request(app)
       .post("/api/orgs/org-1/messenger/saved-views")
@@ -203,12 +208,14 @@ describe("Messenger Saved View and generic group routes", () => {
       target: { kind: "browser", tabId: "tab-1", url: "https://example.test" },
     }));
 
-    expect((await request(app).get("/api/orgs/org-1/messenger/saved-views/view-1")).status).toBe(200);
-    expect(mockSavedViewsService.get).toHaveBeenCalledWith("org-1", "user-1", "view-1");
-    expect((await request(app).patch("/api/orgs/org-1/messenger/saved-views/view-1").send({ hidden: true })).status).toBe(200);
-    expect(mockSavedViewsService.update).toHaveBeenCalledWith("org-1", "user-1", "view-1", { hidden: true });
-    expect((await request(app).delete("/api/orgs/org-1/messenger/saved-views/view-1")).status).toBe(200);
-    expect(mockSavedViewsService.remove).toHaveBeenCalledWith("org-1", "user-1", "view-1");
+    expect((await request(app).get(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`)).status).toBe(200);
+    expect(mockSavedViewsService.get).toHaveBeenCalledWith("org-1", "user-1", savedViewId);
+    expect((await request(app).patch(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`).send({ hidden: true })).status).toBe(200);
+    expect(mockSavedViewsService.update).toHaveBeenCalledWith("org-1", "user-1", savedViewId, { hidden: true });
+    expect((await request(app).delete(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`)).status).toBe(200);
+    expect(mockSavedViewsService.remove).toHaveBeenCalledWith("org-1", "user-1", savedViewId);
+
+    expect((await request(app).get("/api/orgs/org-1/messenger/saved-views/not-a-uuid")).status).toBe(400);
   });
 
   it("rejects invalid Saved View targets and inaccessible organizations", async () => {
@@ -217,6 +224,8 @@ describe("Messenger Saved View and generic group routes", () => {
       .send({ target: { kind: "browser", tabId: "tab-1", url: "about:blank" }, title: "Blank" });
     expect(invalid.status).toBe(400);
     expect(mockSavedViewsService.create).not.toHaveBeenCalled();
+
+    expect((await request(createApp()).get("/api/orgs/org-1/messenger/saved-views?limit=101")).status).toBe(400);
 
     const forbidden = await request(createApp({
       type: "agent",
@@ -232,9 +241,9 @@ describe("Messenger Saved View and generic group routes", () => {
     const app = createApp();
     expect((await request(app)
       .post("/api/orgs/org-1/messenger/groups/group-1/entries")
-      .send({ itemKey: "saved-view:view-1" })).status).toBe(201);
+      .send({ itemKey: "saved-view:11111111-1111-4111-8111-111111111111" })).status).toBe(201);
     expect(mockMessengerService.assignThreadToCustomGroup).toHaveBeenLastCalledWith(
-      "org-1", "user-1", "group-1", "saved-view:view-1",
+      "org-1", "user-1", "group-1", "saved-view:11111111-1111-4111-8111-111111111111",
     );
 
     expect((await request(app)
@@ -246,33 +255,39 @@ describe("Messenger Saved View and generic group routes", () => {
 
     const mismatch = await request(app)
       .post("/api/orgs/org-1/messenger/groups/group-1/entries")
-      .send({ itemKey: "saved-view:view-1", threadKey: "chat:chat-1" });
+      .send({ itemKey: "saved-view:11111111-1111-4111-8111-111111111111", threadKey: "chat:chat-1" });
     expect(mismatch.status).toBe(400);
 
     expect((await request(app)
       .patch("/api/orgs/org-1/messenger/groups/group-1/entries/reorder")
-      .send({ itemKeys: ["saved-view:view-1", "chat:chat-1"] })).status).toBe(200);
+      .send({ itemKeys: ["saved-view:11111111-1111-4111-8111-111111111111", "chat:chat-1"] })).status).toBe(200);
     expect(mockMessengerService.reorderCustomGroupEntries).toHaveBeenCalledWith(
-      "org-1", "user-1", "group-1", ["saved-view:view-1", "chat:chat-1"],
+      "org-1", "user-1", "group-1", ["saved-view:11111111-1111-4111-8111-111111111111", "chat:chat-1"],
     );
   });
 
   it("validates and forwards Saved View reorder requests for the current board user", async () => {
     const firstId = "11111111-1111-4111-8111-111111111111";
     const secondId = "22222222-2222-4222-8222-222222222222";
-    mockSavedViewsService.reorder.mockResolvedValueOnce([
-      { id: secondId, sortOrder: 0 },
-      { id: firstId, sortOrder: 1 },
-    ]);
+    mockSavedViewsService.reorder.mockResolvedValueOnce({
+      items: [
+        { id: secondId, sortOrder: 0 },
+        { id: firstId, sortOrder: 1 },
+      ],
+      pageInfo: { limit: 50, offset: 0, total: 2, hasMore: false, nextOffset: null },
+    });
 
     const response = await request(createApp())
       .patch("/api/orgs/org-1/messenger/saved-views/reorder")
       .send({ ids: [secondId, firstId] });
     expect(response.status).toBe(200);
-    expect(response.body).toEqual([
-      { id: secondId, sortOrder: 0 },
-      { id: firstId, sortOrder: 1 },
-    ]);
+    expect(response.body).toEqual({
+      items: [
+        { id: secondId, sortOrder: 0 },
+        { id: firstId, sortOrder: 1 },
+      ],
+      pageInfo: { limit: 50, offset: 0, total: 2, hasMore: false, nextOffset: null },
+    });
     expect(mockSavedViewsService.reorder).toHaveBeenCalledWith("org-1", "user-1", [secondId, firstId]);
 
     const invalid = await request(createApp())

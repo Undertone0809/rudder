@@ -491,7 +491,10 @@ export const createMessengerCustomGroupSchema = z.object({
   icon: z.string().trim().min(1).max(24).optional().nullable(),
 });
 
-const messengerItemKeySchema = z.string().trim().min(1).max(240);
+const messengerItemKeySchema = z.string().trim().min(1).max(240).refine((itemKey) => {
+  if (!itemKey.startsWith("saved-view:")) return true;
+  return z.string().uuid().safeParse(itemKey.slice("saved-view:".length)).success;
+}, "Saved View item keys must contain a valid UUID");
 const messengerItemKeysSchema = z.array(messengerItemKeySchema).min(1).max(50);
 
 export const createMessengerCustomGroupWithEntriesSchema = createMessengerCustomGroupSchema.extend({

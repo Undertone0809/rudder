@@ -47,6 +47,7 @@ export {
 export {
   createMessengerSavedViewSchema,
   listMessengerSavedViewsQuerySchema,
+  messengerSavedViewIdSchema,
   messengerSavedViewTargetSchema,
   reorderMessengerSavedViewsSchema,
   updateMessengerSavedViewSchema,

@@ -1,8 +1,25 @@
 import { z } from "zod";
 
 const uuid = z.string().uuid();
+export const messengerSavedViewIdSchema = uuid;
 const nonBlankId = z.string().trim().min(1).max(240);
-const nonBlankPath = z.string().trim().min(1).max(4096);
+
+function isCanonicalPortableLibraryPath(value: string, allowRoot: boolean) {
+  if (allowRoot && value === "") return true;
+  if (!value || value !== value.trim()) return false;
+  if (value.startsWith("/") || value.includes("\\")) return false;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return false;
+  const segments = value.split("/");
+  return segments.every((segment) => Boolean(segment)
+    && segment !== "."
+    && segment !== ".."
+    && !segment.startsWith("~"));
+}
+
+const libraryPathSchema = z.string().max(4096)
+  .refine((value) => isCanonicalPortableLibraryPath(value, false), "Library path must be canonical and relative");
+const libraryDirectoryPathSchema = z.string().max(4096)
+  .refine((value) => isCanonicalPortableLibraryPath(value, true), "Library directory path must be canonical and relative");
 
 const browserUrlSchema = z.string().trim().min(1).max(8192).refine((value) => {
   try {
@@ -17,9 +34,9 @@ export const messengerSavedViewTargetSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("browser"), tabId: nonBlankId, url: browserUrlSchema }).strict(),
   z.object({ kind: z.literal("automation"), automationId: uuid }).strict(),
   z.object({ kind: z.literal("library_document"), documentId: uuid }).strict(),
-  z.object({ kind: z.literal("library_entry"), entryId: uuid, path: nonBlankPath }).strict(),
-  z.object({ kind: z.literal("library_file"), filePath: nonBlankPath }).strict(),
-  z.object({ kind: z.literal("library_directory"), directoryPath: nonBlankPath }).strict(),
+  z.object({ kind: z.literal("library_entry"), entryId: uuid, path: libraryPathSchema }).strict(),
+  z.object({ kind: z.literal("library_file"), filePath: libraryPathSchema }).strict(),
+  z.object({ kind: z.literal("library_directory"), directoryPath: libraryDirectoryPathSchema }).strict(),
 ]);
 
 const savedViewMetadataShape = {
@@ -55,6 +72,8 @@ export const reorderMessengerSavedViewsSchema = z.object({
 
 export const listMessengerSavedViewsQuerySchema = z.object({
   visibility: z.enum(["visible", "hidden", "all"]).default("visible"),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
 }).strict();
 
 export type MessengerSavedViewTargetInput = z.infer<typeof messengerSavedViewTargetSchema>;

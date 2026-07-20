@@ -6,6 +6,7 @@ import {
   createMessengerCustomGroupWithEntriesSchema,
   createMessengerSavedViewSchema,
   listMessengerSavedViewsQuerySchema,
+  messengerSavedViewIdSchema,
   reorderMessengerCustomGroupEntriesSchema,
   reorderMessengerCustomGroupsSchema,
   reorderMessengerSavedViewsSchema,
@@ -71,7 +72,7 @@ export function messengerRoutes(db: Db) {
     assertCompanyAccess(req, orgId);
     const userId = boardUserId(req);
     const query = listMessengerSavedViewsQuerySchema.parse(req.query);
-    res.json(await savedViews.list(orgId, userId, query.visibility));
+    res.json(await savedViews.list(orgId, userId, query));
   });
 
   router.post(
@@ -100,7 +101,8 @@ export function messengerRoutes(db: Db) {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const userId = boardUserId(req);
-    res.json(await savedViews.get(orgId, userId, req.params.id as string));
+    const id = messengerSavedViewIdSchema.parse(req.params.id);
+    res.json(await savedViews.get(orgId, userId, id));
   });
 
   router.patch(
@@ -110,7 +112,8 @@ export function messengerRoutes(db: Db) {
       const orgId = req.params.orgId as string;
       assertCompanyAccess(req, orgId);
       const userId = boardUserId(req);
-      res.json(await savedViews.update(orgId, userId, req.params.id as string, req.body));
+      const id = messengerSavedViewIdSchema.parse(req.params.id);
+      res.json(await savedViews.update(orgId, userId, id, req.body));
     },
   );
 
@@ -118,7 +121,8 @@ export function messengerRoutes(db: Db) {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const userId = boardUserId(req);
-    res.json(await savedViews.remove(orgId, userId, req.params.id as string));
+    const id = messengerSavedViewIdSchema.parse(req.params.id);
+    res.json(await savedViews.remove(orgId, userId, id));
   });
 
   router.get("/orgs/:orgId/messenger/groups", async (req, res) => {
