@@ -1253,10 +1253,13 @@ contracts:
       - doc/product/domains/collaboration/chat-messenger-im.md
     related_code:
       - packages/db/src/schema/messenger_custom_groups.ts
+      - packages/db/src/schema/messenger_saved_views.ts
       - packages/shared/src/types/messenger.ts
       - packages/shared/src/validators/chat.ts
+      - packages/shared/src/validators/messenger.ts
       - server/src/routes/messenger.ts
       - server/src/services/messenger.ts
+      - server/src/services/messenger-saved-views.ts
       - ui/src/api/messenger.ts
       - ui/src/context/SidePanelContext.tsx
       - ui/src/components/MessengerContextSidebar.tsx
@@ -1266,6 +1269,7 @@ contracts:
       - ui/src/pages/Messenger.tsx
       - desktop/scripts/smoke.mjs
     related_tests:
+      - packages/shared/src/validators/messenger.test.ts
       - server/src/__tests__/messenger-routes.test.ts
       - server/src/__tests__/messenger-service.test.ts
       - ui/src/components/MessengerContextSidebar.test.tsx

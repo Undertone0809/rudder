@@ -38,13 +38,58 @@ export interface MessengerCustomGroupEntry {
   orgId: string;
   userId: string;
   groupId: string;
+  /** Canonical opaque directory key. Persisted in the legacy `thread_key` column. */
+  itemKey: string;
+  /** Compatibility alias for thread-backed entries; Saved View JSON omits it. */
   threadKey: string;
   sortOrder: number;
   createdAt: Date;
   updatedAt: Date;
 }
 
+export type MessengerSavedViewTarget =
+  | { kind: "browser"; tabId: string; url: string }
+  | { kind: "automation"; automationId: string }
+  | { kind: "library_document"; documentId: string }
+  | { kind: "library_entry"; entryId: string; path: string }
+  | { kind: "library_file"; filePath: string }
+  | { kind: "library_directory"; directoryPath: string };
+
+export type MessengerSavedViewTargetKind = MessengerSavedViewTarget["kind"];
+
+export interface MessengerSavedView {
+  id: string;
+  orgId: string;
+  userId: string;
+  targetKind: MessengerSavedViewTargetKind;
+  targetPayload: MessengerSavedViewTarget;
+  resourceKey: string;
+  title: string;
+  subtitle: string | null;
+  favicon: string | null;
+  sortOrder: number;
+  hiddenAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export type MessengerDirectoryItem =
+  | {
+    type: "thread";
+    itemKey: string;
+    title: string;
+    thread: MessengerThreadSummary;
+  }
+  | {
+    type: "saved_view";
+    itemKey: string;
+    title: string;
+    savedView: MessengerSavedView;
+  };
+
 export interface MessengerCustomGroupHydratedEntry extends MessengerCustomGroupEntry {
+  item: MessengerDirectoryItem;
+  /** Compatibility alias. Runtime responses omit this for Saved View entries. */
   thread: MessengerThreadSummary;
 }
 

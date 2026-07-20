@@ -144,7 +144,7 @@ export type {
   LibraryDocumentIssueLink,
   LibraryDocumentRevision,
   LibraryDocumentSummary, LibraryEntry, LiveEvent, MessengerApprovalThreadItem,
-  MessengerBudgetThreadItem, MessengerChatThreadDetail, MessengerCustomGroup, MessengerCustomGroupEntry, MessengerCustomGroupHydratedEntry, MessengerCustomGroupWithEntries, MessengerCustomGroupsResponse, MessengerEvent, MessengerHeartbeatRunThreadItem, MessengerIssueThreadItem, MessengerJoinRequestThreadItem, MessengerThreadAction, MessengerThreadDetail,
+  MessengerBudgetThreadItem, MessengerChatThreadDetail, MessengerCustomGroup, MessengerCustomGroupEntry, MessengerCustomGroupHydratedEntry, MessengerCustomGroupWithEntries, MessengerCustomGroupsResponse, MessengerDirectoryItem, MessengerEvent, MessengerHeartbeatRunThreadItem, MessengerIssueThreadItem, MessengerJoinRequestThreadItem, MessengerSavedView, MessengerSavedViewTarget, MessengerSavedViewTargetKind, MessengerThreadAction, MessengerThreadDetail,
   MessengerThreadItem, MessengerThreadPageInfo,
   MessengerThreadSummary,
   MessengerThreadSummaryPage, MessengerThreadUserState, OperatorProfileSettings, Organization, OrganizationExportJob,
@@ -174,6 +174,18 @@ export type {
   WorkspaceBackupRestoreResult, WorkspaceBackupStatus, WorkspaceBackupSummary, WorkspaceBackupTriggerSource, WorkspaceOperation,
   WorkspaceOperationPhase, WorkspaceOperationStatus, WorkspaceRuntimeService, WorkspaceWebPreviewNetworkMode
 } from "./types/index.js";
+export {
+  createMessengerSavedViewSchema,
+  listMessengerSavedViewsQuerySchema,
+  messengerSavedViewTargetSchema,
+  reorderMessengerSavedViewsSchema,
+  updateMessengerSavedViewSchema,
+  type CreateMessengerSavedView,
+  type ListMessengerSavedViewsQuery,
+  type MessengerSavedViewTargetInput,
+  type ReorderMessengerSavedViews,
+  type UpdateMessengerSavedView
+} from "./validators/messenger.js";
 
 export {
   DEFAULT_INSTANCE_BROWSER_SETTINGS, KEYBOARD_SHORTCUT_ACTION_IDS, OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH, instanceBrowserSettingsSchema, instanceGeneralSettingsSchema, instanceLocaleSchema, instanceNotificationSettingsSchema, instancePathPickerRequestSchema,

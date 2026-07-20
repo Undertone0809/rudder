@@ -24,12 +24,25 @@ const mockProductIntelligence = vi.hoisted(() => ({
   execute: vi.fn(),
 }));
 
+const mockSavedViewsService = vi.hoisted(() => ({
+  list: vi.fn(),
+  get: vi.fn(),
+  create: vi.fn(),
+  update: vi.fn(),
+  reorder: vi.fn(),
+  remove: vi.fn(),
+}));
+
 vi.mock("../services/messenger.js", () => ({
   messengerService: () => mockMessengerService,
 }));
 
 vi.mock("../services/product-intelligence.js", () => ({
   productIntelligenceService: () => mockProductIntelligence,
+}));
+
+vi.mock("../services/messenger-saved-views.js", () => ({
+  messengerSavedViewsService: () => mockSavedViewsService,
 }));
 
 function createApp(actor: Record<string, unknown> = {
@@ -158,5 +171,89 @@ describe("Messenger custom group title routes", () => {
 
     expect(res.status).toBe(422);
     expect(mockMessengerService.updateCustomGroup).not.toHaveBeenCalled();
+  });
+});
+
+describe("Messenger Saved View and generic group routes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSavedViewsService.list.mockResolvedValue([]);
+    mockSavedViewsService.get.mockResolvedValue({ id: "view-1" });
+    mockSavedViewsService.create.mockResolvedValue({ id: "view-1" });
+    mockSavedViewsService.update.mockResolvedValue({ id: "view-1" });
+    mockSavedViewsService.reorder.mockResolvedValue([]);
+    mockSavedViewsService.remove.mockResolvedValue({ id: "view-1" });
+    mockMessengerService.assignThreadToCustomGroup.mockResolvedValue({ itemKey: "saved-view:view-1" });
+    mockMessengerService.reorderCustomGroupEntries.mockResolvedValue({ groups: [] });
+  });
+
+  it("scopes Saved View CRUD and list visibility to the current board user", async () => {
+    const app = createApp();
+    expect((await request(app).get("/api/orgs/org-1/messenger/saved-views?visibility=hidden")).status).toBe(200);
+    expect(mockSavedViewsService.list).toHaveBeenCalledWith("org-1", "user-1", "hidden");
+
+    const created = await request(app)
+      .post("/api/orgs/org-1/messenger/saved-views")
+      .send({
+        target: { kind: "browser", tabId: "tab-1", url: "https://example.test" },
+        title: "Example",
+      });
+    expect(created.status).toBe(201);
+    expect(mockSavedViewsService.create).toHaveBeenCalledWith("org-1", "user-1", expect.objectContaining({
+      target: { kind: "browser", tabId: "tab-1", url: "https://example.test" },
+    }));
+
+    expect((await request(app).get("/api/orgs/org-1/messenger/saved-views/view-1")).status).toBe(200);
+    expect(mockSavedViewsService.get).toHaveBeenCalledWith("org-1", "user-1", "view-1");
+    expect((await request(app).patch("/api/orgs/org-1/messenger/saved-views/view-1").send({ hidden: true })).status).toBe(200);
+    expect(mockSavedViewsService.update).toHaveBeenCalledWith("org-1", "user-1", "view-1", { hidden: true });
+    expect((await request(app).delete("/api/orgs/org-1/messenger/saved-views/view-1")).status).toBe(200);
+    expect(mockSavedViewsService.remove).toHaveBeenCalledWith("org-1", "user-1", "view-1");
+  });
+
+  it("rejects invalid Saved View targets and inaccessible organizations", async () => {
+    const invalid = await request(createApp())
+      .post("/api/orgs/org-1/messenger/saved-views")
+      .send({ target: { kind: "browser", tabId: "tab-1", url: "about:blank" }, title: "Blank" });
+    expect(invalid.status).toBe(400);
+    expect(mockSavedViewsService.create).not.toHaveBeenCalled();
+
+    const forbidden = await request(createApp({
+      type: "agent",
+      source: "api_key",
+      agentId: "agent-1",
+      orgId: "org-1",
+    })).get("/api/orgs/org-1/messenger/saved-views");
+    expect(forbidden.status).toBe(403);
+    expect(mockSavedViewsService.list).not.toHaveBeenCalled();
+  });
+
+  it("normalizes canonical and legacy custom-group item aliases", async () => {
+    const app = createApp();
+    expect((await request(app)
+      .post("/api/orgs/org-1/messenger/groups/group-1/entries")
+      .send({ itemKey: "saved-view:view-1" })).status).toBe(201);
+    expect(mockMessengerService.assignThreadToCustomGroup).toHaveBeenLastCalledWith(
+      "org-1", "user-1", "group-1", "saved-view:view-1",
+    );
+
+    expect((await request(app)
+      .post("/api/orgs/org-1/messenger/groups/group-1/entries")
+      .send({ threadKey: "chat:chat-1" })).status).toBe(201);
+    expect(mockMessengerService.assignThreadToCustomGroup).toHaveBeenLastCalledWith(
+      "org-1", "user-1", "group-1", "chat:chat-1",
+    );
+
+    const mismatch = await request(app)
+      .post("/api/orgs/org-1/messenger/groups/group-1/entries")
+      .send({ itemKey: "saved-view:view-1", threadKey: "chat:chat-1" });
+    expect(mismatch.status).toBe(400);
+
+    expect((await request(app)
+      .patch("/api/orgs/org-1/messenger/groups/group-1/entries/reorder")
+      .send({ itemKeys: ["saved-view:view-1", "chat:chat-1"] })).status).toBe(200);
+    expect(mockMessengerService.reorderCustomGroupEntries).toHaveBeenCalledWith(
+      "org-1", "user-1", "group-1", ["saved-view:view-1", "chat:chat-1"],
+    );
   });
 });

@@ -45,6 +45,18 @@ export {
   type UpdateMessengerThreadUserState
 } from "./chat.js";
 export {
+  createMessengerSavedViewSchema,
+  listMessengerSavedViewsQuerySchema,
+  messengerSavedViewTargetSchema,
+  reorderMessengerSavedViewsSchema,
+  updateMessengerSavedViewSchema,
+  type CreateMessengerSavedView,
+  type ListMessengerSavedViewsQuery,
+  type MessengerSavedViewTargetInput,
+  type ReorderMessengerSavedViews,
+  type UpdateMessengerSavedView
+} from "./messenger.js";
+export {
   organizationIntelligenceProfileConfigSchema, organizationIntelligenceProfilePurposeSchema,
   organizationIntelligenceProfileStatusSchema, upsertOrganizationIntelligenceProfileSchema,
   type OrganizationIntelligenceProfilePurposeInput,

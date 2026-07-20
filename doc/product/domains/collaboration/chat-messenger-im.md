@@ -2012,10 +2012,16 @@ Related plans:
 
 - `doc/plans/2026-07-20-messenger-saved-views.md`
 
-Current related code to be extended:
+Current implementation foundation:
 
+- `packages/db/src/schema/messenger_saved_views.ts`
 - `packages/shared/src/types/messenger.ts`
+- `packages/shared/src/validators/messenger.ts`
 - `server/src/routes/messenger.ts`
+- `server/src/services/messenger-saved-views.ts`
+
+Remaining UI and Desktop runtime surfaces to be extended:
+
 - `ui/src/components/MessengerContextSidebar.tsx`
 - `ui/src/pages/Messenger.tsx`
 - `ui/src/pages/Chat.side-panel.tsx`

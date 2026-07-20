@@ -4,14 +4,19 @@ import {
   assignMessengerCustomGroupEntrySchema,
   createMessengerCustomGroupSchema,
   createMessengerCustomGroupWithEntriesSchema,
+  createMessengerSavedViewSchema,
+  listMessengerSavedViewsQuerySchema,
   reorderMessengerCustomGroupEntriesSchema,
   reorderMessengerCustomGroupsSchema,
+  reorderMessengerSavedViewsSchema,
   updateMessengerCustomGroupSchema,
+  updateMessengerSavedViewSchema,
   updateMessengerThreadUserStateSchema,
   type MessengerSystemThreadKind,
 } from "@rudderhq/shared";
 import { Router } from "express";
 import { validate } from "../middleware/validate.js";
+import { messengerSavedViewsService } from "../services/messenger-saved-views.js";
 import { messengerService } from "../services/messenger.js";
 import { productIntelligenceService } from "../services/product-intelligence.js";
 import {
@@ -46,6 +51,7 @@ function parseThreadKey(threadKey: string) {
 export function messengerRoutes(db: Db) {
   const router = Router();
   const svc = messengerService(db);
+  const savedViews = messengerSavedViewsService(db);
   const productIntelligence = productIntelligenceService(db);
 
   async function generateCustomGroupTitle(orgId: string, titles: string[]) {
@@ -59,6 +65,61 @@ export function messengerRoutes(db: Db) {
     });
     return sanitizeGeneratedTitle(runtimeResultText(result));
   }
+
+  router.get("/orgs/:orgId/messenger/saved-views", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    const userId = boardUserId(req);
+    const query = listMessengerSavedViewsQuerySchema.parse(req.query);
+    res.json(await savedViews.list(orgId, userId, query.visibility));
+  });
+
+  router.post(
+    "/orgs/:orgId/messenger/saved-views",
+    validate(createMessengerSavedViewSchema),
+    async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      const userId = boardUserId(req);
+      res.status(201).json(await savedViews.create(orgId, userId, req.body));
+    },
+  );
+
+  router.patch(
+    "/orgs/:orgId/messenger/saved-views/reorder",
+    validate(reorderMessengerSavedViewsSchema),
+    async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      const userId = boardUserId(req);
+      res.json(await savedViews.reorder(orgId, userId, req.body.ids));
+    },
+  );
+
+  router.get("/orgs/:orgId/messenger/saved-views/:id", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    const userId = boardUserId(req);
+    res.json(await savedViews.get(orgId, userId, req.params.id as string));
+  });
+
+  router.patch(
+    "/orgs/:orgId/messenger/saved-views/:id",
+    validate(updateMessengerSavedViewSchema),
+    async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      const userId = boardUserId(req);
+      res.json(await savedViews.update(orgId, userId, req.params.id as string, req.body));
+    },
+  );
+
+  router.delete("/orgs/:orgId/messenger/saved-views/:id", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    const userId = boardUserId(req);
+    res.json(await savedViews.remove(orgId, userId, req.params.id as string));
+  });
 
   router.get("/orgs/:orgId/messenger/groups", async (req, res) => {
     const orgId = req.params.orgId as string;
@@ -85,16 +146,16 @@ export function messengerRoutes(db: Db) {
       const orgId = req.params.orgId as string;
       assertCompanyAccess(req, orgId);
       const userId = boardUserId(req);
-      const threadKeys = req.body.threadKeys as string[];
+      const itemKeys = req.body.itemKeys as string[];
       const generatedName = req.body.autoGenerateName
-        ? await generateCustomGroupTitle(orgId, await svc.listThreadTitles(orgId, userId, threadKeys)).catch(() => null)
+        ? await generateCustomGroupTitle(orgId, await svc.listThreadTitles(orgId, userId, itemKeys)).catch(() => null)
         : null;
       res.status(201).json(await svc.createCustomGroupWithEntries(
         orgId,
         userId,
         generatedName ?? req.body.name,
         req.body.icon ?? null,
-        threadKeys,
+        itemKeys,
       ));
     },
   );
@@ -156,7 +217,7 @@ export function messengerRoutes(db: Db) {
       const orgId = req.params.orgId as string;
       assertCompanyAccess(req, orgId);
       const userId = boardUserId(req);
-      res.status(201).json(await svc.assignThreadToCustomGroup(orgId, userId, req.params.groupId as string, req.body.threadKey));
+      res.status(201).json(await svc.assignThreadToCustomGroup(orgId, userId, req.params.groupId as string, req.body.itemKey));
     },
   );
 
@@ -167,7 +228,7 @@ export function messengerRoutes(db: Db) {
       const orgId = req.params.orgId as string;
       assertCompanyAccess(req, orgId);
       const userId = boardUserId(req);
-      res.json(await svc.reorderCustomGroupEntries(orgId, userId, req.params.groupId as string, req.body.threadKeys));
+      res.json(await svc.reorderCustomGroupEntries(orgId, userId, req.params.groupId as string, req.body.itemKeys));
     },
   );
 

@@ -5,6 +5,8 @@ import type {
   MessengerCustomGroupsResponse,
   MessengerEvent,
   MessengerIssueThreadItem,
+  MessengerSavedView,
+  MessengerSavedViewTarget,
   MessengerSystemThreadKind,
   MessengerThreadDetail,
   MessengerThreadSummary,
@@ -28,7 +30,31 @@ type MessengerThreadsOptions = {
   splitIssues?: boolean;
 };
 
+type SavedViewVisibility = "visible" | "hidden" | "all";
+type SavedViewCreateInput = {
+  target: MessengerSavedViewTarget;
+  title: string;
+  subtitle?: string | null;
+  favicon?: string | null;
+};
+type SavedViewUpdateInput = Partial<Omit<SavedViewCreateInput, "target">> & {
+  target?: MessengerSavedViewTarget;
+  hidden?: boolean;
+};
+
 export const messengerApi = {
+  listSavedViews: (orgId: string, visibility: SavedViewVisibility = "visible") =>
+    api.get<MessengerSavedView[]>(`/orgs/${orgId}/messenger/saved-views?visibility=${visibility}`),
+  getSavedView: (orgId: string, savedViewId: string) =>
+    api.get<MessengerSavedView>(`/orgs/${orgId}/messenger/saved-views/${savedViewId}`),
+  createSavedView: (orgId: string, data: SavedViewCreateInput) =>
+    api.post<MessengerSavedView>(`/orgs/${orgId}/messenger/saved-views`, data),
+  updateSavedView: (orgId: string, savedViewId: string, data: SavedViewUpdateInput) =>
+    api.patch<MessengerSavedView>(`/orgs/${orgId}/messenger/saved-views/${savedViewId}`, data),
+  reorderSavedViews: (orgId: string, ids: string[]) =>
+    api.patch<MessengerSavedView[]>(`/orgs/${orgId}/messenger/saved-views/reorder`, { ids }),
+  deleteSavedView: (orgId: string, savedViewId: string) =>
+    api.delete<MessengerSavedView>(`/orgs/${orgId}/messenger/saved-views/${savedViewId}`),
   listThreads: (orgId: string) =>
     api.get<MessengerThreadSummary[]>(`/orgs/${orgId}/messenger/threads`),
   listThreadPage: (orgId: string, options: MessengerThreadsOptions = {}) => {
@@ -77,7 +103,7 @@ export const messengerApi = {
     api.get<MessengerCustomGroupsResponse>(`/orgs/${orgId}/messenger/groups`),
   createCustomGroup: (orgId: string, data: { name: string; icon?: string | null }) =>
     api.post<MessengerCustomGroup>(`/orgs/${orgId}/messenger/groups`, data),
-  createCustomGroupWithEntries: (orgId: string, data: { name: string; icon?: string | null; threadKeys: string[]; autoGenerateName?: boolean }) =>
+  createCustomGroupWithEntries: (orgId: string, data: { name: string; icon?: string | null; itemKeys?: string[]; threadKeys?: string[]; autoGenerateName?: boolean }) =>
     api.post<MessengerCustomGroupsResponse>(`/orgs/${orgId}/messenger/groups/merge`, data),
   updateCustomGroup: (orgId: string, groupId: string, data: { name?: string; icon?: string | null; collapsed?: boolean; pinned?: boolean; sortOrder?: number }) =>
     api.patch<MessengerCustomGroup>(`/orgs/${orgId}/messenger/groups/${groupId}`, data),
@@ -89,10 +115,10 @@ export const messengerApi = {
     api.delete<MessengerCustomGroup>(`/orgs/${orgId}/messenger/groups/${groupId}`),
   reorderCustomGroups: (orgId: string, groupIds: string[]) =>
     api.patch<MessengerCustomGroupsResponse>(`/orgs/${orgId}/messenger/groups/reorder`, { groupIds }),
-  assignCustomGroupEntry: (orgId: string, groupId: string, threadKey: string) =>
-    api.post<MessengerCustomGroupEntry>(`/orgs/${orgId}/messenger/groups/${groupId}/entries`, { threadKey }),
-  removeCustomGroupEntry: (orgId: string, threadKey: string) =>
-    api.delete<{ threadKey: string }>(`/orgs/${orgId}/messenger/groups/entries/${encodeURIComponent(threadKey)}`),
-  reorderCustomGroupEntries: (orgId: string, groupId: string, threadKeys: string[]) =>
-    api.patch<MessengerCustomGroupsResponse>(`/orgs/${orgId}/messenger/groups/${groupId}/entries/reorder`, { threadKeys }),
+  assignCustomGroupEntry: (orgId: string, groupId: string, itemKey: string) =>
+    api.post<MessengerCustomGroupEntry>(`/orgs/${orgId}/messenger/groups/${groupId}/entries`, { itemKey }),
+  removeCustomGroupEntry: (orgId: string, itemKey: string) =>
+    api.delete<{ itemKey: string; threadKey?: string }>(`/orgs/${orgId}/messenger/groups/entries/${encodeURIComponent(itemKey)}`),
+  reorderCustomGroupEntries: (orgId: string, groupId: string, itemKeys: string[]) =>
+    api.patch<MessengerCustomGroupsResponse>(`/orgs/${orgId}/messenger/groups/${groupId}/entries/reorder`, { itemKeys }),
 };

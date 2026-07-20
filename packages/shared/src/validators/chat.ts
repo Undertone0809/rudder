@@ -491,10 +491,20 @@ export const createMessengerCustomGroupSchema = z.object({
   icon: z.string().trim().min(1).max(24).optional().nullable(),
 });
 
+const messengerItemKeySchema = z.string().trim().min(1).max(240);
+const messengerItemKeysSchema = z.array(messengerItemKeySchema).min(1).max(50);
+
 export const createMessengerCustomGroupWithEntriesSchema = createMessengerCustomGroupSchema.extend({
-  threadKeys: z.array(z.string().trim().min(1).max(240)).min(1).max(50),
+  itemKeys: messengerItemKeysSchema.optional(),
+  threadKeys: messengerItemKeysSchema.optional(),
   autoGenerateName: z.boolean().optional(),
-});
+}).superRefine((value, ctx) => {
+  if (!value.itemKeys && !value.threadKeys) {
+    ctx.addIssue({ code: "custom", message: "itemKeys or threadKeys is required", path: ["itemKeys"] });
+  } else if (value.itemKeys && value.threadKeys && JSON.stringify(value.itemKeys) !== JSON.stringify(value.threadKeys)) {
+    ctx.addIssue({ code: "custom", message: "itemKeys and threadKeys must match", path: ["itemKeys"] });
+  }
+}).transform((value) => ({ ...value, itemKeys: value.itemKeys ?? value.threadKeys! }));
 
 export const updateMessengerCustomGroupSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
@@ -509,12 +519,26 @@ export const reorderMessengerCustomGroupsSchema = z.object({
 });
 
 export const assignMessengerCustomGroupEntrySchema = z.object({
-  threadKey: z.string().trim().min(1).max(240),
-});
+  itemKey: messengerItemKeySchema.optional(),
+  threadKey: messengerItemKeySchema.optional(),
+}).superRefine((value, ctx) => {
+  if (!value.itemKey && !value.threadKey) {
+    ctx.addIssue({ code: "custom", message: "itemKey or threadKey is required", path: ["itemKey"] });
+  } else if (value.itemKey && value.threadKey && value.itemKey !== value.threadKey) {
+    ctx.addIssue({ code: "custom", message: "itemKey and threadKey must match", path: ["itemKey"] });
+  }
+}).transform((value) => ({ ...value, itemKey: value.itemKey ?? value.threadKey! }));
 
 export const reorderMessengerCustomGroupEntriesSchema = z.object({
-  threadKeys: z.array(z.string().trim().min(1).max(240)).max(500),
-});
+  itemKeys: z.array(messengerItemKeySchema).max(500).optional(),
+  threadKeys: z.array(messengerItemKeySchema).max(500).optional(),
+}).superRefine((value, ctx) => {
+  if (!value.itemKeys && !value.threadKeys) {
+    ctx.addIssue({ code: "custom", message: "itemKeys or threadKeys is required", path: ["itemKeys"] });
+  } else if (value.itemKeys && value.threadKeys && JSON.stringify(value.itemKeys) !== JSON.stringify(value.threadKeys)) {
+    ctx.addIssue({ code: "custom", message: "itemKeys and threadKeys must match", path: ["itemKeys"] });
+  }
+}).transform((value) => ({ ...value, itemKeys: value.itemKeys ?? value.threadKeys! }));
 
 export type ChatConversationStatus = z.infer<typeof chatConversationStatusSchema>;
 export type ChatIssueCreationMode = z.infer<typeof chatIssueCreationModeSchema>;

@@ -25,6 +25,7 @@ import {
   joinRequests,
   messengerCustomGroupEntries,
   messengerCustomGroups,
+  messengerSavedViews,
   messengerThreadUserStates,
   organizations,
   organizationSecrets,
@@ -41,6 +42,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { hashChatGenerationBody } from "../services/chat-generation-protocol.ts";
 import { chatService } from "../services/chats.ts";
 import { issueService } from "../services/issues.ts";
+import { messengerSavedViewsService } from "../services/messenger-saved-views.ts";
 import { messengerService } from "../services/messenger.ts";
 
 type EmbeddedPostgresInstance = {
@@ -134,6 +136,7 @@ describe("messengerService and issue follows", () => {
   let chatSvc!: ReturnType<typeof chatService>;
   let issueSvc!: ReturnType<typeof issueService>;
   let messengerSvc!: ReturnType<typeof messengerService>;
+  let savedViewsSvc!: ReturnType<typeof messengerSavedViewsService>;
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";
 
@@ -143,6 +146,7 @@ describe("messengerService and issue follows", () => {
     chatSvc = chatService(db);
     issueSvc = issueService(db);
     messengerSvc = messengerService(db);
+    savedViewsSvc = messengerSavedViewsService(db);
     instance = started.instance;
     dataDir = started.dataDir;
   }, 20_000);
@@ -151,6 +155,7 @@ describe("messengerService and issue follows", () => {
     await db.delete(issueFollows);
     await db.delete(messengerCustomGroupEntries);
     await db.delete(messengerCustomGroups);
+    await db.delete(messengerSavedViews);
     await db.delete(messengerThreadUserStates);
     await db.delete(chatQueuedMessages);
     await db.delete(chatMessages);
@@ -5228,5 +5233,121 @@ describe("messengerService and issue follows", () => {
 
     const persisted = await messengerSvc.getThreadState(orgId, userId, "issues");
     expect(persisted?.lastReadAt.toISOString()).toBe(readAt.toISOString());
+  });
+
+  it("persists, deduplicates, restores, and isolates Messenger Saved Views by target identity", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    const userId = "saved-view-user";
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Saved Views Org",
+        urlKey: deriveOrganizationUrlKey("Saved Views Org"),
+        issuePrefix: `V${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      },
+      {
+        id: otherOrgId,
+        name: "Other Saved Views Org",
+        urlKey: deriveOrganizationUrlKey("Other Saved Views Org"),
+        issuePrefix: `W${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      },
+    ]);
+
+    const firstBrowser = await savedViewsSvc.create(orgId, userId, {
+      target: { kind: "browser", tabId: "tab-a", url: "https://example.test/shared" },
+      title: "First browser",
+    });
+    const repeatedTab = await savedViewsSvc.create(orgId, userId, {
+      target: { kind: "browser", tabId: "tab-a", url: "https://example.test/updated" },
+      title: "Updated browser",
+    });
+    const sameUrlDifferentTab = await savedViewsSvc.create(orgId, userId, {
+      target: { kind: "browser", tabId: "tab-b", url: "https://example.test/updated" },
+      title: "Second browser",
+    });
+    expect(repeatedTab.id).toBe(firstBrowser.id);
+    expect(repeatedTab.targetPayload).toMatchObject({ tabId: "tab-a", url: "https://example.test/updated" });
+    expect(sameUrlDifferentTab.id).not.toBe(firstBrowser.id);
+
+    const automationId = randomUUID();
+    const automation = await savedViewsSvc.create(orgId, userId, {
+      target: { kind: "automation", automationId },
+      title: "Missing automation remains saved",
+    });
+    const group = await messengerSvc.createCustomGroup(orgId, userId, "Saved tools");
+    await messengerSvc.assignThreadToCustomGroup(orgId, userId, group.id, `saved-view:${automation.id}`);
+    const membershipBeforeHide = await db.select().from(messengerCustomGroupEntries);
+    expect(membershipBeforeHide).toHaveLength(1);
+
+    await savedViewsSvc.update(orgId, userId, automation.id, { hidden: true });
+    expect((await savedViewsSvc.list(orgId, userId, "hidden")).map((view) => view.id)).toEqual([automation.id]);
+    expect((await savedViewsSvc.list(orgId, userId, "visible")).map((view) => view.id)).not.toContain(automation.id);
+    expect((await messengerSvc.listCustomGroups(orgId, userId)).groups[0]?.entries).toEqual([]);
+    expect(await db.select().from(messengerCustomGroupEntries)).toHaveLength(1);
+
+    const restored = await savedViewsSvc.create(orgId, userId, {
+      target: { kind: "automation", automationId },
+      title: "Restored missing automation",
+    });
+    expect(restored.id).toBe(automation.id);
+    expect(restored.hiddenAt).toBeNull();
+    const restoredEntry = (await messengerSvc.listCustomGroups(orgId, userId)).groups[0]?.entries[0];
+    expect(restoredEntry).toMatchObject({
+      itemKey: `saved-view:${automation.id}`,
+      item: { type: "saved_view", title: "Restored missing automation" },
+    });
+    expect(restoredEntry).not.toHaveProperty("threadKey");
+    expect(restoredEntry).not.toHaveProperty("thread");
+
+    await expect(savedViewsSvc.update(orgId, userId, automation.id, {
+      target: { kind: "automation", automationId: randomUUID() },
+    })).rejects.toMatchObject({ status: 400 });
+
+    await expect(savedViewsSvc.get(orgId, "another-user", automation.id)).rejects.toMatchObject({ status: 404 });
+    await expect(savedViewsSvc.get(otherOrgId, userId, automation.id)).rejects.toMatchObject({ status: 404 });
+    expect(await savedViewsSvc.list(orgId, "another-user", "all")).toEqual([]);
+
+    const savedViewActivity = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.entityType, "messenger_saved_view"));
+    expect(savedViewActivity.length).toBeGreaterThanOrEqual(6);
+    expect(new Set(savedViewActivity.map((event) => event.actorId))).toEqual(new Set([userId]));
+  });
+
+  it("reorders Saved Views and transactionally removes their group membership", async () => {
+    const orgId = randomUUID();
+    const userId = "saved-view-order-user";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Saved View Order Org",
+      urlKey: deriveOrganizationUrlKey("Saved View Order Org"),
+      issuePrefix: `O${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+    });
+    const first = await savedViewsSvc.create(orgId, userId, {
+      target: { kind: "library_file", filePath: "/missing/first.md" },
+      title: "First stale file",
+    });
+    const second = await savedViewsSvc.create(orgId, userId, {
+      target: { kind: "library_directory", directoryPath: "/missing/directory" },
+      title: "Missing directory",
+    });
+    const third = await savedViewsSvc.create(orgId, userId, {
+      target: { kind: "library_entry", entryId: randomUUID(), path: "missing/entry.md" },
+      title: "Missing library entry",
+    });
+
+    const reordered = await savedViewsSvc.reorder(orgId, userId, [third.id, first.id]);
+    expect(reordered.map((view) => view.id)).toEqual([third.id, first.id, second.id]);
+    expect(reordered.map((view) => view.sortOrder)).toEqual([0, 1, 2]);
+
+    const group = await messengerSvc.createCustomGroup(orgId, userId, "Library");
+    await messengerSvc.assignThreadToCustomGroup(orgId, userId, group.id, `saved-view:${first.id}`);
+    expect(await db.select().from(messengerCustomGroupEntries)).toHaveLength(1);
+    const deleted = await savedViewsSvc.remove(orgId, userId, first.id);
+    expect(deleted.id).toBe(first.id);
+    expect(await db.select().from(messengerCustomGroupEntries)).toHaveLength(0);
+    await expect(savedViewsSvc.get(orgId, userId, first.id)).rejects.toMatchObject({ status: 404 });
   });
 });

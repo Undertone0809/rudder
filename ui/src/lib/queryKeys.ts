@@ -103,6 +103,10 @@ export const queryKeys = {
         ? ["messenger", orgId, "threads", "pages"] as const
         : ["messenger", orgId, "threads", "pages", splitIssues ? "split-issues" : "aggregate-issues"] as const,
     threadPreview: (orgId: string) => ["messenger", orgId, "threads", "preview"] as const,
+    savedViews: (orgId: string, visibility: "visible" | "hidden" | "all" = "visible") =>
+      ["messenger", orgId, "saved-views", visibility] as const,
+    savedView: (orgId: string, savedViewId: string) =>
+      ["messenger", orgId, "saved-views", "detail", savedViewId] as const,
     customGroups: (orgId: string) => ["messenger", orgId, "groups"] as const,
     issues: (orgId: string) => ["messenger", orgId, "issues"] as const,
     approvals: (orgId: string) => ["messenger", orgId, "approvals"] as const,

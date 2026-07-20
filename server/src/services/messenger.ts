@@ -20,6 +20,7 @@ import {
   joinRequests,
   messengerCustomGroupEntries,
   messengerCustomGroups,
+  messengerSavedViews,
   messengerThreadUserStates,
   projects
 } from "@rudderhq/db";
@@ -36,6 +37,7 @@ import {
   type MessengerBudgetThreadItem,
   type MessengerCustomGroupHydratedEntry,
   type MessengerCustomGroupsResponse,
+  type MessengerDirectoryItem,
   type MessengerHeartbeatRunThreadItem,
   type MessengerIssueThreadItem,
   type MessengerJoinRequestThreadItem,
@@ -1033,6 +1035,10 @@ export function messengerService(db: Db) {
       || threadKey === "join-requests";
   }
 
+  function savedViewIdFromItemKey(itemKey: string) {
+    return itemKey.startsWith("saved-view:") ? itemKey.slice("saved-view:".length) : null;
+  }
+
   async function getCustomGroupOrThrow(orgId: string, userId: string, groupId: string) {
     const [group] = await db
       .select()
@@ -1125,9 +1131,39 @@ export function messengerService(db: Db) {
     }
   }
 
+  async function findMessengerSavedView(orgId: string, userId: string, itemKey: string) {
+    const savedViewId = savedViewIdFromItemKey(itemKey);
+    if (!savedViewId) return null;
+    return db
+      .select()
+      .from(messengerSavedViews)
+      .where(and(
+        eq(messengerSavedViews.orgId, orgId),
+        eq(messengerSavedViews.userId, userId),
+        eq(messengerSavedViews.id, savedViewId),
+      ))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+  }
+
+  async function ensureMessengerItemCanBeGrouped(orgId: string, userId: string, itemKey: string) {
+    if (savedViewIdFromItemKey(itemKey)) {
+      if (!await findMessengerSavedView(orgId, userId, itemKey)) {
+        throw notFound("Messenger Saved View not found");
+      }
+      return;
+    }
+    await ensureMessengerThreadCanBeGrouped(orgId, userId, itemKey);
+  }
+
   async function listThreadTitles(orgId: string, userId: string, threadKeys: string[]) {
     const titles: string[] = [];
     for (const threadKey of [...new Set(threadKeys)]) {
+      const savedView = await findMessengerSavedView(orgId, userId, threadKey);
+      if (savedView?.title) {
+        titles.push(savedView.title);
+        continue;
+      }
       const summary = await findMessengerThreadSummary(orgId, userId, threadKey);
       if (summary?.title) titles.push(summary.title);
     }
@@ -1166,8 +1202,29 @@ export function messengerService(db: Db) {
         .orderBy(asc(messengerCustomGroupEntries.sortOrder), asc(messengerCustomGroupEntries.createdAt)),
     ]);
 
+    const savedViewItemKeys = entries
+      .map((entry) => entry.threadKey)
+      .filter((itemKey) => Boolean(savedViewIdFromItemKey(itemKey)));
+    const savedViewIds = savedViewItemKeys
+      .map((itemKey) => savedViewIdFromItemKey(itemKey))
+      .filter((id): id is string => Boolean(id));
+    const savedViews = savedViewIds.length > 0
+      ? await db
+        .select()
+        .from(messengerSavedViews)
+        .where(and(
+          eq(messengerSavedViews.orgId, orgId),
+          eq(messengerSavedViews.userId, userId),
+          inArray(messengerSavedViews.id, savedViewIds),
+        ))
+      : [];
+    const savedViewByItemKey = new Map<string, typeof messengerSavedViews.$inferSelect>(
+      savedViews.map((savedView) => [`saved-view:${savedView.id}`, savedView]),
+    );
+
     const conversationIds = entries
       .map((entry) => entry.threadKey)
+      .filter((itemKey) => !savedViewIdFromItemKey(itemKey))
       .map((threadKey) => chatConversationIdFromThreadKey(threadKey))
       .filter((id): id is string => Boolean(id));
     const conversations = await chatsSvc.listSummariesByIds(orgId, conversationIds, userId);
@@ -1177,6 +1234,7 @@ export function messengerService(db: Db) {
     }));
     const nonChatThreadKeys = [...new Set(entries
       .map((entry) => entry.threadKey)
+      .filter((itemKey) => !savedViewIdFromItemKey(itemKey))
       .filter((threadKey) => !chatConversationIdFromThreadKey(threadKey)))];
     const issueThreadKeys = nonChatThreadKeys.filter((threadKey) => Boolean(issueIdFromThreadKey(threadKey)));
     if (nonChatThreadKeys.length > 0) {
@@ -1199,6 +1257,33 @@ export function messengerService(db: Db) {
     const staleEntryIds: string[] = [];
     const entriesByGroupId = new Map<string, MessengerCustomGroupHydratedEntry[]>();
     for (const entry of entries) {
+      const savedViewId = savedViewIdFromItemKey(entry.threadKey);
+      if (savedViewId) {
+        const savedView = savedViewByItemKey.get(entry.threadKey);
+        if (!savedView) {
+          staleEntryIds.push(entry.id);
+          continue;
+        }
+        // Hidden Saved Views retain their exact membership and order, but are
+        // omitted from the visible hydrated directory until restored.
+        if (savedView.hiddenAt) continue;
+        const { threadKey: _storedItemKey, ...entryFields } = entry;
+        const item = {
+          type: "saved_view",
+          itemKey: entry.threadKey,
+          title: savedView.title,
+          savedView,
+        } satisfies MessengerDirectoryItem;
+        const hydratedEntry = {
+          ...entryFields,
+          itemKey: entry.threadKey,
+          item,
+        } as unknown as MessengerCustomGroupHydratedEntry;
+        const groupEntries = entriesByGroupId.get(entry.groupId);
+        if (groupEntries) groupEntries.push(hydratedEntry);
+        else entriesByGroupId.set(entry.groupId, [hydratedEntry]);
+        continue;
+      }
       const summary = summaryByThreadKey.get(entry.threadKey);
       if (!summary) {
         if (isSyntheticMessengerThreadKey(entry.threadKey)) {
@@ -1209,6 +1294,13 @@ export function messengerService(db: Db) {
       }
       const hydratedEntry = {
         ...entry,
+        itemKey: entry.threadKey,
+        item: {
+          type: "thread",
+          itemKey: entry.threadKey,
+          title: summary.title,
+          thread: summary,
+        },
         thread: summary,
       } satisfies MessengerCustomGroupHydratedEntry;
       const groupEntries = entriesByGroupId.get(entry.groupId);
@@ -1330,7 +1422,7 @@ export function messengerService(db: Db) {
   }
 
   async function assignThreadToCustomGroupWithClient(client: Pick<Db, "insert" | "select">, orgId: string, userId: string, groupId: string, threadKey: string) {
-    await ensureMessengerThreadCanBeGrouped(orgId, userId, threadKey);
+    await ensureMessengerItemCanBeGrouped(orgId, userId, threadKey);
     const [lastEntry] = await client
       .select({ sortOrder: messengerCustomGroupEntries.sortOrder })
       .from(messengerCustomGroupEntries)
@@ -1365,7 +1457,11 @@ export function messengerService(db: Db) {
         },
       })
       .returning();
-    return entry;
+    if (savedViewIdFromItemKey(threadKey)) {
+      const { threadKey: _storedItemKey, ...entryFields } = entry;
+      return { ...entryFields, itemKey: threadKey };
+    }
+    return { ...entry, itemKey: threadKey };
   }
 
   async function assignThreadToCustomGroup(orgId: string, userId: string, groupId: string, threadKey: string) {
@@ -1393,7 +1489,9 @@ export function messengerService(db: Db) {
         eq(messengerCustomGroupEntries.userId, userId),
         eq(messengerCustomGroupEntries.threadKey, threadKey),
       ));
-    return { threadKey };
+    return savedViewIdFromItemKey(threadKey)
+      ? { itemKey: threadKey }
+      : { itemKey: threadKey, threadKey };
   }
 
   async function reorderCustomGroupEntries(orgId: string, userId: string, groupId: string, threadKeys: string[]) {
