@@ -113,7 +113,7 @@ test.describe("Chat project empty heading", () => {
     expect(response.ok()).toBe(true);
     expect(new URL(response.url()).searchParams.get("limit")).toBe("40");
     await expect(page.getByTestId("chat-empty-state-tabs")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId("chat-empty-state-project-label")).toHaveText(project.name);
+    await expect(page.getByTestId("chat-empty-state-project-label")).toHaveCount(0);
     await page.getByTestId("chat-empty-state-tab-recent").click();
     await expect(page.getByTestId("chat-empty-state-recent-project-conversations"))
       .toContainText("Older launch decision");

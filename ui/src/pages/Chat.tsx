@@ -2922,7 +2922,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 {showEmptyStateSupplementalContent ? (
                   hasRecentProjectConversations ? (
                     <Tabs value={emptyStateActiveTab} onValueChange={(value) => setEmptyStateActiveTab(value as "recent" | "use-cases")} className="mb-4 w-full max-w-3xl gap-2" data-testid="chat-empty-state-tabs">
-                      <div className="mb-2 flex min-h-8 items-center justify-between gap-4 px-1">
+                      <div className="mb-2 flex min-h-8 items-center px-1">
                         <TabsList variant="line" aria-label="New chat empty state" className="h-8 gap-1 border-transparent bg-transparent p-0">
                           <TabsTrigger value="use-cases" id="chat-empty-state-tab-use-cases" data-testid="chat-empty-state-tab-use-cases" className="h-8 flex-none rounded-[var(--radius-md)] border border-transparent px-3 text-sm data-[state=active]:!border-[color:var(--border-soft)] data-[state=active]:!bg-[color:var(--surface-active)] data-[state=active]:shadow-none after:hidden">
                             <span>Use cases</span>
@@ -2931,11 +2931,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                             <span>Chats</span>
                           </TabsTrigger>
                         </TabsList>
-                        {activeProject ? (
-                          <span data-testid="chat-empty-state-project-label" className="hidden max-w-[50%] truncate text-xs text-muted-foreground sm:block">
-                            {projectDisplayName(activeProject)}
-                          </span>
-                        ) : null}
                       </div>
                       <TabsContent value="use-cases" id="chat-empty-state-use-cases-panel" aria-labelledby="chat-empty-state-tab-use-cases" className="mt-0 flex flex-col items-center">
                         {renderEmptyStatePromptFlow()}

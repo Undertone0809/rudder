@@ -416,16 +416,8 @@ test.describe("Chat options menu", () => {
     await expect(page.getByTestId("chat-project-selector")).toContainText(project.name, { timeout: 15_000 });
 
     const tabsList = page.getByRole("tablist", { name: "New chat empty state" });
-    const projectLabel = page.getByTestId("chat-empty-state-project-label");
     await expect(tabsList).toBeVisible();
-    await expect(projectLabel).toHaveText(project.name);
-    const headerAlignment = await Promise.all([tabsList.boundingBox(), projectLabel.boundingBox()]);
-    expect(headerAlignment[0]).not.toBeNull();
-    expect(headerAlignment[1]).not.toBeNull();
-    expect(Math.abs(
-      headerAlignment[0]!.y + headerAlignment[0]!.height / 2
-      - (headerAlignment[1]!.y + headerAlignment[1]!.height / 2),
-    )).toBeLessThanOrEqual(1);
+    await expect(page.getByTestId("chat-empty-state-project-label")).toHaveCount(0);
 
     await page.getByTestId("chat-empty-state-tab-recent").click();
     const recentSection = page.getByTestId("chat-empty-state-recent-project-conversations");
