@@ -22,12 +22,29 @@ let intersectionCallback: ((entries: Array<{ isIntersecting: boolean }>) => void
 let intersectionObserverOptions: IntersectionObserverInit | undefined;
 let localStorageValues: Record<string, string>;
 
+function hydrateCustomGroupFixtures(groups: any[]) {
+  return groups.map((group) => ({
+    ...group,
+    entries: group.entries.map((entry: any) => entry.item ? entry : {
+      ...entry,
+      item: {
+        type: "thread" as const,
+        itemKey: entry.threadKey,
+        title: entry.thread.title,
+        thread: entry.thread,
+      },
+    }),
+  }));
+}
+
 vi.mock("@tanstack/react-query", () => ({
   useMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useQueryClient: () => ({ invalidateQueries }),
   useQuery: ({ queryKey }: { queryKey?: unknown }) => {
     const key = Array.isArray(queryKey) ? queryKey : [];
-    if (key[0] === "messenger" && key[2] === "groups") return { data: { groups: customGroupList } };
+    if (key[0] === "messenger" && key[2] === "groups") {
+      return { data: { groups: hydrateCustomGroupFixtures(customGroupList) } };
+    }
     return { data: chatList };
   },
 }));

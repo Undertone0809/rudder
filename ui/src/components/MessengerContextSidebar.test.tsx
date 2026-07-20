@@ -110,6 +110,18 @@ function baseModel() {
   };
 }
 
+function hydratedThreadEntry<T extends { threadKey: string; thread: { title: string } }>(entry: T) {
+  return {
+    ...entry,
+    item: {
+      type: "thread" as const,
+      itemKey: entry.threadKey,
+      title: entry.thread.title,
+      thread: entry.thread,
+    },
+  };
+}
+
 describe("MessengerContextSidebar", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -605,7 +617,7 @@ describe("MessengerContextSidebar", () => {
         createdAt: "2026-04-11T08:00:00.000Z",
         updatedAt: "2026-04-11T08:00:00.000Z",
         entries: [
-          {
+          hydratedThreadEntry({
             id: "entry-older",
             orgId: "org-1",
             userId: "local-board",
@@ -627,8 +639,8 @@ describe("MessengerContextSidebar", () => {
               needsAttention: false,
               isPinned: false,
             },
-          },
-          {
+          }),
+          hydratedThreadEntry({
             id: "entry-newer",
             orgId: "org-1",
             userId: "local-board",
@@ -650,8 +662,8 @@ describe("MessengerContextSidebar", () => {
               needsAttention: false,
               isPinned: false,
             },
-          },
-          {
+          }),
+          hydratedThreadEntry({
             id: "entry-pinned",
             orgId: "org-1",
             userId: "local-board",
@@ -673,7 +685,7 @@ describe("MessengerContextSidebar", () => {
               needsAttention: false,
               isPinned: true,
             },
-          },
+          }),
         ],
       },
     ];
@@ -714,7 +726,7 @@ describe("MessengerContextSidebar", () => {
         collapsed: false,
         createdAt: "2026-04-11T08:00:00.000Z",
         updatedAt: "2026-04-11T08:00:00.000Z",
-        entries: [{
+        entries: [hydratedThreadEntry({
           id: "entry-pinned",
           orgId: "org-1",
           userId: "local-board",
@@ -736,7 +748,7 @@ describe("MessengerContextSidebar", () => {
             needsAttention: false,
             isPinned: false,
           },
-        }],
+        })],
       },
       {
         id: "regular-group",
@@ -749,7 +761,7 @@ describe("MessengerContextSidebar", () => {
         collapsed: false,
         createdAt: "2026-04-11T08:00:00.000Z",
         updatedAt: "2026-04-11T08:00:00.000Z",
-        entries: [{
+        entries: [hydratedThreadEntry({
           id: "entry-regular",
           orgId: "org-1",
           userId: "local-board",
@@ -771,7 +783,7 @@ describe("MessengerContextSidebar", () => {
             needsAttention: false,
             isPinned: false,
           },
-        }],
+        })],
       },
     ];
     messengerModel = {
@@ -824,7 +836,7 @@ describe("MessengerContextSidebar", () => {
         createdAt: "2026-04-11T08:00:00.000Z",
         updatedAt: "2026-04-11T08:00:00.000Z",
         entries: [
-          {
+          hydratedThreadEntry({
             id: "entry-older",
             orgId: "org-1",
             userId: "local-board",
@@ -846,7 +858,7 @@ describe("MessengerContextSidebar", () => {
               needsAttention: false,
               isPinned: false,
             },
-          },
+          }),
         ],
       },
     ];

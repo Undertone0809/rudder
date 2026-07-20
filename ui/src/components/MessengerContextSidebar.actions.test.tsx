@@ -87,6 +87,21 @@ let activeGeneratingChatIds: Set<string>;
 let cleanupFn: (() => void) | null = null;
 let clipboardWriteText: ReturnType<typeof vi.fn>;
 
+function hydrateCustomGroupFixtures(groups: any[]) {
+  return groups.map((group) => ({
+    ...group,
+    entries: group.entries.map((entry: any) => entry.item ? entry : {
+      ...entry,
+      item: {
+        type: "thread" as const,
+        itemKey: entry.threadKey,
+        title: entry.thread.title,
+        thread: entry.thread,
+      },
+    }),
+  }));
+}
+
 vi.mock("@tanstack/react-query", () => ({
   useMutation: (options: {
     mutationFn: (variables: any) => Promise<any>;
@@ -123,7 +138,9 @@ vi.mock("@tanstack/react-query", () => ({
     const queryKey = Array.isArray(options.queryKey) ? options.queryKey : [];
     if (queryKey[0] === "agents") return { data: agentList };
     if (queryKey[0] === "organizations" && queryKey[2] === "intelligence-profiles") return { data: intelligenceProfiles };
-    if (queryKey[0] === "messenger" && queryKey[2] === "groups") return { data: { groups: customGroupList } };
+    if (queryKey[0] === "messenger" && queryKey[2] === "groups") {
+      return { data: { groups: hydrateCustomGroupFixtures(customGroupList) } };
+    }
     return { data: chatList };
   },
 }));
