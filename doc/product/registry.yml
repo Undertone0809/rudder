@@ -169,6 +169,9 @@ contracts:
       - server/src/services/heartbeat-run-reference.ts
       - server/src/routes/chats.stream-routes.ts
       - server/src/services/chat-generation-protocol.ts
+      - ui/src/components/transcript/RunTranscriptView.common.tsx
+      - ui/src/components/transcript/RunTranscriptView.normalize.tsx
+      - ui/src/components/transcript/RunTranscriptView.tsx
       - ui/src/components/transcript/RunTranscriptView.chat.tsx
     related_tests:
       - server/src/__tests__/heartbeat-run-summary.test.ts

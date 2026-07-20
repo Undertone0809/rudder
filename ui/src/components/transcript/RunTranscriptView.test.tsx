@@ -121,6 +121,50 @@ describe("RunTranscriptView", () => {
     ]);
   });
 
+  it("keeps a boundary between a complete message and a following delta group", () => {
+    const blocks = normalizeTranscript([
+      { kind: "assistant", ts: "2026-07-20T00:00:00.000Z", text: "Progress update." },
+      { kind: "assistant", ts: "2026-07-20T00:00:01.000Z", text: "Final ", delta: true },
+      { kind: "assistant", ts: "2026-07-20T00:00:02.000Z", text: "answer.", delta: true },
+    ], false);
+
+    expect(blocks).toMatchObject([
+      { type: "message", role: "assistant", text: "Progress update.\nFinal answer." },
+    ]);
+  });
+
+  it("uses hidden reasoning lifecycle entries as delta group boundaries", () => {
+    const blocks = normalizeTranscript([
+      { kind: "thinking", ts: "2026-07-20T00:00:00.000Z", text: "First thought.", delta: true },
+      { kind: "system", ts: "2026-07-20T00:00:01.000Z", text: "reasoning completed" },
+      { kind: "system", ts: "2026-07-20T00:00:02.000Z", text: "reasoning started" },
+      { kind: "thinking", ts: "2026-07-20T00:00:03.000Z", text: "Second thought.", delta: true },
+    ], false);
+
+    expect(blocks).toMatchObject([
+      { type: "thinking", text: "First thought.\nSecond thought." },
+    ]);
+  });
+
+  it("preserves lifecycle-only delta group boundaries in compact chat", () => {
+    const entries: TranscriptEntry[] = [
+      { kind: "assistant", ts: "2026-07-20T00:00:00.000Z", text: "First.", delta: true },
+      { kind: "system", ts: "2026-07-20T00:00:01.000Z", text: "reasoning completed" },
+      { kind: "system", ts: "2026-07-20T00:00:02.000Z", text: "reasoning started" },
+      { kind: "assistant", ts: "2026-07-20T00:00:03.000Z", text: "Second.", delta: true },
+    ];
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView presentation="chat" entries={entries} />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("First.\nSecond.");
+    expect(html).not.toContain("First.Second.");
+    expect(html).not.toContain("reasoning started");
+    expect(html).not.toContain("reasoning completed");
+  });
+
   it("hides empty reasoning lifecycle rows from nice run detail while retaining raw evidence", () => {
     const entries: TranscriptEntry[] = [
       { kind: "system", ts: "2026-07-20T00:00:00.000Z", text: "reasoning started" },
@@ -143,6 +187,76 @@ describe("RunTranscriptView", () => {
     expect(niceHtml).not.toContain("reasoning completed");
     expect(rawHtml).toContain("reasoning started");
     expect(rawHtml).toContain("reasoning completed");
+  });
+
+  it("renders the empty state when nice run detail contains only hidden lifecycle rows", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          presentation="detail"
+          emptyMessage="No meaningful transcript."
+          entries={[
+            { kind: "system", ts: "2026-07-20T00:00:00.000Z", text: "reasoning started" },
+            { kind: "system", ts: "2026-07-20T00:00:01.000Z", text: "reasoning completed" },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("No meaningful transcript.");
+  });
+
+  it("does not let hidden lifecycle rows consume the nice run detail limit", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          presentation="detail"
+          limit={1}
+          entries={[
+            { kind: "assistant", ts: "2026-07-20T00:00:00.000Z", text: "Keep this progress." },
+            { kind: "system", ts: "2026-07-20T00:00:01.000Z", text: "reasoning started" },
+            { kind: "system", ts: "2026-07-20T00:00:02.000Z", text: "reasoning completed" },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Keep this progress.");
+  });
+
+  it("does not let hidden lifecycle rows consume the compact chat limit", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          presentation="chat"
+          limit={1}
+          entries={[
+            { kind: "assistant", ts: "2026-07-20T00:00:00.000Z", text: "Keep this chat progress." },
+            { kind: "system", ts: "2026-07-20T00:00:01.000Z", text: "reasoning started" },
+            { kind: "system", ts: "2026-07-20T00:00:02.000Z", text: "reasoning completed" },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Keep this chat progress.");
+  });
+
+  it("renders the empty state when compact chat contains only hidden lifecycle rows", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          presentation="chat"
+          emptyMessage="No meaningful chat transcript."
+          entries={[
+            { kind: "system", ts: "2026-07-20T00:00:00.000Z", text: "reasoning started" },
+            { kind: "system", ts: "2026-07-20T00:00:01.000Z", text: "reasoning completed" },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("No meaningful chat transcript.");
   });
 
   it("renders assistant and thinking content as markdown in compact mode", () => {

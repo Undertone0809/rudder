@@ -3,14 +3,30 @@ import { useOptionalToast } from "../../context/ToastContext";
 import { readDesktopShell } from "../../lib/desktop-shell";
 import { cn } from "../../lib/utils";
 import { renderTranscriptBlock } from "./RunTranscriptView.blocks";
-import { isInternalTranscriptLifecycleEntry, TranscriptChatTimeline } from "./RunTranscriptView.chat";
-import { filterRenderableTranscriptEntries, resolveTranscriptLocalFileTarget, RunTranscriptViewProps, shouldHandlePlainClick, TranscriptMarkdownLinkClickHandler } from "./RunTranscriptView.common";
+import { TranscriptChatTimeline } from "./RunTranscriptView.chat";
+import { filterRenderableTranscriptEntries, isInternalTranscriptLifecycleEntry, resolveTranscriptLocalFileTarget, RunTranscriptViewProps, shouldHandlePlainClick, TranscriptMarkdownLinkClickHandler } from "./RunTranscriptView.common";
 import { RawTranscriptView, TranscriptDetailTimeline } from "./RunTranscriptView.detail";
 import { normalizeTranscript } from "./RunTranscriptView.normalize";
 
 export { resolveTranscriptLocalFileTarget } from "./RunTranscriptView.common";
 export type { TranscriptDensity, TranscriptMode, TranscriptPresentation } from "./RunTranscriptView.common";
 export { normalizeTranscript } from "./RunTranscriptView.normalize";
+
+function trailingEntriesByVisibleLimit(
+  entries: RunTranscriptViewProps["entries"],
+  limit: number | undefined,
+) {
+  if (!limit) return entries;
+
+  let remaining = limit;
+  let startIndex = entries.length;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    startIndex = index;
+    if (!isInternalTranscriptLifecycleEntry(entries[index])) remaining -= 1;
+    if (remaining === 0) break;
+  }
+  return entries.slice(startIndex);
+}
 
 export function RunTranscriptView({
   entries,
@@ -66,6 +82,7 @@ export function RunTranscriptView({
   );
   const visibleBlocks = limit ? blocks.slice(-limit) : blocks;
   const visibleEntries = limit ? renderableEntries.slice(-limit) : renderableEntries;
+  const visibleNiceEntries = trailingEntriesByVisibleLimit(renderableEntries, limit);
 
   if (renderableEntries.length === 0) {
     return (
@@ -83,12 +100,19 @@ export function RunTranscriptView({
     );
   }
 
+  if (blocks.length === 0) {
+    return (
+      <div className={cn("rounded-2xl border border-dashed border-border/70 bg-background/40 p-4 text-sm text-muted-foreground", className)}>
+        {emptyMessage}
+      </div>
+    );
+  }
+
   if (presentation === "detail") {
-    const detailEntries = visibleEntries.filter((entry) => !isInternalTranscriptLifecycleEntry(entry));
     return (
       <div className={cn("space-y-4", className)}>
         <TranscriptDetailTimeline
-          entries={detailEntries}
+          entries={visibleNiceEntries}
           density={density}
           streaming={streaming}
           thinkingClassName={thinkingClassName}
@@ -103,7 +127,7 @@ export function RunTranscriptView({
     return (
       <div className={className}>
         <TranscriptChatTimeline
-          entries={visibleEntries}
+          entries={visibleNiceEntries}
           density={density}
           streaming={streaming}
           collapseStdout={collapseStdout}

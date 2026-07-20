@@ -132,6 +132,9 @@ test.describe("Run transcript detail", () => {
     const transcriptStartedAt = Date.now() + 1_000;
     const transcriptEntries = [
       { kind: "system", text: "reasoning started" },
+      { kind: "assistant", text: "Progress update." },
+      { kind: "system", text: "reasoning completed" },
+      { kind: "system", text: "reasoning started" },
       { kind: "assistant", text: "I read AG", delta: true },
       { kind: "assistant", text: "ENTS", delta: true },
       { kind: "assistant", text: ".md and added E", delta: true },
@@ -153,6 +156,12 @@ test.describe("Run transcript detail", () => {
       },
       createdAt: new Date(transcriptStartedAt + index),
     })));
+
+    await expect.poll(async () => {
+      const runDetailRes = await page.request.get(`/api/agent-runs/${run.id}`);
+      if (!runDetailRes.ok()) return null;
+      return ((await runDetailRes.json()) as { status?: string }).status ?? null;
+    }, { timeout: 15_000 }).toBe("succeeded");
 
     await page.goto("/");
     await page.evaluate((orgId) => {
@@ -187,14 +196,13 @@ test.describe("Run transcript detail", () => {
     expect(detailBox!.x).toBeLessThan(listBox!.x);
     await expect(transcriptTab).toHaveAttribute("data-state", "active");
     await expect(page.getByRole("button", { name: "nice" })).toBeVisible();
-    await expect(page.getByText("adapter invocation", { exact: true })).toBeVisible();
-    await expect(detailPane.getByText("I read AGENTS.md and added E2E coverage.", { exact: true })).toBeVisible();
+    await expect(detailPane.getByText(/Progress update\.\s+I read AGENTS\.md and added E2E coverage\./)).toBeVisible();
     await expect(detailPane.getByText(/reasoning started/i)).toHaveCount(0);
     await expect(detailPane.getByText(/reasoning completed/i)).toHaveCount(0);
 
     await page.getByRole("button", { name: "raw" }).click();
-    await expect(detailPane.getByText(/reasoning started/i)).toBeVisible();
-    await expect(detailPane.getByText(/reasoning completed/i)).toBeVisible();
+    await expect(detailPane.getByText(/reasoning started/i).first()).toBeVisible();
+    await expect(detailPane.getByText(/reasoning completed/i).first()).toBeVisible();
     await page.getByRole("button", { name: "nice" }).click();
 
     await page.getByRole("button", { name: "Expand transcript" }).click();
@@ -217,7 +225,7 @@ test.describe("Run transcript detail", () => {
     expect(transcriptDialogBox!.y).toBeGreaterThanOrEqual(0);
     expect(transcriptDialogBox!.x + transcriptDialogBox!.width).toBeLessThanOrEqual(viewport!.width);
     expect(transcriptDialogBox!.y + transcriptDialogBox!.height).toBeLessThanOrEqual(viewport!.height);
-    await expect(transcriptDialog.getByText("adapter invocation")).toBeVisible();
+    await expect(transcriptDialog.getByText(/Progress update\.\s+I read AGENTS\.md and added E2E coverage\./)).toBeVisible();
     await expect(transcriptDialog.getByRole("button", { name: "raw" })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(transcriptDialog).toBeHidden();

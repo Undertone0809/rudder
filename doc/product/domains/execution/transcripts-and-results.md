@@ -13,6 +13,9 @@ related_code:
   - server/src/services/heartbeat-run-reference.ts
   - server/src/routes/chats.stream-routes.ts
   - server/src/services/chat-generation-protocol.ts
+  - ui/src/components/transcript/RunTranscriptView.common.tsx
+  - ui/src/components/transcript/RunTranscriptView.normalize.tsx
+  - ui/src/components/transcript/RunTranscriptView.tsx
   - ui/src/components/transcript/RunTranscriptView.chat.tsx
 related_tests:
   - packages/agent-runtimes/codex-local/src/server/app-server-chat.test.ts
@@ -61,6 +64,10 @@ Behavior:
   such as `reasoning started` / `reasoning completed` or Rudder's internal
   result-envelope delimiters. Those raw entries remain attached to the run for
   diagnostics and audit.
+- Hidden lifecycle entries still delimit adjacent streamed text groups in the
+  readable projection. The projection preserves readable boundaries between a
+  completed message and a later delta group, and its display limit counts
+  visible entries rather than hidden lifecycle evidence.
 - Task sessions are updated or cleared after the run based on adapter result
   and session state.
 
@@ -76,6 +83,8 @@ Invariant:
   Chat progress, and streamed protocol fragments must never be rendered as
   spaced or line-broken pseudo-content. Filtering the default projection must
   not delete the persisted raw evidence.
+- Removing lifecycle evidence from the readable projection must not collapse
+  independently emitted assistant messages or consume the visible-entry limit.
 - A single provider reasoning item must not be duplicated merely because the
   provider emits both summary and raw notification streams. Stream selection
   remains item-scoped and deterministic across live and persisted transcript
@@ -96,6 +105,9 @@ Related code:
 - `server/src/services/heartbeat-run-reference.ts`
 - `server/src/routes/chats.stream-routes.ts`
 - `server/src/services/chat-generation-protocol.ts`
+- `ui/src/components/transcript/RunTranscriptView.common.tsx`
+- `ui/src/components/transcript/RunTranscriptView.normalize.tsx`
+- `ui/src/components/transcript/RunTranscriptView.tsx`
 - `ui/src/components/transcript/RunTranscriptView.chat.tsx`
 - `packages/agent-runtimes/codex-local/src/server/app-server-chat.ts`
 - `packages/agent-runtimes/codex-local/src/ui/parse-stdout.ts`

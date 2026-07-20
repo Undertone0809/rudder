@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn } from "../../lib/utils";
 import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
-import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconSlot, TranscriptActionIconStack, TranscriptActionIconStatus, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, truncate } from "./RunTranscriptView.common";
+import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconSlot, TranscriptActionIconStack, TranscriptActionIconStatus, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
 import { describeToolSemanticInfo, formatCommandTerminalOutput, formatToolPayload, isCommandTool } from "./RunTranscriptView.semantic";
 import { stripWrappedShell } from "./RunTranscriptView.shell";
@@ -546,14 +546,6 @@ export function trimTrailingWhitespace(value: string) {
   return value.replace(/\s+$/g, "");
 }
 
-export function isInternalTranscriptLifecycleEntry(entry: TranscriptEntry) {
-  if (entry.kind !== "system") return false;
-  const text = compactWhitespace(entry.text).toLowerCase();
-  return text === "reasoning started"
-    || text === "reasoning completed"
-    || /^item (?:started|completed): reasoning(?:\s+\([^)]*\))?$/.test(text);
-}
-
 const INTERNAL_RESULT_MARKER_PATTERN = /RUDDER_RESULT_(?:BEGIN|END)|__RUDDER_RESULT_[a-f0-9-]+__/i;
 const INTERNAL_RESULT_MARKER_PREFIXES = ["RUDDER_RESULT_BEGIN", "RUDDER_RESULT_END"];
 const DYNAMIC_RESULT_MARKER_STEM = "__RUDDER_RESULT_";
@@ -582,13 +574,17 @@ function trailingInternalResultMarkerPrefixIndex(text: string, entryStarts: Set<
   return -1;
 }
 
-function assistantEntriesBeforeTextIndex(
-  entries: Array<Extract<TranscriptEntry, { kind: "assistant" }>>,
+function transcriptEntriesBeforeAssistantTextIndex(
+  entries: TranscriptEntry[],
   endIndex: number,
 ) {
   const visible: TranscriptEntry[] = [];
   let offset = 0;
   for (const entry of entries) {
+    if (entry.kind !== "assistant") {
+      visible.push(entry);
+      continue;
+    }
     const entryEnd = offset + entry.text.length;
     if (entryEnd <= endIndex) {
       visible.push(entry);
@@ -604,15 +600,20 @@ function assistantEntriesBeforeTextIndex(
   return visible;
 }
 
-function stripInternalResultProtocolFromChatTranscript(entries: TranscriptEntry[], streaming: boolean) {
+function stripInternalResultProtocolFromChatTranscript(
+  entries: TranscriptEntry[],
+  streaming: boolean,
+  preserveLifecycleBoundaries: boolean,
+) {
   const filtered: TranscriptEntry[] = [];
-  let assistantGroup: Array<Extract<TranscriptEntry, { kind: "assistant" }>> = [];
+  let assistantGroup: TranscriptEntry[] = [];
 
   const flushAssistantGroup = () => {
     if (assistantGroup.length === 0) return;
     const entryStarts = new Set<number>();
     let text = "";
     for (const entry of assistantGroup) {
+      if (entry.kind !== "assistant") continue;
       entryStarts.add(text.length);
       text += entry.text;
     }
@@ -624,13 +625,19 @@ function stripInternalResultProtocolFromChatTranscript(entries: TranscriptEntry[
     if (markerIndex < 0) {
       filtered.push(...assistantGroup);
     } else {
-      filtered.push(...assistantEntriesBeforeTextIndex(assistantGroup, markerIndex));
+      filtered.push(...transcriptEntriesBeforeAssistantTextIndex(assistantGroup, markerIndex));
     }
     assistantGroup = [];
   };
 
   for (const entry of entries) {
     if (entry.kind === "assistant") {
+      assistantGroup.push(entry);
+      continue;
+    }
+    if (preserveLifecycleBoundaries
+      && assistantGroup.length > 0
+      && isInternalTranscriptLifecycleEntry(entry)) {
       assistantGroup.push(entry);
       continue;
     }
@@ -690,14 +697,23 @@ export function filterChatAssistantTranscriptEntries(
     hideAssistantMessages: boolean;
     hiddenAssistantMessageText?: string | null;
     streaming?: boolean;
+    preserveLifecycleBoundaries?: boolean;
   },
 ) {
+  const preserveLifecycleBoundaries = options.preserveLifecycleBoundaries === true;
   if (options.hideAssistantMessages) {
-    return entries.filter((entry) => entry.kind !== "assistant" && !isInternalTranscriptLifecycleEntry(entry));
+    return entries.filter((entry) => entry.kind !== "assistant"
+      && (preserveLifecycleBoundaries || !isInternalTranscriptLifecycleEntry(entry)));
   }
   const withoutFinalAnswer = redactAssistantSuffixFromChatTranscript(entries, options.hiddenAssistantMessageText);
-  const withoutLifecycle = withoutFinalAnswer.filter((entry) => !isInternalTranscriptLifecycleEntry(entry));
-  return stripInternalResultProtocolFromChatTranscript(withoutLifecycle, options.streaming === true);
+  const withRequiredBoundaries = preserveLifecycleBoundaries
+    ? withoutFinalAnswer
+    : withoutFinalAnswer.filter((entry) => !isInternalTranscriptLifecycleEntry(entry));
+  return stripInternalResultProtocolFromChatTranscript(
+    withRequiredBoundaries,
+    options.streaming === true,
+    preserveLifecycleBoundaries,
+  );
 }
 
 export function TranscriptChatTimeline({
@@ -726,6 +742,7 @@ export function TranscriptChatTimeline({
       hideAssistantMessages,
       hiddenAssistantMessageText,
       streaming,
+      preserveLifecycleBoundaries: true,
     }),
     [entries, hideAssistantMessages, hiddenAssistantMessageText, streaming],
   );

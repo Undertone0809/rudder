@@ -1,5 +1,5 @@
 import type { TranscriptEntry } from "../../agent-runtimes";
-import { asRecord, ChatTranscriptTurn, compactWhitespace, filterRoutineStdout, humanizeLabel, isInternalAgentInstructionText, isTurnStartedText, pluralize, shouldCollapseEventText, TranscriptBlock, TranscriptDensity, TranscriptTodoListItem, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
+import { asRecord, ChatTranscriptTurn, compactWhitespace, filterRoutineStdout, humanizeLabel, isInternalAgentInstructionText, isInternalTranscriptLifecycleEntry, isTurnStartedText, pluralize, shouldCollapseEventText, TranscriptBlock, TranscriptDensity, TranscriptTodoListItem, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
 import { describeToolSemanticInfo, extractSkillSlugFromEntryPath, extractToolUseId, isCommandTool, parseStructuredToolResult, readStringField } from "./RunTranscriptView.semantic";
 import { parseFileChangeSystemText, parseMemoryUpdateSystemText } from "./RunTranscriptView.shell";
 
@@ -367,6 +367,8 @@ export function normalizeTranscript(
   const pendingToolBlocks = new Map<string, Extract<TranscriptBlock, { type: "tool" }>>();
   const pendingActivityBlocks = new Map<string, Extract<TranscriptBlock, { type: "activity" }>>();
   const pendingTodoListBlocks = new Map<string, Extract<TranscriptBlock, { type: "todo_list" }>>();
+  let previousTextEntry: { kind: "assistant" | "user" | "thinking"; delta: boolean } | null = null;
+  let forceTextBoundary = false;
 
   const replacePendingFileChangeActivity = (block: TranscriptBlock) => {
     const pendingIndex = blocks.length - 1;
@@ -388,6 +390,11 @@ export function normalizeTranscript(
 
   for (const entry of entries) {
     const previous = blocks[blocks.length - 1];
+
+    if (isInternalTranscriptLifecycleEntry(entry)) {
+      forceTextBoundary = true;
+      continue;
+    }
 
     if (entry.kind === "assistant" || entry.kind === "user") {
       if (entry.kind === "user") {
@@ -433,7 +440,12 @@ export function normalizeTranscript(
 
       const isStreaming = streaming && entry.kind === "assistant" && entry.delta === true;
       if (previous?.type === "message" && previous.role === entry.kind) {
-        previous.text += (entry.kind === "assistant" && entry.delta === true)
+        const continuesDeltaGroup = entry.kind === "assistant"
+          && entry.delta === true
+          && previousTextEntry?.kind === "assistant"
+          && previousTextEntry.delta
+          && !forceTextBoundary;
+        previous.text += continuesDeltaGroup
           || previous.text.endsWith("\n")
           || entry.text.startsWith("\n")
           ? entry.text
@@ -449,13 +461,19 @@ export function normalizeTranscript(
           streaming: isStreaming,
         });
       }
+      previousTextEntry = { kind: entry.kind, delta: entry.kind === "assistant" && entry.delta === true };
+      forceTextBoundary = false;
       continue;
     }
 
     if (entry.kind === "thinking") {
       const isStreaming = streaming && entry.delta === true;
       if (previous?.type === "thinking") {
-        previous.text += entry.delta === true || previous.text.endsWith("\n") || entry.text.startsWith("\n")
+        const continuesDeltaGroup = entry.delta === true
+          && previousTextEntry?.kind === "thinking"
+          && previousTextEntry.delta
+          && !forceTextBoundary;
+        previous.text += continuesDeltaGroup || previous.text.endsWith("\n") || entry.text.startsWith("\n")
           ? entry.text
           : `\n${entry.text}`;
         previous.ts = entry.ts;
@@ -468,8 +486,13 @@ export function normalizeTranscript(
           streaming: isStreaming,
         });
       }
+      previousTextEntry = { kind: entry.kind, delta: entry.delta === true };
+      forceTextBoundary = false;
       continue;
     }
+
+    previousTextEntry = null;
+    forceTextBoundary = false;
 
     if (entry.kind === "tool_call") {
       const toolBlock: Extract<TranscriptBlock, { type: "tool" }> = {

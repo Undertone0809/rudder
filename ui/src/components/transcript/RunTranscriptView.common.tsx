@@ -268,6 +268,14 @@ export function compactWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+export function isInternalTranscriptLifecycleEntry(entry: TranscriptEntry): boolean {
+  if (entry.kind !== "system") return false;
+  const text = compactWhitespace(entry.text).toLowerCase();
+  return text === "reasoning started"
+    || text === "reasoning completed"
+    || /^item (?:started|completed): reasoning(?:\s+\([^)]*\))?$/.test(text);
+}
+
 export function isTurnStartedText(value: string): boolean {
   return compactWhitespace(value).toLowerCase() === "turn started";
 }
