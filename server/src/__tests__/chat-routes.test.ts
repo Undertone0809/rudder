@@ -1197,6 +1197,49 @@ describe("chat routes", () => {
     expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
   });
 
+  it("normalizes multipart draft fields before accepting an attached first turn", async () => {
+    const preferredAgentId = "10000000-0000-4000-8000-000000000001";
+    const projectId = "10000000-0000-4000-8000-000000000002";
+    const conversation = createConversation({ preferredAgentId, planMode: true });
+    const userMessage = createMessage("message-user", "user", "message", "Start with an attachment");
+    mockAgentService.getById.mockResolvedValue({ id: preferredAgentId, orgId: "organization-1", status: "idle" });
+    mockProjectService.getById.mockResolvedValue({ id: projectId, orgId: "organization-1" });
+    mockChatService.createWithInitialMessage.mockResolvedValue({ conversation, message: userMessage });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "Ready.",
+      replyingAgentId: preferredAgentId,
+      reply: { kind: "message", body: "Ready.", structuredPayload: null, replyingAgentId: preferredAgentId },
+    });
+
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/chats/messages/stream")
+      .field("body", "Start with an attachment")
+      .field("preferredAgentId", preferredAgentId)
+      .field("issueCreationMode", "manual_approval")
+      .field("planMode", "true")
+      .field("contextLinks", JSON.stringify([{ entityType: "project", entityId: projectId }]))
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockChatService.createWithInitialMessage).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({
+        preferredAgentId,
+        planMode: true,
+        contextLinks: [expect.objectContaining({ entityType: "project", entityId: projectId })],
+      }),
+    );
+  });
+
   it("keeps the accepted first message and records failure evidence when generation startup fails", async () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Start despite runtime failure");

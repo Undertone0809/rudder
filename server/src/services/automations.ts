@@ -274,6 +274,12 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
           structuredPayload: automationChatRunInputPayload(input.automation, existingRun, source),
           chatTurnId: crypto.randomUUID(),
         },
+        activity: {
+          actorType: "system",
+          actorId: "automation-chat-output",
+          agentId: input.automation.assigneeAgentId,
+          runId: input.runId,
+        },
       }, input.executor);
 
     await input.executor

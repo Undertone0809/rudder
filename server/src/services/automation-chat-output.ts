@@ -103,6 +103,12 @@ export async function publishAutomationRunOutputToChat(
               [CHAT_TRANSCRIPT_KEY]: input.transcript ?? [],
             },
           },
+          activity: {
+            actorType: "system",
+            actorId: "automation-chat-output",
+            agentId: row.assigneeAgentId,
+            runId: row.runId,
+          },
         }, tx as unknown as Db);
       conversationId = created.conversation.id;
       await tx

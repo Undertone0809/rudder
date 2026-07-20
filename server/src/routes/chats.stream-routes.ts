@@ -87,6 +87,23 @@ function outputAdmissionClosed(error: unknown): boolean {
   );
 }
 
+function normalizeMultipartFirstTurnBody(body: Record<string, unknown> | undefined) {
+  if (!body) return {};
+  const normalized = { ...body };
+  if (typeof normalized.planMode === "string") {
+    if (normalized.planMode === "true") normalized.planMode = true;
+    else if (normalized.planMode === "false") normalized.planMode = false;
+  }
+  if (typeof normalized.contextLinks === "string") {
+    try {
+      normalized.contextLinks = JSON.parse(normalized.contextLinks);
+    } catch {
+      // Leave invalid JSON in place so the shared schema returns a normal 400.
+    }
+  }
+  return normalized;
+}
+
 export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
   const CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE =
     "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.";
@@ -859,7 +876,11 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         throw err;
       }
     }
-    const parsed = createChatFirstTurnSchema.safeParse(req.body ?? {});
+    const parsed = createChatFirstTurnSchema.safeParse(
+      isMultipartRequest(req)
+        ? normalizeMultipartFirstTurnBody(req.body as Record<string, unknown> | undefined)
+        : (req.body ?? {}),
+    );
     if (!parsed.success) {
       res.status(400).json({ error: "Invalid first chat message", details: parsed.error.issues });
       return;

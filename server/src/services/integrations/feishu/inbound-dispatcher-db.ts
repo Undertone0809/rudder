@@ -398,6 +398,11 @@ async function createFeishuChatConversation(
       createdByUserId: input.userId,
       contextLinks: [{ entityType: "agent", entityId: input.agentId, metadata: { source: "agent_integration", provider: input.provider } }],
       initialMessage: input.initialMessage,
+      activity: {
+        actorType: "system",
+        actorId: "feishu-inbound",
+        agentId: input.agentId,
+      },
     }, executor);
 }
 
