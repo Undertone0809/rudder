@@ -132,6 +132,25 @@ describe("run-detail-events", () => {
     expect(entries).not.toContainEqual(expect.objectContaining({ text: "chat transcript entry" }));
   });
 
+  it("omits internal issue execution release events from fallback run detail entries", () => {
+    const entries = heartbeatRunEventsToTranscriptEntries([
+      makeEvent({
+        seq: 1,
+        eventType: "lifecycle",
+        message: "Visible terminal lifecycle evidence",
+      }),
+      makeEvent({
+        seq: 2,
+        eventType: "issue.execution_released",
+        message: "Issue execution released after terminal run",
+      }),
+    ]);
+
+    expect(entries).toEqual([
+      expect.objectContaining({ text: "Visible terminal lifecycle evidence" }),
+    ]);
+  });
+
   it("merges log transcript entries and event entries in timestamp order", () => {
     const logEntries: TranscriptEntry[] = [
       { kind: "assistant", ts: "2026-04-12T10:00:02.000Z", text: "Working now." },

@@ -6,6 +6,10 @@ interface RunDetailEventOptions {
   redactValue?: <T>(value: T) => T;
 }
 
+const OPERATOR_HIDDEN_RUN_EVENT_TYPES = new Set([
+  "issue.execution_released",
+]);
+
 function humanizeEventType(eventType: string): string {
   return eventType
     .split(/[._-]+/)
@@ -186,12 +190,13 @@ export function heartbeatRunEventsToTranscriptEntries(
   events: HeartbeatRunEvent[],
   options: RunDetailEventOptions = {},
 ): TranscriptEntry[] {
-  const embeddedTranscriptEntries = events.flatMap((event) => {
+  const visibleEvents = events.filter((event) => !OPERATOR_HIDDEN_RUN_EVENT_TYPES.has(event.eventType));
+  const embeddedTranscriptEntries = visibleEvents.flatMap((event) => {
     const entry = heartbeatRunEventTranscriptEntry(event, options);
     return entry ? [entry] : [];
   });
   if (embeddedTranscriptEntries.length > 0) return embeddedTranscriptEntries;
-  return events.map((event) => heartbeatRunEventToTranscriptEntry(event, options));
+  return visibleEvents.map((event) => heartbeatRunEventToTranscriptEntry(event, options));
 }
 
 export function mergeTranscriptEntries(

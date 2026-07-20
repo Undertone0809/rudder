@@ -17,7 +17,7 @@ import {
   summarizeTokenUsage,
   toHeartbeatRun
 } from "@rudderhq/shared";
-import { and, asc, desc, eq, gt, gte, inArray, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, lte, ne, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type {
   AgentRuntimeExecutionResult
@@ -38,6 +38,7 @@ import { summarizeHeartbeatRunResultJson } from "../heartbeat-run-summary.js";
 import { instanceSettingsService } from "../instance-settings.js";
 import { issueService } from "../issues.js";
 import { publishLiveEvent } from "../live-events.js";
+import { ISSUE_EXECUTION_RELEASED_EVENT_TYPE } from "../operator-event-visibility.js";
 import { appendHeartbeatRunEvent } from "../run-events.js";
 import { getRunLogStore } from "../run-log-store.js";
 import { workspaceOperationService } from "../workspace-operations.js";
@@ -1897,7 +1898,11 @@ export function heartbeatService(
       db
         .select()
         .from(heartbeatRunEvents)
-        .where(and(eq(heartbeatRunEvents.runId, runId), gt(heartbeatRunEvents.seq, afterSeq)))
+        .where(and(
+          eq(heartbeatRunEvents.runId, runId),
+          gt(heartbeatRunEvents.seq, afterSeq),
+          ne(heartbeatRunEvents.eventType, ISSUE_EXECUTION_RELEASED_EVENT_TYPE),
+        ))
         .orderBy(asc(heartbeatRunEvents.seq))
         .limit(Math.max(1, Math.min(limit, 1000))),
 
