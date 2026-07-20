@@ -3,7 +3,7 @@ import { useOptionalToast } from "../../context/ToastContext";
 import { readDesktopShell } from "../../lib/desktop-shell";
 import { cn } from "../../lib/utils";
 import { renderTranscriptBlock } from "./RunTranscriptView.blocks";
-import { TranscriptChatTimeline } from "./RunTranscriptView.chat";
+import { isInternalTranscriptLifecycleEntry, TranscriptChatTimeline } from "./RunTranscriptView.chat";
 import { filterRenderableTranscriptEntries, resolveTranscriptLocalFileTarget, RunTranscriptViewProps, shouldHandlePlainClick, TranscriptMarkdownLinkClickHandler } from "./RunTranscriptView.common";
 import { RawTranscriptView, TranscriptDetailTimeline } from "./RunTranscriptView.detail";
 import { normalizeTranscript } from "./RunTranscriptView.normalize";
@@ -84,10 +84,11 @@ export function RunTranscriptView({
   }
 
   if (presentation === "detail") {
+    const detailEntries = visibleEntries.filter((entry) => !isInternalTranscriptLifecycleEntry(entry));
     return (
       <div className={cn("space-y-4", className)}>
         <TranscriptDetailTimeline
-          entries={visibleEntries}
+          entries={detailEntries}
           density={density}
           streaming={streaming}
           thinkingClassName={thinkingClassName}
