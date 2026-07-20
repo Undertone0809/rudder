@@ -64,6 +64,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CirclePlus,
   Copy,
   GitFork,
   Loader2,
@@ -2386,7 +2387,7 @@ export function ChatMessageItem({
                   title="Open Side Chat"
                   onClick={() => onOpenSideChat(message)}
                 >
-                  <Sparkles className="h-4 w-4" />
+                  <CirclePlus className="h-4 w-4" />
                 </button>
               ) : null}
               {canShowAssistantMessageActions && onForkMessage && message.status !== "streaming" ? (

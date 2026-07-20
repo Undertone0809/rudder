@@ -24,6 +24,7 @@ type SidePanelContextValue = {
   openEmpty: () => void;
   closePanel: () => void;
   closeTarget: (key: string) => void;
+  registerCloseRequestHandler: (handler: (target: SidePanelTarget) => void | Promise<void>) => () => void;
   replaceTarget: (key: string, target: SidePanelTarget) => void;
   reorderTarget: (key: string, targetKey: string, position: "before" | "after") => void;
   setActiveKey: (key: string | null) => void;
@@ -123,6 +124,7 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
   const [contextKey, setCurrentContextKey] = useState(DEFAULT_SIDE_PANEL_CONTEXT_KEY);
   const [currentContextState, setCurrentContextState] = useState<SidePanelContextState>(() => emptyContextState());
   const [open, setOpen] = useState(false);
+  const closeRequestHandlerRef = useRef<((target: SidePanelTarget) => void | Promise<void>) | null>(null);
 
   const writeContextState = useCallback((key: string, updater: (state: SidePanelContextState) => SidePanelContextState) => {
     const current = contextStatesRef.current[key] ?? emptyContextState();
@@ -219,6 +221,25 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     });
   }, [contextKey, writeContextState]);
 
+  const registerCloseRequestHandler = useCallback((handler: (target: SidePanelTarget) => void | Promise<void>) => {
+    closeRequestHandlerRef.current = handler;
+    return () => {
+      if (closeRequestHandlerRef.current === handler) closeRequestHandlerRef.current = null;
+    };
+  }, []);
+
+  const requestCloseTarget = useCallback((key: string) => {
+    const current = contextStatesRef.current[currentContextKeyRef.current] ?? emptyContextState();
+    const target = current.tabs.find((candidate) => sidePanelTargetKey(candidate) === key);
+    if (!target) return;
+    const handler = closeRequestHandlerRef.current;
+    if (handler) {
+      void handler(target);
+      return;
+    }
+    closeTarget(key);
+  }, [closeTarget]);
+
   const hasActiveClosableTab = open && Boolean(currentContextState.activeKey);
 
   useEffect(() => {
@@ -256,9 +277,9 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     if (!desktopShell?.onCloseSidePanelActiveTab) return undefined;
     return desktopShell.onCloseSidePanelActiveTab(() => {
       const activeKey = currentContextState.activeKey;
-      if (activeKey) closeTarget(activeKey);
+      if (activeKey) requestCloseTarget(activeKey);
     });
-  }, [closeTarget, currentContextState.activeKey, hasActiveClosableTab]);
+  }, [currentContextState.activeKey, hasActiveClosableTab, requestCloseTarget]);
 
   useEffect(() => {
     if (!open || !currentContextState.activeKey) return;
@@ -269,11 +290,11 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
       if (event.altKey || event.shiftKey) return;
       event.preventDefault();
       event.stopPropagation();
-      closeTarget(currentContextState.activeKey!);
+      requestCloseTarget(currentContextState.activeKey!);
     };
     document.addEventListener("keydown", handleKeyDown, true);
     return () => document.removeEventListener("keydown", handleKeyDown, true);
-  }, [closeTarget, currentContextState.activeKey, open]);
+  }, [currentContextState.activeKey, open, requestCloseTarget]);
 
   const replaceTarget = useCallback((key: string, target: SidePanelTarget) => {
     const nextKey = sidePanelTargetKey(target);
@@ -316,6 +337,7 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     openEmpty,
     openTarget,
     openTargetForContext,
+    registerCloseRequestHandler,
     replaceTarget,
     reorderTarget,
     setActiveKey,
@@ -323,7 +345,7 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     showPanel,
     showPanelForContext,
     tabs: currentContextState.tabs,
-  }), [clearCurrentContext, closePanel, closeTarget, contextKey, currentContextState.activeKey, currentContextState.tabs, hidePanel, open, openEmpty, openTarget, openTargetForContext, reorderTarget, replaceTarget, setActiveKey, setContextKey, showPanel, showPanelForContext]);
+  }), [clearCurrentContext, closePanel, closeTarget, contextKey, currentContextState.activeKey, currentContextState.tabs, hidePanel, open, openEmpty, openTarget, openTargetForContext, registerCloseRequestHandler, reorderTarget, replaceTarget, setActiveKey, setContextKey, showPanel, showPanelForContext]);
 
   return <SidePanelContext.Provider value={value}>{children}</SidePanelContext.Provider>;
 }

@@ -3,19 +3,16 @@ import {
   chatAttachments,
   chatContextLinks,
   chatConversations,
-  chatGenerations,
   chatMessages,
   messengerCustomGroupEntries,
   messengerCustomGroups,
 } from "@rudderhq/db";
 import type { ChatConversation } from "@rudderhq/shared";
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lte, ne, or } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
 
 export const SIDE_CHAT_TTL_MS = 2 * 60 * 60 * 1000;
-
-const ACTIVE_GENERATION_STATUSES = ["active", "starting", "running", "tool_busy", "closing"] as const;
 
 type ConversationRow = typeof chatConversations.$inferSelect;
 
@@ -326,41 +323,23 @@ export function sideChatService(db: Db) {
     return hydrated(createdId, input.userId);
   }
 
-  async function complete(input: { conversationId: string; userId: string }) {
+  async function destroy(input: { conversationId: string; userId: string }) {
     const conversation = await getOwnedSideChat(input.conversationId, input.userId);
-    if (conversation.sideChatState === "completed") return hydrated(conversation.id, input.userId);
-    if (conversation.sideChatState !== "active") throw conflict("Side Chat is already read-only");
-    const activeGeneration = await db
-      .select({ id: chatGenerations.id })
-      .from(chatGenerations)
-      .where(and(
-        eq(chatGenerations.conversationId, conversation.id),
-        inArray(chatGenerations.status, [...ACTIVE_GENERATION_STATUSES]),
-      ))
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-    if (activeGeneration) throw conflict("Wait for the Side Chat reply to finish");
-
-    const now = new Date();
-    const transitioned = await db
-      .update(chatConversations)
-      .set({
-        sideChatState: "completed",
-        sideChatExpiresAt: null,
-        sideChatCompletedAt: now,
-        updatedAt: now,
-      })
+    if (conversation.sideChatState === "kept" || conversation.messengerVisible) {
+      throw conflict("A kept Side Chat is a normal Messenger chat");
+    }
+    const deleted = await db
+      .delete(chatConversations)
       .where(and(
         eq(chatConversations.id, conversation.id),
-        eq(chatConversations.sideChatState, "active"),
+        eq(chatConversations.createdByUserId, input.userId),
+        eq(chatConversations.conversationKind, "side_chat"),
+        eq(chatConversations.messengerVisible, false),
+        ne(chatConversations.sideChatState, "kept"),
       ))
       .returning({ id: chatConversations.id });
-    if (transitioned.length === 0) {
-      const latest = await getOwnedSideChat(conversation.id, input.userId);
-      if (latest.sideChatState === "completed") return hydrated(conversation.id, input.userId);
-      throw conflict("Side Chat is already read-only");
-    }
-    return hydrated(conversation.id, input.userId);
+    if (!deleted[0]) throw conflict("Side Chat could not be destroyed");
+    return deleted[0];
   }
 
   async function keepInMessenger(input: { conversationId: string; userId: string }) {
@@ -370,8 +349,27 @@ export function sideChatService(db: Db) {
     }
     if (conversation.sideChatState !== "active") throw conflict("Only an active Side Chat can be kept in Messenger");
 
-    await db.transaction(async (tx) => {
+    const outcome = await db.transaction(async (tx) => {
       const now = new Date();
+      const expired = await tx
+        .update(chatConversations)
+        .set({
+          sideChatState: "expired",
+          sideChatExpiresAt: null,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(chatConversations.id, conversation.id),
+          eq(chatConversations.sideChatState, "active"),
+          eq(chatConversations.messengerVisible, false),
+          or(
+            isNull(chatConversations.sideChatExpiresAt),
+            lte(chatConversations.sideChatExpiresAt, now),
+          ),
+        ))
+        .returning({ id: chatConversations.id });
+      if (expired.length > 0) return "expired" as const;
+
       const transitioned = await tx
         .update(chatConversations)
         .set({
@@ -387,6 +385,7 @@ export function sideChatService(db: Db) {
           eq(chatConversations.id, conversation.id),
           eq(chatConversations.sideChatState, "active"),
           eq(chatConversations.messengerVisible, false),
+          gt(chatConversations.sideChatExpiresAt, now),
         ))
         .returning({ id: chatConversations.id });
       if (transitioned.length === 0) {
@@ -395,12 +394,12 @@ export function sideChatService(db: Db) {
           .from(chatConversations)
           .where(eq(chatConversations.id, conversation.id))
           .then((rows) => rows[0] ?? null);
-        if (latest?.sideChatState === "kept" && latest.messengerVisible) return;
+        if (latest?.sideChatState === "kept" && latest.messengerVisible) return "kept" as const;
         throw conflict("Only an active Side Chat can be kept in Messenger");
       }
 
       const sourceConversationId = conversation.forkedFromConversationId;
-      if (!sourceConversationId) return;
+      if (!sourceConversationId) return "kept" as const;
       const sourceThreadKey = `chat:${sourceConversationId}`;
       const existingGroup = await tx
         .select({ id: messengerCustomGroups.id })
@@ -417,7 +416,7 @@ export function sideChatService(db: Db) {
         .orderBy(asc(messengerCustomGroups.sortOrder), asc(messengerCustomGroups.createdAt))
         .limit(1)
         .then((rows) => rows[0] ?? null);
-      if (!existingGroup) return;
+      if (!existingGroup) return "kept" as const;
 
       const lastEntry = await tx
         .select({ sortOrder: messengerCustomGroupEntries.sortOrder })
@@ -441,14 +440,17 @@ export function sideChatService(db: Db) {
           updatedAt: now,
         })
         .onConflictDoNothing();
+      return "kept" as const;
     });
+
+    if (outcome === "expired") throw conflict("Side Chat expired");
 
     return hydrated(conversation.id, input.userId);
   }
 
   return {
     create,
-    complete,
+    destroy,
     keepInMessenger,
     assertAccessible,
     assertMutable,

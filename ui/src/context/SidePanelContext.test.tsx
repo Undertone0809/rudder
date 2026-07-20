@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SidePanelProvider, useSidePanel } from "./SidePanelContext";
@@ -47,8 +47,13 @@ function stubDesktopShell() {
   };
 }
 
-function SidePanelProbe() {
+function SidePanelProbe({ onCloseRequest }: { onCloseRequest?: (target: SidePanelTarget) => void }) {
   const sidePanel = useSidePanel();
+
+  useEffect(() => {
+    if (!onCloseRequest) return undefined;
+    return sidePanel.registerCloseRequestHandler(onCloseRequest);
+  }, [onCloseRequest, sidePanel.registerCloseRequestHandler]);
 
   return (
     <div>
@@ -89,7 +94,7 @@ function SidePanelProbe() {
   );
 }
 
-function renderSidePanelProvider() {
+function renderSidePanelProvider(onCloseRequest?: (target: SidePanelTarget) => void) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -97,7 +102,7 @@ function renderSidePanelProvider() {
   act(() => {
     root.render(
       <SidePanelProvider>
-        <SidePanelProbe />
+        <SidePanelProbe onCloseRequest={onCloseRequest} />
       </SidePanelProvider>,
     );
   });
@@ -353,6 +358,23 @@ describe("SidePanelProvider context visibility", () => {
     expect(text(container, "open")).toBe("false");
     expect(text(container, "active-key")).toBe("");
     expect(text(container, "tab-count")).toBe("0");
+  });
+
+  it("routes Desktop close requests through the registered target lifecycle handler", async () => {
+    const { emitCloseActiveTab } = stubDesktopShell();
+    const closeRequest = vi.fn();
+    ({ container, root } = renderSidePanelProvider(closeRequest));
+
+    click(container, "Chat A");
+    click(container, "Open issue");
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    act(() => emitCloseActiveTab());
+
+    expect(closeRequest).toHaveBeenCalledWith(issueTarget);
+    expect(text(container, "tab-count")).toBe("1");
   });
 
   it("removes Browser tabs from every context after disable or clear without removing other tabs", async () => {

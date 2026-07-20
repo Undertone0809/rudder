@@ -120,6 +120,7 @@ import {
   Bot,
   Boxes,
   ChevronDown,
+  CirclePlus,
   Copy,
   Folder,
   FolderInput,
@@ -139,7 +140,6 @@ import {
   PinOff,
   Plus,
   RefreshCw,
-  Sparkles,
   Square,
   Trash2,
   X
@@ -1981,7 +1981,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           onClick={activateSideChatSlashCommand}
         >
           <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] bg-[color:var(--surface-active)] text-[color:var(--accent-base)]">
-            <Sparkles className="h-4 w-4" />
+            <CirclePlus className="h-4 w-4" />
           </span>
           <span className="flex min-w-0 flex-1 items-baseline gap-2">
             <span className="shrink-0 font-medium text-foreground">Side Chat</span>

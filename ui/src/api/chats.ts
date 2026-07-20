@@ -136,8 +136,8 @@ export const chatsApi = {
     chatId: string,
     data: { sourceMessageId: string; clientMutationId: string },
   ) => api.post<ChatConversation>(`/chats/${chatId}/side-chats`, data),
-  completeSideChat: (chatId: string) =>
-    api.post<ChatConversation>(`/chats/${chatId}/side-chat/complete`, {}),
+  destroySideChat: (chatId: string) =>
+    api.delete<{ id: string }>(`/chats/${chatId}/side-chat`),
   keepSideChat: (chatId: string) =>
     api.post<ChatConversation>(`/chats/${chatId}/side-chat/keep`, {}),
   update: (

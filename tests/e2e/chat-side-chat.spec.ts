@@ -69,23 +69,29 @@ async function openFromAssistantAction(page: Page, assistantMessageId: string) {
   return panel;
 }
 
+function sideComposerEditor(panel: Locator) {
+  return panel.getByTestId("side-chat-composer").locator(".rudder-mdxeditor-content").first();
+}
+
 async function sendFirstSideChatMessage(page: Page, panel: Locator, sourceConversationId: string) {
   const createResponsePromise = page.waitForResponse((response) => (
     response.request().method() === "POST"
     && response.url().includes(`/api/chats/${sourceConversationId}/side-chats`)
   ));
-  await panel.getByPlaceholder("Ask a focused follow-up…").fill("What is the rollback trigger?");
-  await panel.getByRole("button", { name: "Send" }).click();
+  await sideComposerEditor(panel).fill("What is the rollback trigger?");
+  await panel.getByRole("button", { name: "Send Side Chat message" }).click();
   const createResponse = await createResponsePromise;
   expect(createResponse.ok(), await createResponse.text()).toBe(true);
   const sideChat = await createResponse.json() as { id: string };
   await expect(panel.getByTestId("side-chat-messages")).toContainText("What is the rollback trigger?", { timeout: 15_000 });
-  await expect(panel.getByRole("button", { name: "Done & return" })).toBeEnabled({ timeout: 20_000 });
+  await expect(panel.getByTestId("side-chat-streaming-reply")).toContainText("Streaming reply", { timeout: 15_000 });
+  await expect(panel.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." })).toBeVisible({ timeout: 20_000 });
+  await expect(panel.getByRole("button", { name: "Done & return" })).toHaveCount(0);
   return sideChat;
 }
 
-test("Side Chat preserves the main draft, becomes read-only on Done, and disappears when closed", async ({ page }, testInfo) => {
-  const source = await seedSideChatSource(page, `Side-Chat-Done-${Date.now()}`);
+test("Side Chat preserves the main draft, streams like Chat, and is destroyed when closed", async ({ page }, testInfo) => {
+  const source = await seedSideChatSource(page, `Side-Chat-Close-${Date.now()}`);
   const mainComposer = page.getByTestId("chat-composer-editor-scroll").locator(".rudder-mdxeditor-content").first();
   await mainComposer.click();
   await page.keyboard.insertText("Keep this unfinished main-chat draft");
@@ -93,16 +99,21 @@ test("Side Chat preserves the main draft, becomes read-only on Done, and disappe
   const panel = await openFromAssistantAction(page, source.assistantMessageId);
   await expect(mainComposer).toContainText("Keep this unfinished main-chat draft");
   await page.screenshot({ path: testInfo.outputPath("01-assistant-action-draft.png"), fullPage: true });
+  await expect(panel.locator(".chat-composer")).toBeVisible();
+  await expect(panel.getByTestId("side-chat-project-chip")).toBeVisible();
+  await expect(panel.getByTestId("side-chat-agent-chip")).toContainText("Sidekick");
+  await expect(panel).not.toContainText("Enter to send · Shift+Enter for a new line");
+  await expect(panel.getByTestId("side-chat-icon")).toHaveClass(/lucide-circle-plus/);
   const sideChat = await sendFirstSideChatMessage(page, panel, source.conversationId);
 
-  const listBeforeDone = await page.request.get(`/api/orgs/${source.organization.id}/chats?status=all`);
-  expect(listBeforeDone.ok()).toBe(true);
-  expect((await listBeforeDone.json() as Array<{ id: string }>).some((chat) => chat.id === sideChat.id)).toBe(false);
-  const messengerBeforeDone = await page.request.get(
+  const hiddenList = await page.request.get(`/api/orgs/${source.organization.id}/chats?status=all`);
+  expect(hiddenList.ok()).toBe(true);
+  expect((await hiddenList.json() as Array<{ id: string }>).some((chat) => chat.id === sideChat.id)).toBe(false);
+  const hiddenMessenger = await page.request.get(
     `/api/orgs/${source.organization.id}/messenger/threads?limit=40&splitIssues=true`,
   );
-  expect(messengerBeforeDone.ok()).toBe(true);
-  expect((await messengerBeforeDone.json() as { items: Array<{ threadKey: string }> }).items
+  expect(hiddenMessenger.ok()).toBe(true);
+  expect((await hiddenMessenger.json() as { items: Array<{ threadKey: string }> }).items
     .some((thread) => thread.threadKey === `chat:${sideChat.id}`)).toBe(false);
   const hiddenMessengerThread = await page.request.get(
     `/api/orgs/${source.organization.id}/messenger/chat/${sideChat.id}`,
@@ -110,32 +121,19 @@ test("Side Chat preserves the main draft, becomes read-only on Done, and disappe
   expect(hiddenMessengerThread.status()).toBe(404);
 
   await page.screenshot({ path: testInfo.outputPath("02-side-chat-active.png"), fullPage: true });
-  await panel.getByRole("button", { name: "Done & return" }).click();
-  await expect(panel.getByTestId("side-chat-read-only")).toBeVisible({ timeout: 15_000 });
-  await expect(panel.getByTestId("side-chat-state")).toContainText("Completed · read-only");
-  await expect(panel.getByTestId("side-chat-composer")).toHaveCount(0);
-  await expect(panel.getByRole("button", { name: "Keep in Messenger" })).toHaveCount(0);
-  const renameAfterDone = await page.request.patch(`/api/chats/${sideChat.id}`, {
-    data: { title: "This must remain immutable" },
-  });
-  expect(renameAfterDone.status()).toBe(409);
-  const deleteAuditRecord = await page.request.delete(`/api/chats/${sideChat.id}`);
-  expect(deleteAuditRecord.status()).toBe(409);
-  await page.screenshot({ path: testInfo.outputPath("03-side-chat-read-only.png"), fullPage: true });
-
+  const destroyResponsePromise = page.waitForResponse((response) => (
+    response.request().method() === "DELETE"
+    && response.url().includes(`/api/chats/${sideChat.id}/side-chat`)
+  ));
   const sideChatTab = panel.locator('[data-side-panel-tab-key^="side-chat:"]');
   await sideChatTab.hover();
   await sideChatTab.getByRole("button", { name: "Close Side Chat tab" }).click();
+  const destroyResponse = await destroyResponsePromise;
+  expect(destroyResponse.ok(), await destroyResponse.text()).toBe(true);
   await expect(panel).toBeHidden();
-  const auditRecordRes = await page.request.get(`/api/chats/${sideChat.id}`);
-  expect(auditRecordRes.ok()).toBe(true);
-  expect(await auditRecordRes.json()).toMatchObject({
-    id: sideChat.id,
-    messengerVisible: false,
-    sideChatState: "completed",
-  });
+  expect((await page.request.get(`/api/chats/${sideChat.id}`)).status()).toBe(404);
   await expect(mainComposer).toContainText("Keep this unfinished main-chat draft");
-  await page.screenshot({ path: testInfo.outputPath("04-completed-tab-closed.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("03-side-chat-destroyed.png"), fullPage: true });
 });
 
 test("the /side menu matches composer popovers and can keep the same Side Chat in Messenger", async ({ page }, testInfo) => {
@@ -168,7 +166,10 @@ test("the /side menu matches composer popovers and can keep the same Side Chat i
   const keepResponse = await keepResponsePromise;
   expect(keepResponse.ok(), await keepResponse.text()).toBe(true);
   expect(await keepResponse.json()).toMatchObject({ id: sideChat.id, messengerVisible: true, sideChatState: "kept" });
-  await expect(panel.getByTestId("side-chat-state")).toContainText("Kept in Messenger");
+  await expect(page).toHaveURL(new RegExp(`/messenger/chat/${sideChat.id}$`));
+  await expect(page.getByTestId("side-chat-panel-view")).toHaveCount(0);
+  await expect(page.getByTestId("chat-composer-layout")).toBeVisible();
+  await expect(page.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." })).toBeVisible();
 
   const listAfterKeep = await page.request.get(`/api/orgs/${source.organization.id}/chats?status=active`);
   expect(listAfterKeep.ok()).toBe(true);
@@ -194,6 +195,45 @@ test("the Side Panel empty state opens the same provisional Side Chat flow", asy
   await panel.getByTestId("chat-side-panel-empty-side chat-target").click();
   await expect(panel.getByTestId("side-chat-panel-view")).toBeVisible();
   await expect(panel.getByTestId("side-chat-anchor-preview")).toContainText("narrow cohort");
-  await expect(panel.getByPlaceholder("Ask a focused follow-up…")).toBeVisible();
+  await expect(sideComposerEditor(panel)).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("09-side-panel-entry-draft.png"), fullPage: true });
+
+  const sideChatTab = panel.locator('[data-side-panel-tab-key^="side-chat:"]');
+  await sideChatTab.hover();
+  await sideChatTab.getByRole("button", { name: "Close Side Chat tab" }).click();
+  await expect(panel).toBeHidden();
+});
+
+test("an elapsed Side Chat becomes non-editable and can still be destroyed", async ({ page }, testInfo) => {
+  const source = await seedSideChatSource(page, `Side-Chat-Expiry-${Date.now()}`);
+  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+  const createResponsePromise = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+    && response.url().includes(`/api/chats/${source.conversationId}/side-chats`)
+  ));
+  await sideComposerEditor(panel).fill("Expire this focused exploration.");
+  await panel.getByRole("button", { name: "Send Side Chat message" }).click();
+  const createResponse = await createResponsePromise;
+  expect(createResponse.ok(), await createResponse.text()).toBe(true);
+  const sideChat = await createResponse.json() as { id: string };
+  await expect(panel.getByTestId("side-chat-messages")).toContainText("Expire this focused exploration.");
+  await e2eDb
+    .update(chatConversations)
+    // This Playwright database is isolated to this run. Normal/kept rows ignore
+    // this field, while the active Side Chat under test observes the deadline.
+    .set({ sideChatExpiresAt: new Date(Date.now() + 1_000) });
+  await expect(panel.getByTestId("side-chat-read-only")).toBeVisible({ timeout: 20_000 });
+  await expect(panel.getByTestId("side-chat-state")).toContainText("Expired · read-only");
+  await expect(panel.getByTestId("side-chat-composer")).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath("10-side-chat-expired-read-only.png"), fullPage: true });
+
+  const destroyResponsePromise = page.waitForResponse((response) => (
+    response.request().method() === "DELETE"
+    && response.url().includes(`/api/chats/${sideChat.id}/side-chat`)
+  ));
+  const sideChatTab = panel.locator('[data-side-panel-tab-key^="side-chat:"]');
+  await sideChatTab.hover();
+  await sideChatTab.getByRole("button", { name: "Close Side Chat tab" }).click();
+  expect((await destroyResponsePromise).ok()).toBe(true);
+  expect((await page.request.get(`/api/chats/${sideChat.id}`)).status()).toBe(404);
 });
