@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   listLegacyUserHomeLocalScanSkillIds,
@@ -5,6 +7,13 @@ import {
 } from "../services/organization-skills.js";
 
 describe("organization bundled skill pruning", () => {
+  it("does not ship the retired skill optimizer package", () => {
+    expect(fs.existsSync(path.join(
+      process.cwd(),
+      "server/resources/bundled-skills/skill-optimizer/SKILL.md",
+    ))).toBe(false);
+  });
+
   it("prunes stale bundled rows that are no longer present in the current bundled set", () => {
     const staleIds = listStaleBundledSkillIds(
       [
