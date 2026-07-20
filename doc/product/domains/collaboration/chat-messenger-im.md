@@ -940,7 +940,12 @@ before the exploration proves useful.
 7. Closing a provisional tab discards the unsent client draft. Closing a
    persisted temporary tab cancels any active generation, deletes the hidden
    Side Chat and its owned rows, and closes the tab. Close failures stay visible
-   and do not silently remove the tab.
+   and do not silently remove the tab. Move and Close are mutually exclusive for
+   the same tab: every close ingress is disabled while Move is pending. If a
+   prior close response was lost, a later `not found` closes the stale local tab;
+   if Move committed but its response was lost, the kept conversation remains
+   intact and a later close conflict only reconciles the stale tab into
+   Messenger.
 8. `Move to Messenger` changes an `active` Side Chat to `kept`, preserves the
    same conversation id, removes expiry, and makes it visible. If the source
    Chat already belongs to the operator's custom group, the kept Side Chat is

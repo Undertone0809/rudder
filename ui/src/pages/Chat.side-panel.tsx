@@ -1,6 +1,7 @@
 import { agentsApi } from "@/api/agents";
 import { authApi } from "@/api/auth";
 import { chatsApi } from "@/api/chats";
+import { ApiError } from "@/api/client";
 import { issuesApi } from "@/api/issues";
 import { organizationsApi } from "@/api/orgs";
 import { AgentIcon } from "@/components/AgentIconPicker";
@@ -2006,16 +2007,18 @@ function ChatSidePanelBrowserView({
 
 function ChatSidePanelTabContextMenu({
   children,
+  closeDisabled,
   isMobile,
-  movingSideChat,
+  moveInProgress,
   organizationId,
   tab,
   onClose,
   onMoveSideChat,
 }: {
   children: ReactElement;
+  closeDisabled: boolean;
   isMobile: boolean;
-  movingSideChat: boolean;
+  moveInProgress: boolean;
   organizationId: string | null | undefined;
   tab: SidePanelTarget;
   onClose: (tab: SidePanelTarget) => void;
@@ -2035,7 +2038,7 @@ function ChatSidePanelTabContextMenu({
   );
   const canMoveSideChat = Boolean(
     sideChat?.conversationId
-    && !movingSideChat
+    && !moveInProgress
     && !conversationStatusLoading
     && !conversationQuery.isError
     && conversation?.sideChatState === "active"
@@ -2043,7 +2046,7 @@ function ChatSidePanelTabContextMenu({
   );
   const moveTooltip = !sideChat?.conversationId
     ? "Send a message first to create this Side Chat."
-    : movingSideChat || conversationStatusLoading
+    : moveInProgress || conversationStatusLoading
         ? "Checking whether this Side Chat can be moved…"
         : canMoveSideChat
           ? "Make this Side Chat a regular Messenger chat. This tab will close."
@@ -2097,7 +2100,17 @@ function ChatSidePanelTabContextMenu({
             <ContextMenuSeparator />
           </>
         ) : null}
-        <ContextMenuItem onSelect={() => onClose(tab)}>
+        <ContextMenuItem
+          aria-disabled={closeDisabled ? "true" : undefined}
+          data-disabled={closeDisabled ? "" : undefined}
+          onSelect={(event) => {
+            if (closeDisabled) {
+              event.preventDefault();
+              return;
+            }
+            onClose(tab);
+          }}
+        >
           <X />
           Close
         </ContextMenuItem>
@@ -2129,10 +2142,14 @@ export function ChatSidePanel({
   const navigate = useNavigate();
   const [draggedTabKey, setDraggedTabKey] = useState<string | null>(null);
   const [tabDropTarget, setTabDropTarget] = useState<{ key: string; position: "before" | "after" } | null>(null);
+  const [closingSideChatKeys, setClosingSideChatKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const [movingSideChatKey, setMovingSideChatKey] = useState<string | null>(null);
   const [desktopExitComplete, setDesktopExitComplete] = useState(!sidePanel.open);
   const panelRef = useRef<HTMLElement>(null);
   const browserShortcutControllersRef = useRef(new Map<string, (action: BrowserShortcutAction) => void>());
   const sideChatCloseHandlersRef = useRef(new Map<string, () => Promise<string | null>>());
+  const closingSideChatKeysRef = useRef(new Set<string>());
+  const movingSideChatKeyRef = useRef<string | null>(null);
   const browserShortcutScopeActiveRef = useRef(false);
   const lastOpenDesktopPanelRef = useRef<ReactElement | null>(null);
   const queryClient = useQueryClient();
@@ -2380,6 +2397,10 @@ export function ChatSidePanel({
       sidePanel.closeTarget(tabKey);
       return;
     }
+    if (movingSideChatKeyRef.current === tabKey) return;
+    if (closingSideChatKeysRef.current.has(tabKey)) return;
+    closingSideChatKeysRef.current.add(tabKey);
+    setClosingSideChatKeys(new Set(closingSideChatKeysRef.current));
     try {
       const registeredClose = sideChatCloseHandlersRef.current.get(tab.clientMutationId);
       const destroyedConversationId = registeredClose
@@ -2396,11 +2417,38 @@ export function ChatSidePanel({
         sidePanel.closeTarget(sidePanelTargetKey({ ...tab, conversationId: destroyedConversationId }));
       }
     } catch (error) {
+      if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
+        if (tab.conversationId) {
+          const detailQueryKey = queryKeys.chats.detail(
+            selectedOrganizationId ?? "__none__",
+            tab.conversationId,
+          );
+          if (error.status === 404) {
+            queryClient.removeQueries({ queryKey: detailQueryKey });
+            queryClient.removeQueries({
+              queryKey: queryKeys.chats.messages(
+                selectedOrganizationId ?? "__none__",
+                tab.conversationId,
+              ),
+            });
+          } else {
+            void queryClient.invalidateQueries({ queryKey: detailQueryKey });
+            void queryClient.invalidateQueries({
+              queryKey: ["messenger", selectedOrganizationId],
+            });
+          }
+        }
+        sidePanel.closeTarget(tabKey);
+        return;
+      }
       pushToast({
         title: "Could not close Side Chat",
         body: error instanceof Error ? error.message : "Try again.",
         tone: "error",
       });
+    } finally {
+      closingSideChatKeysRef.current.delete(tabKey);
+      setClosingSideChatKeys(new Set(closingSideChatKeysRef.current));
     }
   };
 
@@ -2438,7 +2486,17 @@ export function ChatSidePanel({
     },
   });
   const moveSideChatToMessenger = (tab: SideChatTarget) => {
-    void moveSideChatMutation.mutateAsync(tab).catch(() => undefined);
+    const tabKey = sidePanelTargetKey(tab);
+    if (movingSideChatKeyRef.current || closingSideChatKeysRef.current.has(tabKey)) return;
+    movingSideChatKeyRef.current = tabKey;
+    setMovingSideChatKey(tabKey);
+    void moveSideChatMutation.mutateAsync(tab)
+      .catch(() => undefined)
+      .finally(() => {
+        if (movingSideChatKeyRef.current !== tabKey) return;
+        movingSideChatKeyRef.current = null;
+        setMovingSideChatKey(null);
+      });
   };
 
   const libraryDirectoryEntries = libraryDirectory?.entries ?? [];
@@ -2476,11 +2534,15 @@ export function ChatSidePanel({
               const tabKey = sidePanelTargetKey(tab);
               const selected = tabKey === activeTargetKey;
               const dragging = draggedTabKey === tabKey;
+              const sideChatClosing = closingSideChatKeys.has(tabKey);
+              const closeDisabled = tab.kind === "side_chat"
+                && (movingSideChatKey === tabKey || sideChatClosing);
               return (
                 <ChatSidePanelTabContextMenu
                   key={tabKey}
+                  closeDisabled={closeDisabled}
                   isMobile={isMobile}
-                  movingSideChat={moveSideChatMutation.isPending}
+                  moveInProgress={movingSideChatKey !== null || sideChatClosing}
                   organizationId={selectedOrganizationId}
                   tab={tab}
                   onClose={(target) => void closeSidePanelTab(target)}
@@ -2547,9 +2609,11 @@ export function ChatSidePanel({
                       draggable={false}
                       data-testid="chat-side-panel-tab-close"
                       aria-label={`Close ${tab.label} tab`}
-                      className="pointer-events-none inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-[color,background-color,opacity] group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 hover:bg-[color:var(--surface-panel)] hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                      disabled={closeDisabled}
+                      className="pointer-events-none inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-[color,background-color,opacity] group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 hover:bg-[color:var(--surface-panel)] hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-40"
                       onClick={(event) => {
                         event.stopPropagation();
+                        if (closeDisabled) return;
                         void closeSidePanelTab(tab);
                       }}
                     >

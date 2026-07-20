@@ -81,9 +81,18 @@ export function SideChatPanelView({
     }
     if (!conversationId) return null;
     if (!destroyPromiseRef.current) {
-      destroyPromiseRef.current = chatsApi.destroySideChat(conversationId).then(() => undefined);
+      const request = chatsApi.destroySideChat(conversationId).then(() => undefined);
+      destroyPromiseRef.current = request;
+      try {
+        await request;
+      } catch (error) {
+        if (destroyPromiseRef.current === request) destroyPromiseRef.current = null;
+        closeRequestedRef.current = false;
+        throw error;
+      }
+    } else {
+      await destroyPromiseRef.current;
     }
-    await destroyPromiseRef.current;
     return conversationId;
   }, []);
 
