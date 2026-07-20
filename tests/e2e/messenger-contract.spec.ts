@@ -79,6 +79,15 @@ async function expectTestIdsInDomOrder(page: Page, testIds: string[]) {
   }).toBe(true);
 }
 
+async function expectTestIdWithinSection(page: Page, sectionTestId: string, childTestId: string) {
+  await expect.poll(async () => {
+    return page.evaluate(({ sectionTestId, childTestId }) => {
+      const sectionContent = document.querySelector(`[data-testid="${sectionTestId}-content"]`);
+      return Boolean(sectionContent?.querySelector(`[data-testid="${childTestId}"]`));
+    }, { sectionTestId, childTestId });
+  }).toBe(true);
+}
+
 async function dragMessengerSectionOver(page: Page, source: Locator, target: Locator) {
   const sourceBox = await source.boundingBox();
   const targetBox = await target.boundingBox();
@@ -834,6 +843,239 @@ test.describe("Messenger unified threads contract", () => {
     ]);
     await expect(page.getByTestId(threadTestId(`chat:${pinnedChat.id}`))).toHaveCount(1);
     await page.screenshot({ path: "/tmp/rudder-messenger-project-pinned.png", fullPage: true });
+  });
+
+  test("preserves custom groups when switching Messenger to Project mode", async ({ page }, testInfo) => {
+    const sessionRes = await page.request.get("/api/auth/get-session");
+    expect(sessionRes.ok()).toBe(true);
+    const session = await sessionRes.json();
+    const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+    expect(currentUserId).toBeTruthy();
+
+    const organization = await createConfiguredOrganization(page, `Messenger-Project-Custom-Groups-${Date.now()}`);
+    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "Grouped launch project",
+        status: "in_progress",
+        icon: "rocket",
+        color: "#0ea5e9",
+      },
+    });
+    expect(projectRes.ok()).toBe(true);
+    const project = await projectRes.json() as { id: string };
+
+    async function createChat(title: string, projectId: string | null = null) {
+      const response = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+        data: {
+          title,
+          summary: `${title} summary`,
+          preferredAgentId: organization.chatAgent.id,
+          issueCreationMode: "manual_approval",
+          planMode: false,
+          initialMessage: { body: `Start ${title}` },
+          ...(projectId
+            ? { contextLinks: [{ entityType: "project", entityId: projectId }] }
+            : {}),
+        },
+      });
+      if (!response.ok()) {
+        throw new Error(`Failed to create Messenger E2E chat (${response.status()}): ${await response.text()}`);
+      }
+      return response.json() as Promise<{ id: string }>;
+    }
+
+    async function createGroup(name: string, threadKeys: string[], pinned: boolean) {
+      const groupRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
+        data: { name, icon: pinned ? "rocket::amber" : "folder::slate" },
+      });
+      expect(groupRes.ok()).toBe(true);
+      const group = await groupRes.json() as { id: string };
+      for (const threadKey of threadKeys) {
+        const assignRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups/${group.id}/entries`, {
+          data: { threadKey },
+        });
+        expect(assignRes.ok()).toBe(true);
+      }
+      if (!pinned) {
+        const unpinRes = await page.request.patch(`/api/orgs/${organization.id}/messenger/groups/${group.id}`, {
+          data: { pinned: false },
+        });
+        expect(unpinRes.ok()).toBe(true);
+      }
+      return group;
+    }
+
+    const pinnedGroupedChat = await createChat("Pinned grouped project chat", project.id);
+    const hydratedOnlyChat = await createChat("Hydrated older grouped chat", project.id);
+    const individuallyPinnedGroupedChat = await createChat("Individually pinned grouped chat", project.id);
+    const oldActivityAt = new Date("2026-01-01T00:00:00.000Z");
+    await e2eDb
+      .update(chatConversations)
+      .set({ lastMessageAt: oldActivityAt, updatedAt: oldActivityAt })
+      .where(eq(chatConversations.id, pinnedGroupedChat.id));
+    await e2eDb
+      .update(chatConversations)
+      .set({ lastMessageAt: oldActivityAt, updatedAt: oldActivityAt })
+      .where(eq(chatConversations.id, hydratedOnlyChat.id));
+    await e2eDb
+      .update(chatConversations)
+      .set({ lastMessageAt: oldActivityAt, updatedAt: oldActivityAt })
+      .where(eq(chatConversations.id, individuallyPinnedGroupedChat.id));
+    const memberPinRes = await page.request.post(`/api/chats/${individuallyPinnedGroupedChat.id}/user-state`, {
+      data: { pinned: true },
+    });
+    expect(memberPinRes.ok()).toBe(true);
+
+    const pinnedGroup = await createGroup(
+      "Pinned custom project group",
+      [`chat:${pinnedGroupedChat.id}`],
+      true,
+    );
+    const unpinnedGroup = await createGroup(
+      "Unpinned custom project group",
+      [`chat:${hydratedOnlyChat.id}`, `chat:${individuallyPinnedGroupedChat.id}`],
+      false,
+    );
+    const emptyGroup = await createGroup("Empty custom project group", [], false);
+
+    const baseTime = Date.now() - 5 * 60_000;
+    await e2eDb.insert(chatConversations).values(Array.from({ length: 45 }, (_, index) => {
+      const activityAt = new Date(baseTime - index * 1_000);
+      return {
+        id: randomUUID(),
+        orgId: organization.id,
+        title: `Recent pagination filler ${String(index + 1).padStart(2, "0")}`,
+        summary: "This recent row keeps the older grouped chat outside the first activity page.",
+        issueCreationMode: "manual_approval" as const,
+        planMode: false,
+        createdByUserId: currentUserId,
+        lastMessageAt: activityAt,
+        createdAt: activityAt,
+        updatedAt: activityAt,
+      };
+    }));
+
+    const loosePinnedChat = await createChat("Loose pinned project chat", project.id);
+    const loosePinRes = await page.request.post(`/api/chats/${loosePinnedChat.id}/user-state`, {
+      data: { pinned: true },
+    });
+    expect(loosePinRes.ok()).toBe(true);
+    const looseProjectChat = await createChat("Loose project chat", project.id);
+    const looseNoProjectChat = await createChat("Loose no-project chat");
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "latest" }));
+    }, organization.id);
+
+    const firstPageResponse = page.waitForResponse((response) =>
+      response.request().method() === "GET"
+      && response.url().includes(`/api/orgs/${organization.id}/messenger/threads?limit=40`),
+    );
+    await page.goto(`/${organization.issuePrefix}/messenger/chat`, { waitUntil: "commit" });
+    const firstPage = await (await firstPageResponse).json() as { items: Array<{ threadKey: string }> };
+    expect(firstPage.items.map((item) => item.threadKey)).not.toContain(`chat:${hydratedOnlyChat.id}`);
+
+    const pinnedGroupSectionId = `messenger-thread-section-custom-group-${pinnedGroup.id}`;
+    const unpinnedGroupSectionId = `messenger-thread-section-custom-group-${unpinnedGroup.id}`;
+    const emptyGroupSectionId = `messenger-thread-section-custom-group-${emptyGroup.id}`;
+    const pinnedProjectSectionId = "messenger-thread-section-project-pinned";
+    const noProjectSectionId = "messenger-thread-section-project-none";
+    const projectSectionId = `messenger-thread-section-project-${project.id}`;
+    const pinnedGroupedThreadId = threadTestId(`chat:${pinnedGroupedChat.id}`);
+    const hydratedOnlyThreadId = threadTestId(`chat:${hydratedOnlyChat.id}`);
+    const individuallyPinnedGroupedThreadId = threadTestId(`chat:${individuallyPinnedGroupedChat.id}`);
+    const loosePinnedThreadId = threadTestId(`chat:${loosePinnedChat.id}`);
+    const looseProjectThreadId = threadTestId(`chat:${looseProjectChat.id}`);
+    const looseNoProjectThreadId = threadTestId(`chat:${looseNoProjectChat.id}`);
+
+    await expect(page.getByTestId(pinnedGroupSectionId)).toContainText("Pinned custom project group", { timeout: 15_000 });
+    await expect(page.getByTestId(unpinnedGroupSectionId)).toContainText("Hydrated older grouped chat");
+    await expect(page.getByTestId(emptyGroupSectionId)).toContainText("Empty custom project group");
+
+    await page.getByTestId("messenger-thread-organization-trigger").click();
+    await page.getByRole("menuitemradio", { name: "Project" }).click();
+
+    await expect(page.getByTestId("workspace-context-header")).toContainText("Threads organized by project");
+    await expect(page.getByTestId(pinnedProjectSectionId)).toBeVisible();
+    await expect(page.getByTestId(noProjectSectionId)).toBeVisible();
+    await expect(page.getByTestId(projectSectionId)).toBeVisible();
+    await expectTestIdWithinSection(page, pinnedProjectSectionId, pinnedGroupSectionId);
+    await expectTestIdWithinSection(page, noProjectSectionId, unpinnedGroupSectionId);
+    await expectTestIdWithinSection(page, noProjectSectionId, emptyGroupSectionId);
+    await expectTestIdWithinSection(page, projectSectionId, looseProjectThreadId);
+    await expectTestIdsInDomOrder(page, [
+      pinnedGroupSectionId,
+      loosePinnedThreadId,
+      unpinnedGroupSectionId,
+      emptyGroupSectionId,
+      looseNoProjectThreadId,
+    ]);
+    await expect(page.getByTestId(pinnedGroupSectionId).getByTestId(pinnedGroupedThreadId)).toHaveCount(1);
+    for (const threadId of [hydratedOnlyThreadId, individuallyPinnedGroupedThreadId]) {
+      await expect(page.getByTestId(unpinnedGroupSectionId).getByTestId(threadId)).toHaveCount(1);
+    }
+    for (const threadId of [pinnedGroupedThreadId, hydratedOnlyThreadId, individuallyPinnedGroupedThreadId]) {
+      await expect(page.getByTestId(threadId)).toHaveCount(1);
+    }
+    await expect(page.getByTestId(pinnedGroupSectionId).getByRole("button", { name: "Drag group Pinned custom project group" })).toHaveCount(0);
+    await expect(page.getByTestId(unpinnedGroupSectionId).getByRole("button", { name: "Drag group Unpinned custom project group" })).toHaveCount(0);
+
+    await page.getByTestId(hydratedOnlyThreadId).click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${hydratedOnlyChat.id}$`));
+
+    const collapseResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${unpinnedGroup.id}`)
+      && response.request().method() === "PATCH",
+    );
+    await page.getByTestId(unpinnedGroupSectionId).getByRole("button", { name: /Unpinned custom project group/ }).first().click();
+    expect((await collapseResponse).ok()).toBe(true);
+    await page.reload({ waitUntil: "commit" });
+    await expect(
+      page.getByTestId(unpinnedGroupSectionId).getByRole("button", { name: /Unpinned custom project group/ }).first(),
+    ).toHaveAttribute("aria-expanded", "false");
+
+    const expandResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${unpinnedGroup.id}`)
+      && response.request().method() === "PATCH",
+    );
+    await page.getByTestId(unpinnedGroupSectionId).getByRole("button", { name: /Unpinned custom project group/ }).first().click();
+    expect((await expandResponse).ok()).toBe(true);
+
+    await page.getByTestId(unpinnedGroupSectionId).hover();
+    await page.getByTestId(unpinnedGroupSectionId).getByRole("button", { name: "Group actions" }).click();
+    const pinGroupResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${unpinnedGroup.id}`)
+      && response.request().method() === "PATCH",
+    );
+    await page.getByRole("menuitem", { name: "Pin" }).click();
+    expect((await pinGroupResponse).ok()).toBe(true);
+    await expectTestIdWithinSection(page, pinnedProjectSectionId, unpinnedGroupSectionId);
+    await page.getByTestId(pinnedProjectSectionId).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath("project-custom-groups-pinned.png"), fullPage: true });
+
+    await page.reload({ waitUntil: "commit" });
+    await expectTestIdWithinSection(page, pinnedProjectSectionId, unpinnedGroupSectionId);
+    await expectTestIdWithinSection(page, projectSectionId, looseProjectThreadId);
+    await page.getByTestId(unpinnedGroupSectionId).hover();
+    await page.getByTestId(unpinnedGroupSectionId).getByRole("button", { name: "Group actions" }).click();
+    const unpinGroupResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${unpinnedGroup.id}`)
+      && response.request().method() === "PATCH",
+    );
+    await page.getByRole("menuitem", { name: "Unpin" }).click();
+    expect((await unpinGroupResponse).ok()).toBe(true);
+    await expectTestIdWithinSection(page, noProjectSectionId, unpinnedGroupSectionId);
+    await page.reload({ waitUntil: "commit" });
+    await expectTestIdWithinSection(page, noProjectSectionId, unpinnedGroupSectionId);
+    await expectTestIdWithinSection(page, projectSectionId, looseProjectThreadId);
+    for (const threadId of [hydratedOnlyThreadId, individuallyPinnedGroupedThreadId]) {
+      await expect(page.getByTestId(unpinnedGroupSectionId).getByTestId(threadId)).toHaveCount(1);
+      await expect(page.getByTestId(threadId)).toHaveCount(1);
+    }
+    await page.getByTestId(pinnedProjectSectionId).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath("project-custom-groups-unpinned.png"), fullPage: true });
   });
 
   test("sorts Messenger project groups by drag and progressively expands large project groups", async ({ page }) => {
