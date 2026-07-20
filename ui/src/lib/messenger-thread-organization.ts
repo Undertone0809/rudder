@@ -447,6 +447,79 @@ export function organizeCustomThreadDirectory(
   ];
 }
 
+export function organizeProjectThreadDirectory(
+  looseEntries: OrganizedThreadEntry[],
+  groups: CustomThreadGroupLayoutInput[],
+  projectsById: ReadonlyMap<string, Project>,
+): OrganizedThreadSection[] {
+  const groupedThreadKeys = new Set<string>();
+  const groupSections = groups.map((group) => ({
+    key: customGroupSectionKey(group.id),
+    label: group.name,
+    icon: group.icon,
+    isPinned: group.pinned,
+    entries: group.entries
+      .filter((entry) => {
+        if (groupedThreadKeys.has(entry.thread.threadKey)) return false;
+        groupedThreadKeys.add(entry.thread.threadKey);
+        return true;
+      })
+      .map((entry) => ({ ...entry, customGroupId: group.id })),
+  }) satisfies OrganizedThreadSection);
+  const ungroupedEntries = dedupeOrganizedThreadEntriesByKey(looseEntries)
+    .filter((entry) => !groupedThreadKeys.has(entry.thread.threadKey))
+    .map((entry) => ({ ...entry, customGroupId: null }));
+  const projectSections = organizeThreadEntries(
+    ungroupedEntries,
+    "project",
+    new Map(),
+    projectsById,
+    (kind) => kind,
+  );
+
+  const attachGroups = (
+    sectionKey: string,
+    label: string,
+    isPinned: boolean,
+    childSections: OrganizedThreadSection[],
+  ) => {
+    if (childSections.length === 0) return;
+    const sectionIndex = projectSections.findIndex((section) => section.key === sectionKey);
+    if (sectionIndex === -1) {
+      const section = {
+        key: sectionKey,
+        label,
+        isPinned,
+        entries: [],
+        childSections,
+      } satisfies OrganizedThreadSection;
+      if (isPinned) projectSections.unshift(section);
+      else projectSections.push(section);
+      return;
+    }
+    const section = projectSections[sectionIndex];
+    if (!section) return;
+    projectSections[sectionIndex] = {
+      ...section,
+      childSections: [...childSections, ...section.childSections ?? []],
+    };
+  };
+
+  attachGroups(
+    PROJECT_PINNED_SECTION_KEY,
+    "Pinned",
+    true,
+    groupSections.filter((section) => section.isPinned),
+  );
+  attachGroups(
+    "project:none",
+    "No project",
+    false,
+    groupSections.filter((section) => !section.isPinned),
+  );
+  return projectSections;
+}
+
 function moveArrayItem<T>(items: T[], oldIndex: number, newIndex: number) {
   const next = [...items];
   if (oldIndex < 0 || oldIndex >= next.length || newIndex < 0 || newIndex >= next.length) {
