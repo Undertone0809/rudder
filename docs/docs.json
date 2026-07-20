@@ -99,6 +99,13 @@
             ]
           },
           {
+            "group": "Benchmarks",
+            "icon": "chart-bar",
+            "pages": [
+              "benchmarks/gdpval-harness"
+            ]
+          },
+          {
             "group": "Project",
             "icon": "folder-git-2",
             "pages": [
@@ -164,6 +171,13 @@
               "zh/reference/workspace-boundaries",
               "zh/reference/automation-output-routing",
               "zh/reference/permissions-and-platforms"
+            ]
+          },
+          {
+            "group": "基准评测",
+            "icon": "chart-bar",
+            "pages": [
+              "zh/benchmarks/gdpval-harness"
             ]
           },
           {

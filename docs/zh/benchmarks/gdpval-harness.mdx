@@ -1,0 +1,111 @@
+---
+title: "GDPval Harness Benchmark"
+description: "Rudder GDPval-based 10 任务 harness 探索性 pilot 的协议、修正与结果。"
+icon: "chart-bar"
+canonical: "https://docs.rudderhq.dev/zh/benchmarks/gdpval-harness"
+"og:url": "https://docs.rudderhq.dev/zh/benchmarks/gdpval-harness"
+---
+
+<Note>
+  **修正说明：** 原始 instrumentation 错误地报告 managed memory 没有变化。重建后的 Rudder Run 事件表明，managed daily memory 实际发生了读写；同时，GDP-6 到 GDP-7 之间存在一次无法解释的连续性重置。候选交付物、评审结果和分数均未改变。
+</Note>
+
+## 研究问题
+
+当每个环境请求相同的模型和推理强度时，执行 harness 会在多大程度上影响专业任务的输出质量？
+
+这次 pilot 比较的是三个完整配置的系统：Rudder、Codex CLI 和 Claude Code，而不是三个完全相同的无状态 wrapper。每个环境都请求 `gpt-5.6-sol` 和 high reasoning effort，同时保留各自正常的编排、session 和工具边界作为实验条件的一部分。
+
+[![GDPval-based harness benchmark：三组均请求 gpt-5.6-sol；Rudder 81.7，Codex CLI 75.7，Claude Code 75.6。](/images/gdpval-harness-benchmark.png)](/images/gdpval-harness-benchmark.png)
+
+## 冻结的任务选择
+
+这次 pilot 从 GDPval 的 220 个任务中选取了 10 个。该 cohort 在执行前被刻意冻结，而不是随机抽样：它覆盖 10 个不同职业，要求提交 11 份 XLSX、DOCX、PPTX 或 PDF 交付物。每个 harness、每个 case 只执行并评分一次，共 30 次执行。
+
+任务包来自 `openai/gdpval` 数据集，固定 revision 为 `11e7900cdcac61bc4daf59e65feb238acda98fbf`。
+
+候选系统可以看到任务 prompt 和源文件；rubric 和 gold deliverable 始终保留在独立的 scorer workspace 中。
+
+## 各 harness 的执行条件
+
+| Harness | 执行条件 | 持久状态 |
+| --- | --- | --- |
+| Rudder | 10 个 case 依次复用同一个组织和默认 managed Agent，并保留 Rudder 的 managed instruction bundle 和控制平面工具 | Managed memory 确实被读写，但重建时间线中存在一次无法解释的连续性重置 |
+| Codex CLI | 每个 case 使用全新的 workspace 和 session | case 之间不复用状态 |
+| Claude Code | 每个 case 使用全新的 workspace 和 session，并通过兼容适配器路由 | case 之间不复用状态 |
+
+因此，这是一项 configured-system 对比，而不是 memory ablation。Rudder 的组织上下文、工具、指令和 managed memory 共同构成其正常 harness 条件，不能单独把分差归因于其中一项。
+
+## 模型验证
+
+三组都请求了 `gpt-5.6-sol` 和 high reasoning effort，但可获得的验证证据不同。
+
+| Harness | 可用的验证证据 |
+| --- | --- |
+| Rudder | 10 个 case 的 Run metadata 都与请求模型一致 |
+| Claude Code | 兼容适配器的请求日志观测到 `gpt-5.6-sol`，包括由 Claude alias 转换的请求 |
+| Codex CLI | 请求配置为 `gpt-5.6-sol`，但 event stream 没有暴露实际模型身份 |
+
+## 评分协议
+
+每个有效候选结果都由隐藏 harness 标签的本地 LLM rubric judge 独立评分。Judge 检查源文件、候选交付物、gold deliverable 和 rubric item，再记录逐项证据以及 candidate-versus-gold 判断。
+
+三个 harness 的结果均使用同一 judge 配置：`gpt-5.6-sol` 与 high reasoning effort。
+
+主要指标让每个 case 权重相同，不受 GDPval rubric 原始分值范围不同的影响：
+
+```text
+case_score_i = clamp(100 × awarded_raw_points_i / positive_max_points_i, 0, 100)
+macro_score  = average(case_score_1 ... case_score_10)
+```
+
+负向 penalty 会降低 case score，但每个 case 在求平均前都被限制在 0–100，避免一个 penalty 特别重的 case 主导整个 cohort。
+
+指标的完整名称是 **Local case-equal macro-normalized rubric score · 0–100**。它不是任务完成率；artifact validity 会单独报告。
+
+## 汇总结果
+
+| Harness | Local case-equal score | 有效交付物 | Candidate vs gold |
+| --- | ---: | ---: | ---: |
+| Rudder | **81.7** | 10/10 | 9W / 0T / 1L |
+| Codex CLI | 75.7 | 10/10 | 9W / 0T / 1L |
+| Claude Code | 75.6 | 10/10 | 9W / 0T / 1L |
+
+在这组冻结 cohort 中，Rudder 的本地 case-equal 指标领先 Codex CLI 6.0 个百分点，领先 Claude Code 6.1 个百分点。三个 harness 的 candidate-versus-gold 粗粒度结果完全相同，因此差距来自 rubric 覆盖与 penalty 避免，而不是更多的 pairwise win。
+
+## Case 级结果
+
+下表显示“获得的 raw rubric points / positive maximum”。负数表示 penalty item 超过了正向得分；计算 macro score 时，该 case 会被 clamp 到 0。
+
+| Case | 职业 | Claude Code | Codex CLI | Rudder | 对 gold |
+| --- | --- | ---: | ---: | ---: | --- |
+| 审计风险指标抽样 | 会计师和审计师 | 48/63 | 49/63 | 56/63 | 全部 win |
+| 企业 UAT 计划 | 计算机和信息系统经理 | 83/101 | 74/101 | 87/101 | 全部 win |
+| 可疑活动调查 | 合规官 | 62/69 | 58/69 | 62/69 | 全部 win |
+| 物业主管绩效改进计划 | 物业和房地产经理 | 66/85 | 62/85 | 67/85 | 全部 win |
+| 自然纪录片脚本 | 影视剪辑师 | 50/51 | 51/51 | 51/51 | 全部 win |
+| BridgeMind POC 月报 | 项目管理专家 | 78/79 | 78/79 | 78/79 | 全部 win |
+| 库存事故演示文稿 | 运输和库存文员 | 74/81 | 72/81 | 76/81 | 全部 win |
+| 区域匹配报告 | 销售经理 | 61/101 | 81/101 | 80/101 | 全部 win |
+| Tiny Rod 财务报告 | 财务经理 | 62/76 | 62/76 | 62/76 | 全部 loss |
+| Duplex 比较市场分析 | 房地产经纪人 | -70/50 | -35/50 | 10/50 | 全部 win |
+
+## 敏感性与限制
+
+比较市场分析 case 包含异常大的 penalty item，放大了汇总差距。去掉该 case 后，Rudder 仍领先约 4.4–4.6 个百分点。
+
+解读结果时需要保留以下边界：
+
+- 每个 harness、每个 case 只有一次执行，无法估计不同 run 之间的方差。
+- 10 个任务是为了覆盖面而有意选择的，并非从 220 个任务中随机抽样。
+- Rubric 分数来自本地 LLM judge，而不是 GDPval 的盲测专家人工评审流程。
+- 三个 harness 相对 gold 都是 9W / 0T / 1L，这是理解分数差距时不可忽略的反证。
+- 本次 run history 跨越了 setup 和 resume 事件，最终从保留的 execution 与 judgment 记录中恢复并审计。
+- Rudder memory 确实启用，但连续性并不完整，也没有进行 Memory on/off ablation；不能把分差归因于 Memory。
+- Codex CLI 的模型身份只验证到请求层。
+
+这些结果不是官方 GDPval 分数或排行榜结果。最强且有证据支持的结论更窄：**在我们的本地 case-equal rubric 指标下，Rudder configured system 在这组冻结的 10 任务 cohort 中领先。** 这个排名是对完整配置系统的方向性证据，不是对 Rudder、Memory 或某个单独 harness 组件的因果估计。
+
+## 下一步实验
+
+更强的后续实验应覆盖 30–50 个 case，每个 harness、每个 case 至少重复三次，引入专家人工盲评和替代 judge，并以 counterbalanced case order 对比 Rudder Memory on/off。这样的设计可以测量稳定性，并开始区分 harness、memory、顺序和 judge 各自的影响。
