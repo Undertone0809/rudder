@@ -26,7 +26,7 @@ canonical: "https://docs.rudderhq.dev/zh/benchmarks/gdpval-harness"
 
 | Harness | 执行条件 | 持久状态 |
 | --- | --- | --- |
-| Rudder | 10 个 case 依次复用同一个组织和默认 managed Agent，并保留 Rudder 的 managed instruction bundle 和控制平面工具 | Managed memory 确实被读写，但重建时间线中存在一次无法解释的连续性重置 |
+| Rudder | 10 个 case 依次复用同一个组织和默认 managed Agent，并保留 Rudder 的 managed instruction bundle 和 Rudder 工具 | Managed memory 确实被读写，但重建时间线中存在一次无法解释的连续性重置 |
 | Codex CLI | 每个 case 使用全新的 workspace 和 session | case 之间不复用状态 |
 | Claude Code | 每个 case 使用全新的 workspace 和 session，并通过兼容适配器路由 | case 之间不复用状态 |
 

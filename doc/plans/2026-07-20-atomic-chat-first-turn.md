@@ -2,7 +2,7 @@
 title: Atomic Chat first turn and zero-message cleanup
 date: 2026-07-20
 kind: fix-plan
-status: in_progress
+status: completed
 area: chat
 entities:
   - messenger_chat
@@ -26,7 +26,14 @@ related_code:
   - cli/src/agent-v1-registry.ts
   - packages/db/src/migrations
   - tests/e2e/chat-explicit-agent-settings.spec.ts
-commit_refs: []
+commit_refs:
+  - 20daadf50
+  - b046a6c28
+  - d48dfb4a1
+  - 64ba3c684
+  - ae78a6ce9
+  - 7c2a2298e
+  - eac0851fe
 updated_at: 2026-07-20
 ---
 
