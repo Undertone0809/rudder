@@ -1924,6 +1924,17 @@ describe("MarkdownBody", () => {
     ]);
   });
 
+  it("adapts the GitHub website icon for dark backgrounds", () => {
+    const container = render(
+      <ThemeProvider>
+        <WebsiteLinkIcon url={new URL("https://github.com/Undertone0809/rudder")} />
+      </ThemeProvider>,
+    );
+
+    const logo = container.querySelector("img.rudder-website-link-logo");
+    expect(logo?.getAttribute("data-dark-mode")).toBe("invert");
+  });
+
   it("replaces the generic website icon only with fetched metadata icons", async () => {
     const url = "https://metadata-icon.example.test/post";
     entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValue({
