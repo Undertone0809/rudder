@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
+import { eq, inArray } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
   activityLog,
   agentWakeupRequests,
@@ -909,19 +909,48 @@ test.describe("Messenger unified threads contract", () => {
     const pinnedGroupedChat = await createChat("Pinned grouped project chat", project.id);
     const hydratedOnlyChat = await createChat("Hydrated older grouped chat", project.id);
     const individuallyPinnedGroupedChat = await createChat("Individually pinned grouped chat", project.id);
+    const additionalGroupedChats: Array<{ id: string }> = [];
+    for (let index = 0; index < 5; index += 1) {
+      additionalGroupedChats.push(await createChat(
+        index === 4 ? "Unread grouped chat behind local expansion" : `Additional grouped chat ${index + 1}`,
+        project.id,
+      ));
+    }
+    const unreadGroupedChat = additionalGroupedChats.at(-1)!;
     const oldActivityAt = new Date("2026-01-01T00:00:00.000Z");
     await e2eDb
       .update(chatConversations)
       .set({ lastMessageAt: oldActivityAt, updatedAt: oldActivityAt })
-      .where(eq(chatConversations.id, pinnedGroupedChat.id));
+      .where(inArray(chatConversations.id, [
+        pinnedGroupedChat.id,
+        hydratedOnlyChat.id,
+        individuallyPinnedGroupedChat.id,
+        ...additionalGroupedChats.slice(0, -1).map((chat) => chat.id),
+      ]));
+    const unreadReadAt = new Date();
+    const unreadMessageAt = new Date(unreadReadAt.getTime() + 60_000);
+    await e2eDb.insert(chatConversationUserStates).values({
+      orgId: organization.id,
+      conversationId: unreadGroupedChat.id,
+      userId: currentUserId,
+      lastReadAt: unreadReadAt,
+      updatedAt: unreadReadAt,
+    });
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: unreadGroupedChat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Unread grouped reply used to verify ancestor expansion.",
+      createdAt: unreadMessageAt,
+      updatedAt: unreadMessageAt,
+    });
     await e2eDb
       .update(chatConversations)
-      .set({ lastMessageAt: oldActivityAt, updatedAt: oldActivityAt })
-      .where(eq(chatConversations.id, hydratedOnlyChat.id));
-    await e2eDb
-      .update(chatConversations)
-      .set({ lastMessageAt: oldActivityAt, updatedAt: oldActivityAt })
-      .where(eq(chatConversations.id, individuallyPinnedGroupedChat.id));
+      .set({ lastMessageAt: unreadMessageAt, updatedAt: unreadMessageAt })
+      .where(eq(chatConversations.id, unreadGroupedChat.id));
     const memberPinRes = await page.request.post(`/api/chats/${individuallyPinnedGroupedChat.id}/user-state`, {
       data: { pinned: true },
     });
@@ -934,13 +963,17 @@ test.describe("Messenger unified threads contract", () => {
     );
     const unpinnedGroup = await createGroup(
       "Unpinned custom project group",
-      [`chat:${hydratedOnlyChat.id}`, `chat:${individuallyPinnedGroupedChat.id}`],
+      [
+        `chat:${hydratedOnlyChat.id}`,
+        `chat:${individuallyPinnedGroupedChat.id}`,
+        ...additionalGroupedChats.map((chat) => `chat:${chat.id}`),
+      ],
       false,
     );
     const emptyGroup = await createGroup("Empty custom project group", [], false);
 
     const baseTime = Date.now() - 5 * 60_000;
-    await e2eDb.insert(chatConversations).values(Array.from({ length: 45 }, (_, index) => {
+    await e2eDb.insert(chatConversations).values(Array.from({ length: 180 }, (_, index) => {
       const activityAt = new Date(baseTime - index * 1_000);
       return {
         id: randomUUID(),
@@ -987,6 +1020,7 @@ test.describe("Messenger unified threads contract", () => {
     const pinnedGroupedThreadId = threadTestId(`chat:${pinnedGroupedChat.id}`);
     const hydratedOnlyThreadId = threadTestId(`chat:${hydratedOnlyChat.id}`);
     const individuallyPinnedGroupedThreadId = threadTestId(`chat:${individuallyPinnedGroupedChat.id}`);
+    const unreadGroupedThreadId = threadTestId(`chat:${unreadGroupedChat.id}`);
     const loosePinnedThreadId = threadTestId(`chat:${loosePinnedChat.id}`);
     const looseProjectThreadId = threadTestId(`chat:${looseProjectChat.id}`);
     const looseNoProjectThreadId = threadTestId(`chat:${looseNoProjectChat.id}`);
@@ -1022,6 +1056,66 @@ test.describe("Messenger unified threads contract", () => {
     }
     await expect(page.getByTestId(pinnedGroupSectionId).getByRole("button", { name: "Drag group Pinned custom project group" })).toHaveCount(0);
     await expect(page.getByTestId(unpinnedGroupSectionId).getByRole("button", { name: "Drag group Unpinned custom project group" })).toHaveCount(0);
+
+    const groupShowMoreId = `messenger-thread-section-custom-group-${unpinnedGroup.id}-show-more`;
+    await expect(page.getByTestId(unreadGroupedThreadId)).toHaveCount(0);
+    await expect(page.getByTestId("messenger-thread-page-load-more")).toBeVisible({ timeout: 15_000 });
+    let globalThreadPageRequests = 0;
+    const countGlobalThreadPageRequest = (request: import("@playwright/test").Request) => {
+      const requestUrl = new URL(request.url());
+      if (
+        request.method() === "GET"
+        && requestUrl.pathname === `/api/orgs/${organization.id}/messenger/threads`
+        && requestUrl.searchParams.has("cursor")
+        && requestUrl.searchParams.get("limit") === "40"
+      ) {
+        globalThreadPageRequests += 1;
+      }
+    };
+    page.on("request", countGlobalThreadPageRequest);
+    await page.getByTestId(groupShowMoreId).click();
+    await expect(page.getByTestId(unreadGroupedThreadId)).toHaveCount(1);
+    await expect(page.getByTestId(groupShowMoreId)).toHaveCount(0);
+    await page.waitForTimeout(250);
+    page.off("request", countGlobalThreadPageRequest);
+    expect(globalThreadPageRequests).toBe(0);
+
+    await expect(page.getByTestId(`${noProjectSectionId}-attention-count`)).toHaveText("1");
+    const collapseUnreadGroupResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${unpinnedGroup.id}`)
+      && response.request().method() === "PATCH",
+    );
+    await page.getByTestId(unpinnedGroupSectionId).getByRole("button", { name: /Unpinned custom project group/ }).first().click();
+    expect((await collapseUnreadGroupResponse).ok()).toBe(true);
+    await expect(
+      page.getByTestId(unpinnedGroupSectionId).getByRole("button", { name: /Unpinned custom project group/ }).first(),
+    ).toHaveAttribute("aria-expanded", "false");
+    await page.getByTestId(noProjectSectionId).click();
+    await expect(page.getByTestId(noProjectSectionId)).toHaveAttribute("aria-expanded", "false");
+    await page.evaluate(() => {
+      const originalScrollIntoView = Element.prototype.scrollIntoView;
+      (window as typeof window & { __projectGroupedUnreadScrolls?: string[] }).__projectGroupedUnreadScrolls = [];
+      Element.prototype.scrollIntoView = function scrollIntoView(options?: boolean | ScrollIntoViewOptions) {
+        const threadKey = (this as HTMLElement).dataset?.messengerThreadKey;
+        if (threadKey) {
+          (window as typeof window & { __projectGroupedUnreadScrolls: string[] }).__projectGroupedUnreadScrolls.push(threadKey);
+        }
+        return originalScrollIntoView.call(this, options);
+      };
+    });
+    const expandUnreadGroupResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${unpinnedGroup.id}`)
+      && response.request().method() === "PATCH",
+    );
+    await page.getByTestId("primary-rail").getByRole("link", { name: "Messenger" }).dblclick();
+    expect((await expandUnreadGroupResponse).ok()).toBe(true);
+    await expect(page.getByTestId(noProjectSectionId)).toHaveAttribute("aria-expanded", "true");
+    await expect(
+      page.getByTestId(unpinnedGroupSectionId).getByRole("button", { name: /Unpinned custom project group/ }).first(),
+    ).toHaveAttribute("aria-expanded", "true");
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __projectGroupedUnreadScrolls?: string[] }).__projectGroupedUnreadScrolls ?? []
+    ))).toContain(`chat:${unreadGroupedChat.id}`);
 
     await page.getByTestId(hydratedOnlyThreadId).click();
     await expect(page).toHaveURL(new RegExp(`/messenger/chat/${hydratedOnlyChat.id}$`));

@@ -622,10 +622,14 @@ export function organizeThreadEntries(
     : { key: "attention:other", label: "Other threads" });
 }
 
-export function sectionAttentionCount(section: OrganizedThreadSection) {
-  return section.entries.filter(
+export function sectionAttentionCount(section: OrganizedThreadSection): number {
+  const directAttentionCount = section.entries.filter(
     (entry) => entry.thread.unreadCount > 0 || entry.thread.needsAttention,
   ).length;
+  return directAttentionCount + (section.childSections ?? []).reduce(
+    (count, childSection) => count + sectionAttentionCount(childSection),
+    0,
+  );
 }
 
 export function locallyReadThreadSummary(
