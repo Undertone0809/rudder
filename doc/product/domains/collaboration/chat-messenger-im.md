@@ -2098,6 +2098,11 @@ Invariants:
 - Pinned custom groups render inside the `Pinned` section immediately under
   the section header and before loose pinned threads. Unpinned groups and loose
   unpinned issue, chat, approval, and synthetic attention rows follow.
+- In the `Project` directory, custom groups remain atomic: pinned groups render
+  first inside `Pinned`, while unpinned groups render first inside `No project`.
+  Their members stay inside the group and are not reclassified or duplicated
+  under a project, `System`, or another top-level section; an individually
+  pinned member inside an unpinned group remains inside that group.
 - Pinning assigns a custom group to the pinned ordering domain; it does not lock
   the group's position. Pinned groups remain draggable relative to other pinned
   groups, and unpinned groups remain draggable relative to other unpinned
@@ -2149,9 +2154,12 @@ Evidence:
   synthetic membership, drag/drop grouping, row-action group creation, and
   custom group pin/order behavior, including pinned-domain group reordering and
   pinned groups rendering above loose pinned threads after reload. It also
-  covers atomic custom-group placement, disclosure, and persisted collapse in
-  the Project directory, the default Arc-style layout, and the absence of the
-  superseded `Pinned`, `Today`, and `Recent` managed sections.
+  covers the default Arc-style layout and the absence of the superseded
+  `Pinned`, `Today`, and `Recent` managed sections. Project-mode coverage proves
+  atomic group placement under `Pinned` and `No project`, pagination-independent
+  member hydration, exact-once ownership, navigation, persisted collapse state,
+  pin/unpin movement, empty-group visibility, and the absence of group drag
+  handles where reordering is not supported.
 
 ## MESSENGER.SAVED.VIEWS.001
 
