@@ -2,6 +2,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const CANONICAL_ORIGIN = "https://docs.rudderhq.dev";
 const SOCIAL_IMAGE_URL = `${CANONICAL_ORIGIN}/images/rudder-social-card.png`;
@@ -21,6 +22,9 @@ const MARKDOWN_ALTERNATE_RE =
 const HREFLANG_ALTERNATE_RE =
   /<link\b(?=[^>]*\brel=["']alternate["'])(?=[^>]*\bhreflang=["'][^"']+["'])[^>]*\/?\s*>/gi;
 const SEO_GUARD_RE = /<script\b[^>]*\bdata-rudder-seo-guard[^>]*>[\s\S]*?<\/script>/gi;
+const SEARCH_RUNTIME_RE = /<script\b[^>]*\bdata-rudder-search[^>]*><\/script>/gi;
+const SEARCH_RUNTIME_SOURCE = fileURLToPath(new URL("./docs-static-search.js", import.meta.url));
+const SEARCH_RUNTIME_TAG = '<script src="/rudder-search.js" defer data-rudder-search></script>';
 const CHINESE_FOOTER_PATHS = [
   "/get-started/installation",
   "/get-started/first-organization",
@@ -79,6 +83,84 @@ function routeForFile(exportDir, filePath) {
 
 function canonicalUrl(route) {
   return route === "/" ? CANONICAL_ORIGIN : `${CANONICAL_ORIGIN}${route}`;
+}
+
+function decodeHtml(text) {
+  return text
+    .replace(/&#(\d+);/g, (_match, value) => String.fromCodePoint(Number(value)))
+    .replace(/&#x([\da-f]+);/gi, (_match, value) => String.fromCodePoint(Number.parseInt(value, 16)))
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&nbsp;", " ");
+}
+
+function textFromMarkup(markup) {
+  return decodeHtml(
+    markup
+      .replace(/<(script|style|svg)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
+      .replace(/<[^>]+>/g, " "),
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractMetaContent(html, name) {
+  for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
+    const tag = match[0];
+    const metaName = tag.match(/\bname=["']([^"']+)["']/i)?.[1];
+    if (metaName !== name) continue;
+    return decodeHtml(tag.match(/\bcontent=["']([^"']*)["']/i)?.[1] ?? "");
+  }
+  return "";
+}
+
+function extractSearchPage(route, html) {
+  const main = html.match(/<main\b[^>]*>([\s\S]*?)<\/main>/i)?.[1];
+  if (!main) return null;
+
+  const titleMarkup = main.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1];
+  const title = titleMarkup ? textFromMarkup(titleMarkup) : "";
+  if (!title) return null;
+
+  const headings = [...main.matchAll(/<h[2-3]\b[^>]*>([\s\S]*?)<\/h[2-3]>/gi)]
+    .map((match) => textFromMarkup(match[1]))
+    .filter(Boolean);
+
+  return {
+    content: textFromMarkup(main),
+    description: extractMetaContent(html, "description"),
+    headings,
+    language: route === "/zh" || route.startsWith("/zh/") ? "zh-CN" : "en",
+    path: route,
+    title,
+  };
+}
+
+function writeSearchAssets(exportDir, pageRoutes) {
+  const searchPages = [];
+  for (const [route, filePath] of pageRoutes) {
+    if (route === "/index" && pageRoutes.has("/")) continue;
+    const page = extractSearchPage(route, fs.readFileSync(filePath, "utf8"));
+    if (page) searchPages.push(page);
+  }
+
+  fs.writeFileSync(
+    path.join(exportDir, "rudder-search-index.json"),
+    `${JSON.stringify(searchPages, null, 2)}\n`,
+  );
+  fs.copyFileSync(SEARCH_RUNTIME_SOURCE, path.join(exportDir, "rudder-search.js"));
+  return searchPages.length;
+}
+
+function injectSearchRuntime(html) {
+  html = html.replace(SEARCH_RUNTIME_RE, "");
+  if (!html.includes("</head>")) {
+    throw new Error("Exported docs page is missing </head>");
+  }
+  return html.replace("</head>", `${SEARCH_RUNTIME_TAG}</head>`);
 }
 
 function replaceHtmlLang(html, language) {
@@ -193,6 +275,7 @@ function postprocessExport(exportDir) {
 
   const pageRoutes = new Map(pageFiles.map((filePath) => [routeForFile(exportDir, filePath), filePath]));
   const routes = new Set(pageRoutes.keys());
+  const indexedPages = writeSearchAssets(exportDir, pageRoutes);
   let pairedPages = 0;
   let chinesePages = 0;
 
@@ -213,6 +296,7 @@ function postprocessExport(exportDir) {
 
     html = injectSocialMeta(html);
     html = injectSeoGuard(html, isChinese);
+    html = injectSearchRuntime(html);
 
     if (isChinese) {
       html = localizeSerializedFooter(localizeFooterMarkup(html));
@@ -223,7 +307,7 @@ function postprocessExport(exportDir) {
   }
 
   console.log(
-    `Postprocessed ${pageFiles.length} docs pages (${chinesePages} Chinese, ${pairedPages} with language alternates, ${normalizedRuntimeChunks} runtime chunks normalized).`,
+    `Postprocessed ${pageFiles.length} docs pages (${chinesePages} Chinese, ${pairedPages} with language alternates, ${indexedPages} searchable, ${normalizedRuntimeChunks} runtime chunks normalized).`,
   );
 }
 

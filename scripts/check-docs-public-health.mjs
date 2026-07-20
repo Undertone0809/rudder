@@ -25,6 +25,16 @@ const REQUIRED_PATHS = [
   { path: "/robots.txt", status: 200, bodyIncludes: [`Sitemap: ${CANONICAL_ORIGIN}/sitemap.xml`] },
   { path: "/sitemap.xml", status: 200, bodyIncludes: [`<loc>${CANONICAL_ORIGIN}`, `${CANONICAL_ORIGIN}/zh`] },
   { path: "/llms.txt", status: 200, bodyIncludes: [CANONICAL_ORIGIN] },
+  {
+    path: "/rudder-search-index.json",
+    status: 200,
+    bodyIncludes: ['"path": "/concepts/agents"', '"language": "zh-CN"'],
+  },
+  {
+    path: "/rudder-search.js",
+    status: 200,
+    bodyIncludes: ["/rudder-search-index.json", "data-rudder-search-result"],
+  },
   { path: "/favicon.svg", status: 200 },
   { path: "/favicon.ico", status: 200 },
   { path: "/favicon.png", status: 200 },
