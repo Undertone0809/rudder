@@ -1065,6 +1065,37 @@ contracts:
       - tests/e2e/feishu-source-badges.spec.ts
     related_plans:
       - doc/plans/2026-06-22-chat-fork-conversation-groups.md
+  CHAT.SIDE.CHAT.001:
+    owner: product
+    domain: collaboration
+    status: active
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/collaboration/chat-messenger-im.md
+    related_code:
+      - packages/db/src/schema/chat_conversations.ts
+      - packages/db/src/schema/chat_messages.ts
+      - packages/shared/src/constants.ts
+      - packages/shared/src/types/chat.ts
+      - packages/shared/src/validators/chat.ts
+      - server/src/routes/chats.ts
+      - server/src/routes/chats.stream-routes.ts
+      - server/src/services/side-chats.ts
+      - ui/src/api/chats.ts
+      - ui/src/lib/side-chat.ts
+      - ui/src/lib/side-panel-targets.ts
+      - ui/src/components/side-panel/SideChatPanelView.tsx
+      - ui/src/pages/Chat.tsx
+      - ui/src/pages/Chat.messages.tsx
+      - ui/src/pages/Chat.side-panel.tsx
+    related_tests:
+      - server/src/__tests__/chat-routes.test.ts
+      - ui/src/lib/side-chat.test.ts
+      - ui/src/lib/side-panel-targets.test.ts
+      - ui/src/pages/Chat.messages.test.tsx
+      - tests/e2e/chat-side-chat.spec.ts
+    related_plans:
+      - doc/plans/2026-07-19-side-chat.md
   CHAT.RICH.REFERENCE.RENDERING.001:
     owner: product
     domain: collaboration

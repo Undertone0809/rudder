@@ -92,6 +92,7 @@ test("Side Chat preserves the main draft, becomes read-only on Done, and disappe
 
   const panel = await openFromAssistantAction(page, source.assistantMessageId);
   await expect(mainComposer).toContainText("Keep this unfinished main-chat draft");
+  await page.screenshot({ path: testInfo.outputPath("01-assistant-action-draft.png"), fullPage: true });
   const sideChat = await sendFirstSideChatMessage(page, panel, source.conversationId);
 
   const listBeforeDone = await page.request.get(`/api/orgs/${source.organization.id}/chats?status=all`);
@@ -108,7 +109,7 @@ test("Side Chat preserves the main draft, becomes read-only on Done, and disappe
   );
   expect(hiddenMessengerThread.status()).toBe(404);
 
-  await page.screenshot({ path: testInfo.outputPath("side-chat-active.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("02-side-chat-active.png"), fullPage: true });
   await panel.getByRole("button", { name: "Done & return" }).click();
   await expect(panel.getByTestId("side-chat-read-only")).toBeVisible({ timeout: 15_000 });
   await expect(panel.getByTestId("side-chat-state")).toContainText("Completed · read-only");
@@ -120,7 +121,7 @@ test("Side Chat preserves the main draft, becomes read-only on Done, and disappe
   expect(renameAfterDone.status()).toBe(409);
   const deleteAuditRecord = await page.request.delete(`/api/chats/${sideChat.id}`);
   expect(deleteAuditRecord.status()).toBe(409);
-  await page.screenshot({ path: testInfo.outputPath("side-chat-read-only.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("03-side-chat-read-only.png"), fullPage: true });
 
   const sideChatTab = panel.locator('[data-side-panel-tab-key^="side-chat:"]');
   await sideChatTab.hover();
@@ -133,18 +134,30 @@ test("Side Chat preserves the main draft, becomes read-only on Done, and disappe
     messengerVisible: false,
     sideChatState: "completed",
   });
+  await expect(mainComposer).toContainText("Keep this unfinished main-chat draft");
+  await page.screenshot({ path: testInfo.outputPath("04-completed-tab-closed.png"), fullPage: true });
 });
 
-test("the /side entry can keep the same Side Chat in Messenger", async ({ page }) => {
+test("the /side menu matches composer popovers and can keep the same Side Chat in Messenger", async ({ page }, testInfo) => {
   const source = await seedSideChatSource(page, `Side-Chat-Keep-${Date.now()}`);
   const mainComposer = page.getByTestId("chat-composer-editor-scroll").locator(".rudder-mdxeditor-content").first();
   await mainComposer.click();
   await page.keyboard.insertText("/");
   const slashMenu = page.getByTestId("chat-slash-command-menu");
   await expect(slashMenu).toBeVisible();
-  await slashMenu.getByTestId("chat-slash-side-chat").click();
+  await expect(slashMenu).toHaveAttribute("role", "menu");
+  await expect(slashMenu.getByTestId("chat-slash-side-chat")).toHaveAttribute("role", "menuitem");
+  await page.waitForTimeout(400);
+  const [menuBox, composerBox] = await Promise.all([slashMenu.boundingBox(), page.locator(".chat-composer").boundingBox()]);
+  expect(menuBox).not.toBeNull();
+  expect(composerBox).not.toBeNull();
+  expect(menuBox!.y + menuBox!.height).toBeLessThanOrEqual(composerBox!.y - 8);
+  expect(Math.abs(menuBox!.width - composerBox!.width)).toBeLessThanOrEqual(2);
+  await page.screenshot({ path: testInfo.outputPath("05-side-slash-menu.png"), fullPage: true });
+  await page.keyboard.press("Enter");
   const panel = page.getByTestId("chat-side-panel");
   await expect(panel.getByTestId("side-chat-panel-view")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("06-side-slash-draft.png"), fullPage: true });
 
   const sideChat = await sendFirstSideChatMessage(page, panel, source.conversationId);
   const keepResponsePromise = page.waitForResponse((response) => (
@@ -167,4 +180,20 @@ test("the /side entry can keep the same Side Chat in Messenger", async ({ page }
   expect(await visibleMessengerThread.json()).toMatchObject({
     conversation: { id: sideChat.id, messengerVisible: true, sideChatState: "kept" },
   });
+  await page.screenshot({ path: testInfo.outputPath("07-kept-in-messenger.png"), fullPage: true });
+});
+
+test("the Side Panel empty state opens the same provisional Side Chat flow", async ({ page }, testInfo) => {
+  await seedSideChatSource(page, `Side-Chat-Panel-${Date.now()}`);
+  await page.getByTestId("workspace-main-card").getByTestId("chat-side-panel-trigger").click();
+  const panel = page.getByTestId("chat-side-panel");
+  await expect(panel.getByTestId("chat-side-panel-empty-state")).toBeVisible();
+  await expect(panel.getByTestId("chat-side-panel-empty-side chat-target")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("08-side-panel-empty-state.png"), fullPage: true });
+
+  await panel.getByTestId("chat-side-panel-empty-side chat-target").click();
+  await expect(panel.getByTestId("side-chat-panel-view")).toBeVisible();
+  await expect(panel.getByTestId("side-chat-anchor-preview")).toContainText("narrow cohort");
+  await expect(panel.getByPlaceholder("Ask a focused follow-up…")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("09-side-panel-entry-draft.png"), fullPage: true });
 });
