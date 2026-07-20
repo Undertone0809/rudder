@@ -39,6 +39,7 @@ export interface ResolvedIntegrationUserBinding {
 export interface ResolvedIntegrationChatBinding {
   conversationId: string;
   created?: boolean;
+  initialMessageId?: string;
   initialTitle?: string | null;
   dailySessionStarted?: boolean;
   notifyFeishu?: boolean;

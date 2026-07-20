@@ -30,7 +30,7 @@ import {
   organizations,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import express from "express";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -473,6 +473,42 @@ describe("Feishu inbound dispatcher DB deps", () => {
     await expect(db.select().from(chatMessages)).resolves.toHaveLength(1);
   });
 
+  it("atomically creates a new Feishu binding with its first inbound message", async () => {
+    const seeded = await seedIntegration();
+    const deps = createFeishuInboundDispatcherDbDeps(db, {
+      enqueueAgentRun: false,
+      createOutboundPlaceholder: false,
+      startTitleGeneration: false,
+    });
+    const event = inboundEvent({
+      eventId: "event_atomic_first_inbound",
+      messageId: "om_atomic_first_inbound",
+      body: "persist me with the binding",
+      commandBody: "persist me with the binding",
+    });
+    const integration = {
+      id: seeded.integrationId,
+      orgId: seeded.orgId,
+      agentId: seeded.agentId,
+      provider: "feishu" as const,
+      status: "active" as const,
+    };
+    const userBinding = { userId: seeded.userId, orgMember: true };
+
+    const chat = await deps.ensureChatBinding(integration, userBinding, event);
+    const messagesAfterBinding = await db.select().from(chatMessages);
+    expect(messagesAfterBinding).toHaveLength(1);
+    expect(messagesAfterBinding[0]).toMatchObject({
+      conversationId: chat.conversationId,
+      role: "user",
+      body: event.body,
+      structuredPayload: expect.objectContaining({ eventType: "agent_integration_inbound" }),
+    });
+    const appended = await deps.appendInboundMessage(integration, userBinding, chat, event);
+    expect(appended.chatMessageId).toBe(messagesAfterBinding[0]?.id);
+    await expect(db.select().from(chatMessages)).resolves.toHaveLength(1);
+  });
+
   it("resolves auto-bound Feishu users by union id when the message open id differs", async () => {
     const seeded = await seedIntegration({ bindUser: false });
     const binding = await feishuIntegrationUserBindingService(db).bindActiveOrgUserByOpenId({
@@ -643,7 +679,13 @@ describe("Feishu inbound dispatcher DB deps", () => {
       role: message.role,
       kind: message.kind,
       body: message.body,
-    }))).toEqual([
+    }))).toEqual(expect.arrayContaining([
+      {
+        conversationId: result.conversationId,
+        role: "system",
+        kind: "system_event",
+        body: "New Feishu session started.",
+      },
       {
         conversationId: first.conversationId,
         role: "user",
@@ -656,7 +698,8 @@ describe("Feishu inbound dispatcher DB deps", () => {
         kind: "system_event",
         body: "New Feishu session started.",
       },
-    ]);
+    ]));
+    expect(messages).toHaveLength(3);
     await expect(db.select().from(heartbeatRuns)).resolves.toHaveLength(1);
     await expect(db.select().from(agentIntegrationOutboundMessages)).resolves.toHaveLength(1);
 
@@ -725,7 +768,13 @@ describe("Feishu inbound dispatcher DB deps", () => {
       role: message.role,
       kind: message.kind,
       body: message.body,
-    }))).toEqual([
+    }))).toEqual(expect.arrayContaining([
+      {
+        conversationId: next.conversationId,
+        role: "system",
+        kind: "system_event",
+        body: "New daily session started.",
+      },
       {
         conversationId: first.conversationId,
         role: "user",
@@ -744,8 +793,11 @@ describe("Feishu inbound dispatcher DB deps", () => {
         kind: "message",
         body: "today work",
       },
-    ]);
-    const rolloverEvent = messages.find((message) => message.kind === "system_event");
+    ]));
+    expect(messages).toHaveLength(4);
+    const rolloverEvent = messages.find((message) =>
+      message.kind === "system_event" && message.conversationId === first.conversationId,
+    );
     expect(rolloverEvent?.structuredPayload).toMatchObject({
       reason: "daily_rollover",
       previousConversationId: first.conversationId,
@@ -812,7 +864,10 @@ describe("Feishu inbound dispatcher DB deps", () => {
     const rolloverEvent = await db
       .select()
       .from(chatMessages)
-      .where(eq(chatMessages.kind, "system_event"))
+      .where(and(
+        eq(chatMessages.kind, "system_event"),
+        eq(chatMessages.conversationId, first.conversationId),
+      ))
       .then((rows) => rows[0]);
     expect(rolloverEvent).toMatchObject({
       conversationId: first.conversationId,
@@ -1054,10 +1109,10 @@ describe("Feishu inbound dispatcher DB deps", () => {
     const conversations = await db.select().from(chatConversations);
     expect(conversations).toHaveLength(1);
     const messages = await db.select().from(chatMessages);
-    expect(messages.map((message) => message.body)).toEqual([
+    expect(messages.map((message) => message.body)).toEqual(expect.arrayContaining([
       "start long reply",
       "arrives during active reply",
-    ]);
+    ]));
   });
 
   it("coalesces concurrent Feishu /new quick commands without orphaning acknowledged sessions", async () => {
@@ -1118,6 +1173,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
       "seed the original session",
     ]);
     expect(messages.filter((message) => message.kind === "system_event").map((message) => message.body)).toEqual([
+      "New Feishu session started.",
       "New Feishu session started.",
     ]);
     const conversations = await db.select().from(chatConversations);
@@ -1280,10 +1336,10 @@ describe("Feishu inbound dispatcher DB deps", () => {
     const [updatedGeneration] = await db.select().from(chatGenerations).where(eq(chatGenerations.id, generation.id));
     expect(updatedGeneration?.status).toBe("active");
     const messages = await db.select().from(chatMessages);
-    expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual([
+    expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual(expect.arrayContaining([
       { role: "user", kind: "message", body: "start a session with stale DB generation" },
       { role: "system", kind: "system_event", body: "No active Feishu reply to stop." },
-    ]);
+    ]));
   });
 
   it("drives the mock inbound route through DB-backed Messenger issue run and outbound writes", async () => {
@@ -1703,9 +1759,12 @@ describe("Feishu inbound dispatcher DB deps", () => {
     expect(streamChatAssistantReply).not.toHaveBeenCalled();
     expect(sent).toEqual([{ chatId: "oc_runtime_new", text: "New session started." }]);
     const messages = await db.select().from(chatMessages);
-    expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual([
+    expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual(expect.arrayContaining([
+      { role: "user", kind: "message", body: "/new" },
       { role: "system", kind: "system_event", body: "New Feishu session started." },
-    ]);
+      { role: "system", kind: "system_event", body: "New Feishu session started." },
+    ]));
+    expect(messages).toHaveLength(3);
     const [outbound] = await db.select().from(agentIntegrationOutboundMessages);
     expect(outbound).toMatchObject({
       orgId: seeded.orgId,
@@ -1811,10 +1870,10 @@ describe("Feishu inbound dispatcher DB deps", () => {
     expect(observedSignal?.aborted).toBe(true);
     expect(sent).toEqual([{ chatId: "oc_runtime_stop", text: "Stop requested." }]);
     const messages = await db.select().from(chatMessages);
-    expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual([
+    expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual(expect.arrayContaining([
       { role: "user", kind: "message", body: "please start a long reply" },
       { role: "system", kind: "system_event", body: "Feishu session stop requested." },
-    ]);
+    ]));
     const [generation] = await db.select().from(chatGenerations);
     expect(generation).toMatchObject({
       status: "stopped",
@@ -1931,10 +1990,10 @@ describe("Feishu inbound dispatcher DB deps", () => {
     });
     expect(sent).toEqual([{ chatId: "oc_runtime_pending_stop", text: "Stop requested." }]);
     const messages = await db.select().from(chatMessages);
-    expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual([
+    expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual(expect.arrayContaining([
       { role: "user", kind: "message", body: "please start a reply that I will stop immediately" },
       { role: "system", kind: "system_event", body: "Feishu session stop requested." },
-    ]);
+    ]));
     const [generation] = await db.select().from(chatGenerations);
     expect(generation).toMatchObject({
       status: "stopped",

@@ -3,13 +3,13 @@ import type { Db } from "@rudderhq/db";
 import {
   automationRuns,
   automations,
-  chatContextLinks,
   chatConversations,
   chatMessages,
   issues,
 } from "@rudderhq/db";
 import { and, eq, sql } from "drizzle-orm";
 import { CHAT_TRANSCRIPT_KEY } from "./chats.helpers.js";
+import { chatService } from "./chats.js";
 
 function automationRunOutputBody(input: {
   output?: string | null;
@@ -40,6 +40,7 @@ export async function publishAutomationRunOutputToChat(
 ) {
   if (!input.issueId) return null;
   const issueId = input.issueId;
+  const chats = chatService(db);
 
   return db.transaction(async (tx) => {
     const row = await tx
@@ -73,38 +74,47 @@ export async function publishAutomationRunOutputToChat(
       conversationId = currentRun?.linkedChatConversationId ?? null;
     }
     if (!conversationId) {
-      const [conversation] = await tx
-      .insert(chatConversations)
-      .values({
-        orgId: row.orgId,
-        title: row.automationTitle || "New chat",
-        preferredAgentId: row.assigneeAgentId,
-        status: "active",
-        issueCreationMode: "manual_approval",
-        planMode: false,
-      })
-      .returning({ id: chatConversations.id });
-      conversationId = conversation?.id ?? null;
-      if (!conversationId) return null;
-      if (row.projectId) {
-        await tx
-          .insert(chatContextLinks)
-          .values({
-            orgId: row.orgId,
-            conversationId,
+      const created = await chats.createWithInitialMessage(row.orgId, {
+          title: row.automationTitle || "New chat",
+          summary: null,
+          preferredAgentId: row.assigneeAgentId,
+          issueCreationMode: "manual_approval",
+          planMode: false,
+          createdByUserId: null,
+          contextLinks: row.projectId ? [{
             entityType: "project",
             entityId: row.projectId,
             metadata: null,
-          })
-          .onConflictDoNothing();
-      }
+          }] : [],
+          initialMessage: {
+            role: "assistant",
+            kind: "message",
+            status: chatMessageStatus(input.status),
+            body: automationRunOutputBody(input),
+            replyingAgentId: row.assigneeAgentId,
+            structuredPayload: {
+              eventType: "automation_run_result",
+              automationId: row.automationId,
+              automationTitle: row.automationTitle,
+              runId: row.runId,
+              issueId: row.issueId,
+              status: input.status ?? null,
+              links: { automation: `/automations/${row.automationId}`, issue: `/issues/${row.issueId}` },
+              [CHAT_TRANSCRIPT_KEY]: input.transcript ?? [],
+            },
+          },
+        }, tx as unknown as Db);
+      conversationId = created.conversation.id;
       await tx
         .update(automationRuns)
         .set({
           linkedChatConversationId: conversationId,
+          terminalChatMessageId: created.message.id,
+          lastChatMessageId: created.message.id,
           updatedAt: new Date(),
         })
         .where(eq(automationRuns.id, row.runId));
+      return created.message;
     }
     const existing = await tx
       .select()
