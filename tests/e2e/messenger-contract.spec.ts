@@ -4,6 +4,7 @@ import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
   activityLog,
   agents,
+  chatContextLinks,
   chatConversationUserStates,
   chatConversations,
   chatMessages,
@@ -834,6 +835,130 @@ test.describe("Messenger unified threads contract", () => {
     ]);
     await expect(page.getByTestId(threadTestId(`chat:${pinnedChat.id}`))).toHaveCount(1);
     await page.screenshot({ path: "/tmp/rudder-messenger-project-pinned.png", fullPage: true });
+  });
+
+  test("keeps custom groups atomic and locally expandable while organizing Messenger by project", async ({ page }) => {
+    const organization = await createConfiguredOrganization(page, `Messenger-Project-Custom-Groups-${Date.now()}`);
+    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "Grouped launch project",
+        status: "in_progress",
+        icon: "rocket",
+        color: "#0ea5e9",
+      },
+    });
+    expect(projectRes.ok()).toBe(true);
+    const project = await projectRes.json() as { id: string };
+
+    const activityBase = Date.now();
+    const groupedChats = Array.from({ length: 8 }, (_, index) => ({
+      id: randomUUID(),
+      orgId: organization.id,
+      title: `Atomic grouped project thread ${index + 1}`,
+      summary: `Atomic grouped project thread ${index + 1} summary`,
+      preferredAgentId: organization.chatAgent.id,
+      issueCreationMode: "manual_approval" as const,
+      planMode: false,
+      createdByUserId: null,
+      lastMessageAt: new Date(activityBase - index * 1_000),
+      createdAt: new Date(activityBase - index * 1_000),
+      updatedAt: new Date(activityBase - index * 1_000),
+    }));
+    await e2eDb.insert(chatConversations).values(groupedChats);
+    await e2eDb.insert(chatContextLinks).values(groupedChats.map((chat) => ({
+      orgId: organization.id,
+      conversationId: chat.id,
+      entityType: "project" as const,
+      entityId: project.id,
+    })));
+
+    const pinnedGroupRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
+      data: { name: "Pinned atomic group", icon: "rocket::amber" },
+    });
+    const regularGroupRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
+      data: { name: "Project work queue", icon: "folder::slate" },
+    });
+    expect(pinnedGroupRes.ok()).toBe(true);
+    expect(regularGroupRes.ok()).toBe(true);
+    const pinnedGroup = await pinnedGroupRes.json() as { id: string };
+    const regularGroup = await regularGroupRes.json() as { id: string };
+    const pinRes = await page.request.patch(`/api/orgs/${organization.id}/messenger/groups/${pinnedGroup.id}`, {
+      data: { pinned: true },
+    });
+    const unpinRes = await page.request.patch(`/api/orgs/${organization.id}/messenger/groups/${regularGroup.id}`, {
+      data: { pinned: false },
+    });
+    expect(pinRes.ok()).toBe(true);
+    expect(unpinRes.ok()).toBe(true);
+
+    const pinnedEntryRes = await page.request.post(
+      `/api/orgs/${organization.id}/messenger/groups/${pinnedGroup.id}/entries`,
+      { data: { itemKey: `chat:${groupedChats[0]!.id}` } },
+    );
+    expect(pinnedEntryRes.ok()).toBe(true);
+    for (const chat of groupedChats.slice(1)) {
+      const entryRes = await page.request.post(
+        `/api/orgs/${organization.id}/messenger/groups/${regularGroup.id}/entries`,
+        { data: { itemKey: `chat:${chat.id}` } },
+      );
+      expect(entryRes.ok()).toBe(true);
+    }
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "project" }));
+      window.localStorage.setItem("rudder.messengerSplitIssueNotificationsByOrg", JSON.stringify({ [orgId]: false }));
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat`, { waitUntil: "commit" });
+
+    const pinnedSection = page.getByTestId("messenger-thread-section-project-pinned");
+    const noProjectSection = page.getByTestId("messenger-thread-section-project-none");
+    const pinnedSectionContent = page.getByTestId("messenger-thread-section-project-pinned-content");
+    const noProjectSectionContent = page.getByTestId("messenger-thread-section-project-none-content");
+    const projectSection = page.getByTestId(`messenger-thread-section-project-${project.id}`);
+    const pinnedGroupSectionId = `messenger-thread-section-custom-group-${pinnedGroup.id}`;
+    const regularGroupSectionId = `messenger-thread-section-custom-group-${regularGroup.id}`;
+    const pinnedGroupSection = page.getByTestId(pinnedGroupSectionId);
+    const regularGroupSection = page.getByTestId(regularGroupSectionId);
+    const regularGroupContent = page.getByTestId(`${regularGroupSectionId}-content`);
+
+    await expect(page.getByText("Threads organized by project")).toBeVisible({ timeout: 15_000 });
+    await expect(pinnedSection).toBeVisible();
+    await expect(noProjectSection).toBeVisible();
+    await expect(pinnedSectionContent.getByTestId(pinnedGroupSectionId)).toContainText("Pinned atomic group");
+    await expect(noProjectSectionContent.getByTestId(regularGroupSectionId)).toContainText("Project work queue");
+    await expect(projectSection).toHaveCount(0);
+    await expect(pinnedGroupSection.getByRole("button", { name: "Drag group Pinned atomic group" })).toHaveCount(0);
+    await expect(regularGroupSection.getByRole("button", { name: "Drag group Project work queue" })).toHaveCount(0);
+    const regularGroupRows = regularGroupSection.locator("[data-messenger-thread-key]");
+    await expect(page.locator("[data-messenger-thread-key]")).toHaveCount(7);
+    await expect(regularGroupRows).toHaveCount(6);
+    await regularGroupSection.getByTestId(`${regularGroupSectionId}-show-more`).click();
+    await expect(regularGroupRows).toHaveCount(7);
+    await expect(regularGroupSection.getByTestId(`${regularGroupSectionId}-show-more`)).toHaveCount(0);
+    for (const chat of groupedChats) {
+      await expect(page.getByTestId(threadTestId(`chat:${chat.id}`))).toHaveCount(1);
+    }
+    await page.screenshot({ path: "/tmp/rudder-messenger-project-custom-groups.png", fullPage: true });
+
+    const groupToggle = regularGroupSection.locator("button[aria-expanded]").first();
+    await expect(groupToggle).toHaveAttribute("aria-expanded", "true");
+    const collapseResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${regularGroup.id}`)
+      && response.request().method() === "PATCH",
+    );
+    await groupToggle.click();
+    expect((await collapseResponse).ok()).toBe(true);
+    await expect(groupToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(regularGroupContent).toHaveAttribute("aria-hidden", "true");
+
+    await page.reload({ waitUntil: "commit" });
+
+    const restoredGroupSection = page.getByTestId(regularGroupSectionId);
+    await expect(restoredGroupSection).toContainText("Project work queue", { timeout: 15_000 });
+    await expect(restoredGroupSection.locator('button[aria-expanded="false"]').first()).toBeVisible();
+    await expect(page.getByTestId(`${regularGroupSectionId}-content`)).toHaveAttribute("aria-hidden", "true");
   });
 
   test("sorts Messenger project groups by drag and progressively expands large project groups", async ({ page }) => {

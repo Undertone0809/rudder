@@ -1604,6 +1604,7 @@ export function MessengerContextSidebar() {
       }));
       return;
     }
+    if (customGroupBySectionKey.has(section.key)) return;
     if (model.hasMoreThreadSummaries && !model.isFetchingMoreThreadSummaries) {
       void model.loadMoreThreadSummaries?.();
     }
@@ -1956,6 +1957,7 @@ export function MessengerContextSidebar() {
     const visibleEntries = isManagedSection ? section.entries.slice(0, visibleCount) : section.entries;
     const hasHiddenLoadedEntries = isManagedSection && visibleCount < section.entries.length;
     const canFetchMoreForSection = isManagedSection
+      && !customGroup
       && Boolean(model.hasMoreThreadSummaries)
       && visibleCount >= section.entries.length
       && section.entries.length >= MANAGED_GROUP_INITIAL_VISIBLE_COUNT;

@@ -683,6 +683,67 @@ describe("MessengerContextSidebar unread scroll requests", () => {
     expect(document.querySelector('[data-messenger-thread-key="chat:pinned-6"]')).not.toBeNull();
   });
 
+  it("keeps Project custom-group expansion local when more global thread pages exist", async () => {
+    window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ "org-1": "project" }));
+    const loadMoreThreadSummaries = vi.fn().mockResolvedValue(undefined);
+    const groupedThreads = Array.from({ length: 7 }, (_, index) =>
+      baseThread(`chat:project-group-${index}`, `Project group ${index}`),
+    );
+    chatList = groupedThreads.map((thread, index) => baseConversation({
+      id: `project-group-${index}`,
+      title: thread.title,
+    }));
+    customGroupList = [{
+      id: "project-group",
+      orgId: "org-1",
+      userId: "local-board",
+      name: "Project work queue",
+      icon: "folder",
+      sortOrder: 0,
+      collapsed: false,
+      pinnedAt: null,
+      entries: groupedThreads.map((thread, index) => ({
+        id: `entry-${index}`,
+        groupId: "project-group",
+        threadKey: thread.threadKey,
+        sortOrder: index,
+        thread,
+      })),
+    }];
+    messengerModel = {
+      ...messengerModel,
+      threadSummaries: groupedThreads,
+      hasMoreThreadSummaries: true,
+      loadMoreThreadSummaries,
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+    });
+
+    const groupSectionId = "messenger-thread-section-custom-group-project-group";
+    expect(document.querySelector(`[data-testid="${groupSectionId}"]`)).not.toBeNull();
+    expect(document.querySelector('[data-messenger-thread-key="chat:project-group-5"]')).not.toBeNull();
+    expect(document.querySelector('[data-messenger-thread-key="chat:project-group-6"]')).toBeNull();
+
+    await act(async () => {
+      (document.querySelector(`[data-testid="${groupSectionId}-show-more"]`) as HTMLButtonElement | null)?.click();
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector('[data-messenger-thread-key="chat:project-group-6"]')).not.toBeNull();
+    expect(document.querySelector(`[data-testid="${groupSectionId}-show-more"]`)).toBeNull();
+    expect(loadMoreThreadSummaries).not.toHaveBeenCalled();
+  });
+
   it("starts loading the next Messenger thread page before the user reaches the sentinel", async () => {
     messengerModel = {
       ...messengerModel,

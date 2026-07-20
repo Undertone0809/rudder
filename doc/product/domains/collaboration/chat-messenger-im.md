@@ -1993,6 +1993,10 @@ Product model:
 - Pinned custom groups and loose pinned threads share one visible `Pinned`
   domain above unpinned groups and loose rows. The section may be absent when
   no visible thread or group is pinned.
+- In the `Project` directory, a hydrated thread-backed custom group remains one
+  atomic directory section. Pinned groups are nested under `Pinned`; unpinned
+  groups are nested under `No project`, even when individual members link to a
+  project or are pinned independently.
 - A custom group is an organization-scoped, operator-scoped Messenger directory
   section over hydrated directory items. Most members are thread summaries, but
   Saved Views may be mixed into the same group without becoming threads or
@@ -2088,6 +2092,12 @@ Invariants:
   groups. Group reordering must not move a group across the pin boundary.
 - Pinning a custom group does not pin every member individually, and pinning a
   member does not remove it from its group.
+- Project organization must not split a thread-backed custom group across
+  member projects or expose group-reordering drag handles. Group actions and
+  the persisted collapse toggle remain available in that view.
+- Progressive disclosure inside a Project-organized custom group is local to
+  the hydrated group. `Show more` reveals additional loaded group members and
+  must not request an unrelated global Messenger thread page.
 - Removing an item from a group returns that item to the loose Messenger
   directory with its existing read/unread and attention state intact.
 - A mixed group may contain both thread-backed members and Saved Views. Saved
@@ -2117,7 +2127,9 @@ Evidence:
 - Messenger sidebar tests cover non-chat row group actions, grouped rendering,
   stale/newer unread handling, grouped split issue read acknowledgement,
   drag/drop auto-title requests, group title regeneration actions, and
-  title-generation motion states.
+  title-generation motion states. They also cover atomic Project placement,
+  non-sortable Project groups, persisted collapse state, and group-local
+  progressive disclosure.
 - Messenger route tests cover Fast Intelligence group title generation,
   fallback-on-merge failure, manual regeneration, and no mutation when
   regenerated output is unusable.
@@ -2125,8 +2137,9 @@ Evidence:
   synthetic membership, drag/drop grouping, row-action group creation, and
   custom group pin/order behavior, including pinned-domain group reordering and
   pinned groups rendering above loose pinned threads after reload. It also
-  covers the default Arc-style layout and the absence of the superseded
-  `Pinned`, `Today`, and `Recent` managed sections.
+  covers atomic custom-group placement, disclosure, and persisted collapse in
+  the Project directory, the default Arc-style layout, and the absence of the
+  superseded `Pinned`, `Today`, and `Recent` managed sections.
 
 ## MESSENGER.SAVED.VIEWS.001
 
