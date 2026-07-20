@@ -2526,7 +2526,10 @@ export function chatService(db: Db) {
             completedAt: now,
             updatedAt: now,
           })
-          .where(eq(chatGenerations.id, generation.id));
+          .where(and(
+            eq(chatGenerations.id, generation.id),
+            inArray(chatGenerations.status, ACTIVE_CHAT_GENERATION_STATUSES),
+          ));
       }
       if (item.controlActionId) {
         await tx

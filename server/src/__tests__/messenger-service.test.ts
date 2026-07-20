@@ -1496,6 +1496,201 @@ describe("messengerService and issue follows", () => {
     });
   });
 
+  it.each(["completed", "stopped"] as const)(
+    "does not overwrite a %s generation when releasing its server queue claim",
+    async (terminalStatus) => {
+      const orgId = randomUUID();
+      const conversationId = randomUUID();
+      const generationId = randomUUID();
+      const itemId = randomUUID();
+      const leaseToken = randomUUID();
+      const runtimeTerminalAt = new Date("2026-07-21T01:00:00.000Z");
+      const completedAt = new Date("2026-07-21T01:00:01.000Z");
+      const terminalReason = terminalStatus === "completed" ? "runtime_completed" : "operator_stop";
+
+      await db.insert(organizations).values({
+        id: orgId,
+        name: `Messenger ${terminalStatus} Generation Fence Org`,
+        urlKey: deriveOrganizationUrlKey(`Messenger ${terminalStatus} Generation Fence Org`),
+        issuePrefix: `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      });
+      await db.insert(chatConversations).values({
+        id: conversationId,
+        orgId,
+        title: `${terminalStatus} generation release fence chat`,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      });
+      await db.insert(chatGenerations).values({
+        id: generationId,
+        orgId,
+        conversationId,
+        status: "active",
+        attemptEpoch: 1,
+      });
+      await db.insert(chatQueuedMessages).values({
+        id: itemId,
+        orgId,
+        conversationId,
+        position: 1,
+        status: "dequeue_claimed",
+        clientMutationId: `terminal-generation-release-fence-${terminalStatus}`,
+        payload: { body: "Release this claim without changing runtime evidence" },
+        requestActor: boardQueueRequestActor(orgId),
+        continuationGenerationId: generationId,
+        deliveryLeaseToken: leaseToken,
+        deliveryLeaseEpoch: 3,
+        deliveryLeaseOwner: "release-fence-worker",
+        deliveryLeaseExpiresAt: new Date(Date.now() + 30_000),
+      });
+
+      let allowTerminalCommit!: () => void;
+      const terminalCommitBarrier = new Promise<void>((resolve) => {
+        allowTerminalCommit = resolve;
+      });
+      let terminalWriteReady!: () => void;
+      const terminalWriteStarted = new Promise<void>((resolve) => {
+        terminalWriteReady = resolve;
+      });
+      const terminalWrite = db.transaction(async (tx) => {
+        await tx
+          .update(chatGenerations)
+          .set({
+            status: terminalStatus,
+            terminalReason,
+            controlState: "terminal",
+            runtimeTerminalAt,
+            completedAt,
+          })
+          .where(eq(chatGenerations.id, generationId));
+        terminalWriteReady();
+        await terminalCommitBarrier;
+      });
+      await terminalWriteStarted;
+
+      const release = chatSvc.releaseServerQueuedMessageClaim({
+        itemId,
+        generationId,
+        leaseToken,
+        leaseEpoch: 3,
+        reason: "queued_continuation_completion_unconfirmed",
+      });
+      while (true) {
+        const lockWaiters = await db.execute(sql<{ waiting: boolean }>`
+          select exists (
+            select 1
+            from pg_stat_activity
+            where datname = current_database()
+              and pid <> pg_backend_pid()
+              and wait_event_type = 'Lock'
+              and query ilike '%update "chat_generations"%'
+          ) as waiting
+        `);
+        if (lockWaiters[0]?.waiting) break;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      allowTerminalCommit();
+      await terminalWrite;
+      const released = await release;
+
+      expect(released).toMatchObject({
+        id: itemId,
+        status: "failed_actionable",
+        deliveryDisposition: "failed_actionable",
+        continuationGenerationId: null,
+        deliveryLeaseToken: null,
+        deliveryLeaseOwner: null,
+        deliveryLeaseExpiresAt: null,
+        lastDeliveryReason: "queued_continuation_completion_unconfirmed",
+      });
+      const [generation] = await db
+        .select()
+        .from(chatGenerations)
+        .where(eq(chatGenerations.id, generationId));
+      expect(generation).toMatchObject({
+        status: terminalStatus,
+        terminalReason,
+        controlState: "terminal",
+        runtimeTerminalAt,
+        completedAt,
+      });
+    },
+  );
+
+  it("still aborts a nonterminal generation when releasing its server queue claim", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const generationId = randomUUID();
+    const itemId = randomUUID();
+    const leaseToken = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Active Generation Release Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Active Generation Release Org"),
+      issuePrefix: `A${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Active generation release chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      id: generationId,
+      orgId,
+      conversationId,
+      status: "active",
+      attemptEpoch: 0,
+    });
+    await db.insert(chatQueuedMessages).values({
+      id: itemId,
+      orgId,
+      conversationId,
+      position: 1,
+      status: "dequeue_claimed",
+      clientMutationId: "active-generation-release",
+      payload: { body: "Requeue this unstarted continuation" },
+      requestActor: boardQueueRequestActor(orgId),
+      continuationGenerationId: generationId,
+      deliveryLeaseToken: leaseToken,
+      deliveryLeaseEpoch: 2,
+      deliveryLeaseOwner: "active-release-worker",
+      deliveryLeaseExpiresAt: new Date(Date.now() + 30_000),
+    });
+
+    const released = await chatSvc.releaseServerQueuedMessageClaim({
+      itemId,
+      generationId,
+      leaseToken,
+      leaseEpoch: 2,
+      reason: "server_continuation_lease_expired",
+    });
+
+    expect(released).toMatchObject({
+      id: itemId,
+      status: "queued",
+      deliveryDisposition: null,
+      continuationGenerationId: null,
+      deliveryLeaseToken: null,
+      lastDeliveryReason: "server_continuation_lease_expired",
+    });
+    const [generation] = await db
+      .select()
+      .from(chatGenerations)
+      .where(eq(chatGenerations.id, generationId));
+    expect(generation).toMatchObject({
+      status: "aborted",
+      terminalReason: "server_continuation_lease_expired",
+      controlState: "terminal",
+    });
+    expect(generation?.runtimeTerminalAt).not.toBeNull();
+    expect(generation?.completedAt).not.toBeNull();
+  });
+
   it("does not abort a generation when a stale release loses the queue-item CAS", async () => {
     const orgId = randomUUID();
     const conversationId = randomUUID();
