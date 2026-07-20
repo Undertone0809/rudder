@@ -27,20 +27,20 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/reference/runtime-types"
 
 | 界面选项 | 运行环境值 | 本地命令 |
 | --- | --- | --- |
-| Codex (local) | `codex_local` | `codex` |
-| Claude Code (local) | `claude_local` | `claude` |
-| Cursor (local) | `cursor` | `cursor-agent` |
-| Gemini CLI (local) | `gemini_local` | `gemini` |
-| OpenCode (local) | `opencode_local` | `opencode` |
-| Pi (local) | `pi_local` | `pi` |
+| **Codex (local)** | `codex_local` | `codex` |
+| **Claude Code (local)** | `claude_local` | `claude` |
+| **Cursor (local)** | `cursor` | `cursor-agent` |
+| **Gemini CLI (local)** | `gemini_local` | `gemini` |
+| **OpenCode (local)** | `opencode_local` | `opencode` |
+| **Pi (local)** | `pi_local` | `pi` |
 
 可用性只是安装提示：
 
 | 就绪分组 | 含义 |
 | --- | --- |
-| Ready on this machine | 服务端能在 PATH 中找到默认本地命令 |
-| Needs setup | Rudder 没有找到默认命令 |
-| Other runtimes | Rudder 无法通过本地命令探测判断是否就绪 |
+| **Ready on this machine** | 服务端能在 PATH 中找到默认本地命令 |
+| **Needs setup** | Rudder 没有找到默认命令 |
+| **Other runtimes** | Rudder 无法通过本地命令探测判断是否就绪 |
 
 配置后应运行 **Test runtime chain**。探测成功比可用性分组更能说明实际状态。
 
@@ -74,7 +74,7 @@ Rudder 准备托管状态和本次任务选中的上下文，运行环境负责�
 - OpenCode 命令已经安装，但缺少服务商登录。它可能显示为可用，完整测试仍会
   报认证失败。修复服务商配置后重新测试。
 - 某个运行环境不支持原生运行中转向。Rudder 应如实说明“中断后继续”的备用
-  路径，不能返回原生 Steer 已成功的假象。
+  路径，不能返回原生 **Steer** 已成功的假象。
 
 <CardGroup cols={2}>
   <Card title="配置 Agent 运行环境" icon="terminal" href="/zh/how-to/configure-agent-runtime">

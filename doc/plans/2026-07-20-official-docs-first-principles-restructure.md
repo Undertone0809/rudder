@@ -22,7 +22,10 @@ related_code:
   - server/resources/bundled-skills/rudder-docs/evals
   - .github/workflows/docs-staging.yml
   - .github/workflows/docs-production.yml
-commit_refs: []
+commit_refs:
+  - "docs: establish first-principles documentation foundation"
+  - "docs: rewrite concepts and how-to guides"
+  - "docs: complete first-principles documentation migration"
 updated_at: 2026-07-20
 ---
 
@@ -297,6 +300,10 @@ the exact Location. The final page must expose the correct canonical, hreflang,
 and compatibility anchors.
 
 ## Open issues and rollout gates
+
+All three repository implementation batches are complete and validated. The
+plan remains `in_progress` because rollout still depends on the external
+first-reader study and an explicitly authorized production publication.
 
 - The first-reader study requires ten eligible external participants. The
   repository can include the protocol and results template, but implementation

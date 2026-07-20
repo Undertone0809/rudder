@@ -631,7 +631,7 @@ test("canonical route collision exemptions only recognize the approved legacy ho
   assert.ok(collectIntegrityErrors({ manifest }).some((error) => error === "host-hijack: active redirect source collides with canonical URL /about"));
 });
 
-test("Chinese UI label allowlist is sorted, unique, and covers Batch 1 and Batch 2 pages", () => {
+test("Chinese UI label allowlist is sorted, unique, and covers all rewritten pages", () => {
   const allowlist = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "doc/engineering/public-docs/ui-label-allowlist.json"), "utf8"));
   assert.deepEqual(allowlist.labels, [...new Set(allowlist.labels)].sort());
   const manifest = loadManifest();
@@ -642,7 +642,13 @@ test("Chinese UI label allowlist is sorted, unique, and covers Batch 1 and Batch
     "docs/zh/get-started/first-organization.mdx",
     "docs/zh/concepts/issues.mdx",
     "docs/zh/concepts/chat-messenger.mdx",
-    ...[...BATCH_2_CONCEPT_IDS, ...BATCH_2_HOW_TO_IDS]
+    ...[
+      ...BATCH_2_CONCEPT_IDS,
+      ...BATCH_2_HOW_TO_IDS,
+      ...BATCH_3_REFERENCE_IDS,
+      "about",
+      "contact",
+    ]
       .map((pageId) => manifest.pages.find((page) => page.id === pageId).files.zh),
   ];
   const uiLabels = checkedFiles.flatMap((relativeFile) => {
@@ -660,6 +666,18 @@ test("Chinese UI label allowlist is sorted, unique, and covers Batch 1 and Batch
   assert.ok(!uiLabels.includes("PATH"), "all-uppercase syntax is not a UI-label exception");
   for (const label of uiLabels) {
     assert.ok(allowlist.labels.includes(label), `allowlist is missing ${label}`);
+  }
+
+  const forbiddenOrdinaryEnglish = new Map([
+    ["docs/zh/contact.mdx", [/\bAPI key\b/u, /\bcommit\b/u]],
+    ["docs/zh/reference/issue-statuses.mdx", [/\bcheckout\b/u]],
+    ["docs/zh/reference/permissions-and-platforms.mdx", [/\bjunction\b/u]],
+  ]);
+  for (const [relativeFile, terms] of forbiddenOrdinaryEnglish) {
+    const source = fs.readFileSync(path.join(REPO_ROOT, relativeFile), "utf8");
+    for (const term of terms) {
+      assert.doesNotMatch(source, term, `${relativeFile} must translate ordinary English ${term}`);
+    }
   }
 });
 

@@ -432,18 +432,63 @@ describe("bundled rudder docs skill", () => {
     const evals = JSON.parse(await fs.readFile(evalPath, "utf8")) as Array<{
       query: string;
       locale: "en" | "zh";
+      query_mode: "current" | "legacy_compatibility";
+      expected_source_class: "official_public_docs_primary";
+      required_contract_ids: string[];
       expected_public_path: string;
-      expected_anchor?: string;
+      expected_anchor: string | null;
+      illustrative_case_sufficient: false;
     }>;
     const sourceMap = await fs.readFile(path.join(root, "references", "source-map.md"), "utf8");
+    const contentMap = JSON.parse(
+      await fs.readFile(path.join(process.cwd(), "scripts", "docs-content-map.yml"), "utf8"),
+    ) as {
+      base_url: string;
+      pages: Array<{
+        status: string;
+        urls: Record<"en" | "zh", string>;
+        contracts: { primary: string[] };
+      }>;
+    };
 
     expect(evals.length).toBeGreaterThanOrEqual(10);
     expect(evals.some((item) => item.locale === "en")).toBe(true);
     expect(evals.some((item) => item.locale === "zh")).toBe(true);
+    expect(
+      evals.filter((item) => item.query_mode === "legacy_compatibility").map((item) => item.locale).sort(),
+    ).toEqual(["en", "zh"]);
+
+    let primaryMatches = 0;
     for (const item of evals) {
+      expect(Object.keys(item).sort()).toEqual([
+        "expected_anchor",
+        "expected_public_path",
+        "expected_source_class",
+        "illustrative_case_sufficient",
+        "locale",
+        "query",
+        "query_mode",
+        "required_contract_ids",
+      ]);
+      expect(item.expected_source_class).toBe("official_public_docs_primary");
+      expect(item.required_contract_ids.length).toBeGreaterThan(0);
+      expect(item.illustrative_case_sufficient).toBe(false);
       expect(item.expected_public_path).not.toMatch(/\/concepts\/(?:control-plane|approvals-budgets-activity|chat|messenger)$/);
       expect(sourceMap).toContain(item.expected_public_path);
+
+      const page = contentMap.pages.find(
+        (candidate) =>
+          candidate.status === "active" &&
+          `${contentMap.base_url}${candidate.urls[item.locale]}` === item.expected_public_path,
+      );
+      if (
+        page &&
+        item.required_contract_ids.every((contractId) => page.contracts.primary.includes(contractId))
+      ) {
+        primaryMatches += 1;
+      }
     }
+    expect(primaryMatches / evals.length).toBeGreaterThanOrEqual(0.9);
     for (const anchor of ["approvals", "budgets-and-cost", "activity"]) {
       expect(evals.some((item) => item.expected_anchor === anchor)).toBe(true);
     }
