@@ -182,6 +182,15 @@ test("the /side menu matches composer popovers and can keep the same Side Chat i
     conversation: { id: sideChat.id, messengerVisible: true, sideChatState: "kept" },
   });
   await page.screenshot({ path: testInfo.outputPath("07-kept-in-messenger.png"), fullPage: true });
+
+  await page.goto(`/${source.organization.issuePrefix}/messenger/chat/${sideChat.id}`);
+  const sourceChatLink = page.getByRole("link", { name: "Open source chat Main strategy chat" });
+  await expect(sourceChatLink).toBeVisible({ timeout: 15_000 });
+  await sourceChatLink.click();
+  await expect(page).toHaveURL(new RegExp(`/messenger/chat/${source.conversationId}$`));
+  await expect(page.getByTestId("chat-side-panel")).toBeHidden();
+  await expect(page.getByTestId("chat-assistant-message").filter({ hasText: "narrow cohort" })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("08-source-chat-direct-navigation.png"), fullPage: true });
 });
 
 test("the Side Panel empty state opens the same provisional Side Chat flow", async ({ page }, testInfo) => {

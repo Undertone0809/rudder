@@ -375,6 +375,24 @@ describe("ChatSystemMessageBody", () => {
     expect(html).not.toContain("chat-system-issue-link");
   });
 
+  it("renders Side Chat source events as direct links back to the source conversation", () => {
+    const html = renderSystemMessageBody(message({
+      body: "Side Chat started from [Main strategy chat](chat://source-chat).",
+      structuredPayload: {
+        eventType: "side_chat_started",
+        sourceConversationId: "source-chat",
+        sourceConversationTitle: "Main strategy chat",
+      },
+    }));
+
+    expect(html).toContain("Side Chat started from");
+    expect(html).toContain('href="/messenger/chat/source-chat"');
+    expect(html).toContain('aria-label="Open source chat Main strategy chat"');
+    expect(html).toContain(">Main strategy chat</a>.");
+    expect(html).not.toContain('href="chat://source-chat"');
+    expect(html).not.toContain("rudder-markdown");
+  });
+
   it("renders automation source events as links back to automation detail", () => {
     const automationMessage = message({
       body: "From automation Say hello.",

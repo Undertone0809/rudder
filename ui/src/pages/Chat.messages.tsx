@@ -1462,6 +1462,23 @@ function chatForkSystemMessageParts(message: ChatMessage) {
   };
 }
 
+function sideChatStartedSystemMessageParts(message: ChatMessage) {
+  const payload = message.structuredPayload;
+  if (!payload || payload.eventType !== "side_chat_started") return null;
+
+  const sourceConversationId = readStructuredPayloadString(payload, "sourceConversationId");
+  if (!sourceConversationId) return null;
+  const sourceConversationTitle =
+    readStructuredPayloadString(payload, "sourceConversationTitle")
+    ?? legacyChatForkSourceTitleFromBody(message.body, sourceConversationId)
+    ?? "source chat";
+
+  return {
+    sourceConversationId,
+    sourceConversationTitle,
+  };
+}
+
 function isAutomationSystemMessage(message: ChatMessage) {
   const eventType = message.structuredPayload?.eventType;
   return eventType === "automation_source" || eventType === "automation_created";
@@ -1479,6 +1496,23 @@ export function ChatSystemMessageBody({
   const issueCreatedParts = issueCreatedSystemMessageParts(message);
   const automationSourceParts = automationSourceSystemMessageParts(message);
   const chatForkParts = chatForkSystemMessageParts(message);
+  const sideChatStartedParts = sideChatStartedSystemMessageParts(message);
+
+  if (sideChatStartedParts) {
+    return (
+      <span className="min-w-0 flex-1 leading-5">
+        Side Chat started from{" "}
+        <Link
+          to={`/messenger/chat/${sideChatStartedParts.sourceConversationId}`}
+          className="chat-system-issue-link"
+          aria-label={`Open source chat ${sideChatStartedParts.sourceConversationTitle}`}
+        >
+          {sideChatStartedParts.sourceConversationTitle}
+        </Link>
+        .
+      </span>
+    );
+  }
 
   if (chatForkParts) {
     const sourceChatHref = `chat://${chatForkParts.sourceConversationId}`;
