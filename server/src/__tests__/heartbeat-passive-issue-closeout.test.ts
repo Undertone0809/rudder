@@ -767,6 +767,16 @@ describe("heartbeat passive issue closeout", () => {
       linkedIssueId: issueId,
     });
     expect(automationRun?.completedAt).toBeTruthy();
+    expect(automationRun?.linkedChatConversationId).toBeTruthy();
+
+    const chatActivity = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.entityId, automationRun!.linkedChatConversationId!));
+    expect(chatActivity).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: "chat.created", runId: null }),
+      expect.objectContaining({ action: "chat.message_added", runId: null }),
+    ]));
 
     const closeoutActivity = await db
       .select()

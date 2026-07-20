@@ -107,7 +107,6 @@ export async function publishAutomationRunOutputToChat(
             actorType: "system",
             actorId: "automation-chat-output",
             agentId: row.assigneeAgentId,
-            runId: row.runId,
           },
         }, tx as unknown as Db);
       conversationId = created.conversation.id;
