@@ -5098,7 +5098,13 @@ describe("messengerService and issue follows", () => {
     expect(thread.detail.items[1]?.origin).toEqual(expect.objectContaining({
       runId: newerRunId,
       scene: "issue",
-      issueId: expect.any(String),
+      targetId: null,
+      conversationId: null,
+      messageId: null,
+      issueId: null,
+      automationRunId: null,
+      automationId: null,
+      wakeupRequestId: null,
       sourceState: "source_unavailable",
     }));
     expect(thread.detail.items[1]?.metadata).not.toHaveProperty("contextSnapshot");
@@ -5404,18 +5410,38 @@ describe("messengerService and issue follows", () => {
     });
     expect(items.get(runIds.deleted)?.origin).toEqual(expect.objectContaining({
       scene: "issue",
+      targetId: null,
+      conversationId: null,
+      messageId: null,
+      issueId: null,
+      automationRunId: null,
+      automationId: null,
+      wakeupRequestId: null,
       targetLabel: null,
       sourceState: "source_unavailable",
     }));
     expect(items.get(runIds.crossOrg)?.origin).toEqual(expect.objectContaining({
       scene: "issue",
+      targetId: null,
+      conversationId: null,
+      messageId: null,
+      issueId: null,
+      automationRunId: null,
+      automationId: null,
+      wakeupRequestId: null,
       targetLabel: null,
       sourceState: "source_unavailable",
     }));
     expect(items.get(runIds.crossOrg)?.actions).not.toContainEqual(expect.objectContaining({ label: "Open issue" }));
     expect(items.get(runIds.heartbeatCrossOrg)?.origin).toEqual(expect.objectContaining({
       scene: "heartbeat",
-      wakeupRequestId: crossOrgWakeupRequestId,
+      targetId: null,
+      conversationId: null,
+      messageId: null,
+      issueId: null,
+      automationRunId: null,
+      automationId: null,
+      wakeupRequestId: null,
       sourceState: "source_unavailable",
     }));
     expect(items.get(runIds.heartbeatCrossOrg)?.actions).not.toContainEqual(
@@ -5423,6 +5449,13 @@ describe("messengerService and issue follows", () => {
     );
     expect(items.get(runIds.legacy)?.origin).toEqual(expect.objectContaining({
       scene: "heartbeat",
+      targetId: null,
+      conversationId: null,
+      messageId: null,
+      issueId: null,
+      automationRunId: null,
+      automationId: null,
+      wakeupRequestId: null,
       targetLabel: null,
       sourceState: "legacy_unknown",
     }));

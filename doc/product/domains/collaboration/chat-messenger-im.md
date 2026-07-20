@@ -1910,6 +1910,10 @@ Product model:
 
 - Messenger thread directory includes chat threads and domain-derived attention
   threads such as issue, approval, failed run, and automation-created work.
+- Failed-run cards expose a normalized scene and trigger plus an
+  organization-verified source label, status, and action for Chat, Heartbeat,
+  Issue/Review, and Automation runs. `sourceState` distinguishes `available`,
+  `source_unavailable`, and `legacy_unknown` provenance.
 - Messenger also presents Saved Views as durable directory items, but a Saved
   View is not a message thread and is excluded from thread attention semantics.
 - Threads support read/unread state, previews, pin/archive/delete where the
@@ -1930,6 +1934,9 @@ Flow:
 5. Actions such as pin/archive/delete route to the owning chat/thread behavior.
 6. Messenger merges Saved Views into their fixed section or custom-group
    placement without sending them through read-marker or attention aggregation.
+7. Failed-run origin hydration starts from a redacted allowlist and restores
+   source entity IDs and navigation only after the source row is verified in
+   the current organization.
 
 Invariants:
 
@@ -1942,12 +1949,21 @@ Invariants:
   mark-read or mark-unread actions, or a fabricated latest-message/activity
   timestamp. Saving, opening, hiding, restoring, regrouping, or deleting it must
   not change Messenger attention badges.
+- Failed-run payloads must never expose raw `contextSnapshot` data, secrets, or
+  entity IDs copied from a deleted, missing, or cross-organization source.
+  Unavailable and legacy origins remain non-navigable failed-run cards; source
+  actions exist only when the referenced entity was verified in the current
+  organization.
 
 Evidence:
 
 - Messenger contract E2E covers ordering, previews, read state, groups,
   redirects, empty state, pin/archive/delete, issue notifications, approvals,
   and automation-created issue attention.
+- Failed-run service tests cover available and unavailable Chat, Heartbeat,
+  Issue/Review, and Automation origins, organization-boundary redaction, and
+  legacy fallback. Messenger contract E2E covers normalized source labels,
+  status, navigation, and non-navigable unavailable cards.
 
 ## MESSENGER.THREAD.PREVIEW.001
 

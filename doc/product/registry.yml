@@ -337,17 +337,20 @@ contracts:
       - doc/product/domains/execution/agent-runs.md
     related_code:
       - packages/shared/src/agent-run.ts
+      - server/src/services/messenger-run-origin.ts
       - server/src/services/runtime-kernel/heartbeat.execute.ts
       - server/src/routes/agents.management-routes.ts
       - ui/src/pages/AgentDetail.runs.tsx
     related_tests:
       - packages/shared/src/agent-run.test.ts
+      - server/src/__tests__/messenger-service.test.ts
       - packages/agent-runtime-utils/src/server-utils.test.ts
       - server/src/__tests__/codex-local-execute.test.ts
       - server/src/__tests__/heartbeat-workspace-preflight.test.ts
       - ui/src/pages/AgentDetail.run-filters.test.ts
       - ui/src/pages/AgentDetail.runs.test.ts
       - tests/e2e/agent-runs-filter-menu.spec.ts
+      - tests/e2e/messenger-contract.spec.ts
     related_plans:
       - doc/plans/2026-06-20-agent-run-unification-completion.md
       - doc/plans/2026-06-24-agent-run-scene-runtime-contract.md
@@ -1277,7 +1280,9 @@ contracts:
     related_code:
       - server/src/routes/onboarding.ts
       - server/src/services/messenger.ts
+      - server/src/services/messenger-run-origin.ts
       - server/src/routes/sidebar-badges.ts
+      - ui/src/components/messenger/MessengerRunOrigin.tsx
       - ui/src/pages/Messenger.tsx
     related_tests:
       - server/src/__tests__/messenger-service.test.ts

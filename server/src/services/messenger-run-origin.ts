@@ -41,7 +41,18 @@ function descriptorForOrigin(
   },
 ): MessengerRunOriginDescriptor {
   const base: MessengerRunOriginDescriptor = {
-    ...origin,
+    runId: origin.runId,
+    scene: origin.scene,
+    targetType: origin.targetType,
+    targetId: null,
+    triggerKind: origin.triggerKind,
+    invocationSource: origin.invocationSource,
+    conversationId: null,
+    messageId: null,
+    issueId: null,
+    automationRunId: null,
+    automationId: null,
+    wakeupRequestId: null,
     targetLabel: null,
     targetStatus: null,
     sourceState: "legacy_unknown",
@@ -54,7 +65,16 @@ function descriptorForOrigin(
     if (!conversation || message?.conversationId !== origin.conversationId) {
       return { ...base, sourceState: "source_unavailable" };
     }
-    return { ...base, targetLabel: conversation.title, sourceState: "available" };
+    return {
+      ...base,
+      targetId: origin.targetType === "chat_conversation"
+        ? origin.conversationId
+        : origin.targetType === "chat_message" ? origin.messageId : null,
+      conversationId: origin.conversationId,
+      messageId: origin.messageId,
+      targetLabel: conversation.title,
+      sourceState: "available",
+    };
   }
 
   if (origin.scene === "issue" || origin.scene === "review") {
@@ -63,6 +83,8 @@ function descriptorForOrigin(
     if (!issue) return { ...base, sourceState: "source_unavailable" };
     return {
       ...base,
+      targetId: origin.targetType === "issue" ? origin.issueId : null,
+      issueId: origin.issueId,
       targetLabel: issue.identifier ? `${issue.identifier} · ${issue.title}` : issue.title,
       targetStatus: issue.status,
       sourceState: "available",
@@ -78,9 +100,11 @@ function descriptorForOrigin(
     }
     const automationId = origin.automationId ?? automationRun.automationId;
     const automation = hydrated.automations.get(automationId);
-    if (!automation) return { ...base, automationId, sourceState: "source_unavailable" };
+    if (!automation) return { ...base, sourceState: "source_unavailable" };
     return {
       ...base,
+      targetId: origin.targetType === "automation_run" ? origin.automationRunId : null,
+      automationRunId: origin.automationRunId,
       automationId,
       targetLabel: automation.title,
       sourceState: "available",
@@ -98,6 +122,8 @@ function descriptorForOrigin(
   if (!wakeupRequest) return { ...base, sourceState: "source_unavailable" };
   return {
     ...base,
+    targetId: origin.targetType === "wakeup_request" ? origin.wakeupRequestId : null,
+    wakeupRequestId: origin.wakeupRequestId,
     targetLabel: isTimer ? "Timer self-check" : isManual ? "Manual heartbeat" : "Heartbeat wakeup",
     sourceState: "available",
   };

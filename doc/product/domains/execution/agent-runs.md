@@ -43,6 +43,9 @@ Product model:
 - Agent Run is the product facade that derives scene, target type, target id,
   conversation id, message id, automation run id, issue id, and workspace
   context from run columns and context snapshots.
+- `AgentRunOrigin` is the canonical allowlisted provenance projection shared by
+  API and Messenger surfaces. It includes normalized scene/trigger and routing
+  identifiers only; it never exposes the raw context snapshot.
 - Manual is a trigger detail, not a scene. For example, an operator clicking
   `Run heartbeat` creates `scene=heartbeat`, `source=on_demand`, and
   `triggerDetail=manual`.
@@ -95,6 +98,17 @@ This precedence means an automation dispatch linked to an issue remains an
 Automation Run when `automationRunId` is the owning target, while a
 comment/assignment wake that entered through automation-compatible plumbing can
 still resolve as an Issue Run through explicit scene metadata or issue context.
+
+Trigger-kind derivation precedence:
+
+1. Use explicit `contextSnapshot.triggerKind` when present.
+2. Issue comment identity or wake markers resolve to `issue_comment`.
+3. Review, timer, and on-demand manual sources resolve to `review_routing`,
+   `timer`, and `manual` respectively.
+4. Otherwise use `triggerDetail`, falling back to `invocationSource`.
+
+All consumers use this shared normalization rather than interpreting raw run
+snapshots independently.
 
 Flow:
 

@@ -7,6 +7,7 @@ import type { JoinRequest } from "./access.js";
 import type { Approval } from "./approval.js";
 import type { BudgetIncident } from "./budget.js";
 import type { ChatConversation, ChatMessage } from "./chat.js";
+import type { HeartbeatRun } from "./heartbeat.js";
 import type { Issue } from "./issue.js";
 
 export interface MessengerThreadUserState {
@@ -233,6 +234,8 @@ export interface MessengerFailedRunThreadItem extends MessengerThreadItem {
 }
 
 /** @deprecated Use MessengerFailedRunThreadItem. */
-export type MessengerHeartbeatRunThreadItem = MessengerFailedRunThreadItem;
+export interface MessengerHeartbeatRunThreadItem extends MessengerThreadItem {
+  run: HeartbeatRun;
+}
 
 export type MessengerSystemThreadItem = MessengerEvent | MessengerFailedRunThreadItem;
