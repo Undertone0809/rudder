@@ -590,13 +590,18 @@ Evidence:
 
 Why:
 
-- Organization export/import is how agent-team knowledge, issues, automations,
-  skills, resources, and files can move between instances without becoming an
-  unsafe database dump.
+- Organization export/import moves the supported agent-team configuration and
+  work records between instances without becoming an unsafe database dump.
 
 Product model:
 
 - Export builds a portable file bundle plus `.rudder.yaml` manifest.
+- The current portable entity set is organization settings, agents, projects
+  and their workspace definitions, issues (including Automation definitions),
+  and skills.
+- Goals, Library files, organization resources, and project resource
+  attachments are not currently portable. Imported issues are not linked to a
+  source Goal.
 - Import previews dependencies, collisions, secrets/env requirements, and
   selected entities before applying.
 - Export jobs preserve progress and result artifacts.
