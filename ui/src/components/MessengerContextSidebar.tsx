@@ -635,7 +635,7 @@ export function MessengerContextSidebar() {
   const unreadScrollCursorRef = useRef<string | null>(null);
   const handledUnreadScrollRequestIdRef = useRef(0);
   const unreadLoadMoreRequestRef = useRef<{ requestId: number; loadedCount: number } | null>(null);
-  const unreadCustomGroupExpansionIdsRef = useRef<Set<string>>(new Set());
+  const unreadCustomGroupExpansionRequestIdsRef = useRef<Map<string, number>>(new Map());
   const customGroupIconUpdateQueuesRef = useRef<Record<string, Promise<void>>>({});
   const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -2689,22 +2689,24 @@ export function MessengerContextSidebar() {
       .map((sectionKey) => customGroupBySectionKey.get(sectionKey) ?? null)
       .find((group) => group?.collapsed) ?? null;
     if (collapsedCustomGroup) {
-      if (!unreadCustomGroupExpansionIdsRef.current.has(collapsedCustomGroup.id)) {
-        unreadCustomGroupExpansionIdsRef.current.add(collapsedCustomGroup.id);
-        updateCustomGroupMutation.mutate(
-          { groupId: collapsedCustomGroup.id, data: { collapsed: false } },
-          {
-            onError: () => {
-              unreadCustomGroupExpansionIdsRef.current.delete(collapsedCustomGroup.id);
-            },
-          },
+      if (
+        unreadCustomGroupExpansionRequestIdsRef.current.get(collapsedCustomGroup.id)
+        !== unreadScrollRequestId
+      ) {
+        unreadCustomGroupExpansionRequestIdsRef.current.set(
+          collapsedCustomGroup.id,
+          unreadScrollRequestId,
         );
+        updateCustomGroupMutation.mutate({
+          groupId: collapsedCustomGroup.id,
+          data: { collapsed: false },
+        });
       }
       return;
     }
     for (const sectionKey of unreadScrollTarget.sectionPath) {
       const customGroupId = customGroupIdFromSectionKey(sectionKey);
-      if (customGroupId) unreadCustomGroupExpansionIdsRef.current.delete(customGroupId);
+      if (customGroupId) unreadCustomGroupExpansionRequestIdsRef.current.delete(customGroupId);
     }
 
     if (

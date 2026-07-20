@@ -604,6 +604,68 @@ describe("MessengerContextSidebar unread scroll requests", () => {
     expect(unreadRow?.scrollIntoView).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
   });
 
+  it("attempts a failed automatic custom-group expansion only once per unread request", async () => {
+    window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ "org-1": "project" }));
+    const unreadThread = baseThread("chat:failed-group-expansion", "Failed group expansion", 1);
+    customGroupList = [{
+      id: "failed-project-group",
+      orgId: "org-1",
+      userId: "local-board",
+      name: "Failed project group",
+      icon: "folder",
+      sortOrder: 0,
+      collapsed: true,
+      pinnedAt: null,
+      entries: [{
+        id: "entry-failed-group-expansion",
+        groupId: "failed-project-group",
+        threadKey: unreadThread.threadKey,
+        sortOrder: 0,
+        thread: unreadThread,
+      }],
+    }];
+    messengerModel = {
+      ...messengerModel,
+      threadSummaries: [],
+    };
+    mockUpdateCustomGroup.mockRejectedValue(new Error("network unavailable"));
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      requestMessengerUnreadScroll();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockUpdateCustomGroup).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockUpdateCustomGroup).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      requestMessengerUnreadScroll();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockUpdateCustomGroup).toHaveBeenCalledTimes(2);
+  });
+
   it("loads the next Messenger thread page when the sidebar sentinel enters view", async () => {
     const loadMoreThreadSummaries = vi.fn().mockResolvedValue(undefined);
     messengerModel = {
