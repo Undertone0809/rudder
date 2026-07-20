@@ -19,7 +19,7 @@ import {
   organizations
 } from "@rudderhq/db";
 import { chatInlineVisualMappingsFromStructuredPayload, MESSENGER_FORK_GROUP_DEFAULT_ICON, sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatConversation, type ChatConversationMutability, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessage, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
-import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
@@ -2025,6 +2025,7 @@ export function chatService(db: Db) {
           eq(chatQueuedMessages.id, input.itemId),
           eq(chatQueuedMessages.orgId, input.orgId),
           eq(chatQueuedMessages.conversationId, input.conversationId),
+          isNull(chatQueuedMessages.cancelledAt),
           inArray(chatQueuedMessages.status, ["queued", "steer_pending", "continuation_pending"]),
         ))
         .limit(1)
@@ -2089,6 +2090,7 @@ export function chatService(db: Db) {
         .where(and(
           eq(chatQueuedMessages.id, item.id),
           eq(chatQueuedMessages.version, item.version),
+          isNull(chatQueuedMessages.cancelledAt),
         ))
         .returning();
       if (!updatedItem) throw conflict("Queued feedback changed while continuation was being scheduled");
@@ -2123,6 +2125,7 @@ export function chatService(db: Db) {
           eq(chatQueuedMessages.conversationId, input.conversationId),
           eq(chatQueuedMessages.id, input.itemId),
           eq(chatQueuedMessages.status, "queued"),
+          isNull(chatQueuedMessages.cancelledAt),
         ),
       )
       .returning();
@@ -2146,17 +2149,18 @@ export function chatService(db: Db) {
         .from(chatQueuedMessages)
         .where(and(
           inArray(chatQueuedMessages.status, ["continuation_pending", "steer_pending", "queued"]),
+          isNull(chatQueuedMessages.cancelledAt),
           sql`jsonb_typeof(${chatQueuedMessages.requestActor}) = 'object'`,
           or(
             isNull(chatQueuedMessages.deliveryLeaseExpiresAt),
             lt(chatQueuedMessages.deliveryLeaseExpiresAt, now),
           ),
-          sql`${chatQueuedMessages.status} <> 'steer_pending' or coalesce((
+          sql`(${chatQueuedMessages.status} <> 'steer_pending' or coalesce((
             select steer_action.provider_disposition
             from ${chatControlActions} as steer_action
             where steer_action.id = ${chatQueuedMessages.controlActionId}
             limit 1
-          ), 'not_sent') in ('not_sent', 'rejected')`,
+          ), 'not_sent') in ('not_sent', 'rejected'))`,
         ))
         .orderBy(
           sql`case
@@ -2313,6 +2317,7 @@ export function chatService(db: Db) {
           .where(and(
             eq(chatQueuedMessages.id, candidate.id),
             eq(chatQueuedMessages.version, candidate.version),
+            isNull(chatQueuedMessages.cancelledAt),
           ))
           .returning();
         if (!claimed) throw conflict("Queued continuation changed while being claimed");
@@ -2363,6 +2368,7 @@ export function chatService(db: Db) {
         eq(chatQueuedMessages.continuationGenerationId, input.generationId),
         eq(chatQueuedMessages.deliveryLeaseToken, input.leaseToken),
         eq(chatQueuedMessages.deliveryLeaseEpoch, input.leaseEpoch),
+        isNull(chatQueuedMessages.cancelledAt),
         inArray(chatQueuedMessages.status, SERVER_QUEUE_RUNNING_STATUSES),
       ))
       .returning({ id: chatQueuedMessages.id });
@@ -2393,13 +2399,19 @@ export function chatService(db: Db) {
         .then((rows) => rows[0] ?? null);
       if (!item) return null;
       const isSteer = item.deliveryIntent === "steer" || item.status === "running_next";
-      const succeeded = input.status === "completed";
-      const nextStatus = succeeded
+      const cancelled = Boolean(item.cancelledAt);
+      const succeeded = !cancelled && input.status === "completed";
+      const nextStatus = cancelled
+        ? "cancelled"
+        : succeeded
         ? (isSteer ? "delivered" : "completed")
         : "failed_actionable";
-      const nextDisposition = succeeded
+      const nextDisposition = cancelled
+        ? "cancelled"
+        : succeeded
         ? (isSteer ? "delivered" : null)
         : "failed_actionable";
+      const terminalReason = cancelled ? "operator_cancelled" : (input.reason ?? input.status);
       const [updated] = await tx
         .update(chatQueuedMessages)
         .set({
@@ -2408,8 +2420,8 @@ export function chatService(db: Db) {
           deliveryLeaseToken: null,
           deliveryLeaseOwner: null,
           deliveryLeaseExpiresAt: null,
-          lastDeliveryReason: succeeded ? null : (input.reason ?? input.status),
-          reconciliationReason: succeeded ? null : (input.reason ?? input.status),
+          lastDeliveryReason: succeeded ? null : terminalReason,
+          reconciliationReason: succeeded ? null : terminalReason,
           version: sql`${chatQueuedMessages.version} + 1`,
           updatedAt: now,
         })
@@ -2418,18 +2430,19 @@ export function chatService(db: Db) {
           eq(chatQueuedMessages.version, item.version),
         ))
         .returning();
+      if (!updated) return null;
       if (item.controlActionId) {
         await tx
           .update(chatControlActions)
           .set({
             localDisposition: nextDisposition ?? (succeeded ? "delivered" : "failed_actionable"),
-            lastError: succeeded ? null : (input.reason ?? input.status),
+            lastError: succeeded ? null : terminalReason,
             resolvedAt: now,
             updatedAt: now,
           })
           .where(eq(chatControlActions.id, item.controlActionId));
       }
-      return updated ? hydrateQueuedMessage(updated) : null;
+      return hydrateQueuedMessage(updated);
     });
   }
 
@@ -2469,12 +2482,18 @@ export function chatService(db: Db) {
         || generation.status === "closing"
       ));
       const isSteer = item.deliveryIntent === "steer" || item.status === "running_next";
-      const nextStatus = providerMayHaveStarted
+      const cancelled = Boolean(item.cancelledAt);
+      const nextStatus = cancelled
+        ? "cancelled"
+        : providerMayHaveStarted
         ? (isSteer ? "acceptance_unknown" : "failed_actionable")
         : (isSteer ? "continuation_pending" : "queued");
-      const nextDisposition = providerMayHaveStarted
+      const nextDisposition = cancelled
+        ? "cancelled"
+        : providerMayHaveStarted
         ? (isSteer ? "acceptance_unknown" : "failed_actionable")
         : (isSteer ? "continuation_pending" : null);
+      const releaseReason = cancelled ? "operator_cancelled" : input.reason;
       const [updated] = await tx
         .update(chatQueuedMessages)
         .set({
@@ -2484,8 +2503,8 @@ export function chatService(db: Db) {
           deliveryLeaseToken: null,
           deliveryLeaseOwner: null,
           deliveryLeaseExpiresAt: null,
-          lastDeliveryReason: input.reason,
-          reconciliationReason: input.reason,
+          lastDeliveryReason: releaseReason,
+          reconciliationReason: releaseReason,
           version: sql`${chatQueuedMessages.version} + 1`,
           updatedAt: now,
         })
@@ -2494,12 +2513,13 @@ export function chatService(db: Db) {
           eq(chatQueuedMessages.version, item.version),
         ))
         .returning();
+      if (!updated) return null;
       if (generation) {
         await tx
           .update(chatGenerations)
           .set({
             status: "aborted",
-            terminalReason: input.reason,
+            terminalReason: releaseReason,
             controlState: providerMayHaveStarted ? "control_lost" : "terminal",
             runtimeTerminalAt: now,
             completedAt: now,
@@ -2513,13 +2533,13 @@ export function chatService(db: Db) {
           .set({
             localDisposition: nextDisposition ?? "pending",
             providerDisposition: providerMayHaveStarted ? "unverified" : "not_sent",
-            lastError: input.reason,
+            lastError: releaseReason,
             resolvedAt: providerMayHaveStarted ? now : null,
             updatedAt: now,
           })
           .where(eq(chatControlActions.id, item.controlActionId));
       }
-      return updated ? hydrateQueuedMessage(updated) : null;
+      return hydrateQueuedMessage(updated);
     });
   }
 
@@ -2565,6 +2585,7 @@ export function chatService(db: Db) {
           and(
             eq(chatQueuedMessages.conversationId, conversationId),
             eq(chatQueuedMessages.status, "queued"),
+            isNull(chatQueuedMessages.cancelledAt),
           ),
         )
         .orderBy(asc(chatQueuedMessages.position), asc(chatQueuedMessages.createdAt))
@@ -2587,6 +2608,7 @@ export function chatService(db: Db) {
             eq(chatQueuedMessages.conversationId, conversationId),
             eq(chatQueuedMessages.status, "queued"),
             eq(chatQueuedMessages.version, candidate.version),
+            isNull(chatQueuedMessages.cancelledAt),
           ),
         )
         .returning();
@@ -2600,6 +2622,27 @@ export function chatService(db: Db) {
     reason: "delivery_failed" | "delivery_aborted" | "claim_expired";
   }) {
     const now = new Date();
+    const [cancelledRow] = await db
+      .update(chatQueuedMessages)
+      .set({
+        status: "cancelled",
+        deliveryDisposition: "cancelled",
+        lastDeliveryReason: "operator_cancelled",
+        version: sql`${chatQueuedMessages.version} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(chatQueuedMessages.conversationId, input.conversationId),
+          eq(chatQueuedMessages.id, input.itemId),
+          eq(chatQueuedMessages.status, "dequeue_claimed"),
+          isNotNull(chatQueuedMessages.cancelledAt),
+          isNull(chatQueuedMessages.deliveryLeaseToken),
+          isNull(chatQueuedMessages.continuationGenerationId),
+        ),
+      )
+      .returning();
+    if (cancelledRow) return hydrateQueuedMessage(cancelledRow);
     const [row] = await db
       .update(chatQueuedMessages)
       .set({
@@ -2613,6 +2656,9 @@ export function chatService(db: Db) {
           eq(chatQueuedMessages.conversationId, input.conversationId),
           eq(chatQueuedMessages.id, input.itemId),
           eq(chatQueuedMessages.status, "dequeue_claimed"),
+          isNull(chatQueuedMessages.cancelledAt),
+          isNull(chatQueuedMessages.deliveryLeaseToken),
+          isNull(chatQueuedMessages.continuationGenerationId),
         ),
       )
       .returning();
@@ -2621,18 +2667,41 @@ export function chatService(db: Db) {
 
   async function reclaimStaleQueuedMessageClaims(conversationId: string) {
     const cutoff = new Date(Date.now() - QUEUED_MESSAGE_CLAIM_LEASE_MS);
+    const now = new Date();
+    await db
+      .update(chatQueuedMessages)
+      .set({
+        status: "cancelled",
+        deliveryDisposition: "cancelled",
+        lastDeliveryReason: "operator_cancelled",
+        version: sql`${chatQueuedMessages.version} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(chatQueuedMessages.conversationId, conversationId),
+          eq(chatQueuedMessages.status, "dequeue_claimed"),
+          isNotNull(chatQueuedMessages.cancelledAt),
+          isNull(chatQueuedMessages.deliveryLeaseToken),
+          isNull(chatQueuedMessages.continuationGenerationId),
+          lt(chatQueuedMessages.updatedAt, cutoff),
+        ),
+      );
     await db
       .update(chatQueuedMessages)
       .set({
         status: "queued",
         lastDeliveryReason: "claim_expired",
         version: sql`${chatQueuedMessages.version} + 1`,
-        updatedAt: new Date(),
+        updatedAt: now,
       })
       .where(
         and(
           eq(chatQueuedMessages.conversationId, conversationId),
           eq(chatQueuedMessages.status, "dequeue_claimed"),
+          isNull(chatQueuedMessages.cancelledAt),
+          isNull(chatQueuedMessages.deliveryLeaseToken),
+          isNull(chatQueuedMessages.continuationGenerationId),
           lt(chatQueuedMessages.updatedAt, cutoff),
         ),
       );
@@ -2650,6 +2719,7 @@ export function chatService(db: Db) {
         and(
           eq(chatQueuedMessages.conversationId, input.conversationId),
           eq(chatQueuedMessages.id, input.itemId),
+          isNull(chatQueuedMessages.cancelledAt),
         ),
       )
       .limit(1)
