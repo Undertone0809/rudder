@@ -1104,6 +1104,19 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       return;
     }
 
+    if (stop.outcome === "stop_in_progress" && !stop.generation.runtimeTerminalAt) {
+      const localInterruptRequested = startupInterruptRequested || cancelActiveChatGeneration(conversation.id);
+      res.json({
+        stopped: Boolean(localInterruptRequested),
+        controlActionId,
+        generationId,
+        disposition: "stopping",
+        acceptedThroughSeq: stop.action.acceptedThroughSeq,
+        frozenBodyHash: stop.action.frozenBodyHash,
+      });
+      return;
+    }
+
     if (stop.idempotent && stop.generation.runtimeTerminalAt) {
       const terminalDisposition = stop.generation.status === "stopped"
         || stop.action.localDisposition === "stopped"

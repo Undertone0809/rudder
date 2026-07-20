@@ -211,6 +211,10 @@ Product model:
 - When a user sends a local chat follow-up while that conversation already has
   an active assistant generation, Rudder parks the follow-up in a visible
   running queue instead of starting a second concurrent reply in the same chat.
+- Editing or retrying a historical user message is not a queued follow-up. If
+  the conversation still has an active assistant generation, the operator must
+  Stop that response first; the edit or retry must never be converted into a
+  Queue row or presented as Steer feedback.
 - Queued follow-ups preserve the queued body and composer context until they are
   delivered. Operators can edit or delete ordinary queued follow-ups while they
   remain queued. The server, rather than the open browser, owns claiming and
@@ -353,6 +357,11 @@ Invariants:
   deltas, final messages, reasoning, and summary data arriving afterward must
   not mutate the chat body, reorder progress, or replace the prefix after
   reload.
+- Once a generation is already `stop_requested` or `stopping`, a repeated Stop
+  may request the local interrupt again but must remain in progress. A server
+  instance without the runtime owner must not synthesize
+  `interrupted_unverified` terminal evidence that can race the owning
+  instance's later verified `stopped` result.
 - Refreshing an assistant answer is allowed only for completed assistant
   messages in locally mutable chats. External-bound conversations that require a
   fork-to-continue path must not expose direct refresh.
@@ -439,6 +448,9 @@ Evidence:
 - Chat edit streaming E2E covers switching between prior and active turn
   branches while the replacement branch is still streaming, with the active
   generation still stoppable.
+- Chat route tests cover rejecting edit/retry admission into Queue while a reply
+  is active and keeping cross-instance repeated Stop requests in `stopping`
+  without manufacturing terminal evidence.
 - Chat concurrent-streaming E2E covers queueing a follow-up during an active
   stream, editing the queued body, native same-turn Codex Steer, fallback
   continuation, immediate Stop, server-owned Stop-then-Steer delivery, retained
