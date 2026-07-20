@@ -1,3 +1,4 @@
+import type { AgentRunOrigin } from "../agent-run.js";
 import type {
   MessengerSystemThreadKind as MessengerSystemThreadKindBase,
   MessengerThreadKind,
@@ -6,7 +7,6 @@ import type { JoinRequest } from "./access.js";
 import type { Approval } from "./approval.js";
 import type { BudgetIncident } from "./budget.js";
 import type { ChatConversation, ChatMessage } from "./chat.js";
-import type { HeartbeatRun } from "./heartbeat.js";
 import type { Issue } from "./issue.js";
 
 export interface MessengerThreadUserState {
@@ -220,6 +220,19 @@ export interface MessengerJoinRequestThreadItem extends MessengerThreadItem {
   joinRequest: JoinRequest;
 }
 
-export interface MessengerHeartbeatRunThreadItem extends MessengerThreadItem {
-  run: HeartbeatRun;
+export type MessengerRunOriginSourceState = "available" | "source_unavailable" | "legacy_unknown";
+
+export interface MessengerRunOriginDescriptor extends AgentRunOrigin {
+  targetLabel: string | null;
+  targetStatus: string | null;
+  sourceState: MessengerRunOriginSourceState;
 }
+
+export interface MessengerFailedRunThreadItem extends MessengerThreadItem {
+  origin: MessengerRunOriginDescriptor;
+}
+
+/** @deprecated Use MessengerFailedRunThreadItem. */
+export type MessengerHeartbeatRunThreadItem = MessengerFailedRunThreadItem;
+
+export type MessengerSystemThreadItem = MessengerEvent | MessengerFailedRunThreadItem;

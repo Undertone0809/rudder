@@ -51,7 +51,8 @@ export {
   type PluginStateScopeKind, type PluginStatus, type PluginUiSlotEntityType, type PluginUiSlotType, type PluginWebhookDeliveryStatus, type PrincipalType, type ProjectIconName, type ProjectResourceAttachmentRole, type ProjectStatus, type RudderAgentV1McpToolName, type SecretProvider, type SideChatState, type StorageProvider, type WakeupRequestStatus, type WakeupTriggerDetail
 } from "./constants.js";
 
-export { resolveAgentRunScene, toAgentRun, toAgentRuns, toHeartbeatRun, toHeartbeatRuns, toPublicHeartbeatRunContextSnapshot } from "./agent-run.js";
+export { resolveAgentRunScene, toAgentRun, toAgentRunOrigin, toAgentRuns, toHeartbeatRun, toHeartbeatRuns, toPublicHeartbeatRunContextSnapshot } from "./agent-run.js";
+export type { AgentRunOrigin, AgentRunOriginInput } from "./agent-run.js";
 export {
   WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS, WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS, WORKSPACE_BACKUP_OFFLINE_INTERVAL_HOURS,
   WORKSPACE_BACKUP_RUNNING_INTERVAL_HOURS
@@ -144,7 +145,7 @@ export type {
   LibraryDocumentIssueLink,
   LibraryDocumentRevision,
   LibraryDocumentSummary, LibraryEntry, LiveEvent, MessengerApprovalThreadItem,
-  MessengerBudgetThreadItem, MessengerChatThreadDetail, MessengerCustomGroup, MessengerCustomGroupEntry, MessengerCustomGroupHydratedEntry, MessengerCustomGroupHydratedSavedViewEntry, MessengerCustomGroupHydratedThreadEntry, MessengerCustomGroupWithEntries, MessengerCustomGroupsResponse, MessengerDirectoryItem, MessengerEvent, MessengerHeartbeatRunThreadItem, MessengerIssueThreadItem, MessengerJoinRequestThreadItem, MessengerSavedView, MessengerSavedViewPage, MessengerSavedViewPageInfo, MessengerSavedViewTarget, MessengerSavedViewTargetKind, MessengerThreadAction, MessengerThreadDetail,
+  MessengerBudgetThreadItem, MessengerChatThreadDetail, MessengerCustomGroup, MessengerCustomGroupEntry, MessengerCustomGroupHydratedEntry, MessengerCustomGroupHydratedSavedViewEntry, MessengerCustomGroupHydratedThreadEntry, MessengerCustomGroupWithEntries, MessengerCustomGroupsResponse, MessengerDirectoryItem, MessengerEvent, MessengerFailedRunThreadItem, MessengerHeartbeatRunThreadItem, MessengerIssueThreadItem, MessengerJoinRequestThreadItem, MessengerRunOriginDescriptor, MessengerRunOriginSourceState, MessengerSavedView, MessengerSavedViewPage, MessengerSavedViewPageInfo, MessengerSavedViewTarget, MessengerSavedViewTargetKind, MessengerSystemThreadItem, MessengerThreadAction, MessengerThreadDetail,
   MessengerThreadItem, MessengerThreadPageInfo,
   MessengerThreadSummary,
   MessengerThreadSummaryPage, MessengerThreadUserState, OperatorProfileSettings, Organization, OrganizationExportJob,

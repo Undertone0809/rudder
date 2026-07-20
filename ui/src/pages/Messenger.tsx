@@ -16,6 +16,7 @@ import {
 } from "@/components/ApprovalPayload";
 import { HoverTimestampLabel } from "@/components/HoverTimestamp";
 import { MarkdownBody } from "@/components/MarkdownBody";
+import { failedRunOrigin, MessengerRunOrigin } from "@/components/messenger/MessengerRunOrigin";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -42,6 +43,7 @@ import type {
   MessengerApprovalThreadItem,
   MessengerEvent,
   MessengerIssueThreadItem,
+  MessengerSystemThreadItem,
   Project,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -194,22 +196,6 @@ function IssueStatusTransition({ change }: { change: { from: string | null; to: 
       <StatusBadge status={change.to} />
     </div>
   );
-}
-
-function failedRunIssueTitle(metadata: Record<string, unknown>) {
-  if (!metadata.contextSnapshot || typeof metadata.contextSnapshot !== "object") return null;
-  const snapshot = metadata.contextSnapshot as Record<string, unknown>;
-  if (!snapshot.issue || typeof snapshot.issue !== "object") return null;
-  const issue = snapshot.issue as Record<string, unknown>;
-  return typeof issue.title === "string" && issue.title.trim().length > 0 ? issue.title.trim() : null;
-}
-
-function failedRunIssueStatus(metadata: Record<string, unknown>) {
-  if (!metadata.contextSnapshot || typeof metadata.contextSnapshot !== "object") return null;
-  const snapshot = metadata.contextSnapshot as Record<string, unknown>;
-  if (!snapshot.issue || typeof snapshot.issue !== "object") return null;
-  const issue = snapshot.issue as Record<string, unknown>;
-  return typeof issue.status === "string" && issue.status.trim().length > 0 ? issue.status.trim() : null;
 }
 
 function TimelineDivider({ date }: { date: Date }) {
@@ -901,21 +887,13 @@ function MessengerSystemCard({
   item,
   orgId,
 }: {
-  item: MessengerEvent;
+  item: MessengerSystemThreadItem;
   orgId: string;
 }) {
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
   const metadata = item.metadata as Record<string, unknown>;
-  const relatedIssueId =
-    item.kind === "failed-runs" &&
-    metadata.contextSnapshot &&
-    typeof metadata.contextSnapshot === "object" &&
-    typeof (metadata.contextSnapshot as Record<string, unknown>).issueId === "string"
-      ? ((metadata.contextSnapshot as Record<string, unknown>).issueId as string)
-      : null;
-  const relatedIssueTitle = item.kind === "failed-runs" ? failedRunIssueTitle(metadata) : null;
-  const relatedIssueStatus = item.kind === "failed-runs" ? failedRunIssueStatus(metadata) : null;
+  const origin = failedRunOrigin(item);
 
   const actionMutation = useMutation({
     mutationFn: async (action: MessengerEvent["actions"][number]) => runSystemAction(action),
@@ -983,23 +961,7 @@ function MessengerSystemCard({
         }
       >
         <div className="flex flex-col gap-2 text-xs">
-          {relatedIssueTitle && relatedIssueId ? (
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              Issue{" "}
-              <Link
-                to={`/issues/${relatedIssueId}`}
-                className="font-medium text-blue-700 underline-offset-4 hover:text-blue-800 hover:underline dark:text-blue-300 dark:hover:text-blue-200"
-                data-testid={`messenger-failed-run-issue-title-${item.id}`}
-              >
-                {relatedIssueTitle}
-              </Link>
-              {relatedIssueStatus ? (
-                <span data-testid={`messenger-failed-run-issue-status-${item.id}`}>
-                  <StatusBadge status={relatedIssueStatus} />
-                </span>
-              ) : null}
-            </div>
-          ) : null}
+          {origin ? <MessengerRunOrigin origin={origin} /> : null}
           <div className="flex flex-wrap gap-2">
             {typeof metadata.requestType === "string" ? (
               <span className="rounded-[calc(var(--radius-sm)-1px)] bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toAgentRun, toHeartbeatRun, toPublicHeartbeatRunContextSnapshot, type HeartbeatRun } from "./index.js";
+import { toAgentRun, toAgentRunOrigin, toHeartbeatRun, toPublicHeartbeatRunContextSnapshot, type HeartbeatRun } from "./index.js";
 
 function heartbeatRun(overrides: Partial<HeartbeatRun>): HeartbeatRun {
   return {
@@ -137,6 +137,45 @@ describe("toAgentRun", () => {
     expect(run.targetId).toBe("conversation-1");
     expect(run.conversationId).toBe("conversation-1");
     expect(run.messageId).toBe("assistant-message-1");
+    expect(run.issueId).toBeNull();
+  });
+
+  it("projects an allowlisted origin without exposing private snapshot fields", () => {
+    const origin = toAgentRunOrigin(heartbeatRun({
+      id: "issue-origin-run",
+      invocationSource: "assignment",
+      triggerDetail: "system",
+      wakeupRequestId: "wakeup-1",
+      contextSnapshot: {
+        scene: "issue",
+        triggerKind: "issue_comment",
+        targetType: "issue",
+        targetId: "issue-1",
+        issueId: "issue-1",
+        resumeSessionDisplayId: "private-display-id",
+        resumeSessionParams: {
+          cwd: "/private/workspace",
+          token: "private-token",
+        },
+        credentials: { apiKey: "private-key" },
+      },
+    }));
+
+    expect(origin).toEqual({
+      runId: "issue-origin-run",
+      scene: "issue",
+      targetType: "issue",
+      targetId: "issue-1",
+      triggerKind: "issue_comment",
+      invocationSource: "assignment",
+      conversationId: null,
+      messageId: null,
+      issueId: "issue-1",
+      automationRunId: null,
+      automationId: null,
+      wakeupRequestId: "wakeup-1",
+    });
+    expect(JSON.stringify(origin)).not.toMatch(/private-display-id|private\/workspace|private-token|private-key/);
   });
 
   it("honors explicit automation target metadata while preserving linked chat facts", () => {
@@ -179,6 +218,7 @@ describe("toAgentRun", () => {
     expect(run.triggerKind).toBe("manual");
     expect(run.targetType).toBe("issue");
     expect(run.targetId).toBe("issue-1");
+    expect(run.issueId).toBe("issue-1");
   });
 
   it("treats issue-comment automation wakes as issue scene runs", () => {
@@ -194,9 +234,10 @@ describe("toAgentRun", () => {
     }));
 
     expect(run.scene).toBe("issue");
-    expect(run.triggerKind).toBe("system");
+    expect(run.triggerKind).toBe("issue_comment");
     expect(run.targetType).toBe("issue");
     expect(run.targetId).toBe("issue-1");
+    expect(run.issueId).toBe("issue-1");
   });
 
   it("keeps automation run identity as automation scene even when linked to an issue", () => {
@@ -214,6 +255,7 @@ describe("toAgentRun", () => {
     expect(run.targetType).toBe("automation_run");
     expect(run.targetId).toBe("automation-run-1");
     expect(run.automationRunId).toBe("automation-run-1");
+    expect(run.issueId).toBe("issue-1");
   });
 
   it("lets an explicit issue scene override automation run linkage", () => {
@@ -259,8 +301,10 @@ describe("toAgentRun", () => {
     }));
 
     expect(run.scene).toBe("review");
+    expect(run.triggerKind).toBe("review_routing");
     expect(run.targetType).toBe("issue");
     expect(run.targetId).toBe("issue-1");
+    expect(run.issueId).toBe("issue-1");
   });
 
   it("normalizes timer invocations to the heartbeat scene", () => {
@@ -273,7 +317,7 @@ describe("toAgentRun", () => {
     }));
 
     expect(run.scene).toBe("heartbeat");
-    expect(run.triggerKind).toBe("system");
+    expect(run.triggerKind).toBe("timer");
     expect(run.targetType).toBe("wakeup_request");
     expect(run.targetId).toBeNull();
   });

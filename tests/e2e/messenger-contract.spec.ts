@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
   activityLog,
+  agentWakeupRequests,
   agents,
   chatContextLinks,
   chatConversationUserStates,
@@ -3097,13 +3098,13 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.getByTestId("messenger-time-issues")).toContainText("Apr 10");
   });
 
-  test("renders failed-run issue titles as links without exposing raw issue ids", async ({ page }, testInfo) => {
+  test("distinguishes failed Chat, Heartbeat, Issue, and missing-source origins", async ({ page }, testInfo) => {
     const organization = await createConfiguredOrganization(page, `Messenger-Failed-${Date.now()}`);
 
     const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {
         title: "Create your first agent",
-        description: "Use this issue to verify failed-run issue links in Messenger.",
+        description: "Use this issue to verify failed-run origins in Messenger.",
         status: "todo",
         priority: "medium",
       },
@@ -3125,44 +3126,105 @@ test.describe("Messenger unified threads contract", () => {
     expect(agentRes.ok()).toBe(true);
     const agent = await agentRes.json();
 
-    const olderRunId = randomUUID();
-    const newerRunId = randomUUID();
-    const olderRunTimestamp = new Date("2026-04-14T02:30:00.000Z");
-    const newerRunTimestamp = new Date("2026-04-14T03:45:00.000Z");
+    const chatConversationId = randomUUID();
+    const chatMessageId = randomUUID();
+    await e2eDb.insert(chatConversations).values({
+      id: chatConversationId,
+      orgId: organization.id,
+      title: "Investigate the failed deployment",
+    });
+    await e2eDb.insert(chatMessages).values({
+      id: chatMessageId,
+      orgId: organization.id,
+      conversationId: chatConversationId,
+      role: "assistant",
+      body: "The deployment check failed.",
+    });
+
+    const issueRunId = randomUUID();
+    const chatRunId = randomUUID();
+    const heartbeatRunId = randomUUID();
+    const heartbeatWakeupRequestId = randomUUID();
+    const missingSourceRunId = randomUUID();
+    const missingIssueId = randomUUID();
+    const issueRunTimestamp = new Date("2026-04-14T02:30:00.000Z");
+    const chatRunTimestamp = new Date("2026-04-14T03:00:00.000Z");
+    const heartbeatRunTimestamp = new Date("2026-04-14T03:30:00.000Z");
+    const missingRunTimestamp = new Date("2026-04-14T04:00:00.000Z");
+    await e2eDb.insert(agentWakeupRequests).values({
+      id: heartbeatWakeupRequestId,
+      orgId: organization.id,
+      agentId: agent.id,
+      source: "timer",
+      triggerDetail: "system",
+      reason: "heartbeat_timer",
+      status: "failed",
+    });
     await e2eDb.insert(heartbeatRuns).values([
       {
-        id: olderRunId,
+        id: issueRunId,
         orgId: organization.id,
         agentId: agent.id,
-        invocationSource: "manual",
+        invocationSource: "assignment",
+        triggerDetail: "system",
         status: "failed",
         error: "Process exited with code 1.",
         stderrExcerpt: "Agent bootstrap failed before tool execution.",
         contextSnapshot: {
+          scene: "issue",
           issueId: issue.id,
-          issue: {
-            title: issue.title,
-          },
+          triggerKind: "issue_comment",
+          credentials: "private-issue-secret",
         },
-        createdAt: olderRunTimestamp,
-        updatedAt: olderRunTimestamp,
+        createdAt: issueRunTimestamp,
+        updatedAt: issueRunTimestamp,
       },
       {
-        id: newerRunId,
+        id: chatRunId,
         orgId: organization.id,
         agentId: agent.id,
-        invocationSource: "manual",
+        invocationSource: "chat",
+        triggerDetail: "chat_assistant_reply_stream",
+        chatConversationId,
         status: "failed",
         error: "Process exited with code 2.",
-        stderrExcerpt: "Agent bootstrap failed again after retry.",
         contextSnapshot: {
-          issueId: issue.id,
-          issue: {
-            title: issue.title,
-          },
+          scene: "chat",
+          assistantMessageId: chatMessageId,
+          workspacePath: "/private/chat/workspace",
         },
-        createdAt: newerRunTimestamp,
-        updatedAt: newerRunTimestamp,
+        createdAt: chatRunTimestamp,
+        updatedAt: chatRunTimestamp,
+      },
+      {
+        id: heartbeatRunId,
+        orgId: organization.id,
+        agentId: agent.id,
+        invocationSource: "timer",
+        triggerDetail: "system",
+        wakeupRequestId: heartbeatWakeupRequestId,
+        status: "failed",
+        error: "Timer self-check failed.",
+        contextSnapshot: {
+          sessionResumeParams: { cwd: "/private/heartbeat/workspace" },
+        },
+        createdAt: heartbeatRunTimestamp,
+        updatedAt: heartbeatRunTimestamp,
+      },
+      {
+        id: missingSourceRunId,
+        orgId: organization.id,
+        agentId: agent.id,
+        invocationSource: "assignment",
+        triggerDetail: "system",
+        status: "failed",
+        error: "Deleted issue source.",
+        contextSnapshot: {
+          scene: "issue",
+          issueId: missingIssueId,
+        },
+        createdAt: missingRunTimestamp,
+        updatedAt: missingRunTimestamp,
       },
     ]);
 
@@ -3179,26 +3241,51 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.getByTestId(threadTestId("agent-errors"))).toHaveCount(0);
 
     const failedRunCards = page.locator('[data-testid^="messenger-system-card-failed-runs-"]');
-    await expect(failedRunCards).toHaveCount(2);
+    await expect(failedRunCards).toHaveCount(4);
     await expect
       .poll(async () => failedRunCards.evaluateAll((elements) => elements.map((element) => element.getAttribute("data-testid"))))
       .toEqual([
-        `messenger-system-card-failed-runs-${olderRunId}`,
-        `messenger-system-card-failed-runs-${newerRunId}`,
+        `messenger-system-card-failed-runs-${issueRunId}`,
+        `messenger-system-card-failed-runs-${chatRunId}`,
+        `messenger-system-card-failed-runs-${heartbeatRunId}`,
+        `messenger-system-card-failed-runs-${missingSourceRunId}`,
       ]);
 
-    const runCard = page.locator(`[data-testid="messenger-system-card-failed-runs-${olderRunId}"]`);
-    await expect(runCard).toContainText("The run hit a system-level execution problem.");
-    await expect(runCard).not.toContainText("Process exited with code 1.");
-    await expect(runCard).not.toContainText("Agent bootstrap failed before tool execution.");
-    const issueLink = runCard.getByTestId(`messenger-failed-run-issue-title-${olderRunId}`);
-    await expect(issueLink).toHaveText("Create your first agent");
-    await expect(issueLink).toHaveAttribute("href", new RegExp(`/issues/${issue.id}$`));
-    await expect(runCard.getByRole("link", { name: "Open issue" })).toHaveCount(0);
-    await expect(runCard).not.toContainText(issue.id);
+    const issueCard = page.getByTestId(`messenger-system-card-failed-runs-${issueRunId}`);
+    await expect(issueCard).toContainText("The run hit a system-level execution problem.");
+    await expect(issueCard).not.toContainText("Process exited with code 1.");
+    await expect(issueCard).not.toContainText("Agent bootstrap failed before tool execution.");
+    await expect(issueCard.getByTestId(`messenger-run-scene-${issueRunId}`)).toHaveText("Issue Run");
+    await expect(issueCard.getByTestId(`messenger-run-target-${issueRunId}`)).toContainText("Create your first agent");
+    await expect(issueCard.getByRole("link", { name: "Open issue" })).toHaveAttribute("href", new RegExp(`/issues/${issue.id}$`));
+    await expect(issueCard.getByRole("button", { name: `Copy full run ID ${issueRunId}` })).toBeVisible();
 
-    await runCard.screenshot({
-      path: testInfo.outputPath("messenger-failed-run-card.png"),
+    const chatCard = page.getByTestId(`messenger-system-card-failed-runs-${chatRunId}`);
+    await expect(chatCard.getByTestId(`messenger-run-scene-${chatRunId}`)).toHaveText("Chat Run");
+    await expect(chatCard.getByTestId(`messenger-run-target-${chatRunId}`)).toHaveText("Investigate the failed deployment");
+    await expect(chatCard.getByRole("link", { name: "Open chat message" })).toHaveAttribute(
+      "href",
+      new RegExp(`/messenger/chat/${chatConversationId}\\?messageId=${chatMessageId}$`),
+    );
+
+    const heartbeatCard = page.getByTestId(`messenger-system-card-failed-runs-${heartbeatRunId}`);
+    await expect(heartbeatCard.getByTestId(`messenger-run-scene-${heartbeatRunId}`)).toHaveText("Heartbeat Run");
+    await expect(heartbeatCard.getByTestId(`messenger-run-target-${heartbeatRunId}`)).toHaveText("Timer self-check");
+    await expect(heartbeatCard).toContainText(heartbeatWakeupRequestId);
+    await heartbeatCard.getByRole("link", { name: "Open heartbeat details" }).click();
+    await expect(page).toHaveURL(new RegExp(`originRunId=${heartbeatRunId}#run-origin-${heartbeatRunId}$`));
+    await expect(heartbeatCard.getByTestId(`messenger-run-origin-details-${heartbeatRunId}`)).toHaveAttribute("open", "");
+
+    const missingSourceCard = page.getByTestId(`messenger-system-card-failed-runs-${missingSourceRunId}`);
+    await expect(missingSourceCard.getByTestId(`messenger-run-source-fallback-${missingSourceRunId}`)).toHaveText("Source unavailable");
+    await expect(missingSourceCard.getByRole("link", { name: "Open issue" })).toHaveCount(0);
+    await expect(mainContent).not.toContainText("private-issue-secret");
+    await expect(mainContent).not.toContainText("/private/chat/workspace");
+    await expect(mainContent).not.toContainText("/private/heartbeat/workspace");
+
+    await mainContent.screenshot({
+      path: testInfo.outputPath("messenger-failed-run-origins.png"),
+      animations: "disabled",
     });
   });
 

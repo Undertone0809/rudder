@@ -101,7 +101,7 @@ export type { LiveEvent } from "./live.js";
 export type {
   IssueFollow,
   IssueFollowEntry, MessengerApprovalThreadItem,
-  MessengerBudgetThreadItem, MessengerChatThreadDetail, MessengerCustomGroup, MessengerCustomGroupEntry, MessengerCustomGroupHydratedEntry, MessengerCustomGroupHydratedSavedViewEntry, MessengerCustomGroupHydratedThreadEntry, MessengerCustomGroupWithEntries, MessengerCustomGroupsResponse, MessengerDirectoryItem, MessengerEvent, MessengerHeartbeatRunThreadItem, MessengerIssueThreadItem, MessengerJoinRequestThreadItem, MessengerSavedView, MessengerSavedViewPage, MessengerSavedViewPageInfo, MessengerSavedViewTarget, MessengerSavedViewTargetKind, MessengerSystemThreadKind,
+  MessengerBudgetThreadItem, MessengerChatThreadDetail, MessengerCustomGroup, MessengerCustomGroupEntry, MessengerCustomGroupHydratedEntry, MessengerCustomGroupHydratedSavedViewEntry, MessengerCustomGroupHydratedThreadEntry, MessengerCustomGroupWithEntries, MessengerCustomGroupsResponse, MessengerDirectoryItem, MessengerEvent, MessengerFailedRunThreadItem, MessengerHeartbeatRunThreadItem, MessengerIssueThreadItem, MessengerJoinRequestThreadItem, MessengerRunOriginDescriptor, MessengerRunOriginSourceState, MessengerSavedView, MessengerSavedViewPage, MessengerSavedViewPageInfo, MessengerSavedViewTarget, MessengerSavedViewTargetKind, MessengerSystemThreadItem, MessengerSystemThreadKind,
   MessengerThreadAction, MessengerThreadDetail,
   MessengerThreadItem, MessengerThreadPageInfo,
   MessengerThreadSummary,

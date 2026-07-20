@@ -29,19 +29,18 @@ import {
   formatMessengerTitle,
   issueUpdatedChangedKeys,
   messengerSavedViewIdSchema,
-  toPublicHeartbeatRunContextSnapshot,
   type Approval,
   type BudgetIncident,
-  type HeartbeatRun,
   type JoinRequest,
   type MessengerApprovalThreadItem,
   type MessengerBudgetThreadItem,
   type MessengerCustomGroupHydratedEntry,
   type MessengerCustomGroupsResponse,
   type MessengerDirectoryItem,
-  type MessengerHeartbeatRunThreadItem,
+  type MessengerFailedRunThreadItem,
   type MessengerIssueThreadItem,
   type MessengerJoinRequestThreadItem,
+  type MessengerRunOriginDescriptor,
   type MessengerSystemThreadKind,
   type MessengerThreadAction,
   type MessengerThreadDetail,
@@ -56,6 +55,11 @@ import { logActivity } from "./activity-log.js";
 import { budgetService } from "./budgets.js";
 import { chatService } from "./chats.js";
 import { issueLowSignalContentOnlyActivitySql } from "./issue-activity-filters.js";
+import {
+  hydrateMessengerFailedRunOrigins,
+  messengerFailedRunSourceAction,
+  type MessengerFailedRunOriginRow,
+} from "./messenger-run-origin.js";
 import {
   lockMessengerCustomGroupPlacement,
   lockMessengerSavedViewPlacement,
@@ -290,17 +294,11 @@ type ApprovalCommentRow = {
   createdAt: Date;
 };
 
-type FailedRunRow = {
-  id: string;
+type FailedRunRow = MessengerFailedRunOriginRow & {
   orgId: string;
   agentId: string;
   status: string;
-  error: string | null;
-  errorCode: string | null;
   resultJson: Record<string, unknown> | null;
-  stderrExcerpt: string | null;
-  stdoutExcerpt: string | null;
-  contextSnapshot: Record<string, unknown> | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -901,10 +899,13 @@ function approvalCard(
   };
 }
 
-function failedRunCard(run: FailedRunRow, agentName: string | null): MessengerHeartbeatRunThreadItem {
+function failedRunCard(
+  run: FailedRunRow,
+  agentName: string | null,
+  origin: MessengerRunOriginDescriptor,
+): MessengerFailedRunThreadItem {
   const summary = failedRunUserSummary(run);
-  const publicContextSnapshot = toPublicHeartbeatRunContextSnapshot(run.contextSnapshot);
-  const publicRun = { ...run, contextSnapshot: publicContextSnapshot } as HeartbeatRun;
+  const sourceAction = messengerFailedRunSourceAction(origin);
   return {
     id: run.id,
     threadKey: "failed-runs",
@@ -917,15 +918,15 @@ function failedRunCard(run: FailedRunRow, agentName: string | null): MessengerHe
     latestActivityAt: run.updatedAt ?? run.createdAt,
     actions: [
       buildAction("Retry", `/agent-runs/${run.id}/retry`, "POST"),
+      ...(sourceAction ? [sourceAction] : []),
       buildAction("Open run", `/agents/${run.agentId}/runs/${run.id}`, "GET"),
     ],
     metadata: {
       runId: run.id,
       agentId: run.agentId,
       status: run.status,
-      contextSnapshot: publicContextSnapshot,
     },
-    run: publicRun,
+    origin,
   };
 }
 
@@ -2446,12 +2447,12 @@ export function messengerService(db: Db) {
           id: heartbeatRuns.id,
           orgId: heartbeatRuns.orgId,
           agentId: heartbeatRuns.agentId,
+          invocationSource: heartbeatRuns.invocationSource,
+          triggerDetail: heartbeatRuns.triggerDetail,
           status: heartbeatRuns.status,
-          error: heartbeatRuns.error,
-          errorCode: heartbeatRuns.errorCode,
+          wakeupRequestId: heartbeatRuns.wakeupRequestId,
+          chatConversationId: heartbeatRuns.chatConversationId,
           resultJson: heartbeatRuns.resultJson,
-          stderrExcerpt: heartbeatRuns.stderrExcerpt,
-          stdoutExcerpt: heartbeatRuns.stdoutExcerpt,
           contextSnapshot: heartbeatRuns.contextSnapshot,
           createdAt: heartbeatRuns.createdAt,
           updatedAt: heartbeatRuns.updatedAt,
@@ -2469,7 +2470,12 @@ export function messengerService(db: Db) {
     ]);
     const lastReadAt = await lastReadAtPromise;
     const agentNames = new Map(agentRows.map((row) => [row.id, row.name]));
-    const items = runRows.map((run) => failedRunCard(run, agentNames.get(run.agentId) ?? null));
+    const origins = await hydrateMessengerFailedRunOrigins(db, orgId, runRows);
+    const items = runRows.map((run) => failedRunCard(
+      run,
+      agentNames.get(run.agentId) ?? null,
+      origins.get(run.id)!,
+    ));
     const latestFirstItems = [...items].sort(compareLatestActivity);
     const chronologicalItems = [...items].sort(compareChronologicalActivity);
     const latestActivityAt = latestFirstItems[0]?.latestActivityAt ?? null;
@@ -2499,7 +2505,7 @@ export function messengerService(db: Db) {
         href: "/messenger/system/failed-runs",
         description: "Recent failed agent runs",
         items: chronologicalItems,
-      } satisfies MessengerThreadDetail<MessengerHeartbeatRunThreadItem>,
+      } satisfies MessengerThreadDetail<MessengerFailedRunThreadItem>,
     };
   }
 
