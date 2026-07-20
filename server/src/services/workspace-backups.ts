@@ -47,6 +47,7 @@ const SKIPPED_ENTRY_NAMES = new Set([
   ".nvm",
   ".pnpm-store",
   ".rudder",
+  ".tmp",
   ".turbo",
   ".vite",
   "Library",
@@ -90,6 +91,18 @@ type WorkspaceBackupWalkState = {
   byteSize: number;
 };
 
+type WorkspaceBackupWalkOptions = {
+  includeFileData: boolean;
+};
+
+type WorkspaceBackupCreateInput = {
+  orgId: string;
+  triggerSource?: WorkspaceBackupTriggerSource;
+  createdByUserId?: string | null;
+  restoredFromBackupId?: string | null;
+  retentionDays?: number;
+};
+
 type WorkspaceBackupArtifactMigration = {
   backupId: string;
   orgId: string;
@@ -128,6 +141,13 @@ export type SparseWorkspaceRecoveryResult = {
   error: string | null;
 };
 
+export type WorkspaceBackupScheduleSkip = {
+  orgId: string;
+  reason: "not_due" | "running" | "unchanged";
+  comparedBackupId: string;
+  treeSha256: string | null;
+};
+
 function timestamp(date = new Date()) {
   const pad = (value: number) => String(value).padStart(2, "0");
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
@@ -159,6 +179,30 @@ function sha256Buffer(buffer: Buffer | string) {
   return crypto.createHash("sha256").update(buffer).digest("hex");
 }
 
+async function sha256File(filePath: string) {
+  const handle = await fs.open(filePath, "r");
+  const hash = crypto.createHash("sha256");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  let position = 0;
+  try {
+    while (true) {
+      const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, position);
+      if (bytesRead === 0) break;
+      hash.update(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+  } finally {
+    await handle.close();
+  }
+  return hash.digest("hex");
+}
+
+function compareCanonicalPaths(left: WorkspaceBackupArtifactEntry, right: WorkspaceBackupArtifactEntry) {
+  if (left.path < right.path) return -1;
+  if (left.path > right.path) return 1;
+  return 0;
+}
+
 function writeUInt16(value: number) {
   const buffer = Buffer.allocUnsafe(2);
   buffer.writeUInt16LE(value, 0);
@@ -182,7 +226,7 @@ function buildWorkspaceBackupZip(artifact: WorkspaceBackupArtifact, rootFolderNa
   const localParts: Buffer[] = [];
   const centralParts: Buffer[] = [];
   let offset = 0;
-  const sortedEntries = [...artifact.entries].sort((left, right) => left.path.localeCompare(right.path));
+  const sortedEntries = [...artifact.entries].sort(compareCanonicalPaths);
   const normalizedRoot = sanitizeZipPathSegment(rootFolderName);
   const createdAt = new Date(artifact.createdAt);
   const zipEntries = [
@@ -278,6 +322,16 @@ function addWarning(warnings: string[], warning: string) {
   }
 }
 
+function isSkippedEntryName(name: string) {
+  if (SKIPPED_ENTRY_NAMES.has(name)) return true;
+  return name.endsWith("~")
+    || name.endsWith(".swp")
+    || name.endsWith(".swo")
+    || name.endsWith(".partial")
+    || name.endsWith(".crdownload")
+    || /\.tmp(?:[-.]|$)/.test(name);
+}
+
 function toPortableRelativePath(relativePath: string) {
   return relativePath.split(path.sep).join("/");
 }
@@ -342,7 +396,8 @@ function mapBackupRow(row: WorkspaceBackupRow): WorkspaceBackupSummary {
 
 function buildTreeHash(entries: WorkspaceBackupArtifactEntry[]) {
   const hash = crypto.createHash("sha256");
-  for (const entry of [...entries].sort((left, right) => left.path.localeCompare(right.path))) {
+  for (const entry of [...entries].sort(compareCanonicalPaths)) {
+    // Scheduled identity is content-based: timestamps and permission bits do not create new versions.
     hash.update(entry.path);
     hash.update("\0");
     hash.update(entry.kind);
@@ -563,6 +618,19 @@ async function fileExists(filePath: string) {
   }
 }
 
+async function backupArtifactLooksUsable(row: WorkspaceBackupRow) {
+  try {
+    const stat = await fs.stat(row.artifactRef);
+    if (!stat.isFile() || (row.compressedSize > 0 && stat.size !== row.compressedSize)) return false;
+    return !row.archiveSha256 || await sha256File(row.artifactRef) === row.archiveSha256;
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
 async function pathExists(targetPath: string) {
   try {
     return await fs.lstat(targetPath);
@@ -580,11 +648,12 @@ async function walkWorkspace(
   warnings: string[],
   entries: WorkspaceBackupArtifactEntry[] = [],
   state: WorkspaceBackupWalkState = { byteSize: 0 },
+  options: WorkspaceBackupWalkOptions = { includeFileData: true },
 ): Promise<WorkspaceBackupArtifactEntry[]> {
   const dirents = await fs.readdir(currentPath, { withFileTypes: true });
 
   for (const dirent of dirents) {
-    if (SKIPPED_ENTRY_NAMES.has(dirent.name)) {
+    if (isSkippedEntryName(dirent.name)) {
       const skippedPath = toPortableRelativePath(path.relative(rootPath, path.join(currentPath, dirent.name)));
       addWarning(warnings, `Skipped ${skippedPath}`);
       continue;
@@ -608,7 +677,7 @@ async function walkWorkspace(
         mode: stat.mode,
         sha256: null,
       });
-      await walkWorkspace(rootPath, absolutePath, warnings, entries, state);
+      await walkWorkspace(rootPath, absolutePath, warnings, entries, state, options);
       continue;
     }
 
@@ -630,7 +699,7 @@ async function walkWorkspace(
         mtimeMs: stat.mtimeMs,
         mode: stat.mode,
         sha256: sha256Buffer(data),
-        dataBase64: data.toString("base64"),
+        ...(options.includeFileData ? { dataBase64: data.toString("base64") } : {}),
       });
       continue;
     }
@@ -639,6 +708,31 @@ async function walkWorkspace(
   }
 
   return entries;
+}
+
+async function countBackupEligibleWorkspaceFiles(
+  currentPath: string,
+  stopAfter: number,
+  state = { byteSize: 0, fileCount: 0 },
+): Promise<number> {
+  const dirents = await fs.readdir(currentPath, { withFileTypes: true });
+  for (const dirent of dirents) {
+    if (state.fileCount > stopAfter) break;
+    if (isSkippedEntryName(dirent.name)) continue;
+
+    const absolutePath = path.join(currentPath, dirent.name);
+    const stat = await fs.lstat(absolutePath);
+    if (stat.isSymbolicLink()) continue;
+    if (stat.isDirectory()) {
+      await countBackupEligibleWorkspaceFiles(absolutePath, stopAfter, state);
+      continue;
+    }
+    if (!stat.isFile() || stat.size > MAX_BACKUP_FILE_BYTES) continue;
+    if (state.byteSize + stat.size > MAX_BACKUP_TOTAL_BYTES) continue;
+    state.byteSize += stat.size;
+    state.fileCount += 1;
+  }
+  return state.fileCount;
 }
 
 function buildManifest(input: {
@@ -660,6 +754,29 @@ function buildManifest(input: {
     treeSha256: input.treeSha256,
     activeRunCount: input.activeRunCount,
     warnings: input.artifact.warnings,
+  };
+}
+
+function lastScheduledCheckAt(row: WorkspaceBackupRow) {
+  const value = row.manifest?.lastScheduledCheck;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const checkedAt = (value as Record<string, unknown>).checkedAt;
+  if (typeof checkedAt !== "string") return null;
+  const parsed = new Date(checkedAt);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function manifestWithUnchangedCheck(row: WorkspaceBackupRow, checkedAt: Date, treeSha256: string) {
+  const manifest = row.manifest && typeof row.manifest === "object" && !Array.isArray(row.manifest)
+    ? row.manifest
+    : {};
+  return {
+    ...manifest,
+    lastScheduledCheck: {
+      checkedAt: checkedAt.toISOString(),
+      result: "unchanged",
+      treeSha256,
+    },
   };
 }
 
@@ -789,9 +906,10 @@ export function workspaceBackupService(db: Db) {
 
   async function recoverSparseWorkspaceFromLatestBackup(orgId: string): Promise<SparseWorkspaceRecoveryResult> {
     const layout = await ensureOrganizationWorkspaceLayout(orgId);
-    const warnings: string[] = [];
-    const currentEntries = await walkWorkspace(layout.root, layout.root, warnings);
-    const currentFileCount = currentEntries.filter((entry) => entry.kind === "file").length;
+    const currentFileCount = await countBackupEligibleWorkspaceFiles(
+      layout.root,
+      SPARSE_WORKSPACE_RECOVERY_MAX_CURRENT_FILES,
+    );
     if (currentFileCount > SPARSE_WORKSPACE_RECOVERY_MAX_CURRENT_FILES) {
       return {
         orgId,
@@ -867,8 +985,126 @@ export function workspaceBackupService(db: Db) {
     };
   }
 
+  async function claimBackup(input: WorkspaceBackupCreateInput): Promise<WorkspaceBackupRow> {
+    const organization = await orgs.getById(input.orgId);
+    if (!organization) throw notFound("Organization not found");
+
+    const startedAt = new Date();
+    const expiresAt = addDays(startedAt, input.retentionDays ?? WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS);
+    const backupId = crypto.randomUUID();
+    const triggerSource = input.triggerSource ?? "manual";
+    const organizationStorageKey = resolveOrganizationStorageKey(input.orgId);
+    const backupDir = path.resolve(resolveDefaultBackupDir(), "workspaces", organizationStorageKey);
+    const artifactRef = path.resolve(backupDir, `workspace-${organizationStorageKey}-${timestamp(startedAt)}-${backupId.slice(0, 8)}.json`);
+    const [runningRow] = await db
+      .insert(workspaceBackups)
+      .values({
+        id: backupId,
+        orgId: input.orgId,
+        status: "running",
+        triggerSource,
+        artifactProvider: "local_file",
+        artifactRef,
+        startedAt,
+        expiresAt,
+        createdByUserId: input.createdByUserId ?? null,
+        restoredFromBackupId: input.restoredFromBackupId ?? null,
+      })
+      .returning();
+    if (!runningRow) throw new Error("Workspace backup row was not created.");
+    return runningRow;
+  }
+
+  async function finalizeClaimedBackup(runningRow: WorkspaceBackupRow): Promise<WorkspaceBackupSummary> {
+    const backupId = runningRow.id;
+    const artifactRef = runningRow.artifactRef;
+    const tempArtifactRef = `${artifactRef}.tmp`;
+
+    try {
+      await fs.mkdir(path.dirname(artifactRef), { recursive: true });
+      const layout = await ensureOrganizationWorkspaceLayout(runningRow.orgId);
+      const warnings: string[] = [];
+      const entries = await walkWorkspace(layout.root, layout.root, warnings);
+      const fileCount = entries.filter((entry) => entry.kind === "file").length;
+      const byteSize = entries.reduce((total, entry) => total + (entry.kind === "file" ? entry.byteSize : 0), 0);
+      const treeSha256 = buildTreeHash(entries);
+      const activeRunCount = await countActiveRuns(runningRow.orgId);
+      const artifact: WorkspaceBackupArtifact = {
+        version: ARTIFACT_VERSION,
+        orgId: runningRow.orgId,
+        instanceId: resolveRudderInstanceId(),
+        createdAt: runningRow.startedAt?.toISOString() ?? runningRow.createdAt.toISOString(),
+        rootPath: layout.root,
+        entries: entries.sort(compareCanonicalPaths),
+        warnings,
+      };
+      const manifest = buildManifest({ artifact, fileCount, byteSize, treeSha256, activeRunCount });
+      const serialized = JSON.stringify(artifact, null, 2);
+      const archiveSha256 = sha256Buffer(serialized);
+      await fs.writeFile(tempArtifactRef, serialized, { encoding: "utf8", mode: 0o600 });
+      await fs.rename(tempArtifactRef, artifactRef);
+      const stat = await fs.stat(artifactRef);
+      const finishedAt = new Date();
+      const [row] = await db
+        .update(workspaceBackups)
+        .set({
+          status: "succeeded",
+          archiveSha256,
+          treeSha256,
+          fileCount,
+          byteSize,
+          compressedSize: stat.size,
+          manifest,
+          warnings,
+          finishedAt,
+          updatedAt: finishedAt,
+        })
+        .where(and(
+          eq(workspaceBackups.id, backupId),
+          eq(workspaceBackups.status, "running"),
+        ))
+        .returning();
+      if (row) return mapBackupRow(row);
+
+      const [currentRow] = await db
+        .select()
+        .from(workspaceBackups)
+        .where(eq(workspaceBackups.id, backupId))
+        .limit(1);
+      if (currentRow) return mapBackupRow(currentRow);
+      throw new Error("Workspace backup row was not updated.");
+    } catch (error) {
+      await fs.rm(tempArtifactRef, { force: true }).catch(() => undefined);
+      const finishedAt = new Date();
+      const [row] = await db
+        .update(workspaceBackups)
+        .set({
+          status: "failed",
+          error: error instanceof Error ? error.message : String(error),
+          finishedAt,
+          updatedAt: finishedAt,
+        })
+        .where(and(
+          eq(workspaceBackups.id, backupId),
+          eq(workspaceBackups.status, "running"),
+        ))
+        .returning();
+      if (row) return mapBackupRow(row);
+
+      const [currentRow] = await db
+        .select()
+        .from(workspaceBackups)
+        .where(eq(workspaceBackups.id, backupId))
+        .limit(1);
+      if (currentRow) return mapBackupRow(currentRow);
+      return mapBackupRow(runningRow);
+    }
+  }
+
   const service = {
     recoverSparseWorkspaceFromLatestBackup,
+    claimBackup,
+    finalizeClaimedBackup,
 
     async list(orgId: string): Promise<WorkspaceBackupSummary[]> {
       const organization = await orgs.getById(orgId);
@@ -881,100 +1117,9 @@ export function workspaceBackupService(db: Db) {
       return rows.map(mapBackupRow);
     },
 
-    async create(input: {
-      orgId: string;
-      triggerSource?: WorkspaceBackupTriggerSource;
-      createdByUserId?: string | null;
-      restoredFromBackupId?: string | null;
-      retentionDays?: number;
-    }): Promise<WorkspaceBackupSummary> {
-      const organization = await orgs.getById(input.orgId);
-      if (!organization) throw notFound("Organization not found");
-
-      const startedAt = new Date();
-      const expiresAt = addDays(startedAt, input.retentionDays ?? WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS);
-      const backupId = crypto.randomUUID();
-      const triggerSource = input.triggerSource ?? "manual";
-      const organizationStorageKey = resolveOrganizationStorageKey(input.orgId);
-      const backupDir = path.resolve(resolveDefaultBackupDir(), "workspaces", organizationStorageKey);
-      const artifactRef = path.resolve(backupDir, `workspace-${organizationStorageKey}-${timestamp(startedAt)}-${backupId.slice(0, 8)}.json`);
-
-      await fs.mkdir(backupDir, { recursive: true });
-      const [runningRow] = await db
-        .insert(workspaceBackups)
-        .values({
-          id: backupId,
-          orgId: input.orgId,
-          status: "running",
-          triggerSource,
-          artifactProvider: "local_file",
-          artifactRef,
-          startedAt,
-          expiresAt,
-          createdByUserId: input.createdByUserId ?? null,
-          restoredFromBackupId: input.restoredFromBackupId ?? null,
-        })
-        .returning();
-
-      try {
-        const layout = await ensureOrganizationWorkspaceLayout(input.orgId);
-        const warnings: string[] = [];
-        const entries = await walkWorkspace(layout.root, layout.root, warnings);
-        const fileCount = entries.filter((entry) => entry.kind === "file").length;
-        const byteSize = entries.reduce((total, entry) => total + (entry.kind === "file" ? entry.byteSize : 0), 0);
-        const treeSha256 = buildTreeHash(entries);
-        const activeRunCount = await countActiveRuns(input.orgId);
-        const artifact: WorkspaceBackupArtifact = {
-          version: ARTIFACT_VERSION,
-          orgId: input.orgId,
-          instanceId: resolveRudderInstanceId(),
-          createdAt: startedAt.toISOString(),
-          rootPath: layout.root,
-          entries: entries.sort((left, right) => left.path.localeCompare(right.path)),
-          warnings,
-        };
-        const manifest = buildManifest({ artifact, fileCount, byteSize, treeSha256, activeRunCount });
-        const serialized = JSON.stringify(artifact, null, 2);
-        const archiveSha256 = sha256Buffer(serialized);
-        const tempArtifactRef = `${artifactRef}.tmp`;
-        await fs.writeFile(tempArtifactRef, serialized, { encoding: "utf8", mode: 0o600 });
-        await fs.rename(tempArtifactRef, artifactRef);
-        const stat = await fs.stat(artifactRef);
-        const finishedAt = new Date();
-        const [row] = await db
-          .update(workspaceBackups)
-          .set({
-            status: "succeeded",
-            archiveSha256,
-            treeSha256,
-            fileCount,
-            byteSize,
-            compressedSize: stat.size,
-            manifest,
-            warnings,
-            finishedAt,
-            updatedAt: finishedAt,
-          })
-          .where(eq(workspaceBackups.id, backupId))
-          .returning();
-        if (!row) throw new Error("Workspace backup row was not updated.");
-        return mapBackupRow(row);
-      } catch (error) {
-        const finishedAt = new Date();
-        const [row] = await db
-          .update(workspaceBackups)
-          .set({
-            status: "failed",
-            error: error instanceof Error ? error.message : String(error),
-            finishedAt,
-            updatedAt: finishedAt,
-          })
-          .where(eq(workspaceBackups.id, backupId))
-          .returning();
-        if (row) return mapBackupRow(row);
-        if (!runningRow) throw new Error("Workspace backup row was not created.");
-        return mapBackupRow(runningRow);
-      }
+    async create(input: WorkspaceBackupCreateInput): Promise<WorkspaceBackupSummary> {
+      const runningRow = await claimBackup(input);
+      return await finalizeClaimedBackup(runningRow);
     },
 
     async listFiles(orgId: string, backupId: string, directoryPath = ""): Promise<OrganizationWorkspaceFileList> {
@@ -1095,6 +1240,7 @@ export function workspaceBackupService(db: Db) {
       deleted: WorkspaceBackupSummary[];
       sparseRecoveries: SparseWorkspaceRecoveryResult[];
       skipped: number;
+      skippedDetails: WorkspaceBackupScheduleSkip[];
       errors: Array<{ orgId: string; message: string }>;
     }> {
       const now = input?.now ?? new Date();
@@ -1107,41 +1253,133 @@ export function workspaceBackupService(db: Db) {
       const failed: WorkspaceBackupSummary[] = [...staleFailed];
       const errors: Array<{ orgId: string; message: string }> = [];
       const sparseRecoveries: SparseWorkspaceRecoveryResult[] = [];
-      let skipped = 0;
+      const skippedDetails: WorkspaceBackupScheduleSkip[] = [];
 
       for (const organization of organizations) {
         try {
-          const [latest] = await db
-            .select()
-            .from(workspaceBackups)
-            .where(and(eq(workspaceBackups.orgId, organization.id), ne(workspaceBackups.status, "deleted")))
-            .orderBy(desc(workspaceBackups.createdAt))
-            .limit(1);
+          const outcome = await db.transaction(async (tx) => {
+            await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`workspace-backup-scheduled:${organization.id}`}))`);
+            const lockedService = workspaceBackupService(tx as unknown as Db);
 
-          if (latest?.status === "running" || (latest && latest.createdAt > dueBefore)) {
-            skipped += 1;
-            continue;
-          }
+            const [running] = await tx
+              .select()
+              .from(workspaceBackups)
+              .where(and(
+                eq(workspaceBackups.orgId, organization.id),
+                eq(workspaceBackups.status, "running"),
+              ))
+              .orderBy(desc(workspaceBackups.createdAt))
+              .limit(1);
+            if (running) {
+              return {
+                kind: "skipped" as const,
+                detail: {
+                  orgId: organization.id,
+                  reason: "running" as const,
+                  comparedBackupId: running.id,
+                  treeSha256: running.treeSha256,
+                },
+                sparseRecovery: null,
+              };
+            }
 
-          const sparseRecovery = await recoverSparseWorkspaceFromLatestBackup(organization.id);
-          if (sparseRecovery.recovered || sparseRecovery.error) {
-            sparseRecoveries.push(sparseRecovery);
-          }
-          if (sparseRecovery.error) {
-            errors.push({
+            const [latestSuccessful] = await tx
+              .select()
+              .from(workspaceBackups)
+              .where(and(
+                eq(workspaceBackups.orgId, organization.id),
+                inArray(workspaceBackups.status, ["succeeded", "restored"]),
+              ))
+              .orderBy(desc(workspaceBackups.createdAt))
+              .limit(1);
+            const unchangedCheckAt = latestSuccessful ? lastScheduledCheckAt(latestSuccessful) : null;
+            const latestCheckAt = latestSuccessful
+              ? new Date(Math.max(latestSuccessful.createdAt.getTime(), unchangedCheckAt?.getTime() ?? 0))
+              : null;
+            if (latestSuccessful && latestCheckAt && latestCheckAt > dueBefore) {
+              return {
+                kind: "skipped" as const,
+                detail: {
+                  orgId: organization.id,
+                  reason: "not_due" as const,
+                  comparedBackupId: latestSuccessful.id,
+                  treeSha256: latestSuccessful.treeSha256,
+                },
+                sparseRecovery: null,
+              };
+            }
+
+            const sparseRecovery = await lockedService.recoverSparseWorkspaceFromLatestBackup(organization.id);
+            if (sparseRecovery.error) {
+              return {
+                kind: "error" as const,
+                message: `Sparse workspace recovery failed before scheduled backup: ${sparseRecovery.error}`,
+                sparseRecovery,
+              };
+            }
+
+            if (
+              latestSuccessful?.treeSha256
+              && await backupArtifactLooksUsable(latestSuccessful)
+            ) {
+              try {
+                const layout = await ensureOrganizationWorkspaceLayout(organization.id);
+                const warnings: string[] = [];
+                const entries = await walkWorkspace(
+                  layout.root,
+                  layout.root,
+                  warnings,
+                  [],
+                  { byteSize: 0 },
+                  { includeFileData: false },
+                );
+                const treeSha256 = buildTreeHash(entries);
+                if (treeSha256 === latestSuccessful.treeSha256) {
+                  await tx
+                    .update(workspaceBackups)
+                    .set({
+                      manifest: manifestWithUnchangedCheck(latestSuccessful, now, treeSha256),
+                      updatedAt: now,
+                    })
+                    .where(eq(workspaceBackups.id, latestSuccessful.id));
+                  return {
+                    kind: "skipped" as const,
+                    detail: {
+                      orgId: organization.id,
+                      reason: "unchanged" as const,
+                      comparedBackupId: latestSuccessful.id,
+                      treeSha256,
+                    },
+                    sparseRecovery,
+                  };
+                }
+              } catch {
+                // Preserve the existing failed-backup row behavior by letting create() retry the full snapshot.
+              }
+            }
+
+            const backup = await lockedService.claimBackup({
               orgId: organization.id,
-              message: `Sparse workspace recovery failed before scheduled backup: ${sparseRecovery.error}`,
+              triggerSource: "scheduled",
+              retentionDays: input?.retentionDays,
             });
-            continue;
-          }
-
-          const backup = await service.create({
-            orgId: organization.id,
-            triggerSource: "scheduled",
-            retentionDays: input?.retentionDays,
+            return {
+              kind: "claimed" as const,
+              backup,
+              sparseRecovery,
+            };
           });
-          if (backup.status === "failed") failed.push(backup);
-          else created.push(backup);
+
+          if (outcome.sparseRecovery && (outcome.sparseRecovery.recovered || outcome.sparseRecovery.error)) {
+            sparseRecoveries.push(outcome.sparseRecovery);
+          }
+          if (outcome.kind === "skipped") skippedDetails.push(outcome.detail);
+          else if (outcome.kind === "claimed") {
+            const backup = await service.finalizeClaimedBackup(outcome.backup);
+            if (backup.status === "failed") failed.push(backup);
+            else created.push(backup);
+          }
+          else if (outcome.kind === "error") errors.push({ orgId: organization.id, message: outcome.message });
         } catch (error) {
           errors.push({
             orgId: organization.id,
@@ -1150,7 +1388,15 @@ export function workspaceBackupService(db: Db) {
         }
       }
 
-      return { created, failed, deleted, sparseRecoveries, skipped, errors };
+      return {
+        created,
+        failed,
+        deleted,
+        sparseRecoveries,
+        skipped: skippedDetails.length,
+        skippedDetails,
+        errors,
+      };
     },
 
     async restore(orgId: string, backupId: string, input?: { createdByUserId?: string | null }): Promise<WorkspaceBackupRestoreResult> {

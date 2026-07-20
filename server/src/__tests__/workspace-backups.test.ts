@@ -9,14 +9,14 @@ import {
   workspaceBackups,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { resolveDefaultBackupDir, resolveOrganizationWorkspaceRoot } from "../home-paths.js";
 import { reconcileWorkspaceBackupArtifactStorage, workspaceBackupService } from "../services/workspace-backups.js";
 
@@ -125,6 +125,7 @@ describe("workspace backup service", () => {
   }, 20_000);
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await db.delete(workspaceBackups);
     await db.delete(heartbeatRuns);
     await db.delete(agents);
@@ -144,14 +145,22 @@ describe("workspace backup service", () => {
 
   async function createOrganization() {
     const orgId = randomUUID();
+    const suffix = orgId.slice(0, 8);
     await db.insert(organizations).values({
       id: orgId,
-      name: "Workspace Backup Org",
-      urlKey: deriveOrganizationUrlKey("Workspace Backup Org"),
-      issuePrefix: "WBO",
+      name: `Workspace Backup Org ${suffix}`,
+      urlKey: deriveOrganizationUrlKey(`Workspace Backup Org ${suffix}`),
+      issuePrefix: `W${suffix.slice(0, 4)}`.toUpperCase(),
       requireBoardApprovalForNewAgents: false,
     });
     return orgId;
+  }
+
+  async function makeBackupDue(backupId: string, createdAt = new Date("2026-05-20T08:00:00.000Z")) {
+    await db
+      .update(workspaceBackups)
+      .set({ createdAt, updatedAt: createdAt })
+      .where(eq(workspaceBackups.id, backupId));
   }
 
   it("creates a backup and reads files from the selected version", async () => {
@@ -343,7 +352,7 @@ describe("workspace backup service", () => {
     await expect(fs.readFile(path.join(workspaceRoot, "notes.md"), "utf8")).resolves.toBe("before\n");
   });
 
-  it("repairs a sparse workspace from the latest richer backup before creating a scheduled backup", async () => {
+  it("repairs a sparse workspace from the latest richer backup without duplicating the recovered version", async () => {
     const orgId = await createOrganization();
     const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
     await fs.mkdir(path.join(workspaceRoot, "projects", "foundria-llc", "tax"), { recursive: true });
@@ -367,8 +376,15 @@ describe("workspace backup service", () => {
     });
 
     expect(scheduled.errors).toEqual([]);
-    expect(scheduled.created).toHaveLength(1);
-    expect(scheduled.created[0]?.fileCount).toBeGreaterThanOrEqual(richBackup.fileCount);
+    expect(scheduled.created).toHaveLength(0);
+    expect(scheduled.skippedDetails).toEqual([
+      expect.objectContaining({
+        orgId,
+        reason: "unchanged",
+        comparedBackupId: richBackup.id,
+        treeSha256: richBackup.treeSha256,
+      }),
+    ]);
     await expect(fs.readFile(path.join(workspaceRoot, "projects", "foundria-llc", "tax", "147c-letter.md"), "utf8"))
       .resolves.toBe("approved\n");
   });
@@ -519,6 +535,28 @@ describe("workspace backup service", () => {
     });
   });
 
+  it("does not reuse a same-size corrupted artifact for scheduled unchanged detection", async () => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "daily.md"), "snapshot\n", "utf8");
+    const initial = await service.create({ orgId, triggerSource: "scheduled" });
+    await makeBackupDue(initial.id);
+    const artifact = await fs.readFile(initial.artifactRef);
+    const changedByte = artifact[0] === 0x7b ? 0x5b : 0x7b;
+    artifact[0] = changedByte;
+    await fs.writeFile(initial.artifactRef, artifact);
+
+    const scheduled = await service.runScheduledBackups({
+      now: new Date("2026-05-20T11:00:00.000Z"),
+      intervalMs: 2 * 60 * 60 * 1000,
+    });
+
+    expect(scheduled.created).toHaveLength(1);
+    expect(scheduled.created[0]?.id).not.toBe(initial.id);
+    expect(scheduled.skippedDetails).toEqual([]);
+  });
+
   it("creates scheduled backups and prunes expired versions", async () => {
     const orgId = await createOrganization();
     const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
@@ -540,6 +578,385 @@ describe("workspace backup service", () => {
 
     expect(deleted).toHaveLength(1);
     await expect(service.list(orgId)).resolves.toEqual([]);
+  });
+
+  it("skips a due scheduled backup when the canonical workspace tree is unchanged", async () => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(path.join(workspaceRoot, "projects"), { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "projects", "daily.md"), "snapshot\n", "utf8");
+    const initial = await service.create({ orgId, triggerSource: "scheduled" });
+    await makeBackupDue(initial.id);
+
+    const artifactNamesBefore = await fs.readdir(path.dirname(initial.artifactRef));
+    const scheduled = await service.runScheduledBackups({
+      now: new Date("2026-05-20T11:00:00.000Z"),
+      intervalMs: 2 * 60 * 60 * 1000,
+    });
+
+    expect(scheduled.created).toEqual([]);
+    expect(scheduled.failed).toEqual([]);
+    expect(scheduled.skipped).toBe(1);
+    expect(scheduled.skippedDetails).toEqual([{
+      orgId,
+      reason: "unchanged",
+      comparedBackupId: initial.id,
+      treeSha256: initial.treeSha256,
+    }]);
+    const persisted = await service.list(orgId);
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]?.manifest).toEqual(expect.objectContaining({
+      lastScheduledCheck: {
+        checkedAt: "2026-05-20T11:00:00.000Z",
+        result: "unchanged",
+        treeSha256: initial.treeSha256,
+      },
+    }));
+    await expect(fs.readdir(path.dirname(initial.artifactRef))).resolves.toEqual(artifactNamesBefore);
+
+    const nextHourlyTick = await service.runScheduledBackups({
+      now: new Date("2026-05-20T12:00:00.000Z"),
+      intervalMs: 2 * 60 * 60 * 1000,
+    });
+    expect(nextHourlyTick.skippedDetails).toEqual([
+      expect.objectContaining({ orgId, reason: "not_due", comparedBackupId: initial.id }),
+    ]);
+  });
+
+  it("creates a scheduled backup when file contents change without relying on directory mtime", async () => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    const filePath = path.join(workspaceRoot, "daily.md");
+    await fs.writeFile(filePath, "before\n", "utf8");
+    const initial = await service.create({ orgId, triggerSource: "scheduled" });
+    await makeBackupDue(initial.id);
+    const rootStat = await fs.stat(workspaceRoot);
+    await fs.writeFile(filePath, "after!\n", "utf8");
+    await fs.utimes(workspaceRoot, rootStat.atime, rootStat.mtime);
+
+    const scheduled = await service.runScheduledBackups({
+      now: new Date("2026-05-20T11:00:00.000Z"),
+      intervalMs: 2 * 60 * 60 * 1000,
+    });
+
+    expect(scheduled.created).toHaveLength(1);
+    expect(scheduled.created[0]?.treeSha256).not.toBe(initial.treeSha256);
+    expect(scheduled.skippedDetails).toEqual([]);
+  });
+
+  it.each([
+    {
+      name: "adds",
+      mutate: async (workspaceRoot: string) => {
+        await fs.writeFile(path.join(workspaceRoot, "added.md"), "added\n", "utf8");
+      },
+    },
+    {
+      name: "deletes",
+      mutate: async (workspaceRoot: string) => {
+        await fs.rm(path.join(workspaceRoot, "original.md"));
+      },
+    },
+    {
+      name: "renames",
+      mutate: async (workspaceRoot: string) => {
+        await fs.rename(path.join(workspaceRoot, "original.md"), path.join(workspaceRoot, "renamed.md"));
+      },
+    },
+  ])("creates a scheduled backup when the workspace $name a file", async ({ mutate }) => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "original.md"), "original\n", "utf8");
+    const initial = await service.create({ orgId, triggerSource: "scheduled" });
+    await makeBackupDue(initial.id);
+    await mutate(workspaceRoot);
+
+    const scheduled = await service.runScheduledBackups({
+      now: new Date("2026-05-20T11:00:00.000Z"),
+      intervalMs: 2 * 60 * 60 * 1000,
+    });
+
+    expect(scheduled.created).toHaveLength(1);
+    expect(scheduled.created[0]?.treeSha256).not.toBe(initial.treeSha256);
+  });
+
+  it("ignores runtime, cache, and temporary-file churn during scheduled change detection", async () => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "durable.md"), "durable\n", "utf8");
+    const initial = await service.create({ orgId, triggerSource: "scheduled" });
+    await makeBackupDue(initial.id);
+    await fs.mkdir(path.join(workspaceRoot, ".cache", "runtime"), { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, ".cache", "runtime", "state.json"), "{}\n", "utf8");
+    await fs.mkdir(path.join(workspaceRoot, ".tmp"), { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, ".tmp", "agent-state.json"), "{}\n", "utf8");
+    await fs.writeFile(path.join(workspaceRoot, "durable.md.tmp-123"), "partial\n", "utf8");
+
+    const scheduled = await service.runScheduledBackups({
+      now: new Date("2026-05-20T11:00:00.000Z"),
+      intervalMs: 2 * 60 * 60 * 1000,
+    });
+
+    expect(scheduled.created).toEqual([]);
+    expect(scheduled.skippedDetails).toEqual([
+      expect.objectContaining({ orgId, reason: "unchanged", comparedBackupId: initial.id }),
+    ]);
+  });
+
+  it("retries after a failed scheduled backup instead of treating the failure as freshness", async () => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "daily.md"), "snapshot\n", "utf8");
+    const failedAt = new Date("2026-05-20T10:59:00.000Z");
+    await db.insert(workspaceBackups).values({
+      id: randomUUID(),
+      orgId,
+      status: "failed",
+      triggerSource: "scheduled",
+      artifactProvider: "local_file",
+      artifactRef: path.join(rudderHome, "missing-failed-workspace-backup.json"),
+      error: "simulated write failure",
+      startedAt: failedAt,
+      finishedAt: failedAt,
+      createdAt: failedAt,
+      updatedAt: failedAt,
+    });
+
+    const scheduled = await service.runScheduledBackups({
+      now: new Date("2026-05-20T11:00:00.000Z"),
+      intervalMs: 2 * 60 * 60 * 1000,
+    });
+
+    expect(scheduled.created).toHaveLength(1);
+    expect(scheduled.created[0]?.status).toBe("succeeded");
+    expect(scheduled.skippedDetails).toEqual([]);
+  });
+
+  it.each([
+    {
+      name: "is missing its artifact",
+      invalidate: async (backup: { id: string; artifactRef: string }) => {
+        await fs.rm(backup.artifactRef);
+      },
+    },
+    {
+      name: "comes from a legacy row without a tree hash",
+      invalidate: async (backup: { id: string; artifactRef: string }) => {
+        await db.update(workspaceBackups).set({ treeSha256: null }).where(eq(workspaceBackups.id, backup.id));
+      },
+    },
+  ])("creates a replacement when the latest successful backup $name", async ({ invalidate }) => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "daily.md"), "snapshot\n", "utf8");
+    const initial = await service.create({ orgId, triggerSource: "scheduled" });
+    await makeBackupDue(initial.id);
+    await invalidate(initial);
+
+    const scheduled = await service.runScheduledBackups({
+      now: new Date("2026-05-20T11:00:00.000Z"),
+      intervalMs: 2 * 60 * 60 * 1000,
+    });
+
+    expect(scheduled.created).toHaveLength(1);
+    expect(scheduled.created[0]?.id).not.toBe(initial.id);
+    expect(scheduled.skippedDetails).toEqual([]);
+  });
+
+  it("keeps manual and pre-restore backups forced even when their tree hash is unchanged", async () => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "notes.md"), "same\n", "utf8");
+
+    const firstManual = await service.create({ orgId, triggerSource: "manual" });
+    const secondManual = await service.create({ orgId, triggerSource: "manual" });
+    const restored = await service.restore(orgId, firstManual.id);
+
+    expect(secondManual.id).not.toBe(firstManual.id);
+    expect(secondManual.treeSha256).toBe(firstManual.treeSha256);
+    expect(restored.preRestoreBackup.triggerSource).toBe("pre_restore");
+    expect(restored.preRestoreBackup.id).not.toBe(secondManual.id);
+    expect(restored.preRestoreBackup.treeSha256).toBe(firstManual.treeSha256);
+    await expect(service.list(orgId)).resolves.toHaveLength(3);
+  });
+
+  it("prunes expired backups even when another organization is skipped as unchanged", async () => {
+    const unchangedOrgId = await createOrganization();
+    const unchangedRoot = resolveOrganizationWorkspaceRoot(unchangedOrgId);
+    await fs.mkdir(unchangedRoot, { recursive: true });
+    await fs.writeFile(path.join(unchangedRoot, "daily.md"), "snapshot\n", "utf8");
+    const unchanged = await service.create({ orgId: unchangedOrgId, triggerSource: "scheduled" });
+    await makeBackupDue(unchanged.id);
+
+    const expiredOrgId = await createOrganization();
+    const expiredAt = new Date("2026-05-19T08:00:00.000Z");
+    const expiredId = randomUUID();
+    await db.insert(workspaceBackups).values({
+      id: expiredId,
+      orgId: expiredOrgId,
+      status: "failed",
+      triggerSource: "scheduled",
+      artifactProvider: "local_file",
+      artifactRef: path.join(rudderHome, "already-missing-expired-backup.json"),
+      error: "expired failure",
+      startedAt: expiredAt,
+      finishedAt: expiredAt,
+      expiresAt: new Date("2026-05-20T10:00:00.000Z"),
+      createdAt: expiredAt,
+      updatedAt: expiredAt,
+    });
+
+    const scheduled = await service.runScheduledBackups({
+      now: new Date("2026-05-20T11:00:00.000Z"),
+      intervalMs: 2 * 60 * 60 * 1000,
+    });
+
+    expect(scheduled.deleted).toEqual([
+      expect.objectContaining({ id: expiredId, status: "deleted" }),
+    ]);
+    expect(scheduled.skippedDetails).toEqual([
+      expect.objectContaining({ orgId: unchangedOrgId, reason: "unchanged" }),
+    ]);
+  });
+
+  it("serializes concurrent scheduler calls so only one artifact is created per organization", async () => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "daily.md"), "snapshot\n", "utf8");
+    const now = new Date("2026-05-20T11:00:00.000Z");
+
+    const [first, second] = await Promise.all([
+      service.runScheduledBackups({ now }),
+      workspaceBackupService(db).runScheduledBackups({ now }),
+    ]);
+
+    expect(first.created.length + second.created.length).toBe(1);
+    await expect(service.list(orgId)).resolves.toHaveLength(1);
+  });
+
+  it("commits the scheduled running claim before writing the artifact", async () => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "daily.md"), "snapshot\n", "utf8");
+
+    let signalRenameStarted!: () => void;
+    const renameStarted = new Promise<void>((resolve) => {
+      signalRenameStarted = resolve;
+    });
+    let releaseRename!: () => void;
+    const renameRelease = new Promise<void>((resolve) => {
+      releaseRename = resolve;
+    });
+    const originalRename = fs.rename.bind(fs);
+    const renameSpy = vi.spyOn(fs, "rename").mockImplementation(async (oldPath, newPath) => {
+      signalRenameStarted();
+      await renameRelease;
+      return await originalRename(oldPath, newPath);
+    });
+
+    const scheduledPromise = service.runScheduledBackups({ now: new Date("2026-05-20T11:00:00.000Z") });
+    try {
+      await Promise.race([
+        renameStarted,
+        new Promise<never>((_resolve, reject) => {
+          setTimeout(() => reject(new Error("Timed out waiting for scheduled artifact write")), 2_000);
+        }),
+      ]);
+
+      const [runningRow] = await db
+        .select()
+        .from(workspaceBackups)
+        .where(eq(workspaceBackups.orgId, orgId));
+      expect(runningRow).toEqual(expect.objectContaining({
+        orgId,
+        status: "running",
+        triggerSource: "scheduled",
+      }));
+      const stateWhileBlocked = await Promise.race([
+        scheduledPromise.then(() => "settled" as const),
+        new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 100)),
+      ]);
+      expect(stateWhileBlocked).toBe("blocked");
+    } finally {
+      releaseRename();
+      renameSpy.mockRestore();
+    }
+
+    const scheduled = await scheduledPromise;
+    expect(scheduled.created).toEqual([
+      expect.objectContaining({ orgId, status: "succeeded" }),
+    ]);
+  });
+
+  it("waits for the organization scheduler advisory lock before checking or creating a backup", async () => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "daily.md"), "snapshot\n", "utf8");
+
+    let releaseLock!: () => void;
+    const lockRelease = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    let signalLockHeld!: () => void;
+    const lockHeld = new Promise<void>((resolve) => {
+      signalLockHeld = resolve;
+    });
+    const lockTransaction = db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`workspace-backup-scheduled:${orgId}`}))`);
+      signalLockHeld();
+      await lockRelease;
+    });
+    await lockHeld;
+
+    const scheduledPromise = service.runScheduledBackups({ now: new Date("2026-05-20T11:00:00.000Z") });
+    const stateBeforeRelease = await Promise.race([
+      scheduledPromise.then(() => "settled" as const),
+      new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 100)),
+    ]);
+
+    expect(stateBeforeRelease).toBe("blocked");
+    await expect(service.list(orgId)).resolves.toEqual([]);
+    releaseLock();
+    await lockTransaction;
+    const scheduled = await scheduledPromise;
+    expect(scheduled.created).toHaveLength(1);
+  });
+
+  it("isolates scheduled change detection across organizations", async () => {
+    const unchangedOrgId = await createOrganization();
+    const changedOrgId = await createOrganization();
+    const unchangedRoot = resolveOrganizationWorkspaceRoot(unchangedOrgId);
+    const changedRoot = resolveOrganizationWorkspaceRoot(changedOrgId);
+    await fs.mkdir(unchangedRoot, { recursive: true });
+    await fs.mkdir(changedRoot, { recursive: true });
+    await fs.writeFile(path.join(unchangedRoot, "daily.md"), "same\n", "utf8");
+    await fs.writeFile(path.join(changedRoot, "daily.md"), "before\n", "utf8");
+    const unchanged = await service.create({ orgId: unchangedOrgId, triggerSource: "scheduled" });
+    const changed = await service.create({ orgId: changedOrgId, triggerSource: "scheduled" });
+    await makeBackupDue(unchanged.id);
+    await makeBackupDue(changed.id);
+    await fs.writeFile(path.join(changedRoot, "daily.md"), "after\n", "utf8");
+
+    const scheduled = await service.runScheduledBackups({
+      now: new Date("2026-05-20T11:00:00.000Z"),
+      intervalMs: 2 * 60 * 60 * 1000,
+    });
+
+    expect(scheduled.created).toEqual([
+      expect.objectContaining({ orgId: changedOrgId }),
+    ]);
+    expect(scheduled.skippedDetails).toEqual([
+      expect.objectContaining({ orgId: unchangedOrgId, reason: "unchanged" }),
+    ]);
   });
 
   it("uses a shorter due interval for running scheduler ticks than offline startup catch-up", async () => {
@@ -564,6 +981,7 @@ describe("workspace backup service", () => {
     expect(offline.created).toHaveLength(0);
     expect(offline.skipped).toBe(1);
 
+    await fs.writeFile(path.join(workspaceRoot, "daily.md"), "changed snapshot\n", "utf8");
     const running = await service.runScheduledBackups({
       now: threeHoursLater,
       intervalMs: 2 * 60 * 60 * 1000,
