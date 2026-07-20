@@ -1,6 +1,6 @@
 ---
 title: "Manage plugins"
-description: "Install, activate, inspect, update, and remove Rudder plugins while keeping core operating-layer boundaries intact."
+description: "Install, activate, inspect, update, and remove Rudder plugins while preserving core product rules and records."
 icon: "plug"
 keywords:
   - "manage Rudder plugins"
@@ -11,7 +11,7 @@ canonical: "https://docs.rudderhq.dev/how-to/manage-plugins"
 
 ---
 
-Use plugins to add capabilities outside the core Rudder operating layer.
+Use plugins to add capabilities around Rudder's built-in workflows.
 
 ## Before installing
 
@@ -24,7 +24,7 @@ Check what the plugin declares:
 - configuration fields
 - external services it needs
 
-Only install plugins from sources you trust. A plugin can add useful integration behavior, but it should not replace core Rudder rules for organizations, issues, approvals, budgets, or runs.
+Only install plugins from sources you trust. A plugin can add useful integration behavior, but it should not replace Rudder's rules for organizations, issues, approvals, budgets, or runs.
 
 ## Install and activate
 
@@ -54,7 +54,7 @@ If a plugin starts work from a webhook or scheduled job, make sure the resulting
 
 Before updating, check whether the plugin changes capabilities or configuration. Before removing, check whether active jobs, webhooks, or UI surfaces depend on it.
 
-Removing a plugin should not delete core Rudder records such as issues, approvals, budgets, or run history.
+Removing a plugin should not delete built-in records such as issues, approvals, budgets, or run history.
 
 ## Next steps
 
@@ -62,7 +62,7 @@ Removing a plugin should not delete core Rudder records such as issues, approval
   <Card title="Plugins" icon="plug" href="/concepts/plugins">
     Understand plugin boundaries.
   </Card>
-  <Card title="Operating layer" icon="sliders-horizontal" href="/concepts/operating-layer">
-    See which rules stay in core Rudder.
+  <Card title="Rudder" icon="sliders-horizontal" href="/concepts/approvals-budgets-activity">
+    See which rules remain owned by Rudder.
   </Card>
 </CardGroup>

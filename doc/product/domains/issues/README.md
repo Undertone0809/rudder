@@ -29,7 +29,7 @@ edit_policy: user_confirmed_only
 - Agent run or heartbeat execution semantics. See `RUN.*`.
 - Assignee, reviewer, checkout, and wake eligibility rules. See `ROUTING.*`.
 - Comment, Messenger, and thread semantics. Those belong to collaboration.
-- Activity log audit semantics. Those belong to operating-layer.
+- Activity log audit semantics. Those belong to Rudder.
 - Resource and Library eligibility. Those belong to library-and-context.
 
 ## Contract Index

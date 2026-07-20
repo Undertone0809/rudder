@@ -43,11 +43,11 @@ function createProject() {
   return {
     id: "project-1",
     orgId: "organization-1",
-    urlKey: "operating-layer",
+    urlKey: "Rudder",
     goalId: null,
     goalIds: [],
     goals: [],
-    name: "Operating Layer",
+    name: "Rudder",
     description: null,
     status: "planned",
     leadAgentId: null,
@@ -114,17 +114,17 @@ describe("POST /api/orgs/:orgId/projects", () => {
     const res = await request(app)
       .post("/api/orgs/organization-1/projects")
       .send({
-        name: "Operating Layer",
+        name: "Rudder",
         status: "planned",
         workspace: {
           cwd: "/tmp/legacy-project-workspace",
-          repoUrl: "https://github.com/acme/operating-layer",
+          repoUrl: "https://github.com/acme/Rudder",
         },
       });
 
     expect(res.status).toBe(201);
     expect(mockProjectService.create).toHaveBeenCalledWith("organization-1", {
-      name: "Operating Layer",
+      name: "Rudder",
       status: "planned",
     });
     expect(res.body.workspaces).toEqual([]);
@@ -153,13 +153,13 @@ describe("POST /api/orgs/:orgId/projects", () => {
     const res = await request(app)
       .post("/api/orgs/organization-1/projects")
       .send({
-        name: "Operating Layer",
+        name: "Rudder",
         status: "planned",
       });
 
     expect(res.status).toBe(201);
     expect(mockProjectService.create).toHaveBeenCalledWith("organization-1", {
-      name: "Operating Layer",
+      name: "Rudder",
       status: "planned",
     });
     expect(mockLogActivity).toHaveBeenCalledWith(
@@ -222,7 +222,7 @@ describe("POST /api/orgs/:orgId/projects", () => {
     const res = await request(app)
       .post("/api/orgs/organization-1/projects")
       .send({
-        name: "Operating Layer",
+        name: "Rudder",
       });
 
     expect(res.status).toBe(403);

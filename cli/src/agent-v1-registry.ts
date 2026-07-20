@@ -58,7 +58,7 @@ export interface AgentV1McpToolManifestEntry extends AgentCliCapabilitiesManifes
 export interface AgentV1McpToolsManifest {
   schema: "rudder.agent-mcp-tools/v1";
   contract: AgentCliCapabilityContract | "all";
-  serverName: "rudder-operating-layer";
+  serverName: "rudder-tools";
   tools: AgentV1McpToolManifestEntry[];
 }
 
@@ -1202,7 +1202,7 @@ export function buildAgentV1McpToolsManifest(
   return {
     schema: "rudder.agent-mcp-tools/v1",
     contract,
-    serverName: "rudder-operating-layer",
+    serverName: "rudder-tools",
     tools: capabilities.map((entry) => {
       const semanticContract = semanticContractByCapability.get(entry.id);
       if (!semanticContract) {

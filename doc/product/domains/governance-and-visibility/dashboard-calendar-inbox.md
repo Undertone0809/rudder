@@ -1,12 +1,12 @@
 ---
 title: Dashboard Calendar And Inbox
-domain: operating-layer
+domain: governance-and-visibility
 status: active
 coverage: detailed
 contract_ids:
-  - CONTROL.DASHBOARD.001
-  - CONTROL.CALENDAR.001
-  - CONTROL.INBOX.001
+  - DASHBOARD.SUMMARY.001
+  - CALENDAR.SOURCE.001
+  - INBOX.ATTENTION.001
 related_code:
   - server/src/routes/dashboard.ts
   - server/src/services/dashboard.ts
@@ -26,7 +26,7 @@ edit_policy: user_confirmed_only
 
 # Dashboard Calendar And Inbox
 
-## CONTROL.DASHBOARD.001
+## DASHBOARD.SUMMARY.001
 
 Why:
 
@@ -62,7 +62,7 @@ Evidence:
 - Known gap: dashboard cards are only as strong as the source-domain contracts
   and tests they aggregate.
 
-## CONTROL.CALENDAR.001
+## CALENDAR.SOURCE.001
 
 Why:
 
@@ -96,7 +96,7 @@ Evidence:
 - Known gap: third-party calendar source behavior should get provider-specific
   contracts if external sync becomes first-class.
 
-## CONTROL.INBOX.001
+## INBOX.ATTENTION.001
 
 Why:
 

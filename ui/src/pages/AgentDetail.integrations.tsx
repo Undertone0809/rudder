@@ -15,7 +15,7 @@ import type {
   AgentIntegrationProviderRegion,
   AgentIntegrationSetupSession,
   AgentIntegrationSummary,
-  AgentOperatingLayerIntegrationSummary,
+  AgentRudderToolSummary,
   CreateCustomIntegration,
   CustomIntegrationKind,
   CustomIntegrationScope,
@@ -247,8 +247,8 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
   });
   const integrations = integrationsQuery.data ?? [];
   const customIntegrations = customIntegrationsQuery.data ?? [];
-  const operatingLayerIntegrations = agent.operatingLayerIntegrations ?? [];
-  const rudderMcpIntegration = operatingLayerIntegrations.find((integration) => integration.kind === "rudder_mcp") ?? null;
+  const rudderTools = agent.rudderTools ?? [];
+  const rudderMcpIntegration = rudderTools.find((integration) => integration.kind === "rudder_mcp") ?? null;
   const feishuIntegration = integrations.find((integration) => integration.provider === "feishu") ?? null;
   const state = getFeishuIntegrationState(feishuIntegration);
   const isActive = state === "active";
@@ -782,7 +782,7 @@ function UpcomingIntegrationCard({ integration }: UpcomingIntegrationCardProps) 
   );
 }
 
-function RudderMcpManageRow({ integration }: { integration: AgentOperatingLayerIntegrationSummary }) {
+function RudderMcpManageRow({ integration }: { integration: AgentRudderToolSummary }) {
   return (
     <div className="grid gap-3 rounded-md border border-border bg-background/40 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
       <div className="flex min-w-0 items-start gap-3">

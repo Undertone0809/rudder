@@ -716,7 +716,7 @@ function assertStartupRecoveryFrame(event: IpcMainInvokeEvent, action: string): 
   }
 }
 
-function collectBrowserOperatingLayerOrigins(...additionalOrigins: Array<string | null | undefined>): string[] {
+function collectRudderAppOrigins(...additionalOrigins: Array<string | null | undefined>): string[] {
   const configuredPort = process.env.PORT?.trim();
   const configuredOrigin = configuredPort ? `http://127.0.0.1:${configuredPort}` : null;
   return collectDesktopNavigationOrigins(
@@ -766,7 +766,7 @@ function initializeBrowserProfile(instanceRoot: string): void {
 
   const browserSession = session.fromPartition(partition);
   installBrowserSessionPolicy(browserSession, {
-    getOperatingLayerOrigins: collectBrowserOperatingLayerOrigins,
+    getRudderAppOrigins: collectRudderAppOrigins,
   });
   const controller = createBrowserProfileController({
     partition,
@@ -784,9 +784,9 @@ function initializeBrowserProfile(instanceRoot: string): void {
       partition,
       createWindow: (windowOptions) => new BrowserWindow(windowOptions),
       registerGuest: browserGuestRegistry.register,
-      getOperatingLayerOrigins: collectBrowserOperatingLayerOrigins,
+      getRudderAppOrigins: collectRudderAppOrigins,
     }),
-    getOperatingLayerOrigins: collectBrowserOperatingLayerOrigins,
+    getRudderAppOrigins: collectRudderAppOrigins,
   });
   browserAgentTabController = agentTabs;
   browserRuntimeLifecycle = createDesktopBrowserRuntimeLifecycle({
@@ -1128,7 +1128,7 @@ async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Pr
     const browserProfile = requireBrowserProfileController();
     installBrowserWebviewPolicy(window.webContents, {
       partition: browserProfile.getPartition(),
-      getOperatingLayerOrigins: () => collectBrowserOperatingLayerOrigins(initialUrl),
+      getRudderAppOrigins: () => collectRudderAppOrigins(initialUrl),
       isBrowserAvailable: () => browserProfile.isOperatorAvailable(),
       registerGuest: (guest) => {
         browserGuestRegistry.register(guest);

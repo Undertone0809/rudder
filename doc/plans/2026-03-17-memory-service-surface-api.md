@@ -2,7 +2,7 @@
 
 ## Goal
 
-Define a Rudder memory service and surface API that can sit above multiple memory backends, while preserving Rudder's operating-layer requirements:
+Define a Rudder memory service and surface API that can sit above multiple memory backends, while preserving Rudder's requirements:
 
 - company scoping
 - auditability
@@ -19,7 +19,7 @@ This plan is based on the external landscape summarized in `doc/memory-landscape
 
 ## Recommendation In One Sentence
 
-Rudder should not embed one opinionated memory engine into core. It should add a company-scoped memory operating layer with a small normalized adapter contract, then let built-ins and plugins implement the provider-specific behavior.
+Rudder should not embed one opinionated memory engine into core. It should add a company-scoped memory Rudder with a small normalized adapter contract, then let built-ins and plugins implement the provider-specific behavior.
 
 ## Product Decisions
 
@@ -340,7 +340,7 @@ This is important because a memory system that "works" but silently burns budget
 
 ## Suggested Data Model Additions
 
-At the operating-layer level, the likely new core tables are:
+At the Rudder level, the likely new core tables are:
 
 - `memory_bindings`
   - company-scoped key
@@ -375,11 +375,11 @@ Why:
 - it is easy to back up and debug
 - it gives the system a baseline even without external API keys
 
-The design should still treat that built-in as just another provider behind the same operating-layer contract.
+The design should still treat that built-in as just another provider behind the same Rudder contract.
 
 ## Rollout Phases
 
-### Phase 1: Operating-layer contract
+### Phase 1: Rudder contract
 
 - add memory binding models and API types
 - add plugin capability / registration surface for memory providers

@@ -107,10 +107,10 @@ describe("bundled rudder docs skill", () => {
     expect(contents).toMatch(/exact source[\s\S]*near the claim[\s\S]*host supports links/);
   });
 
-  it("keeps the main body a router rather than a command catalog or operating-layer manual", async () => {
+  it("keeps the main body a router rather than a command catalog or Rudder manual", async () => {
     const contents = await readSkill();
 
-    expect(contents).not.toMatch(/## (?:Essential Commands|Operating-Layer Rails|Heartbeat Operating Loop|Heartbeat Procedure|Agent V1 Commands)/);
+    expect(contents).not.toMatch(/## (?:Essential Commands|Rudder Rails|Heartbeat Operating Loop|Heartbeat Procedure|Agent V1 Commands)/);
     expect(contents).not.toMatch(/\|\s*`rudder (?:agent|approval|automation|chat|issue|library|project|runs|skill)/);
     expect(contents).not.toContain("Goal -> Plan -> Chat or Issue -> Agent run");
     expect((contents.match(/^```/gm) ?? []).length).toBe(0);
@@ -311,7 +311,7 @@ describe("bundled rudder docs skill", () => {
     }
   });
 
-  it("preserves conditional operating-layer safety, review, and authentication facts", async () => {
+  it("preserves conditional Rudder safety, review, and authentication facts", async () => {
     const contents = await readReferences();
 
     const requiredPatterns = [

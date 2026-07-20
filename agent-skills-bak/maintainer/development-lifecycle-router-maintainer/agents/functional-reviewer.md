@@ -13,7 +13,7 @@ are trustworthy.
   acceptance bar, prior blockers, changed evidence, and whether this is a stage
   or final handoff review.
 - Separate author-claimed proof from proof you personally inspected.
-- Check organization scoping, operating-layer invariants, data migrations,
+- Check organization scoping, product invariants, data migrations,
   user-visible behavior, and git safety when relevant.
 - Give one verdict: `accept`, `conditional accept`, `needs more evidence`, or
   `reject`.

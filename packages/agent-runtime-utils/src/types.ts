@@ -134,9 +134,9 @@ export interface AgentRuntimeInvocationMeta {
   loadedSkills?: AgentRuntimeLoadedSkillMeta[];
   /**
    * Rudder desired-state skills for this invocation. Usually supplied by the
-   * operating layer from the agent's enabled skill set.
+   * Rudder from the agent's enabled skill set.
    *
-   * Persisted heartbeat payloads derive this from operating-layer runtime skills,
+   * Persisted heartbeat payloads derive this from Rudder runtime skills,
    * not from adapter-authored realization or discovery claims.
    */
   desiredSkills?: AgentRuntimeLoadedSkillMeta[];
@@ -157,7 +157,7 @@ export interface AgentRuntimeInvocationMeta {
   promptInjectedSkills?: AgentRuntimeLoadedSkillMeta[];
   /**
    * Skills the runtime can explicitly confirm were used.
-   * Prompt mentions should be reported separately by the operating layer.
+   * Prompt mentions should be reported separately by Rudder.
    */
   usedSkills?: AgentRuntimeLoadedSkillMeta[];
   /**

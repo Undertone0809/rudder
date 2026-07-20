@@ -52,9 +52,9 @@ runtime semantics. Custom integrations need explicit organization, owner-agent,
 binding, tool, credential, and audit records so Rudder can enforce scope before
 any prompt or tool-call surface sees them.
 
-Rudder's first-party operating-layer MCP server is not a custom integration. It is
-runtime-owned built-in infrastructure exposed as `rudder-operating-layer` during
-supported agent runs. Agent Detail may show this built-in operating-layer tool
+Rudder's first-party Rudder MCP server is not a custom integration. It is
+runtime-owned built-in infrastructure exposed as `rudder-tools` during
+supported agent runs. Agent Detail may show this built-in Rudder tool
 surface so operators understand what the runtime can call, but operators do not
 configure its URL, credentials, binding, or tool allowlist from the custom
 integration setup flow. `AGENT.CONTROL.TOOLS.001` owns the runtime injection,
@@ -72,7 +72,7 @@ tool naming, identity, and fallback semantics for that built-in surface.
 - Agent custom integration binding: per-agent status and enabled-tool allowlist.
 - Custom integration tool call: sanitized audit evidence for attempted custom
   tool dispatch.
-- Rudder MCP tools: built-in, runtime-managed operating-layer tools represented
+- Rudder MCP tools: built-in, runtime-managed Rudder tools represented
   as a read-only Agent Detail Manage row, not persisted custom integration rows.
 
 ### Entry Points / Inputs
@@ -89,7 +89,7 @@ tool naming, identity, and fallback semantics for that built-in surface.
   a validated blocked audit event for the first implementation slice.
 - Agent Detail Integrations exposes Custom API and MCP Server setup controls.
 - Agent Detail Integrations Manage exposes a read-only built-in `Rudder MCP
-  tools` row for the first-party `rudder-operating-layer` Agent V1 MCP server.
+  tools` row for the first-party `rudder-tools` Agent V1 MCP server.
 
 ### Product Logic Flow
 
@@ -142,7 +142,7 @@ Agent Detail Integrations shows Custom API and MCP Server setup controls,
 connected custom integration rows, scope labels, enabled tool names, credential
 presence, status, and disconnect actions. It does not display secret ids or
 secret values. The Manage view also shows built-in Rudder MCP tools with the
-Rudder logo, `rudder-operating-layer` server name, runtime-managed auth, tool
+Rudder logo, `rudder-tools` server name, runtime-managed auth, tool
 count, and complete tool-name list. The Discover view does not show that
 built-in row because it is not something the operator connects.
 
@@ -207,6 +207,6 @@ semantics remain governed by their provider contracts, not this page.
   - `AGENT.SKILLS.001` for discovery vs runtime enablement.
   - `AGENT.INSTRUCTIONS.001` for runtime prompt assembly.
   - `AGENT.RUNTIME.PERMISSIONS.001` for runtime credential boundaries.
-  - `AGENT.CONTROL.TOOLS.001` for built-in Rudder MCP operating-layer tools.
+  - `AGENT.CONTROL.TOOLS.001` for built-in Rudder MCP tools.
   - `PLUGIN.CAPABILITY.001` for namespaced tool capability principles.
   - `IM.FEISHU.001` for the existing fixed-provider, agent-bound precedent.

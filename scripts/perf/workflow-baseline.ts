@@ -489,8 +489,8 @@ async function main() {
   try {
     await db.insert(organizations).values({
       id: orgId,
-      name: `Operating Layer Perf ${orgId.slice(0, 8)}`,
-      urlKey: `operating-layer-perf-${orgId.slice(0, 8)}`,
+      name: `Workflow Perf ${orgId.slice(0, 8)}`,
+      urlKey: `workflow-perf-${orgId.slice(0, 8)}`,
       issuePrefix: `P${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       budgetMonthlyCents: 500_000,
       requireBoardApprovalForNewAgents: false,
@@ -535,7 +535,7 @@ async function main() {
       id,
       orgId,
       title: `Perf issue ${index + 1}`,
-      description: "Seeded issue for operating-layer perf timing.",
+      description: "Seeded issue for workflow performance timing.",
       status: ["todo", "in_progress", "in_review", "blocked", "done"][index % 5],
       priority: ["low", "medium", "high"][index % 3],
       assigneeUserId: index % 2 === 0 ? boardUserId : null,

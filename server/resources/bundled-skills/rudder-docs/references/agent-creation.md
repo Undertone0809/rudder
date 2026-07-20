@@ -40,7 +40,7 @@ creating an unlinked Agent and repairing the relationship later.
 
 Inspect exposed typed capabilities first. If a governed typed Agent-hire
 capability is exposed by the current runtime, prefer it. The standard Rudder
-operating-layer tool set currently has no Agent-hire mutation tool, so verify and
+Rudder tool set currently has no Agent-hire mutation tool, so verify and
 use `rudder agent hire` as the canonical installed fallback.
 
 Discover before drafting:

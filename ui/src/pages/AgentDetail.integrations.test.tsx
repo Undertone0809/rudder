@@ -5,7 +5,7 @@ import {
   RUDDER_AGENT_V1_MCP_TOOL_NAMES,
   type AgentDetail,
   type AgentIntegrationSummary,
-  type AgentOperatingLayerIntegrationSummary,
+  type AgentRudderToolSummary,
   type CustomIntegrationSummary,
 } from "@rudderhq/shared";
 import type { ReactNode } from "react";
@@ -163,13 +163,13 @@ function agent(overrides: Partial<AgentDetail> = {}): AgentDetail {
     chainOfCommand: [],
     access: { membership: null, grants: [], canAssignTasks: false, taskAssignSource: "none" },
     instructionsLibraryPath: null,
-    operatingLayerIntegrations: [operatingLayerIntegration()],
+    rudderTools: [rudderToolSummary()],
     integrations: [],
     ...overrides,
   };
 }
 
-function operatingLayerIntegration(overrides: Partial<AgentOperatingLayerIntegrationSummary> = {}): AgentOperatingLayerIntegrationSummary {
+function rudderToolSummary(overrides: Partial<AgentRudderToolSummary> = {}): AgentRudderToolSummary {
   return {
     id: RUDDER_AGENT_V1_MCP_SERVER_NAME,
     displayName: "Rudder MCP tools",
@@ -272,7 +272,7 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).toContain("Manage");
     expect(container.textContent).not.toContain("Built-in");
     expect(container.textContent).not.toContain("Rudder MCP tools");
-    expect(container.textContent).not.toContain("rudder-operating-layer");
+    expect(container.textContent).not.toContain("rudder-tools");
     expect(container.textContent).not.toContain("runtime-managed auth");
     expect(container.textContent).toContain("Custom API");
     expect(container.textContent).toContain("MCP Server");
@@ -294,7 +294,7 @@ describe("AgentIntegrationsTab", () => {
     });
 
     expect(container.textContent).toContain("Rudder MCP tools");
-    expect(container.textContent).toContain("rudder-operating-layer");
+    expect(container.textContent).toContain("rudder-tools");
     expect(container.textContent).toContain(`${RUDDER_AGENT_V1_MCP_TOOL_NAMES.length} exposed`);
     expect(container.textContent).toContain("Runtime managed");
     expect(container.textContent).toContain("No user credential");

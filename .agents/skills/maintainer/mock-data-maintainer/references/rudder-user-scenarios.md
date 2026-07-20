@@ -24,7 +24,7 @@ case. The data should feel like a small case study.
 Persona: founder/operator trying to ship a public beta with a small agent team.
 
 Problem: work is spread across chat, GitHub, release notes, and local scripts.
-The founder needs one operating layer for goals, agent ownership, approvals, and
+The founder needs one Rudder for goals, agent ownership, approvals, and
 cost.
 
 Data to show:
@@ -103,7 +103,7 @@ generic marketing-use-case rows just to fill space.
 
 Persona: team evaluating whether Rudder fits their workflow.
 
-Problem: they understand task boards, but not agent operating layers.
+Problem: they understand task boards, but not agent Rudders.
 
 Data to show:
 
@@ -112,5 +112,5 @@ Data to show:
 - then approvals and budget controls
 - finally chat-to-issue as the intake path
 
-The data should show a progression from "task board" to "operating layer for
+The data should show a progression from "task board" to "Rudder for
 agent teams."

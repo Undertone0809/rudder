@@ -1,6 +1,6 @@
 # Rudder API Reference
 
-Internal/debug reference for the Rudder operating layer API.
+Internal/debug reference for the Rudder API.
 
 - The `rudder-docs` router treats this as a compatibility and source-debugging
   reference, not the normal first interface for agent operations.

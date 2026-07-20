@@ -28,7 +28,7 @@ Current V1 assumptions are centered on one board operator. We now need:
 ## Product constraints
 
 1. Keep company scoping strict for every new table, endpoint, and permission check.
-2. Preserve existing operating-layer invariants:
+2. Preserve existing product invariants:
 
 - single-assignee task model
 - approval gates

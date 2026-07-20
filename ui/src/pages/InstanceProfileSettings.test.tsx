@@ -148,7 +148,7 @@ describe("InstanceProfileSettings", () => {
       "[unknown] - Always answer concisely.",
       "",
       "## Projects",
-      "[2026-05-01] - Rudder: agent orchestration operating layer.",
+      "[2026-05-01] - Rudder: agent orchestration Rudder.",
     ].join("\n");
 
     const profileTextarea = container.querySelector("#profile-more-about-you") as HTMLTextAreaElement | null;
@@ -159,7 +159,7 @@ describe("InstanceProfileSettings", () => {
     });
 
     expect(profileTextarea?.value).toContain("[unknown] - Always answer concisely.");
-    expect(profileTextarea?.value).toContain("Rudder: agent orchestration operating layer.");
+    expect(profileTextarea?.value).toContain("Rudder: agent orchestration Rudder.");
 
     const saveButton = Array.from(document.querySelectorAll("button"))
       .find((button) => button.textContent?.includes("Save profile")) as HTMLButtonElement | undefined;

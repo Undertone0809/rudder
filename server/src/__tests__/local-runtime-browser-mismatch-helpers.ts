@@ -67,7 +67,7 @@ const lines = readline.createInterface({ input: process.stdin });
           coreContractHash: ${JSON.stringify(RUDDER_CORE_MCP_CONTRACT_HASH)},
           browserContractHash: ${JSON.stringify(RUDDER_BROWSER_MCP_CONTRACT_HASH)},
         } } },
-        serverInfo: { name: "rudder-operating-layer", version: "0.4.5" },
+        serverInfo: { name: "rudder-tools", version: "0.4.5" },
       } }));
     }
     if (request.method === "tools/list") {

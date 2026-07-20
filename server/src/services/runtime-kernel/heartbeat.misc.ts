@@ -199,7 +199,7 @@ export function createHeartbeatMiscHandlers(context: any) {
     return wakeupIds.length;
   }
 
-  async function cancelRunInternal(runId: string, reason = "Cancelled by operating layer") {
+  async function cancelRunInternal(runId: string, reason = "Cancelled by Rudder") {
     const run = await getRun(runId);
     if (!run) throw notFound("Heartbeat run not found");
     if (run.status !== "running" && run.status !== "queued") return run;

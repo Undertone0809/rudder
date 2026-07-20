@@ -2320,7 +2320,7 @@ the adjacent Side Panel workbench.
 - Library targets retain `LIBRARY.FILES.001` path, protection, and conditional
   write rules. Automation targets retain `AUTOMATION.*` lifecycle rules.
   Browser targets retain the dedicated Browser partition and all sandbox,
-  protocol, popup, permission, download, file, and operating-layer-origin rules.
+  protocol, popup, permission, download, file, and Rudder-app-origin rules.
 - Browser live reuse is best effort and depends on the original guest identity,
   not only URL equality. Fallback from the last URL must not claim recovery of
   ephemeral browsing state.

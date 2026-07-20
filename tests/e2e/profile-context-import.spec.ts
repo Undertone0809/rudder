@@ -27,14 +27,14 @@ test.describe("Profile context import", () => {
       "[unknown] - Prefer concise, direct engineering feedback.",
       "",
       "## Projects",
-      "[2026-05-05] - Rudder: orchestration and control platform for agent work.",
+      "[2026-05-05] - Rudder: assign, run, review, and improve agent work.",
       "```",
     ].join("\n");
 
     const profileTextarea = modal.locator("#profile-more-about-you");
     await profileTextarea.fill(providerExport);
     await expect(profileTextarea).toHaveValue(/Prefer concise, direct engineering feedback\./);
-    await expect(profileTextarea).toHaveValue(/Rudder: orchestration and control platform for agent work\./);
+    await expect(profileTextarea).toHaveValue(/Rudder: assign, run, review, and improve agent work\./);
 
     const saveResponse = page.waitForResponse((response) =>
       response.request().method() === "PATCH"

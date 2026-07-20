@@ -92,7 +92,7 @@ The default strategy is:
 3. The run scene adds only invariant rules for that scene.
 4. Wake-source context adds the current task, comment, recovery, or chat state.
 5. Project resource attachments add project-specific working references.
-6. Organization resources stay queryable through the operating layer and are not
+6. Organization resources stay queryable through Rudder and are not
    loaded into every run by default.
 
 ### 4.1 Stable Agent Instructions

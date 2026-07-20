@@ -41,7 +41,7 @@
     "decisionNote": "Approved. Keep the release copy focused on operating agent teams, not generic AI task management.",
     "payload": {
       "summary": "Release note framing for local desktop build.",
-      "approvedCopyAngle": "Rudder is a operating layer for real agent-work loops."
+      "approvedCopyAngle": "Rudder is a shared workspace for real agent-work loops."
     }
   },
   {

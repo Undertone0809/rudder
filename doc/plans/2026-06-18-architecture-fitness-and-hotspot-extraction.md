@@ -10,7 +10,7 @@ entities:
   - module_boundaries
 related_plans:
   - 2026-05-19-source-file-size-boundary-refactor.md
-  - 2026-05-25-performance-operating-layer-optimization.md
+  - 2026-05-25-performance-workflow-optimization.md
 supersedes: []
 related_code:
   - scripts/architecture-audit.mjs
@@ -107,7 +107,7 @@ Phase 2 added an explicit ratchet:
   pages.
 - No CI wiring yet; the ratchet command is available for local and CI adoption
   after reviewer sign-off.
-- No new performance claims beyond the existing performance-operating-layer plan.
+- No new performance claims beyond the existing performance-Rudder plan.
 
 ## Non-Functional Requirements
 
@@ -285,4 +285,4 @@ because the change is contributor workflow and internal architecture hygiene.
 - Advisory list-like endpoint detection is intentionally heuristic and should
   stay non-blocking until noise is reviewed.
 - Runtime latency and production-shaped performance evidence remain tracked in
-  `2026-05-25-performance-operating-layer-optimization.md`.
+  `2026-05-25-performance-workflow-optimization.md`.

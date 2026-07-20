@@ -89,7 +89,7 @@ required for the implementation commit.
 
 Post-implementation contract sync (2026-07-14): the user later explicitly
 authorized updating `doc/product/**`. The delivered observable lifecycle
-guarantees are now recorded as `CONTROL.SERVER.LIFECYCLE.001` without changing
+guarantees are now recorded as `SERVER.LIFECYCLE.001` without changing
 runtime or business behavior. The contract deliberately scopes ownership to
 resources registered with the server lifecycle owner and records unbounded HTTP
 drain, shared-PostgreSQL black-box coverage, and deferred teardown work as known

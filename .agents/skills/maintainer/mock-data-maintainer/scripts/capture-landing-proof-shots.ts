@@ -945,7 +945,7 @@ async function seedDemoOrg(api: APIRequestContext, dbUrl: string): Promise<SeedC
   await fs.writeFile(path.join(workspaceRoot, "launch", "public-beta-message.md"), [
     "# Public beta message",
     "",
-    "Rudder is the operating layer for agent teams. The launch page should show how goals, tasks, approvals, skills, and budgets stay connected while agents work.",
+    "Rudder helps agent teams connect goals, tasks, approvals, skills, and budgets while work is in motion. The launch page should make that connection visible.",
     "",
     "## Review points",
     "- keep the desktop-first positioning concrete",
@@ -1607,7 +1607,7 @@ async function captureDashboard(page: Page, orgPrefix: string) {
   await expect(page.locator("#main-content")).toContainText("Fixed macOS 15 packaged-startup crash", { timeout: 30_000 });
   await page.waitForTimeout(2400);
   const main = page.locator("#main-content");
-  await captureLocator(page, main.locator("div.space-y-6").first(), "dashboard-operating-layer.png", { x: 18, y: 18 });
+  await captureLocator(page, main.locator("div.space-y-6").first(), "dashboard-Rudder.png", { x: 18, y: 18 });
   await captureViewport(page, "board-overview.png");
 }
 
@@ -1876,7 +1876,7 @@ async function main() {
       dbUrl: runtime.dbUrl,
       seed,
       screenshots: [
-        "dashboard-operating-layer.png",
+        "dashboard-Rudder.png",
         "board-overview.png",
         "mobile-dashboard.png",
         "chat-create-issue-proposal.png",

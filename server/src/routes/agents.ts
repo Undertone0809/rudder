@@ -34,7 +34,7 @@ import {
   updateCustomIntegrationBindingSchema,
   type AgentIntegrationProviderRegion,
   type AgentIntegrationSetupSession,
-  type AgentOperatingLayerIntegrationSummary,
+  type AgentRudderToolSummary,
   type AgentSkillAnalytics,
   type AgentSkillSnapshot,
   type InstanceSchedulerHeartbeatAgent
@@ -161,7 +161,7 @@ function normalizeFeishuProviderRegion(value: unknown): AgentIntegrationProvider
   return value === "lark_global" ? "lark_global" : "feishu_cn";
 }
 
-function buildAgentOperatingLayerIntegrations(): AgentOperatingLayerIntegrationSummary[] {
+function buildAgentRudderTools(): AgentRudderToolSummary[] {
   return [
     {
       id: RUDDER_AGENT_V1_MCP_SERVER_NAME,
@@ -572,7 +572,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
       access: accessState,
       instructionsLibraryPath,
       ...(options?.restricted ? {} : {
-        operatingLayerIntegrations: buildAgentOperatingLayerIntegrations(),
+        rudderTools: buildAgentRudderTools(),
         integrations,
       }),
     };

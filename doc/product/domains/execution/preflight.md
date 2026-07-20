@@ -132,7 +132,7 @@ Actionable-work definition:
   reviewer in `in_review` or `blocked`, as long as a blocked reviewer decision
   has not already been recorded.
 - The definition intentionally mirrors the agent inbox and reviewer-routing
-  contracts. Hidden operating-layer rows should not wake a timer run that the
+  contracts. Hidden Rudder rows should not wake a timer run that the
   agent cannot understand from its visible work list.
 
 Skip and admit outcomes:

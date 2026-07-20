@@ -1376,11 +1376,11 @@ contracts:
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-07-09-feishu-daily-session-rollover.md
-  CONTROL.APPROVALS.001:
+  APPROVAL.GOVERNED.ACTIONS.001:
     owner: product
-    domain: operating-layer
+    domain: governance-and-visibility
     docs:
-      - doc/product/domains/operating-layer/approvals-budgets-activity.md
+      - doc/product/domains/governance-and-visibility/approvals-budgets-activity.md
     related_code:
       - packages/db/src/schema/approvals.ts
       - packages/db/src/schema/approval_comments.ts
@@ -1391,11 +1391,11 @@ contracts:
       - server/src/__tests__/approval-routes-chat-application.test.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
-  CONTROL.BUDGETS.001:
+  BUDGET.ENFORCEMENT.001:
     owner: product
-    domain: operating-layer
+    domain: governance-and-visibility
     docs:
-      - doc/product/domains/operating-layer/approvals-budgets-activity.md
+      - doc/product/domains/governance-and-visibility/approvals-budgets-activity.md
     related_code:
       - packages/db/src/schema/cost_events.ts
       - server/src/services/budgets.ts
@@ -1407,22 +1407,22 @@ contracts:
       - tests/e2e/cost-trend.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
-  CONTROL.ACTIVITY.001:
+  ACTIVITY.AUDIT.001:
     owner: product
-    domain: operating-layer
+    domain: governance-and-visibility
     docs:
-      - doc/product/domains/operating-layer/approvals-budgets-activity.md
+      - doc/product/domains/governance-and-visibility/approvals-budgets-activity.md
     related_code:
       - server/src/services/activity.ts
     related_tests:
       - server/src/__tests__/activity-service.test.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
-  CONTROL.RUN.INTELLIGENCE.001:
+  RUN.INTELLIGENCE.001:
     owner: product
-    domain: operating-layer
+    domain: execution
     docs:
-      - doc/product/domains/operating-layer/approvals-budgets-activity.md
+      - doc/product/domains/execution/run-intelligence.md
     related_code:
       - server/src/services/run-intelligence.ts
       - server/src/routes/run-intelligence.ts
@@ -1442,12 +1442,12 @@ contracts:
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-07-14-run-intelligence-summary-and-bounded-evidence.md
-  CONTROL.SERVER.LIFECYCLE.001:
+  SERVER.LIFECYCLE.001:
     owner: product
-    domain: operating-layer
+    domain: execution
     spec_depth: logic_contract
     docs:
-      - doc/product/domains/operating-layer/server-runtime-lifecycle.md
+      - doc/product/domains/execution/server-runtime-lifecycle.md
     related_code:
       - server/src/index.ts
       - server/src/app.ts
@@ -1470,12 +1470,12 @@ contracts:
     related_plans:
       - doc/plans/2026-07-13-runtime-supervisor-resource-lifecycle.md
       - doc/plans/2026-07-17-safe-change-throughput-architecture-optimization.md
-  CONTROL.DESKTOP.STARTUP.RECOVERY.001:
+  DESKTOP.STARTUP.RECOVERY.001:
     owner: product
-    domain: operating-layer
+    domain: execution
     spec_depth: logic_contract
     docs:
-      - doc/product/domains/operating-layer/desktop-startup-recovery.md
+      - doc/product/domains/execution/desktop-startup-recovery.md
     related_code:
       - desktop/src/boot-screen.ts
       - desktop/src/boot-preload.ts
@@ -1546,11 +1546,11 @@ contracts:
     related_plans:
       - doc/plans/2026-05-06-issue-document-autosave-and-workspace-attach.md
       - doc/plans/2026-05-19-library-project-context-workspace-proposal.md
-  CONTROL.DASHBOARD.001:
+  DASHBOARD.SUMMARY.001:
     owner: product
-    domain: operating-layer
+    domain: governance-and-visibility
     docs:
-      - doc/product/domains/operating-layer/dashboard-calendar-inbox.md
+      - doc/product/domains/governance-and-visibility/dashboard-calendar-inbox.md
     related_code:
       - server/src/routes/dashboard.ts
       - server/src/services/dashboard.ts
@@ -1559,11 +1559,11 @@ contracts:
       - tests/e2e/dashboard-date-filter.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
-  CONTROL.CALENDAR.001:
+  CALENDAR.SOURCE.001:
     owner: product
-    domain: operating-layer
+    domain: governance-and-visibility
     docs:
-      - doc/product/domains/operating-layer/dashboard-calendar-inbox.md
+      - doc/product/domains/governance-and-visibility/dashboard-calendar-inbox.md
     related_code:
       - packages/db/src/schema/calendar_events.ts
       - packages/db/src/schema/calendar_sources.ts
@@ -1575,11 +1575,11 @@ contracts:
       - tests/e2e/calendar-v1.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
-  CONTROL.INBOX.001:
+  INBOX.ATTENTION.001:
     owner: product
-    domain: operating-layer
+    domain: governance-and-visibility
     docs:
-      - doc/product/domains/operating-layer/dashboard-calendar-inbox.md
+      - doc/product/domains/governance-and-visibility/dashboard-calendar-inbox.md
     related_code:
       - server/src/routes/sidebar-badges.ts
       - server/src/services/messenger.ts

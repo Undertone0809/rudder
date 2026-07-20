@@ -1,6 +1,6 @@
 # Rudder Docs
 
-> Rudder is an open-source operating layer for AI agent teams. It coordinates goals, conversational Chat, structured issues, agent runs, reviews, budgets, workspaces, skills, and feedback loops so humans can run agent work with clear context and evidence.
+> Rudder is open-source software for assigning, running, reviewing, and improving AI agent work. It connects goals, conversational Chat, structured issues, runs, reviews, budgets, workspaces, skills, and feedback loops so humans can work with clear context and evidence.
 
 Rudder is useful when agent work needs to be assigned, run, reviewed, budgeted, and improved over repeated loops. The product is local-first and supports local CLI-backed runtimes such as Codex and Claude Code, shell process runtimes, HTTP webhooks, and gateway-backed agents.
 

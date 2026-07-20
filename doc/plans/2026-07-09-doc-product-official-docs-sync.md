@@ -29,7 +29,7 @@ updated_at: 2026-07-09
 The official Mintlify docs should reflect Rudder's current product model, not a
 thin subset of it. The guarded Product Logic Registry in `doc/product/` already
 records the current behavior contracts for organizations, issues, agents, runs,
-work routing, workspaces, automations, collaboration, operating-layer surfaces,
+work routing, workspaces, automations, collaboration, Rudder surfaces,
 review, learning, and plugins. This plan turns the public parts of that truth
 into user-facing documentation under `docs/`.
 
@@ -61,7 +61,7 @@ current product.
 
 Update the official docs information architecture and content:
 
-- Add public concept pages for automations, review and learning, operating-layer
+- Add public concept pages for automations, review and learning, Rudder
   operations, and plugins.
 - Do not add `concepts/documents-work-products.mdx`; documents and work products
   should be covered through Workspaces, Library, issue close-out, and review
@@ -118,7 +118,7 @@ Update the official docs information architecture and content:
 
 After this change:
 
-1. A new user lands on the docs homepage and sees Rudder as a operating layer for
+1. A new user lands on the docs homepage and sees Rudder as a shared workspace for
    goals, issues, runs, reviews, budgets, workspaces, automations, plugins, and
    learning.
 2. They open Core Concepts and can find each current product domain in the
@@ -155,7 +155,7 @@ Page additions:
 
 - `docs/concepts/automations.mdx`
 - `docs/concepts/reviews-feedback-learning.mdx`
-- `docs/concepts/operating-layer.mdx`
+- `docs/concepts/approvals-budgets-activity.mdx`
 - `docs/concepts/plugins.mdx`
 - `docs/how-to/create-automation.mdx`
 - `docs/how-to/review-agent-work.mdx`

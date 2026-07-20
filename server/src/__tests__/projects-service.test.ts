@@ -144,7 +144,7 @@ describe("project service workspace resolution", () => {
     });
 
     const created = await projectSvc.create(orgId, {
-      name: "Operating Layer",
+      name: "Rudder",
       status: "planned",
     });
 

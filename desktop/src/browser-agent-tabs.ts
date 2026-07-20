@@ -104,8 +104,8 @@ function ownerKey(identity: BrowserRuntimeIdentity): string {
   return JSON.stringify([identity.orgId, identity.agentId, identity.runId]);
 }
 
-function safeWebUrl(url: string, operatingLayerOrigins: string[]): string {
-  if (!isAllowedBrowserNavigationUrl(url, operatingLayerOrigins)) {
+function safeWebUrl(url: string, rudderAppOrigins: string[]): string {
+  if (!isAllowedBrowserNavigationUrl(url, rudderAppOrigins)) {
     throw new BrowserAgentError("browser_unsafe_url", "Browser navigation requires an approved HTTP or HTTPS URL.");
   }
   return url;
@@ -366,7 +366,7 @@ function tabSummary(record: BrowserTabRecord) {
 
 export function createBrowserAgentTabController(options: {
   createTab: BrowserAgentTabFactory;
-  getOperatingLayerOrigins(): string[];
+  getRudderAppOrigins(): string[];
   createId?: () => string;
   createSnapshotId?: () => string;
   now?: () => Date;
@@ -477,7 +477,7 @@ export function createBrowserAgentTabController(options: {
     rawUrl: unknown,
     deadlineAt = clock() + commandTimeoutMs,
   ) => {
-    const url = safeWebUrl(requiredString(rawUrl, "URL"), options.getOperatingLayerOrigins());
+    const url = safeWebUrl(requiredString(rawUrl, "URL"), options.getRudderAppOrigins());
     const key = ownerKey(identity);
     const expectedGlobalGeneration = globalGeneration;
     const expectedOwnerGeneration = ownerGenerations.get(key) ?? 0;
@@ -592,7 +592,7 @@ export function createBrowserAgentTabController(options: {
     const record = ownedRecord(tabId, identity);
     if (action === "navigate") {
       return runRecordOperation(record, deadlineAt, async () => {
-        const url = safeWebUrl(requiredString(args.url, "URL"), options.getOperatingLayerOrigins());
+        const url = safeWebUrl(requiredString(args.url, "URL"), options.getRudderAppOrigins());
         record.snapshotId = null;
         record.refs.clear();
         try {

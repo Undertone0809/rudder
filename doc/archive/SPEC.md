@@ -10,7 +10,7 @@ archive_note: Long-horizon legacy product spec with old task/CEO terminology.
 Archived: this is not current behavior truth. Use `doc/product/README.md` and
 the owning `doc/product/domains/**` contract for current product behavior.
 
-Target specification for the Rudder operating layer. Living document — updated incrementally during spec interviews.
+Target specification for the Rudder. Living document — updated incrementally during spec interviews.
 
 Current product narrative: Rudder builds a self-improving agent team by turning goals, issues, agent runs, reviews, and feedback into a real work loop. This long-horizon spec still contains legacy `task`, `CEO`, and organization-template language where it describes older design sketches. For current behavior, use `doc/product/**`; when updating current docs, prefer issue-centric work-loop language unless a legacy compatibility name is being documented deliberately.
 
@@ -91,7 +91,7 @@ Rudder runtime code. Agent or adapter files can add persona, tool, or memory
 context, but `HEARTBEAT.md` files are ignored legacy artifacts, not
 supplemental runtime context or a source of truth for the standard wakeup loop.
 
-Rudder provides the operating layer and shared contract for supported managed
+Rudder provides Rudder and shared contract for supported managed
 local runtimes. Adapter-specific runtimes remain responsible for their own
 inner prompt shape when they do not use Rudder's managed instruction bundle.
 
@@ -142,7 +142,7 @@ Beyond the minimum, Rudder provides progressively richer integration:
 
 1. **Callable** (minimum) — Rudder can start you. That's the only contract.
 2. **Status reporting** — Agent reports back success/failure/in-progress after execution.
-3. **Fully instrumented** — Agent reports status, cost/token usage, task updates, and logs. Bidirectional integration with the operating layer.
+3. **Fully instrumented** — Agent reports status, cost/token usage, task updates, and logs. Bidirectional integration with Rudder.
 
 Rudder ships **default agents** that demonstrate full integration: progress tracking, cost instrumentation, and a **Rudder skill** (a Claude Code skill for interacting with the Rudder API) for task management. These serve as both useful defaults and reference implementations for adapter authors.
 
@@ -399,7 +399,7 @@ Flow:
 1. Human creates an Agent in the UI
 2. Rudder generates a connection string (URL + key + instructions)
 3. Human provides this string to the Agent (e.g. in its adapter config, environment, etc.)
-4. Agent uses the key to authenticate API calls to the operating layer
+4. Agent uses the key to authenticate API calls to Rudder
 
 ### Tech Stack
 
@@ -548,7 +548,7 @@ Things Rudder explicitly does **not** do:
 
 ## 13. Principles (Consolidated)
 
-1. **Unopinionated about how you run your Agents.** Any language, any framework, any runtime. Rudder is the operating layer, not the execution plane.
+1. **Unopinionated about how you run your Agents.** Any language, any framework, any runtime. Rudder coordinates the work; runtimes execute it.
 2. **Organization is the unit of organization.** Everything lives under a Organization.
 3. **Issues are the durable work surface.** Agent work should flow through issues, comments, runs, reviews, and feedback rather than loose chat or hidden terminal state.
 4. **All work traces to the goal.** Nothing durable should exist in isolation.

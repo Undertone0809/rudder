@@ -67,7 +67,7 @@ As of 2026-02-17, the repo already includes:
 - React UI pages for dashboard/agents/projects/goals/issues lists
 - PostgreSQL schema via Drizzle with embedded PostgreSQL fallback when `DATABASE_URL` is unset
 
-V1 implementation extends this baseline into an organization-centric, governance-aware operating layer.
+V1 implementation extends this baseline into an organization-centric, governance-aware Rudder.
 
 ## 5. V1 Scope
 

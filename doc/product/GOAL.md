@@ -10,7 +10,7 @@ Rudder turns goals, tasks, chats, issues, agent runs, reviews, and feedback into
 
 Agent teams need durable, inspectable coordination surfaces that make human teams compound: goals, conversation, explicit ownership where needed, shared context, review, feedback, operating memory, and budget discipline.
 
-Rudder is the operating layer that makes those loops visible and repeatable. It is not the agent runtime and it is not a generic social chat product. It is the place where real work becomes inspectable enough to run, review, learn from, and improve, whether users choose Chat or issue structure.
+Rudder makes those loops visible and repeatable. It is not the agent runtime and it is not a generic social chat product. It is the place where real work becomes inspectable enough to run, review, learn from, and improve, whether users choose Chat or issue structure.
 
 The current north-star metric is the weekly count of real agent-work loops completed end-to-end through Rudder.
 
@@ -51,11 +51,9 @@ Goal -> Plan -> Chat or Issue -> Agent run -> Review -> Feedback -> Learning pro
 
 The product should make that loop concrete without overclaiming automation. Rudder should help agents form plans, preserve the evidence behind their work, and create reviewable promotion paths for better context, skills, decisions, workflows, evals, and role instructions. It should align agents with the team's taste through real feedback and accepted work, not silently rewrite behavior or leave lessons unindexed inside transcripts.
 
-## Architecture
+## Responsibilities
 
-Two layers:
-
-### 1. Operating Layer (this software)
+### Rudder
 
 The central nervous system. Manages:
 
@@ -66,16 +64,16 @@ The central nervous system. Manages:
 - Goal hierarchy and context links across organizations, teams, agents, chats, and issues
 - Heartbeat monitoring — know when agents are alive, idle, or stuck
 
-### 2. Execution Services (agent runtimes)
+### Agent runtimes
 
-Agents run through local or external runtimes and report into the operating layer. Agent runtimes connect Rudder to different execution environments:
+Agents run through local or external runtimes and report into Rudder. Agent runtimes connect Rudder to different execution environments:
 
 - local coding CLIs and processes
 - HTTP/webhook-based agents
 - gateway-backed agent systems
 - any runtime that can be called, can report progress, or can leave evidence through the API
 
-The operating layer coordinates work and preserves the record. Runtimes do the actual work.
+Rudder coordinates work and preserves the record. Runtimes do the actual work.
 
 ## Core Principle
 

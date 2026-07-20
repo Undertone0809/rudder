@@ -43,7 +43,7 @@ edit_policy: user_confirmed_only
 - `AGENT.RUNTIME.PERMISSIONS.001`: local runtime platform permissions define
   how managed homes, operator-home bridges, skills, credentials, and
   filesystem substitutions behave across macOS, Linux, and Windows.
-- `AGENT.CONTROL.TOOLS.001`: first-party Rudder MCP operating-layer tools expose
+- `AGENT.CONTROL.TOOLS.001`: first-party Rudder MCP tools expose
   the stable `agent-v1` command contract to supported runtimes through
   runtime-managed identity and auth.
 - `AGENT.BROWSER.001`: Rudder Desktop Browser profile, link routing, import,

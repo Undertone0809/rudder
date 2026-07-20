@@ -1,11 +1,11 @@
 ---
 title: Desktop Startup Recovery
-domain: operating-layer
+domain: execution
 status: active
 coverage: logic_contract
 spec_depth: logic_contract
 contract_ids:
-  - CONTROL.DESKTOP.STARTUP.RECOVERY.001
+  - DESKTOP.STARTUP.RECOVERY.001
 related_code:
   - desktop/src/boot-screen.ts
   - desktop/src/boot-preload.ts
@@ -25,7 +25,7 @@ edit_policy: user_confirmed_only
 
 # Desktop Startup Recovery
 
-## CONTROL.DESKTOP.STARTUP.RECOVERY.001
+## DESKTOP.STARTUP.RECOVERY.001
 
 ## Contract Summary
 
@@ -180,7 +180,7 @@ trust placed in a renderer that is active before the normal application loads.
   contract does not claim an initial renderer-load black-box path that the
   current Electron/macOS harness cannot execute reliably.
 - Server resource rollback and restart ownership remain governed by
-  `CONTROL.SERVER.LIFECYCLE.001`.
+  `SERVER.LIFECYCLE.001`.
 - Automatic SMTP sending, support uploads, telemetry, Apple Mail automation,
   and attachment collection require separate product decisions.
 

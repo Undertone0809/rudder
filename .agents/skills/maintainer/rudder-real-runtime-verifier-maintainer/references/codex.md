@@ -9,16 +9,16 @@ stripped unless the runtime explicitly supports it.
 Look for raw events like:
 
 ```json
-{"type":"item.completed","item":{"type":"mcp_tool_call","server":"rudder-operating-layer","tool":"rudder_agent_me"}}
+{"type":"item.completed","item":{"type":"mcp_tool_call","server":"rudder-tools","tool":"rudder_agent_me"}}
 ```
 
 Server-qualified tool names may appear as:
 
-- `rudder-operating-layer_rudder_agent_me`
-- `rudder-operating-layer_rudder_issue_context`
-- `rudder-operating-layer_rudder_issue_checkout`
-- `rudder-operating-layer_rudder_issue_comment`
-- `rudder-operating-layer_rudder_issue_done`
+- `rudder-tools_rudder_agent_me`
+- `rudder-tools_rudder_issue_context`
+- `rudder-tools_rudder_issue_checkout`
+- `rudder-tools_rudder_issue_comment`
+- `rudder-tools_rudder_issue_done`
 
 ## Known Traps
 

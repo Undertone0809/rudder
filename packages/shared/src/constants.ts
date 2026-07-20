@@ -197,7 +197,7 @@ export type AgentIntegrationDropReason = (typeof AGENT_INTEGRATION_DROP_REASONS)
 export const AGENT_INTEGRATION_OUTBOUND_STATUSES = ["pending", "streaming", "final", "error"] as const;
 export type AgentIntegrationOutboundStatus = (typeof AGENT_INTEGRATION_OUTBOUND_STATUSES)[number];
 
-export const RUDDER_AGENT_V1_MCP_SERVER_NAME = "rudder-operating-layer" as const;
+export const RUDDER_AGENT_V1_MCP_SERVER_NAME = "rudder-tools" as const;
 export const RUDDER_AGENT_V1_MCP_TOOL_NAMES = [
   "rudder_agent_me",
   "rudder_agent_inbox",

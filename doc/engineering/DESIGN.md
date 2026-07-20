@@ -22,7 +22,7 @@ If a design choice is not explicitly covered elsewhere, this document controls t
 
 ## 2. Product Character
 
-Rudder is a operating layer for agent work.
+Rudder is a shared workspace for agent work.
 It should feel like an operator tool, not a marketing site, not a consumer social app, and not a theatrical AI demo.
 
 The default visual character is:

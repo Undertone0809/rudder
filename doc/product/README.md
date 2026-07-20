@@ -80,8 +80,10 @@ history or line-by-line code copies.
   concurrency, and output routing.
 - `domains/collaboration/`: Chat, Messenger, issue threads, readable
   references, unread state, and IM/agent-integration bridges.
-- `domains/operating-layer/`: approvals, budgets, costs, activity, dashboard
-  rollups, operator-observability signals, and server process lifecycle.
+- `domains/governance-and-visibility/`: approvals, budgets, costs, activity,
+  Dashboard, Calendar, and Inbox attention.
+- `domains/execution/`: agent runs, runtime invocation, run intelligence,
+  server lifecycle, and Desktop startup recovery.
 - `domains/review-feedback-learning/`: review decisions, feedback capture,
   issue/review follow-up, and learning-promotion paths.
 - `domains/plugins/`: installed plugin lifecycle, worker boundaries,

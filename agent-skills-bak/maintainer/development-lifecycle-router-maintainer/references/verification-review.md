@@ -25,7 +25,7 @@ clarification before final review.
 ## Terminal Product Proof
 
 For user-visible, agent-visible, Desktop, release, runtime, CLI, or
-operating-layer workflow changes, identify the terminal product surface before
+Rudder workflow changes, identify the terminal product surface before
 calling verification complete.
 
 Start from the work loop:
@@ -81,7 +81,7 @@ push, or fix failures during the acceptance pass.
 
 For routed development work, acceptance is required by default when the artifact
 changes user-visible, agent-visible, Desktop, release, runtime, CLI, workflow, or
-operating-layer behavior. "Small bug", "quick fix", "优化一下", "推进", or the
+product behavior. "Small bug", "quick fix", "优化一下", "推进", or the
 absence of the word "review" does not remove this gate. The gate is not
 applicable only when the current artifact is advisory, review-only,
 skill-optimization text, recovery diagnosis without a fix, or another explicitly
@@ -221,7 +221,7 @@ are acceptable when the verifier produced strong terminal proof and the change i
 localized; one targeted reviewer is acceptable only for truly mechanical text or
 config-only changes with no product behavior change. Record the reason, the
 omitted lens, and why the remaining lens coverage is enough. Consequential
-workflow, Desktop, runtime, CLI, release, agent-visible, or operating-layer changes
+workflow, Desktop, runtime, CLI, release, agent-visible, or product changes
 still need the three-lens set.
 
 ## Reviewer Lenses
@@ -263,7 +263,7 @@ Spawning reviewers is not the same as passing review. Before handoff:
 - reject the gate when all reviewers duplicate the same functional checklist and
   none challenge framing, user journey, hidden assumptions, or alternatives
 
-For UI, workflow, Desktop, runtime, release, or operating-layer changes, the
+For UI, workflow, Desktop, runtime, release, or product changes, the
 parent must verify that reviewers distinguish author-claimed validation from
 reviewer-verified terminal proof. Spawned reviewer approval is not a substitute
 for a missing verifier result.

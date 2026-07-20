@@ -38,7 +38,7 @@ The recommended default experience is:
 
 ## 2. Context
 
-Rudder is positioned as the operating layer for agent teams. Its product model is not "one prompt goes in, one answer comes out." It is a durable work system where humans and agents coordinate through goals, tasks, knowledge, workflows, approvals, and feedback.
+Rudder is positioned as a workspace for building and running agent teams. Its product model is not "one prompt goes in, one answer comes out." It is a durable work system where humans and agents coordinate through goals, tasks, knowledge, workflows, approvals, and feedback.
 
 Rudder's product direction also emphasizes that:
 
@@ -598,7 +598,7 @@ You'll know it worked when:
 
 ### Reasoning
 
-This issue moves onboarding from "the agent ran once" to "Rudder is becoming an operating layer."
+This issue moves onboarding from "the agent ran once" to "Rudder is becoming a shared workspace."
 
 Many products can run an agent once. Rudder's stronger value is that context, workflows, approvals, feedback, and memory stay attached to durable work. This issue introduces that value immediately after the first run, when the user has fresh context worth saving.
 
@@ -1160,8 +1160,7 @@ This design gives Rudder a concrete, issue-native onboarding path while respecti
 
 This proposal uses the following project context:
 
-1. `README.md`: Rudder is described as an orchestration and control platform for agent work and the operating layer for agent teams. It gives humans and agents shared structure for goals, tasks, knowledge, workflows, approvals, and feedback. It also states that the current north-star metric is the weekly count of real agent-work loops completed end-to-end through Rudder.
+1. `README.md`: Rudder is described as a workspace for building and running agent teams. It gives humans and agents shared structure for goals, tasks, knowledge, workflows, approvals, and feedback. It also states that the current north-star metric is the weekly count of real agent-work loops completed end-to-end through Rudder.
 2. `README.md`: Rudder's design idea states that durable execution should stay attached to issues, approvals, and outputs, while chat should clarify and route work.
 3. `README.md`: Rudder's typical flow includes creating an organization, defining a goal, configuring agents, creating issues, letting agents pick up work, and reviewing outputs.
 4. `AGENTS.md`: The repository guidance treats the product description as canonical onboarding/product copy context and requires E2E coverage for shipped user-visible workflow changes.
-

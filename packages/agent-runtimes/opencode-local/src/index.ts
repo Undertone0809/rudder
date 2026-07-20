@@ -41,7 +41,7 @@ Notes:
 - OpenCode CLI currently exposes plugin loading but no verified skills-directory allowlist. Rudder points OPENCODE_CONFIG and OpenCode XDG state at sanitized adapter-managed runtime state, links selected skills into a Rudder-managed OpenCode sidecar, then injects only those selected SKILL.md files into the prompt.
 - Operator-home Claude/OpenCode skill directories are not used as Rudder runtime skill sources, and operator HOME does not authorize provider-native, project, global, stale, or unselected skills to become Rudder-loaded skills.
 - Runs are executed with: opencode run --pure --format json --dir <cwd> ...
-- Rudder writes a first-party rudder-operating-layer MCP server into the adapter-managed OpenCode config for runtime operating-layer work.
+- Rudder writes a first-party rudder-tools MCP server into the adapter-managed OpenCode config for runtime Rudder work.
 - Sessions are resumed with --session when stored session cwd matches current cwd.
 - dangerouslySkipPermissions is opt-in for OpenCode. New OpenCode agents do not inherit the global Claude-oriented dangerous permission default unless this field is explicitly true.
 - A zero-exit OpenCode run that writes files but emits no final text is marked degraded instead of reported as an empty successful Rudder result.

@@ -168,7 +168,7 @@ UI, capabilities, route boundaries, optional bundled-example host wiring, and
 package plus host verification. Current engineering documentation and SDK
 source remain authoritative for exact details.
 
-Update the operating-layer and organization-skill references so they route to
+Update the Rudder and organization-skill references so they route to
 these unified workflows instead of naming a retired skill. Do not copy command
 catalogs or route-shape tables into the new domain references.
 

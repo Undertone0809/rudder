@@ -3,7 +3,7 @@
 Rudder CLI now supports both:
 
 - instance setup/diagnostics (`onboard`, `doctor`, `configure`, `env`, `allowed-hostname`)
-- operating-layer client operations (issues, approvals, agents, activity, dashboard)
+- Rudder client operations (issues, approvals, agents, activity, dashboard)
 
 ## Base Usage
 
