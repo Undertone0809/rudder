@@ -4,12 +4,15 @@ const mockDb = vi.hoisted(() => ({
   existingBinding: null as { conversationId: string; createdAt: Date } | null,
   select: vi.fn(),
   insert: vi.fn(),
+  transaction: vi.fn(),
 }));
 
 const mockChatSvc = vi.hoisted(() => ({
   create: vi.fn(),
+  createWithInitialMessage: vi.fn(),
   addMessage: vi.fn(),
   getById: vi.fn(),
+  getMessage: vi.fn(),
 }));
 
 const mockStartAutomaticGeneration = vi.hoisted(() => vi.fn());
@@ -138,10 +141,24 @@ describe("Feishu DB dispatcher chat title generation", () => {
     mockDb.existingBinding = null;
     mockDb.select.mockImplementation(selectExistingBinding);
     mockDb.insert.mockReturnValue(insertNewBinding);
+    mockDb.transaction.mockImplementation(async (callback: (tx: typeof mockDb) => unknown) => callback(mockDb));
     mockChatSvc.create.mockResolvedValue({
       id: "conversation-1",
       orgId: "org-1",
       title: "hi, what skill do you have?",
+    });
+    mockChatSvc.createWithInitialMessage.mockResolvedValue({
+      conversation: {
+        id: "conversation-1",
+        orgId: "org-1",
+        title: "hi, what skill do you have?",
+      },
+      message: {
+        id: "message-row-1",
+        role: "user",
+        kind: "message",
+        body: "hi, what skill do you have?",
+      },
     });
     mockChatSvc.addMessage.mockResolvedValue({
       id: "message-row-1",
@@ -153,6 +170,12 @@ describe("Feishu DB dispatcher chat title generation", () => {
       id: "conversation-1",
       orgId: "org-1",
       title: "hi, what skill do you have?",
+    });
+    mockChatSvc.getMessage.mockResolvedValue({
+      id: "message-row-1",
+      role: "user",
+      kind: "message",
+      body: "hi, what skill do you have?",
     });
   });
 
@@ -175,6 +198,9 @@ describe("Feishu DB dispatcher chat title generation", () => {
       initialTitle: "hi, what skill do you have?",
     });
     expect(message).toEqual({ chatMessageId: "message-row-1" });
+    expect(mockDb.transaction).toHaveBeenCalledTimes(1);
+    expect(mockChatSvc.createWithInitialMessage).toHaveBeenCalledTimes(1);
+    expect(mockChatSvc.addMessage).not.toHaveBeenCalled();
     expect(mockStartAutomaticGeneration).toHaveBeenCalledWith(
       expect.objectContaining({ id: "conversation-1" }),
       expect.objectContaining({ id: "message-row-1" }),
