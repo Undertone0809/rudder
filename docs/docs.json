@@ -99,16 +99,10 @@
             ]
           },
           {
-            "group": "Benchmarks",
-            "icon": "chart-bar",
+            "group": "Other",
+            "icon": "ellipsis",
             "pages": [
-              "benchmarks/gdpval-harness"
-            ]
-          },
-          {
-            "group": "Project",
-            "icon": "folder-git-2",
-            "pages": [
+              "benchmarks/gdpval-harness",
               "about",
               "contact",
               "releases"
@@ -174,16 +168,10 @@
             ]
           },
           {
-            "group": "基准评测",
-            "icon": "chart-bar",
+            "group": "其他",
+            "icon": "ellipsis",
             "pages": [
-              "zh/benchmarks/gdpval-harness"
-            ]
-          },
-          {
-            "group": "项目",
-            "icon": "folder-git-2",
-            "pages": [
+              "zh/benchmarks/gdpval-harness",
               "zh/releases"
             ]
           }
