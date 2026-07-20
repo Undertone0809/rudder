@@ -2134,7 +2134,7 @@ export function chatRoutes(
     }
     const latestGeneration = await svc.getLatestGeneration(conversation.id);
     if (latestGeneration && latestGeneration.status !== "completed") {
-      throw conflict("Queued follow-ups remain parked after a stopped or failed reply");
+      throw conflict("Queue remains parked after a stopped or failed reply");
     }
     const item = await svc.claimNextQueuedMessage(conversation.id);
     if (item) {
@@ -2571,6 +2571,10 @@ export function chatRoutes(
 
     const releaseGeneration = claimChatGeneration(conversation.id, null, null);
     if (!releaseGeneration) {
+      if (req.body.editUserMessageId) {
+        res.status(409).json({ error: "Stop the current response before editing this message" });
+        return;
+      }
       const item = await svc.createQueuedMessage({
         orgId: conversation.orgId,
         conversationId: conversation.id,

@@ -8,7 +8,7 @@ import {
   chatQueuedMessages,
 } from "@rudderhq/db";
 import type { ChatQueuedMessage, ChatQueuedMessagePayload, ChatQueueRequestActor } from "@rudderhq/shared";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound } from "../errors.js";
 
@@ -88,6 +88,7 @@ export function chatSteerMessageService(db: Db) {
       .where(and(
         eq(chatQueuedMessages.id, input.item.id),
         eq(chatQueuedMessages.version, input.item.version),
+        isNull(chatQueuedMessages.cancelledAt),
       ))
       .returning();
     if (!linkedItem) throw conflict("Queued Steer feedback changed while its message was being persisted");
@@ -154,6 +155,7 @@ export function chatSteerMessageService(db: Db) {
         where ${chatQueuedMessages.id} = ${input.itemId}
           and ${chatQueuedMessages.orgId} = ${input.orgId}
           and ${chatQueuedMessages.conversationId} = ${input.conversationId}
+          and ${chatQueuedMessages.cancelledAt} is null
         for update
       `);
       const item = await tx
@@ -163,6 +165,7 @@ export function chatSteerMessageService(db: Db) {
           eq(chatQueuedMessages.id, input.itemId),
           eq(chatQueuedMessages.orgId, input.orgId),
           eq(chatQueuedMessages.conversationId, input.conversationId),
+          isNull(chatQueuedMessages.cancelledAt),
           inArray(chatQueuedMessages.status, ["queued", "steer_pending", "continuation_pending"]),
         ))
         .limit(1)
@@ -253,6 +256,7 @@ export function chatSteerMessageService(db: Db) {
         .where(and(
           eq(chatQueuedMessages.id, item.id),
           eq(chatQueuedMessages.version, item.version),
+          isNull(chatQueuedMessages.cancelledAt),
         ))
         .returning();
       if (!updatedItem) throw conflict("Queued feedback changed while continuation was being scheduled");
@@ -293,6 +297,7 @@ export function chatSteerMessageService(db: Db) {
         where ${chatQueuedMessages.id} = ${input.itemId}
           and ${chatQueuedMessages.orgId} = ${input.orgId}
           and ${chatQueuedMessages.conversationId} = ${input.conversationId}
+          and ${chatQueuedMessages.cancelledAt} is null
         for update
       `);
       const item = await tx
@@ -302,6 +307,7 @@ export function chatSteerMessageService(db: Db) {
           eq(chatQueuedMessages.id, input.itemId),
           eq(chatQueuedMessages.orgId, input.orgId),
           eq(chatQueuedMessages.conversationId, input.conversationId),
+          isNull(chatQueuedMessages.cancelledAt),
           inArray(chatQueuedMessages.status, ["queued", "steer_pending", "continuation_pending"]),
         ))
         .limit(1)
@@ -410,6 +416,7 @@ export function chatSteerMessageService(db: Db) {
           .where(and(
             eq(chatQueuedMessages.id, item.id),
             eq(chatQueuedMessages.version, item.version),
+            isNull(chatQueuedMessages.cancelledAt),
           ))
           .returning();
         if (!updatedItem) throw conflict("Queued feedback changed while continuation was being scheduled");
@@ -472,6 +479,7 @@ export function chatSteerMessageService(db: Db) {
         .where(and(
           eq(chatQueuedMessages.id, item.id),
           eq(chatQueuedMessages.version, item.version),
+          isNull(chatQueuedMessages.cancelledAt),
         ))
         .returning();
       if (!updatedItem) throw conflict("Queued feedback changed while Steer was being accepted");
