@@ -145,7 +145,9 @@ test.describe("Chat project empty heading", () => {
 
     await expect(heading).toHaveText(`What should we build in ${beta.name}?`, { timeout: 15_000 });
     await expect(page.getByTestId("chat-project-selector")).toContainText(beta.name);
-    await expect(page.getByTestId("chat-project-selector").locator("svg")).toHaveCount(0);
+    const projectIcon = page.getByTestId("chat-project-icon");
+    await expect(projectIcon).toBeVisible();
+    await expect(projectIcon.locator("svg")).toHaveCount(1);
     await expect(page.getByTestId("chat-agent-selector").locator(".lucide-chevron-down")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Skills", exact: true }).locator("svg")).toHaveCount(0);
     await expect(recentConversations).toContainText("Beta roadmap thread", { timeout: 15_000 });
@@ -153,25 +155,40 @@ test.describe("Chat project empty heading", () => {
     await expect(recentConversations).toHaveCSS("animation-name", "rudder-chat-empty-recent-project-enter");
 
     const clearProject = page.getByTestId("chat-project-clear");
+    const projectSelector = page.getByTestId("chat-project-selector");
+    const projectLabel = projectSelector.locator(":scope > span").last();
+    const restingSelectorBox = await projectSelector.boundingBox();
+    const restingLabelBox = await projectLabel.boundingBox();
+    expect(restingSelectorBox).not.toBeNull();
+    expect(restingLabelBox).not.toBeNull();
+    await expect(projectIcon).toHaveCSS("opacity", "1");
     await expect(clearProject).toHaveCSS("opacity", "0");
     await expect(clearProject).toHaveCSS("pointer-events", "none");
 
-    await page.getByTestId("chat-project-selector").focus();
+    await projectSelector.focus();
+    await expect(projectIcon).toHaveCSS("opacity", "0");
     await expect(clearProject).toHaveCSS("opacity", "1");
     await expect(clearProject).toHaveCSS("pointer-events", "auto");
     await page.keyboard.press("Tab");
     await expect(clearProject).toBeFocused();
 
     await heading.click();
+    await expect(projectIcon).toHaveCSS("opacity", "1");
     await expect(clearProject).toHaveCSS("opacity", "0");
     await expect(clearProject).toHaveCSS("pointer-events", "none");
-    await page.getByTestId("chat-project-selector").hover();
+    await projectSelector.hover();
+    await expect(projectIcon).toHaveCSS("opacity", "0");
     await expect(clearProject).toHaveCSS("opacity", "1");
     await expect(clearProject).toHaveCSS("pointer-events", "auto");
+    const hoveredSelectorBox = await projectSelector.boundingBox();
+    const hoveredLabelBox = await projectLabel.boundingBox();
+    expect(hoveredSelectorBox).toEqual(restingSelectorBox);
+    expect(hoveredLabelBox).toEqual(restingLabelBox);
     await clearProject.click();
 
     await expect(heading).toHaveText(/What can I help with\?/);
     await expect(page.getByTestId("chat-project-selector")).toContainText("No project");
+    await expect(page.getByTestId("chat-project-icon")).toHaveCount(0);
     await expect(page.getByTestId("chat-project-clear")).toHaveCount(0);
     await expect(page.getByTestId("chat-project-menu")).toHaveCount(0);
   });

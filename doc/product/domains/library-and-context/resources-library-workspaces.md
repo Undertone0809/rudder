@@ -30,6 +30,8 @@ related_code:
   - ui/src/context/ImagePreviewContext.tsx
   - ui/src/components/WorkspaceFilePreview.tsx
   - ui/src/components/WorkspacePdfPreview.tsx
+  - ui/src/components/workspaces/WorkspaceLaunchControls.tsx
+  - ui/src/lib/workspace-preferences.ts
   - ui/src/pages/OrganizationWorkspaces.tsx
   - ui/src/pages/Chat.side-panel.tsx
   - desktop/src/ide-opener.ts
@@ -50,6 +52,9 @@ related_tests:
   - ui/src/context/ImagePreviewContext.test.tsx
   - ui/src/components/WorkspaceFilePreview.test.tsx
   - ui/src/components/WorkspacePdfPreview.test.tsx
+  - ui/src/components/workspaces/WorkspaceLaunchControls.test.tsx
+  - ui/src/lib/workspace-preferences.test.ts
+  - ui/src/pages/OrganizationWorkspaces.scrollbars.test.tsx
   - ui/src/pages/Chat.attachment-preview.test.tsx
   - ui/src/components/NewProjectDialog.test.tsx
   - tests/e2e/organization-workspaces-image-preview.spec.ts
@@ -149,6 +154,18 @@ Product model:
   Code remain explicit file targets. In Messenger document previews, folder and
   terminal entries are containing-directory targets: folder targets reveal the
   file, while terminal targets use the file's parent directory as cwd.
+- In the full Library work surface, a valid existing file that reaches the end
+  of all built-in editor and preview capabilities shows an honest centered
+  cannot-preview message. Rudder Desktop adds a compact split launcher there:
+  `Default app` and detected compatible IDEs are file targets, while detected
+  folder and terminal targets are offered only when the trusted containing-
+  directory bridge is available. Xcode is not treated as a compatible
+  per-file IDE target. Browser/server surfaces show the message without local
+  launcher controls.
+- The unsupported-file split launcher's initial primary target is `Default
+  app`. Selecting another menu target opens it immediately; only a successful
+  open becomes the remembered primary target, and a stored target is restored
+  only while it remains in the current capability-derived target set.
 - Messenger Library file previews render supported documents inline, including
   PDF files through the validated workspace content endpoint. Their compact path
   breadcrumb exposes the complete Library-relative path on hover, and the
@@ -198,6 +215,12 @@ Flow:
 11. Opening a supported HTML file delegates website rendering and inspection
     controls to `LIBRARY.WEB.PREVIEW.001` while Open continues to target the
     original validated Library file.
+12. When a resolved full-Library file has no remaining built-in presentation
+    capability, Desktop derives launcher choices from the current trusted
+    bridge and detected targets. Direct activation reuses the current primary;
+    choosing a menu target launches it immediately and remembers it only after
+    success. Default-app and IDE actions use the validated file-open bridge;
+    folder and terminal actions use the validated file-location bridge.
 
 Invariants:
 
@@ -233,6 +256,21 @@ Invariants:
 - The per-file `Default app` target must remain a Desktop bridge action, not a
   server-side filesystem open. It is unavailable in non-Desktop shells that
   cannot access the operator's local default application registry.
+- Unsupported-file fallback eligibility is the terminal full-Library
+  presentation branch, not an extension, MIME, binary, or `previewKind`
+  allow/deny list. Existing editors, HTML/image/PDF previews, and bounded
+  read-only text presentations keep precedence. Loading, failed reads, missing
+  files, and missing Library roots keep their own states and must not expose the
+  fallback launcher.
+- Unsupported-file launch controls require an existing trusted workspace root
+  and the Desktop file-open bridge. The default app is always available under
+  those conditions; IDEs are drawn from compatible detected targets, and
+  folder/terminal choices additionally require the file-location bridge.
+  Launcher menus must not hardcode installed applications or route through
+  `openPath`.
+- A failed unsupported-file launch surfaces an error and must not replace the
+  last successfully used target. Stale or incompatible stored targets fall
+  back to `Default app` without being persisted as a new successful choice.
 - Markdown autosave must not silently overwrite content changed after the
   editor's last confirmed read when that change is visible to the conditional
   save check. Dirty drafts remain local until a conditional save succeeds or the
@@ -256,6 +294,18 @@ Evidence:
   path-escape rejection, and Library sidebar launcher placement.
 - Organization workspace sidebar component tests cover the visible `Open In`
   label and `Default app` file target.
+- Workspace launcher component and preference tests cover the compact split
+  control, accessible names, pending disablement, capability-derived target
+  lists, Xcode exclusion, stored-target restoration, and invalid preference
+  fallback. Full Library component coverage proves capability-terminal
+  fallback, trusted file-versus-location routing, success-only persistence,
+  browser degradation, root-missing separation, and non-regression for existing
+  image, HTML, Markdown, and code/data presentations.
+- Organization workspace launcher E2E uses real `.zip` and `.bin` filesystem
+  fixtures to prove default-app direct launch, a detected IDE, a detected
+  terminal, failed-launch primary preservation, Finder selection, remembered
+  primary reuse, and correct bridge arguments. The same path verifies PNG,
+  PDF, and Markdown files remain in their built-in preview/editor presentations.
 - Messenger Side Panel component and E2E coverage prove a Library document can
   use the same Desktop launcher menu and route terminal/folder actions through
   the validated containing-directory bridge.

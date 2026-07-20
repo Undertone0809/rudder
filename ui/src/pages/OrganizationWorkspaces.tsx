@@ -57,6 +57,7 @@ import { getWorkspaceCodeLanguageLabel, isWorkspaceCodeFilePath, WorkspaceCodeEd
 import { WorkspaceHtmlPreview, WorkspaceHtmlPreviewToolbar } from "../components/WorkspaceHtmlPreview";
 import { WorkspacePdfPreview } from "../components/WorkspacePdfPreview";
 import {
+  UnsupportedWorkspaceFileLauncher,
   WorkspaceLaunchMenu,
   WorkspaceLaunchTargetIcon,
 } from "../components/workspaces/WorkspaceLaunchControls";
@@ -102,12 +103,17 @@ import {
   normalizeWorkspaceOpenFilePaths,
   readStoredWorkspaceLaunchTargetId,
   readStoredWorkspaceOpenFileTabState,
+  readStoredWorkspaceUnsupportedFileLaunchTargetId,
+  resolveWorkspaceUnsupportedFileLaunchTarget,
   workspaceFileOpenTargets,
   workspaceLaunchMenuOpeningId,
+  workspaceUnsupportedFileLaunchTargets,
   writeStoredWorkspaceLaunchTargetId,
   writeStoredWorkspaceOpenFileTabState,
+  writeStoredWorkspaceUnsupportedFileLaunchTargetId,
   type WorkspaceFileOpenTarget,
-  type WorkspaceOpenTargetId
+  type WorkspaceOpenTargetId,
+  type WorkspaceUnsupportedFileLaunchTarget
 } from "../lib/workspace-preferences";
 import {
   applyMovedWorkspacePath,
@@ -287,6 +293,9 @@ export function OrganizationWorkspaceBrowser({
   const [openingWorkspaceTargetId, setOpeningWorkspaceTargetId] = useState<
     WorkspaceOpenTargetId | null
   >(null);
+  const [lastUnsupportedFileLaunchTargetId, setLastUnsupportedFileLaunchTargetId] = useState<
+    WorkspaceOpenTargetId | null
+  >(() => readStoredWorkspaceUnsupportedFileLaunchTargetId());
   const [isMobileViewport, setIsMobileViewport] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT : false,
   );
@@ -1343,6 +1352,42 @@ export function OrganizationWorkspaceBrowser({
     writeStoredWorkspaceLaunchTargetId(target.id);
   }, []);
 
+  const handleOpenUnsupportedFileTarget = useCallback(async (
+    filePath: string,
+    target: WorkspaceUnsupportedFileLaunchTarget,
+  ) => {
+    if (!workspaceRootPath) return;
+    const desktopShell = readDesktopShell();
+    const openTarget = isWorkspaceFileOpenTarget(target)
+      ? desktopShell?.openWorkspaceFileInIde
+      : desktopShell?.openWorkspaceFileLocation;
+    if (typeof openTarget !== "function") return;
+
+    setOpeningWorkspaceTargetId(target.id);
+    try {
+      if (isWorkspaceFileOpenTarget(target)) {
+        await desktopShell!.openWorkspaceFileInIde(workspaceRootPath, filePath, target.id);
+      } else {
+        await desktopShell!.openWorkspaceFileLocation!(workspaceRootPath, filePath, target.id);
+      }
+      setLastUnsupportedFileLaunchTargetId(target.id);
+      writeStoredWorkspaceUnsupportedFileLaunchTargetId(target.id);
+      pushToast({
+        title: target.id === "defaultApp" ? "Opened file" : `Opened file with ${target.label}`,
+        body: filePath,
+        tone: "info",
+      });
+    } catch (error) {
+      pushToast({
+        title: "Failed to open file",
+        body: error instanceof Error ? error.message : `Could not open ${filePath} with ${target.label}.`,
+        tone: "error",
+      });
+    } finally {
+      setOpeningWorkspaceTargetId(null);
+    }
+  }, [pushToast, workspaceRootPath]);
+
   useEffect(() => {
     if (!isMobileViewport || requestedDocumentId) {
       setHeaderActions(null);
@@ -1733,6 +1778,17 @@ export function OrganizationWorkspaceBrowser({
       </DropdownMenuContent>
     </DropdownMenu>
   ) : null;
+  const selectedFileDesktopShell = readDesktopShell();
+  const selectedUnsupportedFileLaunchTargets = workspaceRootPath
+    ? workspaceUnsupportedFileLaunchTargets(workspaceLaunchTargets, {
+        canOpenFile: typeof selectedFileDesktopShell?.openWorkspaceFileInIde === "function",
+        canOpenLocation: typeof selectedFileDesktopShell?.openWorkspaceFileLocation === "function",
+      })
+    : [];
+  const selectedUnsupportedFileLaunchTarget = resolveWorkspaceUnsupportedFileLaunchTarget(
+    selectedUnsupportedFileLaunchTargets,
+    lastUnsupportedFileLaunchTargetId,
+  );
 
   function scrollToSelectedMarkdownOutlineItem(item: DocumentOutlineItem) {
     const editorScrollElement = editorScrollElementRef.current;
@@ -2531,6 +2587,10 @@ export function OrganizationWorkspaceBrowser({
                 <div className="px-4 py-6 text-sm text-muted-foreground">Loading file…</div>
               ) : fileQuery.error ? (
                 <div className="px-4 py-6 text-sm text-destructive">{fileQuery.error.message}</div>
+              ) : selectedFileDetail?.rootExists === false ? (
+                <div className="px-4 py-6 text-sm text-muted-foreground">
+                  {selectedFileDetail.message ?? "The shared Library root is not available on this machine yet."}
+                </div>
               ) : selectedFileUsesHtmlPreview ? (
                 <div
                   ref={setEditorScrollElementRef}
@@ -2771,9 +2831,18 @@ export function OrganizationWorkspaceBrowser({
                     <code>{selectedFileDetail.content}</code>
                   </pre>
                 </div>
+              ) : selectedFileDetail ? (
+                <UnsupportedWorkspaceFileLauncher
+                  targets={selectedUnsupportedFileLaunchTargets}
+                  currentTarget={selectedUnsupportedFileLaunchTarget}
+                  openingTargetId={openingWorkspaceTargetId}
+                  onOpenTarget={(target) => {
+                    void handleOpenUnsupportedFileTarget(selectedFilePath, target);
+                  }}
+                />
               ) : (
                 <div className="px-4 py-6 text-sm text-muted-foreground">
-                  {selectedFileDetail?.message ?? libraryCopy("cannotRenderInLibrary", locale)}
+                  {libraryCopy("cannotRenderInLibrary", locale)}
                 </div>
               )}
             </div>

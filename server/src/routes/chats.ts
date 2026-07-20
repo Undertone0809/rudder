@@ -46,6 +46,7 @@ import {
   steerActiveChatGeneration
 } from "../services/chat-generation-locks.js";
 import { hashChatGenerationBody } from "../services/chat-generation-protocol.js";
+import { chatSteerMessageService } from "../services/chat-steer-messages.js";
 import {
   buildChatTitlePromptFromMessages,
   chatTitleGenerationService,
@@ -108,6 +109,7 @@ export function chatRoutes(
   const heartbeat = heartbeatService(db);
   const productIntelligence = productIntelligenceService(db);
   const chatTitles = chatTitleGenerationService({ chats: svc, productIntelligence });
+  const steerMessages = chatSteerMessageService(db);
   const sideChats = sideChatService(db);
 
   const CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE =
@@ -2171,24 +2173,26 @@ export function chatRoutes(
     await assertSideChatMutationAllowed(req, conversation as ChatConversation);
     const active = getActiveChatGeneration(conversation.id);
     const requestActor = queueRequestActor(req);
+    const activityActor = getActorInfo(req);
     const controlActionId = req.body.controlActionId ?? randomUUID();
     const expectedGenerationId = req.body.expectedActiveGenerationId
       ?? active?.generationId
       ?? null;
     if (!expectedGenerationId) {
-      const scheduled = await svc.scheduleSteerContinuation({
+      const scheduled = await steerMessages.scheduleContinuation({
         orgId: conversation.orgId,
         conversationId: conversation.id,
         itemId: req.params.itemId as string,
         controlActionId,
         requestActor,
+        actor: activityActor,
       });
       wakeServerQueue();
       res.json({
         item: scheduled.item,
         result: "scheduled_next" as const,
         disposition: "continuation_pending" as const,
-        controlActionId,
+        controlActionId: scheduled.action.id,
         activeGenerationId: scheduled.action.expectedGenerationId ?? null,
         queueVersion: scheduled.item.version,
         transcriptEventId: null,
@@ -2203,7 +2207,7 @@ export function chatRoutes(
     const expectedControlVersion = req.body.expectedControlVersion
       ?? queueSnapshot.activeControlVersion
       ?? 0;
-    const started = await svc.beginSteerControlAction({
+    const startedControl = await steerMessages.beginControlAction({
       orgId: conversation.orgId,
       conversationId: conversation.id,
       itemId: req.params.itemId as string,
@@ -2212,7 +2216,9 @@ export function chatRoutes(
       expectedAttemptEpoch,
       expectedControlVersion,
       requestActor,
+      actor: activityActor,
     });
+    const started = startedControl;
     const durableControlActionId = started.action.id;
     const durableGenerationId = started.action.expectedGenerationId ?? expectedGenerationId;
     const durableAttemptEpoch = started.action.expectedAttemptEpoch ?? expectedAttemptEpoch;

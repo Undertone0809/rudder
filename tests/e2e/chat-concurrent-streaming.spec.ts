@@ -215,14 +215,20 @@ test("delivers native Codex Steer into the active App Server turn", async ({ pag
   await expect(queueItem).toContainText("Use the revised direction", { timeout: 15_000 });
   await queueItem.getByRole("button", { name: "Steer" }).click();
 
+  const steerMessage = page.getByTestId("chat-user-message-bubble").filter({ hasText: "Use the revised direction" });
+  await expect(steerMessage).toHaveCount(1, { timeout: 20_000 });
   await expect(page.getByTestId("chat-assistant-message").last()).toContainText(
     "Native steer applied: Use the revised direction",
     { timeout: 20_000 },
   );
-  await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Use the revised direction" })).toHaveCount(0);
   const queueRes = await page.request.get(`/api/chats/${chatId}/queue`);
   expect(queueRes.ok()).toBe(true);
   expect((await queueRes.json()).items).toHaveLength(0);
+
+  await page.reload();
+  await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Use the revised direction" })).toHaveCount(1, {
+    timeout: 20_000,
+  });
 });
 
 test("renders one readable reasoning stream when App Server emits summary and raw deltas", async ({ page }) => {

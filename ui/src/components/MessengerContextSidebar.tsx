@@ -1134,6 +1134,7 @@ export function MessengerContextSidebar() {
   const sortableThreadSectionKeys = useMemo(() => (
     organizedThreadSections
       .filter((section) => effectiveThreadOrganizationRule !== "custom" || section.key !== "custom:pinned")
+      .filter((section) => effectiveThreadOrganizationRule !== "project" || !section.isPinned)
       .map((section) => section.key)
   ), [effectiveThreadOrganizationRule, organizedThreadSections]);
   const threadSectionRequiredVisibleCounts = useMemo(() => {
@@ -1547,7 +1548,9 @@ export function MessengerContextSidebar() {
       ? organizedThreadSections
         .filter((section) => section.key !== "custom:pinned")
         .map((section) => section.key)
-      : organizedThreadSections.map((section) => section.key);
+      : organizedThreadSections
+        .filter((section) => effectiveThreadOrganizationRule !== "project" || !section.isPinned)
+        .map((section) => section.key);
     const oldIndex = sectionKeys.indexOf(active.id as string);
     const newIndex = sectionKeys.indexOf(over.id as string);
     if (oldIndex === -1 || newIndex === -1) return;

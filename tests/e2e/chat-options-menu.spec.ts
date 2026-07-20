@@ -203,6 +203,9 @@ test.describe("Chat options menu", () => {
         entityId: project.id,
       }),
     );
+    await expect(selector).toBeDisabled();
+    await expect(selector.getByTestId("chat-project-icon")).toBeVisible();
+    await expect(page.getByTestId("chat-project-clear")).toHaveCount(0);
   });
 
   test("hides no-project context on started conversations", async ({ page }) => {
@@ -256,6 +259,58 @@ test.describe("Chat options menu", () => {
     await expect(toolbar.getByRole("button", { name: /Projectless Agent/ })).toBeVisible({ timeout: 15_000 });
     await expect(toolbar.getByTestId("chat-project-selector")).toHaveCount(0);
     await expect(toolbar).not.toContainText("No project");
+  });
+
+  test("keeps the project icon visible after a project-backed conversation starts", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Started-Project-Chat-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+    const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Started Project Agent",
+      command: E2E_CODEX_STUB,
+    });
+    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: { name: "Persistent Project Identity", status: "in_progress" },
+    });
+    expect(projectRes.ok()).toBe(true);
+    const project = await projectRes.json() as { id: string; name: string };
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Started project-backed chat",
+        preferredAgentId: chatAgent.id,
+        contextLinks: [{ entityType: "project", entityId: project.id }],
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json();
+
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Keep this project context visible.",
+      structuredPayload: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.addInitScript((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/chat/${chat.id}`);
+
+    const selector = page.getByTestId("chat-project-selector");
+    await expect(selector).toContainText(project.name, { timeout: 15_000 });
+    await expect(selector).toBeDisabled();
+    await expect(selector.getByTestId("chat-project-icon")).toBeVisible();
+    await selector.hover({ force: true });
+    await expect(selector.getByTestId("chat-project-icon")).toHaveCSS("opacity", "1");
+    await expect(page.getByTestId("chat-project-clear")).toHaveCount(0);
   });
 
   test("shows recent conversations for the selected project on new chat", async ({ page }, testInfo) => {

@@ -40,6 +40,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { hashChatGenerationBody } from "../services/chat-generation-protocol.ts";
+import { chatSteerMessageService } from "../services/chat-steer-messages.ts";
 import { chatService } from "../services/chats.ts";
 import { issueService } from "../services/issues.ts";
 import { messengerSavedViewsService } from "../services/messenger-saved-views.ts";
@@ -371,6 +372,139 @@ describe("messengerService and issue follows", () => {
       providerDisposition: "acknowledged",
     });
     expect(await chatSvc.listQueuedMessages(conversationId)).toEqual([]);
+  });
+
+  it("materializes one durable user message for repeated native Steer handling", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const generationId = randomUUID();
+    const controlActionId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Visible Steer Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Visible Steer Org"),
+      issuePrefix: `V${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Visible Steer chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      id: generationId,
+      orgId,
+      conversationId,
+      status: "running",
+      attemptEpoch: 1,
+      controlVersion: 0,
+      controlState: "ready",
+    });
+    const queued = await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId,
+      clientMutationId: "visible-native-steer",
+      expectedGenerationId: generationId,
+      payload: { body: "Keep this operator feedback visible" },
+      requestActor: boardQueueRequestActor(orgId),
+    });
+    const steerMessages = chatSteerMessageService(db);
+    const first = await steerMessages.beginControlAction({
+      orgId,
+      conversationId,
+      itemId: queued.id,
+      controlActionId,
+      expectedGenerationId: generationId,
+      expectedAttemptEpoch: 1,
+      expectedControlVersion: 0,
+      requestActor: boardQueueRequestActor(orgId),
+      actor: { actorType: "user", actorId: "board" },
+    });
+    const retried = await steerMessages.beginControlAction({
+      orgId,
+      conversationId,
+      itemId: queued.id,
+      controlActionId,
+      expectedGenerationId: generationId,
+      expectedAttemptEpoch: 1,
+      expectedControlVersion: 0,
+      requestActor: boardQueueRequestActor(orgId),
+      actor: { actorType: "user", actorId: "board" },
+    });
+    const messages = await db.select().from(chatMessages).where(eq(chatMessages.conversationId, conversationId));
+    const activities = await db.select().from(activityLog).where(eq(activityLog.entityId, conversationId));
+
+    expect(first.idempotent).toBe(false);
+    expect(retried.idempotent).toBe(true);
+    expect(retried.action.id).toBe(first.action.id);
+    expect(retried.item).toMatchObject({
+      continuationMessageId: messages[0]?.id,
+      sourceMessageId: messages[0]?.id,
+    });
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Keep this operator feedback visible",
+    });
+    expect(activities).toHaveLength(1);
+    expect(activities[0]).toMatchObject({ action: "chat.message_added" });
+  });
+
+  it("atomically reuses one action and user message for concurrent continuation Steer requests", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const firstActionId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Concurrent Steer Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Concurrent Steer Org"),
+      issuePrefix: `C${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Concurrent Steer chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    const queued = await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId,
+      clientMutationId: "concurrent-continuation-steer",
+      payload: { body: "Persist this concurrent Steer once" },
+      requestActor: boardQueueRequestActor(orgId),
+    });
+    const steerMessages = chatSteerMessageService(db);
+    const invoke = (controlActionId: string) => steerMessages.scheduleContinuation({
+      orgId,
+      conversationId,
+      itemId: queued.id,
+      controlActionId,
+      requestActor: boardQueueRequestActor(orgId),
+      actor: { actorType: "user" as const, actorId: "board" },
+    });
+    const [first, sameId, differentId] = await Promise.all([
+      invoke(firstActionId),
+      invoke(firstActionId),
+      invoke(randomUUID()),
+    ]);
+    const messages = await db.select().from(chatMessages).where(eq(chatMessages.conversationId, conversationId));
+    const actions = await db.select().from(chatControlActions).where(eq(chatControlActions.orgId, orgId));
+
+    expect(new Set([first.action.id, sameId.action.id, differentId.action.id])).toHaveProperty("size", 1);
+    expect(actions[0]?.id).toBe(first.action.id);
+    expect(messages).toHaveLength(1);
+    expect(actions).toHaveLength(1);
+    expect(first.item.sourceMessageId).toBe(messages[0]?.id);
+    expect(sameId.item.sourceMessageId).toBe(messages[0]?.id);
+    expect(differentId.item.sourceMessageId).toBe(messages[0]?.id);
   });
 
   it("atomically schedules Steer as a continuation when Stop terminalizes first", async () => {

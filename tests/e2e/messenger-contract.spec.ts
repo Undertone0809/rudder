@@ -761,6 +761,66 @@ test.describe("Messenger unified threads contract", () => {
     }).toBe(true);
   });
 
+  test("shows pinned threads in a dedicated section while organizing Messenger by project", async ({ page }) => {
+    const organization = await createOrganization(page, `Messenger-Project-Pinned-${Date.now()}`);
+    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "Pinned launch project",
+        status: "in_progress",
+        icon: "rocket",
+        color: "#0ea5e9",
+      },
+    });
+    expect(projectRes.ok()).toBe(true);
+    const project = await projectRes.json() as { id: string };
+
+    const createProjectChat = async (title: string) => {
+      const response = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+        data: {
+          title,
+          summary: `${title} summary`,
+          issueCreationMode: "manual_approval",
+          planMode: false,
+          contextLinks: [{ entityType: "project", entityId: project.id }],
+        },
+      });
+      expect(response.ok()).toBe(true);
+      return response.json() as Promise<{ id: string }>;
+    };
+    const pinnedChat = await createProjectChat("Pinned launch decisions");
+    const regularChat = await createProjectChat("Regular launch follow-up");
+    const pinRes = await page.request.post(`/api/chats/${pinnedChat.id}/user-state`, {
+      data: { pinned: true },
+    });
+    expect(pinRes.ok()).toBe(true);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "project" }));
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat`, { waitUntil: "commit" });
+
+    const pinnedSection = page.getByTestId("messenger-thread-section-project-pinned");
+    const projectSection = page.getByTestId(`messenger-thread-section-project-${project.id}`);
+    const pinnedRow = page.getByTestId(threadTestId(`chat:${pinnedChat.id}`));
+    const regularRow = page.getByTestId(threadTestId(`chat:${regularChat.id}`));
+    await expect(page.getByText("Threads organized by project")).toBeVisible({ timeout: 15_000 });
+    await expect(pinnedSection).toBeVisible();
+    await expect(pinnedSection).toContainText("Pinned");
+    await expect(pinnedRow).toBeVisible();
+    await expect(projectSection).toBeVisible();
+    await expect(regularRow).toBeVisible();
+    await expectTestIdsInDomOrder(page, [
+      "messenger-thread-section-project-pinned",
+      threadTestId(`chat:${pinnedChat.id}`),
+      `messenger-thread-section-project-${project.id}`,
+      threadTestId(`chat:${regularChat.id}`),
+    ]);
+    await expect(page.getByTestId(threadTestId(`chat:${pinnedChat.id}`))).toHaveCount(1);
+    await page.screenshot({ path: "/tmp/rudder-messenger-project-pinned.png", fullPage: true });
+  });
+
   test("sorts Messenger project groups by drag and progressively expands large project groups", async ({ page }) => {
     const organization = await createOrganization(page, `Messenger-Project-Sort-${Date.now()}`);
     const gettingStartedRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {

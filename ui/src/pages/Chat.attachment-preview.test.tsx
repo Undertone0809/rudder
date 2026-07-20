@@ -5817,7 +5817,7 @@ describe("Chat ask_user panel", () => {
 });
 
 describe("Chat project context selector", () => {
-  it("uses text-only triggers and clears a selected draft project without opening the menu", () => {
+  it("keeps the selected project icon in place and clears the draft project without opening the menu", () => {
     mockState.conversationId = null;
     mockState.conversations = [];
     mockState.messagesByChatId = {};
@@ -5826,7 +5826,7 @@ describe("Chat project context selector", () => {
     const projectSelector = container.querySelector<HTMLButtonElement>("[data-testid='chat-project-selector']");
 
     expect(projectSelector).not.toBeNull();
-    expect(projectSelector?.querySelector("svg")).toBeNull();
+    expect(projectSelector?.querySelector("[data-testid='chat-project-icon']")).toBeNull();
     expect(container.querySelector("[data-testid='chat-agent-selector-chevron']")).toBeNull();
 
     act(() => {
@@ -5843,6 +5843,7 @@ describe("Chat project context selector", () => {
 
     const clearProject = container.querySelector<HTMLButtonElement>("[data-testid='chat-project-clear']");
     expect(projectSelector?.textContent).toContain("Rudder mkt");
+    expect(projectSelector?.querySelector("[data-testid='chat-project-icon'] svg")).not.toBeNull();
     expect(clearProject?.getAttribute("aria-label")).toBe("Clear project context: Rudder mkt");
 
     act(() => {
@@ -5850,6 +5851,7 @@ describe("Chat project context selector", () => {
     });
 
     expect(projectSelector?.textContent).toContain("No project");
+    expect(projectSelector?.querySelector("[data-testid='chat-project-icon']")).toBeNull();
     expect(container.querySelector("[data-testid='chat-project-clear']")).toBeNull();
     expect(document.body.querySelector("[data-testid='chat-project-menu']")).toBeNull();
   });
@@ -5959,6 +5961,8 @@ describe("Chat project context selector", () => {
     expect(projectSelector).not.toBeNull();
     expect(projectSelector?.textContent).toContain("Rudder mkt");
     expect(projectSelector?.disabled).toBe(true);
+    expect(projectSelector?.querySelector("[data-testid='chat-project-icon'] svg")).not.toBeNull();
+    expect(container.querySelector("[data-testid='chat-project-clear']")).toBeNull();
     expect(container.querySelector("[data-testid='chat-project-selector-chevron']")).toBeNull();
 
     act(() => {

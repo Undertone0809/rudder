@@ -11,8 +11,10 @@ import { cn } from "@/lib/utils";
 import {
   isWorkspaceFileOpenTarget,
   type WorkspaceFileOpenTarget,
+  type WorkspaceOpenTargetId,
+  type WorkspaceUnsupportedFileLaunchTarget,
 } from "@/lib/workspace-preferences";
-import { Code2, ExternalLink, FolderOpen, Loader2, Terminal } from "lucide-react";
+import { ChevronDown, Code2, ExternalLink, FolderOpen, Loader2, Terminal } from "lucide-react";
 import { useState } from "react";
 
 const WORKSPACE_LAUNCH_TARGET_BRAND_FALLBACKS: Partial<Record<DesktopWorkspaceLaunchTarget["id"], {
@@ -195,5 +197,92 @@ export function WorkspaceLaunchMenu({
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+export function UnsupportedWorkspaceFileLauncher({
+  targets,
+  currentTarget,
+  openingTargetId,
+  onOpenTarget,
+}: {
+  targets: WorkspaceUnsupportedFileLaunchTarget[];
+  currentTarget: WorkspaceUnsupportedFileLaunchTarget | null;
+  openingTargetId: WorkspaceOpenTargetId | null;
+  onOpenTarget: (target: WorkspaceUnsupportedFileLaunchTarget) => void;
+}) {
+  const pending = openingTargetId !== null;
+
+  return (
+    <div className="flex h-full min-h-[360px] items-center justify-center px-6 py-10">
+      <div className="flex max-w-md flex-col items-center text-center">
+        <p className="text-sm leading-6 text-muted-foreground">
+          This file can’t be previewed or edited in Rudder.
+        </p>
+        {currentTarget && targets.length > 0 ? (
+          <div className="mt-4 inline-flex h-9 items-stretch rounded-md border border-[color:var(--border-base)] bg-[color:var(--surface-page)]">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-10 rounded-r-none border-r border-[color:var(--border-base)]"
+                  aria-label={`Open file with ${currentTarget.label}`}
+                  disabled={pending}
+                  data-testid="org-workspaces-unsupported-file-open-current"
+                  onClick={() => onOpenTarget(currentTarget)}
+                >
+                  {pending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <WorkspaceLaunchTargetIcon target={currentTarget} />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent className="pointer-events-none">{`Open with ${currentTarget.label}`}</TooltipContent>
+            </Tooltip>
+            <DropdownMenu>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-8 rounded-l-none"
+                      aria-label="Choose how to open file"
+                      disabled={pending}
+                      data-testid="org-workspaces-unsupported-file-launcher"
+                    >
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                </TooltipTrigger>
+                <TooltipContent className="pointer-events-none">Choose how to open file</TooltipContent>
+              </Tooltip>
+              <DropdownMenuContent align="center" sideOffset={8} className="w-60 whitespace-nowrap p-1">
+                {targets.map((target) => (
+                  <DropdownMenuItem
+                    key={target.id}
+                    className="h-9 gap-2 rounded-[6px]"
+                    disabled={pending}
+                    data-testid={`org-workspaces-unsupported-file-target-${target.id}`}
+                    onSelect={() => onOpenTarget(target)}
+                  >
+                    {openingTargetId === target.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <WorkspaceLaunchTargetIcon target={target} />
+                    )}
+                    <span className="min-w-0 flex-1 truncate">{target.label}</span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }

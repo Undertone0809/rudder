@@ -153,6 +153,11 @@ const mockChatWorkManifest = vi.hoisted(() => ({
   getConversationManifest: vi.fn(),
 }));
 
+const mockChatSteerMessages = vi.hoisted(() => ({
+  beginControlAction: vi.fn(),
+  scheduleContinuation: vi.fn(),
+}));
+
 const mockStorage = vi.hoisted(() => ({
   putFile: vi.fn(),
   deleteObject: vi.fn(),
@@ -227,6 +232,10 @@ vi.mock("../services/chat-agent-runs.js", () => ({
 
 vi.mock("../services/chat-work-manifest.js", () => ({
   chatWorkManifestService: () => mockChatWorkManifest,
+}));
+
+vi.mock("../services/chat-steer-messages.js", () => ({
+  chatSteerMessageService: () => mockChatSteerMessages,
 }));
 
 function createConversation(overrides: Partial<Record<string, unknown>> = {}) {
@@ -368,6 +377,12 @@ describe("chat routes", () => {
     mockChatAssistantService.enrichConversation.mockImplementation(async (conversation) => conversation);
     mockChatAssistantService.enrichConversations.mockImplementation(async (conversations) => conversations);
     mockChatAgentRuns.linkAssistantMessage.mockResolvedValue(null);
+    mockChatSteerMessages.beginControlAction.mockImplementation((input) => (
+      mockChatService.beginSteerControlAction(input)
+    ));
+    mockChatSteerMessages.scheduleContinuation.mockImplementation((input) => (
+      mockChatService.scheduleSteerContinuation(input)
+    ));
     mockChatWorkManifest.reconcileConversation.mockResolvedValue(undefined);
     mockChatWorkManifest.getConversationManifest.mockResolvedValue({
       conversationId: "chat-1",

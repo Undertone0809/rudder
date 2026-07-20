@@ -2305,22 +2305,33 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           {showProjectSelector ? (
             <div className="group/project relative inline-flex max-w-[min(100%,15rem)] min-w-0">
               <button type="button" data-testid="chat-project-selector" aria-label={`Project context: ${projectPillLabel}`} aria-expanded={projectSelectionLocked ? false : projectMenuOpen} disabled={projectSelectionLocked} title={projectSelectionLocked ? "Project context is locked after conversation starts." : undefined} className={cn(
-                  "chat-chip inline-flex w-full min-w-0 items-center rounded-[var(--radius-md)] py-1.5 pl-3 text-xs font-medium",
-                  hasSelectedProject && !projectSelectionLocked ? "pr-9" : "pr-3",
+                  "chat-chip inline-flex w-full min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium",
                   projectSelectionLocked ? "cursor-default" : "transition-colors hover:bg-[color:var(--surface-active)]",
                   projectMenuOpen && "bg-[color:var(--surface-active)]",
                 )} onClick={() => { if (projectSelectionLocked) return;
                   if (projectMenuOpen) { closeComposerContextMenus();
                     return; } openComposerContextMenu("project");
                 }} >
+                {hasSelectedProject ? (
+                  <ProjectIcon
+                    color={activeProject?.color}
+                    icon={activeProject?.icon}
+                    size="xs"
+                    testId="chat-project-icon"
+                    className={cn(
+                      "transition-opacity",
+                      !projectSelectionLocked && "group-focus-within/project:opacity-0 group-hover/project:opacity-0",
+                    )}
+                  />
+                ) : null}
                 <span className="min-w-0 truncate">{projectPillLabel}</span>
               </button>
               {hasSelectedProject && !projectSelectionLocked ? (
-                <button type="button" data-testid="chat-project-clear" aria-label={`Clear project context: ${projectPillLabel}`} title="Clear project context" className="absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-[var(--radius-sm)] text-muted-foreground opacity-0 pointer-events-none transition-[color,background-color,opacity] hover:bg-[color:var(--surface-inset)] hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40 group-focus-within/project:pointer-events-auto group-focus-within/project:opacity-100 group-hover/project:pointer-events-auto group-hover/project:opacity-100" onClick={(event) => {
+                <button type="button" data-testid="chat-project-clear" aria-label={`Clear project context: ${projectPillLabel}`} title="Clear project context" className="absolute left-2 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-[var(--radius-sm)] text-muted-foreground opacity-0 pointer-events-none transition-[color,background-color,opacity] hover:bg-[color:var(--surface-inset)] hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40 group-focus-within/project:pointer-events-auto group-focus-within/project:opacity-100 group-hover/project:pointer-events-auto group-hover/project:opacity-100" onClick={(event) => {
                     event.stopPropagation();
                     applyProjectContext(NO_PROJECT_ID);
                   }} >
-                  <X className="h-3 w-3" strokeWidth={2.4} />
+                  <X className="h-4 w-4" strokeWidth={2.4} />
                 </button>
               ) : null}
             </div>
