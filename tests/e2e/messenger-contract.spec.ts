@@ -81,6 +81,13 @@ async function expectTestIdsInDomOrder(page: Page, testIds: string[]) {
   }).toBe(true);
 }
 
+async function expectTestIdWithinSection(page: Page, sectionTestId: string, childTestId: string) {
+  await expect.poll(async () => page.evaluate(({ sectionTestId, childTestId }) => {
+    const sectionContent = document.querySelector(`[data-testid="${sectionTestId}-content"]`);
+    return Boolean(sectionContent?.querySelector(`[data-testid="${childTestId}"]`));
+  }, { sectionTestId, childTestId })).toBe(true);
+}
+
 async function dragMessengerSectionOver(page: Page, source: Locator, target: Locator) {
   const sourceBox = await source.boundingBox();
   const targetBox = await target.boundingBox();
@@ -851,7 +858,7 @@ test.describe("Messenger unified threads contract", () => {
     expect(projectRes.ok()).toBe(true);
     const project = await projectRes.json() as { id: string };
 
-    const activityBase = Date.now();
+    const activityBase = new Date("2026-01-01T00:00:00.000Z").getTime();
     const groupedChats = Array.from({ length: 8 }, (_, index) => ({
       id: randomUUID(),
       orgId: organization.id,
@@ -879,18 +886,27 @@ test.describe("Messenger unified threads contract", () => {
     const regularGroupRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
       data: { name: "Project work queue", icon: "folder::slate" },
     });
+    const emptyGroupRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
+      data: { name: "Empty project group", icon: "inbox::slate" },
+    });
     expect(pinnedGroupRes.ok()).toBe(true);
     expect(regularGroupRes.ok()).toBe(true);
+    expect(emptyGroupRes.ok()).toBe(true);
     const pinnedGroup = await pinnedGroupRes.json() as { id: string };
     const regularGroup = await regularGroupRes.json() as { id: string };
+    const emptyGroup = await emptyGroupRes.json() as { id: string };
     const pinRes = await page.request.patch(`/api/orgs/${organization.id}/messenger/groups/${pinnedGroup.id}`, {
       data: { pinned: true },
     });
     const unpinRes = await page.request.patch(`/api/orgs/${organization.id}/messenger/groups/${regularGroup.id}`, {
       data: { pinned: false },
     });
+    const unpinEmptyRes = await page.request.patch(`/api/orgs/${organization.id}/messenger/groups/${emptyGroup.id}`, {
+      data: { pinned: false },
+    });
     expect(pinRes.ok()).toBe(true);
     expect(unpinRes.ok()).toBe(true);
+    expect(unpinEmptyRes.ok()).toBe(true);
 
     const pinnedEntryRes = await page.request.post(
       `/api/orgs/${organization.id}/messenger/groups/${pinnedGroup.id}/entries`,
@@ -904,6 +920,55 @@ test.describe("Messenger unified threads contract", () => {
       );
       expect(entryRes.ok()).toBe(true);
     }
+    const pinnedMemberRes = await page.request.post(`/api/chats/${groupedChats[2]!.id}/user-state`, {
+      data: { pinned: true },
+    });
+    expect(pinnedMemberRes.ok()).toBe(true);
+
+    const recentBase = Date.now() - 5 * 60_000;
+    await e2eDb.insert(chatConversations).values(Array.from({ length: 45 }, (_, index) => {
+      const activityAt = new Date(recentBase - index * 1_000);
+      return {
+        id: randomUUID(),
+        orgId: organization.id,
+        title: `Recent pagination filler ${String(index + 1).padStart(2, "0")}`,
+        summary: "This row keeps older grouped chats outside the first activity page.",
+        issueCreationMode: "manual_approval" as const,
+        planMode: false,
+        createdByUserId: null,
+        lastMessageAt: activityAt,
+        createdAt: activityAt,
+        updatedAt: activityAt,
+      };
+    }));
+
+    const looseActivityAt = new Date();
+    const loosePinnedChat = { id: randomUUID(), title: "Loose pinned project chat" };
+    const looseProjectChat = { id: randomUUID(), title: "Loose project chat" };
+    const looseNoProjectChat = { id: randomUUID(), title: "Loose no-project chat" };
+    await e2eDb.insert(chatConversations).values(
+      [loosePinnedChat, looseProjectChat, looseNoProjectChat].map((chat) => ({
+        ...chat,
+        orgId: organization.id,
+        summary: `${chat.title} summary`,
+        issueCreationMode: "manual_approval" as const,
+        planMode: false,
+        createdByUserId: null,
+        lastMessageAt: looseActivityAt,
+        createdAt: looseActivityAt,
+        updatedAt: looseActivityAt,
+      })),
+    );
+    await e2eDb.insert(chatContextLinks).values([loosePinnedChat, looseProjectChat].map((chat) => ({
+      orgId: organization.id,
+      conversationId: chat.id,
+      entityType: "project" as const,
+      entityId: project.id,
+    })));
+    const loosePinRes = await page.request.post(`/api/chats/${loosePinnedChat.id}/user-state`, {
+      data: { pinned: true },
+    });
+    expect(loosePinRes.ok()).toBe(true);
 
     await page.goto("/");
     await page.evaluate((orgId) => {
@@ -911,7 +976,13 @@ test.describe("Messenger unified threads contract", () => {
       window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "project" }));
       window.localStorage.setItem("rudder.messengerSplitIssueNotificationsByOrg", JSON.stringify({ [orgId]: false }));
     }, organization.id);
+    const firstPageResponse = page.waitForResponse((response) =>
+      response.request().method() === "GET"
+      && response.url().includes(`/api/orgs/${organization.id}/messenger/threads?limit=40`),
+    );
     await page.goto(`/${organization.issuePrefix}/messenger/chat`, { waitUntil: "commit" });
+    const firstPage = await (await firstPageResponse).json() as { items: Array<{ threadKey: string }> };
+    expect(firstPage.items.map((item) => item.threadKey)).not.toContain(`chat:${groupedChats[7]!.id}`);
 
     const pinnedSection = page.getByTestId("messenger-thread-section-project-pinned");
     const noProjectSection = page.getByTestId("messenger-thread-section-project-none");
@@ -920,6 +991,7 @@ test.describe("Messenger unified threads contract", () => {
     const projectSection = page.getByTestId(`messenger-thread-section-project-${project.id}`);
     const pinnedGroupSectionId = `messenger-thread-section-custom-group-${pinnedGroup.id}`;
     const regularGroupSectionId = `messenger-thread-section-custom-group-${regularGroup.id}`;
+    const emptyGroupSectionId = `messenger-thread-section-custom-group-${emptyGroup.id}`;
     const pinnedGroupSection = page.getByTestId(pinnedGroupSectionId);
     const regularGroupSection = page.getByTestId(regularGroupSectionId);
     const regularGroupContent = page.getByTestId(`${regularGroupSectionId}-content`);
@@ -929,11 +1001,17 @@ test.describe("Messenger unified threads contract", () => {
     await expect(noProjectSection).toBeVisible();
     await expect(pinnedSectionContent.getByTestId(pinnedGroupSectionId)).toContainText("Pinned atomic group");
     await expect(noProjectSectionContent.getByTestId(regularGroupSectionId)).toContainText("Project work queue");
-    await expect(projectSection).toHaveCount(0);
+    await expect(noProjectSectionContent.getByTestId(emptyGroupSectionId)).toContainText("Empty project group");
+    await expect(page.getByTestId(`messenger-thread-section-project-${project.id}-content`)).toContainText(
+      looseProjectChat.title,
+    );
+    await expectTestIdWithinSection(page, "messenger-thread-section-project-pinned", pinnedGroupSectionId);
+    await expectTestIdWithinSection(page, "messenger-thread-section-project-pinned", threadTestId(`chat:${loosePinnedChat.id}`));
+    await expectTestIdWithinSection(page, "messenger-thread-section-project-none", regularGroupSectionId);
+    await expectTestIdWithinSection(page, "messenger-thread-section-project-none", emptyGroupSectionId);
     await expect(pinnedGroupSection.getByRole("button", { name: "Drag group Pinned atomic group" })).toHaveCount(0);
     await expect(regularGroupSection.getByRole("button", { name: "Drag group Project work queue" })).toHaveCount(0);
     const regularGroupRows = regularGroupSection.locator("[data-messenger-thread-key]");
-    await expect(page.locator("[data-messenger-thread-key]")).toHaveCount(7);
     await expect(regularGroupRows).toHaveCount(6);
     await regularGroupSection.getByTestId(`${regularGroupSectionId}-show-more`).click();
     await expect(regularGroupRows).toHaveCount(7);
@@ -941,7 +1019,14 @@ test.describe("Messenger unified threads contract", () => {
     for (const chat of groupedChats) {
       await expect(page.getByTestId(threadTestId(`chat:${chat.id}`))).toHaveCount(1);
     }
+    for (const chat of [loosePinnedChat, looseProjectChat, looseNoProjectChat]) {
+      await expect(page.getByTestId(threadTestId(`chat:${chat.id}`))).toHaveCount(1);
+    }
     await page.screenshot({ path: "/tmp/rudder-messenger-project-custom-groups.png", fullPage: true });
+
+    await page.getByTestId(threadTestId(`chat:${groupedChats[7]!.id}`)).click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${groupedChats[7]!.id}$`));
+    await page.goto(`/${organization.issuePrefix}/messenger/chat`, { waitUntil: "commit" });
 
     const groupToggle = regularGroupSection.locator("button[aria-expanded]").first();
     await expect(groupToggle).toHaveAttribute("aria-expanded", "true");
@@ -960,6 +1045,38 @@ test.describe("Messenger unified threads contract", () => {
     await expect(restoredGroupSection).toContainText("Project work queue", { timeout: 15_000 });
     await expect(restoredGroupSection.locator('button[aria-expanded="false"]').first()).toBeVisible();
     await expect(page.getByTestId(`${regularGroupSectionId}-content`)).toHaveAttribute("aria-hidden", "true");
+
+    const expandResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${regularGroup.id}`)
+      && response.request().method() === "PATCH",
+    );
+    await restoredGroupSection.locator("button[aria-expanded]").first().click();
+    expect((await expandResponse).ok()).toBe(true);
+    await restoredGroupSection.hover();
+    await restoredGroupSection.getByRole("button", { name: "Group actions" }).click();
+    const pinGroupResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${regularGroup.id}`)
+      && response.request().method() === "PATCH",
+    );
+    await page.getByRole("menuitem", { name: "Pin" }).click();
+    expect((await pinGroupResponse).ok()).toBe(true);
+    await expectTestIdWithinSection(page, "messenger-thread-section-project-pinned", regularGroupSectionId);
+    await page.reload({ waitUntil: "commit" });
+    await expectTestIdWithinSection(page, "messenger-thread-section-project-pinned", regularGroupSectionId);
+
+    const pinnedRegularGroup = page.getByTestId(regularGroupSectionId);
+    await pinnedRegularGroup.hover();
+    await pinnedRegularGroup.getByRole("button", { name: "Group actions" }).click();
+    const unpinGroupResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${regularGroup.id}`)
+      && response.request().method() === "PATCH",
+    );
+    await page.getByRole("menuitem", { name: "Unpin" }).click();
+    expect((await unpinGroupResponse).ok()).toBe(true);
+    await expectTestIdWithinSection(page, "messenger-thread-section-project-none", regularGroupSectionId);
+    await page.reload({ waitUntil: "commit" });
+    await expectTestIdWithinSection(page, "messenger-thread-section-project-none", regularGroupSectionId);
+    await expectTestIdWithinSection(page, `messenger-thread-section-project-${project.id}`, threadTestId(`chat:${looseProjectChat.id}`));
   });
 
   test("sorts Messenger project groups by drag and progressively expands large project groups", async ({ page }) => {
