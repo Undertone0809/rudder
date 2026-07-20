@@ -1278,7 +1278,7 @@ export function messengerService(db: Db) {
           ...entryFields,
           itemKey: entry.threadKey,
           item,
-        } as unknown as MessengerCustomGroupHydratedEntry;
+        } satisfies MessengerCustomGroupHydratedEntry;
         const groupEntries = entriesByGroupId.get(entry.groupId);
         if (groupEntries) groupEntries.push(hydratedEntry);
         else entriesByGroupId.set(entry.groupId, [hydratedEntry]);

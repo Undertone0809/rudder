@@ -144,7 +144,7 @@ export type {
   LibraryDocumentIssueLink,
   LibraryDocumentRevision,
   LibraryDocumentSummary, LibraryEntry, LiveEvent, MessengerApprovalThreadItem,
-  MessengerBudgetThreadItem, MessengerChatThreadDetail, MessengerCustomGroup, MessengerCustomGroupEntry, MessengerCustomGroupHydratedEntry, MessengerCustomGroupWithEntries, MessengerCustomGroupsResponse, MessengerDirectoryItem, MessengerEvent, MessengerHeartbeatRunThreadItem, MessengerIssueThreadItem, MessengerJoinRequestThreadItem, MessengerSavedView, MessengerSavedViewTarget, MessengerSavedViewTargetKind, MessengerThreadAction, MessengerThreadDetail,
+  MessengerBudgetThreadItem, MessengerChatThreadDetail, MessengerCustomGroup, MessengerCustomGroupEntry, MessengerCustomGroupHydratedEntry, MessengerCustomGroupHydratedSavedViewEntry, MessengerCustomGroupHydratedThreadEntry, MessengerCustomGroupWithEntries, MessengerCustomGroupsResponse, MessengerDirectoryItem, MessengerEvent, MessengerHeartbeatRunThreadItem, MessengerIssueThreadItem, MessengerJoinRequestThreadItem, MessengerSavedView, MessengerSavedViewTarget, MessengerSavedViewTargetKind, MessengerThreadAction, MessengerThreadDetail,
   MessengerThreadItem, MessengerThreadPageInfo,
   MessengerThreadSummary,
   MessengerThreadSummaryPage, MessengerThreadUserState, OperatorProfileSettings, Organization, OrganizationExportJob,

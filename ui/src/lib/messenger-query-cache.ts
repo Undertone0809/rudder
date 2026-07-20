@@ -1,5 +1,5 @@
 import { queryKeys } from "@/lib/queryKeys";
-import type { ChatConversation, MessengerCustomGroupsResponse, MessengerThreadSummary, SidebarBadges } from "@rudderhq/shared";
+import type { ChatConversation, MessengerCustomGroupHydratedEntry, MessengerCustomGroupHydratedThreadEntry, MessengerCustomGroupsResponse, MessengerThreadSummary, SidebarBadges } from "@rudderhq/shared";
 import type { QueryClient } from "@tanstack/react-query";
 
 interface MessengerThreadPageData {
@@ -13,6 +13,12 @@ interface MessengerThreadPageData {
 interface MessengerThreadPreviewData {
   items: MessengerThreadSummary[];
   pageInfo: { limit?: number; nextCursor?: string | null; hasMore?: boolean };
+}
+
+function isThreadCustomGroupEntry(
+  entry: MessengerCustomGroupHydratedEntry,
+): entry is MessengerCustomGroupHydratedThreadEntry {
+  return entry.item.type === "thread";
 }
 
 function encodeMessengerThreadSummaryCursor(summary: MessengerThreadSummary) {
@@ -159,10 +165,19 @@ function updateCustomGroupsData(
     ...current,
     groups: current.groups.map((group) => ({
       ...group,
-      entries: group.entries.map((entry) => ({
-        ...entry,
-        thread: updater(entry.thread),
-      })),
+      entries: group.entries.map((entry) => {
+        if (!isThreadCustomGroupEntry(entry)) return entry;
+        const thread = updater(entry.thread);
+        return {
+          ...entry,
+          thread,
+          item: {
+            ...entry.item,
+            title: thread.title,
+            thread,
+          },
+        };
+      }),
     })),
   };
 }
@@ -253,6 +268,7 @@ function getCachedMessengerThreadUnreadCount(queryClient: QueryClient, orgId: st
   const groups = queryClient.getQueryData<MessengerCustomGroupsResponse>(queryKeys.messenger.customGroups(orgId));
   for (const group of groups?.groups ?? []) {
     for (const entry of group.entries) {
+      if (!isThreadCustomGroupEntry(entry)) continue;
       if (entry.thread.threadKey === threadKey) return entry.thread.unreadCount;
     }
   }

@@ -41,7 +41,7 @@ export interface MessengerCustomGroupEntry {
   /** Canonical opaque directory key. Persisted in the legacy `thread_key` column. */
   itemKey: string;
   /** Compatibility alias for thread-backed entries; Saved View JSON omits it. */
-  threadKey: string;
+  threadKey?: string;
   sortOrder: number;
   createdAt: Date;
   updatedAt: Date;
@@ -87,11 +87,21 @@ export type MessengerDirectoryItem =
     savedView: MessengerSavedView;
   };
 
-export interface MessengerCustomGroupHydratedEntry extends MessengerCustomGroupEntry {
-  item: MessengerDirectoryItem;
-  /** Compatibility alias. Runtime responses omit this for Saved View entries. */
+export interface MessengerCustomGroupHydratedThreadEntry extends MessengerCustomGroupEntry {
+  item: Extract<MessengerDirectoryItem, { type: "thread" }>;
+  threadKey: string;
   thread: MessengerThreadSummary;
 }
+
+export interface MessengerCustomGroupHydratedSavedViewEntry extends MessengerCustomGroupEntry {
+  item: Extract<MessengerDirectoryItem, { type: "saved_view" }>;
+  threadKey?: never;
+  thread?: never;
+}
+
+export type MessengerCustomGroupHydratedEntry =
+  | MessengerCustomGroupHydratedThreadEntry
+  | MessengerCustomGroupHydratedSavedViewEntry;
 
 export interface MessengerCustomGroupWithEntries extends MessengerCustomGroup {
   entries: MessengerCustomGroupHydratedEntry[];

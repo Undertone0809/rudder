@@ -139,7 +139,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { buildChatMentionHref, type Agent, type ChatConversation, type MessengerCustomGroupWithEntries, type Project } from "@rudderhq/shared";
+import { buildChatMentionHref, type Agent, type ChatConversation, type MessengerCustomGroupHydratedEntry, type MessengerCustomGroupHydratedThreadEntry, type MessengerCustomGroupWithEntries, type Project } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown,
@@ -158,7 +158,14 @@ import {
   Plus,
   RefreshCw
 } from "lucide-react";
+
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+
+function isThreadCustomGroupEntry(
+  entry: MessengerCustomGroupHydratedEntry,
+): entry is MessengerCustomGroupHydratedThreadEntry {
+  return entry.item.type === "thread";
+}
 
 type CustomGroupEditorState = { mode: "create"; threadKey?: string };
 type CustomGroupRenameState = { group: MessengerCustomGroupWithEntries; name: string };
@@ -949,6 +956,7 @@ export function MessengerContextSidebar() {
       }
       for (const group of customGroups) {
         for (const entry of group.entries) {
+          if (!isThreadCustomGroupEntry(entry)) continue;
           sourceThreadsByKey.set(entry.threadKey, [...sourceThreadsByKey.get(entry.threadKey) ?? [], entry.thread]);
         }
       }
@@ -977,7 +985,7 @@ export function MessengerContextSidebar() {
         name: group.name,
         icon: group.icon,
         pinned: Boolean(group.pinnedAt),
-        entries: group.entries.map((entry) => {
+        entries: group.entries.filter(isThreadCustomGroupEntry).map((entry) => {
           const conversationId = threadConversationId(entry.threadKey);
           const pendingTitle = conversationId ? pendingChatRenameTitles[conversationId] : undefined;
           const readThread = locallyReadThreadSummary(entry.thread, locallyReadThreadWatermarks);
@@ -1033,6 +1041,7 @@ export function MessengerContextSidebar() {
     const map = new Map<string, string | null>();
     for (const group of customGroups) {
       for (const entry of group.entries) {
+        if (!isThreadCustomGroupEntry(entry)) continue;
         map.set(entry.threadKey, group.id);
       }
     }

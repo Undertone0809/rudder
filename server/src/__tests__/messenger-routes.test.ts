@@ -256,4 +256,29 @@ describe("Messenger Saved View and generic group routes", () => {
       "org-1", "user-1", "group-1", ["saved-view:view-1", "chat:chat-1"],
     );
   });
+
+  it("validates and forwards Saved View reorder requests for the current board user", async () => {
+    const firstId = "11111111-1111-4111-8111-111111111111";
+    const secondId = "22222222-2222-4222-8222-222222222222";
+    mockSavedViewsService.reorder.mockResolvedValueOnce([
+      { id: secondId, sortOrder: 0 },
+      { id: firstId, sortOrder: 1 },
+    ]);
+
+    const response = await request(createApp())
+      .patch("/api/orgs/org-1/messenger/saved-views/reorder")
+      .send({ ids: [secondId, firstId] });
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual([
+      { id: secondId, sortOrder: 0 },
+      { id: firstId, sortOrder: 1 },
+    ]);
+    expect(mockSavedViewsService.reorder).toHaveBeenCalledWith("org-1", "user-1", [secondId, firstId]);
+
+    const invalid = await request(createApp())
+      .patch("/api/orgs/org-1/messenger/saved-views/reorder")
+      .send({ ids: [firstId, firstId] });
+    expect(invalid.status).toBe(400);
+    expect(mockSavedViewsService.reorder).toHaveBeenCalledTimes(1);
+  });
 });

@@ -5350,4 +5350,77 @@ describe("messengerService and issue follows", () => {
     expect(await db.select().from(messengerCustomGroupEntries)).toHaveLength(0);
     await expect(savedViewsSvc.get(orgId, userId, first.id)).rejects.toMatchObject({ status: 404 });
   });
+
+  it("deduplicates and restores every Library Saved View by owning resource identity", async () => {
+    const orgId = randomUUID();
+    const userId = "saved-view-library-user";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Saved View Library Identity Org",
+      urlKey: deriveOrganizationUrlKey("Saved View Library Identity Org"),
+      issuePrefix: `L${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+    });
+
+    const documentId = randomUUID();
+    const entryId = randomUUID();
+    const cases = [
+      {
+        initial: { kind: "library_document" as const, documentId },
+        repeated: { kind: "library_document" as const, documentId },
+      },
+      {
+        initial: { kind: "library_entry" as const, entryId, path: "docs/old-name.md" },
+        repeated: { kind: "library_entry" as const, entryId, path: "docs/new-name.md" },
+      },
+      {
+        initial: { kind: "library_file" as const, filePath: "/workspace/missing.md" },
+        repeated: { kind: "library_file" as const, filePath: "/workspace/missing.md" },
+      },
+      {
+        initial: { kind: "library_directory" as const, directoryPath: "/workspace/missing" },
+        repeated: { kind: "library_directory" as const, directoryPath: "/workspace/missing" },
+      },
+    ];
+
+    for (const [index, targetCase] of cases.entries()) {
+      const created = await savedViewsSvc.create(orgId, userId, {
+        target: targetCase.initial,
+        title: `Library target ${index}`,
+        subtitle: "Initial metadata",
+      });
+      const originalSortOrder = created.sortOrder;
+      const repeated = await savedViewsSvc.create(orgId, userId, {
+        target: targetCase.repeated,
+        title: `Updated library target ${index}`,
+        subtitle: "Updated metadata",
+      });
+      expect(repeated.id).toBe(created.id);
+      expect(repeated.targetPayload).toEqual(targetCase.repeated);
+      expect(repeated).toMatchObject({
+        sortOrder: originalSortOrder,
+        title: `Updated library target ${index}`,
+        subtitle: "Updated metadata",
+      });
+
+      await savedViewsSvc.update(orgId, userId, created.id, { hidden: true });
+      const restored = await savedViewsSvc.create(orgId, userId, {
+        target: targetCase.repeated,
+        title: `Restored library target ${index}`,
+      });
+      expect(restored).toMatchObject({
+        id: created.id,
+        hiddenAt: null,
+        sortOrder: originalSortOrder,
+        title: `Restored library target ${index}`,
+      });
+    }
+
+    expect(await savedViewsSvc.list(orgId, userId, "hidden")).toEqual([]);
+    expect((await savedViewsSvc.list(orgId, userId)).map((view) => view.targetKind)).toEqual([
+      "library_document",
+      "library_entry",
+      "library_file",
+      "library_directory",
+    ]);
+  });
 });
