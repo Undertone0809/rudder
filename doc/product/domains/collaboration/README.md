@@ -27,7 +27,7 @@ edit_policy: user_confirmed_only
 - Chat conversations, messages, attachments, rich references, and assistant
   turns, including the thread Work manifest.
 - Messenger thread directory, unread state, custom groups, pin/archive/delete,
-  and attention aggregation.
+  Saved Views, and attention aggregation.
 - Issue-thread presentation of comments/activity when shown in Messenger.
 - External IM bridges that land in Messenger and then route agent work.
 
@@ -62,5 +62,8 @@ edit_policy: user_confirmed_only
 - `MESSENGER.CUSTOM.GROUPS.001`: Messenger custom groups organize chat, issue,
   approval, and synthetic attention rows while preserving each row's native
   navigation, read state, attention semantics, and pin ordering.
+- `MESSENGER.SAVED.VIEWS.001`: Messenger durably saves eligible Browser,
+  Automation, and Library Side Panel targets without treating them as message
+  threads or fabricating unread, attention, or activity time.
 - `IM.FEISHU.001`: Feishu inbound/outbound integration bridges external chat
   into Rudder Messenger, issue, and run records.

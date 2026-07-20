@@ -110,6 +110,10 @@ owning domain contract.
   primary surface: `ISSUE.SURFACE.001`.
 - Messenger custom group membership, grouped-row navigation/read behavior, and
   group pin priority: `MESSENGER.CUSTOM.GROUPS.001`.
+- Side Panel `Add to Messenger` eligibility and placement, Messenger's fixed
+  Saved section, Saved View routes, hidden restoration, custom-group mixing,
+  and Side Panel target reopening:
+  `MESSENGER.SAVED.VIEWS.001`.
 - Feishu/IM source badges on Feishu-bound chat rows: `IM.FEISHU.001`.
 - Issue comment and issue-thread facts: `ISSUE.COMMENTS.001`,
   `ROUTING.COMMENT.WAKE.001`.

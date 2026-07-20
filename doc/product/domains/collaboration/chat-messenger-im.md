@@ -14,6 +14,7 @@ contract_ids:
   - MESSENGER.ATTENTION.001
   - MESSENGER.THREAD.PREVIEW.001
   - MESSENGER.CUSTOM.GROUPS.001
+  - MESSENGER.SAVED.VIEWS.001
   - IM.FEISHU.001
 related_code:
   - desktop/src/browser-ipc.ts
@@ -1300,6 +1301,10 @@ Product model:
   undo/redo, visible save state, and explicit stale-write conflict resolution.
   The Side Panel preserves the operator's draft until a conditional write
   succeeds or the operator chooses the latest server version.
+- Eligible Browser, automation, Library document, Library entry, Library file,
+  and Library directory targets can be added to Messenger Saved Views. Adding a
+  target is a persistence action only: it must not navigate, close or hide the
+  panel, change tab order, or switch the active Side Panel tab.
 
 Flow:
 
@@ -1373,6 +1378,14 @@ Flow:
     precondition. When the server reports a conflict, the panel pauses autosave,
     keeps the draft visible, and offers `Keep mine` or `Use latest`; an older
     in-flight response must not override the operator's conflict decision.
+20. When the operator adds an eligible active target to Saved Views, Rudder
+    persists its typed descriptor under `MESSENGER.SAVED.VIEWS.001` and confirms
+    the mutation in place without changing the current route, panel visibility,
+    tabs, or active target.
+21. Selecting `/messenger/saved-views/:id` asks the shared Side Panel controller
+    to open or focus the saved target. A saved Browser target reuses the original
+    live guest only while that guest exists; after restart, reset, or explicit
+    tab close it opens a new Browser target from the last persisted URL.
 
 Invariants:
 
@@ -1477,6 +1490,10 @@ Invariants:
 - The panel should not show a generic full-page footer as the primary action for
   every target. Full-page navigation may remain a secondary object toolbar
   action, but the panel's job is adjacent work.
+- Saving, hiding, restoring, or deleting a Saved View must not close or mutate
+  the corresponding Side Panel target when that target is already open. Saved
+  View lifecycle and directory placement are owned by
+  `MESSENGER.SAVED.VIEWS.001`, not by Side Panel tab lifecycle.
 
 Evidence:
 
@@ -1535,6 +1552,8 @@ Product model:
 
 - Messenger thread directory includes chat threads and domain-derived attention
   threads such as issue, approval, failed run, and automation-created work.
+- Messenger also presents Saved Views as durable directory items, but a Saved
+  View is not a message thread and is excluded from thread attention semantics.
 - Threads support read/unread state, previews, pin/archive/delete where the
   underlying thread type supports it, custom groups, and stable navigation.
 - Issue thread entries derive from issue comments/activity and read markers.
@@ -1551,6 +1570,8 @@ Flow:
    so starter work does not appear as new unread attention.
 4. Opening a thread clears relevant read markers when appropriate.
 5. Actions such as pin/archive/delete route to the owning chat/thread behavior.
+6. Messenger merges Saved Views into their fixed section or custom-group
+   placement without sending them through read-marker or attention aggregation.
 
 Invariants:
 
@@ -1559,6 +1580,10 @@ Invariants:
 - Unread/attention counts must be organization-scoped and user-scoped.
 - Seeded onboarding issue threads must remain read for the seeded operator
   until later issue activity occurs after the seed read marker.
+- A Saved View must not have unread state, unread count, attention state,
+  mark-read or mark-unread actions, or a fabricated latest-message/activity
+  timestamp. Saving, opening, hiding, restoring, regrouping, or deleting it must
+  not change Messenger attention badges.
 
 Evidence:
 
@@ -1623,23 +1648,30 @@ Product model:
   domain above unpinned groups and loose rows. The section may be absent when
   no visible thread or group is pinned.
 - A custom group is an organization-scoped, operator-scoped Messenger directory
-  section over thread summaries. It is a `threadKey` membership overlay, not
+  section over hydrated directory items. Most members are thread summaries, but
+  Saved Views may be mixed into the same group without becoming threads or
   owning-domain state.
 - A Messenger member can belong to at most one custom group per operator.
   Moving a member into a group removes its previous custom group membership for
   that operator.
-- Group membership is keyed by the Messenger thread key, not by chat-only
-  identity. Supported members include chat rows such as `chat:<id>`, aggregate
+- Group membership is keyed by the stable Messenger directory-item key, not by
+  chat-only identity. Existing members use thread keys and Saved Views use
+  `saved-view:<id>`. Supported members include chat rows such as `chat:<id>`, aggregate
   issue rows such as `issues`, split issue rows such as `issue:<id>`, and known
   synthetic keys such as `approvals`, `failed-runs`, `budget-alerts`, and
   `join-requests`.
-- Grouped members are hydrated thread summaries. They must preserve the same
-  identity, preview, unread count, attention state, supported actions, and
-  destination route as the same summary shown outside a group.
+- Thread-backed grouped members are hydrated thread summaries and preserve the
+  same identity, preview, unread count, attention state, supported actions, and
+  destination route as the same summary shown outside a group. Saved View
+  members hydrate as Saved Views and retain no thread-only state.
 - Dormant synthetic memberships may remain persisted even when the backing
   attention count temporarily drops to zero. The visible hydrated member may be
   absent while the row is empty, but the group must not silently lose the
   membership.
+- Hiding a Saved View removes its row from the visible group but preserves its
+  group membership and group-local order. Restoring it returns it to that
+  position when the group still exists; deleting it removes both the saved
+  record and its custom-group membership.
 - Onboarding may create or reuse an operator-scoped `Getting Started` custom
   group and add seeded starter issue threads such as `issue:<id>` to it.
 - Custom group titles can be explicit operator titles or Fast
@@ -1656,25 +1688,29 @@ Flow:
 2. The operator creates a custom group, moves a Messenger item into a group, or
    drags an item between groups. Onboarding seed may also create the
    `Getting Started` group for starter work.
-3. Rudder writes the operator-scoped membership using the item's Messenger
-   thread key.
+3. Rudder writes the operator-scoped membership using the item's stable
+   Messenger directory key.
 4. When drag/drop merges loose members into a new group, Rudder sends the
-   member titles to Fast Intelligence with `feature: "messenger_group_title"`.
+   directory-item display titles, including Saved View labels, to Fast
+   Intelligence with `feature: "messenger_group_title"`.
    If Fast Intelligence returns a usable title, Rudder stores that title; if it
    fails or returns unusable output, Rudder stores the deterministic fallback
    title from the drop target so grouping still succeeds.
-5. Messenger hydrates the group's members from the same source summaries used
-   for loose Messenger rows.
+5. Messenger hydrates thread-backed members from the same source summaries used
+   for loose Messenger rows and Saved View members from the operator's Saved
+   View records.
 6. Selecting a grouped member opens the same destination as selecting the loose
-   row and applies the same read-marker behavior.
+   row. Thread-backed members apply their normal read-marker behavior; Saved
+   Views have no read marker.
 7. The operator may choose `Regenerate title` from the group actions menu.
-   Rudder rebuilds title-generation context from current group member titles,
+   Rudder rebuilds title-generation context from current directory-item display titles,
    calls Fast Intelligence, and updates only the group name when generation
    succeeds.
-8. Actions that change a member's visible summary, including mark read/unread,
-   pin/unpin, archive/delete where supported, and preview-changing source
-   events, update or refetch the group's hydrated rows so grouped badges do not
-   diverge from loose rows.
+8. Actions that change a thread-backed member's visible summary, including
+   mark read/unread, pin/unpin, archive/delete where supported, and
+   preview-changing source events, update or refetch the group's hydrated rows
+   so grouped badges do not diverge from loose rows. Saved View mutations
+   refresh only Saved View state and directory placement.
 9. The operator may reorder custom groups within the pinned or unpinned domain.
    Rudder persists that domain-local order and restores it on reload without
    moving the group across the pin boundary.
@@ -1694,7 +1730,7 @@ Invariants:
   start with unread count and attention state cleared for the seeded operator.
 - Grouped chat rows must clear the same chat read state as loose chat rows when
   opened.
-- A grouped member's read/unread badge, unread count, attention state, preview,
+- A grouped thread-backed member's read/unread badge, unread count, attention state, preview,
   and last-activity ordering must not diverge from the source Messenger
   summary after local optimistic updates settle.
 - Pinned custom groups render inside the `Pinned` section immediately under
@@ -1708,10 +1744,19 @@ Invariants:
   member does not remove it from its group.
 - Removing an item from a group returns that item to the loose Messenger
   directory with its existing read/unread and attention state intact.
+- A mixed group may contain both thread-backed members and Saved Views. Saved
+  View rows preserve their Saved View route, target kind, title, hidden state,
+  and manual order, but must not inherit unread badges, attention state,
+  mark-read actions, or latest-message ordering from neighboring threads.
+- Hiding and restoring a Saved View preserves its custom-group membership and
+  order. Deleting a Saved View removes its membership but must not delete or
+  close the owning automation, Library object, Browser guest, or active Side
+  Panel target.
 - Automatic group title generation must not run for menu-created groups or for
   moving a member into an existing group.
-- Group title generation uses only member thread titles as context. It must not
-  send full chat transcripts, issue descriptions, comments, or approval bodies.
+- Group title generation uses only directory-item display titles, including
+  Saved View labels, as context. It must not send full chat transcripts, issue
+  descriptions, comments, approval bodies, target payloads, or Browser URLs.
 - Drag/drop merge must remain successful when Fast Intelligence is unavailable;
   the fallback title is stored and the pending group clears normally.
 - While automatic or manual group title generation is in flight, Messenger
@@ -1736,6 +1781,257 @@ Evidence:
   pinned groups rendering above loose pinned threads after reload. It also
   covers the default Arc-style layout and the absence of the superseded
   `Pinned`, `Today`, and `Recent` managed sections.
+
+## MESSENGER.SAVED.VIEWS.001
+
+### Contract Summary
+
+Messenger Saved Views durably place eligible Browser, Automation, and Library
+Side Panel targets in the operator's Messenger directory without turning those
+targets into message threads. The same saved item can remain in the fixed
+`Saved` section or move into a custom group, while opening it continues work in
+the adjacent Side Panel workbench.
+
+### Intent / User Job
+
+- An operator can keep a useful Side Panel target, organize it next to chats
+  and issues, and return to it later without losing the current work at save
+  time or receiving false unread and attention signals.
+
+### Why / Design Reasoning
+
+- Operators need a durable way to return to useful Side Panel workbench targets
+  after the session-scoped tab state ends.
+- Reusing message-thread semantics would create false unread, attention, and
+  recency signals for objects that have no message stream.
+- Target identity, not display URL or label, controls deduplication. This keeps
+  two independent Browser tabs saveable even when they show the same URL while
+  preventing repeated Add on one tab or durable resource from creating noise.
+- Browser continuity is deliberately best effort: a stable application-level
+  guest preserves live state while it exists, while the persisted URL and
+  Browser partition provide an honest recovery boundary after disposal.
+
+### Actors / Objects / State
+
+- A Saved View is an organization-scoped, operator-scoped durable pointer to an
+  eligible Side Panel target. Supported targets are Browser, Automation,
+  Library document, Library entry, Library file, and Library directory.
+- A Saved View stores a stable id, display label, typed target descriptor,
+  hidden state, manual order, and target-specific fallback data. It does not
+  own the underlying automation, Library object, Browser guest, or Side Panel
+  tab.
+- A Saved View is a Messenger directory item, not a message thread. It has no
+  transcript, unread state, attention state, mark-read behavior, or synthetic
+  latest-message/activity time.
+- Messenger reserves a fixed `Saved` section immediately below `New chat`.
+  Visible Saved Views that are not assigned to a custom group render there in
+  manual order; grouped Saved Views render in their custom group without a
+  duplicate row in the fixed section.
+- A Saved View uses `/messenger/saved-views/:id` as its stable Messenger route.
+  Selecting or directly loading that route opens or focuses the saved target in
+  the global Side Panel through the normal target controller and forces that
+  panel to the expanded workspace width while the Messenger sidebar remains
+  visible.
+- Hidden Saved Views are absent from the normal directory but remain available
+  from explicit hidden-item management. Restore returns a record to its
+  preserved group and order when that group still exists; otherwise it returns
+  to its preserved position in the fixed `Saved` section.
+- A saved Browser target keeps a best-effort association with its original
+  Browser target identity. The live guest is reusable only while that original
+  guest still exists. Restart, Browser/Side Panel reset, Browser-data reset, or
+  explicit close ends the live association.
+- Browser fallback opens the last persisted eligible URL as a fresh target in
+  the dedicated Browser partition. It may use partition cookies that still
+  exist, but it does not restore history stacks, scroll/form state, POST state,
+  or in-page application memory. Browser-data reset may also clear cookies.
+- The persisted record includes `targetKind`, a validated typed
+  `targetPayload`, `title`, `subtitle`, optional `favicon`, fixed-section
+  `sortOrder`, `hiddenAt`, and created/updated timestamps. Browser payloads keep
+  the live `tabId` identity plus fallback URL. Automation and Library payloads
+  keep their owning resource identity.
+- Custom-group membership keeps the existing `thread_key` database column as
+  an opaque item key; Saved Views use `saved-view:<id>`.
+- Generic group API fields are canonical. Every hydrated member returns
+  `itemKey` and `item`; a thread-backed member additionally returns compatible
+  `threadKey` and `thread` aliases, while a Saved View never populates those
+  thread aliases. Mutations accept either generic or legacy key fields; if both
+  are supplied they must be equal or validation fails with `400`.
+
+### Entry Points / Inputs
+
+- `Add to Messenger` on an eligible active Side Panel target.
+- Messenger Saved and Hidden row actions: Open, Move to group, Hide, Restore,
+  Remove, and manual reorder.
+- Direct navigation to `/messenger/saved-views/:id`.
+- Organization-scoped Saved View list/create/get/update/reorder/delete APIs and
+  generic custom-group item APIs.
+- Browser main-frame/in-page navigation, title, and
+  `page-favicon-updated` events used to refresh recovery metadata.
+
+### Product Logic Flow
+
+1. From an eligible active Side Panel target, the operator chooses
+   `Add to Messenger`.
+2. Rudder validates the target descriptor, persists the Saved View for the
+   current organization and operator, and confirms success in place. Add does
+   not navigate, close or hide the panel, reorder tabs, or switch the active
+   tab.
+3. Messenger lists the record in the fixed `Saved` section or its custom group,
+   without adding it to message activity or attention aggregation.
+4. Selecting the row navigates to `/messenger/saved-views/:id`, loads the
+   scoped record, and asks the Side Panel to open or focus its target.
+5. For Browser, Rudder focuses the original guest when it is still alive.
+   Otherwise it opens a fresh Browser target from the last persisted URL under
+   the existing Browser profile and navigation policies.
+6. Hide removes the row from the visible directory while preserving Saved View
+   and group order. Restore makes it visible at the preserved placement.
+7. Delete removes the Saved View record and all custom-group membership. An
+   already open or active Side Panel target remains open and unchanged.
+
+### Decision Table
+
+| Case | Conditions | Product result | Must not happen | Evidence |
+| --- | --- | --- | --- | --- |
+| First Browser Add | Eligible nonblank live `tabId` has no Saved View | Create one record and show `In Messenger` | Navigate, close, switch tabs, or dedupe by URL | Service, UI, Desktop E2E |
+| Repeated Browser Add | Same live `tabId` already has a record | Reuse the record; restore it when hidden | Create a duplicate record | Service and UI tests |
+| Same URL, different tabs | Distinct live `tabId` values show one URL | Create distinct records | Collapse them by URL | Service and Desktop E2E |
+| Durable resource Add | Same Automation or Library resource identity exists | Reuse the record; restore it when hidden | Duplicate by label/path formatting | Service tests |
+| Hidden grouped item | Saved View is hidden while membership exists | Omit it from normal rows and preserve membership/order | Treat membership as stale or delete it | Service and E2E |
+| Underlying resource unavailable | Library/Automation lookup is missing, forbidden, or deleted | Keep the row and show unavailable | Auto-delete or cross-scope hydrate | Route/UI/E2E |
+| Browser guest alive | Original runtime still owns the saved `tabId` | Show the same guest and `webContentsId` | Remount/reparent or create a second guest | Packaged Desktop E2E |
+| Browser guest gone | Original tab closed, LRU-evicted, reset, or app restarted | Open a fresh guest at last persisted eligible URL | Claim history/form/scroll recovery | Packaged Desktop E2E |
+| Web/mobile Browser open | No Electron guest capability | Keep the row and ask to open in Rudder Desktop | Drop the record or fake a guest | UI E2E |
+
+### Actor-Visible Input
+
+- Browser shows the action in the address bar before New tab. Automation and
+  Library show it at the right of the target header. The visible states are
+  `Add to Messenger`, `In Messenger`, and `Restore in Messenger`; a blank
+  Browser tab is not saveable.
+- Messenger shows visible ungrouped records under `Saved`, grouped records in
+  their group, and a `Hidden (n)` manager when hidden records exist.
+
+### Operator-Visible Output
+
+- Add confirms in place without route, panel, active-tab, or tab-count changes.
+- Each row shows favicon or type icon, title, and domain/path/automation
+  subtitle, plus Move, Hide, and Remove actions.
+- Missing Library/Automation targets show an unavailable state. Browser rows on
+  web/mobile say to open them in Rudder Desktop; Library/Automation remain
+  usable there.
+- Saved View rows never show unread, attention, mark-read, or latest-message
+  time UI.
+
+### Persisted Evidence
+
+- `messenger_saved_views` must store the scoped typed target, presentation and
+  recovery metadata, fixed-section order, hidden state, and timestamps.
+- `messenger_custom_group_entries.thread_key` must store the opaque
+  `saved-view:<id>` membership and group-local order.
+- Each Saved View mutation must emit an organization-scoped, operator-attributed
+  activity record. Metadata refreshes do not change Messenger activity order.
+- Accepted Browser navigation/title/favicon events must be deduplicated and
+  throttled. The newest accepted main-frame or in-page URL wins; pending
+  recovery metadata is flushed before deliberate tab/reset disposal when
+  possible.
+
+### Canonical Scenarios
+
+1. Save and resume a live Browser guest:
+   - Trigger: Save Browser page A, navigate to B, fill a form, then open its
+     Messenger row while the original tab remains live.
+   - Expected state/action: The same runtime guest remains mounted while the
+     global Side Panel expands beside the Messenger sidebar and can navigate
+     back.
+   - Visible output: Messenger sidebar remains visible; page and in-memory state
+     remain.
+   - Evidence: Stable `webContentsId`, history, form, and scroll Desktop E2E.
+2. Recover after restart:
+   - Trigger: Save a Browser target, navigate again, then restart/reset.
+   - Expected state/action: Create a new guest at the newest persisted eligible
+     URL using the persistent Browser partition.
+   - Visible output: Current page and available cookie login restore; no claim
+     about history/form/scroll.
+   - Evidence: Packaged restart/reset E2E.
+3. Hide and restore a grouped Library target:
+   - Trigger: Move a saved file into a mixed group, hide it, then restore it.
+   - Expected state/action: Membership and group-local order survive.
+   - Visible output: Row disappears while hidden and returns to its exact group.
+   - Evidence: Service and Messenger E2E.
+4. Open an inaccessible Automation target:
+   - Trigger: The owning resource is deleted or becomes inaccessible.
+   - Expected state/action: Retain the Saved View but deny target hydration.
+   - Visible output: Actionable unavailable state with no attention badge.
+   - Evidence: Isolation/service/UI E2E.
+
+### Invariants / Non-Goals
+
+- All Saved View reads, mutations, routes, target hydration, and group
+  membership are organization-scoped and operator-scoped. A stored descriptor
+  never grants access to an underlying object.
+- Only Browser, Automation, Library document, Library entry, Library file, and
+  Library directory Side Panel targets are saveable under this contract.
+- Add, hide, restore, and delete do not implicitly navigate away from the
+  current work, close the Side Panel, or change its active tab or target.
+- Missing, deleted, or inaccessible underlying targets produce an actionable
+  unavailable state; they must not be silently redirected or hydrated across an
+  organization boundary.
+- Library targets retain `LIBRARY.FILES.001` path, protection, and conditional
+  write rules. Automation targets retain `AUTOMATION.*` lifecycle rules.
+  Browser targets retain the dedicated Browser partition and all sandbox,
+  protocol, popup, permission, download, file, and control-plane-origin rules.
+- Browser live reuse is best effort and depends on the original guest identity,
+  not only URL equality. Fallback from the last URL must not claim recovery of
+  ephemeral browsing state.
+- The Browser guest remains mounted in an application-level runtime while live
+  view anchors move between normal and expanded Side Panel workspaces.
+- Hide preserves Saved View custom-group membership and ordering. Delete
+  removes the saved record and membership but never deletes the underlying
+  object or closes an active Side Panel target.
+- Saved Views never participate in unread/attention counts, mark-read APIs, or
+  latest-message ordering, including when mixed into a custom group.
+- Issue, Chat, Side Chat, placeholder, and blank Browser targets are not
+  saveable because Issue and Chat already have Messenger identity or no durable
+  target exists.
+- Live guest retention is capped at eight; least-recently-used inactive guest
+  eviction preserves Saved View records. Restart recovery does not promise
+  history, form state, scroll, POST state, or in-page memory.
+
+### Drift Boundaries
+
+- Adding a target kind, changing deduplication identity, Saved/Hidden placement,
+  group membership semantics, attention exclusion, live guest ownership,
+  recovery guarantees, or web/mobile behavior requires updating this contract.
+- Component names, query-cache layout, throttle duration, row styling, and the
+  internal activity payload may change without a contract update when visible
+  behavior and persisted evidence stay equivalent.
+
+### Traceability
+
+Related plans:
+
+- `doc/plans/2026-07-20-messenger-saved-views.md`
+
+Current related code to be extended:
+
+- `packages/shared/src/types/messenger.ts`
+- `server/src/routes/messenger.ts`
+- `ui/src/components/MessengerContextSidebar.tsx`
+- `ui/src/pages/Messenger.tsx`
+- `ui/src/pages/Chat.side-panel.tsx`
+
+Current related tests to be extended:
+
+- `server/src/__tests__/messenger-routes.test.ts`
+- `ui/src/components/MessengerContextSidebar.test.tsx`
+- `ui/src/pages/Messenger.test.tsx`
+- `desktop/scripts/smoke.mjs`
+
+Known gaps:
+
+- The approved schema, Saved View service, application-level Browser runtime,
+  and dedicated Saved View E2E do not exist at contract approval time. They
+  must be implemented and added to registry traceability before hand-off.
 
 ## IM.FEISHU.001
 
