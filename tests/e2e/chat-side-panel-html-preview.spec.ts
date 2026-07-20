@@ -1,6 +1,7 @@
 import { expect, test, type Locator } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { chatMessages, createDb } from "../../packages/db/src/index.ts";
+import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_DATABASE_URL } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
@@ -78,6 +79,7 @@ test("renders a Library HTML report in the Messenger Side Panel by default", asy
   });
   expect(orgRes.ok(), await orgRes.text()).toBe(true);
   const organization = await orgRes.json() as { id: string; issuePrefix: string };
+  await createE2EChatAgent(page.request, organization.id, { name: "HTML Preview Agent" });
 
   const htmlFilePath = `artifacts/reports/rendered-report-${Date.now()}.html`;
   const fileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
@@ -216,6 +218,7 @@ test("uses full preview surfaces for JSON, CSV, and PDF Library files", async ({
   });
   expect(orgRes.ok(), await orgRes.text()).toBe(true);
   const organization = await orgRes.json() as { id: string; issuePrefix: string };
+  await createE2EChatAgent(page.request, organization.id, { name: "Data Preview Agent" });
 
   const timestamp = Date.now();
   const files = [

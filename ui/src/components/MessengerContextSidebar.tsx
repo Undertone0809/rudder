@@ -590,7 +590,7 @@ function chatConversationForThreadSummary(
     contextLinks: [],
     chatRuntime: {
       sourceType: "unconfigured",
-      sourceLabel: "No agent selected",
+      sourceLabel: "Agent unavailable",
       runtimeAgentId,
       agentRuntimeType: null,
       model: null,
@@ -1891,7 +1891,6 @@ export function MessengerContextSidebar() {
     const isManagedSection = isManagedThreadGroupRule(effectiveThreadOrganizationRule);
     const sectionAgentId = effectiveThreadOrganizationRule === "agent"
       && section.key.startsWith("agent:")
-      && section.key !== "agent:none"
       ? section.key.slice("agent:".length)
       : null;
     const sectionAgent = sectionAgentId ? agentsById.get(sectionAgentId) ?? null : null;
@@ -2277,7 +2276,7 @@ export function MessengerContextSidebar() {
                     testId={`messenger-thread-section-${sanitizeThreadKey(section.key)}-project-icon`}
                   />
                 ) : null}
-                {sectionAgentId ? (
+                {sectionAgent ? (
                   <span
                     data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}-agent-avatar`}
                     aria-hidden="true"
@@ -2286,7 +2285,7 @@ export function MessengerContextSidebar() {
                     <AgentIcon
                       icon={sectionAgent?.icon}
                       role={sectionAgent?.role}
-                      fallbackSeed={sectionAgent?.id ?? sectionAgentId}
+                      fallbackSeed={sectionAgent.id}
                       className="h-full w-full rounded-full"
                     />
                   </span>

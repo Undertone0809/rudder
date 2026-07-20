@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { chatMessages, createDb } from "../../packages/db/src/index.ts";
+import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_DATABASE_URL } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
@@ -12,6 +13,7 @@ test.describe("Chat rich references", () => {
     });
     expect(orgRes.ok()).toBe(true);
     const organization = await orgRes.json();
+    await createE2EChatAgent(page.request, organization.id, { name: "Reference Agent" });
 
     const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {

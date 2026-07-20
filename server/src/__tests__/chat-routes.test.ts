@@ -107,6 +107,7 @@ const mockProjectService = vi.hoisted(() => ({
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
+  list: vi.fn(),
 }));
 
 const mockAccessService = vi.hoisted(() => ({
@@ -374,6 +375,9 @@ describe("chat routes", () => {
       id: "organization-1",
       defaultChatIssueCreationMode: "manual_approval",
     });
+    mockAgentService.list.mockResolvedValue([
+      { id: "agent-1", orgId: "organization-1", status: "idle" },
+    ]);
     mockChatAssistantService.enrichConversation.mockImplementation(async (conversation) => conversation);
     mockChatAssistantService.enrichConversations.mockImplementation(async (conversations) => conversations);
     mockChatAgentRuns.linkAssistantMessage.mockResolvedValue(null);
@@ -1090,7 +1094,7 @@ describe("chat routes", () => {
     }
   });
 
-  it("creates a conversation using the organization default issue creation mode", async () => {
+  it("creates a conversation with the organization default agent and issue creation mode", async () => {
     mockChatService.create.mockResolvedValue(createConversation());
 
     const res = await request(createApp())
@@ -1101,11 +1105,24 @@ describe("chat routes", () => {
     expect(mockChatService.create).toHaveBeenCalledWith(
       "organization-1",
       expect.objectContaining({
+        preferredAgentId: "agent-1",
         issueCreationMode: "manual_approval",
         planMode: false,
         contextLinks: [],
       }),
     );
+  });
+
+  it("rejects chat creation when the organization has no available agent", async () => {
+    mockAgentService.list.mockResolvedValueOnce([]);
+
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/chats")
+      .send({});
+
+    expect(res.status).toBe(422);
+    expect(res.body).toEqual({ error: "Chat requires an available agent" });
+    expect(mockChatService.create).not.toHaveBeenCalled();
   });
 
   it("rejects chat creation when the preferred agent is unknown", async () => {
@@ -1117,7 +1134,7 @@ describe("chat routes", () => {
       .send({ preferredAgentId });
 
     expect(res.status).toBe(422);
-    expect(res.body).toEqual({ error: "Preferred agent must belong to the same organization" });
+    expect(res.body).toEqual({ error: "Preferred agent must be available in the same organization" });
     expect(mockAgentService.getById).toHaveBeenCalledWith(preferredAgentId);
     expect(mockChatService.create).not.toHaveBeenCalled();
   });
@@ -1135,9 +1152,38 @@ describe("chat routes", () => {
       .send({ preferredAgentId });
 
     expect(res.status).toBe(422);
-    expect(res.body).toEqual({ error: "Preferred agent must belong to the same organization" });
+    expect(res.body).toEqual({ error: "Preferred agent must be available in the same organization" });
     expect(mockAgentService.getById).toHaveBeenCalledWith(preferredAgentId);
     expect(mockChatService.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects chat creation with a terminated preferred agent", async () => {
+    const preferredAgentId = "10000000-0000-4000-8000-000000000003";
+    mockAgentService.getById.mockResolvedValueOnce({
+      id: preferredAgentId,
+      orgId: "organization-1",
+      status: "terminated",
+    });
+
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/chats")
+      .send({ preferredAgentId });
+
+    expect(res.status).toBe(422);
+    expect(res.body).toEqual({ error: "Preferred agent must be available in the same organization" });
+    expect(mockChatService.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects clearing the preferred agent from an existing chat", async () => {
+    mockChatService.getById.mockResolvedValueOnce(createConversation());
+
+    const res = await request(createApp())
+      .patch("/api/chats/chat-1")
+      .send({ preferredAgentId: null });
+
+    expect(res.status).toBe(422);
+    expect(res.body).toEqual({ error: "Chat requires an available agent" });
+    expect(mockChatService.update).not.toHaveBeenCalled();
   });
 
   it("rejects message sends before persisting when no preferred agent is available", async () => {

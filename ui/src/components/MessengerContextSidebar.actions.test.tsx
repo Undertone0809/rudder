@@ -332,7 +332,7 @@ function baseConversation(overrides: Record<string, unknown> = {}) {
     contextLinks: [],
     chatRuntime: {
       sourceType: "unconfigured",
-      sourceLabel: "No agent selected",
+      sourceLabel: "Agent unavailable",
       runtimeAgentId: null,
       agentRuntimeType: null,
       model: null,
@@ -3524,7 +3524,7 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(draggedSection?.style.width).toBe("320px");
   });
 
-  it("groups chats by selected agent", () => {
+  it("groups chats by selected agent and flags legacy chats whose agent is unavailable", () => {
     Object.defineProperty(window, "localStorage", {
       configurable: true,
       value: {
@@ -3592,12 +3592,12 @@ describe("MessengerContextSidebar chat actions", () => {
 
     const agentSection = document.querySelector('[data-testid="messenger-thread-section-agent-agent-1"]')
       ?.parentElement;
-    const noAgentSection = document.querySelector('[data-testid="messenger-thread-section-agent-none"]')
+    const unavailableAgentSection = document.querySelector('[data-testid="messenger-thread-section-agent-unavailable"]')
       ?.parentElement;
     expect(agentSection?.textContent).toContain("Holden");
     expect(agentSection?.textContent).toContain("Holden thread");
-    expect(noAgentSection?.textContent).toContain("No agent");
-    expect(noAgentSection?.textContent).toContain("Unassigned thread");
+    expect(unavailableAgentSection?.textContent).toContain("Agent unavailable");
+    expect(unavailableAgentSection?.textContent).toContain("Unassigned thread");
   });
 
   it("collapses agent thread groups from the agent header", async () => {

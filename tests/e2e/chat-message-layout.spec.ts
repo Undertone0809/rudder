@@ -157,6 +157,7 @@ test.describe("Chat message layout", () => {
     });
     expect(orgRes.ok()).toBe(true);
     const organization = await orgRes.json();
+    await createE2EChatAgent(page.request, organization.id, { name: "Code Block Agent" });
 
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
@@ -227,6 +228,7 @@ test.describe("Chat message layout", () => {
     });
     expect(orgRes.ok()).toBe(true);
     const organization = await orgRes.json();
+    await createE2EChatAgent(page.request, organization.id, { name: "Long Message Agent" });
 
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {

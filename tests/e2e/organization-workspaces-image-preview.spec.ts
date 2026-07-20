@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { chatMessages, createDb } from "../../packages/db/src/index.ts";
+import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_BASE_URL, E2E_DATABASE_URL } from "./support/e2e-env";
 import { resolveE2EOrganizationWorkspaceRoot } from "./support/organization-storage";
 
@@ -516,6 +517,7 @@ test.describe("Organization workspaces image preview", () => {
     });
     expect(organizationRes.ok()).toBe(true);
     const organization = await organizationRes.json() as { id: string; issuePrefix: string };
+    await createE2EChatAgent(request, organization.id, { name: "Website Preview Agent" });
     const artifactRoot = `artifacts/messenger-site-${Date.now()}`;
     const htmlFilePath = `${artifactRoot}/index.html`;
     const htmlResponse = await request.post(`/api/orgs/${organization.id}/workspace/file`, {

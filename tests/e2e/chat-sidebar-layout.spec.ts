@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { createE2EChatAgent } from "./support/chat-agent";
 
 const LIGHT_WORKSPACE_PAPER = "rgb(248, 244, 238)";
 
@@ -11,6 +12,7 @@ test.describe("Chat sidebar layout", () => {
     });
     expect(orgRes.ok()).toBe(true);
     const organization = await orgRes.json();
+    await createE2EChatAgent(page.request, organization.id, { name: "Sidebar Agent" });
 
     const firstChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {

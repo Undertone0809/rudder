@@ -74,6 +74,8 @@ related_code:
   - ui/src/pages/Chat.side-panel.tsx
   - ui/src/pages/Chat.work-manifest.tsx
   - ui/src/pages/Chat.tsx
+  - ui/src/pages/ProjectDetail.tsx
+  - ui/src/lib/messenger-thread-organization.ts
   - ui/src/pages/Chat.messages.tsx
   - ui/src/components/MarkdownEditor.tsx
   - ui/src/components/transcript/RunTranscriptView.chat.tsx
@@ -115,6 +117,7 @@ related_tests:
   - ui/src/components/WorkspacePdfPreview.test.tsx
   - ui/src/pages/AgentDetail.runs.test.ts
   - ui/src/pages/Chat.test.tsx
+  - ui/src/lib/messenger-thread-organization.test.ts
   - ui/src/pages/Chat.empty-state.test.tsx
   - ui/src/context/ChatGenerationContext.test.tsx
   - ui/src/lib/motion-css.test.ts
@@ -165,6 +168,13 @@ Product model:
 
 - A chat conversation belongs to an organization and may link to issues,
   projects, resources, approvals, or automation runs.
+- Every locally created native chat has a preferred agent. The create API uses
+  the caller's selected organization agent when supplied and otherwise assigns
+  the organization's first available agent; it rejects creation before
+  persistence when the organization has no available agent.
+- Entry points that only establish context, such as Project `Chat`, open an
+  unpersisted new-chat draft. They must not create an empty conversation merely
+  because the operator opened the composer.
 - Messages have role, status, body, attachments, rich references, structured
   payloads, and optional run attribution.
 - A conversation Work manifest reconciles inspectable Outputs, Sources, and
@@ -244,12 +254,15 @@ Product model:
 
 Flow:
 
-1. User creates or opens chat.
+1. User opens a new-chat draft or an existing chat. Context-only entry points
+   preserve their selected Project without persisting a conversation.
 2. On an empty new Chat, the operator may select a compact task category and
    then a complete prompt suggestion before editing or sending the draft.
-3. Composer may include attachments, mentions, rich references, selected agent,
-   selected skills, and structured proposal payloads.
-4. Server persists user message and context links.
+3. Composer includes a selected agent and may include attachments, mentions,
+   rich references, selected skills, and structured proposal payloads.
+4. On the first send, the server persists the agent-backed conversation, user
+   message, and context links. Direct create callers that omit the agent receive
+   the organization's first available agent; creation fails when none exists.
 5. If a runtime assistant is invoked, Rudder creates a chat Agent Run and
    streams/persists assistant messages.
 6. Chat can continue executing the task conversationally or create/link an
@@ -289,6 +302,12 @@ Flow:
 Invariants:
 
 - Chat messages must remain tied to their conversation and organization.
+- A locally created native conversation must not persist without a preferred
+  organization agent, and an existing native conversation cannot clear that
+  assignment through the Chat update API. Agent-organized Messenger views must
+  not present `No agent` as a valid chat state. Legacy or externally sourced
+  records that cannot resolve an agent remain visible as `Agent unavailable`;
+  legitimately unassigned split issues remain distinct as `Unassigned`.
 - Chat proposals/structured payloads must not be confused with plain user
   instructions or automation run input.
 - Assistant-created issue proposals must be grounded in an explicit latest

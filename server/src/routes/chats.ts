@@ -1688,19 +1688,27 @@ export function chatRoutes(
 
     const contextLinks = req.body.contextLinks ?? [];
     await assertContextLinksBelongToCompany(orgId, contextLinks);
-    if (req.body.preferredAgentId) {
-      const agent = await agentsSvc.getById(req.body.preferredAgentId);
-      if (!agent || agent.orgId !== orgId) {
-        res.status(422).json({ error: "Preferred agent must belong to the same organization" });
+    let preferredAgentId = req.body.preferredAgentId ?? null;
+    if (preferredAgentId) {
+      const agent = await agentsSvc.getById(preferredAgentId);
+      if (!agent || agent.orgId !== orgId || agent.status === "terminated") {
+        res.status(422).json({ error: "Preferred agent must be available in the same organization" });
         return;
       }
+    } else {
+      const [defaultAgent] = await agentsSvc.list(orgId);
+      if (!defaultAgent) {
+        res.status(422).json({ error: "Chat requires an available agent" });
+        return;
+      }
+      preferredAgentId = defaultAgent.id;
     }
 
     const actor = getActorInfo(req);
     const conversation = await svc.create(orgId, {
       title: req.body.title,
       summary: req.body.summary ?? null,
-      preferredAgentId: req.body.preferredAgentId ?? null,
+      preferredAgentId,
       issueCreationMode: req.body.issueCreationMode ?? organization.defaultChatIssueCreationMode,
       planMode: req.body.planMode ?? false,
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
@@ -1767,10 +1775,14 @@ export function chatRoutes(
         return;
       }
     }
+    if (req.body.preferredAgentId === null) {
+      res.status(422).json({ error: "Chat requires an available agent" });
+      return;
+    }
     if (req.body.preferredAgentId) {
       const agent = await agentsSvc.getById(req.body.preferredAgentId);
-      if (!agent || agent.orgId !== existing.orgId) {
-        res.status(422).json({ error: "Preferred agent must belong to the same organization" });
+      if (!agent || agent.orgId !== existing.orgId || agent.status === "terminated") {
+        res.status(422).json({ error: "Preferred agent must be available in the same organization" });
         return;
       }
     }

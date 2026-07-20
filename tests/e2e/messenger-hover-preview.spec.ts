@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { createE2EChatAgent } from "./support/chat-agent";
 
 function threadTestId(threadKey: string) {
   return `messenger-thread-${threadKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
@@ -17,6 +18,7 @@ test("shows delayed detail previews for Messenger chat and issue rows", async ({
   });
   expect(orgRes.ok()).toBe(true);
   const organization = await orgRes.json() as { id: string; issuePrefix: string };
+  await createE2EChatAgent(page.request, organization.id, { name: "Preview Agent" });
 
   const chatTitle = "A long Messenger chat title that is clipped in the compact sidebar row";
   const chatSummary = "Full chat context remains readable in the delayed hover preview.";

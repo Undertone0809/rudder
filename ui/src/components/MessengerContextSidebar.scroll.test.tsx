@@ -131,7 +131,7 @@ function baseConversation(overrides: Record<string, unknown> = {}) {
     ],
     chatRuntime: {
       sourceType: "unconfigured",
-      sourceLabel: "No agent selected",
+      sourceLabel: "Agent unavailable",
       runtimeAgentId: null,
       agentRuntimeType: null,
       model: null,

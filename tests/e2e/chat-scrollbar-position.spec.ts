@@ -74,6 +74,7 @@ test.describe("Chat scrollbar position", () => {
     });
     expect(orgRes.ok()).toBe(true);
     const organization = await orgRes.json();
+    await createE2EChatAgent(page.request, organization.id, { name: "Message Scroll Agent" });
 
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
@@ -131,6 +132,7 @@ test.describe("Chat scrollbar position", () => {
     });
     expect(orgRes.ok()).toBe(true);
     const organization = await orgRes.json();
+    await createE2EChatAgent(page.request, organization.id, { name: "Latest Message Agent" });
 
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {

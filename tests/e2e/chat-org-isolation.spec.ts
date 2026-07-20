@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { chatMessages, createDb } from "../../packages/db/src/index.ts";
+import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_BASE_URL, E2E_DATABASE_URL } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
@@ -26,6 +27,7 @@ test("keeps old organization chat messages out of the current organization route
   const unique = Date.now();
   const organizationA = await createOrganization(page, `Chat-Isolation-A-${unique}`);
   const organizationB = await createOrganization(page, `Chat-Isolation-B-${unique}`);
+  await createE2EChatAgent(page.request, organizationA.id, { name: "Isolation Agent" });
 
   const chatRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organizationA.id}/chats`, {
     data: {

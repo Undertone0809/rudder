@@ -276,8 +276,26 @@ describe("messenger thread organization", () => {
       entry("issue:2", { kind: "issues", metadata: { splitIssue: true } }),
     ], "agent", agents, new Map(), (kind) => kind);
 
-    expect(sections.map((section) => section.key)).toEqual(["agent:agent-1", "agent:none"]);
-    expect(sections.map((section) => section.label)).toEqual(["Ada", "No agent"]);
+    expect(sections.map((section) => section.key)).toEqual(["agent:agent-1", "agent:unassigned"]);
+    expect(sections.map((section) => section.label)).toEqual(["Ada", "Unassigned"]);
+  });
+
+  it("surfaces legacy chats with missing or unresolved agents as unavailable", () => {
+    const sections = organizeThreadEntries([
+      entry("chat:legacy", { kind: "chat" }),
+      entry(
+        "chat:deleted-agent",
+        { kind: "chat" },
+        conversation("deleted-agent", { preferredAgentId: "agent-gone" }),
+      ),
+    ], "agent", new Map(), new Map(), (kind) => kind);
+
+    expect(sections).toHaveLength(1);
+    expect(sections[0]).toMatchObject({
+      key: "agent:unavailable",
+      label: "Agent unavailable",
+    });
+    expect(sections[0]?.entries).toHaveLength(2);
   });
 
   it("groups thread kinds and attention state with stable labels and priority", () => {

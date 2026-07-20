@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { chatMessages, createDb } from "../../packages/db/src/index.ts";
+import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_DATABASE_URL } from "./support/e2e-env";
 import { expectRightAnchoredSidePanelMotion, sampleSidePanelMotion } from "./support/side-panel-motion";
 
@@ -124,6 +125,7 @@ test.describe("Chat Side Panel", () => {
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    await createE2EChatAgent(page.request, organization.id, { name: "Side Panel Agent" });
 
     const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {
@@ -209,6 +211,7 @@ test.describe("Chat Side Panel", () => {
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey?: string | null };
+    await createE2EChatAgent(page.request, organization.id, { name: "Side Panel Agent" });
     const libraryFilePath = `projects/competitor-research/exports/2026/07/file-launcher-${Date.now()}.md`;
     const initialLibraryContent = "# OpenClaw and Hermes Agent SEO competitor research\n\nOpen this document outside Rudder.";
     const libraryFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
@@ -532,6 +535,7 @@ test.describe("Chat Side Panel", () => {
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    await createE2EChatAgent(request, organization.id, { name: "Side Panel Agent" });
     const pdfFilePath = `projects/reports/2026/quarterly-${Date.now()}.pdf`;
     const fileRes = await request.post(`/api/orgs/${organization.id}/workspace/file`, {
       data: {
@@ -1051,6 +1055,7 @@ test.describe("Chat Side Panel", () => {
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    await createE2EChatAgent(page.request, organization.id, { name: "Side Panel Agent" });
 
     const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {
@@ -1187,6 +1192,7 @@ test.describe("Chat Side Panel", () => {
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    await createE2EChatAgent(page.request, organization.id, { name: "Side Panel Agent" });
 
     async function createChat(title: string, body?: string) {
       const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
@@ -1310,6 +1316,7 @@ test.describe("Chat Side Panel", () => {
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    await createE2EChatAgent(page.request, organization.id, { name: "Side Panel Agent" });
 
     const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {
@@ -1404,6 +1411,7 @@ test.describe("Chat Side Panel", () => {
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    await createE2EChatAgent(page.request, organization.id, { name: "Side Panel Agent" });
 
     const directoryPath = `docs/side-panel-browser-${Date.now()}`;
     const files = [
@@ -1795,6 +1803,7 @@ test.describe("Chat Side Panel", () => {
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    await createE2EChatAgent(page.request, organization.id, { name: "Side Panel Agent" });
 
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
@@ -1882,6 +1891,7 @@ test.describe("Chat Side Panel", () => {
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    await createE2EChatAgent(page.request, organization.id, { name: "Side Panel Agent" });
 
     const hostChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
@@ -2067,6 +2077,7 @@ test.describe("Chat Side Panel", () => {
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    await createE2EChatAgent(page.request, organization.id, { name: "Side Panel Agent" });
 
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
@@ -2192,6 +2203,7 @@ test.describe("Chat Side Panel", () => {
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    await createE2EChatAgent(page.request, organization.id, { name: "Side Panel Agent" });
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
         title: "Side Panel resize host",

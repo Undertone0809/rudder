@@ -423,7 +423,7 @@ test.describe("Messenger unified threads contract", () => {
     const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
     expect(currentUserId).toBeTruthy();
 
-    const organization = await createOrganization(page, `Messenger-Unread-Scroll-${Date.now()}`);
+    const organization = await createConfiguredOrganization(page, `Messenger-Unread-Scroll-${Date.now()}`);
     const readAt = new Date("2026-01-01T00:00:00.000Z");
     const unreadTargets: Array<{ id: string; title: string }> = [];
     for (const [index, title] of [
@@ -534,7 +534,7 @@ test.describe("Messenger unified threads contract", () => {
     const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
     expect(currentUserId).toBeTruthy();
 
-    const organization = await createOrganization(page, `Messenger-Rail-Dismiss-${Date.now()}`);
+    const organization = await createConfiguredOrganization(page, `Messenger-Rail-Dismiss-${Date.now()}`);
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
         title: "Rail dismiss unread chat",
@@ -594,7 +594,7 @@ test.describe("Messenger unified threads contract", () => {
   });
 
   test("archives a Messenger chat from the sidebar and removes it from the thread list", async ({ page }) => {
-    const organization = await createOrganization(page, `Messenger-Archive-${Date.now()}`);
+    const organization = await createConfiguredOrganization(page, `Messenger-Archive-${Date.now()}`);
 
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
@@ -674,16 +674,17 @@ test.describe("Messenger unified threads contract", () => {
     expect(projectChatRes.ok()).toBe(true);
     const projectChat = await projectChatRes.json() as { id: string };
 
-    const looseChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+    const defaultedChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
-        title: "Loose no-agent thread",
-        summary: "This thread should remain outside the agent-owned section.",
+        title: "Defaulted agent thread",
+        summary: "The server should attach the organization default agent.",
         issueCreationMode: "manual_approval",
         planMode: false,
       },
     });
-    expect(looseChatRes.ok()).toBe(true);
-    const looseChat = await looseChatRes.json() as { id: string };
+    expect(defaultedChatRes.ok()).toBe(true);
+    const defaultedChat = await defaultedChatRes.json() as { id: string; preferredAgentId: string | null };
+    expect(defaultedChat.preferredAgentId).toBe(agent.id);
 
     const assignedIssueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {
@@ -708,7 +709,7 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.getByText("Threads organized by agent")).toBeVisible({ timeout: 15_000 });
     const agentSectionTestId = `messenger-thread-section-agent-${agent.id}`;
     const projectChatTestId = threadTestId(`chat:${projectChat.id}`);
-    const looseChatTestId = threadTestId(`chat:${looseChat.id}`);
+    const defaultedChatTestId = threadTestId(`chat:${defaultedChat.id}`);
     const assignedIssueTestId = threadTestId(`issue:${assignedIssue.id}`);
     await expect(page.getByTestId(agentSectionTestId)).toBeVisible({ timeout: 15_000 });
     const agentSectionAvatar = page.getByTestId(`${agentSectionTestId}-agent-avatar`);
@@ -730,11 +731,10 @@ test.describe("Messenger unified threads contract", () => {
     }).toBe(true);
     await expect(page.getByTestId(projectChatTestId)).toContainText("Project agent thread");
     await expect(page.getByTestId(assignedIssueTestId)).toContainText("Assigned split issue thread");
-    await expect(page.getByTestId("messenger-thread-section-agent-none")).toBeVisible();
-    await expect(page.getByTestId("messenger-thread-section-agent-none-agent-avatar")).toHaveCount(0);
+    await expect(page.getByText("No agent", { exact: true })).toHaveCount(0);
     await expect(page.getByTestId("messenger-thread-section-system-agent-avatar")).toHaveCount(0);
-    await expect(page.getByTestId(looseChatTestId)).toContainText("Loose no-agent thread");
-    for (const rowTestId of [projectChatTestId, assignedIssueTestId]) {
+    await expect(page.getByTestId(defaultedChatTestId)).toContainText("Defaulted agent thread");
+    for (const rowTestId of [projectChatTestId, defaultedChatTestId, assignedIssueTestId]) {
       await expect.poll(async () => {
         return await page.evaluate(({ sectionTestId, rowTestId }) => {
           const section = document.querySelector(`[data-testid="${sectionTestId}"]`);
@@ -742,12 +742,6 @@ test.describe("Messenger unified threads contract", () => {
         }, { sectionTestId: agentSectionTestId, rowTestId });
       }).toBe(true);
     }
-    await expect.poll(async () => {
-      return await page.evaluate(({ sectionTestId, rowTestId }) => {
-        const section = document.querySelector(`[data-testid="${sectionTestId}"]`);
-        return Boolean(section?.parentElement?.querySelector(`[data-testid="${rowTestId}"]`));
-      }, { sectionTestId: "messenger-thread-section-agent-none", rowTestId: looseChatTestId });
-    }).toBe(true);
     await page.screenshot({ path: "/tmp/rudder-messenger-agent-group-avatar.png", fullPage: true });
 
     await page.evaluate((orgId) => {
@@ -773,7 +767,7 @@ test.describe("Messenger unified threads contract", () => {
     const projectSectionContent = page.getByTestId(`messenger-thread-section-project-${project.id}-content`);
     await expect(projectSectionContent).toHaveAttribute("aria-hidden", "true");
     await expect(projectSectionContent).toHaveClass(/grid-rows-\[0fr\]/);
-    await expect(page.getByTestId(looseChatTestId)).toBeVisible();
+    await expect(page.getByTestId(defaultedChatTestId)).toBeVisible();
     await expect.poll(async () => {
       return await page.evaluate(({ orgId, projectId }) => {
         const raw = window.localStorage.getItem("rudder.messengerCollapsedProjectGroupsByOrg") ?? "";
@@ -783,7 +777,7 @@ test.describe("Messenger unified threads contract", () => {
   });
 
   test("shows pinned threads in a dedicated section while organizing Messenger by project", async ({ page }) => {
-    const organization = await createOrganization(page, `Messenger-Project-Pinned-${Date.now()}`);
+    const organization = await createConfiguredOrganization(page, `Messenger-Project-Pinned-${Date.now()}`);
     const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
       data: {
         name: "Pinned launch project",
@@ -843,7 +837,7 @@ test.describe("Messenger unified threads contract", () => {
   });
 
   test("sorts Messenger project groups by drag and progressively expands large project groups", async ({ page }) => {
-    const organization = await createOrganization(page, `Messenger-Project-Sort-${Date.now()}`);
+    const organization = await createConfiguredOrganization(page, `Messenger-Project-Sort-${Date.now()}`);
     const gettingStartedRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
       data: {
         name: "Getting Started",
@@ -962,7 +956,7 @@ test.describe("Messenger unified threads contract", () => {
   });
 
   test("aligns the New chat entry with custom group cards", async ({ page }) => {
-    const organization = await createOrganization(page, `Messenger-New-Chat-Alignment-${Date.now()}`);
+    const organization = await createConfiguredOrganization(page, `Messenger-New-Chat-Alignment-${Date.now()}`);
 
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
@@ -1010,7 +1004,7 @@ test.describe("Messenger unified threads contract", () => {
   });
 
   test("uses Arc-style Messenger groups without exposing a default group or custom-groups mode", async ({ page }) => {
-    const organization = await createOrganization(page, `Messenger-Arc-Groups-${Date.now()}`);
+    const organization = await createConfiguredOrganization(page, `Messenger-Arc-Groups-${Date.now()}`);
 
     async function createChat(title: string, summary = `${title} summary`) {
       const res = await page.request.post(`/api/orgs/${organization.id}/chats`, {
@@ -1152,7 +1146,7 @@ test.describe("Messenger unified threads contract", () => {
   });
 
   test("groups aggregate issue and synthetic Messenger rows through the same group contract", async ({ page }) => {
-    const organization = await createOrganization(page, `Messenger-Nonchat-Groups-${Date.now()}`);
+    const organization = await createConfiguredOrganization(page, `Messenger-Nonchat-Groups-${Date.now()}`);
 
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
@@ -1465,7 +1459,7 @@ test.describe("Messenger unified threads contract", () => {
   });
 
   test("reorders custom groups within the pinned domain and persists after reload", async ({ page }) => {
-    const organization = await createOrganization(page, `Messenger-Custom-Group-Pin-${Date.now()}`);
+    const organization = await createConfiguredOrganization(page, `Messenger-Custom-Group-Pin-${Date.now()}`);
 
     async function createChat(title: string) {
       const res = await page.request.post(`/api/orgs/${organization.id}/chats`, {
@@ -1642,7 +1636,7 @@ test.describe("Messenger unified threads contract", () => {
     page.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(message.text());
     });
-    const organization = await createOrganization(page, `Messenger-Tab-Reorder-${Date.now()}`);
+    const organization = await createConfiguredOrganization(page, `Messenger-Tab-Reorder-${Date.now()}`);
 
     async function createChat(title: string, summary = `${title} summary`) {
       const res = await page.request.post(`/api/orgs/${organization.id}/chats`, {
@@ -1778,7 +1772,7 @@ test.describe("Messenger unified threads contract", () => {
   });
 
   test("pins a Messenger chat from the sidebar and promotes it above recent threads", async ({ page }) => {
-    const organization = await createOrganization(page, `Messenger-Pin-${Date.now()}`);
+    const organization = await createConfiguredOrganization(page, `Messenger-Pin-${Date.now()}`);
 
     const olderChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
@@ -1835,7 +1829,7 @@ test.describe("Messenger unified threads contract", () => {
   });
 
   test("shows pinned Messenger hover pins in the aligned time column", async ({ page }) => {
-    const organization = await createOrganization(page, `Messenger-Pin-Hover-${Date.now()}`);
+    const organization = await createConfiguredOrganization(page, `Messenger-Pin-Hover-${Date.now()}`);
 
     async function createPinnedChat(title: string, summary: string) {
       const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
@@ -1904,7 +1898,7 @@ test.describe("Messenger unified threads contract", () => {
   });
 
   test("renders pinned Messenger chats from thread summaries before the full chat list responds", async ({ page }) => {
-    const organization = await createOrganization(page, `Messenger-Pin-Cold-${Date.now()}`);
+    const organization = await createConfiguredOrganization(page, `Messenger-Pin-Cold-${Date.now()}`);
 
     const olderChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
@@ -1966,7 +1960,7 @@ test.describe("Messenger unified threads contract", () => {
     const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
     expect(currentUserId).toBeTruthy();
 
-    const organization = await createOrganization(page, `Messenger-${Date.now()}`);
+    const organization = await createConfiguredOrganization(page, `Messenger-${Date.now()}`);
 
     const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
       data: {
@@ -2196,7 +2190,7 @@ test.describe("Messenger unified threads contract", () => {
     const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
     expect(currentUserId).toBeTruthy();
 
-    const organization = await createOrganization(page, `Messenger-Split-Issues-${Date.now()}`);
+    const organization = await createConfiguredOrganization(page, `Messenger-Split-Issues-${Date.now()}`);
     const newerChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
         title: "Split newer chat",
@@ -3142,7 +3136,7 @@ test.describe("Messenger unified threads contract", () => {
   });
 
   test("re-enters Messenger at the last opened thread for the same organization", async ({ page }) => {
-    const organization = await createOrganization(page, `Messenger-Memory-${Date.now()}`);
+    const organization = await createConfiguredOrganization(page, `Messenger-Memory-${Date.now()}`);
 
     const firstChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
@@ -3271,7 +3265,7 @@ test.describe("Messenger unified threads contract", () => {
   });
 
   test("keeps legacy entry points redirecting into Messenger routes", async ({ page }) => {
-    const organization = await createOrganization(page, `Messenger-Redirects-${Date.now()}`);
+    const organization = await createConfiguredOrganization(page, `Messenger-Redirects-${Date.now()}`);
 
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
@@ -3394,7 +3388,7 @@ test.describe("Messenger unified threads contract", () => {
   });
 
   test("keeps active chat actions aligned with Messenger row actions", async ({ page, baseURL }) => {
-    const organization = await createOrganization(page, `Messenger-Actions-${Date.now()}`);
+    const organization = await createConfiguredOrganization(page, `Messenger-Actions-${Date.now()}`);
 
     async function createChat(title: string, summary = `${title} summary`) {
       const res = await page.request.post(`/api/orgs/${organization.id}/chats`, {

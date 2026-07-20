@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { createE2EChatAgent } from "./support/chat-agent";
 
 async function createOrganization(page: Page, name: string) {
   const orgRes = await page.request.post("/api/orgs", {
@@ -33,6 +34,7 @@ async function createArchivedChat(page: Page, organizationId: string, title: str
 test.describe("Organization settings archived chats", () => {
   test("keeps archived chats bounded and deletes an archived chat from the row", async ({ page }) => {
     const organization = await createOrganization(page, `Archived-Chat-Settings-${Date.now()}`);
+    await createE2EChatAgent(page.request, organization.id, { name: "Archive Agent" });
     const targetChat = await createArchivedChat(page, organization.id, "Target archived cleanup");
     for (let index = 0; index < 8; index += 1) {
       await createArchivedChat(page, organization.id, `Archived backlog ${index + 1}`);

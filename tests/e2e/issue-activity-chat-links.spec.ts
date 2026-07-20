@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { createE2EChatAgent } from "./support/chat-agent";
 
 const ORG_NAME = `Issue-Activity-${Date.now()}`;
 
@@ -132,6 +133,7 @@ test.describe("Issue activity", () => {
     });
     expect(orgRes.ok()).toBe(true);
     const organization = await orgRes.json();
+    await createE2EChatAgent(page.request, organization.id, { name: "Issue Activity Agent" });
 
     const linkedIssueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {

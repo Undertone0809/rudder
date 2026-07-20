@@ -12,6 +12,48 @@ import { E2E_DATABASE_URL } from "./support/e2e-env";
 const e2eDb = createDb(E2E_DATABASE_URL);
 
 test.describe("Chat project empty heading", () => {
+  test("opens Project Chat as an agent-backed draft without persisting an empty conversation", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Project-Chat-Draft-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey?: string | null };
+    const organizationRouteKey = organization.urlKey ?? organization.issuePrefix;
+    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: { name: "Draft-first project", description: "Project Chat should not create an empty record." },
+    });
+    expect(projectRes.ok()).toBe(true);
+    const project = await projectRes.json() as { id: string; name: string; urlKey?: string | null };
+    const rejectedChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: { title: "Chat without an agent" },
+    });
+    expect(rejectedChatRes.status()).toBe(422);
+    expect(await rejectedChatRes.json()).toEqual({ error: "Chat requires an available agent" });
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Draft Agent" });
+
+    await page.addInitScript(({ orgId, agentId }) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.chatLastAgentByOrg", JSON.stringify({ [orgId]: agentId }));
+    }, { orgId: organization.id, agentId: agent.id });
+    const listBefore = await page.request.get(`/api/orgs/${organization.id}/chats?status=all`);
+    expect(listBefore.ok()).toBe(true);
+    const conversationsBefore = await listBefore.json() as unknown[];
+
+    await page.goto(`/${organizationRouteKey}/projects/${project.urlKey ?? project.id}`);
+    await page.getByRole("button", { name: "Chat", exact: true }).click();
+
+    await expect(page).toHaveURL(new RegExp(`/${organizationRouteKey}/messenger/chat$`));
+    await expect(page.locator("h1.motion-chat-empty-heading"))
+      .toHaveText(`What should we build in ${project.name}?`, { timeout: 15_000 });
+    await page.screenshot({
+      path: "/tmp/rudder-project-chat-agent-backed-draft.png",
+      fullPage: true,
+    });
+    const listAfter = await page.request.get(`/api/orgs/${organization.id}/chats?status=all`);
+    expect(listAfter.ok()).toBe(true);
+    expect(await listAfter.json()).toHaveLength(conversationsBefore.length);
+  });
+
   test("keeps project Chats visible when newer unrelated chats exceed the global preview limit", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Chat-Project-Filter-${Date.now()}` },

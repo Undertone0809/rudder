@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { chatMessages, createDb } from "../../packages/db/src/index.ts";
+import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_DATABASE_URL } from "./support/e2e-env";
 
 test.use({ serviceWorkers: "block" });
@@ -180,6 +181,7 @@ test("issue mentions render the canonical status icon across read-only and edito
 
 test("Messenger resolves issue status when the reference is outside the bounded mention catalog", async ({ page }, testInfo) => {
   const organization = await createOrganization(page);
+  await createE2EChatAgent(page.request, organization.id, { name: "Mention Agent" });
   const targetIssue = await createIssue(
     page,
     organization.id,

@@ -233,8 +233,10 @@ function splitIssueProjectGroup(
 function entryAgentGroup(entry: OrganizedThreadEntry, agentsById: Map<string, Agent>): ThreadGroup {
   if (entry.thread.kind === "chat") {
     const agentId = entry.conversation ? resolveChatAgentId(entry.conversation) : null;
-    if (!agentId) return { key: "agent:none", label: "No agent" };
-    const label = agentsById.get(agentId)?.name ?? "Unknown agent";
+    if (!agentId) return { key: "agent:unavailable", label: "Agent unavailable" };
+    const agent = agentsById.get(agentId);
+    if (!agent) return { key: "agent:unavailable", label: "Agent unavailable" };
+    const label = agent.name;
     return { key: `agent:${agentId}`, label, sortLabel: label };
   }
 
@@ -244,7 +246,7 @@ function entryAgentGroup(entry: OrganizedThreadEntry, agentsById: Map<string, Ag
       ?? metadataString(metadata, "agentId")
       ?? metadataString(metadata, "runtimeAgentId")
       ?? metadataString(metadata, "preferredAgentId");
-    if (!agentId) return { key: "agent:none", label: "No agent" };
+    if (!agentId) return { key: "agent:unassigned", label: "Unassigned" };
     const label = agentsById.get(agentId)?.name
       ?? metadataString(metadata, "assigneeAgentName")
       ?? metadataString(metadata, "agentName")
@@ -493,10 +495,12 @@ function groupEntries(
       if (b.group.key === "attention:needs") return 1;
       if (a.group.key === "project:none") return 1;
       if (b.group.key === "project:none") return -1;
-      if (a.group.key === "agent:none") return 1;
-      if (b.group.key === "agent:none") return -1;
       if (a.group.key === "system") return 1;
       if (b.group.key === "system") return -1;
+      const aIsAgentFallback = a.group.key === "agent:unavailable" || a.group.key === "agent:unassigned";
+      const bIsAgentFallback = b.group.key === "agent:unavailable" || b.group.key === "agent:unassigned";
+      if (aIsAgentFallback && !bIsAgentFallback) return 1;
+      if (bIsAgentFallback && !aIsAgentFallback) return -1;
       return (a.group.sortLabel ?? a.group.label).localeCompare(b.group.sortLabel ?? b.group.label);
     })
     .map(({ group, entries: sectionEntries }) => ({

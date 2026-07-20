@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { createE2EChatAgent } from "./support/chat-agent";
 
 test("renames a Messenger chat optimistically before the update request returns", async ({ page }) => {
   await page.goto("/");
@@ -8,6 +9,7 @@ test("renames a Messenger chat optimistically before the update request returns"
   });
   expect(orgRes.ok()).toBe(true);
   const organization = await orgRes.json() as { id: string; issuePrefix: string };
+  await createE2EChatAgent(page.request, organization.id, { name: "Rename Agent" });
 
   const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
     data: {
