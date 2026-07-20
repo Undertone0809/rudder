@@ -58,10 +58,11 @@ Product model:
 - Skill sources include bundled skills, organization skill library, agent home,
   global/user skill roots, and adapter-native skill directories when supported.
 - The current always-enabled bundled Rudder baseline is `para-memory-files`,
-  `rudder-docs`, `skill-creator`, and `visualize`. Other repo-owned skill packages, including
-  `conversation-to-skill` and `skill-optimizer`, are not part of the default
+  `rudder-docs`, `skill-creator`, and `visualize`. Other repo-owned skill
+  packages, including `conversation-to-skill`, are not part of the default
   Rudder-resolved set unless they are introduced through a non-bundled
-  selection path.
+  selection path. The retired `skill-optimizer` package is not shipped or
+  available for selection.
 - `rudder-docs` is a self-gating documentation router. It is always enabled so
   supported runtimes can discover it, but the agent should consult it only when
   the task needs Rudder product behavior, exact CLI/API details, official docs,
