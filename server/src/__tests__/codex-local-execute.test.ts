@@ -133,10 +133,25 @@ setInterval(() => undefined, 1_000);
 async function writeFakeCodexAppServerCommand(commandPath: string): Promise<void> {
   const script = `#!/usr/bin/env node
 const fs = require("node:fs");
+const path = require("node:path");
 const readline = require("node:readline");
 const capturePath = process.env.RUDDER_TEST_CAPTURE_PATH;
+const finalText = process.env.RUDDER_TEST_FINAL_TEXT || "hello";
+const inlineVisualBody = process.env.RUDDER_TEST_INLINE_VISUAL_BODY;
 if (capturePath) fs.writeFileSync(capturePath, JSON.stringify(process.argv.slice(2)), "utf8");
 const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+const writeInlineVisual = (threadId) => {
+  if (!inlineVisualBody || !process.env.CODEX_HOME) return;
+  const now = new Date();
+  const parts = [
+    String(now.getFullYear()),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+  ];
+  const dir = path.join(process.env.CODEX_HOME, "visualizations", ...parts, threadId);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "release-signal.html"), inlineVisualBody, "utf8");
+};
 const rl = readline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
   const message = JSON.parse(line);
@@ -146,6 +161,7 @@ rl.on("line", (line) => {
     return;
   }
   if (message.method === "thread/start") {
+    writeInlineVisual("thread-default-app-server");
     send({ id: message.id, result: { thread: { id: "thread-default-app-server" } } });
     return;
   }
@@ -155,12 +171,12 @@ rl.on("line", (line) => {
       threadId: "thread-default-app-server",
       turnId: "turn-default-app-server",
       itemId: "agent-default",
-      delta: "hello",
+      delta: finalText,
     } });
     send({ method: "item/completed", params: {
       threadId: "thread-default-app-server",
       turnId: "turn-default-app-server",
-      item: { type: "agentMessage", id: "agent-default", text: "hello" },
+      item: { type: "agentMessage", id: "agent-default", text: finalText },
     } });
     send({ method: "turn/completed", params: {
       threadId: "thread-default-app-server",
@@ -608,6 +624,75 @@ describe("codex execute", { timeout: 20_000 }, () => {
       const argv = JSON.parse(await fs.readFile(capturePath, "utf8")) as string[];
       expect(argv).toContain("app-server");
       expect(argv).not.toContain("exec");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("captures inline visuals from the default Codex App Server chat path", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-app-server-visual-"));
+    const workspace = path.join(root, "workspace");
+    const binDir = path.join(root, "bin");
+    const commandPath = path.join(binDir, "codex");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(binDir, { recursive: true });
+    await writeFakeCodexAppServerCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+    try {
+      const result = await execute({
+        runId: "run-chat-app-server-visual",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: "codex",
+          cwd: workspace,
+          env: {
+            PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+            RUDDER_TEST_FINAL_TEXT: [
+              "Release signal",
+              '::codex-inline-vis{file="release-signal.html"}',
+            ].join("\n"),
+            RUDDER_TEST_INLINE_VISUAL_BODY: '<div id="widget">Ready</div>',
+          },
+          promptTemplate: "Create an inline visual.",
+          dangerouslyBypassApprovalsAndSandbox: true,
+        },
+        context: {
+          rudderScene: "chat",
+          chatMode: true,
+        },
+        onLog: async () => undefined,
+      });
+
+      expect(result).toMatchObject({
+        exitCode: 0,
+        summary: 'Release signal\n::codex-inline-vis{file="release-signal.html"}',
+        resultJson: {
+          transport: "codex_app_server",
+          inlineVisuals: [{
+            directiveIndex: 0,
+            file: "release-signal.html",
+            status: "captured",
+            contentType: "text/html",
+            byteSize: 28,
+          }],
+        },
+      });
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
@@ -2034,7 +2119,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
         provenance: "repo",
         serverName: "rudder-control-plane",
         toolCount: 77,
-        version: "0.4.6",
+        version: "0.5.0",
       });
     } finally {
       if (previousHome === undefined) delete process.env.HOME;

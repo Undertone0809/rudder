@@ -16,6 +16,24 @@ Skills package reusable instructions, references, scripts, and assets for agents
 
 ![Organization skills library](../images/skills-library.png)
 
+## Built-in skills
+
+Rudder ships a curated set of built-in skills. They are managed by Rudder and projected into compatible agent runtimes when the required capability is available.
+
+| Skill | What it helps an agent do |
+| --- | --- |
+| `visualize` | Turn analysis into safe inline charts, timelines, comparisons, and decision dashboards in Chat. |
+| `browser` | Inspect and interact with websites through Rudder's built-in Browser. |
+| `rudder-docs` | Look up Rudder CLI, API, control-plane, skill, and operating guidance from the bundled documentation. |
+| `para-memory-files` | Maintain durable file-based memory using the PARA method. |
+| `skill-creator` | Create and evaluate reusable agent skills. |
+| `rudder-create-agent` | Draft and submit governance-aware agent configurations. |
+| `rudder-create-plugin` | Scaffold and verify Rudder plugins against the current runtime contract. |
+
+The Visualize skill creates scriptless HTML, SVG, and CSS artifacts with no external assets or network dependencies. Rudder captures the artifact from the agent's thread-scoped output and renders it inline as a message-owned attachment.
+
+Visualize is best for charts and compact decision views; it uses Mermaid when a static node-and-edge diagram is the clearer format.
+
 ## When to create a skill
 
 Create a skill when the same workflow keeps appearing across issues or agents:

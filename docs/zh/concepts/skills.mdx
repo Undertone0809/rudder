@@ -17,6 +17,24 @@ canonical: "https://docs.rudderhq.dev/zh/concepts/skills"
 
 ![组织技能库](../../images/skills-library.png)
 
+## 内置技能
+
+Rudder 自带一组经过维护的内置技能。当运行时具备对应 capability 时，Rudder 会管理这些技能并把它们注入兼容的 agent runtime。
+
+| 技能 | 能帮助 agent 完成什么 |
+| --- | --- |
+| `visualize` | 在 Chat 中把分析转换为安全的 inline charts、timelines、comparisons 和 decision dashboards。 |
+| `browser` | 通过 Rudder 内置 Browser 查看和操作网站。 |
+| `rudder-docs` | 从内置文档中查询 Rudder CLI、API、control-plane、技能和操作规范。 |
+| `para-memory-files` | 使用 PARA 方法维护持久化的文件记忆。 |
+| `skill-creator` | 创建并评估可复用的 agent skills。 |
+| `rudder-create-agent` | 起草并提交符合治理要求的 agent 配置。 |
+| `rudder-create-plugin` | 按照当前 runtime contract 创建并验证 Rudder plugin。 |
+
+Visualize 技能使用不含脚本的 HTML、SVG 和 CSS，不依赖外部资产或网络请求。Rudder 从 agent 的 thread-scoped 输出中捕获 artifact，并把它作为 message-owned attachment 渲染在 Chat 内。
+
+Visualize 适合 charts 和紧凑的 decision views；如果静态 node-and-edge diagram 更清晰，它会使用 Mermaid。
+
 ## 什么时候创建技能
 
 当同一套流程反复出现在多个任务或多个 agent 身上，就应该创建技能。常见例子包括发布检查、预览环境、transcript 调试、mock 数据和记忆维护。

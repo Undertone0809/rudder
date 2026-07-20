@@ -460,7 +460,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
         serverName: "rudder-control-plane",
         toolCount: 69,
         provenance: "repo",
-        version: "0.4.6",
+        version: "0.5.0",
         fallbackReason: "Pi CLI does not expose a supported MCP server configuration surface; Rudder tools are injected through a managed Pi extension.",
       });
       expect(rudderNativeTools).toEqual({

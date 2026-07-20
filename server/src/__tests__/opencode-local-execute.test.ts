@@ -1136,7 +1136,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         provenance: "repo",
         serverName: "rudder-control-plane",
         toolCount: 69,
-        version: "0.4.6",
+        version: "0.5.0",
         fallbackReason: null,
       });
     } finally {
