@@ -38,7 +38,7 @@ test("browses, restores, and deletes workspace backup versions", async ({ page }
   await fs.writeFile(path.join(workspaceRoot, "plans", "roadmap.md"), "# Changed\n", "utf8");
 
   await selectOrganization(page, organization.id);
-  await page.goto(`/${organization.issuePrefix}/workspaces/backups`);
+  await page.goto(`/${organization.urlKey}/workspaces/backups`);
 
   await expect(page.getByRole("heading", { name: "Workspace backups" })).toBeVisible();
   await expect(page.getByTestId("primary-rail")).toBeVisible();
@@ -53,10 +53,10 @@ test("browses, restores, and deletes workspace backup versions", async ({ page }
   await expect(page.getByText("1 backup")).toBeVisible();
 
   await page.getByTestId("workspace-main-header-actions").getByRole("link", { name: "Back to library" }).click();
-  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library(?:\\?|$)`));
+  await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/library(?:\\?|$)`));
   await expect(page.getByRole("button", { name: "Hide Library sidebar" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "No file selected" })).toBeVisible();
-  await page.goto(`/${organization.issuePrefix}/workspaces/backups`);
+  await page.goto(`/${organization.urlKey}/workspaces/backups`);
 
   await page.getByRole("button", { name: "plans" }).click();
   await page.getByRole("button", { name: "roadmap.md" }).click();
@@ -115,7 +115,7 @@ test("shows failed workspace backups without requesting missing artifacts", asyn
   });
 
   await selectOrganization(page, organization.id);
-  await page.goto(`/${organization.issuePrefix}/workspaces/backups`);
+  await page.goto(`/${organization.urlKey}/workspaces/backups`);
 
   await expect(page.getByRole("heading", { name: "Workspace backups" })).toBeVisible();
   await expect(page.getByTestId("workspace-sidebar").getByText("Backup failed: Maximum call stack size exceeded")).toBeVisible();

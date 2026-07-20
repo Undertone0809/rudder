@@ -407,10 +407,22 @@ Product model:
   source, file count, byte size, checksum metadata, expiration, and a local
   artifact reference.
 - Automatic backups use two freshness windows: while Rudder is running, the
-  scheduler creates a new organization workspace backup only when the latest
-  successful version is at least two hours old; on startup, Rudder uses a
-  twenty-four-hour offline catch-up window so a stopped app does not create
-  noisy catch-up versions on every launch.
+  scheduler checks an organization when its latest successful/restored version
+  is at least two hours old; on startup, Rudder uses a twenty-four-hour offline
+  catch-up window so a stopped app does not create noisy catch-up checks on
+  every launch. When a check is due, the scheduler creates a new version only
+  when the canonical workspace content tree has changed since that version.
+- A due automatic check that finds the workspace unchanged creates neither a
+  backup row nor an artifact. Rudder records the unchanged-check checkpoint on
+  the compared version and emits structured operational logging so later
+  scheduler ticks respect the freshness window without manufacturing an empty
+  or duplicate version.
+- Canonical workspace identity is deterministic and content-based: it includes
+  workspace-relative paths, entry kinds, byte sizes, and file-content hashes;
+  it excludes timestamps, permission-only changes, protected/runtime/cache
+  directories, and recognized temporary files.
+- Manual and pre-restore backups always create a concrete version even when its
+  canonical tree matches an existing version.
 - The board operator can create a manual version, browse and preview files from
   a succeeded/restored version, restore that version after Rudder creates a
   pre-restore safety backup, delete non-running versions from visible history,
@@ -426,13 +438,21 @@ Product model:
 
 Flow:
 
-1. Operator opens Workspace backups and selects a concrete version.
-2. Rudder keeps file browsing scoped to the selected version instead of the
+1. Before scheduled organization checks, Rudder applies retention cleanup and
+   marks timed-out running claims as failed.
+2. For each active organization, Rudder serializes the due decision and either
+   records an unchanged checkpoint or commits a visible running claim before
+   writing and finalizing a new artifact.
+3. A first backup, a prior failed attempt, a missing or invalid artifact, or a
+   legacy successful/restored version without a tree hash forces creation of a
+   replacement version rather than an unchanged skip.
+4. Operator opens Workspace backups and selects a concrete version.
+5. Rudder keeps file browsing scoped to the selected version instead of the
    live workspace.
-3. Operator downloads the selected version from the version details action.
-4. Server packages the selected version's backed-up workspace files into a zip
+6. Operator downloads the selected version from the version details action.
+7. Server packages the selected version's backed-up workspace files into a zip
    attachment for that organization/version.
-5. Restore and delete remain separate explicit actions with their existing
+8. Restore and delete remain separate explicit actions with their existing
    safety and retention semantics.
 
 Invariants:
@@ -444,10 +464,20 @@ Invariants:
   retention, workspace files, or activity history.
 - Downloaded zip contents must preserve file paths and bytes from the selected
   backup version, including nested files and binary files.
+- An unchanged scheduled check must not create a backup version or artifact,
+  extend the compared version's retention expiry, or suppress retention cleanup.
+- Scheduled creation must be serialized per organization. A running claim must
+  be committed before artifact generation so concurrent schedulers skip it and
+  interrupted work remains recoverable through stale-running cleanup.
+- Sparse workspace recovery continues before scheduled change detection;
+  manual and pre-restore safety versions must never be deduplicated.
 
 Evidence:
 
-- Workspace backup service tests cover version creation, browsing, restore,
+- Workspace backup service tests cover version creation, unchanged scheduled
+  skips, content/add/delete/rename detection, ignored runtime and temporary
+  churn, failed/missing/legacy/corrupt baselines, per-organization concurrency,
+  sparse recovery, retention, manual/pre-restore forcing, browsing, restore,
   delete, download metadata, zip contents, and checksum failure.
 - Workspace backup route tests cover attachment headers, board-only download,
   and artifact validation errors.

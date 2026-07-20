@@ -1254,7 +1254,26 @@ async function startServerRuntime(
             },
           });
         }
-        if (result.created.length > 0 || result.failed.length > 0 || result.deleted.length > 0 || result.errors.length > 0) {
+        const skippedUnchanged = result.skippedDetails.filter((detail) => detail.reason === "unchanged");
+        if (skippedUnchanged.length > 0) {
+          logger.info(
+            {
+              skippedUnchanged: skippedUnchanged.map((detail) => ({
+                orgId: detail.orgId,
+                comparedBackupId: detail.comparedBackupId,
+                treeSha256: detail.treeSha256,
+              })),
+            },
+            "Scheduled workspace backups skipped unchanged workspaces",
+          );
+        }
+        if (
+          result.created.length > 0
+          || result.failed.length > 0
+          || result.deleted.length > 0
+          || skippedUnchanged.length > 0
+          || result.errors.length > 0
+        ) {
           logger.info(
             {
               created: result.created.length,
