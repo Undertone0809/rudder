@@ -3516,6 +3516,74 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(mockUpdateCustomGroup).toHaveBeenCalledWith("org-1", "project-group", { collapsed: true });
   });
 
+  it("expands hydrated Project custom groups locally without fetching global thread pages", async () => {
+    installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "project" }),
+    });
+    const groupedThreads = Array.from({ length: 8 }, (_, index) => ({
+      threadKey: `chat:group-${index + 1}`,
+      kind: "chat",
+      title: `Grouped thread ${index + 1}`,
+      preview: "Hydrated group conversation",
+      subtitle: null,
+      href: `/messenger/chat/group-${index + 1}`,
+      latestActivityAt: `2026-04-11T09:${String(59 - index).padStart(2, "0")}:00.000Z`,
+      lastReadAt: null,
+      unreadCount: 0,
+      needsAttention: false,
+      isPinned: false,
+    }));
+    customGroupList = [
+      {
+        id: "large-project-group",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Large project group",
+        icon: "folder::amber",
+        sortOrder: 0,
+        collapsed: false,
+        pinnedAt: null,
+        createdAt: "2026-04-11T09:40:00.000Z",
+        updatedAt: "2026-04-11T09:40:00.000Z",
+        entries: groupedThreads.map((thread, index) => ({
+          id: `entry-${index + 1}`,
+          groupId: "large-project-group",
+          threadKey: thread.threadKey,
+          sortOrder: index,
+          thread,
+        })),
+      },
+    ];
+    const loadMoreThreadSummaries = vi.fn().mockResolvedValue(undefined);
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [],
+      hasMoreThreadSummaries: true,
+      isFetchingMoreThreadSummaries: false,
+      loadMoreThreadSummaries,
+    };
+
+    renderSidebar();
+
+    expect(document.querySelector('[data-testid="messenger-thread-chat-group-6"]')).toBeTruthy();
+    expect(document.querySelector('[data-testid="messenger-thread-chat-group-7"]')).toBeNull();
+    const showMore = document.querySelector<HTMLButtonElement>(
+      '[data-testid="messenger-thread-section-custom-group-large-project-group-show-more"]',
+    );
+    expect(showMore).toBeTruthy();
+
+    await act(async () => {
+      showMore?.click();
+    });
+
+    expect(document.querySelector('[data-testid="messenger-thread-chat-group-7"]')).toBeTruthy();
+    expect(document.querySelector('[data-testid="messenger-thread-chat-group-8"]')).toBeTruthy();
+    expect(document.querySelector(
+      '[data-testid="messenger-thread-section-custom-group-large-project-group-show-more"]',
+    )).toBeNull();
+    expect(loadMoreThreadSummaries).not.toHaveBeenCalled();
+  });
+
   it("preserves a dragged top-level section size instead of flattening the preview", () => {
     installLocalStorage({
       "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "project" }),

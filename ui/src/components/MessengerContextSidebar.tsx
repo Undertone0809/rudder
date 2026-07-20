@@ -293,6 +293,7 @@ function threadOrganizationLabel(rule: ThreadOrganizationRule) {
 interface UnreadThreadTarget {
   threadKey: string;
   groupKey: string | null;
+  sectionPath: string[];
   entryIndex: number | null;
 }
 
@@ -634,6 +635,7 @@ export function MessengerContextSidebar() {
   const unreadScrollCursorRef = useRef<string | null>(null);
   const handledUnreadScrollRequestIdRef = useRef(0);
   const unreadLoadMoreRequestRef = useRef<{ requestId: number; loadedCount: number } | null>(null);
+  const unreadCustomGroupExpansionIdsRef = useRef<Set<string>>(new Set());
   const customGroupIconUpdateQueuesRef = useRef<Record<string, Promise<void>>>({});
   const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -1083,17 +1085,24 @@ export function MessengerContextSidebar() {
   }, [customEntryGroupByThreadKey, effectiveThreadOrganizationRule]);
   const unreadThreadTargets = useMemo<UnreadThreadTarget[]>(() => {
     const targets: UnreadThreadTarget[] = [];
-    for (const section of flattenThreadSections(organizedThreadSections)) {
-      for (const [index, entry] of section.entries.entries()) {
-        if (entry.thread.unreadCount > 0) {
-          targets.push({
-            threadKey: entry.thread.threadKey,
-            groupKey: isManagedThreadGroupRule(effectiveThreadOrganizationRule) ? section.key : null,
-            entryIndex: isManagedThreadGroupRule(effectiveThreadOrganizationRule) ? index : null,
-          });
+    const isManaged = isManagedThreadGroupRule(effectiveThreadOrganizationRule);
+    const collectTargets = (sections: OrganizedThreadSection[] | undefined, ancestorPath: string[]) => {
+      for (const section of sections ?? []) {
+        const sectionPath = isManaged ? [...ancestorPath, section.key] : [];
+        for (const [index, entry] of section.entries.entries()) {
+          if (entry.thread.unreadCount > 0) {
+            targets.push({
+              threadKey: entry.thread.threadKey,
+              groupKey: isManaged ? section.key : null,
+              sectionPath,
+              entryIndex: isManaged ? index : null,
+            });
+          }
         }
+        collectTargets(section.childSections, sectionPath);
       }
-    }
+    };
+    collectTargets(organizedThreadSections, []);
     return targets;
   }, [effectiveThreadOrganizationRule, organizedThreadSections]);
   const unreadScrollTarget = useMemo<UnreadThreadTarget | null>(() => {
@@ -2032,7 +2041,7 @@ export function MessengerContextSidebar() {
                 type="button"
                 data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}-show-more`}
                 className="inline-flex h-7 items-center rounded-[calc(var(--radius-sm)-1px)] px-2 text-[11px] font-medium text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25 disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={model.isFetchingMoreThreadSummaries}
+                disabled={Boolean(model.isFetchingMoreThreadSummaries && canFetchMoreForSection)}
                 onClick={() => handleShowMoreThreadSection(section, visibleCount)}
               >
                 {model.isFetchingMoreThreadSummaries && canFetchMoreForSection ? (
@@ -2661,21 +2670,42 @@ export function MessengerContextSidebar() {
     if (unreadScrollRequestId <= 0) return;
     if (handledUnreadScrollRequestIdRef.current === unreadScrollRequestId) return;
 
-    if (
-      unreadScrollTarget.groupKey
-      && collapsedThreadGroupKeys.has(unreadScrollTarget.groupKey)
-    ) {
+    const collapsedLocalSectionKeys = unreadScrollTarget.sectionPath.filter((sectionKey) => (
+      collapsedThreadGroupKeys.has(sectionKey)
+    ));
+    if (collapsedLocalSectionKeys.length > 0) {
       setCollapsedThreadGroupKeys((current) => {
-        const groupKey = unreadScrollTarget.groupKey;
-        if (!groupKey || !current.has(groupKey)) return current;
+        if (!collapsedLocalSectionKeys.some((sectionKey) => current.has(sectionKey))) return current;
         const next = new Set(current);
-        next.delete(groupKey);
+        for (const sectionKey of collapsedLocalSectionKeys) next.delete(sectionKey);
         if (model.selectedOrganizationId && isManagedThreadGroupRule(effectiveThreadOrganizationRule)) {
           writeCollapsedThreadGroups(model.selectedOrganizationId, effectiveThreadOrganizationRule, next);
         }
         return next;
       });
       return;
+    }
+
+    const collapsedCustomGroup = unreadScrollTarget.sectionPath
+      .map((sectionKey) => customGroupBySectionKey.get(sectionKey) ?? null)
+      .find((group) => group?.collapsed) ?? null;
+    if (collapsedCustomGroup) {
+      if (!unreadCustomGroupExpansionIdsRef.current.has(collapsedCustomGroup.id)) {
+        unreadCustomGroupExpansionIdsRef.current.add(collapsedCustomGroup.id);
+        updateCustomGroupMutation.mutate(
+          { groupId: collapsedCustomGroup.id, data: { collapsed: false } },
+          {
+            onError: () => {
+              unreadCustomGroupExpansionIdsRef.current.delete(collapsedCustomGroup.id);
+            },
+          },
+        );
+      }
+      return;
+    }
+    for (const sectionKey of unreadScrollTarget.sectionPath) {
+      const customGroupId = customGroupIdFromSectionKey(sectionKey);
+      if (customGroupId) unreadCustomGroupExpansionIdsRef.current.delete(customGroupId);
     }
 
     if (
@@ -2714,7 +2744,7 @@ export function MessengerContextSidebar() {
     return () => {
       cancelAnimationFrame(frame);
     };
-  }, [collapsedThreadGroupKeys, model.selectedOrganizationId, threadOrganizationRule, unreadScrollRequestId, unreadScrollTarget, visibleThreadGroupEntryLimits]);
+  }, [collapsedThreadGroupKeys, customGroupBySectionKey, effectiveThreadOrganizationRule, model.selectedOrganizationId, unreadScrollRequestId, unreadScrollTarget, updateCustomGroupMutation, visibleThreadGroupEntryLimits]);
 
   useEffect(() => {
     const sentinel = loadMoreThreadSummariesRef.current;

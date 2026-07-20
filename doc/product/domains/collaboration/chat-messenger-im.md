@@ -2089,9 +2089,11 @@ Flow:
    preview-changing source events, update or refetch the group's hydrated rows
    so grouped badges do not diverge from loose rows. Saved View mutations
    refresh only Saved View state and directory placement.
-9. The operator may reorder custom groups within the pinned or unpinned domain.
-   Rudder persists that domain-local order and restores it on reload without
-   moving the group across the pin boundary.
+9. In `Latest activity`, the operator may reorder custom groups within the
+   pinned or unpinned domain. Rudder persists that domain-local order and
+   restores it on reload without moving the group across the pin boundary.
+   `Project` preserves the persisted group order but does not expose group drag
+   handles or support group reordering.
 
 Invariants:
 
@@ -2119,10 +2121,12 @@ Invariants:
   Their members stay inside the group and are not reclassified or duplicated
   under a project, `System`, or another top-level section; an individually
   pinned member inside an unpinned group remains inside that group.
-- Pinning assigns a custom group to the pinned ordering domain; it does not lock
-  the group's position. Pinned groups remain draggable relative to other pinned
-  groups, and unpinned groups remain draggable relative to other unpinned
-  groups. Group reordering must not move a group across the pin boundary.
+- In `Latest activity`, pinning assigns a custom group to the pinned ordering
+  domain without locking its position. Pinned groups remain draggable relative
+  to other pinned groups, and unpinned groups remain draggable relative to
+  other unpinned groups; reordering must not move a group across the pin
+  boundary. `Project` is the explicit exception: it preserves persisted group
+  order but exposes no group drag handles or project-mode group reordering.
 - Pinning a custom group does not pin every member individually, and pinning a
   member does not remove it from its group.
 - Project organization must not split a thread-backed custom group across
@@ -2174,8 +2178,9 @@ Evidence:
   `Pinned`, `Today`, and `Recent` managed sections. Project-mode coverage proves
   atomic group placement under `Pinned` and `No project`, pagination-independent
   member hydration, exact-once ownership, navigation, persisted collapse state,
-  pin/unpin movement, empty-group visibility, and the absence of group drag
-  handles where reordering is not supported.
+  pin/unpin movement, empty-group visibility, local expansion without unrelated
+  global-page fetching, ancestor-aware unread jumps and attention counts, and
+  the absence of Project group drag handles where reordering is not supported.
 
 ## MESSENGER.SAVED.VIEWS.001
 

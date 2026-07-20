@@ -14,6 +14,7 @@ import {
   organizeProjectThreadDirectory,
   organizeThreadEntries,
   projectSectionKeyToStoredId,
+  sectionAttentionCount,
   sortCustomLayoutSections,
   sortManagedThreadSections,
   storedProjectSectionIdToKey,
@@ -78,6 +79,24 @@ describe("messenger thread organization", () => {
     };
 
     expect(flattenThreadSections([root])).toEqual([root, leaf]);
+  });
+
+  it("aggregates attention from nested custom-group sections", () => {
+    const section: OrganizedThreadSection = {
+      key: "project:none",
+      label: "No project",
+      entries: [entry("chat:direct", { needsAttention: true })],
+      childSections: [{
+        key: "custom-group:group-1",
+        label: "Grouped work",
+        entries: [
+          entry("chat:unread", { unreadCount: 2 }),
+          entry("chat:settled"),
+        ],
+      }],
+    };
+
+    expect(sectionAttentionCount(section)).toBe(2);
   });
 
   it("groups chat and split-issue summaries by project with fixed sections last", () => {

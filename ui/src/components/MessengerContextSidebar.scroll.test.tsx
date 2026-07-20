@@ -11,6 +11,7 @@ import { MessengerContextSidebar } from "./MessengerContextSidebar";
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const invalidateQueries = vi.fn();
+const mockUpdateCustomGroup = vi.hoisted(() => vi.fn());
 
 let messengerModel: any;
 let messengerRoute: any;
@@ -38,7 +39,22 @@ function hydrateCustomGroupFixtures(groups: any[]) {
 }
 
 vi.mock("@tanstack/react-query", () => ({
-  useMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useMutation: (options: {
+    mutationFn: (variables: any) => Promise<any>;
+    onSuccess?: (data: any, variables: any) => Promise<void> | void;
+    onError?: (error: unknown, variables: any) => Promise<void> | void;
+  }) => ({
+    mutate: vi.fn(async (variables: any, callbacks?: { onError?: (error: unknown) => void }) => {
+      try {
+        const data = await options.mutationFn(variables);
+        await options.onSuccess?.(data, variables);
+      } catch (error) {
+        await options.onError?.(error, variables);
+        callbacks?.onError?.(error);
+      }
+    }),
+    isPending: false,
+  }),
   useQueryClient: () => ({ invalidateQueries }),
   useQuery: ({ queryKey }: { queryKey?: unknown }) => {
     const key = Array.isArray(queryKey) ? queryKey : [];
@@ -46,6 +62,12 @@ vi.mock("@tanstack/react-query", () => ({
       return { data: { groups: hydrateCustomGroupFixtures(customGroupList) } };
     }
     return { data: chatList };
+  },
+}));
+
+vi.mock("@/api/messenger", () => ({
+  messengerApi: {
+    updateCustomGroup: mockUpdateCustomGroup,
   },
 }));
 
@@ -201,6 +223,11 @@ describe("MessengerContextSidebar unread scroll requests", () => {
       isFetchingMoreThreadSummaries: false,
       loadMoreThreadSummaries: vi.fn(),
     };
+    mockUpdateCustomGroup.mockImplementation(async (_orgId: string, groupId: string, data: { collapsed?: boolean }) => {
+      const group = customGroupList.find((candidate) => candidate.id === groupId);
+      if (group && data.collapsed !== undefined) group.collapsed = data.collapsed;
+      return group;
+    });
   });
 
   afterEach(() => {
@@ -497,6 +524,83 @@ describe("MessengerContextSidebar unread scroll requests", () => {
     expect(projectContent?.getAttribute("aria-hidden")).toBeNull();
     expect(window.localStorage.getItem("rudder.messengerCollapsedProjectGroupsByOrg")).toBe(JSON.stringify({ "org-1": [] }));
     expect(unreadRow).not.toBeNull();
+    expect(unreadRow?.scrollIntoView).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
+  });
+
+  it("expands collapsed Project ancestors and reports nested custom-group attention before scrolling", async () => {
+    window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ "org-1": "project" }));
+    window.localStorage.setItem("rudder.messengerCollapsedProjectGroupsByOrg", JSON.stringify({
+      "org-1": ["project:none"],
+    }));
+    const unreadThread = baseThread("chat:grouped-unread", "Grouped unread", 1);
+    customGroupList = [{
+      id: "collapsed-project-group",
+      orgId: "org-1",
+      userId: "local-board",
+      name: "Collapsed project group",
+      icon: "folder",
+      sortOrder: 0,
+      collapsed: true,
+      pinnedAt: null,
+      entries: [{
+        id: "entry-grouped-unread",
+        groupId: "collapsed-project-group",
+        threadKey: unreadThread.threadKey,
+        sortOrder: 0,
+        thread: unreadThread,
+      }],
+    }];
+    messengerModel = {
+      ...messengerModel,
+      threadSummaries: [],
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+    });
+
+    const noProjectHeader = document.querySelector<HTMLElement>(
+      '[data-testid="messenger-thread-section-project-none"]',
+    );
+    const groupSection = document.querySelector<HTMLElement>(
+      '[data-testid="messenger-thread-section-custom-group-collapsed-project-group"]',
+    );
+    expect(noProjectHeader?.getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelector(
+      '[data-testid="messenger-thread-section-project-none-attention-count"]',
+    )?.textContent).toBe("1");
+    expect(groupSection?.querySelector('button[aria-expanded="false"]')).not.toBeNull();
+
+    await act(async () => {
+      requestMessengerUnreadScroll();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(noProjectHeader?.getAttribute("aria-expanded")).toBe("true");
+    expect(mockUpdateCustomGroup).toHaveBeenCalledWith(
+      "org-1",
+      "collapsed-project-group",
+      { collapsed: false },
+    );
+
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+    });
+
+    const unreadRow = document.querySelector<HTMLElement>(
+      '[data-messenger-thread-key="chat:grouped-unread"]',
+    );
+    expect(groupSection?.querySelector('button[aria-expanded="true"]')).not.toBeNull();
     expect(unreadRow?.scrollIntoView).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
   });
 

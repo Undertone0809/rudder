@@ -846,6 +846,12 @@ test.describe("Messenger unified threads contract", () => {
   });
 
   test("keeps custom groups atomic and locally expandable while organizing Messenger by project", async ({ page }) => {
+    const sessionRes = await page.request.get("/api/auth/get-session");
+    expect(sessionRes.ok()).toBe(true);
+    const session = await sessionRes.json();
+    const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+    expect(currentUserId).toBeTruthy();
+
     const organization = await createConfiguredOrganization(page, `Messenger-Project-Custom-Groups-${Date.now()}`);
     const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
       data: {
@@ -924,6 +930,37 @@ test.describe("Messenger unified threads contract", () => {
       data: { pinned: true },
     });
     expect(pinnedMemberRes.ok()).toBe(true);
+    const unreadGroupedChat = groupedChats[7]!;
+    const unreadReadAt = new Date(activityBase - 8_000);
+    const unreadMessageAt = new Date(activityBase - 7_000);
+    await e2eDb.insert(chatConversationUserStates).values({
+      orgId: organization.id,
+      conversationId: unreadGroupedChat.id,
+      userId: currentUserId,
+      lastReadAt: unreadReadAt,
+      updatedAt: unreadReadAt,
+    }).onConflictDoUpdate({
+      target: [
+        chatConversationUserStates.orgId,
+        chatConversationUserStates.conversationId,
+        chatConversationUserStates.userId,
+      ],
+      set: {
+        lastReadAt: unreadReadAt,
+        updatedAt: unreadReadAt,
+      },
+    });
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: unreadGroupedChat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Unread grouped reply used to verify ancestor expansion.",
+      createdAt: unreadMessageAt,
+      updatedAt: unreadMessageAt,
+    });
 
     const recentBase = Date.now() - 5 * 60_000;
     await e2eDb.insert(chatConversations).values(Array.from({ length: 45 }, (_, index) => {
@@ -1031,9 +1068,26 @@ test.describe("Messenger unified threads contract", () => {
     await expect(regularGroupSection.getByRole("button", { name: "Drag group Project work queue" })).toHaveCount(0);
     const regularGroupRows = regularGroupSection.locator("[data-messenger-thread-key]");
     await expect(regularGroupRows).toHaveCount(6);
-    await regularGroupSection.getByTestId(`${regularGroupSectionId}-show-more`).click();
+    const groupShowMore = regularGroupSection.getByTestId(`${regularGroupSectionId}-show-more`);
+    let globalThreadPageRequests = 0;
+    const countGlobalThreadPageRequest = (request: import("@playwright/test").Request) => {
+      const requestUrl = new URL(request.url());
+      if (
+        request.method() === "GET"
+        && requestUrl.pathname === `/api/orgs/${organization.id}/messenger/threads`
+        && requestUrl.searchParams.has("cursor")
+        && requestUrl.searchParams.get("limit") === "40"
+      ) {
+        globalThreadPageRequests += 1;
+      }
+    };
+    page.on("request", countGlobalThreadPageRequest);
+    await groupShowMore.click();
     await expect(regularGroupRows).toHaveCount(7);
-    await expect(regularGroupSection.getByTestId(`${regularGroupSectionId}-show-more`)).toHaveCount(0);
+    await expect(groupShowMore).toHaveCount(0);
+    await page.waitForTimeout(250);
+    page.off("request", countGlobalThreadPageRequest);
+    expect(globalThreadPageRequests).toBe(0);
     for (const chat of groupedChats) {
       await expect(page.getByTestId(threadTestId(`chat:${chat.id}`))).toHaveCount(1);
     }
@@ -1041,6 +1095,39 @@ test.describe("Messenger unified threads contract", () => {
       await expect(page.getByTestId(threadTestId(`chat:${chat.id}`))).toHaveCount(1);
     }
     await page.screenshot({ path: "/tmp/rudder-messenger-project-custom-groups.png", fullPage: true });
+
+    await expect(page.getByTestId("messenger-thread-section-project-none-attention-count")).toHaveText("1");
+    const collapseUnreadGroupResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${regularGroup.id}`)
+      && response.request().method() === "PATCH",
+    );
+    await regularGroupSection.locator("button[aria-expanded]").first().click();
+    expect((await collapseUnreadGroupResponse).ok()).toBe(true);
+    await expect(regularGroupSection.locator("button[aria-expanded]").first()).toHaveAttribute("aria-expanded", "false");
+    await noProjectSection.click();
+    await expect(noProjectSection).toHaveAttribute("aria-expanded", "false");
+    await page.evaluate(() => {
+      const originalScrollIntoView = Element.prototype.scrollIntoView;
+      (window as typeof window & { __projectGroupedUnreadScrolls?: string[] }).__projectGroupedUnreadScrolls = [];
+      Element.prototype.scrollIntoView = function scrollIntoView(options?: boolean | ScrollIntoViewOptions) {
+        const threadKey = (this as HTMLElement).dataset?.messengerThreadKey;
+        if (threadKey) {
+          (window as typeof window & { __projectGroupedUnreadScrolls: string[] }).__projectGroupedUnreadScrolls.push(threadKey);
+        }
+        return originalScrollIntoView.call(this, options);
+      };
+    });
+    const expandUnreadGroupResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${regularGroup.id}`)
+      && response.request().method() === "PATCH",
+    );
+    await page.getByTestId("primary-rail").getByRole("link", { name: "Messenger" }).dblclick();
+    expect((await expandUnreadGroupResponse).ok()).toBe(true);
+    await expect(noProjectSection).toHaveAttribute("aria-expanded", "true");
+    await expect(regularGroupSection.locator("button[aria-expanded]").first()).toHaveAttribute("aria-expanded", "true");
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __projectGroupedUnreadScrolls?: string[] }).__projectGroupedUnreadScrolls ?? []
+    ))).toContain(`chat:${unreadGroupedChat.id}`);
 
     await page.getByTestId(threadTestId(`chat:${groupedChats[7]!.id}`)).click();
     await expect(page).toHaveURL(new RegExp(`/messenger/chat/${groupedChats[7]!.id}$`));
