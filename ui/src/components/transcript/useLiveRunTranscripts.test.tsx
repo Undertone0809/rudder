@@ -67,8 +67,25 @@ function HookProbe({ onEntries }: { onEntries: (texts: string[]) => void }) {
   return null;
 }
 
+function ConfigurableHookProbe({
+  runs,
+  onEntries,
+}: {
+  runs: LiveRunForIssue[];
+  onEntries: (texts: string[]) => void;
+}) {
+  const { transcriptByRun } = useLiveRunTranscripts({ runs, orgId: "org-1" });
+  onEntries(
+    runs.flatMap((run) => (transcriptByRun.get(run.id) ?? []).map((entry) =>
+      "text" in entry ? entry.text : "content" in entry ? entry.content : "",
+    )),
+  );
+  return null;
+}
+
 describe("useLiveRunTranscripts", () => {
   beforeEach(() => {
+    logMock.mockReset();
     logMock.mockResolvedValue({ runId: "run-1", store: "local", logRef: "run.log", content: "", endOffset: 0 });
     MockWebSocket.instances = [];
     vi.stubGlobal("WebSocket", MockWebSocket);
@@ -181,6 +198,52 @@ describe("useLiveRunTranscripts", () => {
       "direct entry",
       "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"first message\"}}",
     ]);
+
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("rehydrates a terminal transcript after the run is removed and added again", async () => {
+    const terminalRun: LiveRunForIssue = {
+      ...liveRun,
+      status: "succeeded",
+      finishedAt: "2026-06-19T11:07:00.000Z",
+    };
+    const persistedContent = `${JSON.stringify({
+      ts: "2026-06-19T11:06:30.000Z",
+      stream: "stdout",
+      chunk: "persisted terminal evidence\n",
+    })}\n`;
+    logMock.mockResolvedValue({
+      runId: terminalRun.id,
+      store: "local",
+      logRef: "run.log",
+      content: persistedContent,
+      endOffset: new TextEncoder().encode(persistedContent).length,
+    });
+
+    const observed: string[][] = [];
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const renderProbe = (runs: LiveRunForIssue[]) => (
+      <ConfigurableHookProbe runs={runs} onEntries={(texts) => observed.push(texts)} />
+    );
+
+    await act(async () => {
+      root.render(renderProbe([terminalRun]));
+    });
+    expect(observed.at(-1)).toContain("persisted terminal evidence");
+
+    await act(async () => {
+      root.render(renderProbe([]));
+    });
+    await act(async () => {
+      root.render(renderProbe([terminalRun]));
+    });
+
+    expect(logMock).toHaveBeenCalledTimes(2);
+    expect(observed.at(-1)).toContain("persisted terminal evidence");
 
     act(() => root.unmount());
     container.remove();

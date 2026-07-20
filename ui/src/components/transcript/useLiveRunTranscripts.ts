@@ -23,6 +23,16 @@ type LiveEntryChunk = { type: "entry"; entry: TranscriptEntry };
 type LiveTranscriptChunk = LiveLogChunk | LiveEntryChunk;
 type IncomingLiveTranscriptChunk = (LiveLogChunk | LiveEntryChunk) & { dedupeKey: string };
 
+function runIdFromDedupeKey(key: string): string | null {
+  for (const prefix of ["log:", "socket:event:", "socket:status:"]) {
+    if (!key.startsWith(prefix)) continue;
+    const suffix = key.slice(prefix.length);
+    const separatorIndex = suffix.indexOf(":");
+    return separatorIndex === -1 ? suffix : suffix.slice(0, separatorIndex);
+  }
+  return null;
+}
+
 function utf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).length;
 }
@@ -184,6 +194,12 @@ export function useLiveRunTranscripts({
       const runId = key.replace(/:records$/, "");
       if (!knownRunIds.has(runId)) {
         pendingLogRowsByRunRef.current.delete(key);
+      }
+    }
+    for (const key of seenChunkKeysRef.current) {
+      const runId = runIdFromDedupeKey(key);
+      if (runId && !knownRunIds.has(runId)) {
+        seenChunkKeysRef.current.delete(key);
       }
     }
     for (const runId of logOffsetByRunRef.current.keys()) {

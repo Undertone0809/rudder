@@ -968,7 +968,7 @@ export function activityService(db: Db) {
             ),
           ),
         )
-        .orderBy(desc(heartbeatRuns.createdAt));
+        .orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id));
       return runs.map((run) => ({
         ...run,
         contextSnapshot: toPublicHeartbeatRunContextSnapshot(run.contextSnapshot),

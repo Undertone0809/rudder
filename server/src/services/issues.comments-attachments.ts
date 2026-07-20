@@ -397,7 +397,16 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
           ? Math.min(Math.floor(opts.limit), MAX_ISSUE_COMMENT_PAGE_LIMIT)
           : null;
 
-      const conditions = [eq(issueComments.issueId, issueId), isNull(issueComments.deletedAt)];
+      const issueOrgIds = db
+        .select({ orgId: issues.orgId })
+        .from(issues)
+        .where(eq(issues.id, issueId));
+      const commentBelongsToIssueOrg = inArray(issueComments.orgId, issueOrgIds);
+      const conditions = [
+        eq(issueComments.issueId, issueId),
+        commentBelongsToIssueOrg,
+        isNull(issueComments.deletedAt),
+      ];
       if (afterCommentId) {
         const resolvedAfterCommentId = isUuidLike(afterCommentId)
           ? afterCommentId
@@ -411,6 +420,7 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
           .where(
             and(
               eq(issueComments.issueId, issueId),
+              commentBelongsToIssueOrg,
               eq(issueComments.id, resolvedAfterCommentId),
               isNull(issueComments.deletedAt),
             ),

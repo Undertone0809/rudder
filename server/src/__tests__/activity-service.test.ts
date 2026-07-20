@@ -415,6 +415,57 @@ describe("activityService.forIssue", () => {
     );
   });
 
+  it("orders issue runs deterministically when timestamps collide", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const issueId = randomUUID();
+    const createdAt = new Date("2026-07-20T00:00:00.000Z");
+    const runIds = [
+      "00000000-0000-4000-8000-000000000001",
+      "00000000-0000-4000-8000-000000000003",
+      "00000000-0000-4000-8000-000000000002",
+    ];
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder Tied Run Order Org",
+      urlKey: deriveOrganizationUrlKey("Rudder Tied Run Order Org"),
+      issuePrefix: `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Tied run agent",
+      role: "engineer",
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Issue with tied run timestamps",
+      status: "in_progress",
+      priority: "medium",
+    });
+    await db.insert(heartbeatRuns).values(runIds.map((id) => ({
+      id,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "succeeded",
+      contextSnapshot: { issueId },
+      createdAt,
+      updatedAt: createdAt,
+    })));
+
+    const result = await svc.runsForIssue(orgId, issueId);
+
+    expect(result.map((run) => run.runId)).toEqual([
+      "00000000-0000-4000-8000-000000000003",
+      "00000000-0000-4000-8000-000000000002",
+      "00000000-0000-4000-8000-000000000001",
+    ]);
+  });
+
   it("does not return issues from another organization through contaminated run activity", async () => {
     const orgId = randomUUID();
     const otherOrgId = randomUUID();
