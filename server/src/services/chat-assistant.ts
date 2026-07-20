@@ -907,6 +907,32 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           error: resolved.availabilityError ?? resolved.runtimeSource.descriptor.error,
         };
     },
+    getDraftChatAssistantAvailability: async (input: {
+      orgId: string;
+      preferredAgentId: string | null;
+      contextLinks?: Array<Pick<ChatContextLink, "entityType" | "entityId"> & Partial<ChatContextLink>>;
+      planMode?: boolean;
+    }) => {
+      const contextLinks = (input.contextLinks ?? []) as ChatContextLink[];
+      const resolved = await resolveChatInvocation({
+        conversation: {
+          id: randomUUID(),
+          orgId: input.orgId,
+          preferredAgentId: input.preferredAgentId,
+          primaryIssueId: null,
+          contextLinks,
+          planMode: input.planMode ?? false,
+        },
+        contextLinks,
+      });
+      return resolved.runtimeSource.descriptor.available && !resolved.availabilityError
+        ? { ...resolved.runtimeSource.descriptor, available: true as const }
+        : {
+          ...resolved.runtimeSource.descriptor,
+          available: false as const,
+          error: resolved.availabilityError ?? resolved.runtimeSource.descriptor.error,
+        };
+    },
     generateChatAssistantReply: async (
       input: GenerateChatAssistantReplyInput,
     ): Promise<ChatAssistantResult> => {

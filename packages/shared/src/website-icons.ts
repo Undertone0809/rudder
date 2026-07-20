@@ -39,7 +39,7 @@ const rudderIcon = imageDataUrl("image/x-icon", "AAABAAEAICAAAAEAIAC8BgAAFgAAAIl
 export const KNOWN_WEBSITE_ICONS: readonly KnownWebsiteIcon[] = [
   { hostnames: ["x.com","twitter.com"], includeSubdomains: true, siteName: "X", iconDataUrl: xIcon },
   { hostnames: ["linkedin.com","www.linkedin.com"], siteName: "LinkedIn", iconDataUrl: linkedinIcon },
-  { hostnames: ["github.com","www.github.com","gist.github.com"], siteName: "GitHub", iconDataUrl: githubIcon },
+  { hostnames: ["github.com","www.github.com","gist.github.com"], siteName: "GitHub", iconDataUrl: githubIcon, darkMode: "invert" },
   { hostnames: ["youtube.com","www.youtube.com","youtu.be"], siteName: "YouTube", iconDataUrl: youtubeIcon },
   { hostnames: ["google.com","www.google.com"], siteName: "Google", iconDataUrl: googleIcon },
   { hostnames: ["docs.google.com"], siteName: "Google Docs", iconDataUrl: googleDocsIcon },

@@ -48,6 +48,7 @@ import {
   resolveBrowserShortcutInput,
   type Agent,
   type BrowserShortcutAction,
+  type ChatConversation,
   type Issue,
   type IssueComment,
   type OrganizationWorkspaceFileDetail,
@@ -63,6 +64,7 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
+  CirclePlus,
   Compass,
   ExternalLink,
   FileCode2,
@@ -82,7 +84,6 @@ import {
   Plus,
   Redo2,
   RotateCw,
-  Sparkles,
   Table2,
   Terminal,
   Undo2,
@@ -356,7 +357,7 @@ function SidePanelEmptyState({
     ...(sourceConversationId ? [{
       label: "Side Chat",
       description: "Ask a focused follow-up without leaving the main chat.",
-      icon: Sparkles,
+      icon: CirclePlus,
       target: {
         kind: "side_chat" as const,
         sourceConversationId,
@@ -2012,11 +2013,15 @@ export function ChatSidePanel({
   selectedOrganizationId: string | null | undefined;
 }) {
   const sidePanel = useSidePanel();
+  const { pushToast } = useToast();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [draggedTabKey, setDraggedTabKey] = useState<string | null>(null);
   const [tabDropTarget, setTabDropTarget] = useState<{ key: string; position: "before" | "after" } | null>(null);
   const [desktopExitComplete, setDesktopExitComplete] = useState(!sidePanel.open);
   const panelRef = useRef<HTMLElement>(null);
   const browserShortcutControllersRef = useRef(new Map<string, (action: BrowserShortcutAction) => void>());
+  const sideChatCloseHandlersRef = useRef(new Map<string, () => Promise<string | null>>());
   const browserShortcutScopeActiveRef = useRef(false);
   const lastOpenDesktopPanelRef = useRef<ReactElement | null>(null);
   const queryClient = useQueryClient();
@@ -2029,6 +2034,13 @@ export function ChatSidePanel({
   ) => {
     if (controller) browserShortcutControllersRef.current.set(key, controller);
     else browserShortcutControllersRef.current.delete(key);
+  }, []);
+  const registerSideChatCloseHandler = useCallback((
+    clientMutationId: string,
+    handler: (() => Promise<string | null>) | null,
+  ) => {
+    if (handler) sideChatCloseHandlersRef.current.set(clientMutationId, handler);
+    else sideChatCloseHandlersRef.current.delete(clientMutationId);
   }, []);
 
   const visibleTabs = sidePanel.tabs;
@@ -2251,7 +2263,43 @@ export function ChatSidePanel({
   };
   const replaceSidePanelTarget = (key: string, nextTarget: SidePanelTarget) => sidePanel.replaceTarget(key, nextTarget);
 
-  const closeSidePanelTab = (tab: SidePanelTarget) => sidePanel.closeTarget(sidePanelTargetKey(tab));
+  const closeSidePanelTab = async (tab: SidePanelTarget) => {
+    const tabKey = sidePanelTargetKey(tab);
+    if (tab.kind !== "side_chat") {
+      sidePanel.closeTarget(tabKey);
+      return;
+    }
+    try {
+      const registeredClose = sideChatCloseHandlersRef.current.get(tab.clientMutationId);
+      const destroyedConversationId = registeredClose
+        ? await registeredClose()
+        : tab.conversationId
+          ? await chatsApi.destroySideChat(tab.conversationId).then(() => tab.conversationId)
+          : null;
+      if (destroyedConversationId) {
+        queryClient.removeQueries({ queryKey: queryKeys.chats.detail(selectedOrganizationId ?? "__none__", destroyedConversationId) });
+        queryClient.removeQueries({ queryKey: queryKeys.chats.messages(selectedOrganizationId ?? "__none__", destroyedConversationId) });
+      }
+      sidePanel.closeTarget(tabKey);
+      if (destroyedConversationId && destroyedConversationId !== tab.conversationId) {
+        sidePanel.closeTarget(sidePanelTargetKey({ ...tab, conversationId: destroyedConversationId }));
+      }
+    } catch (error) {
+      pushToast({
+        title: "Could not close Side Chat",
+        body: error instanceof Error ? error.message : "Try again.",
+        tone: "error",
+      });
+    }
+  };
+
+  useEffect(() => sidePanel.registerCloseRequestHandler(closeSidePanelTab), [closeSidePanelTab, sidePanel]);
+
+  const keepSideChatInMessenger = (conversation: ChatConversation) => {
+    if (sideChatTarget) sidePanel.closeTarget(sidePanelTargetKey(sideChatTarget));
+    const prefix = extractOrganizationPrefixFromPath(location.pathname);
+    navigate(applyOrganizationPrefix(`/messenger/chat/${conversation.id}`, prefix));
+  };
 
   const libraryDirectoryEntries = libraryDirectory?.entries ?? [];
   const libraryDirectoryFileCount = libraryDirectoryEntries.filter((entry) => !entry.isDirectory).length;
@@ -2354,7 +2402,7 @@ export function ChatSidePanel({
                     className="pointer-events-none inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-[color,background-color,opacity] group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 hover:bg-[color:var(--surface-panel)] hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                     onClick={(event) => {
                       event.stopPropagation();
-                      closeSidePanelTab(tab);
+                      void closeSidePanelTab(tab);
                     }}
                   >
                     <X className="h-3 w-3" />
@@ -2404,7 +2452,7 @@ export function ChatSidePanel({
       )}>
         <div className={cn(
           "scrollbar-auto-hide min-h-0 flex-1",
-          browserTarget || issueTarget || automationTarget || libraryFilePreviewPath ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
+          browserTarget || issueTarget || automationTarget || libraryFilePreviewPath || sideChatTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
           issueTarget && !browserTarget && "px-4 py-4",
         )} data-testid="chat-side-panel-scroll-body">
           {browserTargets.map((target) => {
@@ -2480,7 +2528,9 @@ export function ChatSidePanel({
             <SideChatPanelView
               organizationId={selectedOrganizationId}
               target={sideChatTarget}
+              onRegisterCloseHandler={registerSideChatCloseHandler}
               onReplaceTarget={replaceSidePanelTarget}
+              onKept={keepSideChatInMessenger}
             />
           ) : chatTarget ? (
             <div className="space-y-4" data-testid="chat-side-panel-chat-view">

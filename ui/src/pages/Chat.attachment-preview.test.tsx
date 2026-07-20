@@ -14,7 +14,7 @@ import {
 import {
   readPendingChatStopRecovery,
 } from "@/lib/chat-stop-recovery";
-import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, type Agent, type AutomationDetail, type AutomationRunSummary, type BrowserShortcutAction, type ChatConversation, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type ChatStreamEvent, type Goal, type Issue, type IssueComment, type IssueLabel, type OrganizationWorkspaceFileEntry, type Project } from "@rudderhq/shared";
+import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, type Agent, type AutomationDetail, type AutomationRunSummary, type BrowserShortcutAction, type ChatConversation, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type ChatRuntimeDescriptor, type ChatStreamEvent, type Goal, type Issue, type IssueComment, type IssueLabel, type OrganizationWorkspaceFileEntry, type Project } from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -68,6 +68,18 @@ const mockState = vi.hoisted(() => ({
   updateWorkspaceFile: vi.fn(),
   sendInFlightByChatId: {} as Record<string, true>,
   setChatSendInFlight: vi.fn(),
+  createConversation: vi.fn(),
+  draftPreflight: {
+    sourceType: "agent",
+    sourceLabel: "Wesley",
+    runtimeAgentId: "agent-1",
+    agentRuntimeType: "codex",
+    model: null,
+    available: true,
+    error: null,
+  } as ChatRuntimeDescriptor,
+  preflightDraft: vi.fn(),
+  sendFirstMessageStream: vi.fn(),
   sendMessageStream: vi.fn(),
   setStreamDraftForChat: vi.fn(),
   setSidebarOpen: vi.fn(),
@@ -115,6 +127,14 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "chats" && queryKey[2] === "queue") {
       return {
         data: mockState.queueSnapshot,
+        isPending: false,
+        isLoading: false,
+        error: null,
+      };
+    }
+    if (queryKey[0] === "chats" && queryKey[2] === "draft-preflight") {
+      return {
+        data: mockState.draftPreflight,
         isPending: false,
         isLoading: false,
         error: null,
@@ -364,7 +384,9 @@ vi.mock("@/context/ChatGenerationContext", () => ({
 
 vi.mock("@/api/chats", () => ({
   chatsApi: {
-    create: vi.fn(),
+    create: mockState.createConversation,
+    preflightDraft: mockState.preflightDraft,
+    sendFirstMessageStream: mockState.sendFirstMessageStream,
     get: vi.fn(),
     update: vi.fn(async (_chatId: string, patch: Partial<ChatConversation>) => ({
       ...mockState.conversations[0],
@@ -1294,6 +1316,25 @@ beforeEach(() => {
   mockState.getQueryData.mockReset();
   mockState.sendInFlightByChatId = {};
   mockState.setChatSendInFlight.mockReset();
+  mockState.createConversation.mockReset();
+  mockState.createConversation.mockResolvedValue(chat({
+    id: "new-chat-1",
+    title: "Start atomic chat",
+    preferredAgentId: "agent-1",
+    lastMessageAt: null,
+  }));
+  mockState.draftPreflight = {
+    sourceType: "agent",
+    sourceLabel: "Wesley",
+    runtimeAgentId: "agent-1",
+    agentRuntimeType: "codex",
+    model: null,
+    available: true,
+    error: null,
+  };
+  mockState.preflightDraft.mockReset();
+  mockState.preflightDraft.mockResolvedValue(mockState.draftPreflight);
+  mockState.sendFirstMessageStream.mockReset();
   mockState.sendMessageStream.mockReset();
   mockState.setSidebarOpen.mockReset();
   mockState.setStreamDraftForChat.mockReset();
@@ -5813,6 +5854,194 @@ describe("Chat ask_user panel", () => {
 
     expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
     expect(mockState.sendMessageStream.mock.calls[0]?.[1]).toContain("Answer: Test output, Screenshots");
+  });
+});
+
+describe("Atomic new-chat drafts", () => {
+  it("keeps an unavailable draft unpersisted and links to agent settings", async () => {
+    mockState.conversationId = null;
+    mockState.conversations = [];
+    mockState.messagesByChatId = {};
+    mockState.draftPreflight = {
+      sourceType: "unconfigured",
+      sourceLabel: "Unconfigured chat runtime",
+      runtimeAgentId: "agent-1",
+      agentRuntimeType: "process",
+      model: null,
+      available: false,
+      error: "The current user has not configured a chat model yet.",
+    };
+
+    const { container } = renderChat();
+    const editor = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']");
+    expect(editor).not.toBeNull();
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(editor, "This must stay a draft.");
+      editor!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("The current user has not configured a chat model yet.");
+    expect(container.querySelector<HTMLAnchorElement>('a[href="/agents"]')?.textContent).toContain("Open agents");
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')?.disabled).toBe(true);
+
+    await act(async () => {
+      editor!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(mockState.preflightDraft).not.toHaveBeenCalled();
+    expect(mockState.createConversation).not.toHaveBeenCalled();
+    expect(mockState.sendFirstMessageStream).not.toHaveBeenCalled();
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    expect(mockState.navigate).not.toHaveBeenCalled();
+  });
+
+  it("retains the complete draft when first-turn submission fails before ack", async () => {
+    const attachment = new File(["failure context"], "failure-context.txt", { type: "text/plain" });
+    mockState.conversationId = null;
+    mockState.conversations = [];
+    mockState.messagesByChatId = {};
+    updateChatPendingAttachmentsForScope(
+      resolveChatPendingAttachmentScopeKey("org-1", null),
+      () => [attachment],
+    );
+    mockState.sendFirstMessageStream.mockRejectedValueOnce(
+      new ApiError("Runtime rejected the first turn", 503, null),
+    );
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const projectSelector = container.querySelector<HTMLButtonElement>("[data-testid='chat-project-selector']");
+    act(() => projectSelector?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    const projectOption = Array.from(document.body.querySelectorAll<HTMLButtonElement>("[role='menuitemradio']"))
+      .find((button) => button.textContent?.includes("Rudder mkt"));
+    act(() => projectOption?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    const optionsButton = container.querySelector<HTMLButtonElement>('button[aria-label="Add files and options"]');
+    act(() => optionsButton?.dispatchEvent(new MouseEvent("pointerdown", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+    })));
+    const planModeToggle = document.body.querySelector<HTMLButtonElement>("[data-testid='chat-plan-mode-toggle']");
+    expect(planModeToggle).not.toBeNull();
+    act(() => planModeToggle?.click());
+
+    const editor = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']");
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(editor, "Keep every draft field.");
+      editor!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await clickEnabledButtonByAriaLabel(container, "Send");
+    await vi.waitFor(() => expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      body: "Runtime rejected the first turn",
+      tone: "error",
+    })));
+
+    expect(mockState.createConversation).not.toHaveBeenCalled();
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    expect(mockState.sendFirstMessageStream).toHaveBeenCalledTimes(1);
+    expect(mockState.sendFirstMessageStream.mock.calls[0]?.[0]).toBe("org-1");
+    expect(mockState.sendFirstMessageStream.mock.calls[0]?.[1]).toBe("Keep every draft field.");
+    expect(mockState.sendFirstMessageStream.mock.calls[0]?.[2]).toMatchObject({
+      preferredAgentId: "agent-1",
+      planMode: true,
+      files: [attachment],
+      contextLinks: [
+        { entityType: "project", entityId: "10000000-0000-4000-8000-000000000010" },
+      ],
+    });
+    expect(editor?.value).toBe("Keep every draft field.");
+    expect(container.textContent).toContain("failure-context.txt");
+    expect(container.querySelector("[data-testid='chat-project-selector']")?.textContent).toContain("Rudder mkt");
+    expect(mockState.navigate).not.toHaveBeenCalled();
+  });
+
+  it("commits the first-turn UI only after the acknowledgement", async () => {
+    mockState.conversationId = null;
+    mockState.conversations = [];
+    mockState.messagesByChatId = {};
+    let onEvent!: (event: ChatStreamEvent) => void | Promise<void>;
+    let resolveStream!: () => void;
+    mockState.sendFirstMessageStream.mockImplementationOnce((
+      _orgId: string,
+      _body: string,
+      options: { onEvent: (event: ChatStreamEvent) => void | Promise<void> },
+    ) => {
+      onEvent = options.onEvent;
+      return new Promise<void>((resolve) => {
+        resolveStream = resolve;
+      });
+    });
+
+    const { container } = renderChat();
+    const editor = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']");
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(editor, "Create exactly one accepted chat.");
+      editor!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await clickEnabledButtonByAriaLabel(container, "Send");
+    await vi.waitFor(() => expect(mockState.sendFirstMessageStream).toHaveBeenCalledTimes(1));
+
+    expect(mockState.createConversation).not.toHaveBeenCalled();
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    expect(mockState.navigate).not.toHaveBeenCalled();
+    expect(editor?.value).toBe("Create exactly one accepted chat.");
+
+    const acceptedConversation = chat({
+      id: "atomic-chat-1",
+      title: "Create exactly one accepted chat",
+      preferredAgentId: "agent-1",
+      lastMessageAt: new Date("2026-05-12T10:00:00.000Z"),
+    });
+    const acceptedMessage = message({
+      id: "atomic-message-1",
+      conversationId: acceptedConversation.id,
+      body: "Create exactly one accepted chat.",
+      chatTurnId: "atomic-turn-1",
+      createdAt: new Date("2026-05-12T10:00:00.000Z"),
+    });
+    await act(async () => {
+      await onEvent({
+        type: "ack",
+        conversation: acceptedConversation,
+        userMessage: acceptedMessage,
+        generationId: "atomic-generation-1",
+        attemptEpoch: 1,
+        generationSeq: 0,
+      });
+    });
+
+    expect(editor?.value).toBe("");
+    expect(mockState.navigate).toHaveBeenCalledWith("/chat/atomic-chat-1");
+    expect(mockState.setQueryData).toHaveBeenCalledWith(
+      expect.arrayContaining(["chats", "org-1", "detail", "atomic-chat-1"]),
+      expect.objectContaining({ id: "atomic-chat-1" }),
+    );
+    expect(mockState.setStreamDraftForChat).toHaveBeenCalledWith(
+      "atomic-chat-1",
+      expect.objectContaining({
+        userBody: "Create exactly one accepted chat.",
+        userMessageId: "atomic-message-1",
+        generationId: "atomic-generation-1",
+        state: "streaming",
+      }),
+    );
+
+    await act(async () => {
+      resolveStream();
+      await Promise.resolve();
+    });
   });
 });
 

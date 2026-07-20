@@ -28,26 +28,23 @@ async function createBrokenChatAgent(page: Page, orgId: string) {
 test("chat runtime boot failures are non-retryable in the real chat UI", async ({ page }) => {
   const organization = await createOrganization(page, "Chat-Runtime-Boot-Failure");
   const agent = await createBrokenChatAgent(page, organization.id);
-  const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
-    data: {
-      title: "Runtime boot failure",
-      preferredAgentId: agent.id,
-    },
-  });
-  expect(chatRes.ok()).toBe(true);
-  const chat = await chatRes.json() as { id: string };
 
   await page.goto("/");
   await page.evaluate((orgId) => {
     window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
   }, organization.id);
 
-  await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+  await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${agent.id}`);
 
   const composer = page.locator(".rudder-mdxeditor-content").first();
   await expect(composer).toBeVisible({ timeout: 15_000 });
   await composer.fill("Trigger the broken runtime");
   await page.getByRole("button", { name: "Send" }).click();
+  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/[^/?#]+$`), {
+    timeout: 15_000,
+  });
+  const chatId = new URL(page.url()).pathname.split("/").pop();
+  expect(chatId).toBeTruthy();
 
   const failedAssistant = page.getByTestId("chat-assistant-message").last();
   await expect(failedAssistant).toContainText("Runtime unavailable", { timeout: 15_000 });
@@ -55,7 +52,7 @@ test("chat runtime boot failures are non-retryable in the real chat UI", async (
   await expect(failedAssistant).toContainText("Code chat_runtime_boot_failed");
   await expect(failedAssistant.getByRole("button", { name: /retry/i })).toHaveCount(0);
 
-  const messagesRes = await page.request.get(`/api/chats/${chat.id}/messages`);
+  const messagesRes = await page.request.get(`/api/chats/${chatId}/messages`);
   expect(messagesRes.ok()).toBe(true);
   const messages = await messagesRes.json() as Array<{
     role: string;

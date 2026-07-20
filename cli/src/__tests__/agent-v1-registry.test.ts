@@ -148,6 +148,14 @@ describe("agent-v1 registry", () => {
     });
   });
 
+  it("requires a body in the chat create MCP contract", () => {
+    const chatCreate = buildAgentV1McpToolsManifest("agent-v1").tools
+      .find((tool) => tool.capabilityId === "chat.create");
+
+    expect(chatCreate?.inputSchema.properties).toHaveProperty("body");
+    expect(chatCreate?.inputSchema.required).toContain("body");
+  });
+
   it("builds stable MCP tool metadata for every agent-v1 capability", () => {
     const cliManifest = buildAgentCliCapabilitiesManifest("agent-v1");
     const mcpManifest = buildAgentV1McpToolsManifest("agent-v1");

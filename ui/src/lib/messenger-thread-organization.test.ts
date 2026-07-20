@@ -6,10 +6,12 @@ import {
   customGroupIdFromSectionKey,
   customGroupSectionKey,
   dedupeThreadSummariesByKey,
+  flattenThreadSectionEntries,
   flattenThreadSections,
   locallyReadThreadSummary,
   nextDefaultThreadOrderKeysAfterMove,
   organizeCustomThreadDirectory,
+  organizeProjectThreadDirectory,
   organizeThreadEntries,
   projectSectionKeyToStoredId,
   sortCustomLayoutSections,
@@ -262,6 +264,114 @@ describe("messenger thread organization", () => {
     });
     expect(sections[0]?.childSections?.[1]?.entries.map((item) => item.thread.threadKey))
       .toEqual(["chat:loose-pinned"]);
+  });
+
+  it("composes custom groups atomically into the Project pinned and no-project sections", () => {
+    const projects = new Map<string, Project>([
+      ["project-1", { id: "project-1", name: "Alpha" } as Project],
+    ]);
+    const alphaConversation = conversation("alpha", {
+      contextLinks: [{
+        entityType: "project",
+        entityId: "project-1",
+        entity: { label: "Alpha" },
+      } as ChatConversation["contextLinks"][number]],
+    });
+    const groupedPinned = entry("chat:grouped-pinned", {}, alphaConversation);
+    const groupedUnpinned = entry(
+      "chat:grouped-unpinned",
+      { isPinned: true },
+      alphaConversation,
+    );
+    const hydratedOnly = entry("issue:hydrated-only", {
+      kind: "issues",
+      metadata: { splitIssue: true, projectId: "project-1", projectName: "Alpha" },
+    });
+
+    const sections = organizeProjectThreadDirectory(
+      [
+        groupedPinned,
+        groupedUnpinned,
+        entry("chat:loose-pinned", { isPinned: true }, alphaConversation),
+        entry("chat:loose-project", {}, alphaConversation),
+        entry("issues", { kind: "issues" }),
+        entry("chat:loose-none", {}, conversation("none")),
+      ],
+      [
+        {
+          id: "group-pinned",
+          name: "Pinned group",
+          pinned: true,
+          entries: [groupedPinned, hydratedOnly],
+        },
+        {
+          id: "group-unpinned",
+          name: "Unpinned group",
+          pinned: false,
+          entries: [groupedUnpinned],
+        },
+        {
+          id: "group-empty",
+          name: "Empty group",
+          pinned: false,
+          entries: [],
+        },
+      ],
+      projects,
+    );
+
+    expect(sections.map((section) => section.key)).toEqual([
+      "project:pinned",
+      "project:project-1",
+      "system",
+      "project:none",
+    ]);
+    expect(sections[0]?.childSections?.map((section) => section.key)).toEqual([
+      "custom-group:group-pinned",
+    ]);
+    expect(sections[0]?.entries.map((item) => item.thread.threadKey)).toEqual([
+      "chat:loose-pinned",
+    ]);
+    expect(sections[3]?.childSections?.map((section) => section.key)).toEqual([
+      "custom-group:group-unpinned",
+      "custom-group:group-empty",
+    ]);
+    expect(sections[3]?.entries.map((item) => item.thread.threadKey)).toEqual([
+      "chat:loose-none",
+    ]);
+    expect(sections[1]?.entries.map((item) => item.thread.threadKey)).toEqual([
+      "chat:loose-project",
+    ]);
+    expect(flattenThreadSectionEntries(sections).map((item) => item.thread.threadKey)).toEqual([
+      "chat:loose-pinned",
+      "chat:grouped-pinned",
+      "issue:hydrated-only",
+      "chat:loose-project",
+      "issues",
+      "chat:loose-none",
+      "chat:grouped-unpinned",
+    ]);
+  });
+
+  it("gives the first custom group stable-key ownership without hiding later empty groups", () => {
+    const sharedEntry = entry("chat:shared");
+    const sections = organizeProjectThreadDirectory(
+      [sharedEntry],
+      [
+        { id: "group-1", name: "First", pinned: false, entries: [sharedEntry, sharedEntry] },
+        { id: "group-2", name: "Second", pinned: false, entries: [sharedEntry] },
+      ],
+      new Map(),
+    );
+
+    expect(sections).toHaveLength(1);
+    expect(sections[0]?.childSections?.map((section) => [
+      section.key,
+      section.entries.map((item) => item.thread.threadKey),
+    ])).toEqual([
+      ["custom-group:group-1", ["chat:shared"]],
+      ["custom-group:group-2", []],
+    ]);
   });
 
   it("groups split issues by assignee with organization-provided agent labels", () => {

@@ -49,4 +49,22 @@ describe("Side Chat helpers", () => {
     expect(sideChatIsReadOnly({ conversationKind: "side_chat", sideChatState: "expired" } as ChatConversation)).toBe(true);
     expect(sideChatIsReadOnly({ conversationKind: "side_chat", sideChatState: "active" } as ChatConversation)).toBe(false);
   });
+
+  it("makes an active Side Chat read-only as soon as its local expiry elapses", () => {
+    const conversation = {
+      conversationKind: "side_chat",
+      sideChatState: "active",
+      sideChatExpiresAt: new Date("2026-07-20T10:00:00.000Z"),
+    } as ChatConversation;
+    expect(sideChatIsReadOnly(conversation, new Date("2026-07-20T09:59:59.999Z"))).toBe(false);
+    expect(sideChatIsReadOnly(conversation, new Date("2026-07-20T10:00:00.000Z"))).toBe(true);
+  });
+
+  it("keeps a promoted Side Chat editable as a normal Chat", () => {
+    expect(sideChatIsReadOnly({
+      conversationKind: "side_chat",
+      sideChatState: "kept",
+      sideChatExpiresAt: null,
+    } as ChatConversation)).toBe(false);
+  });
 });

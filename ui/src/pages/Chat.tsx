@@ -120,6 +120,7 @@ import {
   Bot,
   Boxes,
   ChevronDown,
+  CirclePlus,
   Copy,
   Folder,
   FolderInput,
@@ -139,7 +140,6 @@ import {
   PinOff,
   Plus,
   RefreshCw,
-  Sparkles,
   Square,
   Trash2,
   X
@@ -490,6 +490,32 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       projectId: activeProjectId === NO_PROJECT_ID ? undefined : activeProjectId,
     }),
     enabled: !!selectedOrganizationId && activeProjectId !== NO_PROJECT_ID,
+  });
+  const draftContextLinks = useMemo(
+    () => buildDraftChatContextLinks(
+      activeProjectId === NO_PROJECT_ID ? null : activeProjectId,
+      draftIssueContextId,
+    ),
+    [activeProjectId, draftIssueContextId],
+  );
+  const draftPreflightQuery = useQuery({
+    queryKey: [
+      "chats",
+      selectedOrganizationId ?? "__none__",
+      "draft-preflight",
+      activeSkillAgentId ?? "__none__",
+      activeProjectId,
+      draftIssueContextId ?? "__none__",
+      activePlanMode,
+    ],
+    queryFn: () => chatsApi.preflightDraft(selectedOrganizationId!, {
+      preferredAgentId: activeSkillAgentId!,
+      issueCreationMode: "manual_approval",
+      planMode: activePlanMode,
+      contextLinks: draftContextLinks,
+    }),
+    enabled: !selectedConversation && Boolean(selectedOrganizationId) && Boolean(activeSkillAgentId),
+    retry: false,
   });
   const {
     data: organizationSkills,
@@ -1154,20 +1180,132 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         pushToast({ title: "Fork this Feishu chat to continue in Rudder", tone: "error" });
         return;
       }
-      if (!conversation) { if (!acquireNewConversationSendLock()) return; newConversationLockAcquired = true; const selectedDraftAgentId = draftPreferredAgentId === NO_CHAT_AGENT_ID ? null : draftPreferredAgentId;
+      if (!conversation) {
+        if (!acquireNewConversationSendLock()) return;
+        newConversationLockAcquired = true;
+        const selectedDraftAgentId = draftPreferredAgentId === NO_CHAT_AGENT_ID ? null : draftPreferredAgentId;
         if (!selectedDraftAgentId) {
           pushToast({
             title: "No chat agent available",
-            body: "Create or activate an agent before sending.", tone: "error", }); releaseNewConversationSendLock(); newConversationLockAcquired = false;
-          return; } const createdConversation = await chatsApi.create(selectedOrganizationId, {
+            body: "Create or activate an agent before sending.", tone: "error",
+          });
+          releaseNewConversationSendLock();
+          newConversationLockAcquired = false;
+          return;
+        }
+        if (!draftPreflightQuery.data?.available) {
+          pushToast({
+            title: "Chat is not ready",
+            body: draftPreflightQuery.data?.error ?? "Check the selected agent configuration and try again.",
+            tone: "error",
+          });
+          releaseNewConversationSendLock();
+          newConversationLockAcquired = false;
+          return;
+        }
+
+        const abortController = new AbortController();
+        const startedAt = new Date();
+        const streamKey = `new:${startedAt.getTime()}:${Math.random().toString(36).slice(2)}`;
+        const acceptedConversation = { current: null as ChatConversation | null };
+        activeStreamKey = streamKey;
+        await chatsApi.sendFirstMessageStream(selectedOrganizationId, body, {
           preferredAgentId: selectedDraftAgentId,
           issueCreationMode: "manual_approval",
           planMode: draftPlanMode,
-        contextLinks: buildDraftChatContextLinks(
-            draftProjectId === NO_PROJECT_ID ? null : draftProjectId, draftIssueContextId, ), }); const startedAt = new Date(); conversation = upsertOptimisticConversation(createdConversation, body, startedAt); rememberChatAgentId(selectedOrganizationId, selectedDraftAgentId); rememberChatProjectIdForAgent(selectedOrganizationId, selectedDraftAgentId, draftProjectId === NO_PROJECT_ID ? null : draftProjectId);
-        if (usesComposerState) { setDraft(""); clearPendingFilesForCurrentScope();
-          setBranchPreview(null); }
-        navigate(chatConversationPath(conversation.id)); } const chatId = conversation.id; const activeDraftForChat = readChatScopedState(streamDrafts, chatId);
+          contextLinks: buildDraftChatContextLinks(
+            draftProjectId === NO_PROJECT_ID ? null : draftProjectId,
+            draftIssueContextId,
+          ),
+          signal: abortController.signal,
+          files: filesToUpload,
+          onEvent: async (event) => {
+            if (event.type === "ack") {
+              if (!event.conversation) {
+                throw new Error("First chat acknowledgement did not include the accepted conversation");
+              }
+              userMessageAcknowledged = true;
+              conversation = event.conversation;
+              acceptedConversation.current = event.conversation;
+              activeChatId = conversation.id;
+              if (!acquireChatSendLock(conversation.id)) {
+                throw new Error("The accepted chat is already sending another message");
+              }
+              chatSendLockAcquired = true;
+              streamOwnershipRef.current[conversation.id] = { streamKey, controller: abortController };
+              setStreamAbortController(conversation.id, abortController);
+              setChatSendInFlight(conversation.id, true);
+              upsertConversation(conversation);
+              upsertMessengerThreadSummary(conversation, {
+                latestActivityAt: new Date(event.userMessage.createdAt),
+                preview: event.userMessage.body,
+              });
+              upsertMessages(conversation.id, [event.userMessage]);
+              rememberChatAgentId(selectedOrganizationId, selectedDraftAgentId);
+              rememberChatProjectIdForAgent(
+                selectedOrganizationId,
+                selectedDraftAgentId,
+                draftProjectId === NO_PROJECT_ID ? null : draftProjectId,
+              );
+              if (usesComposerState) {
+                setBranchPreview(null);
+                setDraft("");
+                clearPendingFilesForCurrentScope();
+              }
+              options?.onUserMessageAcknowledged?.();
+              if (options?.clearPendingFilesOnSuccess && !pendingFilesClearedAfterAck) {
+                clearPendingFilesForCurrentScope();
+                pendingFilesClearedAfterAck = true;
+              }
+              setStreamDraftForChat(conversation.id, {
+                chatId: conversation.id,
+                streamKey,
+                userBody: body,
+                userCreatedAt: new Date(event.userMessage.createdAt),
+                userMessageId: event.userMessage.id,
+                chatTurnId: event.userMessage.chatTurnId ?? null,
+                turnVariant: event.userMessage.turnVariant ?? 0,
+                editedFromCreatedAt: null,
+                body: "",
+                generationId: event.generationId ?? null,
+                attemptEpoch: event.attemptEpoch ?? null,
+                lastCommittedRenderSeq: event.generationSeq ?? 0,
+                renderedBodyHash: event.bodyHash ?? EMPTY_CHAT_BODY_SHA256,
+                state: "streaming",
+                createdAt: startedAt,
+                transcript: [],
+                replyingAgentId: conversation.chatRuntime.runtimeAgentId ?? conversation.preferredAgentId ?? null,
+              });
+              navigate(chatConversationPath(conversation.id));
+              releaseNewConversationSendLock();
+              newConversationLockAcquired = false;
+              return;
+            }
+            if (!conversation) {
+              throw new Error("Chat stream emitted output before accepting the first message");
+            }
+            if (event.type === "assistant_delta" || event.type === "assistant_state" || event.type === "transcript_entry") {
+              setStreamDraftForChat(conversation.id, (current) => applyChatStreamProgressEvent(current, streamKey, event));
+              return;
+            }
+            if (event.type === "final") {
+              keepProcessOpenForMessages(event.messages);
+              upsertMessages(conversation.id, event.messages);
+              setStreamDraftForChat(conversation.id, (current) => current?.streamKey === streamKey ? null : current);
+            }
+          },
+        });
+        const createdConversation = acceptedConversation.current;
+        if (!createdConversation) {
+          throw new Error("Chat stream ended before accepting the first message");
+        }
+        if (options?.clearPendingFilesOnSuccess) clearPendingFilesForCurrentScope();
+        await refreshChat(createdConversation.id);
+        await queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, createdConversation.id) });
+        setStreamDraftForChat(createdConversation.id, (current) => current?.streamKey === streamKey ? null : current);
+        return;
+      }
+      const chatId = conversation.id; const activeDraftForChat = readChatScopedState(streamDrafts, chatId);
       const serverActiveGenerationId = queueQuery.data?.activeGenerationId ?? null;
       if (!options?.queuedMessageId && (activeDraftForChat || serverActiveGenerationId)) {
         await queueComposerFollowUp(conversation, body, { files: filesToUpload, clearComposerOnSuccess: usesComposerState });
@@ -1455,7 +1593,25 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       pushToast({ title: "Could not copy chat link", tone: "error" });
     }
   }; const createGroupForActiveConversation = () => { if (!selectedConversation || !selectedConversationThreadKey) return; createCustomGroupForChatMutation.mutate({ conversation: selectedConversation, threadKey: selectedConversationThreadKey }); }; const moveActiveConversationToGroup = (groupId: string) => { if (!selectedConversationThreadKey) return; assignCustomGroupEntryMutation.mutate({ groupId, threadKey: selectedConversationThreadKey }); }; const removeActiveConversationFromGroup = () => { if (!selectedConversationThreadKey) return; removeCustomGroupEntryMutation.mutate(selectedConversationThreadKey); }; const controlsDisabled = activeSendInFlight || newConversationSendInFlight; const activeSelectedAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId; const canPersistSelectedAgentForConversation = Boolean( selectedConversation && !selectedConversation.preferredAgentId && activeSelectedAgentId, );
-  const composerUnavailable = selectedConversation ? !selectedConversation.chatRuntime.available && !canPersistSelectedAgentForConversation : !activeSelectedAgentId; const composerUnavailableMessage = activeSelectedAgentId ? selectedConversation?.chatRuntime.error ?? "Selected chat agent is unavailable." : "Create or activate an agent before sending messages."; const hasPendingLightweightProposal = rawMessages.some(
+  const draftPreflightError = draftPreflightQuery.error instanceof Error
+    ? draftPreflightQuery.error.message
+    : draftPreflightQuery.error
+      ? "Could not validate the selected chat configuration."
+      : null;
+  const draftPreflightUnavailable = !activeSelectedAgentId
+    || draftPreflightQuery.isPending
+    || Boolean(draftPreflightError)
+    || !draftPreflightQuery.data?.available;
+  const composerUnavailable = selectedConversation
+    ? !selectedConversation.chatRuntime.available && !canPersistSelectedAgentForConversation
+    : draftPreflightUnavailable;
+  const composerUnavailableMessage = !activeSelectedAgentId
+    ? "Create or activate an agent before sending messages."
+    : selectedConversation
+      ? selectedConversation.chatRuntime.error ?? "Selected chat agent is unavailable."
+      : draftPreflightError
+        ?? draftPreflightQuery.data?.error
+        ?? "Checking the selected chat configuration."; const hasPendingLightweightProposal = rawMessages.some(
     (message) => !message.supersededAt && message.kind === "operation_proposal" && !message.approval && operationProposalStatusFromMessage(message) === "pending", ); const hasActionableApprovals = rawMessages .filter((m) => !m.supersededAt) .some((message) => approvalNeedsAction(message.approval));
   const agentPillLabel =
     activeAgentId === NO_CHAT_AGENT_ID ? (agents ? NO_CHAT_AGENT_LABEL : "Loading agents") : (() => { const activeAgent = (agents ?? []).find((agent) => agent.id === activeAgentId); return activeAgent ? formatChatAgentLabel(activeAgent) : "Unknown agent"; })(); const activeProjectContextLink = selectedConversation?.contextLinks.find((link) => link.entityType === "project") ?? null; const activeProject = activeProjectId === NO_PROJECT_ID ? null : visibleProjects.find((project) => project.id === activeProjectId) ?? null; const hasSelectedProject = activeProjectId !== NO_PROJECT_ID; const projectPillLabel = activeProject ? projectDisplayName(activeProject) : activeProjectId === NO_PROJECT_ID ? "No project" : activeProjectContextLink?.entity?.label ?? "Unknown project"; const showProjectSelector = !selectedConversation || activeProjectId !== NO_PROJECT_ID || !projectSelectionLocked; const allRecentProjectConversations = useMemo(() => {
@@ -1828,7 +1984,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           onClick={activateSideChatSlashCommand}
         >
           <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] bg-[color:var(--surface-active)] text-[color:var(--accent-base)]">
-            <Sparkles className="h-4 w-4" />
+            <CirclePlus className="h-4 w-4" />
           </span>
           <span className="flex min-w-0 flex-1 items-baseline gap-2">
             <span className="shrink-0 font-medium text-foreground">Side Chat</span>

@@ -68,29 +68,22 @@ test.describe("Explicit chat agent settings", () => {
     expect(agentRes.ok()).toBe(true);
     const agent = await agentRes.json();
 
-    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
-      data: {
-        title: "Model configuration warning",
-        preferredAgentId: agent.id,
-        issueCreationMode: "manual_approval",
-        planMode: false,
-      },
-    });
-    expect(chatRes.ok()).toBe(true);
-    const chat = await chatRes.json();
-
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
-    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${agent.id}`);
 
     await expect(page.getByRole("button", { name: /Navigator/ })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("The current user has not configured a chat model yet.")).toBeVisible();
-    await expect(page.getByRole("link", { name: "Configure model" })).toHaveAttribute("href", `/${organization.issuePrefix}/agents`);
+    await expect(page.getByRole("link", { name: "Open agents" })).toHaveAttribute("href", `/${organization.issuePrefix}/agents`);
     await expect(page.getByText("Navigator uses process")).toHaveCount(0);
     await expect(page.getByText("does not support chat conversations")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Send" })).toBeDisabled();
+
+    const chatsRes = await page.request.get(`/api/orgs/${organization.id}/chats?status=all&limit=40`);
+    expect(chatsRes.ok()).toBe(true);
+    expect(await chatsRes.json()).toEqual([]);
   });
 });

@@ -588,7 +588,7 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
   {
     "capabilityId": "chat.create",
     "name": "rudder_chat_create",
-    "description": "Create a chat conversation.",
+    "description": "Create a chat conversation with its first message.",
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": false,
@@ -694,5 +694,5 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": true
   }
 ] as const;
-export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "c773870c046e7ebb8b9d8ca4eccf54e58efb460a1392f2d9f38a5e5c21c7e6d1";
+export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "998b5f7a23d57634148a59a04f002b46b480570952d9f7eb4a9fa559f756cb7c";
 export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "c4d41b5aaa22d76e528877c17cee84e0fb363b38ebe9d2ff4e1c36a46edecfbe";

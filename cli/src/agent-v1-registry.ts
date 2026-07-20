@@ -50,6 +50,7 @@ export interface AgentV1McpToolManifestEntry extends AgentCliCapabilitiesManifes
     type: "object";
     additionalProperties: boolean;
     properties: Record<string, unknown>;
+    required?: string[];
   };
   outputMode: "json";
 }
@@ -990,9 +991,9 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   },
   {
     id: "chat.create",
-    command: "rudder chat create --org-id <id>",
+    command: "rudder chat create --org-id <id> --body <text>",
     category: "chat",
-    description: "Create a chat conversation.",
+    description: "Create a chat conversation with its first message.",
     mutating: true,
     contract: "agent-v1",
     requiresOrgId: true,

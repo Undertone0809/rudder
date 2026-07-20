@@ -178,7 +178,7 @@ test.describe("Chat Work Manifest", () => {
         orgId: organization.id,
         conversationId: chat.id,
         role: "assistant",
-        body: `Produced ${outputFile.markdownLink} and ${websiteOutputFile.markdownLink}. Source duplicate: https://source.example/research#section. Reference: https://reference.example/docs. ${overflowReferences}`,
+        body: `Produced ${outputFile.markdownLink} and ${websiteOutputFile.markdownLink}. Source duplicate: https://source.example/research#section. Reference: https://reference.example/docs. [GitHub repository](https://github.com/Undertone0809/rudder). ${overflowReferences}`,
         status: "completed",
         runId,
         replyingAgentId: agent.id,
@@ -213,7 +213,10 @@ test.describe("Chat Work Manifest", () => {
     expect(otherManifestRes.ok(), await otherManifestRes.text()).toBe(true);
 
     await page.goto("/");
-    await page.evaluate((orgId) => localStorage.setItem("rudder.selectedOrganizationId", orgId), organization.id);
+    await page.evaluate((orgId) => {
+      localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      localStorage.setItem("rudder.theme", "dark");
+    }, organization.id);
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
 
@@ -228,10 +231,15 @@ test.describe("Chat Work Manifest", () => {
       .toBeVisible();
     await expect(shelf).not.toContainText("From Agent");
     const references = shelf.locator("section[aria-label='References']");
-    await references.getByRole("button", { name: "View all 28" }).click();
+    await references.getByRole("button", { name: "View all 29" }).click();
     await expect(references).toContainText("https://reference.example/docs");
     await expect(references.getByRole("button", { name: /reference\.example/ }).locator("[data-website-icon]"))
       .toBeVisible();
+    const githubLogo = references.getByRole("button", { name: /GitHub repository/ })
+      .locator("img.rudder-website-link-logo");
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    await expect(githubLogo).toHaveAttribute("data-dark-mode", "invert");
+    await expect(githubLogo).toHaveCSS("filter", "invert(1)");
     await expect(references.getByRole("button", { name: new RegExp(issue.identifier) }).locator("[data-file-icon='issue']"))
       .toBeVisible();
     await expect(references.getByRole("button", { name: new RegExp(automation.title) }).locator("[data-file-icon='automation']"))
@@ -286,7 +294,7 @@ test.describe("Chat Work Manifest", () => {
     await expect(issueSidePanel).toHaveCount(0);
     await expect(shelf).toBeVisible();
     await shelf.locator("section[aria-label='References']")
-      .getByRole("button", { name: "View all 28" })
+      .getByRole("button", { name: "View all 29" })
       .click();
 
     const manifestScrollRegion = shelf.getByTestId("chat-work-manifest-scroll-region");

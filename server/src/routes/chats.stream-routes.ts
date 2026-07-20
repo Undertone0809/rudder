@@ -6,6 +6,7 @@ import {
   convertChatToIssueSchema,
   createChatAttachmentMetadataSchema,
   createChatContextLinkSchema,
+  createChatFirstTurnSchema,
   resolveChatOperationProposalSchema,
   setChatProjectContextSchema,
   stopChatGenerationSchema,
@@ -86,6 +87,23 @@ function outputAdmissionClosed(error: unknown): boolean {
   );
 }
 
+function normalizeMultipartFirstTurnBody(body: Record<string, unknown> | undefined) {
+  if (!body) return {};
+  const normalized = { ...body };
+  if (typeof normalized.planMode === "string") {
+    if (normalized.planMode === "true") normalized.planMode = true;
+    else if (normalized.planMode === "false") normalized.planMode = false;
+  }
+  if (typeof normalized.contextLinks === "string") {
+    try {
+      normalized.contextLinks = JSON.parse(normalized.contextLinks);
+    } catch {
+      // Leave invalid JSON in place so the shared schema returns a normal 400.
+    }
+  }
+  return normalized;
+}
+
 export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
   const CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE =
     "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.";
@@ -115,6 +133,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     isMultipartRequest,
     uploadedMessageFiles,
     validateUploadedMessageFiles,
+    preflightChatDraft,
     logChatMessagesAdded,
     assertContextLinksBelongToCompany,
     turnContextFromUserMessage,
@@ -135,8 +154,13 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     wakeServerQueue,
     wakeTerminalProjector,
   } = ctx;
-  router.post("/chats/:id/messages/stream", async (req, res) => {
-    if (isMultipartRequest(req)) {
+  const handleChatMessageStream = async (req: Request, res: any) => {
+    const atomicFirstTurn = (req as any).atomicFirstTurn as {
+      conversation: ChatConversation;
+      userMessage: ChatMessage;
+      uploadPrepared: boolean;
+    } | undefined;
+    if (isMultipartRequest(req) && !atomicFirstTurn?.uploadPrepared) {
       try {
         await runMessageFileUpload(req, res);
       } catch (err) {
@@ -164,7 +188,8 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       return;
     }
 
-    const conversation = await assertConversationAccess(req, req.params.id as string);
+    const conversation = atomicFirstTurn?.conversation
+      ?? await assertConversationAccess(req, req.params.id as string);
     if (!conversation) {
       res.status(404).json({ error: "Chat conversation not found" });
       return;
@@ -183,10 +208,12 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     }
 
     const queuedMessageId = parsedBody.data.queuedMessageId ?? null;
-    const assistantAvailability = await assistantSvc.getChatAssistantAvailability(conversation as ChatConversation);
-    if (!assistantAvailability.available) {
-      res.status(503).json({ error: assistantAvailability.error });
-      return;
+    if (!atomicFirstTurn) {
+      const assistantAvailability = await assistantSvc.getChatAssistantAvailability(conversation as ChatConversation);
+      if (!assistantAvailability.available) {
+        res.status(503).json({ error: assistantAvailability.error });
+        return;
+      }
     }
 
     const abortController = new AbortController();
@@ -254,6 +281,41 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       startupGate.resolveGeneration(null);
       startingChatGenerationGates.delete(conversation.id);
       releaseGeneration();
+      if (atomicFirstTurn) {
+        const failurePayload = recoverableFailurePayload(error, null);
+        const failureBody = recoverableFailureBody(failurePayload) || CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE;
+        const failedMessage = await svc.addMessage(conversation.id, {
+          orgId: conversation.orgId,
+          role: "assistant",
+          kind: "message",
+          status: "failed",
+          body: failureBody,
+          structuredPayload: failurePayload,
+          replyingAgentId: conversation.preferredAgentId,
+          chatTurnId: atomicFirstTurn.userMessage.chatTurnId,
+        });
+        await logChatMessagesAdded(conversation, [failedMessage], {
+          actorType: "system",
+          actorId: "chat-assistant",
+          agentId: conversation.preferredAgentId,
+        });
+        res.status(201);
+        res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache, no-transform");
+        res.setHeader("X-Accel-Buffering", "no");
+        writeStreamEvent(res, {
+          type: "ack",
+          conversation: atomicFirstTurn.conversation,
+          userMessage: atomicFirstTurn.userMessage,
+        });
+        writeStreamEvent(res, {
+          type: "error",
+          error: failureBody,
+          messageId: failedMessage.id,
+        });
+        res.end();
+        return;
+      }
       throw error;
     }
     if (abortController.signal.aborted && startupGate.stopRequested) {
@@ -387,7 +449,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     res.flushHeaders();
 
     try {
-      const userMessage = await addUserMessage(
+      const userMessage = atomicFirstTurn?.userMessage ?? await addUserMessage(
         conversation as ChatConversation,
         parsedBody.data.body,
         actor,
@@ -426,6 +488,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       writeStreamEvent(res, {
         type: "ack",
         userMessage: hydratedUserMessage,
+        ...(atomicFirstTurn ? { conversation: atomicFirstTurn.conversation } : {}),
         generationId: generation!.id,
         attemptEpoch: generation!.attemptEpoch ?? 1,
         generationSeq: 0,
@@ -791,6 +854,78 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       releaseGeneration();
       wakeServerQueue();
     }
+  };
+
+  router.post("/chats/:id/messages/stream", handleChatMessageStream);
+
+  router.post("/orgs/:orgId/chats/messages/stream", async (req, res) => {
+    let uploadPrepared = false;
+    if (isMultipartRequest(req)) {
+      try {
+        await runMessageFileUpload(req, res);
+        uploadPrepared = true;
+      } catch (err) {
+        if (err instanceof multer.MulterError) {
+          if (err.code === "LIMIT_FILE_SIZE") {
+            res.status(422).json({ error: `Attachment exceeds ${MAX_ATTACHMENT_BYTES} bytes` });
+            return;
+          }
+          res.status(400).json({ error: err.message });
+          return;
+        }
+        throw err;
+      }
+    }
+    const parsed = createChatFirstTurnSchema.safeParse(
+      isMultipartRequest(req)
+        ? normalizeMultipartFirstTurnBody(req.body as Record<string, unknown> | undefined)
+        : (req.body ?? {}),
+    );
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid first chat message", details: parsed.error.issues });
+      return;
+    }
+    const messageFiles = uploadedMessageFiles(req);
+    const attachmentValidationError = validateUploadedMessageFiles(messageFiles);
+    if (attachmentValidationError) {
+      res.status(422).json({ error: attachmentValidationError });
+      return;
+    }
+    const actor = getActorInfo(req);
+    if (actor.actorType === "agent") {
+      res.status(422).json({ error: "Agent-authored chat messages must use the non-stream message endpoint" });
+      return;
+    }
+    const draft = await preflightChatDraft(req, res, parsed.data);
+    if (!draft) return;
+    if (!draft.availability.available) {
+      res.status(503).json({ error: draft.availability.error });
+      return;
+    }
+    const accepted = await svc.createWithInitialMessage(draft.orgId, {
+      title: parsed.data.title,
+      summary: parsed.data.summary ?? null,
+      preferredAgentId: draft.preferredAgentId,
+      issueCreationMode: parsed.data.issueCreationMode ?? draft.organization.defaultChatIssueCreationMode,
+      planMode: parsed.data.planMode ?? false,
+      createdByUserId: actor.actorId,
+      contextLinks: draft.contextLinks,
+      initialMessage: {
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: parsed.data.body,
+      },
+      activity: actor,
+    });
+    const conversation = await assistantSvc.enrichConversation(accepted.conversation) as ChatConversation;
+    (req.params as Record<string, string>).id = conversation.id;
+    (req as any).atomicFirstTurn = {
+      conversation,
+      userMessage: accepted.message,
+      uploadPrepared,
+    };
+    await handleChatMessageStream(req, res);
   });
 
   router.post("/chats/:id/messages/stream/checkpoint", validate(chatClientCheckpointSchema), async (req, res) => {

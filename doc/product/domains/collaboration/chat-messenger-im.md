@@ -175,6 +175,9 @@ Product model:
 - Entry points that only establish context, such as Project `Chat`, open an
   unpersisted new-chat draft. They must not create an empty conversation merely
   because the operator opened the composer.
+- No Chat may persist without at least one durable message or structured system
+  event. The first accepted message is the atomic creation boundary across UI,
+  API, CLI, MCP, automation, and IM entry points.
 - Messages have role, status, body, attachments, rich references, structured
   payloads, and optional run attribution.
 - A conversation Work manifest reconciles inspectable Outputs, Sources, and
@@ -260,40 +263,46 @@ Flow:
    then a complete prompt suggestion before editing or sending the draft.
 3. Composer includes a selected agent and may include attachments, mentions,
    rich references, selected skills, and structured proposal payloads.
-4. On the first send, the server persists the agent-backed conversation, user
-   message, and context links. Direct create callers that omit the agent receive
-   the organization's first available agent; creation fails when none exists.
-5. If a runtime assistant is invoked, Rudder creates a chat Agent Run and
+4. Before the first send, the server performs a side-effect-free preflight for
+   organization access, Agent/runtime/model support, context ownership, and
+   attachment validity. A failure keeps the complete unpersisted draft.
+5. On the first accepted send, the server atomically persists the agent-backed
+   conversation, context links, first message, title, and activity before
+   acknowledging the turn. Direct create callers must supply a non-empty first
+   message; the server derives its role from the authenticated actor.
+6. If assistant startup or generation fails after acceptance, Rudder retains
+   the accepted user message and durable, visible failure evidence.
+7. If a runtime assistant is invoked, Rudder creates a chat Agent Run and
    streams/persists assistant messages.
-6. Chat can continue executing the task conversationally or create/link an
+8. Chat can continue executing the task conversationally or create/link an
    issue, automation, or approval when the operator asks for that additional
    structure. The assistant must not emit an issue proposal merely because the
    work is large, durable, assignable, or issue-shaped.
-7. When the operator refreshes a completed assistant answer, Rudder reuses the
+9. When the operator refreshes a completed assistant answer, Rudder reuses the
    original turn context, creates a new turn variant, and surfaces branch
    controls for moving between variants.
-8. While the refreshed or edited variant is still streaming, the operator may
+10. While the refreshed or edited variant is still streaming, the operator may
    switch the visible turn branch back to an earlier variant to inspect prior
    user and assistant content. The current stream continues in the background,
    generation controls remain available, and returning to the active/latest
    variant shows the live stream draft again.
-9. If the operator sends another local follow-up while the selected chat has an
+11. If the operator sends another local follow-up while the selected chat has an
    active generation, Rudder creates a queued follow-up with the current draft,
    attachments, selected project, skills, model/effort, access mode, and
    expected active generation id.
-10. The queue renders beside the composer with stable ordering. The first queued
+12. The queue renders beside the composer with stable ordering. The first queued
    item is marked as next, later items show their queue position, and editable
    queued items expose edit/delete controls.
-11. When the operator chooses Steer, Rudder atomically persists the durable
+13. When the operator chooses Steer, Rudder atomically persists the durable
    control action, one normal user message, their queue linkage, and message
    activity evidence before attempting provider delivery. That
    message stays in the conversation whether delivery is native, deferred,
    unknown, or actionable failure; delivery status remains separate evidence.
-12. When the current reply completes, a server-owned worker claims the next
+14. When the current reply completes, a server-owned worker claims the next
    eligible queued follow-up, sends it as the next chat turn, and hides the
    queued row after it is linked to the delivered user message. Delivery does
    not depend on the originating page remaining open.
-13. If the current reply is stopped, fails, or is otherwise not completed,
+15. If the current reply is stopped, fails, or is otherwise not completed,
    ordinary queued follow-ups stay parked and are not silently flushed. The
    operator may explicitly Steer retained feedback; Rudder then persists a
    continuation, waits for the prior owner to terminate, and starts that
@@ -302,6 +311,17 @@ Flow:
 Invariants:
 
 - Chat messages must remain tied to their conversation and organization.
+- A Chat transaction must not commit a conversation before its first message or
+  structured system event. Preflight, validation, permission, context,
+  attachment-preparation, Agent, runtime, and model failures are side-effect
+  free and must not add Messenger rows, activities, or bindings.
+- After the first message is accepted, runtime startup and generation failures
+  are real work evidence: the Chat, accepted message, and durable visible error
+  remain inspectable.
+- Production code may create `chat_conversations` only through approved
+  lifecycle services. Automation and IM bindings must share the atomic first
+  event transaction; Fork and Side Chat must copy history or add a system event
+  before commit.
 - A locally created native conversation must not persist without a preferred
   organization agent, and an existing native conversation cannot clear that
   assignment through the Chat update API. Agent-organized Messenger views must
@@ -394,6 +414,12 @@ Invariants:
 
 Evidence:
 
+- Atomic first-turn route/UI tests cover side-effect-free preflight, required
+  initial bodies, multipart context normalization, no pre-ack navigation or
+  clearing, one ack-created Chat, and durable startup-failure evidence.
+- Automation, Feishu, lifecycle architecture, and migration tests cover atomic
+  internal first events, prohibited direct conversation inserts, orphan
+  deletion, bound-row recovery, Messenger hiding, and IM binding invalidation.
 - Chat E2E covers rich references, skill picker, duplicate-free agent-enabled
   skill mentions, attachments, draft persistence, and attribution navigation.
 - Chat scroll-map focused tests cover the visible-message filter, the 64-marker
@@ -856,12 +882,11 @@ before the exploration proves useful.
   structure for a short clarification or tangent.
 - A transient client-only prompt would lose runtime evidence and would bypass
   the normal Chat execution, budget, and audit paths.
-- Side Chat therefore delays persistence until first Send, then preserves the
-  resulting conversation and run evidence while keeping the thread out of
-  ordinary lists unless the operator promotes it.
-- Completion is explicit and immediate. `Done & return` makes the Side Chat
-  read-only; closing its tab removes the ordinary UI entry without deleting the
-  audit record.
+- Side Chat therefore delays persistence until first Send and keeps the thread
+  out of ordinary lists unless the operator promotes it.
+- Temporary means disposable: closing the Side Chat tab destroys its client
+  draft or hidden persisted conversation. The operator promotes useful work
+  with `Keep in Messenger` before closing it.
 
 ### Actors / Objects / State
 
@@ -873,11 +898,13 @@ before the exploration proves useful.
   the first Send.
 - A persisted Side Chat is a `chat_conversations` row with
   `conversationKind=side_chat`, source lineage, `messengerVisible`, lifecycle
-  state, expiry/completion/keep timestamps, and the client mutation id.
-- Lifecycle states are `active`, `completed`, `expired`, and `kept`.
+  state, expiry/keep timestamps, and the client mutation id. The legacy
+  `completed` enum/value remains schema-compatible but is not produced by the
+  current Side Chat workflow.
+- Current lifecycle states are `active`, `expired`, and `kept`.
 - `active` is hidden and mutable until its two-hour send window expires.
-  `completed` and `expired` are hidden and read-only. `kept` is durable,
-  Messenger-visible, and mutable through the ordinary Chat path.
+  `expired` is hidden and read-only. `kept` is durable, Messenger-visible, and
+  mutable through the ordinary Chat path.
 
 ### Entry Points / Inputs
 
@@ -887,7 +914,7 @@ before the exploration proves useful.
 - First Send posts the exact source assistant message plus the provisional
   mutation id to `POST /api/chats/:sourceId/side-chats`, then uses the normal
   Chat message stream route.
-- `Done & return` posts to `/api/chats/:id/side-chat/complete`.
+- Closing a persisted Side Chat posts to `DELETE /api/chats/:id/side-chat`.
 - `Keep in Messenger` posts to `/api/chats/:id/side-chat/keep`.
 
 ### Product Logic Flow
@@ -909,16 +936,19 @@ before the exploration proves useful.
    the two-hour send window.
 6. Hidden Side Chats are excluded from ordinary Chat lists, Messenger threads,
    recent chats, search results, and custom groups.
-7. `Done & return` is allowed only after an active reply finishes. It changes
-   `active` to `completed`, clears expiry, and makes the open panel read-only.
-   Closing that tab removes the ordinary UI path but keeps the audit record.
+7. Closing a provisional tab discards the unsent client draft. Closing a
+   persisted temporary tab cancels any active generation, deletes the hidden
+   Side Chat and its owned rows, and closes the tab. Close failures stay visible
+   and do not silently remove the tab.
 8. `Keep in Messenger` changes an `active` Side Chat to `kept`, preserves the
    same conversation id, removes expiry, and makes it visible. If the source
    Chat already belongs to the operator's custom group, the kept Side Chat is
    appended to that group; otherwise it remains an ungrouped Messenger Chat.
-9. The first attempted mutation after the send window expires atomically marks
-   the Side Chat `expired` and rejects the mutation without creating a message
-   or run.
+   The Side Panel tab closes and that same id opens as an ordinary Messenger
+   Chat with the ordinary Chat UI.
+9. When the send window elapses, the open Side Chat becomes locally read-only
+   immediately. The first server mutation at or after expiry atomically marks
+   it `expired` and rejects the mutation without creating a message or run.
 
 ### Decision Table
 
@@ -927,7 +957,8 @@ before the exploration proves useful.
 | Provisional open | Valid normal Chat; completed assistant anchor available | Open one unsaved Side Panel target | Create a conversation before first Send or change parent state | Side Chat E2E entry screenshots |
 | First Send | Owner and organization match; anchor is completed; mutation id is new or an identical retry | Create exactly one hidden active Side Chat and start the ordinary Chat runtime flow | Duplicate records, copy messages after the anchor, or expose the thread in Messenger | Service, route, and E2E tests |
 | Active follow-up | Owner matches and expiry is in the future | Persist the message and refresh expiry to two hours | Let another user send or silently retain the old expiry | Service and route tests |
-| Complete | State is active and no generation is running | Transition to completed and render the tab read-only | Cancel a live reply, reopen mutation, show Keep, rename, or delete the audit record | Service, route, and E2E tests |
+| Close provisional | No persisted conversation id | Discard the client draft and close the tab | Create or retain a server record | UI and E2E tests |
+| Close persisted | Hidden Side Chat belongs to operator | Cancel any live generation, delete the temporary conversation, and close the tab | Leave a hidden recoverable thread or delete a kept Messenger Chat | Service, route, and E2E tests |
 | Expire | Active send window has elapsed | Transition to expired and reject mutation | Create a user message, generation, or other mutation side effect | Service and route tests |
 | Keep | State is active | Preserve id, transition to kept, expose in Messenger, and reuse source group only when it exists | Create a replacement Chat, invent a custom group, or keep a completed/expired Side Chat | Service, route, and E2E tests |
 | Unauthorized access | Wrong organization, non-board actor, or different user | Return not found/denied without revealing the record | Leak Side Chat existence or content | Service and route tests |
@@ -940,49 +971,55 @@ before the exploration proves useful.
 - The assistant-message action is available only on completed assistant
   responses. The Side Panel empty state offers Side Chat only when a source
   Chat context exists.
-- The Side Chat panel shows the source-answer preview, focused transcript,
-  composer, expiry state, `Keep in Messenger`, and `Done & return`.
+- Every Side Chat entry point and header uses the circle-plus Side icon. The
+  sparkle icon is not the Side Chat identity.
+- Apart from its source-answer preview and expiry/Keep controls, the Side Chat
+  transcript and composer use the normal Chat visual and interaction grammar:
+  normal user messages, assistant attribution, process transcript, streaming
+  answer, editor, send affordance, and visible Project, Agent, and Skills chips.
+- The Side Chat composer does not show the redundant `Enter to send ·
+  Shift+Enter for a new line` helper, and there is no Done action.
 
 ### Operator-Visible Output
 
 - Before first Send, the operator sees an independent provisional composer.
 - While active, the operator sees user/assistant turns and a remaining-time
   label without any new row in Messenger.
-- Completion or expiry replaces the composer and lifecycle actions with a
-  read-only explanation.
-- Keep updates the state label to `Kept in Messenger` and makes the same
-  conversation available in the normal Messenger list.
-- Send, complete, and keep failures surface as visible errors or toasts; they
-  are not silently ignored.
+- Expiry replaces the composer with a read-only explanation.
+- Keep closes the Side Chat tab, makes the same conversation available in the
+  normal Messenger list, and opens it with the normal Chat UI.
+- Send, close, and keep failures surface as visible errors or toasts; they are
+  not silently ignored.
 
 ### Persisted Evidence
 
 - The Side Chat conversation stores organization, creator, source conversation
-  and message lineage, lifecycle state, visibility, expiry/completion/keep
-  timestamps, and idempotency key.
+  and message lineage, lifecycle state, visibility, expiry/keep timestamps,
+  legacy-compatible completion fields, and idempotency key.
 - Copied source messages and attachments preserve the bounded context through
   the anchor. The `side_chat_started` system event records the source boundary.
 - Normal `chat_messages`, `chat_generations`, Agent Runs, transcripts, and cost
   evidence record executed follow-ups.
 - Activity entries record `chat.side_chat_created`,
-  `chat.side_chat_completed`, and `chat.side_chat_kept`.
+  `chat.side_chat_destroyed`, and `chat.side_chat_kept`.
 
 ### Canonical Scenarios
 
-1. Focused clarification and return:
+1. Focused clarification and discard:
    - Trigger: Open Side Chat on a completed assistant answer, send a follow-up,
-     wait for the reply, then choose `Done & return`.
-   - Expected state/action: The parent draft remains unchanged; the Side Chat
-     becomes read-only immediately.
-   - Visible output: Active transcript, then completed read-only panel; closing
-     the tab returns to the unchanged parent Chat.
-   - Evidence: `tests/e2e/chat-side-chat.spec.ts` completion flow.
+     wait for the streaming reply, then close the tab.
+   - Expected state/action: The parent draft remains unchanged; the hidden Side
+     Chat is destroyed.
+   - Visible output: Normal Chat transcript/streaming inside the panel, then the
+     unchanged parent Chat with no recoverable hidden thread.
+   - Evidence: `tests/e2e/chat-side-chat.spec.ts` close/destroy flow.
 2. Useful tangent promoted to Messenger:
    - Trigger: Type `/side`, enter through the composer menu, send, then choose
      `Keep in Messenger`.
    - Expected state/action: The hidden record becomes `kept` with the same id
      and joins the source custom group only when one already exists.
-   - Visible output: `Kept in Messenger` state and a normal Messenger row.
+   - Visible output: The Side Panel tab closes and the same id opens as a normal
+     editable Messenger Chat.
    - Evidence: Side Chat service, route, and E2E keep tests.
 3. Expired hidden exploration:
    - Trigger: Attempt another send after the active two-hour window.
@@ -1003,20 +1040,21 @@ before the exploration proves useful.
   selected branch, or active generation.
 - A hidden Side Chat never appears in ordinary Chat or Messenger discovery,
   unread counts, recent results, search, or custom groups.
-- Completion and expiry are terminal read-only states. They cannot be reopened
-  or promoted later.
-- Side Chat records are audit evidence and cannot be deleted through the normal
-  Chat delete path.
+- Expiry is terminal and read-only. An expired temporary Side Chat can only be
+  closed/destroyed, not promoted.
+- Temporary Side Chat records are disposable and are destroyed through the
+  Side Chat close endpoint. The normal Chat delete path accepts kept Side Chats
+  because they are ordinary Messenger Chats after promotion.
 - Keeping preserves the same conversation id and does not create a custom group
   when the source has none.
-- Side Chat does not promise a history/archive UI, cross-device recovery of an
-  unsent provisional draft, or automatic deletion of hidden audit records.
+- Side Chat does not promise a history/archive UI or cross-device recovery of
+  an unsent provisional draft.
 
 ### Drift Boundaries
 
 - Changes to entry points, anchoring, persistence timing, owner scope, copied
-  context, TTL, lifecycle transitions, visibility, promotion grouping,
-  immutability, or audit retention require updating this contract.
+  context, TTL, lifecycle transitions, close/destruction, visibility,
+  promotion grouping, or immutability require updating this contract.
 - Pure visual tuning that preserves the shared composer-menu grammar and the
   interaction outcomes does not require a product-contract change.
 
@@ -1050,7 +1088,7 @@ Related tests:
 
 Known gaps:
 
-- The audit record has no ordinary history/archive UI by design.
+- None for the current temporary lifecycle contract.
 
 ## CHAT.RICH.REFERENCE.RENDERING.001
 
@@ -1516,6 +1554,9 @@ Product model:
   until the app session ends.
 - Hiding the Side Panel is a visibility action, not a tab-destruction action.
   The operator must explicitly close a tab to remove it from the current item.
+- Side Chat is the lifecycle exception to generic close behavior: explicitly
+  closing its tab also discards the provisional draft or destroys the persisted
+  hidden temporary chat. Merely hiding the Side Panel does not destroy it.
 - Closing the final tab removes that tab and closes the Side Panel. The empty
   picker remains available when the operator explicitly opens an empty panel or
   uses the add-tab affordance, but is not left behind as a side effect of closing

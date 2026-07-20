@@ -4,6 +4,7 @@ import {
   addChatMessageSchema,
   cancelChatQueuedMessageSchema,
   chatAutomationCreateFromStructuredPayload,
+  chatDraftSchema,
   createChatConversationSchema,
   createChatQueuedMessageSchema,
   createSideChatSchema,
@@ -339,6 +340,48 @@ export function chatRoutes(
         throw new HttpError(422, "Agent context must belong to the same organization");
       }
     }
+  }
+
+  async function preflightChatDraft(
+    req: Request,
+    res: Response,
+    input: {
+      preferredAgentId?: string | null;
+      planMode?: boolean;
+      contextLinks?: Array<{ entityType: "issue" | "project" | "agent"; entityId: string; metadata?: Record<string, unknown> | null }>;
+    },
+  ) {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    const organization = await organizationsSvc.getById(orgId);
+    if (!organization) {
+      res.status(404).json({ error: "Organization not found" });
+      return null;
+    }
+    const contextLinks = input.contextLinks ?? [];
+    await assertContextLinksBelongToCompany(orgId, contextLinks);
+    let preferredAgentId = input.preferredAgentId ?? null;
+    if (preferredAgentId) {
+      const agent = await agentsSvc.getById(preferredAgentId);
+      if (!agent || agent.orgId !== orgId || agent.status === "terminated") {
+        res.status(422).json({ error: "Preferred agent must be available in the same organization" });
+        return null;
+      }
+    } else {
+      const [defaultAgent] = await agentsSvc.list(orgId);
+      if (!defaultAgent) {
+        res.status(422).json({ error: "Chat requires an available agent" });
+        return null;
+      }
+      preferredAgentId = defaultAgent.id;
+    }
+    const availability = await assistantSvc.getDraftChatAssistantAvailability({
+      orgId,
+      preferredAgentId,
+      contextLinks,
+      planMode: input.planMode ?? false,
+    });
+    return { orgId, organization, contextLinks, preferredAgentId, availability };
   }
 
   type ActorInfo = ReturnType<typeof getActorInfo>;
@@ -1678,63 +1721,37 @@ export function chatRoutes(
   });
 
   router.post("/orgs/:orgId/chats", validate(createChatConversationSchema), async (req, res) => {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const organization = await organizationsSvc.getById(orgId);
-    if (!organization) {
-      res.status(404).json({ error: "Organization not found" });
+    const draft = await preflightChatDraft(req, res, req.body);
+    if (!draft) return;
+    if (!draft.availability.available) {
+      res.status(503).json({ error: draft.availability.error });
       return;
     }
-
-    const contextLinks = req.body.contextLinks ?? [];
-    await assertContextLinksBelongToCompany(orgId, contextLinks);
-    let preferredAgentId = req.body.preferredAgentId ?? null;
-    if (preferredAgentId) {
-      const agent = await agentsSvc.getById(preferredAgentId);
-      if (!agent || agent.orgId !== orgId || agent.status === "terminated") {
-        res.status(422).json({ error: "Preferred agent must be available in the same organization" });
-        return;
-      }
-    } else {
-      const [defaultAgent] = await agentsSvc.list(orgId);
-      if (!defaultAgent) {
-        res.status(422).json({ error: "Chat requires an available agent" });
-        return;
-      }
-      preferredAgentId = defaultAgent.id;
-    }
-
     const actor = getActorInfo(req);
-    const conversation = await svc.create(orgId, {
+    const result = await svc.createWithInitialMessage(draft.orgId, {
       title: req.body.title,
       summary: req.body.summary ?? null,
-      preferredAgentId,
-      issueCreationMode: req.body.issueCreationMode ?? organization.defaultChatIssueCreationMode,
+      preferredAgentId: draft.preferredAgentId,
+      issueCreationMode: req.body.issueCreationMode ?? draft.organization.defaultChatIssueCreationMode,
       planMode: req.body.planMode ?? false,
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
-      contextLinks,
-    });
-
-    await logActivity(db, {
-      orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "chat.created",
-      entityType: "chat",
-      entityId: conversation?.id ?? "unknown",
-      details: {
-        title: conversation?.title ?? "New chat",
-        contextLinkCount: contextLinks.length,
-        contextLinks: contextLinks.map((link: { entityType: "issue" | "project" | "agent"; entityId: string }) => ({
-          entityType: link.entityType,
-          entityId: link.entityId,
-        })),
+      contextLinks: draft.contextLinks,
+      initialMessage: {
+        role: actor.actorType === "agent" ? "assistant" : "user",
+        kind: "message",
+        status: "completed",
+        body: req.body.initialMessage.body,
+        replyingAgentId: actor.actorType === "agent" ? actor.agentId : null,
       },
+      activity: actor,
     });
+    res.status(201).json(await assistantSvc.enrichConversation(result.conversation));
+  });
 
-    res.status(201).json(await assistantSvc.enrichConversation(conversation as ChatConversation));
+  router.post("/orgs/:orgId/chats/preflight", validate(chatDraftSchema), async (req, res) => {
+    const draft = await preflightChatDraft(req, res, req.body);
+    if (!draft) return;
+    res.json(draft.availability);
   });
 
   router.get("/chats/:id", async (req, res) => {
@@ -1926,34 +1943,50 @@ export function chatRoutes(
     res.status(201).json(await assistantSvc.enrichConversation(sideChat));
   });
 
-  router.post("/chats/:id/side-chat/complete", async (req, res) => {
+  router.delete("/chats/:id/side-chat", async (req, res) => {
     assertBoard(req);
     const existing = await assertConversationAccess(req, req.params.id as string);
     if (!existing || existing.conversationKind !== "side_chat") {
       res.status(404).json({ error: "Side Chat not found" });
       return;
     }
+    if (existing.sideChatState === "kept" || existing.messengerVisible) {
+      throw conflict("A kept Side Chat is a normal Messenger chat");
+    }
+    if (hasActiveChatGeneration(existing.id)) {
+      cancelAndReleaseActiveChatGeneration(existing.id);
+    }
+    const attachments = await svc.listAttachmentsForConversation(existing.id);
     const userId = boardUserId(req);
-    const sideChat = await sideChats.complete({
+    const destroyed = await sideChats.destroy({
       conversationId: req.params.id as string,
       userId,
     });
+    for (const attachment of attachments) {
+      try {
+        if (!await svc.assetHasAttachments(attachment.assetId)) {
+          await storage.deleteObject(attachment.orgId, attachment.objectKey);
+        }
+      } catch (err) {
+        logger.warn({ err, conversationId: existing.id, attachmentId: attachment.id }, "failed to delete Side Chat attachment object");
+      }
+    }
     const actor = getActorInfo(req);
     await logActivity(db, {
-      orgId: sideChat.orgId,
+      orgId: existing.orgId,
       actorType: actor.actorType,
       actorId: actor.actorId,
       agentId: actor.agentId,
       runId: actor.runId,
-      action: "chat.side_chat_completed",
+      action: "chat.side_chat_destroyed",
       entityType: "chat",
-      entityId: sideChat.id,
+      entityId: existing.id,
       details: {
-        sourceConversationId: sideChat.forkedFromConversationId,
-        sourceMessageId: sideChat.forkedFromMessageId,
+        sourceConversationId: existing.forkedFromConversationId,
+        sourceMessageId: existing.forkedFromMessageId,
       },
     });
-    res.json(await assistantSvc.enrichConversation(sideChat));
+    res.json(destroyed);
   });
 
   router.post("/chats/:id/side-chat/keep", async (req, res) => {
@@ -1994,8 +2027,11 @@ export function chatRoutes(
       return;
     }
     assertChatLocalMutationAllowed(existing as ChatConversation);
-    if ((existing as ChatConversation).conversationKind === "side_chat") {
-      throw conflict("Side Chat audit records cannot be deleted");
+    if (
+      (existing as ChatConversation).conversationKind === "side_chat"
+      && (!(existing as ChatConversation).messengerVisible || (existing as ChatConversation).sideChatState !== "kept")
+    ) {
+      throw conflict("Close the Side Chat tab to destroy this temporary chat");
     }
     if (hasActiveChatGeneration(existing.id)) {
       if (req.query.cancelActive === "true") {
@@ -2682,6 +2718,7 @@ export function chatRoutes(
     isMultipartRequest,
     uploadedMessageFiles,
     validateUploadedMessageFiles,
+    preflightChatDraft,
     logChatMessagesAdded,
     assertContextLinksBelongToCompany,
     turnContextFromUserMessage,

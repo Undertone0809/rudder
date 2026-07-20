@@ -33,6 +33,7 @@ interface ChatSearchOptions extends BaseClientOptions {
 
 interface ChatCreateOptions extends BaseClientOptions {
   payload?: string;
+  body?: string;
   title?: string;
   summary?: string;
   preferredAgentId?: string;
@@ -268,6 +269,7 @@ export function registerChatCommands(program: Command): void {
       .description(getAgentCliCapabilityById("chat.create").description)
       .option("-O, --org-id <id>", "Organization ID")
       .option("--payload <json>", "Raw chat create payload JSON")
+      .option("--body <text>", "First message body (reads stdin when omitted)")
       .option("--title <title>", "Chat title")
       .option("--summary <text>", "Chat summary")
       .option("--preferred-agent-id <id>", "Preferred agent ID")
@@ -276,8 +278,10 @@ export function registerChatCommands(program: Command): void {
       .action(async (opts: ChatCreateOptions) => {
         try {
           const ctx = resolveCommandContext(opts, { requireCompany: true });
+          const body = opts.body ?? await readStdin();
           const payload = createChatConversationSchema.parse({
             ...parseJsonObjectOption(opts.payload, "--payload"),
+            initialMessage: { body },
             ...definedRecord({
               title: opts.title,
               summary: opts.summary,

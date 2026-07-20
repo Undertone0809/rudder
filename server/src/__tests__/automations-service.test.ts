@@ -678,8 +678,8 @@ describe("automation service live-execution coalescing", () => {
     expect(run.status).toBe("running");
     expect(run.linkedIssueId).toBeNull();
     expect(run.linkedChatConversationId).toBeTruthy();
-    expect(run.startedChatMessageId).toBeNull();
-    expect(run.lastChatMessageId).toBeNull();
+    expect(run.startedChatMessageId).toBeTruthy();
+    expect(run.lastChatMessageId).toBe(run.startedChatMessageId);
 
     const automationIssues = await db
       .select()
@@ -1224,7 +1224,8 @@ describe("automation service live-execution coalescing", () => {
     expect(run.status).toBe("running");
     expect(run.linkedIssueId).toBeNull();
     expect(run.linkedChatConversationId).toBeTruthy();
-    expect(run.startedChatMessageId).toBeNull();
+    expect(run.startedChatMessageId).toBeTruthy();
+    expect(run.lastChatMessageId).toBe(run.startedChatMessageId);
     const updatedAutomation = await db
       .select({ chatConversationId: automations.chatConversationId })
       .from(automations)

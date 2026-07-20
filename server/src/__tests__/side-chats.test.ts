@@ -210,18 +210,11 @@ describe("sideChatService", () => {
     expect(copiedAnchor).toMatchObject({ runId: null, approvalId: null, structuredPayload: null });
   });
 
-  it("turns completed and expired Side Chats read-only", async () => {
+  it("destroys an unkept Side Chat and turns an elapsed Side Chat read-only", async () => {
     const source = await createSource();
     const sideChat = await createSideChat(source);
-    const completed = await service.complete({ conversationId: sideChat.id, userId: source.userId });
-
-    expect(completed.sideChatState).toBe("completed");
-    expect(completed.sideChatExpiresAt).toBeNull();
-    await expect(service.assertMutable(completed, source.userId)).rejects.toMatchObject({ status: 409 });
-    await expect(service.keepInMessenger({
-      conversationId: completed.id,
-      userId: source.userId,
-    })).rejects.toMatchObject({ status: 409 });
+    await expect(service.destroy({ conversationId: sideChat.id, userId: source.userId })).resolves.toEqual({ id: sideChat.id });
+    expect(await db.select().from(chatConversations).where(eq(chatConversations.id, sideChat.id))).toHaveLength(0);
 
     const other = await service.create({
       ...source,
@@ -234,6 +227,20 @@ describe("sideChatService", () => {
     await expect(service.assertMutable(stale, source.userId, new Date(expiredAt.getTime() + 1))).rejects.toMatchObject({ status: 409 });
     const [expired] = await db.select().from(chatConversations).where(eq(chatConversations.id, other.id));
     expect(expired?.sideChatState).toBe("expired");
+
+    const staleKeep = await service.create({
+      ...source,
+      sourceMessageId: source.anchorMessageId,
+      clientMutationId: "side-chat-expired-keep-test",
+    });
+    await db
+      .update(chatConversations)
+      .set({ sideChatExpiresAt: new Date(Date.now() - 1_000) })
+      .where(eq(chatConversations.id, staleKeep.id));
+    await expect(service.keepInMessenger({ conversationId: staleKeep.id, userId: source.userId }))
+      .rejects.toMatchObject({ status: 409 });
+    const [rejectedKeep] = await db.select().from(chatConversations).where(eq(chatConversations.id, staleKeep.id));
+    expect(rejectedKeep).toMatchObject({ sideChatState: "expired", messengerVisible: false });
   });
 
   it("rejects an assistant anchor that has not completed", async () => {
@@ -255,7 +262,7 @@ describe("sideChatService", () => {
     const source = await createSource();
     const sideChat = await createSideChat(source);
     await expect(service.assertAccessible(sideChat, "different-user")).rejects.toMatchObject({ status: 404 });
-    await expect(service.complete({ conversationId: sideChat.id, userId: "different-user" })).rejects.toMatchObject({ status: 404 });
+    await expect(service.destroy({ conversationId: sideChat.id, userId: "different-user" })).rejects.toMatchObject({ status: 404 });
   });
 
   it("keeps the same conversation id and joins the source Messenger group when present", async () => {
@@ -286,5 +293,6 @@ describe("sideChatService", () => {
       `chat:${source.sourceConversationId}`,
       `chat:${sideChat.id}`,
     ]);
+    await expect(service.destroy({ conversationId: sideChat.id, userId: source.userId })).rejects.toMatchObject({ status: 409 });
   });
 });

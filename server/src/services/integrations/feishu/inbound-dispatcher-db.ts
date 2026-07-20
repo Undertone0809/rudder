@@ -8,7 +8,6 @@ import {
   agentIntegrationUserBindings,
   agentIntegrations,
   agents,
-  chatContextLinks,
   chatConversations,
   chatGenerations,
   chatMessages,
@@ -311,12 +310,29 @@ async function switchFeishuSession(input: {
       return { id: lockedBinding.conversationId, raced: true };
     }
 
-    const conversation = await createFeishuChatConversation(tx, {
+    const created = await createFeishuChatConversation(input.db, tx as unknown as Db, {
       orgId: input.integration.orgId,
       agentId: input.integration.agentId,
       userId: input.userId,
       provider: input.integration.provider,
+      initialMessage: {
+        role: "system",
+        kind: "system_event",
+        status: "completed",
+        body: input.reason === "daily_rollover" ? DAILY_SESSION_STARTED_TEXT : "New Feishu session started.",
+        structuredPayload: {
+          eventType: "agent_integration_session_started",
+          ...feishuQuickCommandMessage("new", input.event, {
+            integrationId: input.integration.id,
+            previousConversationId: input.previousConversationId,
+            reason: input.reason,
+            notifyFeishu: input.notifyFeishu,
+            summary,
+          }),
+        },
+      },
     });
+    const conversation = created.conversation;
 
     await tx.insert(chatMessages).values({
       orgId: input.integration.orgId,
@@ -356,40 +372,38 @@ async function switchFeishuSession(input: {
 }
 
 async function createFeishuChatConversation(
-  client: Pick<Db, "insert">,
+  db: Db,
+  executor: Db,
   input: {
     orgId: string;
     agentId: string;
     userId: string | null;
     provider: string;
+    title?: string;
+    initialMessage: {
+      role: "user" | "system";
+      kind: "message" | "system_event";
+      status: "completed";
+      body: string;
+      structuredPayload: Record<string, unknown>;
+    };
   },
 ) {
-  const [conversation] = await client
-    .insert(chatConversations)
-    .values({
-      orgId: input.orgId,
-      title: "New chat",
+  return chatService(db).createWithInitialMessage(input.orgId, {
+      title: input.title ?? "New chat",
       summary: null,
       preferredAgentId: input.agentId,
       issueCreationMode: "manual_approval",
       planMode: false,
       createdByUserId: input.userId,
-    })
-    .returning();
-  if (!conversation) throw new Error("Failed to create Feishu chat conversation");
-
-  await client
-    .insert(chatContextLinks)
-    .values({
-      orgId: input.orgId,
-      conversationId: conversation.id,
-      entityType: "agent",
-      entityId: input.agentId,
-      metadata: { source: "agent_integration", provider: input.provider },
-    })
-    .onConflictDoNothing();
-
-  return conversation;
+      contextLinks: [{ entityType: "agent", entityId: input.agentId, metadata: { source: "agent_integration", provider: input.provider } }],
+      initialMessage: input.initialMessage,
+      activity: {
+        actorType: "system",
+        actorId: "feishu-inbound",
+        agentId: input.agentId,
+      },
+    }, executor);
 }
 
 export interface FeishuInboundDispatcherDbOptions {
@@ -588,36 +602,45 @@ export function createFeishuInboundDispatcherDbDeps(
       }
 
       const initialTitle = chatTitle(event);
-      const conversation = await chats.create(integration.orgId, {
-        title: initialTitle,
-        summary: null,
-        preferredAgentId: integration.agentId,
-        issueCreationMode: "manual_approval",
-        planMode: false,
-        createdByUserId: binding.userId,
-        contextLinks: [
-          {
-            entityType: "agent",
-            entityId: integration.agentId,
-            metadata: { source: "agent_integration", provider: integration.provider },
-          },
-        ],
-      });
-      if (!conversation) throw new Error("Failed to create Feishu chat conversation");
-
       try {
-        const inserted = await db
-          .insert(agentIntegrationChatBindings)
-          .values({
+        return await db.transaction(async (tx) => {
+          const txDb = tx as unknown as Db;
+          const initial = await createFeishuChatConversation(db, txDb, {
+            orgId: integration.orgId,
+            agentId: integration.agentId,
+            userId: binding.userId,
+            provider: integration.provider,
+            title: initialTitle,
+            initialMessage: {
+              role: "user",
+              kind: "message",
+              status: "completed",
+              body: event.body,
+              structuredPayload: {
+                eventType: "agent_integration_inbound",
+                source: "agent_integration",
+                provider: integration.provider,
+                integrationId: integration.id,
+                externalChatId: event.chatId,
+                externalChatType: event.chatType,
+                externalMessageId: event.messageId,
+                externalEventId: event.eventId,
+                externalSenderOpenId: event.senderOpenId,
+                externalSenderUnionId: event.senderUnionId,
+                externalParentMessageId: event.parentMessageId ?? null,
+              },
+            },
+          });
+          const inserted = await txDb.insert(agentIntegrationChatBindings).values({
             orgId: integration.orgId,
             integrationId: integration.id,
-            conversationId: conversation.id,
+            conversationId: initial.conversation.id,
             externalChatId: event.chatId,
             externalChatType: event.chatType,
-          })
-          .returning({ conversationId: agentIntegrationChatBindings.conversationId })
-          .then((rows) => rows[0]);
-        if (inserted) return { ...inserted, created: true, initialTitle };
+          }).returning({ conversationId: agentIntegrationChatBindings.conversationId }).then((rows) => rows[0]);
+          if (!inserted) throw new Error("Failed to create Feishu chat binding");
+          return { ...inserted, created: true, initialTitle, initialMessageId: initial.message.id };
+        });
       } catch (error) {
         if (!isPostgresError(error, "23505")) throw error;
       }
@@ -714,12 +737,22 @@ export function createFeishuInboundDispatcherDbDeps(
     },
 
     appendInboundMessage: async (integration, binding, chat, event) => {
+      if (chat.initialMessageId) {
+        const initialMessage = await chats.getMessage(chat.conversationId, chat.initialMessageId);
+        if (!initialMessage) throw new Error("Atomic Feishu first message was not persisted");
+        if (options.startTitleGeneration !== false) {
+          const conversation = await chats.getById(chat.conversationId);
+          if (conversation) chatTitles.startAutomaticGeneration(conversation, initialMessage, { expectedCurrentTitle: chat.initialTitle });
+        }
+        return { chatMessageId: initialMessage.id };
+      }
       const message = await chats.addMessage(chat.conversationId, {
         orgId: integration.orgId,
         role: "user",
         kind: "message",
         body: event.body,
         structuredPayload: {
+          eventType: "agent_integration_inbound",
           source: "agent_integration",
           provider: integration.provider,
           integrationId: integration.id,

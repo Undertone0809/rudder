@@ -13,7 +13,6 @@ import {
   automationRuns,
   automations,
   automationTriggers,
-  chatContextLinks,
   chatConversations,
   chatMessages,
   goals,
@@ -247,45 +246,52 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
   }) {
     if (input.automation.outputMode !== "chat_output") return null;
     const existingRun = await input.executor
-      .select({ linkedChatConversationId: automationRuns.linkedChatConversationId })
+      .select()
       .from(automationRuns)
       .where(eq(automationRuns.id, input.runId))
       .then((rows) => rows[0] ?? null);
     if (existingRun?.linkedChatConversationId) return existingRun.linkedChatConversationId;
+    if (!existingRun) return null;
 
-    const [conversation] = await input.executor
-      .insert(chatConversations)
-      .values({
-        orgId: input.automation.orgId,
+    const source = existingRun.source as "schedule" | "manual" | "api" | "webhook";
+    const created = await chatSvc.createWithInitialMessage(input.automation.orgId, {
         title: input.automation.title || "New chat",
+        summary: null,
         preferredAgentId: input.automation.assigneeAgentId,
-        status: "active",
         issueCreationMode: "manual_approval",
         planMode: false,
-      })
-      .returning({ id: chatConversations.id });
-    if (!conversation) return null;
-    if (input.automation.projectId) {
-      await input.executor
-        .insert(chatContextLinks)
-        .values({
-          orgId: input.automation.orgId,
-          conversationId: conversation.id,
+        createdByUserId: null,
+        contextLinks: input.automation.projectId ? [{
           entityType: "project",
           entityId: input.automation.projectId,
           metadata: null,
-        })
-        .onConflictDoNothing();
-    }
+        }] : [],
+        initialMessage: {
+          role: "user",
+          kind: "message",
+          status: "completed",
+          body: automationChatPrompt({ automation: input.automation, source, payload: existingRun.triggerPayload }),
+          structuredPayload: automationChatRunInputPayload(input.automation, existingRun, source),
+          chatTurnId: crypto.randomUUID(),
+        },
+        activity: {
+          actorType: "system",
+          actorId: "automation-chat-output",
+          agentId: input.automation.assigneeAgentId,
+          runId: input.runId,
+        },
+      }, input.executor);
 
     await input.executor
       .update(automationRuns)
       .set({
-        linkedChatConversationId: conversation.id,
+        linkedChatConversationId: created.conversation.id,
+        startedChatMessageId: created.message.id,
+        lastChatMessageId: created.message.id,
         updatedAt: new Date(),
       })
       .where(eq(automationRuns.id, input.runId));
-    return conversation.id;
+    return created.conversation.id;
   }
 
   function automationChatPrompt(input: {
@@ -598,7 +604,13 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
     let assistantDraftBody = "";
     let assistantProgressMessage: ChatMessage | null = null;
     let assistantProgressMessageId: string | null = null;
-    let userMessage: ChatMessage | null = null;
+    let userMessage: ChatMessage | null = run.startedChatMessageId
+      ? await db.select().from(chatMessages).where(and(
+        eq(chatMessages.id, run.startedChatMessageId),
+        eq(chatMessages.conversationId, conversation.id),
+        eq(chatMessages.orgId, conversation.orgId),
+      )).then((rows) => rows[0] as ChatMessage | undefined ?? null)
+      : null;
     let lastRunProgressTouchMs = 0;
 
     const touchRunChatProgress = async (messageId: string | null) => {
@@ -671,28 +683,18 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
     };
 
     try {
-      const prompt = automationChatPrompt({
-        automation,
-        source: run.source as "schedule" | "manual" | "api" | "webhook",
-        payload: run.triggerPayload,
-      });
       const source = run.source as "schedule" | "manual" | "api" | "webhook";
-      userMessage = await chatSvc.addUserChatMessage(
-        conversation.id,
-        conversation.orgId,
-        prompt,
-        null,
-        { structuredPayload: automationChatRunInputPayload(automation, run, source) },
-      ) as ChatMessage;
-      await logChatMessageAdded({
-        orgId: conversation.orgId,
-        conversationId: conversation.id,
-        message: userMessage,
-      });
-      await finalizeRun(run.id, {
-        startedChatMessageId: userMessage.id,
-        lastChatMessageId: userMessage.id,
-      });
+      if (!userMessage) {
+        userMessage = await chatSvc.addUserChatMessage(
+          conversation.id,
+          conversation.orgId,
+          automationChatPrompt({ automation, source, payload: run.triggerPayload }),
+          null,
+          { structuredPayload: automationChatRunInputPayload(automation, run, source) },
+        ) as ChatMessage;
+        await logChatMessageAdded({ orgId: conversation.orgId, conversationId: conversation.id, message: userMessage });
+        await finalizeRun(run.id, { startedChatMessageId: userMessage.id, lastChatMessageId: userMessage.id });
+      }
 
       const assistantInput = await loadAutomationChatAssistantInput(conversation.id);
       const streamed = await assistantSvc.streamChatAssistantReply({
