@@ -1,60 +1,82 @@
 ---
 title: "权限与平台"
-description: "理解 Rudder agents 的本地 runtime 文件、credentials 和平台边界。"
+description: "查询部署信任、本地运行环境目录、凭据、内置浏览器访问和各平台文件行为。"
 icon: "shield-check"
 keywords:
-  - "Rudder runtime permissions"
-  - "agent credentials"
-  - "local runtime platform"
+  - "Rudder 运行环境权限"
+  - "Agent 凭据"
+  - "本地运行环境平台"
 canonical: "https://docs.rudderhq.dev/zh/reference/permissions-and-platforms"
 "og:url": "https://docs.rudderhq.dev/zh/reference/permissions-and-platforms"
 hreflang_en: "https://docs.rudderhq.dev/reference/permissions-and-platforms"
 hreflang_zh: "https://docs.rudderhq.dev/zh/reference/permissions-and-platforms"
-
 ---
 
-本地 runtimes 需要访问文件、credentials、skills 和 tools。Rudder 应该让这些边界可见，而不是把它们藏在 prompt 或 shell command 里。
+<a id="definition" />
 
-## Managed runtime homes
+## 定义
 
-Agents 使用 managed homes 保存 runtime state、instructions、skills 和属于该 agent 的本地文件。这样 agent-private state 不会和 shared Library files 或 project workspaces 混在一起。
+权限说明一个参与者或运行环境可以访问什么。平台处理说明 Rudder 如何在
+macOS、Linux 和 Windows 上维持这些边界。提示词或运行环境选项都不能越过
+当前组织、工作区、部署模式和已配置能力授予额外权限。
 
-## Operator home bridges
+<a id="states" />
 
-有些本地工具需要访问 operator 机器上已有的 credentials 或 config。这类 bridge 要谨慎使用。它们适合 local trusted development，但不应该被当作 shared organization data。
+## 状态与模式
 
-## Skills 和 credentials
+| 部署模式 | 人员访问方式 | 适用范围 |
+| --- | --- | --- |
+| `local_trusted` | 无需登录 | 仅监听本机回环地址的单负责人实例 |
+| `authenticated` 与 `private` | 需要登录 | 受信任的私有网络 |
+| `authenticated` 与 `public` | 需要登录 | 需要更严格检查的公网部署 |
 
-Skills 是可复用操作说明。Credentials 是敏感访问材料。不要混在一起。
+本地运行环境测试会返回 `pass`、`warn` 或 `fail`。警告表示需要检查一项具体
+配置，不能据此认定所有能力都已可用。
 
-当 runtime 需要 credentials 时，优先使用已经拥有这些 credentials 的 runtime config 或本地 provider setup。不要把 secrets 复制到 docs、prompts、Library files 或 issue comments 里。
+<a id="constraints" />
 
-## 内置浏览器边界
+## 约束
 
-Rudder Desktop 的[内置浏览器](/zh/concepts/built-in-browser)会为每个操作系统用户和本地 Rudder 实例使用一个持久的网站会话。该实例中的不同组织，以及 operator 和受支持的 agent 标签页，会有意共享 Cookie 和网站数据。应把网站登录视为实例共享的本地状态，而不是组织级数据。
+- 本地可信运行环境进程通常使用负责人的 `HOME` 和 `USERPROFILE`。服务商配置、
+  已选技能、会话和临时状态保存在适配器托管位置。
+- 凭据留在服务商或负责人原本管理的路径中。不要把秘密复制到文档、提示词、
+  Library 文件或 Issue 评论。
+- Rudder 决定一次运行可以看到哪些技能。不能因为早先运行曾经加载过，就继续
+  暴露已停用或无关的技能。
+- 缺少必要工作区、权限、登录或技能时，应返回可操作的错误，不能把问题拖到
+  服务商执行阶段后变成不明失败。
 
-Agent 控制权仍按组织、agent、run 和 tab 隔离。共享 Cookie 不会让一个 run 检查或操作另一个 run 的标签页。Agent 只能使用有边界的浏览器操作；它们不会获得原始 Cookie、密码、任意 JavaScript 执行或无限制浏览器控制。
+<a id="boundaries" />
 
-禁用 agent Browser 访问会保留 operator 标签页和已保存的网站数据。清除浏览数据会删除共享实例会话。为普通链接选择系统浏览器只会改变链接路由。
+## 边界
 
-## 平台差异
+Rudder Desktop 的内置浏览器按操作系统用户和本地 Rudder 实例保留一个网站
+会话。同一实例中的组织和受支持本地 Agent 标签页共享 Cookie 与网站数据，
+但标签页控制仍受组织、Agent、运行和标签页范围约束。Agent 不会获得原始
+Cookie、密码、任意 JavaScript 执行权限或其他运行的标签页。
 
-macOS、Linux 和 Windows 的文件行为不同。一个依赖 symlinks 或 Unix permissions 的 runtime setup，在另一个平台上可能需要 safe copy 或其他 fallback。
+Cookie 导入目前只支持 macOS 上受支持的本地 Chrome、Microsoft Edge 和 Brave
+配置，并且需要负责人确认。它不会导入密码。Windows 和 Linux 暂不支持导入。
 
-Runtime setup 失败时，先看 visible runtime readiness state 和 error message。再判断问题是 missing CLI、missing permissions、missing credentials、unwritable workspace，还是平台相关的 file operation。
+在 Windows 上，普通目录符号链接需要提升权限时，Rudder 可以改用 junction
+或安全复制。负责人不应仅为了加载一项已选技能就以管理员身份运行 Rudder。
 
-内置浏览器 Cookie 导入目前仅支持 macOS，以及本地 Google Chrome、Microsoft Edge 和 Brave Browser profile。它只会在 operator 确认后导入受支持的 Cookie，不会导入密码。Windows 和 Linux 不支持 Browser Cookie 导入。
+<a id="examples" />
 
-## 下一步
+## 例子
+
+- 本地 Codex 运行可以使用负责人现有的 Codex 登录，Rudder 则把已选技能和
+  会话状态保存在托管位置。
+- 关闭 Agent 浏览器访问会移除托管控制能力，但保留负责人的标签页和网站数据。
+  只有清除浏览数据才会删除共享网站会话。
+- Windows 上创建技能链接返回 `EPERM` 时，Rudder 应使用受支持的备用方式，
+  或在服务商执行前说明需要修复的路径和权限。
 
 <CardGroup cols={2}>
-  <Card title="配置 agent runtime" icon="terminal" href="/zh/how-to/configure-agent-runtime">
-    配置并测试 runtime readiness。
-  </Card>
-  <Card title="Runtime types" icon="terminal" href="/zh/reference/runtime-types">
-    比较 runtime shapes。
+  <Card title="配置 Agent 运行环境" icon="terminal" href="/zh/how-to/configure-agent-runtime">
+    配置凭据并测试运行环境是否就绪。
   </Card>
   <Card title="内置浏览器" icon="globe" href="/zh/concepts/built-in-browser">
-    理解共享会话和隔离控制模型。
+    了解共享网站会话和隔离标签页控制。
   </Card>
 </CardGroup>

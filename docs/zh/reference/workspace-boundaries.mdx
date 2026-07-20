@@ -1,45 +1,76 @@
 ---
 title: "工作区边界"
-description: "查看 Rudder agents 应该在哪里读写项目文件、Library files、私有状态和临时产物。"
+description: "查询项目工作、持久文件、Agent 状态、运行工作区、备份和临时文件应该放在哪里。"
 icon: "folder-tree"
 keywords:
-  - "Rudder workspace boundaries"
-  - "agent files"
-  - "Library files"
+  - "Rudder 工作区边界"
+  - "Agent 文件"
+  - "Library 文件"
 canonical: "https://docs.rudderhq.dev/zh/reference/workspace-boundaries"
 "og:url": "https://docs.rudderhq.dev/zh/reference/workspace-boundaries"
 hreflang_en: "https://docs.rudderhq.dev/reference/workspace-boundaries"
 hreflang_zh: "https://docs.rudderhq.dev/zh/reference/workspace-boundaries"
-
 ---
 
-Workspace boundaries 让 agent 工作可恢复。持久文件要放在未来 run 和 reviewer 找得到的位置。
+<a id="definition" />
 
-| 文件或状态 | 正确位置 |
-| --- | --- |
-| 项目仓库工作 | Project workspace |
-| 持久项目输出 | Library 里的项目文件夹 |
-| 共享组织参考 | Library |
-| 精选 run context | Project Context resources |
-| Agent 私有 instructions、memory 和 local state | Agent home |
-| Runtime scratch files | `/tmp` 或系统临时目录 |
-| 非最终产物的验证截图 | `/tmp` 或系统临时目录 |
+## 定义
 
-## Protected paths
+Rudder 分开管理精选上下文、持久产物、可修改的项目工作、Agent 私有状态和
+临时文件。存放位置决定谁能找到文件、文件能否进入后续运行，以及适用哪种
+恢复规则。
 
-Agents 应该使用 Rudder-managed paths 和 Library references，不要随手创建本地目录。这样能保持 organization boundaries 清楚，也能避免把 private runtime state 和 shared project output 混在一起。
+<a id="states" />
 
-## Backups
+## 状态与位置
 
-Workspace backups 用于 operator recovery 和 inspection。Restore 前先 browse。需要外部副本时 download。不再有恢复价值的 backups 可以删除。
+| 文件或状态 | 放置位置 | 含义 |
+| --- | --- | --- |
+| 组织共享资料或接受后的产物 | Library | 作为可长期引用的组织文件保存 |
+| 项目运行的起始资料 | 把 Library 或外部资料附加到 Project Context | 只有选中的资料可以进入起始上下文 |
+| 代码仓库或工作文件夹 | 主要项目工作区 | 项目关联运行优先在这里工作 |
+| 一次执行使用的文件和分支 | 运行工作区 | 运行记录具体的工作区策略和状态 |
+| Agent 操作说明、记忆、技能、会话和托管状态 | Agent 或适配器托管目录 | 这些状态属于对应 Agent 或运行环境，不是普通 Library 内容 |
+| 恢复版本 | 工作区备份 | 负责人可以检查、下载、恢复或删除符合条件的版本 |
+| 草稿文件和非最终验证截图 | `/tmp` 或系统临时目录 | 可随时丢弃，不进入组织持久内容 |
 
-## 下一步
+<a id="constraints" />
+
+## 约束
+
+- 一个项目可以有多个工作区，但只能有一个主要工作区。
+- Project Context 是准入清单。Rudder 不会把所有组织资料注入每次运行。
+- 受保护的操作说明、技能、运行环境目录、凭据和缓存都不是普通 Library 内容。
+- 仍有未完成 Issue 依赖某个运行工作区时，不能归档该工作区。
+- 恢复工作区备份前，Rudder 会先创建一份安全版本。
+
+<a id="boundaries" />
+
+## 边界
+
+Library 路径受组织范围和路径校验约束。Desktop 的本地打开操作不会让浏览器
+部署打开本地应用，经过校验的文件链接也不会暴露绝对文件系统根目录。
+
+默认本地 Desktop 布局使用 `~/Documents/Rudder` 下的稳定组织映射。如果已经
+建立的映射文件夹消失，Rudder 会把它当作恢复问题，不会在缺失位置直接新建
+空文件夹。
+
+<a id="examples" />
+
+## 例子
+
+- 把源笔记保存在 Library，只把项目需要的笔记附加为资料，并把接受后的报告
+  保存到该项目的 Library 文件夹。
+- 代码任务使用主要项目仓库或明确隔离的运行工作区。构建缓存和临时截图留在
+  Library 之外。
+- 恢复前先浏览所选备份。如果未完成 Issue 仍依赖某个运行工作区，应先完成或
+  迁移依赖，再执行归档。
 
 <CardGroup cols={2}>
-  <Card title="管理 Workspaces 和 Library" icon="folder-tree" href="/zh/how-to/manage-workspaces-and-library">
-    在日常工作中应用这些边界。
+  <Card title="管理工作区和 Library" icon="folder-tree" href="/zh/how-to/manage-workspaces-and-library">
+    把这些边界应用到项目和持久产物。
   </Card>
-  <Card title="工作区" icon="folder-tree" href="/zh/concepts/workspaces">
-    理解 workspace model。
+  <Card title="工作区和 Library" icon="folder-tree" href="/zh/concepts/workspaces">
+    理解各位置背后的产品模型。
   </Card>
 </CardGroup>

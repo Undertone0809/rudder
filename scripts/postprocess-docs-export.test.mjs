@@ -42,7 +42,9 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
     '<a href="/get-started/installation">Quick Start</a>',
     '<a href="/concepts/calendar">Calendar</a>',
     '<a href="/about">About</a>',
-    '<script>self.__next_f.push([1,"\\\"footer\\\":{\\\"links\\\":[{\\\"items\\\":[{\\\"label\\\":\\\"Quick Start\\\",\\\"href\\\":\\\"/get-started/installation\\\"},{\\\"label\\\":\\\"Calendar\\\",\\\"href\\\":\\\"/concepts/calendar\\\"},{\\\"label\\\":\\\"About\\\",\\\"href\\\":\\\"/about\\\"}]}]}"])</script>',
+    '<a href="/contact">Contact</a>',
+    '<a href="/releases">Changelog</a>',
+    '<script>self.__next_f.push([1,"\\\"footer\\\":{\\\"links\\\":[{\\\"items\\\":[{\\\"label\\\":\\\"Quick Start\\\",\\\"href\\\":\\\"/get-started/installation\\\"},{\\\"label\\\":\\\"Calendar\\\",\\\"href\\\":\\\"/concepts/calendar\\\"},{\\\"label\\\":\\\"About\\\",\\\"href\\\":\\\"/about\\\"},{\\\"label\\\":\\\"Contact\\\",\\\"href\\\":\\\"/contact\\\"},{\\\"label\\\":\\\"Changelog\\\",\\\"href\\\":\\\"/releases\\\"}]}]}"])</script>',
   ].join("");
 
   const englishPath = writePage(exportDir, "/", fixturePage("/index.md", footer));
@@ -109,12 +111,16 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
   assert.match(chineseGuide, /hreflang="x-default" href="https:\/\/docs\.rudderhq\.dev\/get-started\/installation"/);
   assert.doesNotMatch(unpaired, /hreflang=/);
 
-  assert.match(chinese, /href="\/zh\/get-started\/installation">Quick Start/);
-  assert.match(chinese, /href="\/zh\/concepts\/calendar">Calendar/);
-  assert.match(chinese, /href="\/about">About/);
-  assert.match(chinese, /\\"href\\":\\"\/zh\/get-started\/installation\\"/);
-  assert.match(chinese, /\\"href\\":\\"\/zh\/concepts\/calendar\\"/);
-  assert.match(chinese, /\\"href\\":\\"\/about\\"/);
+  assert.match(chinese, /href="\/zh\/get-started\/installation">快速开始/);
+  assert.match(chinese, /href="\/zh\/concepts\/calendar">日历/);
+  assert.match(chinese, /href="\/zh\/about">关于/);
+  assert.match(chinese, /href="\/zh\/contact">联系方式/);
+  assert.match(chinese, /href="\/zh\/releases">更新日志/);
+  assert.match(chinese, /\\"label\\":\\"快速开始\\",\\"href\\":\\"\/zh\/get-started\/installation\\"/);
+  assert.match(chinese, /\\"label\\":\\"日历\\",\\"href\\":\\"\/zh\/concepts\/calendar\\"/);
+  assert.match(chinese, /\\"label\\":\\"关于\\",\\"href\\":\\"\/zh\/about\\"/);
+  assert.match(chinese, /\\"label\\":\\"联系方式\\",\\"href\\":\\"\/zh\/contact\\"/);
+  assert.match(chinese, /\\"label\\":\\"更新日志\\",\\"href\\":\\"\/zh\/releases\\"/);
   assert.match(runtimeChunk, /ENV:"production"/);
   assert.doesNotMatch(runtimeChunk, /ENV:"cli"/);
   assert.match(runtimeChunk, /o\|\|true\|\|\(console\.warn\("Connected to Socket\.io"\)/);
@@ -227,6 +233,8 @@ test("public health, package scripts, CI, and staging cover static docs search",
   );
   assert.match(healthCheck, /path: "\/rudder-search-index\.json"/);
   assert.match(healthCheck, /path: "\/rudder-search\.js"/);
+  assert.match(healthCheck, /path: "\/zh\/about"/);
+  assert.match(healthCheck, /path: "\/zh\/contact"/);
 
   const packageJson = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
   assert.equal(

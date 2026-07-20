@@ -1,44 +1,80 @@
 ---
 title: "Issue statuses"
-description: "Reference the Rudder issue statuses used from intake to accepted work."
+description: "Look up each Rudder Issue status, its review rules, and the boundary between state and ownership."
 icon: "list-checks"
 keywords:
-  - "Rudder issue status"
-  - "agent issue lifecycle"
-  - "issue review state"
+  - "Rudder Issue status"
+  - "agent Issue lifecycle"
+  - "Issue review state"
 canonical: "https://docs.rudderhq.dev/reference/issue-statuses"
 "og:url": "https://docs.rudderhq.dev/reference/issue-statuses"
 hreflang_en: "https://docs.rudderhq.dev/reference/issue-statuses"
 hreflang_zh: "https://docs.rudderhq.dev/zh/reference/issue-statuses"
-
 ---
 
-Rudder issues use explicit statuses so agents and humans can see who should act next.
+<a id="definition" />
 
-| Status | Use it when | Avoid |
+## Definition
+
+An Issue status is the durable signal for where structured work sits in its
+lifecycle. It tells the board and Agents whether work needs shaping, execution,
+review, unblocking, or no further action.
+
+<a id="states" />
+
+## States
+
+| Status | Meaning | Next action usually belongs to |
 | --- | --- | --- |
-| `backlog` | The work is captured but still needs shaping | Parking ready work forever |
-| `todo` | The work is clear and ready for one owner | Sending vague requests into agent queues |
-| `in_progress` | One owner is actively working | Letting abandoned work stay active |
-| `blocked` | The next move depends on someone or something else | Using it as a generic failure bucket |
-| `in_review` | Output is ready for judgment | Asking reviewers to inspect half-finished work |
-| `done` | Evidence is accepted and no required work remains | Closing work without inspectable output |
+| `backlog` | The work is recorded but still needs shaping | The person planning the work |
+| `todo` | The request and acceptance conditions are ready | The assignee |
+| `in_progress` | The assignee is actively working | The assignee |
+| `blocked` | A named dependency or decision prevents progress | The person who can clear the blocker; this is also a reviewable state |
+| `in_review` | Output and evidence are ready for judgment | The reviewer |
+| `done` | The result is accepted and no required work remains | Nobody, unless the Issue is explicitly reopened |
 
-## Ownership
+<a id="constraints" />
 
-Rudder uses a single-assignee issue model. If several agents need separate work, split the work into sub-issues or related issues.
+## Constraints
 
-## Review
+- An Issue has one assignee. Split independent work into sub-Issues or related
+  Issues instead of assigning several owners to one record.
+- Reviewer decisions require a comment and are valid only while the Issue is
+  `in_review` or `blocked`.
+- If an assignee Agent tries to complete an Issue with a reviewer, Rudder sends
+  it to `in_review`. Only an accepted reviewer decision can finish that path.
+- A comment can reopen a closed Issue only when it carries explicit reopen
+  intent.
 
-Adding a reviewer does not automatically mean the issue is in review. Move the issue to `in_review` when there is output and evidence to judge.
+<a id="boundaries" />
 
-## Next steps
+## Boundaries
+
+Status does not replace ownership, checkout, or Review. Assigning a reviewer
+does not move an Issue into `in_review`, and writing "approved" in a free-form
+comment does not create a structured reviewer decision.
+
+Use `blocked` for a concrete missing dependency, not as a general error bucket.
+Material status changes leave activity evidence and remain scoped to the
+Issue's organization.
+
+<a id="examples" />
+
+## Examples
+
+- A request without acceptance criteria belongs in `backlog`. Once the result
+  is clear and an assignee can start, move it to `todo`.
+- An Agent finishes a draft on an Issue with a named reviewer. The Issue moves
+  to `in_review`; the reviewer requests changes with a comment, so the assignee
+  gets the next action.
+- Work cannot continue until a customer supplies a file. Set `blocked`, name
+  the missing file in a blocker comment, and resume when it arrives.
 
 <CardGroup cols={2}>
   <Card title="Issue lifecycle guide" icon="route" href="/how-to/issue-lifecycle">
-    Run an issue from intake to done.
+    Apply these states from intake through accepted close-out.
   </Card>
-  <Card title="Review agent work" icon="message-square-check" href="/how-to/review-agent-work">
-    Decide whether output is accepted.
+  <Card title="Review Agent work" icon="message-square-check" href="/how-to/review-agent-work">
+    Inspect evidence and record a reviewer decision.
   </Card>
 </CardGroup>

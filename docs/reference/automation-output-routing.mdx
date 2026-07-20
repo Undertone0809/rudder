@@ -1,63 +1,78 @@
 ---
 title: "Automation output routing"
-description: "Choose whether a Rudder automation should create tracked issue work or send output to chat."
+description: "Compare tracked Issue and Chat output for Rudder Automations, including run records and failure evidence."
 icon: "route"
 keywords:
-  - "automation output routing"
-  - "Rudder automation issue output"
-  - "Rudder automation chat output"
+  - "Automation output routing"
+  - "Rudder Automation Issue output"
+  - "Rudder Automation Chat output"
 canonical: "https://docs.rudderhq.dev/reference/automation-output-routing"
 "og:url": "https://docs.rudderhq.dev/reference/automation-output-routing"
 hreflang_en: "https://docs.rudderhq.dev/reference/automation-output-routing"
 hreflang_zh: "https://docs.rudderhq.dev/zh/reference/automation-output-routing"
-
 ---
 
-Automation output routing decides where people inspect the result.
+<a id="definition" />
 
-New custom automations default to chat output. Tracked issue output remains an explicit alternative when the repeated work needs issue lifecycle structure.
+## Definition
 
-## Choose issue output
+Automation output routing decides which work surface owns each execution
+result. Custom Automations default to Chat output. Tracked Issue output remains
+an explicit choice when repeated work needs Issue fields and lifecycle state.
 
-Use issue output when the result needs:
+<a id="states" />
 
-- assignment
-- status tracking
-- review
-- artifacts or files
-- follow-up work
-- durable close-out evidence
+## States and modes
 
-Issue output creates an execution issue and enters the normal assignment, run, review, and close-out lifecycle. Choose it for the structure itself, not merely because the work is important, expensive, or long-running. A governed team policy can still require issue fields.
+| Output mode | Result of a real execution | Source link on the Automation Run |
+| --- | --- | --- |
+| `chat_output` | A new Messenger conversation for that execution | `linkedChatConversationId` |
+| `track_issue` | A new execution Issue that enters the normal assignment and review path | `linkedIssueId` |
 
-## Choose chat output
+An Automation Run records whether dispatch was received, started, completed,
+failed, skipped, or coalesced. The exact terminal state remains on the Run even
+when no new Chat or Issue is created.
 
-Use chat output when people should receive and continue the result through a conversation rather than a structured issue lifecycle.
+<a id="constraints" />
 
-Good examples:
+## Constraints
 
-- iterative reports that invite follow-up questions
-- status checks that operators want to continue in context
-- informational replies delivered as a conversation
-- analysis that benefits from conversational refinement
+- Every real Chat-output execution gets its own conversation. Rudder does not
+  reuse an arbitrary human Chat as a permanent output sink.
+- Skipped or coalesced Runs do not create empty conversations.
+- A failed Chat-output Run keeps visible partial or fallback evidence.
+- Tracked Issue output follows normal assignment, status, Agent Run, Review,
+  and close-out rules after the Issue is created.
 
-Chat output keeps the audit trail on the automation run and the chat transcript.
+<a id="boundaries" />
 
-Each real execution gets a separate Messenger conversation linked to its automation run. It does not reuse an arbitrary existing human Chat as the destination for all future runs.
+## Boundaries
 
-Skipped or coalesced runs do not create empty conversations. If a chat-output execution fails, Rudder leaves visible partial or fallback evidence instead of silently creating an empty unread thread.
+Output mode does not decide whether work is important, expensive, or
+long-running. Choose the surface based on the coordination record people need.
+A governed policy may still require an Issue even when the result could be read
+in Chat.
 
-## If unsure
+The Automation Run remains the dispatch record in both modes. A Chat transcript
+does not replace the Run, and an execution Issue does not replace the
+Automation definition or schedule.
 
-Choose issue output for explicit assignment, status, or lifecycle management. Choose chat output for conversation-driven delivery and follow-up. Importance and run length alone do not decide the mode.
+<a id="examples" />
 
-## Next steps
+## Examples
+
+- Send a daily digest to Chat when operators will read it and ask follow-up
+  questions in the resulting conversation.
+- Track a weekly compliance check as an Issue when it needs an assignee,
+  acceptance criteria, artifacts, and a reviewer decision.
+- If concurrency policy coalesces a duplicate tick, inspect the Automation Run
+  for the reason. Do not expect an empty Chat or Issue placeholder.
 
 <CardGroup cols={2}>
-  <Card title="Create an automation" icon="workflow" href="/how-to/create-automation">
-    Configure the automation.
+  <Card title="Create an Automation" icon="workflow" href="/how-to/create-automation">
+    Configure the trigger, owner, context, and output mode.
   </Card>
   <Card title="Issue statuses" icon="list-checks" href="/reference/issue-statuses">
-    Understand the tracked issue path.
+    Check the lifecycle used by tracked Issue output.
   </Card>
 </CardGroup>

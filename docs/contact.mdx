@@ -1,6 +1,6 @@
 ---
 title: "Contact"
-description: "Find the right place to ask questions, report issues, request features, or follow Rudder development."
+description: "Choose the public Rudder channel for a question, bug report, feature request, or release update."
 icon: "message-circle"
 keywords:
   - "contact Rudder"
@@ -10,52 +10,52 @@ keywords:
 canonical: "https://docs.rudderhq.dev/contact"
 "og:url": "https://docs.rudderhq.dev/contact"
 hreflang_en: "https://docs.rudderhq.dev/contact"
-
+hreflang_zh: "https://docs.rudderhq.dev/zh/contact"
 ---
 
-Rudder is developed in the open. The best contact path depends on what you need.
+Rudder is developed in public. Use the channel that matches the request.
 
-## Ask a question
+## Questions and setup help
 
-Use GitHub Discussions or a focused GitHub issue when you need help understanding installation, local setup, runtime configuration, or the product model.
+Search the documentation and existing GitHub discussions first. If the answer
+is still unclear, open a focused discussion or Issue with the Rudder version,
+operating system, install method, and the step that failed.
 
 <CardGroup cols={2}>
-  <Card title="GitHub Repository" icon="external-link" href="https://github.com/Undertone0809/rudder">
-    Read the source, follow development, and inspect releases.
+  <Card title="GitHub repository" icon="external-link" href="https://github.com/Undertone0809/rudder">
+    Read the source, discussions, releases, and contribution history.
   </Card>
   <Card title="Open an Issue" icon="circle-dot" href="https://github.com/Undertone0809/rudder/issues">
-    Report bugs, request features, or share a reproducible setup problem.
+    Report a reproducible bug or propose a concrete product change.
   </Card>
 </CardGroup>
 
-## Report a bug
+## Bug reports
 
 Include the smallest useful reproduction:
 
 - Rudder version or commit
-- operating system
-- install path or development command
-- what you expected
-- what actually happened
-- logs, screenshots, or terminal output when relevant
+- operating system and install command
+- expected and observed behavior
+- relevant logs, screenshots, or terminal output
 
-For security-sensitive reports, do not post secrets, API keys, private logs, or customer data in a public issue.
+Remove API keys, credentials, customer data, private repository content, and
+other sensitive material before posting publicly.
 
-## Request a feature
+## Feature requests
 
-Good feature requests describe the agent-work loop you are trying to complete:
+Describe the work loop you are trying to complete, where it currently stops,
+who owns the next action, and which output or Review evidence should remain.
+This makes the request easier to evaluate than a list of desired interface
+controls.
 
-- the goal or workflow
-- where the current loop breaks
-- which human or agent owns the next step
-- what output, review, budget, or feedback evidence should be preserved
+## Releases
 
-## Follow releases
-
-Use the release notes when you want to understand what changed in the public app and CLI.
+Use the changelog for stable release history and upgrade notes. GitHub Releases
+also contains prerelease history.
 
 <CardGroup cols={1}>
-  <Card title="Release Notes" icon="tag" href="/releases">
-    Read stable release notes and upgrade guidance.
+  <Card title="Changelog" icon="tag" href="/releases">
+    Read stable release notes and current upgrade guidance.
   </Card>
 </CardGroup>

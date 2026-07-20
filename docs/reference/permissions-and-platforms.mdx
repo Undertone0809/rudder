@@ -1,60 +1,89 @@
 ---
 title: "Permissions and platforms"
-description: "Understand local runtime file, credential, and platform boundaries for Rudder agents."
+description: "Look up deployment trust, local runtime homes, credentials, Browser access, and platform-specific file behavior."
 icon: "shield-check"
 keywords:
   - "Rudder runtime permissions"
-  - "agent credentials"
+  - "Agent credentials"
   - "local runtime platform"
 canonical: "https://docs.rudderhq.dev/reference/permissions-and-platforms"
 "og:url": "https://docs.rudderhq.dev/reference/permissions-and-platforms"
 hreflang_en: "https://docs.rudderhq.dev/reference/permissions-and-platforms"
 hreflang_zh: "https://docs.rudderhq.dev/zh/reference/permissions-and-platforms"
-
 ---
 
-Local runtimes need access to files, credentials, skills, and tools. Rudder should make those boundaries visible rather than hiding them inside a prompt or shell command.
+<a id="definition" />
 
-## Managed runtime homes
+## Definition
 
-Agents use managed homes for runtime state, instructions, skills, and local files that belong to that agent. This keeps agent-private state separate from shared Library files and project workspaces.
+Permissions describe what an actor or runtime may access. Platform handling
+describes how Rudder preserves those boundaries on macOS, Linux, and Windows.
+Neither a prompt nor a selected runtime can grant authority outside the active
+organization, workspace, deployment mode, and configured capability set.
 
-## Operator home bridges
+<a id="states" />
 
-Some local tools need access to credentials or config already present on the operator's machine. Use those bridges deliberately. They are useful for local trusted development, but they should not be treated as shared organization data.
+## States and modes
 
-## Skills and credentials
+| Deployment mode | Human access | Intended exposure |
+| --- | --- | --- |
+| `local_trusted` | No login | One operator on a loopback-only local instance |
+| `authenticated` with `private` exposure | Login required | A trusted private network |
+| `authenticated` with `public` exposure | Login required | An internet-facing deployment with stricter checks |
 
-Skills are reusable operating instructions. Credentials are sensitive local or remote access material. Do not mix them.
+A local runtime test reports `pass`, `warn`, or `fail`. Treat a warning as a
+specific setup condition to inspect, not as proof that every capability is
+available.
 
-When a runtime needs credentials, prefer the configured runtime path or local provider setup that already owns those credentials. Avoid copying secrets into docs, prompts, Library files, or issue comments.
+<a id="constraints" />
 
-## Built-in Browser boundary
+## Constraints
 
-Rudder Desktop's [Built-in Browser](/concepts/built-in-browser) uses one persistent website session per operating-system user and local Rudder instance. Cookies and site data are intentionally shared across organizations and between operator and supported agent tabs on that instance. Treat a website sign-in as instance-shared local state, not organization-scoped data.
+- Local trusted runtime processes normally use the operator's `HOME` and
+  `USERPROFILE`. Provider-specific config, selected Skills, sessions, and
+  temporary state stay in adapter-managed locations.
+- Credentials remain in the path owned by the provider or operator. Do not
+  copy secrets into documentation, prompts, Library files, or Issue comments.
+- Rudder selects the Skills exposed to a Run. Stale, disabled, or unrelated
+  Skills must not remain visible because an earlier Run materialized them.
+- Required workspace, permission, login, or Skill failures should stop with an
+  actionable error instead of reaching the provider as an unexplained failure.
 
-Agent control remains isolated by organization, agent, run, and tab. Shared cookies do not let one run inspect or operate another run's tab. Agents receive only bounded browser actions; they do not receive raw cookies, passwords, arbitrary JavaScript execution, or unrestricted browser control.
+<a id="boundaries" />
 
-Disabling agent Browser access preserves the operator's tabs and saved website data. Clearing browsing data removes the shared instance session. Choosing the system browser for ordinary links changes link routing only.
+## Boundaries
 
-## Platform differences
+Rudder Desktop's Built-in Browser keeps one persistent website session per
+operating-system user and local Rudder instance. Organizations and supported
+local Agent tabs on that instance share cookies and site data. Tab control is
+still scoped by organization, Agent, Run, and tab. Agents do not receive raw
+cookies, passwords, arbitrary JavaScript execution, or another Run's tab.
 
-File behavior differs across macOS, Linux, and Windows. A runtime setup that works through symlinks or Unix permissions on one platform may need a safe copy or another fallback on another platform.
+Cookie import is currently available on macOS for supported local Chrome,
+Microsoft Edge, and Brave profiles after operator confirmation. It does not
+import passwords. Windows and Linux cookie import are not supported.
 
-When runtime setup fails, check the visible runtime readiness state and error message first. Then inspect whether the problem is missing CLI, missing permissions, missing credentials, unwritable workspace, or a platform-specific file operation.
+On Windows, Rudder may use junctions or safe copies where ordinary directory
+symlinks would require elevated privileges. Operators should not need to run
+Rudder as administrator merely to load a selected Skill.
 
-Built-in Browser cookie import is currently macOS-only and supports local Google Chrome, Microsoft Edge, and Brave Browser profiles. It imports supported cookies after operator confirmation; it does not import passwords. Windows and Linux Browser cookie import is not supported.
+<a id="examples" />
 
-## Next steps
+## Examples
+
+- A local Codex Run can use the operator's existing Codex login while Rudder
+  keeps its selected Skills and session state in managed locations.
+- Turning off Agent Browser access removes the managed control capability but
+  preserves operator tabs and saved website data. Clearing browsing data is
+  the action that removes the shared website session.
+- A Windows Skill link returns `EPERM`. Rudder should use a supported fallback
+  or report which path and permission need repair before provider execution.
 
 <CardGroup cols={2}>
-  <Card title="Configure your agent runtime" icon="terminal" href="/how-to/configure-agent-runtime">
-    Configure and test runtime readiness.
-  </Card>
-  <Card title="Runtime types" icon="terminal" href="/reference/runtime-types">
-    Compare runtime shapes.
+  <Card title="Configure an Agent runtime" icon="terminal" href="/how-to/configure-agent-runtime">
+    Configure credentials and test runtime readiness.
   </Card>
   <Card title="Built-in Browser" icon="globe" href="/concepts/built-in-browser">
-    Understand the shared session and isolated control model.
+    Review the shared session and isolated tab-control model.
   </Card>
 </CardGroup>

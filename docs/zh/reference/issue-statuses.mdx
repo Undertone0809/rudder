@@ -1,44 +1,74 @@
 ---
-title: "问题状态"
-description: "查看 Rudder 从 intake 到 accepted work 使用的 issue statuses。"
+title: "Issue 状态"
+description: "查询 Rudder 中每种 Issue 状态、评审规则，以及状态和负责人之间的边界。"
 icon: "list-checks"
 keywords:
-  - "Rudder issue status"
-  - "agent issue lifecycle"
-  - "issue review state"
+  - "Rudder Issue 状态"
+  - "Agent Issue 生命周期"
+  - "Issue 评审状态"
 canonical: "https://docs.rudderhq.dev/zh/reference/issue-statuses"
 "og:url": "https://docs.rudderhq.dev/zh/reference/issue-statuses"
 hreflang_en: "https://docs.rudderhq.dev/reference/issue-statuses"
 hreflang_zh: "https://docs.rudderhq.dev/zh/reference/issue-statuses"
-
 ---
 
-Rudder 用明确状态表示谁应该行动。
+<a id="definition" />
 
-| Status | 什么时候用 | 避免 |
+## 定义
+
+每个 Issue 的状态都是它在生命周期中所处位置的持久信号。看板和 Agent
+通过它判断当前工作需要整理、执行、评审、解除阻塞，还是已经结束。
+
+<a id="states" />
+
+## 状态
+
+| 状态 | 含义 | 下一步通常由谁处理 |
 | --- | --- | --- |
-| `backlog` | 工作已捕获，但还需要整理 | 把 ready work 永久停在这里 |
-| `todo` | 工作清楚，可以交给一个 owner | 把模糊请求丢进 agent queue |
-| `in_progress` | 一个 owner 正在工作 | 把废弃工作长期留在 active |
-| `blocked` | 下一步依赖其他人或外部条件 | 当成普通失败状态 |
-| `in_review` | 输出已经可以被判断 | 让 reviewer 看半成品 |
-| `done` | 证据被接受，没有剩余必要工作 | 没有可检查输出就关闭 |
+| `backlog` | 已记录任务，但还需要整理 | 负责规划工作的人 |
+| `todo` | 请求和验收条件已经清楚 | 负责人 |
+| `in_progress` | 负责人正在执行 | 负责人 |
+| `blocked` | 某项明确的依赖或决策阻止了进展 | 能解除阻塞的人；这也是可评审状态 |
+| `in_review` | 已有可判断的产物和证据 | 评审人 |
+| `done` | 结果已接受，没有剩余必要工作 | 无，除非明确重新打开 Issue |
 
-## Ownership
+<a id="constraints" />
 
-Rudder 使用 single-assignee issue model。如果多个 agents 需要分别工作，拆成 sub-issues 或 related issues。
+## 约束
 
-## Review
+- 一个 Issue 只有一名负责人。相互独立的工作应拆为子 Issue 或关联
+  Issue，不能给同一条记录安排多名负责人。
+- 评审结论必须带评论，而且只能在 Issue 为 `in_review` 或 `blocked` 时提交。
+- 负责人 Agent 尝试完成带评审人的 Issue 时，Rudder 会把状态改为
+  `in_review`。这条路径只能通过评审人接受结论后完成。
+- 关闭后的 Issue 只有在评论带有明确的重新打开意图时才会恢复。
 
-添加 reviewer 不等于 issue 已进入 review。有可判断输出和证据时，才把 issue 移到 `in_review`。
+<a id="boundaries" />
 
-## 下一步
+## 边界
+
+状态不能替代负责人、checkout 或评审。添加评审人不会自动把 Issue
+移到 `in_review`；在普通评论中写“通过”也不会生成结构化评审结论。
+
+`blocked` 应对应一项具体缺失条件，不是普通错误的收纳箱。重要的状态
+变更会留下活动记录，并始终受 Issue 所属组织的边界限制。
+
+<a id="examples" />
+
+## 例子
+
+- 一项请求还没有验收条件，先放在 `backlog`。结果定义清楚、负责人可以
+  开始后，再移到 `todo`。
+- Agent 完成了带评审人的 Issue。Issue 进入 `in_review`；评审人带评论
+  请求修改后，下一步回到负责人。
+- 工作必须等待客户提供文件。设为 `blocked`，在阻塞评论中写明缺少的
+  文件，收到后再继续。
 
 <CardGroup cols={2}>
-  <Card title="Issue lifecycle" icon="route" href="/zh/how-to/issue-lifecycle">
-    从 intake 跑到 done。
+  <Card title="Issue 生命周期指南" icon="route" href="/zh/how-to/issue-lifecycle">
+    从接收任务推进到接受结果。
   </Card>
-  <Card title="Review agent 工作" icon="message-square-check" href="/zh/how-to/review-agent-work">
-    判断输出是否可以接受。
+  <Card title="评审 Agent 工作" icon="message-square-check" href="/zh/how-to/review-agent-work">
+    检查证据并记录评审结论。
   </Card>
 </CardGroup>

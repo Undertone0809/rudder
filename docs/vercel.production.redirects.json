@@ -56,6 +56,94 @@
       ]
     },
     {
+      "source": "/en/concepts/control-plane",
+      "destination": "https://docs.rudderhq.dev/reference/approvals-budgets-activity",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/en/zh/concepts/control-plane",
+      "destination": "https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/en/concepts/approvals-budgets-activity",
+      "destination": "https://docs.rudderhq.dev/reference/approvals-budgets-activity",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/en/zh/concepts/approvals-budgets-activity",
+      "destination": "https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/en/concepts/chat",
+      "destination": "https://docs.rudderhq.dev/concepts/chat-messenger",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/en/concepts/messenger",
+      "destination": "https://docs.rudderhq.dev/concepts/chat-messenger",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/en/zh/concepts/chat",
+      "destination": "https://docs.rudderhq.dev/zh/concepts/chat-messenger",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/en/zh/concepts/messenger",
+      "destination": "https://docs.rudderhq.dev/zh/concepts/chat-messenger",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
       "source": "/home",
       "destination": "https://docs.rudderhq.dev/",
       "permanent": true,
@@ -122,6 +210,94 @@
       ]
     },
     {
+      "source": "/concepts/control-plane",
+      "destination": "https://docs.rudderhq.dev/reference/approvals-budgets-activity",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/zh/concepts/control-plane",
+      "destination": "https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/concepts/approvals-budgets-activity",
+      "destination": "https://docs.rudderhq.dev/reference/approvals-budgets-activity",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/zh/concepts/approvals-budgets-activity",
+      "destination": "https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/concepts/chat",
+      "destination": "https://docs.rudderhq.dev/concepts/chat-messenger",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/concepts/messenger",
+      "destination": "https://docs.rudderhq.dev/concepts/chat-messenger",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/zh/concepts/chat",
+      "destination": "https://docs.rudderhq.dev/zh/concepts/chat-messenger",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/zh/concepts/messenger",
+      "destination": "https://docs.rudderhq.dev/zh/concepts/chat-messenger",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
       "source": "/",
       "destination": "https://docs.rudderhq.dev/",
       "permanent": true,
@@ -169,6 +345,46 @@
       "permanent": true
     },
     {
+      "source": "/en/concepts/control-plane",
+      "destination": "/reference/approvals-budgets-activity",
+      "permanent": true
+    },
+    {
+      "source": "/en/zh/concepts/control-plane",
+      "destination": "/zh/reference/approvals-budgets-activity",
+      "permanent": true
+    },
+    {
+      "source": "/en/concepts/approvals-budgets-activity",
+      "destination": "/reference/approvals-budgets-activity",
+      "permanent": true
+    },
+    {
+      "source": "/en/zh/concepts/approvals-budgets-activity",
+      "destination": "/zh/reference/approvals-budgets-activity",
+      "permanent": true
+    },
+    {
+      "source": "/en/concepts/chat",
+      "destination": "/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
+      "source": "/en/concepts/messenger",
+      "destination": "/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
+      "source": "/en/zh/concepts/chat",
+      "destination": "/zh/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
+      "source": "/en/zh/concepts/messenger",
+      "destination": "/zh/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
       "source": "/home",
       "destination": "/",
       "permanent": true
@@ -195,6 +411,46 @@
     },
     {
       "source": "/zh/concepts/messenger-approvals",
+      "destination": "/zh/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
+      "source": "/concepts/control-plane",
+      "destination": "/reference/approvals-budgets-activity",
+      "permanent": true
+    },
+    {
+      "source": "/zh/concepts/control-plane",
+      "destination": "/zh/reference/approvals-budgets-activity",
+      "permanent": true
+    },
+    {
+      "source": "/concepts/approvals-budgets-activity",
+      "destination": "/reference/approvals-budgets-activity",
+      "permanent": true
+    },
+    {
+      "source": "/zh/concepts/approvals-budgets-activity",
+      "destination": "/zh/reference/approvals-budgets-activity",
+      "permanent": true
+    },
+    {
+      "source": "/concepts/chat",
+      "destination": "/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
+      "source": "/concepts/messenger",
+      "destination": "/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
+      "source": "/zh/concepts/chat",
+      "destination": "/zh/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
+      "source": "/zh/concepts/messenger",
       "destination": "/zh/concepts/chat-messenger",
       "permanent": true
     }

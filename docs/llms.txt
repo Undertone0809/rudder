@@ -25,7 +25,6 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 - [Skills](https://docs.rudderhq.dev/concepts/skills): Package reusable operating procedures while keeping discovery, enablement, loading, and proven use distinct.
 - [Automations](https://docs.rudderhq.dev/concepts/automations): Run repeatable agent work from a defined trigger, owner, context, concurrency policy, and output route.
 - [Reviews, feedback, and learning](https://docs.rudderhq.dev/concepts/reviews-feedback-learning): Judge an output, record durable feedback, and promote lessons without confusing Review with Approval.
-- [Track approvals, budgets, and activity](https://docs.rudderhq.dev/concepts/approvals-budgets-activity): See how Rudder keeps decisions, spend, changes, run evidence, Dashboard health, Calendar history, and Inbox attention visible.
 - [Plugins](https://docs.rudderhq.dev/concepts/plugins): Extend Rudder with host-managed capabilities, jobs, webhooks, and UI slots without redefining core workflows.
 
 ### How-to guides
@@ -40,16 +39,17 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 - [Configure an Agent runtime](https://docs.rudderhq.dev/how-to/configure-agent-runtime): Configure and test the execution environment Rudder invokes for one Agent, then verify a real low-risk run.
 
 ### Reference
-- [Issue statuses](https://docs.rudderhq.dev/reference/issue-statuses): Reference the Rudder issue statuses used from intake to accepted work.
-- [Runtime types](https://docs.rudderhq.dev/reference/runtime-types): Reference the agent runtime shapes Rudder can invoke and inspect.
-- [Workspace boundaries](https://docs.rudderhq.dev/reference/workspace-boundaries): Reference where Rudder agents should read and write project files, Library files, private state, and scratch artifacts.
-- [Automation output routing](https://docs.rudderhq.dev/reference/automation-output-routing): Choose whether a Rudder automation should create tracked issue work or send output to chat.
-- [Permissions and platforms](https://docs.rudderhq.dev/reference/permissions-and-platforms): Understand local runtime file, credential, and platform boundaries for Rudder agents.
+- [Issue statuses](https://docs.rudderhq.dev/reference/issue-statuses): Look up each Rudder Issue status, its review rules, and the boundary between state and ownership.
+- [Runtime types](https://docs.rudderhq.dev/reference/runtime-types): Compare Rudder runtime choices, readiness states, managed tools, and adapter boundaries.
+- [Workspace boundaries](https://docs.rudderhq.dev/reference/workspace-boundaries): Look up where project work, durable files, Agent state, run workspaces, backups, and scratch files belong.
+- [Automation output routing](https://docs.rudderhq.dev/reference/automation-output-routing): Compare tracked Issue and Chat output for Rudder Automations, including run records and failure evidence.
+- [Permissions and platforms](https://docs.rudderhq.dev/reference/permissions-and-platforms): Look up deployment trust, local runtime homes, credentials, Browser access, and platform-specific file behavior.
+- [Approvals, budgets, and activity](https://docs.rudderhq.dev/reference/approvals-budgets-activity): Look up governed decisions, spend limits, audit activity, run evidence, and operator attention in Rudder.
 
 ### Project
 - [GDPval Harness Benchmark](https://docs.rudderhq.dev/benchmarks/gdpval-harness): Methodology and results from Rudder's 10-task GDPval-based harness pilot.
-- [About Rudder](https://docs.rudderhq.dev/about): Learn what Rudder is, why it exists, and how it helps operators run AI agent teams through durable work loops.
-- [Contact](https://docs.rudderhq.dev/contact): Find the right place to ask questions, report issues, request features, or follow Rudder development.
+- [About Rudder](https://docs.rudderhq.dev/about): Learn what Rudder is, why it exists, and where its responsibilities stop.
+- [Contact](https://docs.rudderhq.dev/contact): Choose the public Rudder channel for a question, bug report, feature request, or release update.
 - [Changelog](https://docs.rudderhq.dev/releases): Stable Rudder release notes, upgrade notes, and GitHub Release links.
 
 ## 简体中文
@@ -73,7 +73,6 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 - [技能](https://docs.rudderhq.dev/zh/concepts/skills): 把可复用的操作步骤整理成技能，同时分清发现、启用、加载和确实使用。
 - [自动化](https://docs.rudderhq.dev/zh/concepts/automations): 用明确的触发方式、负责人、上下文、并发策略和结果去向重复运行 Agent 工作。
 - [评审、反馈和学习](https://docs.rudderhq.dev/zh/concepts/reviews-feedback-learning): 判断产物、保存反馈并谨慎沉淀经验，同时分清评审与审批。
-- [查看审批、预算和活动记录](https://docs.rudderhq.dev/zh/concepts/approvals-budgets-activity): 理解 Rudder 如何让决策、预算、活动、运行证据、Dashboard、Calendar 和 Inbox 保持可见。
 - [插件](https://docs.rudderhq.dev/zh/concepts/plugins): 通过宿主管理的能力、任务、webhook 和界面插槽扩展 Rudder，同时保留核心工作流规则。
 
 ### How-to guides
@@ -88,12 +87,15 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 - [配置 Agent 运行环境](https://docs.rudderhq.dev/zh/how-to/configure-agent-runtime): 配置并测试 Rudder 为一个 Agent 调用的执行环境，再用真实的低风险运行确认结果。
 
 ### Reference
-- [问题状态](https://docs.rudderhq.dev/zh/reference/issue-statuses): 查看 Rudder 从 intake 到 accepted work 使用的 issue statuses。
-- [运行时类型](https://docs.rudderhq.dev/zh/reference/runtime-types): 查看 Rudder 可以调用和检查的 agent runtime 类型。
-- [工作区边界](https://docs.rudderhq.dev/zh/reference/workspace-boundaries): 查看 Rudder agents 应该在哪里读写项目文件、Library files、私有状态和临时产物。
-- [自动化输出路由](https://docs.rudderhq.dev/zh/reference/automation-output-routing): 选择 Rudder automation 应该创建 tracked issue，还是把输出发到 Chat。
-- [权限与平台](https://docs.rudderhq.dev/zh/reference/permissions-and-platforms): 理解 Rudder agents 的本地 runtime 文件、credentials 和平台边界。
+- [Issue 状态](https://docs.rudderhq.dev/zh/reference/issue-statuses): 查询 Rudder 中每种 Issue 状态、评审规则，以及状态和负责人之间的边界。
+- [运行环境类型](https://docs.rudderhq.dev/zh/reference/runtime-types): 比较 Rudder 的运行环境选项、就绪状态、托管工具和适配器边界。
+- [工作区边界](https://docs.rudderhq.dev/zh/reference/workspace-boundaries): 查询项目工作、持久文件、Agent 状态、运行工作区、备份和临时文件应该放在哪里。
+- [自动化输出路由](https://docs.rudderhq.dev/zh/reference/automation-output-routing): 比较 Rudder 自动化的 Issue 和 Chat 输出，包括运行记录与失败证据。
+- [权限与平台](https://docs.rudderhq.dev/zh/reference/permissions-and-platforms): 查询部署信任、本地运行环境目录、凭据、内置浏览器访问和各平台文件行为。
+- [审批、预算和活动记录](https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity): 查询 Rudder 中受治理的决策、费用限制、审计活动、运行证据和需要人处理的事项。
 
 ### Project
 - [GDPval Harness Benchmark](https://docs.rudderhq.dev/zh/benchmarks/gdpval-harness): Rudder GDPval-based 10 任务 harness 探索性 pilot 的方法与结果。
+- [关于 Rudder](https://docs.rudderhq.dev/zh/about): 了解 Rudder 是什么、为什么存在，以及它的职责边界。
+- [联系 Rudder](https://docs.rudderhq.dev/zh/contact): 根据问题、缺陷、功能建议或版本更新，选择合适的 Rudder 公开渠道。
 - [更新日志](https://docs.rudderhq.dev/zh/releases): Rudder 稳定版本的发布记录、升级说明和 GitHub Release 链接。

@@ -427,6 +427,31 @@ describe("bundled rudder docs skill", () => {
     ).toBeGreaterThanOrEqual(6);
   });
 
+  it("routes governance retrieval to current public owners without changing the main router", async () => {
+    const evalPath = path.join(root, "evals", "retrieval-authority-evals.json");
+    const evals = JSON.parse(await fs.readFile(evalPath, "utf8")) as Array<{
+      query: string;
+      locale: "en" | "zh";
+      expected_public_path: string;
+      expected_anchor?: string;
+    }>;
+    const sourceMap = await fs.readFile(path.join(root, "references", "source-map.md"), "utf8");
+
+    expect(evals.length).toBeGreaterThanOrEqual(10);
+    expect(evals.some((item) => item.locale === "en")).toBe(true);
+    expect(evals.some((item) => item.locale === "zh")).toBe(true);
+    for (const item of evals) {
+      expect(item.expected_public_path).not.toMatch(/\/concepts\/(?:control-plane|approvals-budgets-activity|chat|messenger)$/);
+      expect(sourceMap).toContain(item.expected_public_path);
+    }
+    for (const anchor of ["approvals", "budgets-and-cost", "activity"]) {
+      expect(evals.some((item) => item.expected_anchor === anchor)).toBe(true);
+    }
+    expect(sourceMap).toContain("https://docs.rudderhq.dev/reference/approvals-budgets-activity");
+    expect(sourceMap).toContain("https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity");
+    expect(sourceMap).not.toContain("https://docs.rudderhq.dev/concepts/approvals-budgets-activity");
+  });
+
   it("does not reintroduce the legacy package identity", async () => {
     const contents = [await readSkill(), await readReferences()].join("\n");
 

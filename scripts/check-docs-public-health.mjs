@@ -21,6 +21,8 @@ const REQUIRED_PATHS = [
   { path: "/en", status: 200, bodyIncludes: ["Rudder"], canonical: CANONICAL_ORIGIN, finalPath: "/" },
   { path: "/get-started/installation", status: 200, bodyIncludes: ["Rudder"], canonical: `${CANONICAL_ORIGIN}/get-started/installation` },
   { path: "/zh", status: 200, bodyIncludes: ["Rudder"], canonical: `${CANONICAL_ORIGIN}/zh` },
+  { path: "/zh/about", status: 200, bodyIncludes: ["Rudder", "开源软件"], canonical: `${CANONICAL_ORIGIN}/zh/about` },
+  { path: "/zh/contact", status: 200, bodyIncludes: ["GitHub", "缺陷报告"], canonical: `${CANONICAL_ORIGIN}/zh/contact` },
   { path: "/zh/get-started/installation", status: 200, bodyIncludes: ["Rudder"], canonical: `${CANONICAL_ORIGIN}/zh/get-started/installation` },
   { path: "/robots.txt", status: 200, bodyIncludes: [`Sitemap: ${CANONICAL_ORIGIN}/sitemap.xml`] },
   { path: "/sitemap.xml", status: 200, bodyIncludes: [`<loc>${CANONICAL_ORIGIN}`, `${CANONICAL_ORIGIN}/zh`] },

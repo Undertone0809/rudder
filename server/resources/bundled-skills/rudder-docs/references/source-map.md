@@ -25,6 +25,29 @@ two pages. Prefer the user's language when equivalent official pages exist.
 Public docs own published user guidance; a local `docs/` checkout is useful
 when the live site is unavailable or the task is editing the public site.
 
+Use these routes for governance and operational evidence questions:
+
+| User topic | English | 简体中文 |
+| --- | --- | --- |
+| Approvals, budgets, cost, and activity | `https://docs.rudderhq.dev/reference/approvals-budgets-activity` | `https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity` |
+| Run evidence and Run detail | `https://docs.rudderhq.dev/concepts/agents` | `https://docs.rudderhq.dev/zh/concepts/agents` |
+| Dashboard summary | `https://docs.rudderhq.dev/concepts/overview` | `https://docs.rudderhq.dev/zh/concepts/overview` |
+| Calendar source and history | `https://docs.rudderhq.dev/concepts/calendar` | `https://docs.rudderhq.dev/zh/concepts/calendar` |
+| Human attention, Inbox, and Messenger | `https://docs.rudderhq.dev/concepts/chat-messenger` | `https://docs.rudderhq.dev/zh/concepts/chat-messenger` |
+
+The approvals reference includes stable `#approvals`, `#budgets-and-cost`, and
+`#activity` anchors for narrow retrieval. Legacy public URLs are compatibility
+entries only. Cite the canonical routes in new answers.
+
+Other lookup pages are similarly narrow:
+
+- Issue states: `https://docs.rudderhq.dev/reference/issue-statuses`
+- Runtime choices and readiness: `https://docs.rudderhq.dev/reference/runtime-types`
+- Workspace and file placement: `https://docs.rudderhq.dev/reference/workspace-boundaries`
+- Automation result destinations: `https://docs.rudderhq.dev/reference/automation-output-routing`
+- Deployment trust, credentials, Browser, and platform behavior:
+  `https://docs.rudderhq.dev/reference/permissions-and-platforms`
+
 ## Product Logic Registry
 
 - Entry point: `doc/product/README.md`

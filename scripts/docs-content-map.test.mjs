@@ -40,6 +40,23 @@ const BATCH_2_HOW_TO_IDS = [
   "review-agent-work",
 ];
 
+const BATCH_3_REFERENCE_IDS = [
+  "issue-statuses",
+  "runtime-types",
+  "workspace-boundaries",
+  "automation-output-routing",
+  "permissions-and-platforms",
+  "approvals-budgets-activity-reference",
+];
+
+const BATCH_3_REFERENCE_STRUCTURE = [
+  "definition",
+  "states",
+  "constraints",
+  "boundaries",
+  "examples",
+];
+
 function readLocalizedPages(manifest, pageIds) {
   return pageIds.flatMap((pageId) => {
     const page = manifest.pages.find((candidate) => candidate.id === pageId);
@@ -63,14 +80,14 @@ test("manifest parses and covers every current navigation page", () => {
   for (const route of navigation) assert.ok(routes.has(route), `manifest is missing ${route}`);
 });
 
-test("redirect generation excludes Batch 3 reservations", () => {
+test("redirect generation includes the activated Batch 3 aliases", () => {
   const manifest = loadManifest();
   const mintlify = expectedRedirects(manifest, "mintlify");
   const vercel = expectedRedirects(manifest, "vercel");
   assert.ok(mintlify.some((redirect) => redirect.source === "/home"));
   assert.ok(vercel.some((redirect) => redirect.has?.[0]?.type === "host"));
-  assert.ok(!mintlify.some((redirect) => redirect.source === "/concepts/control-plane"));
-  assert.ok(!vercel.some((redirect) => redirect.source === "/concepts/chat"));
+  assert.ok(mintlify.some((redirect) => redirect.source === "/concepts/control-plane"));
+  assert.ok(vercel.some((redirect) => redirect.source === "/concepts/chat"));
 });
 
 test("deployment redirect artifacts keep legacy hosts out of staging and resolve production aliases in one hop", () => {
@@ -254,6 +271,181 @@ test("Batch 2 procedures do not promise unsupported controls, statuses, or porta
   assert.doesNotMatch(`${example.starting_request} ${example.intervention} ${example.artifacts.join(" ")}`, /Goals|Library files|organization resources/u);
 });
 
+test("Batch 3 atomically promotes the governance reference and retires transitional concept bodies", () => {
+  const manifest = loadManifest();
+  const governance = manifest.pages.find((page) => page.id === "approvals-budgets-activity-reference");
+
+  assert.equal(manifest.pages.some((page) => page.id === "approvals-budgets-activity"), false);
+  assert.equal(governance.status, "active");
+  assert.equal(governance.llms, true);
+  assert.equal(governance.metadata_enforcement, "strict");
+  assert.deepEqual(governance.contracts.primary, [
+    "APPROVAL.GOVERNED.ACTIONS.001",
+    "BUDGET.ENFORCEMENT.001",
+    "ACTIVITY.AUDIT.001",
+  ]);
+  assert.deepEqual(manifest.transitional_files, []);
+
+  for (const relativeFile of [
+    "docs/concepts/approvals-budgets-activity.mdx",
+    "docs/zh/concepts/approvals-budgets-activity.mdx",
+    "docs/concepts/chat.mdx",
+    "docs/zh/concepts/chat.mdx",
+    "docs/concepts/messenger.mdx",
+    "docs/zh/concepts/messenger.mdx",
+  ]) {
+    assert.equal(fs.existsSync(path.join(REPO_ROOT, relativeFile)), false, `${relativeFile} must be retired`);
+  }
+
+  for (const contractId of governance.contracts.primary) {
+    assert.equal(
+      manifest.contract_ownership.find((ownership) => ownership.id === contractId)?.primary_page,
+      governance.id,
+      `${contractId} must move to the active reference`,
+    );
+  }
+
+  const docsJson = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "docs/docs.json"), "utf8"));
+  for (const language of docsJson.navigation.languages) {
+    const allPages = language.groups.flatMap((group) => group.pages);
+    assert.ok(allPages.includes(language.language === "en"
+      ? "reference/approvals-budgets-activity"
+      : "zh/reference/approvals-budgets-activity"));
+    assert.ok(!allPages.some((page) => page.endsWith("concepts/approvals-budgets-activity")));
+  }
+});
+
+test("Batch 3 references expose definition, state, constraint, boundary, and example sections", () => {
+  const manifest = loadManifest();
+
+  for (const { locale, page, relativeFile, source } of readLocalizedPages(manifest, BATCH_3_REFERENCE_IDS)) {
+    assert.equal(page.kind, "reference");
+    assert.equal(page.status, "active");
+    for (const anchor of BATCH_3_REFERENCE_STRUCTURE) {
+      assert.ok(page.anchors[locale].includes(anchor), `${page.id}/${locale} must declare #${anchor}`);
+      assert.match(source, new RegExp(`<a id=["']${anchor}["']\\s*/>`), `${relativeFile} must expose #${anchor}`);
+    }
+    if (locale === "en") {
+      assert.doesNotMatch(source, /[\u2013\u2014]/u, `${relativeFile} contains an en or em dash`);
+      assert.doesNotMatch(source, /\s--\s/u, `${relativeFile} contains a prose double dash`);
+    }
+  }
+
+  const governance = manifest.pages.find((page) => page.id === "approvals-budgets-activity-reference");
+  for (const topicAnchor of [
+    "approvals",
+    "budgets-and-cost",
+    "activity",
+    "run-intelligence",
+    "dashboard-calendar-and-inbox",
+  ]) {
+    for (const locale of manifest.locales) {
+      assert.ok(governance.anchors[locale].includes(topicAnchor));
+    }
+  }
+});
+
+test("Batch 3 governance topic map routes legacy topics to current owning pages", () => {
+  const governance = fs.readFileSync(
+    path.join(REPO_ROOT, "docs/reference/approvals-budgets-activity.mdx"),
+    "utf8",
+  );
+  const governanceZh = fs.readFileSync(
+    path.join(REPO_ROOT, "docs/zh/reference/approvals-budgets-activity.mdx"),
+    "utf8",
+  );
+
+  for (const [source, prefix] of [[governance, ""], [governanceZh, "/zh"]]) {
+    assert.match(source, /Legacy topic map|旧主题索引/u);
+    assert.match(source, /\(#approvals\)/u);
+    assert.match(source, /\(#budgets-and-cost\)/u);
+    assert.match(source, /\(#activity\)/u);
+    assert.ok(source.includes(`](${prefix}/concepts/agents)`));
+    assert.ok(source.includes(`](${prefix}/concepts/overview)`));
+    assert.ok(source.includes(`](${prefix}/concepts/calendar)`));
+    assert.ok(source.includes(`](${prefix}/concepts/chat-messenger)`));
+  }
+});
+
+test("Batch 3 legacy aliases are permanent, locale-safe, and resolve in one hop", () => {
+  const manifest = loadManifest();
+  const redirectCases = [
+    ["/concepts/control-plane", "/reference/approvals-budgets-activity"],
+    ["/zh/concepts/control-plane", "/zh/reference/approvals-budgets-activity"],
+    ["/concepts/approvals-budgets-activity", "/reference/approvals-budgets-activity"],
+    ["/zh/concepts/approvals-budgets-activity", "/zh/reference/approvals-budgets-activity"],
+    ["/concepts/chat", "/concepts/chat-messenger"],
+    ["/concepts/messenger", "/concepts/chat-messenger"],
+    ["/zh/concepts/chat", "/zh/concepts/chat-messenger"],
+    ["/zh/concepts/messenger", "/zh/concepts/chat-messenger"],
+  ];
+
+  for (const target of ["mintlify", "vercel"]) {
+    const generated = expectedRedirects(manifest, target, { environment: "staging" });
+    for (const [source, destination] of redirectCases) {
+      assert.equal(resolveRedirect(generated, { host: "docs.rudderhq.dev", path: source }), destination);
+      assert.equal(resolveRedirect(generated, { host: "docs.rudderhq.dev", path: destination }), null);
+    }
+  }
+
+  for (const [source, destination] of redirectCases) {
+    const redirect = manifest.redirects.find((candidate) => candidate.source === source);
+    assert.equal(redirect?.status, "active", `${source} must be active`);
+    assert.equal(redirect?.permanent, true, `${source} must be permanent`);
+    assert.equal(redirect?.locale, source.startsWith("/zh/") ? "zh" : "en");
+    assert.equal(redirect?.destination, destination);
+  }
+});
+
+test("Batch 3 active docs do not link to retired concept routes or use control-plane prose", () => {
+  const manifest = loadManifest();
+  const retiredLink = /\]\(\/(?:zh\/)?concepts\/(?:approvals-budgets-activity|chat|messenger)(?:[)#])/u;
+  for (const { page, relativeFile, source } of readLocalizedPages(
+    manifest,
+    manifest.pages.filter((page) => page.status === "active").map((page) => page.id),
+  )) {
+    assert.doesNotMatch(source, retiredLink, `${relativeFile} links to a retired canonical route`);
+    assert.doesNotMatch(source, /\bcontrol[ -]plane\b/iu, `${relativeFile} uses legacy control-plane prose`);
+    assert.equal(page.status, "active");
+  }
+});
+
+test("Batch 3 Project pages keep GDPval facts, release history, and bilingual project entry points", () => {
+  const manifest = loadManifest();
+  const gdpval = manifest.pages.find((page) => page.id === "gdpval-harness");
+  assert.equal(gdpval.kind, "project");
+  assert.equal(gdpval.status, "active");
+  assert.equal(gdpval.llms, true);
+  assert.deepEqual(Object.keys(gdpval.files).sort(), ["en", "zh"]);
+
+  for (const relativeFile of Object.values(gdpval.files)) {
+    const source = fs.readFileSync(path.join(REPO_ROOT, relativeFile), "utf8");
+    assert.match(source, /81\.7/u);
+    assert.match(source, /75\.7/u);
+    assert.match(source, /75\.6/u);
+    assert.doesNotMatch(source, /correction notice|更正说明/iu);
+  }
+
+  for (const pageId of ["about", "contact"]) {
+    const page = manifest.pages.find((candidate) => candidate.id === pageId);
+    assert.equal(page.kind, "project");
+    assert.deepEqual(Object.keys(page.files).sort(), ["en", "zh"]);
+    assert.equal(page.pairing_exception, null);
+  }
+
+  const about = fs.readFileSync(path.join(REPO_ROOT, "docs/about.mdx"), "utf8");
+  assert.match(about, /Rudder is open-source software for assigning, running, reviewing, and improving\s+agent work\./u);
+  assert.match(about, /It connects goals, tasks, knowledge, runs, reviews, budgets, and\s+workflows/u);
+  assert.doesNotMatch(about, /[\u2013\u2014]/u);
+
+  for (const relativeFile of ["docs/releases.mdx", "docs/zh/releases.mdx"]) {
+    const source = fs.readFileSync(path.join(REPO_ROOT, relativeFile), "utf8");
+    assert.match(source, /historical terminology|历史术语/u);
+    assert.match(source, /current (?:product )?guidance|当前产品说明/u);
+    assert.match(source, /future (?:release )?entries|今后的发布记录/iu);
+  }
+});
+
 test("generated artifacts are deterministic", () => {
   const manifest = loadManifest();
   assert.deepEqual(generatedArtifacts(manifest), generatedArtifacts(manifest));
@@ -285,31 +477,43 @@ test("integrity reports URL, anchor, contract, and primary-owner failures", () =
 test("public contract primary owners must be active", () => {
   const manifest = structuredClone(loadManifest());
   const contractId = "APPROVAL.GOVERNED.ACTIONS.001";
-  const activePage = manifest.pages.find((page) => page.id === "approvals-budgets-activity");
   const reservedPage = manifest.pages.find((page) => page.id === "approvals-budgets-activity-reference");
-  activePage.contracts.primary = activePage.contracts.primary.filter((id) => id !== contractId);
-  reservedPage.contracts.primary.push(contractId);
-  manifest.contract_ownership.find((ownership) => ownership.id === contractId).primary_page = reservedPage.id;
+  reservedPage.status = "reserved_batch_3";
 
   const errors = collectIntegrityErrors({ manifest });
   assert.ok(errors.some((error) => error === `${contractId}: primary page ${reservedPage.id} must be active or transitional_active`));
 });
 
-test("transitional files require current files and an active replacement", () => {
+test("retired transitional files stay empty while malformed entries remain detectable", () => {
+  assert.deepEqual(loadManifest().transitional_files, []);
+
   const missingFileManifest = structuredClone(loadManifest());
-  missingFileManifest.transitional_files[0].files.push("docs/concepts/not-real-chat.mdx");
+  missingFileManifest.transitional_files.push({
+    files: ["docs/concepts/not-real-chat.mdx"],
+    retire_in: "test",
+    replacement_page: "chat-messenger",
+  });
   assert.ok(collectIntegrityErrors({ manifest: missingFileManifest }).some(
     (error) => error === "transitional_files[0]: missing transitional file docs/concepts/not-real-chat.mdx",
   ));
 
   const missingReplacementManifest = structuredClone(loadManifest());
-  missingReplacementManifest.transitional_files[0].replacement_page = "not-real-chat-replacement";
+  missingReplacementManifest.transitional_files.push({
+    files: ["docs/concepts/chat-messenger.mdx"],
+    retire_in: "test",
+    replacement_page: "not-real-chat-replacement",
+  });
   assert.ok(collectIntegrityErrors({ manifest: missingReplacementManifest }).some(
     (error) => error === "transitional_files[0]: unknown replacement page not-real-chat-replacement",
   ));
 
   const reservedReplacementManifest = structuredClone(loadManifest());
-  reservedReplacementManifest.transitional_files[0].replacement_page = "approvals-budgets-activity-reference";
+  reservedReplacementManifest.pages.find((page) => page.id === "approvals-budgets-activity-reference").status = "reserved_batch_3";
+  reservedReplacementManifest.transitional_files.push({
+    files: ["docs/concepts/chat-messenger.mdx"],
+    retire_in: "test",
+    replacement_page: "approvals-budgets-activity-reference",
+  });
   assert.ok(collectIntegrityErrors({ manifest: reservedReplacementManifest }).some(
     (error) => error === "transitional_files[0]: replacement page approvals-budgets-activity-reference must be active or transitional_active",
   ));
@@ -393,7 +597,7 @@ test("integrity rejects alias ownership and language mismatches", () => {
   assert.ok(errors.some((error) => error === "chat-messenger: alias zh-messenger-approvals must redirect to /zh/concepts/chat-messenger"));
 });
 
-test("reserved aliases keep explicit ownership, locale, destination, and activation semantics", () => {
+test("migration aliases keep explicit ownership, locale, destination, and activation semantics", () => {
   const typoManifest = structuredClone(loadManifest());
   typoManifest.redirects.find((redirect) => redirect.id === "retire-control-plane").destination = "/reference/not-real";
   assert.ok(collectIntegrityErrors({ manifest: typoManifest }).some((error) => error.includes("invalid active redirect destination /reference/not-real")));
@@ -402,9 +606,12 @@ test("reserved aliases keep explicit ownership, locale, destination, and activat
   ownerManifest.redirects.find((redirect) => redirect.id === "retire-chat").owner_page = "issues";
   assert.ok(collectIntegrityErrors({ manifest: ownerManifest }).some((error) => error === "chat-messenger: alias retire-chat owner_page must be chat-messenger"));
 
-  const activatedManifest = structuredClone(loadManifest());
-  activatedManifest.redirects.find((redirect) => redirect.id === "retire-control-plane").status = "active";
-  assert.ok(!collectIntegrityErrors({ manifest: activatedManifest }).some((error) => error.includes("retire-control-plane") && error.includes("status")));
+  const reservedManifest = structuredClone(loadManifest());
+  reservedManifest.redirects.find((redirect) => redirect.id === "retire-control-plane").status = "reserved_batch_3";
+  assert.equal(
+    expectedRedirects(reservedManifest, "mintlify").some((redirect) => redirect.source === "/concepts/control-plane"),
+    false,
+  );
 });
 
 test("canonical route collision exemptions only recognize the approved legacy host", () => {

@@ -1,71 +1,95 @@
 ---
 title: "Runtime types"
-description: "Reference the agent runtime shapes Rudder can invoke and inspect."
+description: "Compare Rudder runtime choices, readiness states, managed tools, and adapter boundaries."
 icon: "terminal"
 keywords:
   - "Rudder runtime types"
   - "agent runtime"
-  - "Codex Claude shell webhook"
+  - "Codex Claude Cursor Gemini OpenCode Pi"
 canonical: "https://docs.rudderhq.dev/reference/runtime-types"
 "og:url": "https://docs.rudderhq.dev/reference/runtime-types"
 hreflang_en: "https://docs.rudderhq.dev/reference/runtime-types"
 hreflang_zh: "https://docs.rudderhq.dev/zh/reference/runtime-types"
-
 ---
 
-Rudder coordinates agent work. Runtimes do the work.
+<a id="definition" />
 
-## Supported shapes
+## Definition
 
-| Runtime shape | Use it for |
-| --- | --- |
-| Local CLI | Local coding agents such as Codex, Claude Code, Cursor, Gemini, OpenCode, or similar tools |
-| Shell process | Custom local commands that can run as an agent process |
-| HTTP webhook | External services that receive a request and report back |
-| Gateway runtime | Gateway-backed agent systems managed outside the local app |
+A runtime is the adapter that executes an Agent Run. The Agent is the durable
+team member, the Run is one bounded attempt, and the runtime supplies the local
+or external execution behavior for that attempt.
 
-The exact runtime options available in your app depend on installed packages, configured providers, and local machine setup.
+<a id="states" />
 
-## Managed Rudder tools
+## States
 
-Managed control tools are adapter capabilities, not a feature shared automatically by every runtime shape.
+The standard Agent configuration UI currently enables these local choices:
 
-| Runtime | Managed tool path | Built-in Browser in Desktop `local_trusted` |
+| UI choice | Runtime value | Local command |
 | --- | --- | --- |
-| Codex local | Rudder-managed MCP configuration | Supported when enabled |
-| Claude Code local | Rudder-managed MCP configuration | Supported when enabled |
-| OpenCode local | Rudder-managed MCP configuration | Supported when enabled |
-| Pi local | Rudder-managed native tool bridge | Supported when enabled |
-| Other supported local runtime | Runtime-specific; consult bundled `rudder-docs` for the CLI fallback only when exact command guidance is needed | Not promised |
-| Shell, webhook, gateway, or remote runtime | No local managed tool path is promised | Not promised |
+| Codex (local) | `codex_local` | `codex` |
+| Claude Code (local) | `claude_local` | `claude` |
+| Cursor (local) | `cursor` | `cursor-agent` |
+| Gemini CLI (local) | `gemini_local` | `gemini` |
+| OpenCode (local) | `opencode_local` | `opencode` |
+| Pi (local) | `pi_local` | `pi` |
 
-Rudder prepares the managed path automatically for each eligible run. It is first-party runtime infrastructure, not a custom integration or an MCP server that operators configure manually. See [Built-in Browser](/concepts/built-in-browser) for its shared website-session and isolated tab-control boundaries.
+Availability is setup guidance:
 
-## What runtime configuration controls
+| Readiness group | Meaning |
+| --- | --- |
+| Ready on this machine | The default local command resolved on the server path |
+| Needs setup | Rudder could not find the default command |
+| Other runtimes | Rudder cannot decide readiness through a local command probe |
 
-Runtime configuration controls how Rudder invokes the agent:
+Always use **Test runtime chain** after configuration. A successful probe is
+stronger evidence than the availability group.
 
-- command or endpoint
-- working directory
-- model or provider options
-- environment variables
-- instruction and context loading
-- result parsing and reporting
+<a id="constraints" />
 
-## Readiness
+## Constraints
 
-Before relying on a runtime, test it from the agent configuration screen. A ready runtime should be invokable, able to receive the intended context, and able to report a result that Rudder can inspect.
+Runtime capabilities differ. Codex, Claude Code, OpenCode, and Pi can receive
+Rudder-managed tools through their supported MCP or native bridge. Cursor and
+Gemini have their own adapter behavior. Remote or unsupported adapters must not
+claim a managed tool path that they do not have.
 
-## Next steps
+Model discovery, session reuse, Skill synchronization, transcript parsing,
+cost metadata, and mid-turn controls are adapter-specific. A fallback runtime
+is another explicit attempt, not proof that the primary runtime has the same
+capabilities.
+
+<a id="boundaries" />
+
+## Boundaries
+
+Generic `process` and `http` adapters are internal or advanced plumbing and do
+not appear as ordinary runtime picker choices. Registry entries shown as
+unavailable or coming soon are not promises of an executable setup.
+
+Rudder prepares managed runtime state and the selected work context, then the
+runtime performs the work. Runtime configuration does not grant extra Issue,
+organization, filesystem, credential, or Browser authority.
+
+<a id="examples" />
+
+## Examples
+
+- A local Codex Agent needs repository access and Rudder tools. Configure
+  `codex_local`, select the model and permissions, then run **Test runtime
+  chain** before assigning work.
+- An OpenCode command exists but its provider login is missing. The command may
+  appear ready while the runtime test reports an authentication failure. Fix
+  the provider setup and test again.
+- A runtime cannot provide native mid-turn steering. Rudder should report its
+  interrupt-and-continue fallback instead of presenting a native Steer result.
 
 <CardGroup cols={2}>
-  <Card title="Configure your agent runtime" icon="terminal" href="/how-to/configure-agent-runtime">
-    Set up a runtime for an agent.
+  <Card title="Configure an Agent runtime" icon="terminal" href="/how-to/configure-agent-runtime">
+    Configure a runtime and verify the full chain.
   </Card>
   <Card title="Permissions and platforms" icon="shield-check" href="/reference/permissions-and-platforms">
-    Understand local runtime file and credential boundaries.
-  </Card>
-  <Card title="Built-in Browser" icon="globe" href="/concepts/built-in-browser">
-    Review supported runtimes and Browser boundaries.
+    Check local trust, credential, filesystem, and Browser boundaries.
   </Card>
 </CardGroup>

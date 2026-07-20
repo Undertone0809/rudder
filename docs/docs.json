@@ -68,7 +68,6 @@
               "concepts/skills",
               "concepts/automations",
               "concepts/reviews-feedback-learning",
-              "concepts/approvals-budgets-activity",
               "concepts/plugins"
             ]
           },
@@ -95,7 +94,8 @@
               "reference/runtime-types",
               "reference/workspace-boundaries",
               "reference/automation-output-routing",
-              "reference/permissions-and-platforms"
+              "reference/permissions-and-platforms",
+              "reference/approvals-budgets-activity"
             ]
           },
           {
@@ -137,7 +137,6 @@
               "zh/concepts/skills",
               "zh/concepts/automations",
               "zh/concepts/reviews-feedback-learning",
-              "zh/concepts/approvals-budgets-activity",
               "zh/concepts/plugins"
             ]
           },
@@ -164,7 +163,8 @@
               "zh/reference/runtime-types",
               "zh/reference/workspace-boundaries",
               "zh/reference/automation-output-routing",
-              "zh/reference/permissions-and-platforms"
+              "zh/reference/permissions-and-platforms",
+              "zh/reference/approvals-budgets-activity"
             ]
           },
           {
@@ -172,6 +172,8 @@
             "icon": "ellipsis",
             "pages": [
               "zh/benchmarks/gdpval-harness",
+              "zh/about",
+              "zh/contact",
               "zh/releases"
             ]
           }
@@ -267,6 +269,38 @@
       "destination": "/zh/concepts/chat-messenger"
     },
     {
+      "source": "/en/concepts/control-plane",
+      "destination": "/reference/approvals-budgets-activity"
+    },
+    {
+      "source": "/en/zh/concepts/control-plane",
+      "destination": "/zh/reference/approvals-budgets-activity"
+    },
+    {
+      "source": "/en/concepts/approvals-budgets-activity",
+      "destination": "/reference/approvals-budgets-activity"
+    },
+    {
+      "source": "/en/zh/concepts/approvals-budgets-activity",
+      "destination": "/zh/reference/approvals-budgets-activity"
+    },
+    {
+      "source": "/en/concepts/chat",
+      "destination": "/concepts/chat-messenger"
+    },
+    {
+      "source": "/en/concepts/messenger",
+      "destination": "/concepts/chat-messenger"
+    },
+    {
+      "source": "/en/zh/concepts/chat",
+      "destination": "/zh/concepts/chat-messenger"
+    },
+    {
+      "source": "/en/zh/concepts/messenger",
+      "destination": "/zh/concepts/chat-messenger"
+    },
+    {
       "source": "/home",
       "destination": "/"
     },
@@ -288,6 +322,38 @@
     },
     {
       "source": "/zh/concepts/messenger-approvals",
+      "destination": "/zh/concepts/chat-messenger"
+    },
+    {
+      "source": "/concepts/control-plane",
+      "destination": "/reference/approvals-budgets-activity"
+    },
+    {
+      "source": "/zh/concepts/control-plane",
+      "destination": "/zh/reference/approvals-budgets-activity"
+    },
+    {
+      "source": "/concepts/approvals-budgets-activity",
+      "destination": "/reference/approvals-budgets-activity"
+    },
+    {
+      "source": "/zh/concepts/approvals-budgets-activity",
+      "destination": "/zh/reference/approvals-budgets-activity"
+    },
+    {
+      "source": "/concepts/chat",
+      "destination": "/concepts/chat-messenger"
+    },
+    {
+      "source": "/concepts/messenger",
+      "destination": "/concepts/chat-messenger"
+    },
+    {
+      "source": "/zh/concepts/chat",
+      "destination": "/zh/concepts/chat-messenger"
+    },
+    {
+      "source": "/zh/concepts/messenger",
       "destination": "/zh/concepts/chat-messenger"
     }
   ]

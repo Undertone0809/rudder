@@ -1,45 +1,80 @@
 ---
 title: "Workspace boundaries"
-description: "Reference where Rudder agents should read and write project files, Library files, private state, and scratch artifacts."
+description: "Look up where project work, durable files, Agent state, run workspaces, backups, and scratch files belong."
 icon: "folder-tree"
 keywords:
   - "Rudder workspace boundaries"
-  - "agent files"
+  - "Agent files"
   - "Library files"
 canonical: "https://docs.rudderhq.dev/reference/workspace-boundaries"
 "og:url": "https://docs.rudderhq.dev/reference/workspace-boundaries"
 hreflang_en: "https://docs.rudderhq.dev/reference/workspace-boundaries"
 hreflang_zh: "https://docs.rudderhq.dev/zh/reference/workspace-boundaries"
-
 ---
 
-Workspace boundaries keep agent work recoverable. Put durable files where future runs and reviewers can find them.
+<a id="definition" />
 
-| File or state | Correct location |
-| --- | --- |
-| Project repository work | Project workspace |
-| Durable project output | Project folder in Library |
-| Shared organization reference | Library |
-| Curated run context | Project Context resources |
-| Agent-private instructions, memory, and local state | Agent home |
-| Runtime scratch files | `/tmp` or system temp |
-| Verification screenshots that are not final artifacts | `/tmp` or system temp |
+## Definition
 
-## Protected paths
+Rudder separates curated context, durable output, mutable project work, private
+Agent state, and temporary files. The location determines who can find a file,
+whether it can enter a later Run, and which recovery rules apply.
 
-Agents should use Rudder-managed paths and Library references instead of inventing new local folders. This keeps organization boundaries clear and avoids mixing private runtime state with shared project output.
+<a id="states" />
 
-## Backups
+## States and locations
 
-Workspace backups are for operator recovery and inspection. Browse before restoring. Download when you need an external copy. Delete backups that no longer serve a recovery purpose.
+| File or state | Put it here | What that means |
+| --- | --- | --- |
+| Shared organization reference or accepted output | Library | It remains a durable, referenceable organization file |
+| Starting material for project-linked Runs | Attach a Library or external resource to Project Context | Only selected resources become eligible starting context |
+| Repository or working folder | Primary project workspace | Project-linked Runs prefer it as their work location |
+| Files and branch for one execution | Run workspace | The Run records its concrete workspace strategy and state |
+| Agent instructions, memory, Skills, sessions, and managed state | Agent or adapter-managed home | The state belongs to that Agent or runtime, not ordinary Library browsing |
+| Recovery version | Workspace backup | The operator can inspect, download, restore, or delete an eligible version |
+| Scratch files and non-final verification screenshots | `/tmp` or the system temporary directory | They are disposable and stay outside durable organization content |
 
-## Next steps
+<a id="constraints" />
+
+## Constraints
+
+- A Project may have several workspaces but only one primary workspace.
+- Project Context is an admission list. Rudder does not inject every
+  organization resource into every Run.
+- Protected instructions, Skills, runtime directories, credentials, and cache
+  paths are not ordinary Library content.
+- A Run workspace cannot be archived while open Issues still depend on it.
+- Restoring a workspace backup creates a pre-restore safety version first.
+
+<a id="boundaries" />
+
+## Boundaries
+
+Library paths remain organization-scoped and pass path validation. Desktop
+open actions do not let browser deployments open local applications, and a
+validated file link does not expose its absolute filesystem root.
+
+In the default local Desktop layout, organization files use a stable mapping
+under `~/Documents/Rudder`. If an established mapped folder disappears, Rudder
+treats it as a recovery problem. It does not create an empty replacement over
+the missing location.
+
+<a id="examples" />
+
+## Examples
+
+- Keep source notes in Library, attach only the notes needed by a project, and
+  save the accepted report in that project's Library folder.
+- Let a coding Run use the primary project repository or an explicit isolated
+  Run workspace. Keep build caches and temporary screenshots out of Library.
+- Browse the selected backup before restoring it. If an open Issue still uses
+  a Run workspace, finish or move that dependency before archive.
 
 <CardGroup cols={2}>
   <Card title="Manage Workspaces and Library" icon="folder-tree" href="/how-to/manage-workspaces-and-library">
-    Apply these boundaries in daily work.
+    Apply these boundaries to a project and its durable output.
   </Card>
-  <Card title="Workspaces" icon="folder-tree" href="/concepts/workspaces">
-    Understand the workspace model.
+  <Card title="Workspaces and Library" icon="folder-tree" href="/concepts/workspaces">
+    Read the mental model behind each location.
   </Card>
 </CardGroup>

@@ -1,0 +1,78 @@
+[
+  {
+    "query": "Where can I check whether a governed Rudder action was approved and applied?",
+    "locale": "en",
+    "expected_public_path": "https://docs.rudderhq.dev/reference/approvals-budgets-activity",
+    "expected_anchor": "approvals"
+  },
+  {
+    "query": "Which Rudder page explains monthly budget hard stops and cost events?",
+    "locale": "en",
+    "expected_public_path": "https://docs.rudderhq.dev/reference/approvals-budgets-activity",
+    "expected_anchor": "budgets-and-cost"
+  },
+  {
+    "query": "I need the audit trail for a product mutation in Rudder.",
+    "locale": "en",
+    "expected_public_path": "https://docs.rudderhq.dev/reference/approvals-budgets-activity",
+    "expected_anchor": "activity"
+  },
+  {
+    "query": "Where does Rudder explain Run summaries, transcripts, logs, and raw evidence?",
+    "locale": "en",
+    "expected_public_path": "https://docs.rudderhq.dev/concepts/agents"
+  },
+  {
+    "query": "What owns the current Dashboard health summary?",
+    "locale": "en",
+    "expected_public_path": "https://docs.rudderhq.dev/concepts/overview"
+  },
+  {
+    "query": "How do Calendar events link back to their source work?",
+    "locale": "en",
+    "expected_public_path": "https://docs.rudderhq.dev/concepts/calendar"
+  },
+  {
+    "query": "Where should a human recover unread work and requests for attention?",
+    "locale": "en",
+    "expected_public_path": "https://docs.rudderhq.dev/concepts/chat-messenger"
+  },
+  {
+    "query": "在哪里查看受治理动作的审批结论和实际应用结果？",
+    "locale": "zh",
+    "expected_public_path": "https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity",
+    "expected_anchor": "approvals"
+  },
+  {
+    "query": "Rudder 的月度预算硬限制和成本事件以哪个页面为准？",
+    "locale": "zh",
+    "expected_public_path": "https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity",
+    "expected_anchor": "budgets-and-cost"
+  },
+  {
+    "query": "我需要查一项产品变更的活动审计记录。",
+    "locale": "zh",
+    "expected_public_path": "https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity",
+    "expected_anchor": "activity"
+  },
+  {
+    "query": "运行摘要、完整记录、日志和原始证据应该看哪一页？",
+    "locale": "zh",
+    "expected_public_path": "https://docs.rudderhq.dev/zh/concepts/agents"
+  },
+  {
+    "query": "Dashboard 当前状态汇总的权威说明在哪里？",
+    "locale": "zh",
+    "expected_public_path": "https://docs.rudderhq.dev/zh/concepts/overview"
+  },
+  {
+    "query": "Calendar 事件怎样回到来源任务？",
+    "locale": "zh",
+    "expected_public_path": "https://docs.rudderhq.dev/zh/concepts/calendar"
+  },
+  {
+    "query": "负责人应该在哪里找回未读工作和需要人处理的事项？",
+    "locale": "zh",
+    "expected_public_path": "https://docs.rudderhq.dev/zh/concepts/chat-messenger"
+  }
+]

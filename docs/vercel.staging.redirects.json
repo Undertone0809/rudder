@@ -26,6 +26,46 @@
       "permanent": true
     },
     {
+      "source": "/en/concepts/control-plane",
+      "destination": "/reference/approvals-budgets-activity",
+      "permanent": true
+    },
+    {
+      "source": "/en/zh/concepts/control-plane",
+      "destination": "/zh/reference/approvals-budgets-activity",
+      "permanent": true
+    },
+    {
+      "source": "/en/concepts/approvals-budgets-activity",
+      "destination": "/reference/approvals-budgets-activity",
+      "permanent": true
+    },
+    {
+      "source": "/en/zh/concepts/approvals-budgets-activity",
+      "destination": "/zh/reference/approvals-budgets-activity",
+      "permanent": true
+    },
+    {
+      "source": "/en/concepts/chat",
+      "destination": "/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
+      "source": "/en/concepts/messenger",
+      "destination": "/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
+      "source": "/en/zh/concepts/chat",
+      "destination": "/zh/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
+      "source": "/en/zh/concepts/messenger",
+      "destination": "/zh/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
       "source": "/home",
       "destination": "/",
       "permanent": true
@@ -52,6 +92,46 @@
     },
     {
       "source": "/zh/concepts/messenger-approvals",
+      "destination": "/zh/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
+      "source": "/concepts/control-plane",
+      "destination": "/reference/approvals-budgets-activity",
+      "permanent": true
+    },
+    {
+      "source": "/zh/concepts/control-plane",
+      "destination": "/zh/reference/approvals-budgets-activity",
+      "permanent": true
+    },
+    {
+      "source": "/concepts/approvals-budgets-activity",
+      "destination": "/reference/approvals-budgets-activity",
+      "permanent": true
+    },
+    {
+      "source": "/zh/concepts/approvals-budgets-activity",
+      "destination": "/zh/reference/approvals-budgets-activity",
+      "permanent": true
+    },
+    {
+      "source": "/concepts/chat",
+      "destination": "/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
+      "source": "/concepts/messenger",
+      "destination": "/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
+      "source": "/zh/concepts/chat",
+      "destination": "/zh/concepts/chat-messenger",
+      "permanent": true
+    },
+    {
+      "source": "/zh/concepts/messenger",
       "destination": "/zh/concepts/chat-messenger",
       "permanent": true
     }
