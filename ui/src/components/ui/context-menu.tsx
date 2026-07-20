@@ -1,9 +1,9 @@
 "use client"
 
-import { ContextMenu as ContextMenuPrimitive } from "radix-ui"
-import * as React from "react"
+import { ContextMenu as ContextMenuPrimitive } from "radix-ui";
+import * as React from "react";
 
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/utils";
 
 function ContextMenu({
   ...props
@@ -106,5 +106,5 @@ export {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
-  ContextMenuTrigger,
-}
+  ContextMenuTrigger
+};
