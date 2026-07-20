@@ -15,6 +15,11 @@ on:
         required: true
         type: boolean
         default: true
+      confirm_stable:
+        description: "For a real publish, enter PUBLISH STABLE only after explicit operator approval"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   actions: write
@@ -203,6 +208,11 @@ jobs:
     outputs:
       version: ${{ steps.publish.outputs.version }}
     steps:
+      - name: Confirm stable publish authorization
+        env:
+          CONFIRM_STABLE: ${{ inputs.confirm_stable }}
+        run: test "$CONFIRM_STABLE" = "PUBLISH STABLE"
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0

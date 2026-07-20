@@ -11,6 +11,10 @@ on:
         description: "Optional docs release tag, for example docs/v2026.05.27"
         required: false
         default: ""
+      confirm_domain:
+        description: "Enter only after explicit operator approval; type docs.rudderhq.dev"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -37,6 +41,11 @@ jobs:
     timeout-minutes: 30
     if: github.repository == 'Undertone0809/rudder'
     steps:
+      - name: Confirm production target
+        env:
+          CONFIRM_DOMAIN: ${{ inputs.confirm_domain }}
+        run: test "$CONFIRM_DOMAIN" = "$DOCS_PRODUCTION_DOMAIN"
+
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.source_ref }}

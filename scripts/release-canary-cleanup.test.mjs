@@ -72,4 +72,25 @@ describe("obsolete canary cleanup", () => {
     expect(workflow).toContain("node scripts/cleanup-obsolete-canaries.mjs");
     expect(workflow).toContain('--stable-version "${{ steps.publish.outputs.version }}"');
   });
+
+  it("requires an explicit stable-publish confirmation before the real release job", () => {
+    const workflow = readFileSync(path.join(repoRoot, ".github", "workflows", "release.yml"), "utf8");
+    const stableJobStart = workflow.indexOf("\n  stable:\n");
+    const stableJobEnd = workflow.indexOf("\n  public-install-smoke:\n", stableJobStart);
+    const stableJob = workflow.slice(stableJobStart, stableJobEnd);
+    const canaryJob = workflow.slice(
+      workflow.indexOf("\n  canary:\n"),
+      stableJobStart,
+    );
+    const confirmationIndex = stableJob.indexOf("Confirm stable publish authorization");
+    const publishIndex = stableJob.indexOf("- name: Publish stable");
+
+    expect(workflow).toContain("confirm_stable:");
+    expect(stableJob).toContain('CONFIRM_STABLE: ${{ inputs.confirm_stable }}');
+    expect(stableJob).toContain('test "$CONFIRM_STABLE" = "PUBLISH STABLE"');
+    expect(stableJob).not.toContain('test "${{ inputs.confirm_stable }}"');
+    expect(canaryJob).not.toContain("Confirm stable publish authorization");
+    expect(confirmationIndex).toBeGreaterThan(-1);
+    expect(confirmationIndex).toBeLessThan(publishIndex);
+  });
 });

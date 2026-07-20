@@ -190,6 +190,35 @@ Do not stop at a happy-path fixture when the behavior depends on data volume, da
 Include at least one representative edge case or production-shaped failure mode whenever that is where the implementation is likely to break.
 If a corner case is too expensive or impossible to cover in E2E, document why and add the closest lower-level regression test instead.
 
+## 5.1 Release And Deployment Authorization
+
+Implementation authority is not release authority. Treat local implementation,
+feature-branch push/PR, merge to `main`, shared staging, stable publication, and
+production deployment as separate transitions.
+
+- `start`, `continue`, `proceed`, `implement`, `finish`, or approval of a plan
+  authorizes implementation and verification only. The default stopping point
+  is Review Ready: validated changes, a pushed feature branch, a PR when
+  appropriate, review evidence, and a release-risk summary.
+- Automatic branch previews are review surfaces only. Do not promote them or
+  assign shared aliases without explicit authorization.
+- Merging or pushing to `main` can publish canaries and update docs staging.
+  Do not land changes on `main` without explicit permission to merge or release
+  those automatic effects.
+- Production docs, stable npm/GitHub/Desktop releases, and any other production
+  publish require a fresh, target-specific confirmation at the deployment gate.
+  A plan that mentions deployment, a request to start, or staging approval does
+  not satisfy that gate.
+- Never choose `dry_run: false`, enter `confirm_domain` or `confirm_stable`,
+  supply a production tag, invoke a deployment hook, or run an equivalent
+  production command on the user's behalf unless the user explicitly approved
+  that exact release. Workflow inputs are safeguards, not substitutes for human
+  authorization.
+- Before asking for production approval, report the exact commit/tag and target,
+  completed checks, unresolved or unrelated failing checks, migration or data
+  impact, and rollback point. After approval, release only that reviewed source
+  and verify the public surface.
+
 ## 6. Database Change Workflow
 
 When changing data model:

@@ -234,3 +234,19 @@ test("public health checks and package scripts cover static docs search", () => 
     "playwright test --config tests/docs-search/playwright.config.ts",
   );
 });
+
+test("docs production requires explicit target confirmation before deployment", () => {
+  const source = fs.readFileSync(
+    path.join(REPO_ROOT, ".github/workflows", "docs-production.yml"),
+    "utf8",
+  );
+  const confirmationIndex = source.indexOf("Confirm production target");
+  const deployIndex = source.indexOf("Deploy to Vercel production");
+
+  assert.match(source, /confirm_domain:/);
+  assert.match(source, /explicit operator approval/);
+  assert.match(source, /CONFIRM_DOMAIN: \$\{\{ inputs\.confirm_domain \}\}/);
+  assert.match(source, /test "\$CONFIRM_DOMAIN" = "\$DOCS_PRODUCTION_DOMAIN"/);
+  assert.doesNotMatch(source, /test "\$\{\{ inputs\.confirm_domain \}\}"/);
+  assert.ok(confirmationIndex > -1 && confirmationIndex < deployIndex);
+});

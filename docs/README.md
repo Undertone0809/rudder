@@ -58,6 +58,19 @@ staging channel uses `staging.docs.rudderhq.dev` only. Staging pages are
 still expected to emit production canonical URLs so preview traffic does not
 compete with the canonical docs host in search indexes.
 
+### Production authorization gate
+
+Preparing or approving docs content does not authorize publishing it. Before a
+production docs release, report the exact source ref and proposed tag, confirm
+`pnpm docs:validate` and staging health, disclose known failing checks, and name
+the rollback ref. Then stop and obtain explicit authorization to deploy
+`docs.rudderhq.dev`.
+
+Do not infer production authorization from `start`, `continue`, `proceed`, a
+previously approved plan, permission to merge, or a staging approval. Automation
+must not enter the production confirmation input until an operator explicitly
+approves that exact release.
+
 ## Public Edge Protection
 
 The production Vercel project can receive high-volume generic crawler probes for
