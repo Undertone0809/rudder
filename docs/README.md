@@ -22,6 +22,18 @@ Check the public docs surface after a deploy:
 pnpm docs:health
 ```
 
+Run the exported-site search workflow in Chromium:
+
+```bash
+pnpm test:docs-search
+```
+
+The production site is deployed from Mintlify's offline export. The export
+postprocessor generates `/rudder-search-index.json`, copies the self-contained
+`/rudder-search.js` runtime, and injects it into every page so search does not
+depend on a Mintlify-hosted deployment identifier. The public health check
+requires both assets to be present after deployment.
+
 By default this checks the canonical docs domain plus the public Vercel project
 aliases. Use `DOCS_HEALTH_HOSTS=host.example.com pnpm docs:health` when you
 need to check only one deployment channel.

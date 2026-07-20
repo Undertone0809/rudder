@@ -125,6 +125,71 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
   );
 });
 
+test("adds a self-contained search index and runtime to the static export", () => {
+  const exportDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-docs-search-export-"));
+  const englishPath = writePage(
+    exportDir,
+    "/concepts/agents",
+    [
+      '<!doctype html><html lang="en"><head>',
+      '<meta name="description" content="Durable AI team members."/>',
+      "</head><body><main>",
+      "<h1>Agents</h1>",
+      "<p>Agents have explicit roles, runtime configuration, budgets, and skills.</p>",
+      "<h2>Runtime model</h2>",
+      "</main></body></html>",
+    ].join(""),
+  );
+  const chinesePath = writePage(
+    exportDir,
+    "/zh/concepts/agents",
+    [
+      '<!doctype html><html lang="zh-CN"><head>',
+      '<meta name="description" content="Rudder 里的 agent 团队成员。"/>',
+      "</head><body><main>",
+      "<h1>Agents</h1>",
+      "<p>Agent 有自己的角色、运行时、预算、技能和能力边界。</p>",
+      "<h2>运行时模型</h2>",
+      "</main></body></html>",
+    ].join(""),
+  );
+
+  const result = spawnSync(process.execPath, [SCRIPT_PATH, exportDir], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+
+  const searchIndex = JSON.parse(
+    fs.readFileSync(path.join(exportDir, "rudder-search-index.json"), "utf8"),
+  );
+  assert.deepEqual(searchIndex, [
+    {
+      content: "Agents Agents have explicit roles, runtime configuration, budgets, and skills. Runtime model",
+      description: "Durable AI team members.",
+      headings: ["Runtime model"],
+      language: "en",
+      path: "/concepts/agents",
+      title: "Agents",
+    },
+    {
+      content: "Agents Agent 有自己的角色、运行时、预算、技能和能力边界。 运行时模型",
+      description: "Rudder 里的 agent 团队成员。",
+      headings: ["运行时模型"],
+      language: "zh-CN",
+      path: "/zh/concepts/agents",
+      title: "Agents",
+    },
+  ]);
+  assert.equal(
+    fs.readFileSync(path.join(exportDir, "rudder-search.js"), "utf8"),
+    fs.readFileSync(path.join(REPO_ROOT, "scripts/docs-static-search.js"), "utf8"),
+  );
+
+  for (const filePath of [englishPath, chinesePath]) {
+    const html = fs.readFileSync(filePath, "utf8");
+    assert.match(html, /<script src="\/rudder-search\.js" defer data-rudder-search><\/script>/);
+    assert.equal((html.match(/data-rudder-search/g) ?? []).length, 1);
+  }
+});
+
 test("Simplified Chinese reference pages use localized titles", () => {
   const referenceDir = path.join(REPO_ROOT, "docs/zh/reference");
   for (const filename of fs.readdirSync(referenceDir).filter((name) => name.endsWith(".mdx"))) {
@@ -153,4 +218,19 @@ test("staging and production workflows postprocess exported docs", () => {
       `${workflow} must postprocess the static export before deployment`,
     );
   }
+});
+
+test("public health checks and package scripts cover static docs search", () => {
+  const healthCheck = fs.readFileSync(
+    path.join(REPO_ROOT, "scripts/check-docs-public-health.mjs"),
+    "utf8",
+  );
+  assert.match(healthCheck, /path: "\/rudder-search-index\.json"/);
+  assert.match(healthCheck, /path: "\/rudder-search\.js"/);
+
+  const packageJson = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
+  assert.equal(
+    packageJson.scripts["test:docs-search"],
+    "playwright test --config tests/docs-search/playwright.config.ts",
+  );
 });
