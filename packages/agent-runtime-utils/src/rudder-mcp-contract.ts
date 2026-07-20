@@ -39,6 +39,7 @@ export function rudderMcpInputSchemaForCapability(id: string): {
   type: "object";
   additionalProperties: false;
   properties: Record<string, unknown>;
+  required?: string[];
 } {
   const properties: Record<string, unknown> = {};
   const add = (key: string, value: Record<string, unknown>) => {
@@ -261,7 +262,12 @@ export function rudderMcpInputSchemaForCapability(id: string): {
     add(key, mcpBoolean(`Boolean option ${key}.`));
   }
 
-  return { type: "object", additionalProperties: false, properties };
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties,
+    ...(id === "chat.create" ? { required: ["body"] } : {}),
+  };
 }
 
 export const RUDDER_MCP_CANONICAL_TOOL_DEFINITIONS = RUDDER_MCP_TOOL_DESCRIPTORS.map((tool) => ({

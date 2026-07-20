@@ -73,7 +73,7 @@ const SAMPLE_INPUT_BY_TOOL: Record<string, Record<string, unknown>> = {
   rudder_chat_messages: { chat: "chat_123", limit: 10 },
   rudder_chat_transcript: { chat: "chat_123", limit: 10 },
   rudder_chat_read: { chat: "chat_123", turnLimit: 5 },
-  rudder_chat_create: { title: "MCP chat" },
+  rudder_chat_create: { title: "MCP chat", body: "Start with evidence" },
   rudder_chat_send: { chat: "chat_123", body: "Hello" },
   rudder_chat_archive: { chat: "chat_123" },
   rudder_runs_list: { cursor: "next-run-page" },
@@ -185,6 +185,19 @@ describe("agent-v1 MCP server", () => {
     ]);
     expect(plan.args).not.toContain("wrong-agent");
     expect(plan.args).not.toContain("also-wrong");
+  });
+
+  it("requires and forwards the first message when creating a chat", () => {
+    const env = {
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+    };
+
+    expect(() => buildAgentV1ToolCallPlan("rudder_chat_create", {}, env))
+      .toThrow("Missing required argument: body");
+    expect(buildAgentV1ToolCallPlan("rudder_chat_create", { body: "Start with evidence" }, env).args)
+      .toEqual(["chat", "create", "--body", "Start with evidence", "--json"]);
   });
 
   it("defaults library file list to the runtime project Library path", () => {

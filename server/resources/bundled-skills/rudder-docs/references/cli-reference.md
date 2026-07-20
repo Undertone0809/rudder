@@ -110,7 +110,7 @@ operating-practices guide for operating behavior:
 | `rudder_chat_messages` | `rudder chat messages <chat-id> [--limit <n>] [--cursor <cursor>] [--include-transcript]` | Read bounded chat messages with page cursors; transcript output is omitted unless requested. | no | no | no | no |
 | `rudder_chat_transcript` | `rudder chat transcript <chat-id> [--limit <n>] [--cursor <cursor>] [--max-output-chars <n>]` | Read paginated chat messages with assistant transcript entries clipped in human output. | no | no | no | no |
 | `rudder_chat_read` | `rudder chat read <chat-id> [--turn-limit <n>] [--cursor <cursor>] [--include-output]` | Read a bounded recent-message snapshot for one chat with page cursors. | no | no | no | no |
-| `rudder_chat_create` | `rudder chat create --org-id <id>` | Create a chat conversation. | yes | required | no | attached when available |
+| `rudder_chat_create` | `rudder chat create --org-id <id> --body <text>` | Create a chat conversation with its first message. | yes | required | no | attached when available |
 | `rudder_chat_send` | `rudder chat send <chat-id> --body <text>` | Send an agent-authored message directly to the operator in a chat. | yes | no | required | attached when available |
 | `rudder_chat_archive` | `rudder chat archive <chat-id>` | Archive a chat conversation without deleting it. | yes | no | no | attached when available |
 | `rudder_runs_list` | `rudder runs list --org-id <id> [--used-skill <skill>] [--loaded-skill <skill>] [--cursor <cursor>] [--full]` | List lightweight run summaries with stable pagination and filters; use --full only for legacy full-row compatibility. | no | required | no | no |

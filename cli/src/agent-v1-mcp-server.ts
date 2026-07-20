@@ -853,7 +853,7 @@ function cliArgsForCapability(
       return args;
     }
     case "chat.create": {
-      const args = ["chat", "create"];
+      const args = ["chat", "create", "--body", requiredString(input, "body")];
       pushJson(args, "--payload", input.payload);
       pushOptional(args, "--title", input.title);
       pushOptional(args, "--summary", input.summary);
