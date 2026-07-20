@@ -278,7 +278,6 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
           actorType: "system",
           actorId: "automation-chat-output",
           agentId: input.automation.assigneeAgentId,
-          runId: input.runId,
         },
       }, input.executor);
 

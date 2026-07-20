@@ -1244,6 +1244,20 @@ describe("automation service live-execution coalescing", () => {
       preferredAgentId: agentId,
       status: "active",
     });
+    const chatCreationActivity = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.entityId, run.linkedChatConversationId!));
+    expect(chatCreationActivity).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        action: "chat.created",
+        runId: null,
+      }),
+      expect.objectContaining({
+        action: "chat.message_added",
+        runId: null,
+      }),
+    ]));
     const projectContext = await db
       .select()
       .from(chatContextLinks)
