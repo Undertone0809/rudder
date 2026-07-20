@@ -57,15 +57,38 @@ external release blocker for docs-site publishing. Do not silently count a
 failed docs workflow as handled; either escalate the credential/account issue to
 the Vercel owner or explicitly scope docs-site publishing out of that release.
 
+## Authorization Gates
+
+Release preparation and release execution are separate operations:
+
+1. **Review Ready** — identify the exact source SHA, complete verification,
+   prepare release notes/screenshots, push the feature branch, and open the PR.
+2. **Landing/Staging Gate** — obtain explicit permission before merging to
+   `main` when that merge publishes a canary or updates docs staging.
+3. **Production Gate** — report the exact source ref, version/tag, production
+   targets, successful and failing checks, and rollback point; then stop and wait
+   for an operator to explicitly approve the production release.
+
+Instructions such as `start`, `continue`, `proceed`, `implement`, or approval of
+a plan do not satisfy the production gate. A staging approval is not production
+approval. Agents and automation must not set `dry_run: false`, enter workflow
+confirmation strings, or synthesize a release tag as evidence of approval. The
+operator's explicit authorization must exist before those values are supplied.
+
+Even when an initial request or plan includes production deployment, always
+pause at the production gate after presenting the reviewed source, target,
+checks, known failures, and rollback point. Only the operator's latest explicit
+approval for that described release authorizes proceeding.
+
 ## Docs Site Releases
 
 The public docs site uses separate staging and production channels:
 
-- `staging.doc.rudder.zeeland.studio` follows the latest `main` docs commit.
+- `staging.docs.rudderhq.dev` follows the latest `main` docs commit.
   [`.github/workflows/docs-staging.yml`](../.github/workflows/docs-staging.yml)
   runs automatically on `main` pushes that touch the docs tree or docs deployment
   workflow.
-- `doc.rudder.zeeland.studio` is production. It does not auto-follow `main`.
+- `docs.rudderhq.dev` is production. It does not auto-follow `main`.
   Publish it manually with
   [`.github/workflows/docs-production.yml`](../.github/workflows/docs-production.yml)
   from the Actions tab.
@@ -127,14 +150,21 @@ Inputs:
   - commit SHA, branch, or tag
 - `dry_run`
   - preview only when true
+- `confirm_stable`
+  - leave empty for dry runs
+  - after explicit production authorization, enter `PUBLISH STABLE` for the
+    real stable release
 
 Before running stable:
 
 1. pick the canary commit or tag you trust
 2. confirm the committed public package version is the stable version you want to ship
 3. create or update `releases/vX.Y.Z.md` on that source ref
-4. run the stable workflow from that source ref
-5. after stable is published, merge a separate version-bump commit before
+4. run the workflow with `dry_run: true`
+5. present the exact source ref, version, checks, targets, and rollback point;
+   obtain explicit production approval
+6. run the workflow with `dry_run: false` and `confirm_stable: PUBLISH STABLE`
+7. after stable is published, merge a separate version-bump commit before
    expecting later canaries to be detectable as updates for stable users
 
 Example:
