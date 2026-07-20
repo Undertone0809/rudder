@@ -26,10 +26,12 @@ test("keeps Chinese search scoped and shows a real empty state", async ({ page }
   const hrefs = await results.evaluateAll((links) => links.map((link) => link.getAttribute("href")));
   expect(hrefs.length).toBeGreaterThan(0);
   expect(hrefs.every((href) => href?.startsWith("/zh"))).toBe(true);
+  await expect(page.getByText("文档", { exact: true })).toBeVisible();
 
   await input.fill("definitely-no-rudder-doc-matches-this-query");
   await expect(results).toHaveCount(0);
-  await expect(page.getByText("No results found", { exact: true })).toBeVisible();
+  await expect(page.getByText("未找到结果", { exact: true })).toBeVisible();
+  await expect(page.locator('[role="status"]', { hasText: "结果：0" })).toHaveCount(1);
 });
 
 test("clears stale keyboard selection when the query or dialog is reset", async ({ page }) => {

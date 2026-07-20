@@ -220,7 +220,7 @@ test("staging and production workflows postprocess exported docs", () => {
   }
 });
 
-test("public health checks and package scripts cover static docs search", () => {
+test("public health, package scripts, CI, and staging cover static docs search", () => {
   const healthCheck = fs.readFileSync(
     path.join(REPO_ROOT, "scripts/check-docs-public-health.mjs"),
     "utf8",
@@ -233,6 +233,17 @@ test("public health checks and package scripts cover static docs search", () => 
     packageJson.scripts["test:docs-search"],
     "playwright test --config tests/docs-search/playwright.config.ts",
   );
+
+  const ci = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
+  assert.match(ci, /pnpm exec playwright install --with-deps chromium/);
+  assert.match(ci, /pnpm test:docs-search/);
+
+  const staging = fs.readFileSync(
+    path.join(REPO_ROOT, ".github/workflows/docs-staging.yml"),
+    "utf8",
+  );
+  assert.match(staging, /scripts\/docs-static-search\.js/);
+  assert.match(staging, /scripts\/postprocess-docs-export\.mjs/);
 });
 
 test("docs production requires explicit target confirmation before deployment", () => {

@@ -30,6 +30,10 @@
     return indexPromise;
   }
 
+  function isChinesePath() {
+    return location.pathname === "/zh" || location.pathname.startsWith("/zh/");
+  }
+
   function countOccurrences(haystack, needle) {
     let count = 0;
     let from = 0;
@@ -84,9 +88,7 @@
   function search(index, rawQuery) {
     const query = normalize(rawQuery);
     if (!query) return [];
-    const expectedLanguage = location.pathname === "/zh" || location.pathname.startsWith("/zh/")
-      ? "zh-CN"
-      : "en";
+    const expectedLanguage = isChinesePath() ? "zh-CN" : "en";
 
     return index
       .map((page) => ({ page, score: scorePage(page, query, expectedLanguage) }))
@@ -109,7 +111,7 @@
   function setStatus(input, count) {
     const dialog = input.closest('[role="dialog"]');
     const status = dialog?.querySelector('[role="status"]');
-    const text = `Results: ${count}`;
+    const text = isChinesePath() ? `结果：${count}` : `Results: ${count}`;
     if (status && status.textContent !== text) status.textContent = text;
   }
 
@@ -182,7 +184,9 @@
     group.dataset.rudderSearchGroup = "";
     const label = document.createElement("div");
     label.className = "px-3 py-1.5 text-xs font-normal leading-4 text-gray-500 dark:text-gray-400";
-    label.textContent = results.length > 0 ? "Documentation" : "No results found";
+    label.textContent = results.length > 0
+      ? (isChinesePath() ? "文档" : "Documentation")
+      : (isChinesePath() ? "未找到结果" : "No results found");
     group.append(label);
     results.forEach((result, index) => group.append(resultNode(result, index, input)));
     list.append(group);

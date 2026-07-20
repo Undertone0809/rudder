@@ -99,6 +99,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install Playwright Chromium
+        if: matrix.os == 'ubuntu-latest' && matrix.test == 'full'
+        run: pnpm exec playwright install --with-deps chromium
+
       - name: Typecheck
         run: pnpm -r typecheck
 
@@ -111,6 +115,10 @@ jobs:
       - name: Unit tests
         if: matrix.test == 'full'
         run: pnpm test:run --maxWorkers=1
+
+      - name: Docs search E2E
+        if: matrix.os == 'ubuntu-latest' && matrix.test == 'full'
+        run: pnpm test:docs-search
 
       - name: CLI start tests
         if: matrix.test == 'cli-start'

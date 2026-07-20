@@ -8,6 +8,8 @@ on:
       - ".github/workflows/docs-staging.yml"
       - "docs/**"
       - "package.json"
+      - "scripts/docs-static-search.js"
+      - "scripts/postprocess-docs-export.mjs"
   workflow_dispatch:
 
 permissions:
