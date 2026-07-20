@@ -881,6 +881,7 @@ export function chatService(db: Db) {
       .where(
         and(
           eq(chatQueuedMessages.conversationId, conversationId),
+          isNull(chatQueuedMessages.cancelledAt),
           inArray(chatQueuedMessages.status, [
             "queued",
             "steer_pending",

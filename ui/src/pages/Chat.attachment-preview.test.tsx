@@ -5427,7 +5427,7 @@ describe("Chat streaming controls", () => {
     }));
   });
 
-  it("queues a composer follow-up instead of sending a new stream when the server reports an active generation", async () => {
+  it("adds a composer message to Queue when the server reports an active generation", async () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
     };
@@ -5448,7 +5448,7 @@ describe("Chat streaming controls", () => {
       textarea!.dispatchEvent(new Event("input", { bubbles: true }));
       await Promise.resolve();
     });
-    await clickEnabledButtonByAriaLabel(container, "Queue follow-up");
+    await clickEnabledButtonByAriaLabel(container, "Queue");
 
     expect(mockState.createQueuedMessage).toHaveBeenCalledTimes(1);
     expect(mockState.createQueuedMessage).toHaveBeenCalledWith("chat-1", expect.objectContaining({
@@ -5459,9 +5459,112 @@ describe("Chat streaming controls", () => {
       }),
     }));
     expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    expect(mockState.pushToast).toHaveBeenCalledWith({
+      title: "Queued",
+      body: "Added to Queue.",
+      tone: "info",
+    });
   });
 
-  it("renders claimed queued follow-ups without editable queue actions before delivery", () => {
+  it("edits the original turn directly when a stale generation id is already terminal", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({
+        id: "user-message-1",
+        body: "Please draft a plan.",
+        chatTurnId: "turn-1",
+      })],
+    };
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-terminal",
+      activeAttemptEpoch: 1,
+      activeControlVersion: 1,
+      activeGenerationStatus: "stopped",
+    });
+
+    const { container } = renderChat();
+
+    expect(container.querySelector('button[aria-label="Stop streaming"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Queue"]')).toBeNull();
+    await clickEnabledButtonByAriaLabel(container, "Edit message");
+    const inlineEditor = container.querySelector<HTMLElement>("[data-testid='chat-inline-message-editor']");
+    expect(inlineEditor).not.toBeNull();
+    await clickEnabledButton(inlineEditor!, "Send");
+
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
+    expect(mockState.sendMessageStream).toHaveBeenCalledWith(
+      "chat-1",
+      "Please draft a plan.",
+      expect.objectContaining({ editUserMessageId: "user-message-1" }),
+    );
+    expect(mockState.createQueuedMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps an original-turn edit out of Queue while the current response is active", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({
+        id: "user-message-1",
+        body: "Please draft a plan.",
+        chatTurnId: "turn-1",
+      })],
+    };
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-running",
+      activeAttemptEpoch: 1,
+      activeControlVersion: 0,
+      activeGenerationStatus: "running",
+    });
+
+    const { container } = renderChat();
+
+    await clickEnabledButtonByAriaLabel(container, "Edit message");
+    const inlineEditor = container.querySelector<HTMLElement>("[data-testid='chat-inline-message-editor']");
+    const sendButton = Array.from(inlineEditor?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+      .find((button) => button.textContent?.trim() === "Send");
+
+    expect(sendButton).not.toBeUndefined();
+    expect(sendButton?.disabled).toBe(true);
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    expect(mockState.createQueuedMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps a failed-response Retry out of Queue while another response is active", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: "user-message-1",
+          body: "Please draft a plan.",
+          chatTurnId: "turn-1",
+        }),
+        message({
+          id: "assistant-message-1",
+          role: "assistant",
+          body: "The response failed.",
+          status: "failed",
+          chatTurnId: "turn-1",
+          createdAt: new Date("2026-05-12T09:01:01.000Z"),
+        }),
+      ],
+    };
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-running",
+      activeAttemptEpoch: 1,
+      activeControlVersion: 0,
+      activeGenerationStatus: "running",
+    });
+
+    const { container } = renderChat();
+    await clickEnabledButton(container, "Retry");
+
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    expect(mockState.createQueuedMessage).not.toHaveBeenCalled();
+    expect(mockState.pushToast).toHaveBeenCalledWith({
+      title: "Retry unavailable",
+      body: "Stop the current response before retrying this message.",
+      tone: "error",
+    });
+  });
+
+  it("renders claimed Queue messages without editable queue actions before delivery", () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
     };
@@ -5831,7 +5934,7 @@ describe("Chat streaming controls", () => {
     expect(queueItem?.textContent).not.toContain("Still queued");
   });
 
-  it("offers Steer for retained queued follow-ups after Stop so feedback resumes server-side", () => {
+  it("offers Steer for retained Queue messages after Stop so feedback resumes server-side", () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
     };
@@ -5858,7 +5961,9 @@ describe("Chat streaming controls", () => {
     const { container } = renderChat();
     const queueItem = container.querySelector("[data-testid='chat-running-queue-item']");
 
-    expect(container.querySelector("[data-testid='chat-running-queue']")?.textContent).toContain("Queued follow-ups retained");
+    const queue = container.querySelector("[data-testid='chat-running-queue']");
+    expect(queue?.textContent).toContain("Queue");
+    expect(queue?.textContent?.toLowerCase()).not.toContain("follow-up");
     expect(queueItem?.textContent).toContain("Still queued");
     expect(queueItem?.textContent).toContain("Continue from the interrupted chat run.");
     expect(queueItem?.textContent).toContain("Steer");
@@ -5867,7 +5972,7 @@ describe("Chat streaming controls", () => {
     expect(mockState.steerQueuedMessage).not.toHaveBeenCalled();
   });
 
-  it("hides queued follow-ups after the queued message is delivered", () => {
+  it("hides Queue messages after the queued message is delivered", () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
     };

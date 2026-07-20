@@ -219,12 +219,16 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     const abortController = new AbortController();
     const releaseGeneration = claimChatGeneration(conversation.id, abortController, null);
     if (!releaseGeneration) {
+      if (parsedBody.data.editUserMessageId) {
+        res.status(409).json({ error: "Stop the current response before editing this message" });
+        return;
+      }
       if (queuedMessageId) {
         res.status(409).json({ error: "A chat reply is already being generated for this conversation" });
         return;
       }
       if (messageFiles.length > 0) {
-        res.status(422).json({ error: "Queued follow-ups do not support new files yet" });
+        res.status(422).json({ error: "Queue does not support new files yet" });
         return;
       }
       const item = await svc.createQueuedMessage({
@@ -1021,6 +1025,8 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     }
     const expectedAttemptEpoch = parsed.data.expectedAttemptEpoch
       ?? durableCheckpoint.generation.attemptEpoch;
+    const requestedControlVersion = parsed.data.expectedControlVersion
+      ?? durableCheckpoint.generation.controlVersion;
     const requestedRenderSeq = parsed.data.lastCommittedRenderSeq
       ?? durableCheckpoint.generationSeq;
     const requestedBodyHash = parsed.data.renderedBodyHash
@@ -1034,8 +1040,10 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
           controlActionId,
           expectedGenerationId: generationId,
           expectedAttemptEpoch,
-          expectedControlVersion: parsed.data.expectedControlVersion
-            ?? durableCheckpoint.generation.controlVersion,
+          expectedControlVersion: requestedControlVersion,
+          admissionControlVersion: attempt === 0
+            ? requestedControlVersion
+            : durableCheckpoint.generation.controlVersion,
           requestedRenderSeq,
           requestedBodyHash,
         });
@@ -1077,6 +1085,21 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         controlActionId,
         generationId,
         disposition: "completion_committed",
+      });
+      return;
+    }
+
+    if (stop.outcome === "already_terminal") {
+      const alreadyStopped = stop.generation.status === "stopped"
+        || stop.action.localDisposition === "stopped";
+      wakeTerminalProjector();
+      res.json({
+        stopped: alreadyStopped,
+        controlActionId,
+        generationId,
+        disposition: alreadyStopped ? "stopped" : "no_active_generation",
+        acceptedThroughSeq: stop.action.acceptedThroughSeq,
+        frozenBodyHash: stop.action.frozenBodyHash,
       });
       return;
     }

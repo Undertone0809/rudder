@@ -235,12 +235,35 @@ describe("chatGenerationProtocolService", () => {
       controlActionId,
       expectedGenerationId: generation.id,
       expectedAttemptEpoch: generation.attemptEpoch,
-      expectedControlVersion: 1,
+      expectedControlVersion: 0,
       requestedRenderSeq: latest.event.generationSeq,
       requestedBodyHash: latestHash,
     });
     expect(repeated.idempotent).toBe(true);
     expect(await db.select().from(chatControlActions)).toHaveLength(1);
+    expect(await db.select().from(chatGenerationEvents)).toHaveLength(5);
+
+    const repeatedWithNewAction = await protocol.beginStopAction({
+      orgId: generation.orgId,
+      conversationId: generation.conversationId,
+      controlActionId: randomUUID(),
+      expectedGenerationId: generation.id,
+      expectedAttemptEpoch: generation.attemptEpoch,
+      expectedControlVersion: 1,
+      requestedRenderSeq: latest.event.generationSeq,
+      requestedBodyHash: latestHash,
+    });
+    expect(repeatedWithNewAction).toMatchObject({
+      outcome: "stop_in_progress",
+      idempotent: false,
+      action: {
+        localDisposition: "stopping",
+        acceptedThroughSeq: latest.event.generationSeq,
+        frozenBodyHash: latestHash,
+      },
+      generation: { status: "stop_requested", controlVersion: 1 },
+    });
+    expect(await db.select().from(chatControlActions)).toHaveLength(2);
     expect(await db.select().from(chatGenerationEvents)).toHaveLength(5);
 
     await expect(protocol.appendGenerationEvent({
@@ -765,7 +788,7 @@ describe("chatGenerationProtocolService", () => {
       finalStatus: "completed",
       terminalReason: "completed",
     });
-    await expect(protocol.beginStopAction({
+    const terminalFirstStop = await protocol.beginStopAction({
       orgId: terminalFirst.orgId,
       conversationId: terminalFirst.conversationId,
       controlActionId: randomUUID(),
@@ -774,7 +797,13 @@ describe("chatGenerationProtocolService", () => {
       expectedControlVersion: terminalFirst.controlVersion,
       requestedRenderSeq: 0,
       requestedBodyHash: hashChatGenerationBody(""),
-    })).rejects.toMatchObject({ status: 409 });
+    });
+    expect(terminalFirstStop).toMatchObject({
+      outcome: "already_terminal",
+      idempotent: false,
+      generation: { id: terminalFirst.id, runtimeTerminalAt: terminal.generation.runtimeTerminalAt },
+      action: { localDisposition: "cancelled", lastError: "generation_runtime_already_terminal" },
+    });
     const terminalClaim = await protocol.claimTerminalProjection({ workerId: "terminal-first", leaseMs: 1_000 });
     const terminalProjected = await protocol.completeTerminalProjection({
       outboxId: terminalClaim!.id,

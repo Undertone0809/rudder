@@ -298,6 +298,74 @@ describe("messengerService and issue follows", () => {
     });
   });
 
+  it("records a new Stop as an idempotent success when the generation is already stopped", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const generationId = randomUUID();
+    const controlActionId = randomUUID();
+    const terminalAt = new Date("2026-07-20T14:00:00.000Z");
+    const emptyBodyHash = hashChatGenerationBody("");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Idempotent Stop Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Idempotent Stop Org"),
+      issuePrefix: `I${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Already stopped chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      id: generationId,
+      orgId,
+      conversationId,
+      status: "stopped",
+      attemptEpoch: 1,
+      controlVersion: 1,
+      controlState: "terminal",
+      runtimeTerminalAt: terminalAt,
+      completedAt: terminalAt,
+    });
+
+    const first = await chatSvc.generationProtocol.beginStopAction({
+      orgId,
+      conversationId,
+      controlActionId,
+      expectedGenerationId: generationId,
+      expectedAttemptEpoch: 1,
+      expectedControlVersion: 1,
+      requestedRenderSeq: 0,
+      requestedBodyHash: emptyBodyHash,
+    });
+    const replay = await chatSvc.generationProtocol.beginStopAction({
+      orgId,
+      conversationId,
+      controlActionId,
+      expectedGenerationId: generationId,
+      expectedAttemptEpoch: 1,
+      expectedControlVersion: 1,
+      requestedRenderSeq: 0,
+      requestedBodyHash: emptyBodyHash,
+    });
+
+    expect(first).toMatchObject({
+      outcome: "already_terminal",
+      idempotent: false,
+      generation: { id: generationId, status: "stopped" },
+      action: { id: controlActionId, localDisposition: "stopped" },
+    });
+    expect(replay).toMatchObject({
+      outcome: "already_terminal",
+      idempotent: true,
+      action: { id: controlActionId },
+    });
+  });
+
   it("archives accepted-current Steer feedback when its generation becomes terminal", async () => {
     const orgId = randomUUID();
     const conversationId = randomUUID();
@@ -453,6 +521,90 @@ describe("messengerService and issue follows", () => {
     });
     expect(activities).toHaveLength(1);
     expect(activities[0]).toMatchObject({ action: "chat.message_added" });
+  });
+
+  it("keeps cancelled Queue tombstones hidden and rejects every Steer path", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const generationId = randomUUID();
+    const nativeItemId = randomUUID();
+    const continuationItemId = randomUUID();
+    const cancelledAt = new Date("2026-07-20T09:52:46.951Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Cancelled Queue Steer Fence Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Cancelled Queue Steer Fence Org"),
+      issuePrefix: `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Cancelled Queue Steer fence chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      id: generationId,
+      orgId,
+      conversationId,
+      status: "running",
+      attemptEpoch: 1,
+      controlVersion: 0,
+      controlState: "ready",
+    });
+    await db.insert(chatQueuedMessages).values([
+      {
+        id: nativeItemId,
+        orgId,
+        conversationId,
+        position: 1,
+        status: "queued",
+        clientMutationId: "cancelled-native-steer-regression",
+        expectedGenerationId: generationId,
+        payload: { body: "Cancelled native Steer must never become visible" },
+        requestActor: boardQueueRequestActor(orgId),
+        cancelledAt,
+      },
+      {
+        id: continuationItemId,
+        orgId,
+        conversationId,
+        position: 2,
+        status: "queued",
+        clientMutationId: "cancelled-continuation-steer-regression",
+        payload: { body: "Cancelled continuation Steer must never become visible" },
+        requestActor: boardQueueRequestActor(orgId),
+        cancelledAt,
+      },
+    ]);
+
+    expect(await chatSvc.listQueuedMessages(conversationId)).toEqual([]);
+
+    const steerMessages = chatSteerMessageService(db);
+    await expect(steerMessages.beginControlAction({
+      orgId,
+      conversationId,
+      itemId: nativeItemId,
+      controlActionId: randomUUID(),
+      expectedGenerationId: generationId,
+      expectedAttemptEpoch: 1,
+      expectedControlVersion: 0,
+      requestActor: boardQueueRequestActor(orgId),
+      actor: { actorType: "user", actorId: "board" },
+    })).rejects.toMatchObject({ status: 409 });
+    await expect(steerMessages.scheduleContinuation({
+      orgId,
+      conversationId,
+      itemId: continuationItemId,
+      controlActionId: randomUUID(),
+      requestActor: boardQueueRequestActor(orgId),
+      actor: { actorType: "user", actorId: "board" },
+    })).rejects.toMatchObject({ status: 409 });
+
+    expect(await db.select().from(chatMessages).where(eq(chatMessages.conversationId, conversationId))).toEqual([]);
+    expect(await db.select().from(chatControlActions).where(eq(chatControlActions.orgId, orgId))).toEqual([]);
   });
 
   it("atomically reuses one action and user message for concurrent continuation Steer requests", async () => {

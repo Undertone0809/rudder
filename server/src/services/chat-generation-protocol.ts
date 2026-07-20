@@ -605,6 +605,7 @@ export function chatGenerationProtocolService(db: Db) {
     expectedGenerationId: string;
     expectedAttemptEpoch: number;
     expectedControlVersion: number;
+    admissionControlVersion?: number;
     requestedRenderSeq: number;
     requestedBodyHash: string;
     now?: Date;
@@ -613,10 +614,11 @@ export function chatGenerationProtocolService(db: Db) {
     generation: GenerationRow;
     stopRequestedEvent: GenerationEventRow | null;
     outputCutoffEvent: GenerationEventRow | null;
-    outcome: "stop_applied" | "completion_committed";
+    outcome: "stop_applied" | "stop_in_progress" | "completion_committed" | "already_terminal";
     idempotent: boolean;
   }> {
     const requestedBodyHash = normalizeBodyHash(input.requestedBodyHash);
+    const admissionControlVersion = input.admissionControlVersion ?? input.expectedControlVersion;
     return db.transaction(async (tx) => {
       const generation = await lockGeneration(tx, {
         orgId: input.orgId,
@@ -635,6 +637,7 @@ export function chatGenerationProtocolService(db: Db) {
           || existingAction.actionKind !== "stop"
           || existingAction.expectedGenerationId !== input.expectedGenerationId
           || existingAction.expectedAttemptEpoch !== input.expectedAttemptEpoch
+          || existingAction.expectedControlVersion !== input.expectedControlVersion
           || existingAction.requestedRenderSeq !== input.requestedRenderSeq
           || existingAction.requestedBodyHash !== requestedBodyHash
         ) {
@@ -647,7 +650,11 @@ export function chatGenerationProtocolService(db: Db) {
           outputCutoffEvent: null,
           outcome: existingAction.lastError === "generation_result_already_committed"
             ? "completion_committed"
-            : "stop_applied",
+            : existingAction.lastError === "generation_runtime_already_terminal"
+              ? "already_terminal"
+              : existingAction.lastError === "generation_stop_already_in_progress"
+                ? "stop_in_progress"
+              : "stop_applied",
           idempotent: true,
         };
       }
@@ -695,12 +702,82 @@ export function chatGenerationProtocolService(db: Db) {
         };
       }
       if (generation.runtimeTerminalAt) {
-        throw conflict("Chat generation runtime is already terminal");
+        const now = input.now ?? new Date();
+        const generationWasStopped = generation.status === "stopped";
+        const [action] = await tx
+          .insert(chatControlActions)
+          .values({
+            id: input.controlActionId,
+            orgId: input.orgId,
+            expectedGenerationId: generation.id,
+            expectedAttemptEpoch: input.expectedAttemptEpoch,
+            expectedControlVersion: input.expectedControlVersion,
+            actionKind: "stop",
+            localDisposition: generationWasStopped ? "stopped" : "cancelled",
+            providerDisposition: "not_sent",
+            controlOwnerToken: generation.controlOwnerToken,
+            requestedRenderSeq: input.requestedRenderSeq,
+            requestedBodyHash,
+            acceptedThroughSeq: generation.acceptedThroughSeq ?? input.requestedRenderSeq,
+            frozenBodyHash: generation.frozenBodyHash ?? requestedBodyHash,
+            lastError: "generation_runtime_already_terminal",
+            requestedAt: now,
+            resolvedAt: now,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning();
+        if (!action) throw new Error("Failed to persist already-terminal Stop outcome");
+        return {
+          action,
+          generation,
+          stopRequestedEvent: null,
+          outputCutoffEvent: null,
+          outcome: "already_terminal",
+          idempotent: false,
+        };
+      }
+      if (generation.status === "stop_requested" || generation.status === "stopping") {
+        if (generation.controlVersion !== admissionControlVersion) {
+          throw conflict("Chat generation control version changed");
+        }
+        const now = input.now ?? new Date();
+        const [action] = await tx
+          .insert(chatControlActions)
+          .values({
+            id: input.controlActionId,
+            orgId: input.orgId,
+            expectedGenerationId: generation.id,
+            expectedAttemptEpoch: input.expectedAttemptEpoch,
+            expectedControlVersion: input.expectedControlVersion,
+            actionKind: "stop",
+            localDisposition: "stopping",
+            providerDisposition: "not_sent",
+            controlOwnerToken: generation.controlOwnerToken,
+            requestedRenderSeq: input.requestedRenderSeq,
+            requestedBodyHash,
+            acceptedThroughSeq: generation.acceptedThroughSeq ?? input.requestedRenderSeq,
+            frozenBodyHash: generation.frozenBodyHash ?? requestedBodyHash,
+            lastError: "generation_stop_already_in_progress",
+            requestedAt: now,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning();
+        if (!action) throw new Error("Failed to persist in-progress Stop outcome");
+        return {
+          action,
+          generation,
+          stopRequestedEvent: null,
+          outputCutoffEvent: null,
+          outcome: "stop_in_progress",
+          idempotent: false,
+        };
       }
       if (!(CONTROL_ACTIVE_GENERATION_STATUSES as readonly string[]).includes(generation.status)) {
         throw conflict("Chat generation is no longer stoppable");
       }
-      if (generation.controlVersion !== input.expectedControlVersion) {
+      if (generation.controlVersion !== admissionControlVersion) {
         throw conflict("Chat generation control version changed");
       }
 
@@ -732,7 +809,7 @@ export function chatGenerationProtocolService(db: Db) {
       }
 
       const now = input.now ?? new Date();
-      const appliedControlVersion = generation.controlVersion + 1;
+      const appliedControlVersion = admissionControlVersion + 1;
       const [action] = await tx
         .insert(chatControlActions)
         .values({
@@ -800,7 +877,7 @@ export function chatGenerationProtocolService(db: Db) {
         .where(and(
           eq(chatGenerations.id, generation.id),
           eq(chatGenerations.attemptEpoch, input.expectedAttemptEpoch),
-          eq(chatGenerations.controlVersion, input.expectedControlVersion),
+          eq(chatGenerations.controlVersion, admissionControlVersion),
         ))
         .returning();
       if (!updatedGeneration) throw conflict("Chat generation changed while applying Stop");

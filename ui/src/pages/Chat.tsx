@@ -107,6 +107,7 @@ import { cn } from "@/lib/utils";
 import {
   buildChatMentionHref,
   type ChatConversation,
+  type ChatGenerationStatus,
   type ChatMessage,
   type ChatOperationProposalDecisionAction,
   type ChatQueuedMessage,
@@ -177,6 +178,25 @@ type ChatStreamProgressEvent = Extract<
 const EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS = 250;
 const EMPTY_CHAT_BODY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const CHAT_STEER_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 5_000] as const;
+const ACTIVE_CHAT_GENERATION_STATUSES = new Set<ChatGenerationStatus>([
+  "starting",
+  "active",
+  "running",
+  "tool_busy",
+  "closing",
+  "stop_requested",
+  "stopping",
+]);
+function activeGenerationIdFromSnapshot(snapshot: {
+  activeGenerationId: string | null;
+  activeGenerationStatus: ChatGenerationStatus | null;
+} | null | undefined) {
+  if (!snapshot?.activeGenerationId) return null;
+  if (snapshot.activeGenerationStatus === null) return snapshot.activeGenerationId;
+  return ACTIVE_CHAT_GENERATION_STATUSES.has(snapshot.activeGenerationStatus)
+    ? snapshot.activeGenerationId
+    : null;
+}
 export function Chat() { const { selectedOrganizationId } = useOrganization();
   if (!selectedOrganizationId) {
     return <div className="text-sm text-muted-foreground">Select a organization first.</div>; }
@@ -401,6 +421,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     enabled: !!conversationId && activeConversationBelongsToSelectedOrganization,
     refetchInterval: conversationId ? 2_000 : false,
   });
+  const serverActiveGenerationId = activeGenerationIdFromSnapshot(queueQuery.data);
   const { data: agents, error: agentsError } = useQuery({
     queryKey: queryKeys.agents.list(selectedOrganizationId ?? "__none__"),
     queryFn: () => agentsApi.list(selectedOrganizationId!), enabled: !!selectedOrganizationId, }); const liveAgents = useMemo(() => selectableChatAgents(agents), [agents]);
@@ -1064,11 +1085,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       return;
     }
     const streamDraft = streamDrafts[chatId] ?? null;
-    const serverGenerationFence = queueQuery.data?.activeGenerationId
-      && queueQuery.data.activeAttemptEpoch !== null
-      && queueQuery.data.activeControlVersion !== null
+    const serverGenerationFence = serverActiveGenerationId
+      && queueQuery.data?.activeAttemptEpoch !== null
+      && queueQuery.data?.activeAttemptEpoch !== undefined
+      && queueQuery.data?.activeControlVersion !== null
+      && queueQuery.data?.activeControlVersion !== undefined
       ? {
-          generationId: queueQuery.data.activeGenerationId,
+          generationId: serverActiveGenerationId,
           attemptEpoch: queueQuery.data.activeAttemptEpoch,
           controlVersion: queueQuery.data.activeControlVersion,
         }
@@ -1113,7 +1136,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     () => composerEditorRef.current?.getMarkdown?.() ?? draft,
     [draft],
   );
-  const queueComposerFollowUp = async (
+  const queueComposerMessage = async (
     conversation: ChatConversation,
     bodyOverride?: string,
     options?: { files?: File[]; clearComposerOnSuccess?: boolean },
@@ -1127,10 +1150,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     if (!body) { pushToast({ title: "Message cannot be empty", tone: "error" });
       return false; } const filesToUpload = [...(options?.files ?? pendingFiles)];
     if (filesToUpload.length > 0) {
-      pushToast({ title: "Queued follow-ups do not support new files yet", tone: "error" });
+      pushToast({ title: "Queue does not support new files yet", tone: "error" });
       return false;
     }
-    const serverActiveGenerationId = queueQuery.data?.activeGenerationId ?? null;
     const queued = await chatsApi.createQueuedMessage(conversation.id, {
       clientMutationId: `ui:${Date.now()}:${Math.random().toString(36).slice(2)}`,
       expectedGenerationId: serverActiveGenerationId,
@@ -1159,12 +1181,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       setBranchPreview(null); setDraft(""); clearPendingFilesForCurrentScope();
     }
     await queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, conversation.id) });
-    pushToast({ title: "Queued follow-up", body: "It will run after the current reply finishes.", tone: "info" });
+    pushToast({ title: "Queued", body: "Added to Queue.", tone: "info" });
     return true;
   };
   const sendMessage = async (
     options?: { bodyOverride?: string; filesOverride?: File[]; conversationOverride?: ChatConversation;
-      editUserMessageIdOverride?: string | null; clearPendingFilesOnSuccess?: boolean; onUserMessageAcknowledged?: () => void; queuedMessageId?: string | null; },
+      editUserMessageIdOverride?: string | null; editIntent?: "edit" | "retry"; clearPendingFilesOnSuccess?: boolean; onUserMessageAcknowledged?: () => void; queuedMessageId?: string | null; },
   ) => {
     if (!selectedOrganizationId) { pushToast({ title: "Select a organization first", tone: "error" });
       return; } const usesComposerState = options?.bodyOverride === undefined && options?.filesOverride === undefined; const body = (options?.bodyOverride ?? readComposerDraft()).trim();
@@ -1306,9 +1328,19 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         return;
       }
       const chatId = conversation.id; const activeDraftForChat = readChatScopedState(streamDrafts, chatId);
-      const serverActiveGenerationId = queueQuery.data?.activeGenerationId ?? null;
       if (!options?.queuedMessageId && (activeDraftForChat || serverActiveGenerationId)) {
-        await queueComposerFollowUp(conversation, body, { files: filesToUpload, clearComposerOnSuccess: usesComposerState });
+        if (editUserMessageId) {
+          const isRetry = options?.editIntent === "retry";
+          pushToast({
+            title: isRetry ? "Retry unavailable" : "Edit unavailable",
+            body: isRetry
+              ? "Stop the current response before retrying this message."
+              : "Stop the current response before editing this message.",
+            tone: "error",
+          });
+          return;
+        }
+        await queueComposerMessage(conversation, body, { files: filesToUpload, clearComposerOnSuccess: usesComposerState });
         return;
       } if (!acquireChatSendLock(chatId)) return; chatSendLockAcquired = true; activeChatId = chatId; const selectedAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId;
       if (!conversation.preferredAgentId && selectedAgentId) { conversation = await chatsApi.update(conversation.id, { preferredAgentId: selectedAgentId }); setDraftPreferredAgentId(selectedAgentId); rememberChatAgentId(selectedOrganizationId, selectedAgentId); upsertConversation(conversation);
@@ -1832,7 +1864,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         },
       },
     );
-  }; const selectedConversationHasActiveReply = Boolean(selectedConversation && (activeStream || activeSendInFlight || queueQuery.data?.activeGenerationId)); const retryFailedMessage = useCallback(
+  }; const selectedConversationHasActiveReply = Boolean(selectedConversation && (activeStream || activeSendInFlight || serverActiveGenerationId)); const retryFailedMessage = useCallback(
     (message: ChatMessage) => { if (!selectedConversation) return; const sourceUserMessage = findRetrySourceUserMessage(rawMessages, message);
       if (!sourceUserMessage) {
         pushToast({
@@ -1844,6 +1876,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         filesOverride: [],
         conversationOverride: selectedConversation,
         editUserMessageIdOverride: sourceUserMessage.id,
+        editIntent: "retry",
       }); }, [pushToast, rawMessages, selectedConversation, sendMessage], ); const refreshAssistantMessage = useCallback(
     (message: ChatMessage) => { if (!selectedConversation) return; if (!canRefreshAssistantChatMessage(message)) return; const sourceUserMessage = findRetrySourceUserMessage(rawMessages, message);
       if (selectedConversationHasActiveReply) {
@@ -2001,15 +2034,17 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     );
   };
   const sendButtonDisabled = selectedConversationExternalBound || composerUnavailable || sendButtonMode === "sending" || sendButtonMode === "stopping" || ((sendButtonMode === "send" || sendButtonMode === "queue") && draft.trim().length === 0);
-  const canSteerQueuedFollowUps = Boolean(
+  const canSteerQueuedMessages = Boolean(
     (
-      queueQuery.data?.activeGenerationId
-      && queueQuery.data.activeAttemptEpoch !== null
-      && queueQuery.data.activeControlVersion !== null
+      serverActiveGenerationId
+      && queueQuery.data?.activeAttemptEpoch !== null
+      && queueQuery.data?.activeAttemptEpoch !== undefined
+      && queueQuery.data?.activeControlVersion !== null
+      && queueQuery.data?.activeControlVersion !== undefined
     )
     || activeQueueItems.some((item) => item.status === "queued"),
   );
-  const canStopSelectedConversationReply = Boolean(selectedConversation && !selectedStopRequestPending && !activeStreamStopState && (activeSendInFlight || queueQuery.data?.activeGenerationId));
+  const canStopSelectedConversationReply = Boolean(selectedConversation && !selectedStopRequestPending && !activeStreamStopState && (activeSendInFlight || serverActiveGenerationId));
   const composerStreaming = Boolean(activeStream) || activeSendInFlight || newConversationSendInFlight;
   useEffect(() => {
     const editable = composerSurfaceRef.current?.querySelector<HTMLElement>('[contenteditable="true"]');
@@ -2292,7 +2327,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   submitSteerRetryRef.current = submitSteerRetry;
   const steerQueuedMessage = (itemId: string) => {
     if (!selectedConversation || !selectedOrganizationId || steeringQueuedItemIdsRef.current.has(itemId)) return;
-    const activeGenerationId = queueQuery.data?.activeGenerationId;
+    const activeGenerationId = serverActiveGenerationId;
     const expectedAttemptEpoch = queueQuery.data?.activeAttemptEpoch;
     const expectedControlVersion = queueQuery.data?.activeControlVersion;
     const chatId = selectedConversation.id;
@@ -2398,7 +2433,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       {selectedConversation && visibleQueueItems.length > 0 ? (
         <div data-testid="chat-running-queue" className="mb-2.5 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_88%,transparent)] p-2">
           <div className="mb-1.5 flex items-center justify-between gap-2 px-1 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
-            <span>{activeStream ? "Queued follow-ups" : "Queued follow-ups retained"}</span>
+            <span>Queue</span>
             <span>{visibleQueueItems.length} queued</span>
           </div>
           <div className="space-y-1.5">
@@ -2445,7 +2480,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                       ) : null}
                       {itemEditable ? (
                         <>
-                          {canSteerQueuedFollowUps ? (
+                          {canSteerQueuedMessages ? (
                             <button type="button" className="shrink-0 rounded-full px-2 py-1 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/10 dark:text-emerald-300" onClick={() => steerQueuedMessage(item.id)}>Steer</button>
                           ) : null}
                           <button type="button" aria-label="Edit queued message" className="shrink-0 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" onClick={() => editQueuedMessage(item.id, item.payload.body)}><Pencil className="h-3.5 w-3.5" /></button>
@@ -2476,7 +2511,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           bordered={false} placeholder={composerPlaceholder} onSubmit={() => {
             if (composerUnavailable || newConversationSendInFlight) return;
             if (selectedConversationHasActiveReply && selectedConversation) {
-              void queueComposerFollowUp(selectedConversation);
+              void queueComposerMessage(selectedConversation);
               return;
             }
             if (!controlsDisabled) {
@@ -2588,12 +2623,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             if (sendButtonMode === "stop" && selectedConversation) { stopStreaming(selectedConversation.id);
               return; }
             if (sendButtonMode === "queue" && selectedConversation) {
-              void queueComposerFollowUp(selectedConversation);
+              void queueComposerMessage(selectedConversation);
               return; }
             if (sendButtonMode === "send") {
               void sendMessage(); }
           }} disabled={sendButtonDisabled} aria-busy={sendButtonMode === "sending" || (sendButtonMode === "stopping" && activeStream?.state === "stopping") ? true : undefined} aria-label={
-            sendButtonMode === "sending" ? "Sending" : sendButtonMode === "stopping" ? activeStream?.state === "stopped" ? "Response stopped" : "Stopping response" : sendButtonMode === "stop" ? "Stop streaming" : sendButtonMode === "queue" ? "Queue follow-up" : "Send"
+            sendButtonMode === "sending" ? "Sending" : sendButtonMode === "stopping" ? activeStream?.state === "stopped" ? "Response stopped" : "Stopping response" : sendButtonMode === "stop" ? "Stop streaming" : sendButtonMode === "queue" ? "Queue" : "Send"
           } className={cn(
             "shrink-0 rounded-full border-0 bg-white text-black shadow-sm",
             "hover:bg-zinc-100 dark:bg-white dark:text-black dark:hover:bg-zinc-100",
@@ -3003,7 +3038,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                   issueCreatedMessage={issueCreatedMessage}
                                   inlineEdit={inlineEditUserMessageId === message.id ? {
                                     draft: inlineEditDraft,
-                                    disabled: controlsDisabled || composerUnavailable || selectedConversationExternalBound,
+                                    disabled: controlsDisabled || selectedConversationHasActiveReply || composerUnavailable || selectedConversationExternalBound,
                                     mentions: mentionOptions,
                                     surfaceRef: inlineEditSurfaceRef,
                                     editorRef: inlineEditEditorRef,
