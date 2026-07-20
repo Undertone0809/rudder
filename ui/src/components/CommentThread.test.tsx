@@ -23,6 +23,7 @@ const mockTranscriptState = vi.hoisted(() => ({
   transcriptByRun: new Map<string, unknown[]>(),
   hasOutputForRun: vi.fn(() => false),
 }));
+const mockUseLiveRunTranscripts = vi.hoisted(() => vi.fn());
 
 vi.mock("@/context/DialogContext", () => ({
   useDialog: () => ({ confirm: mockConfirm }),
@@ -125,10 +126,13 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
 }));
 
 vi.mock("./transcript/useLiveRunTranscripts", () => ({
-  useLiveRunTranscripts: () => ({
-    transcriptByRun: mockTranscriptState.transcriptByRun,
-    hasOutputForRun: mockTranscriptState.hasOutputForRun,
-  }),
+  useLiveRunTranscripts: (options: unknown) => {
+    mockUseLiveRunTranscripts(options);
+    return {
+      transcriptByRun: mockTranscriptState.transcriptByRun,
+      hasOutputForRun: mockTranscriptState.hasOutputForRun,
+    };
+  },
 }));
 
 vi.mock("./transcript/RunTranscriptView", () => ({
@@ -632,6 +636,7 @@ describe("CommentThread", () => {
     mockTranscriptState.transcriptByRun = new Map();
     mockTranscriptState.hasOutputForRun.mockReset();
     mockTranscriptState.hasOutputForRun.mockReturnValue(false);
+    mockUseLiveRunTranscripts.mockReset();
     mockConfirm.mockReset();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -1475,6 +1480,54 @@ describe("CommentThread", () => {
     expect(html).toContain('aria-label="Show details"');
     expect(html).not.toContain("No run output captured.");
     expect(html).not.toContain('data-streaming="false"');
+  });
+
+  it("hydrates terminal run logs only after that run is expanded", async () => {
+    const terminalRunId = "55555555-5555-4555-8555-555555555555";
+    const activeRunId = "66666666-6666-4666-8666-666666666666";
+    const container = renderInteractive(
+      <MemoryRouter>
+        <CommentThread
+          comments={[]}
+          linkedRuns={[
+            {
+              runId: terminalRunId,
+              status: "succeeded",
+              agentId: "22222222-2222-4222-8222-222222222222",
+              createdAt: new Date("2026-05-07T00:02:00.000Z"),
+              startedAt: new Date("2026-05-07T00:02:00.000Z"),
+              resultJson: { summary: "Persisted terminal summary" },
+            },
+            {
+              runId: activeRunId,
+              status: "running",
+              agentId: "22222222-2222-4222-8222-222222222222",
+              createdAt: new Date("2026-05-07T00:03:00.000Z"),
+              startedAt: new Date("2026-05-07T00:03:00.000Z"),
+            },
+          ]}
+          onAdd={async () => undefined}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(mockUseLiveRunTranscripts.mock.calls.at(-1)?.[0]).toMatchObject({
+      runs: [{ id: activeRunId }],
+    });
+
+    const terminalRow = container.querySelector(`[data-run-id="${terminalRunId}"]`);
+    const expandButton = terminalRow?.querySelector<HTMLButtonElement>('button[aria-label="Show details"]');
+    expect(expandButton).toBeTruthy();
+    await act(async () => {
+      expandButton!.click();
+    });
+
+    expect(mockUseLiveRunTranscripts.mock.calls.at(-1)?.[0]).toMatchObject({
+      runs: [
+        { id: terminalRunId, resultJson: { summary: "Persisted terminal summary" } },
+        { id: activeRunId },
+      ],
+    });
   });
 
   it("renders active linked run details in streaming mode", () => {

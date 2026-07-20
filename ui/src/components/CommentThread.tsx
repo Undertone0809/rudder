@@ -50,6 +50,7 @@ interface LinkedRunItem {
   invocationSource?: string;
   triggerDetail?: string | null;
   contextSnapshot?: Record<string, unknown> | null;
+  resultJson?: Record<string, unknown> | null;
 }
 
 export interface CommentThreadActivityItem {
@@ -498,6 +499,8 @@ const TimelineList = memo(function TimelineList({
   orgId,
   projectId,
   highlightCommentId,
+  runExpandedOverrides,
+  onToggleRunExpanded,
   runTranscriptById,
   runHasOutput,
   operatorDisplayName,
@@ -517,6 +520,8 @@ const TimelineList = memo(function TimelineList({
   orgId?: string | null;
   projectId?: string | null;
   highlightCommentId?: string | null;
+  runExpandedOverrides: Record<string, boolean>;
+  onToggleRunExpanded: (runId: string, expanded: boolean) => void;
   runTranscriptById: Map<string, TranscriptEntry[]>;
   runHasOutput: (runId: string) => boolean;
   operatorDisplayName?: string | null;
@@ -535,7 +540,6 @@ const TimelineList = memo(function TimelineList({
   const location = useLocation();
   const { confirm } = useDialog();
   const organizationPrefix = extractOrganizationPrefixFromPath(location.pathname);
-  const [runExpandedOverrides, setRunExpandedOverrides] = useState<Record<string, boolean>>({});
   const [commentCollapsedOverrides, setCommentCollapsedOverrides] = useState<Record<string, boolean>>({});
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editBody, setEditBody] = useState("");
@@ -627,10 +631,7 @@ const TimelineList = memo(function TimelineList({
               aria-controls={`run-output-${run.runId}`}
               className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-background/70 text-muted-foreground motion-safe:transition-colors hover:bg-accent hover:text-foreground motion-reduce:transition-none"
               onClick={() => {
-                setRunExpandedOverrides((current) => ({
-                  ...current,
-                  [run.runId]: !runExpanded,
-                }));
+                onToggleRunExpanded(run.runId, !runExpanded);
               }}
             >
               <ChevronDown className={`h-3.5 w-3.5 motion-safe:transition-transform motion-reduce:transition-none ${runExpanded ? "rotate-180" : ""}`} />
@@ -1048,6 +1049,7 @@ export function CommentThread({
   const [submitting, setSubmitting] = useState(false);
   const [attaching, setAttaching] = useState(false);
   const [highlightCommentId, setHighlightCommentId] = useState<string | null>(null);
+  const [runExpandedOverrides, setRunExpandedOverrides] = useState<Record<string, boolean>>({});
   const [reserveHashScrollEndSpace, setReserveHashScrollEndSpace] = useState(false);
   const editorRef = useRef<MarkdownEditorRef>(null);
   const composerSurfaceRef = useRef<HTMLDivElement | null>(null);
@@ -1110,15 +1112,28 @@ export function CommentThread({
         agentName: agent?.name ?? run.agentId.slice(0, 8),
         agentRuntimeType: agent?.agentRuntimeType ?? "process",
         issueId: null,
+        resultJson: run.resultJson ?? null,
       };
     });
   }, [agentMap, linkedRuns]);
 
+  const hydratedTranscriptRuns = useMemo(() => (
+    transcriptRuns.filter((run) =>
+      shouldExpandRunByDefault(run.status) || runExpandedOverrides[run.id] === true)
+  ), [runExpandedOverrides, transcriptRuns]);
+
   const { transcriptByRun, hasOutputForRun } = useLiveRunTranscripts({
-    runs: transcriptRuns,
+    runs: hydratedTranscriptRuns,
     orgId,
     maxChunksPerRun: 120,
   });
+
+  const toggleRunExpanded = useCallback((runId: string, expanded: boolean) => {
+    setRunExpandedOverrides((current) => ({
+      ...current,
+      [runId]: expanded,
+    }));
+  }, []);
 
   // Build mention options from agent map (exclude terminated agents)
   const mentions = useMemo<MentionOption[]>(() => {
@@ -1409,6 +1424,8 @@ export function CommentThread({
       orgId={orgId}
       projectId={projectId}
       highlightCommentId={highlightCommentId}
+      runExpandedOverrides={runExpandedOverrides}
+      onToggleRunExpanded={toggleRunExpanded}
       runTranscriptById={transcriptByRun}
       runHasOutput={hasOutputForRun}
       operatorDisplayName={operatorDisplayName}

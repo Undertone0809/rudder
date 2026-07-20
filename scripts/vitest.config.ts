@@ -6,6 +6,6 @@ export default defineConfig({
   root: dirname(fileURLToPath(import.meta.url)),
   test: {
     environment: "node",
-    include: ["release-*.test.mjs", "runtime-*.test.mjs"],
+    include: ["release-*.test.mjs", "runtime-*.test.mjs", "perf/*.test.ts"],
   },
 });

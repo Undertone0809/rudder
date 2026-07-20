@@ -3559,11 +3559,19 @@ export function chatService(db: Db) {
 
   async function listMessages(conversationId: string, options: { includeTranscript?: boolean } = {}) {
       const includeTranscript = options.includeTranscript !== false;
+      const conversationOrgIds = db
+        .select({ orgId: chatConversations.orgId })
+        .from(chatConversations)
+        .where(eq(chatConversations.id, conversationId));
+      const messageConditions = and(
+        eq(chatMessages.conversationId, conversationId),
+        inArray(chatMessages.orgId, conversationOrgIds),
+      );
       const rows = includeTranscript
         ? await db
           .select()
           .from(chatMessages)
-          .where(eq(chatMessages.conversationId, conversationId))
+          .where(messageConditions)
           .orderBy(chatMessages.createdAt, chatMessages.id)
         : await db
           .select({
@@ -3586,7 +3594,7 @@ export function chatService(db: Db) {
             transcriptSummary: transcriptSummarySql(),
           })
           .from(chatMessages)
-          .where(eq(chatMessages.conversationId, conversationId))
+          .where(messageConditions)
           .orderBy(chatMessages.createdAt, chatMessages.id);
       return hydrateMessages(rows, { includeTranscript });
   }
