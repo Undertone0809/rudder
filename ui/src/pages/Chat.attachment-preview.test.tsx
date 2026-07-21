@@ -5810,7 +5810,7 @@ describe("Chat streaming controls", () => {
     }));
   });
 
-  it("keeps accepted Steer feedback after the active response when the response completes", () => {
+  it("keeps accepted Steer feedback at its Work Transcript timestamp when the response completes", () => {
     const originalUserMessage = message({
       id: "user-message-before-steer",
       body: "Please draft a plan.",
@@ -5818,20 +5818,41 @@ describe("Chat streaming controls", () => {
       createdAt: new Date("2026-05-12T09:04:00.000Z"),
       updatedAt: new Date("2026-05-12T09:04:00.000Z"),
     });
-    const activeAssistantMessage = message({
-      id: "assistant-message-before-steer",
-      role: "assistant",
-      status: "streaming",
-      body: "In-progress answer before Steer",
-      replyingAgentId: "agent-1",
-      chatTurnId: "turn-active",
-      createdAt: new Date("2026-05-12T09:04:01.000Z"),
-      updatedAt: new Date("2026-05-12T09:04:01.000Z"),
-    });
+    const transcriptBeforeSteer = {
+      kind: "thinking" as const,
+      ts: "2026-05-12T09:04:01.500Z",
+      text: "Reasoning before Steer",
+    };
+    const transcriptAfterSteer = {
+      kind: "thinking" as const,
+      ts: "2026-05-12T09:04:02.500Z",
+      text: "Reasoning after Steer",
+    };
+    const activeAssistantMessage = {
+      ...message({
+        id: "assistant-message-before-steer",
+        role: "assistant",
+        status: "streaming",
+        body: "In-progress answer before Steer",
+        replyingAgentId: "agent-1",
+        chatTurnId: "turn-active",
+        transcript: [transcriptBeforeSteer, transcriptAfterSteer],
+        createdAt: new Date("2026-05-12T09:04:01.000Z"),
+        updatedAt: new Date("2026-05-12T09:04:01.000Z"),
+      }),
+      generationId: "generation-1",
+    };
     const steerUserMessage = message({
       id: "user-message-from-steer",
       body: "hi from Steer",
       chatTurnId: "turn-steer",
+      structuredPayload: {
+        source: "steer",
+        targetGenerationId: "generation-1",
+        afterTranscriptEntryCount: 1,
+        generationSeq: 2,
+        deliveryDisposition: "accepted_current",
+      },
       createdAt: new Date("2026-05-12T09:04:02.000Z"),
       updatedAt: new Date("2026-05-12T09:04:02.000Z"),
     });
@@ -5856,7 +5877,7 @@ describe("Chat streaming controls", () => {
         renderedBodyHash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         state: "streaming",
         createdAt: activeAssistantMessage.createdAt,
-        transcript: [],
+        transcript: [transcriptBeforeSteer, transcriptAfterSteer],
         replyingAgentId: "agent-1",
       },
     };
@@ -5864,8 +5885,18 @@ describe("Chat streaming controls", () => {
     const { container, rerender } = renderChat();
     const content = container.querySelector<HTMLElement>("[data-testid='chat-messages-content']");
     expect(content).not.toBeNull();
-    expect(content!.textContent!.indexOf(activeAssistantMessage.body))
-      .toBeLessThan(content!.textContent!.indexOf(steerUserMessage.body));
+    const assertSteerIsEmbeddedAtItsTranscriptTime = () => {
+      const text = content!.textContent!;
+      const embeddedSteer = container.querySelector<HTMLElement>("[data-testid='chat-transcript-steer-message']");
+      expect(embeddedSteer).not.toBeNull();
+      expect(embeddedSteer!.textContent).toContain(steerUserMessage.body);
+      expect([...container.querySelectorAll("[data-testid='chat-user-message-bubble']")]
+        .filter((bubble) => bubble.textContent?.includes(steerUserMessage.body))).toHaveLength(1);
+      expect(text.indexOf(transcriptBeforeSteer.text)).toBeLessThan(text.indexOf(steerUserMessage.body));
+      expect(text.indexOf(steerUserMessage.body)).toBeLessThan(text.indexOf(transcriptAfterSteer.text));
+      expect(text.indexOf(transcriptAfterSteer.text)).toBeLessThan(text.indexOf(activeAssistantMessage.body));
+    };
+    assertSteerIsEmbeddedAtItsTranscriptTime();
 
     mockState.messagesByChatId = {
       "chat-1": [
@@ -5878,8 +5909,56 @@ describe("Chat streaming controls", () => {
     mockState.streamDrafts = {};
     rerender();
 
-    expect(content!.textContent!.indexOf(activeAssistantMessage.body))
-      .toBeLessThan(content!.textContent!.indexOf(steerUserMessage.body));
+    assertSteerIsEmbeddedAtItsTranscriptTime();
+  });
+
+  it("keeps a Steer before the first runtime event visible when the completed transcript is empty", () => {
+    const originalUserMessage = message({
+      id: "user-message-before-empty-transcript",
+      body: "Start without runtime evidence.",
+      chatTurnId: "turn-empty-transcript",
+      createdAt: new Date("2026-05-12T09:04:00.000Z"),
+      updatedAt: new Date("2026-05-12T09:04:00.000Z"),
+    });
+    const assistantMessage = {
+      ...message({
+        id: "assistant-message-empty-transcript",
+        role: "assistant",
+        status: "completed",
+        body: "Final response without transcript events",
+        replyingAgentId: "agent-1",
+        chatTurnId: "turn-empty-transcript",
+        transcript: [],
+        createdAt: new Date("2026-05-12T09:04:03.000Z"),
+        updatedAt: new Date("2026-05-12T09:04:03.000Z"),
+      }),
+      generationId: "generation-empty-transcript",
+    };
+    const steerUserMessage = message({
+      id: "user-message-before-first-runtime-event",
+      body: "Steer before the first runtime event",
+      structuredPayload: {
+        source: "steer",
+        targetGenerationId: "generation-empty-transcript",
+        afterTranscriptEntryCount: 0,
+        generationSeq: 0,
+        deliveryDisposition: "accepted_current",
+      },
+      createdAt: new Date("2026-05-12T09:04:01.000Z"),
+      updatedAt: new Date("2026-05-12T09:04:01.000Z"),
+    });
+    mockState.messagesByChatId = {
+      "chat-1": [originalUserMessage, steerUserMessage, assistantMessage],
+    };
+
+    const { container } = renderChat();
+    const text = container.querySelector<HTMLElement>("[data-testid='chat-messages-content']")!.textContent!;
+
+    expect(container.querySelector("[data-testid='chat-transcript-steer-message']")?.textContent)
+      .toContain(steerUserMessage.body);
+    expect(text.indexOf(steerUserMessage.body)).toBeLessThan(text.indexOf(assistantMessage.body));
+    expect([...container.querySelectorAll("[data-testid='chat-user-message-bubble']")]
+      .filter((bubble) => bubble.textContent?.includes(steerUserMessage.body))).toHaveLength(1);
   });
 
   it("keeps accepted Steer feedback visible while an edited message response is active", () => {
@@ -5895,6 +5974,13 @@ describe("Chat streaming controls", () => {
       id: "user-message-from-edited-steer",
       body: "visible Steer feedback for edited response",
       chatTurnId: "turn-steer",
+      structuredPayload: {
+        source: "steer",
+        targetGenerationId: "edited-generation-1",
+        afterTranscriptEntryCount: 1,
+        generationSeq: 3,
+        deliveryDisposition: "accepted_current",
+      },
       createdAt: new Date("2026-05-12T09:05:02.000Z"),
       updatedAt: new Date("2026-05-12T09:05:02.000Z"),
     });
@@ -5922,9 +6008,13 @@ describe("Chat streaming controls", () => {
         turnVariant: editedUserMessage.turnVariant,
         editedFromCreatedAt: new Date("2026-05-12T09:04:00.000Z"),
         body: "Edited response still in progress",
+        generationId: "edited-generation-1",
         state: "streaming",
         createdAt: new Date("2026-05-12T09:05:01.000Z"),
-        transcript: [],
+        transcript: [
+          { kind: "thinking", ts: "2026-05-12T09:05:01.500Z", text: "Edited reasoning before Steer" },
+          { kind: "thinking", ts: "2026-05-12T09:05:02.500Z", text: "Edited reasoning after Steer" },
+        ],
         replyingAgentId: "agent-1",
       },
     };
@@ -5932,9 +6022,12 @@ describe("Chat streaming controls", () => {
     const { container } = renderChat();
     const content = container.querySelector<HTMLElement>("[data-testid='chat-messages-content']");
 
-    expect(content?.textContent).toContain(steerUserMessage.body);
-    expect(content!.textContent!.indexOf("Edited response still in progress"))
-      .toBeLessThan(content!.textContent!.indexOf(steerUserMessage.body));
+    const text = content!.textContent!;
+    expect(container.querySelector("[data-testid='chat-transcript-steer-message']")?.textContent)
+      .toContain(steerUserMessage.body);
+    expect(text.indexOf("Edited reasoning before Steer")).toBeLessThan(text.indexOf(steerUserMessage.body));
+    expect(text.indexOf(steerUserMessage.body)).toBeLessThan(text.indexOf("Edited reasoning after Steer"));
+    expect(text.indexOf("Edited reasoning after Steer")).toBeLessThan(text.indexOf("Edited response still in progress"));
   });
 
   it("locks Steer immediately and applies the durable response item without waiting for refetch", async () => {

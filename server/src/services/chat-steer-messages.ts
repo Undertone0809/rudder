@@ -3,6 +3,7 @@ import {
   activityLog,
   chatControlActions,
   chatConversations,
+  chatGenerationEvents,
   chatGenerations,
   chatMessages,
   chatQueuedMessages,
@@ -58,6 +59,21 @@ export function chatSteerMessageService(db: Db) {
 
     const body = String(input.item.payload.body ?? "").trim();
     if (!body) throw conflict("Queued Steer feedback has no user-visible body");
+    const targetGenerationId = input.item.activeGenerationId ?? input.item.expectedGenerationId;
+    const transcriptAnchor = targetGenerationId
+      ? await tx
+        .select({
+          afterTranscriptEntryCount: sql<number>`count(*)::int`,
+          generationSeq: sql<number>`coalesce(max(${chatGenerationEvents.generationSeq}), 0)::int`,
+        })
+        .from(chatGenerationEvents)
+        .where(and(
+          eq(chatGenerationEvents.orgId, input.orgId),
+          eq(chatGenerationEvents.generationId, targetGenerationId),
+          eq(chatGenerationEvents.eventKind, "transcript"),
+        ))
+        .then((rows) => rows[0] ?? { afterTranscriptEntryCount: 0, generationSeq: 0 })
+      : { afterTranscriptEntryCount: 0, generationSeq: 0 };
     const [message] = await tx
       .insert(chatMessages)
       .values({
@@ -68,7 +84,15 @@ export function chatSteerMessageService(db: Db) {
         kind: "message",
         status: "completed",
         body,
-        structuredPayload: null,
+        structuredPayload: {
+          source: "steer",
+          targetGenerationId: targetGenerationId ?? null,
+          afterTranscriptEntryCount: transcriptAnchor.afterTranscriptEntryCount,
+          generationSeq: transcriptAnchor.generationSeq,
+          queueItemId: input.item.id,
+          controlActionId: input.item.controlActionId,
+          deliveryDisposition: input.item.deliveryDisposition,
+        },
         chatTurnId: randomUUID(),
         turnVariant: 0,
         createdAt: input.now,

@@ -156,6 +156,7 @@ export function TranscriptMessageBlock({
 }) {
   const compact = density === "compact";
   const isUser = block.role === "user";
+  const isSteer = block.source === "steer";
   const showRoleLabel = isUser && presentation !== "detail";
   const [open, setOpen] = useState(true);
 
@@ -175,6 +176,31 @@ export function TranscriptMessageBlock({
       {block.text}
     </MarkdownBody>
   );
+
+  if (isSteer) {
+    return (
+      <div
+        data-testid="chat-transcript-steer-message"
+        data-message-id={block.messageId}
+        data-control-action-id={block.controlActionId}
+        className="flex justify-end py-1"
+        title={getTranscriptTimestampTitle(block.ts)}
+      >
+        <div className="max-w-[min(100%,72ch)] text-right">
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            Steer
+          </div>
+          <div
+            data-testid="chat-user-message-bubble"
+            data-message-highlight-target="true"
+            className="chat-message-user ml-auto w-fit rounded-[var(--radius-xl)] px-4 py-3 text-left shadow-[var(--shadow-sm)]"
+          >
+            {body}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!isUser || !collapsibleSummary) {
     return (

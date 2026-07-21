@@ -210,7 +210,8 @@ test("delivers native Codex Steer into the active App Server turn", async ({ pag
     const response = await page.request.get(`/api/chats/${chatId}/queue`);
     expect(response.ok()).toBe(true);
     return (await response.json()).activeGenerationStatus;
-  }, { timeout: 15_000 }).toBe("running");
+  }, { timeout: 15_000 }).toMatch(/starting|running/);
+  await expect(page.getByText("Reasoning before Steer", { exact: true })).toBeVisible({ timeout: 15_000 });
 
   await composer.fill("Use the revised direction");
   await composer.press("Enter");
@@ -218,39 +219,45 @@ test("delivers native Codex Steer into the active App Server turn", async ({ pag
   await expect(queueItem).toContainText("Use the revised direction", { timeout: 15_000 });
   await queueItem.getByRole("button", { name: "Steer" }).click();
 
-  const steerMessage = page.getByTestId("chat-user-message-bubble").filter({ hasText: "Use the revised direction" });
+  const steerMessage = page.getByTestId("chat-transcript-steer-message").filter({ hasText: "Use the revised direction" });
   await expect(steerMessage).toHaveCount(1, { timeout: 20_000 });
-  const activeAssistant = page.getByText("Thinking...", { exact: true });
-  await expect(activeAssistant).toBeVisible();
-  expect(await activeAssistant.evaluate((assistant, feedbackText) => {
-    const feedback = [...document.querySelectorAll<HTMLElement>("[data-testid='chat-user-message-bubble']")]
-      .find((element) => element.textContent?.includes(feedbackText));
-    return Boolean(feedback && (assistant.compareDocumentPosition(feedback) & Node.DOCUMENT_POSITION_FOLLOWING));
-  }, "Use the revised direction")).toBe(true);
+  await expect(page.getByText("Reasoning after Steer", { exact: true })).toBeVisible({ timeout: 20_000 });
+
+  const assertEmbeddedTimelineOrder = async (includeFinal: boolean) => {
+    expect(await page.evaluate(({ feedbackText, includeFinal }) => {
+      const findText = (text: string) => [...document.querySelectorAll<HTMLElement>("*")]
+        .find((element) => element.children.length === 0 && element.textContent?.trim() === text);
+      const before = findText("Reasoning before Steer");
+      const feedback = [...document.querySelectorAll<HTMLElement>("[data-testid='chat-transcript-steer-message']")]
+        .find((element) => element.textContent?.includes(feedbackText));
+      const after = findText("Reasoning after Steer");
+      const final = [...document.querySelectorAll<HTMLElement>("[data-testid='chat-assistant-message']")].at(-1);
+      const follows = (earlier: Element | undefined | null, later: Element | undefined | null) => Boolean(
+        earlier && later && (earlier.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING),
+      );
+      return follows(before, feedback)
+        && follows(feedback, after)
+        && (!includeFinal || follows(after, final));
+    }, { feedbackText: "Use the revised direction", includeFinal })).toBe(true);
+  };
+  await assertEmbeddedTimelineOrder(false);
 
   const finalAssistant = page.getByTestId("chat-assistant-message").last();
   await expect(finalAssistant).toContainText(
     "Native steer applied: Use the revised direction",
     { timeout: 20_000 },
   );
-  expect(await finalAssistant.evaluate((assistant, feedbackText) => {
-    const feedback = [...document.querySelectorAll<HTMLElement>("[data-testid='chat-user-message-bubble']")]
-      .find((element) => element.textContent?.includes(feedbackText));
-    return Boolean(feedback && (assistant.compareDocumentPosition(feedback) & Node.DOCUMENT_POSITION_FOLLOWING));
-  }, "Use the revised direction")).toBe(true);
+  await assertEmbeddedTimelineOrder(true);
   const queueRes = await page.request.get(`/api/chats/${chatId}/queue`);
   expect(queueRes.ok()).toBe(true);
   expect((await queueRes.json()).items).toHaveLength(0);
 
   await page.reload();
-  await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Use the revised direction" })).toHaveCount(1, {
+  await expect(page.getByTestId("chat-transcript-steer-message").filter({ hasText: "Use the revised direction" })).toHaveCount(1, {
     timeout: 20_000,
   });
-  expect(await page.getByTestId("chat-assistant-message").last().evaluate((assistant, feedbackText) => {
-    const feedback = [...document.querySelectorAll<HTMLElement>("[data-testid='chat-user-message-bubble']")]
-      .find((element) => element.textContent?.includes(feedbackText));
-    return Boolean(feedback && (assistant.compareDocumentPosition(feedback) & Node.DOCUMENT_POSITION_FOLLOWING));
-  }, "Use the revised direction")).toBe(true);
+  await expect(page.getByText("Reasoning after Steer", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await assertEmbeddedTimelineOrder(true);
 });
 
 test("keeps accepted Steer visible and ordered while an edited response is active", async ({ page }) => {
@@ -305,7 +312,8 @@ test("keeps accepted Steer visible and ordered while an edited response is activ
     const response = await page.request.get(`/api/chats/${chatId}/queue`);
     expect(response.ok()).toBe(true);
     return (await response.json()).activeGenerationStatus;
-  }, { timeout: 15_000 }).toBe("running");
+  }, { timeout: 15_000 }).toMatch(/starting|running/);
+  await expect(page.getByText("Reasoning before Steer", { exact: true })).toBeVisible({ timeout: 15_000 });
 
   await composer.fill("Steer must stay visible after edit");
   await composer.press("Enter");
@@ -313,16 +321,25 @@ test("keeps accepted Steer visible and ordered while an edited response is activ
   await expect(queueItem).toContainText("Steer must stay visible after edit", { timeout: 15_000 });
   await queueItem.getByRole("button", { name: "Steer" }).click();
 
-  const steerMessage = page.getByTestId("chat-user-message-bubble").filter({
+  const steerMessage = page.getByTestId("chat-transcript-steer-message").filter({
     hasText: "Steer must stay visible after edit",
   });
   await expect(steerMessage).toBeVisible({ timeout: 20_000 });
-  const activeAssistant = page.getByText("Thinking...", { exact: true });
-  await expect(activeAssistant).toBeVisible();
-  expect(await activeAssistant.evaluate((assistant, feedbackText) => {
-    const feedback = [...document.querySelectorAll<HTMLElement>("[data-testid='chat-user-message-bubble']")]
+  await expect(page.getByText("Reasoning after Steer", { exact: true })).toBeVisible({ timeout: 20_000 });
+  expect(await page.evaluate((feedbackText) => {
+    const findText = (text: string) => [...document.querySelectorAll<HTMLElement>("*")]
+      .find((element) => element.children.length === 0 && element.textContent?.trim() === text);
+    const before = findText("Reasoning before Steer");
+    const feedback = [...document.querySelectorAll<HTMLElement>("[data-testid='chat-transcript-steer-message']")]
       .find((element) => element.textContent?.includes(feedbackText));
-    return Boolean(feedback && (assistant.compareDocumentPosition(feedback) & Node.DOCUMENT_POSITION_FOLLOWING));
+    const after = findText("Reasoning after Steer");
+    return Boolean(
+      before
+      && feedback
+      && after
+      && (before.compareDocumentPosition(feedback) & Node.DOCUMENT_POSITION_FOLLOWING)
+      && (feedback.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING),
+    );
   }, "Steer must stay visible after edit")).toBe(true);
 
   const finalAssistant = page.getByTestId("chat-assistant-message").last();
@@ -331,9 +348,9 @@ test("keeps accepted Steer visible and ordered while an edited response is activ
     { timeout: 20_000 },
   );
   expect(await finalAssistant.evaluate((assistant, feedbackText) => {
-    const feedback = [...document.querySelectorAll<HTMLElement>("[data-testid='chat-user-message-bubble']")]
+    const feedback = [...document.querySelectorAll<HTMLElement>("[data-testid='chat-transcript-steer-message']")]
       .find((element) => element.textContent?.includes(feedbackText));
-    return Boolean(feedback && (assistant.compareDocumentPosition(feedback) & Node.DOCUMENT_POSITION_FOLLOWING));
+    return Boolean(feedback && (feedback.compareDocumentPosition(assistant) & Node.DOCUMENT_POSITION_FOLLOWING));
   }, "Steer must stay visible after edit")).toBe(true);
 });
 

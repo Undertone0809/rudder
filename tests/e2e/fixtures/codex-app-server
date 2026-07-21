@@ -84,6 +84,21 @@ function finish(body, status = "completed") {
   });
 }
 
+function emitReasoning(itemId, text) {
+  send({
+    method: "item/reasoning/summaryTextDelta",
+    params: { threadId, turnId, itemId, summaryIndex: 0, delta: text },
+  });
+  send({
+    method: "item/completed",
+    params: {
+      threadId,
+      turnId,
+      item: { type: "reasoning", id: itemId, summary: [text], content: [] },
+    },
+  });
+}
+
 const rl = readline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
   const message = JSON.parse(line);
@@ -100,6 +115,9 @@ rl.on("line", (line) => {
     prompt = message.params?.input?.find((item) => item?.type === "text")?.text ?? "";
     send({ id: message.id, result: { turn: { id: turnId } } });
     send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+    if (prompt.includes("Keep Steer message position stable")) {
+      setTimeout(() => emitReasoning("reason-before-steer", "Reasoning before Steer"), 600);
+    }
     if (prompt.includes("Render dual reasoning streams")) {
       setTimeout(() => {
         for (const delta of ["I will use ", "visualize once."]) {
@@ -141,7 +159,8 @@ rl.on("line", (line) => {
     send({ id: message.id, result: { turnId } });
     const finishSteeredTurn = () => finish(`Native steer applied: ${feedback}`);
     if (prompt.includes("Keep Steer message position stable")) {
-      setTimeout(finishSteeredTurn, 2_000);
+      setTimeout(() => emitReasoning("reason-after-steer", "Reasoning after Steer"), 250);
+      setTimeout(finishSteeredTurn, 1_000);
     } else {
       finishSteeredTurn();
     }

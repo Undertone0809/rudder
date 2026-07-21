@@ -75,6 +75,7 @@ import {
 } from "@/lib/chat-stop-recovery";
 import {
   activeChatStreamTimelineInsertionIndex,
+  nativeSteerTranscriptAnchor,
   readChatScopedFlag,
   readChatScopedState,
   shouldShowMessageDuringActiveEdit,
@@ -1433,18 +1434,72 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     activeStream && (
       activeEditCutoffMs !== null
       || !activeStream.userMessageId || !rawMessages.some((message) => message.id === activeStream.userMessageId) ), );
+  const nativeSteerAnchors = useMemo(
+    () => visibleMessages
+      .map(nativeSteerTranscriptAnchor)
+      .filter((anchor): anchor is NonNullable<ReturnType<typeof nativeSteerTranscriptAnchor>> => Boolean(anchor)),
+    [visibleMessages],
+  );
+  const transcriptOwnerGenerationIds = useMemo(() => {
+    const generationIds = new Set<string>();
+    if (showActiveStreamDraft && activeStream?.generationId) {
+      generationIds.add(activeStream.generationId);
+    }
+    for (const message of visibleMessages) {
+      if (message.role === "assistant" && message.generationId) {
+        generationIds.add(message.generationId);
+      }
+    }
+    return generationIds;
+  }, [activeStream?.generationId, showActiveStreamDraft, visibleMessages]);
+  const nativeSteerMessagesByGenerationId = useMemo(() => {
+    const messagesByGenerationId = new Map<string, ChatMessage[]>();
+    for (const anchor of nativeSteerAnchors) {
+      if (!transcriptOwnerGenerationIds.has(anchor.targetGenerationId)) continue;
+      const messages = messagesByGenerationId.get(anchor.targetGenerationId) ?? [];
+      messages.push(anchor.message);
+      messagesByGenerationId.set(anchor.targetGenerationId, messages);
+    }
+    return messagesByGenerationId;
+  }, [nativeSteerAnchors, transcriptOwnerGenerationIds]);
+  const embeddedNativeSteerMessageIds = useMemo(
+    () => new Set(
+      [...nativeSteerMessagesByGenerationId.values()]
+        .flatMap((messages) => messages.map((message) => message.id)),
+    ),
+    [nativeSteerMessagesByGenerationId],
+  );
+  const timelineMessages = useMemo(
+    () => visibleMessages.filter((message) => !embeddedNativeSteerMessageIds.has(message.id)),
+    [embeddedNativeSteerMessageIds, visibleMessages],
+  );
   const chatTimelineRows = useMemo(() => {
-    const rows: ChatTimelineRow[] = visibleMessages.map((message, messageIndex) => ({
+    const rows: ChatTimelineRow[] = timelineMessages.map((message) => ({
       kind: "message",
       message,
-      messageIndex,
+      messageIndex: visibleMessages.findIndex((candidate) => candidate.id === message.id),
     }));
     if (!showActiveStreamDraft || !activeStream) return rows;
-    rows.splice(activeChatStreamTimelineInsertionIndex(visibleMessages, activeStream), 0, {
+    rows.splice(activeChatStreamTimelineInsertionIndex(timelineMessages, activeStream), 0, {
       kind: "active_stream",
     });
     return rows;
-  }, [activeStream, showActiveStreamDraft, visibleMessages]);
+  }, [activeStream, showActiveStreamDraft, timelineMessages, visibleMessages]);
+  useEffect(() => {
+    for (const message of visibleMessages) {
+      if (message.role !== "assistant" || !message.generationId) continue;
+      if ((nativeSteerMessagesByGenerationId.get(message.generationId)?.length ?? 0) === 0) continue;
+      if ((loadedTranscriptsByMessageId[message.id] ?? message.transcript ?? []).length > 0) continue;
+      if (!message.transcriptSummary?.entryCount || loadingTranscriptMessageIds[message.id]) continue;
+      void loadMessageTranscript(message.conversationId, message.id);
+    }
+  }, [
+    loadMessageTranscript,
+    loadedTranscriptsByMessageId,
+    loadingTranscriptMessageIds,
+    nativeSteerMessagesByGenerationId,
+    visibleMessages,
+  ]);
   useEffect(() => {
     if (agentSelectionLocked) {
       setAgentMenuOpen(false); } }, [agentSelectionLocked]);
@@ -2822,6 +2877,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                       turnBranchControls={turnBranchControlsForTurn(activeStream.chatTurnId, activeStream.turnVariant)} /> ) : null}
                                   <StreamTranscriptItem key={`${activeStream.chatId}-${activeStream.createdAt.getTime()}`}
                                     entries={activeStream.transcript}
+                                    steerMessages={activeStream.generationId
+                                      ? nativeSteerMessagesByGenerationId.get(activeStream.generationId) ?? []
+                                      : []}
                                     state={activeStream.state}
                                     streamStartedAt={activeStream.createdAt}
                                     assistantMessageBody={activeStream.body}
@@ -2839,10 +2897,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                             }
                             const { message, messageIndex } = timelineRow;
                             const previousMessage = visibleMessages[messageIndex - 1] ?? null; const previousPreviousMessage = visibleMessages[messageIndex - 2] ?? null; if (shouldAttachIssueCreatedSystemMessage(previousMessage, message) || shouldAttachApprovalFeedbackSystemMessage(previousPreviousMessage, previousMessage, message)) return null; const nextMessage = visibleMessages[messageIndex + 1] ?? null; const issueCreatedMessage = shouldAttachIssueCreatedSystemMessage(message, nextMessage) ? nextMessage : null; const persistedTranscript = (loadedTranscriptsByMessageId[message.id] ?? message.transcript ?? []) as TranscriptEntry[];
+                            const messageSteerMessages = message.generationId
+                              ? nativeSteerMessagesByGenerationId.get(message.generationId) ?? []
+                              : [];
                             const messageCanShowProcess = message.role === "assistant"
                               || message.kind === "issue_proposal" || message.kind === "operation_proposal";
                             const shouldRenderPersistedTranscript =
-                              persistedTranscript.length > 0 && messageCanShowProcess; const shouldRenderLazyTranscript = persistedTranscript.length === 0 && messageCanShowProcess && Boolean(message.transcriptSummary?.entryCount); const persistedProcessStartedAt = shouldRenderPersistedTranscript ? resolvePersistedChatProcessStartedAt(visibleMessages, message, persistedTranscript) : null; const persistedProcessEndedAt = shouldRenderPersistedTranscript ? resolvePersistedChatProcessEndedAt(message, persistedTranscript) : null;
+                              (persistedTranscript.length > 0 || messageSteerMessages.length > 0)
+                              && messageCanShowProcess; const shouldRenderLazyTranscript = persistedTranscript.length === 0 && messageSteerMessages.length === 0 && messageCanShowProcess && Boolean(message.transcriptSummary?.entryCount); const persistedProcessStartedAt = shouldRenderPersistedTranscript ? resolvePersistedChatProcessStartedAt(visibleMessages, message, persistedTranscript) : null; const persistedProcessEndedAt = shouldRenderPersistedTranscript ? resolvePersistedChatProcessEndedAt(message, persistedTranscript) : null;
                             const messageTurnBranchControls = turnBranchControlsFor(message);
                             const refreshTurnBranchControls = message.chatTurnId ? turnBranchControlsForTurn(message.chatTurnId) : null;
                             return (
@@ -2850,6 +2912,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                 {shouldRenderPersistedTranscript ? (
                                   <StreamTranscriptItem
                                     entries={persistedTranscript}
+                                    steerMessages={messageSteerMessages}
                                     state={message.status}
                                     streamStartedAt={persistedProcessStartedAt!}
                                     streamEndedAt={persistedProcessEndedAt}

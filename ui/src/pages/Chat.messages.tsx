@@ -41,6 +41,7 @@ import {
   formatChatProcessDuration,
   lastTranscriptAtMs
 } from "@/lib/chat-process-duration";
+import { mergeNativeSteerTranscriptEntries } from "@/lib/chat-stream-state";
 import { mentionChipInlineStyle, mentionChipNavigationPath, parseMentionChipHref, stripMentionChipLabelPrefix, type ParsedMentionChip } from "@/lib/mention-chips";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
 import { Link } from "@/lib/router";
@@ -2653,6 +2654,7 @@ export function LazyStreamTranscriptItem({
 
 export function StreamTranscriptItem({
   entries,
+  steerMessages = [],
   state,
   streamStartedAt,
   streamEndedAt,
@@ -2662,6 +2664,7 @@ export function StreamTranscriptItem({
   onOpenChange,
 }: {
   entries: TranscriptEntry[];
+  steerMessages?: ChatMessage[];
   state: ChatStreamDraftState | ChatMessage["status"];
   streamStartedAt: Date;
   streamEndedAt?: Date | null;
@@ -2670,8 +2673,13 @@ export function StreamTranscriptItem({
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
+  const timelineEntries = useMemo(
+    () => mergeNativeSteerTranscriptEntries(entries, steerMessages),
+    [entries, steerMessages],
+  );
   const streamingActive = state === "streaming" || state === "finalizing";
-  const [processOpen, setProcessOpen] = useState(() => streamingActive || defaultOpen);
+  const hasSteerInterjection = steerMessages.length > 0;
+  const [processOpen, setProcessOpen] = useState(() => streamingActive || defaultOpen || hasSteerInterjection);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -2681,17 +2689,17 @@ export function StreamTranscriptItem({
   }, [streamingActive]);
 
   useEffect(() => {
-    if (defaultOpen) setProcessOpen(true);
-  }, [defaultOpen]);
+    if (defaultOpen || hasSteerInterjection) setProcessOpen(true);
+  }, [defaultOpen, hasSteerInterjection]);
 
   const durationMs = useMemo(() => {
     const start = streamStartedAt.getTime();
     const explicitEnd = streamEndedAt?.getTime() ?? 0;
-    const end = streamingActive ? Date.now() : Math.max(lastTranscriptAtMs(entries), explicitEnd);
+    const end = streamingActive ? Date.now() : Math.max(lastTranscriptAtMs(timelineEntries), explicitEnd);
     return Math.max(0, end - start);
-  }, [streamStartedAt, streamEndedAt, streamingActive, entries, tick]);
+  }, [streamStartedAt, streamEndedAt, streamingActive, timelineEntries, tick]);
 
-  if (entries.length === 0) return null;
+  if (timelineEntries.length === 0) return null;
 
   const statusHint =
     state === "failed"
@@ -2747,7 +2755,7 @@ export function StreamTranscriptItem({
         {showBody ? (
           <div className="mt-3">
             <RunTranscriptView
-              entries={entries}
+              entries={timelineEntries}
               mode="nice"
               density="compact"
               streaming={streamingActive}
