@@ -1220,6 +1220,7 @@ test.describe("Chat Side Panel", () => {
     const hostChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
         title: "Pinned composer host chat",
+        initialMessage: { body: "Open the issue detail beside this chat." },
         issueCreationMode: "manual_approval",
         planMode: false,
       },
