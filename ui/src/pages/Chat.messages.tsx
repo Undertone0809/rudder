@@ -2241,14 +2241,7 @@ export function ChatMessageItem({
 
   const isUser = message.role === "user";
   const statusLabel = !isUser ? assistantStateLabel(message.status) : null;
-  const inlineVisualAttachmentIds = new Set(
-    [
-      ...chatInlineVisualMappingsFromStructuredPayload(message.structuredPayload),
-      ...rudderInlineVisualMappingsFromStructuredPayload(message.structuredPayload),
-    ]
-      .filter((mapping) => mapping.status === "ready")
-      .map((mapping) => mapping.attachmentId),
-  );
+  const inlineVisualAttachmentIds = new Set([...chatInlineVisualMappingsFromStructuredPayload(message.structuredPayload), ...rudderInlineVisualMappingsFromStructuredPayload(message.structuredPayload)].filter((mapping) => mapping.status === "ready").map((mapping) => mapping.attachmentId));
   const visibleMessageAttachments = message.attachments.filter(
     (attachment) => !inlineVisualAttachmentIds.has(attachment.id),
   );

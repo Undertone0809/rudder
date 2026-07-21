@@ -74,7 +74,6 @@ import {
   type PendingChatStopRecovery,
 } from "@/lib/chat-stop-recovery";
 import {
-  activeChatStreamTimelineInsertionIndex,
   readChatScopedFlag,
   readChatScopedState,
   shouldShowMessageDuringActiveEdit,
@@ -124,7 +123,6 @@ import {
   FolderInput,
   FolderPlus,
   GitFork,
-  ListChecks,
   Loader2,
   Mail,
   MailOpen,
@@ -146,17 +144,16 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import { createPortal } from "react-dom";
 import { PendingAttachmentPreview } from "./Chat.attachments";
 import { AskUserPanel, AssistantDraftItem, ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, OptimisticUserDraftItem, StreamTranscriptItem, chatIssueApprovalPayloadWithProposalOverride, type ChatTurnBranchControls } from "./Chat.messages";
-import { ASK_USER_ANSWER_PREFIX, ApprovalAction, ChatBranchPreview, ChatEmptyStatePromptOptions, ChatEmptyStatePromptStarters, ChatEmptyStateRecentConversations, EmptyStatePromptGroup, EmptyStatePromptSuggestion, INTERRUPTED_CHAT_CONTINUATION_PROMPT, NO_CHAT_AGENT_LABEL, NO_PROJECT_ID, PLAN_MODE_HELP_TEXT, applyChatPromptToDraft, approvalNeedsAction, askUserAnswerFromMessage, askUserRequestFromMessage, buildChatProposalRejectFeedbackPrompt, buildChatProposalRevisionPrompt, buildDraftChatContextLinks, buildMessengerChatThreadSummary, canRefreshAssistantChatMessage, canRefreshDisplayedAssistantChatMessage, chatEmptyStateHeading, chatPromptGroupForExactTrigger, chatPromptQueryKey, chatPromptSuggestionsForDraft, chatSidePanelTargetFromHref, composerMenuPositionForAnchor, computeDisplayedChatMessages, conversationDisplayTitle, draftIssueContextLabel, findLatestUnansweredAskUserMessage, findRetrySourceUserMessage, formatChatPrimaryIssueBreadcrumb, isAskUserMessageAnswered, isChatAgentSelectionLocked, isChatProjectSelectionLocked, isUserVisibleIncomingChatMessage, issueProposalFromMessage, materializePendingAttachment, mergeChatConversationsForStatus, mergeChatMessages, operationProposalFromMessage, operationProposalStatusFromMessage, parseAskUserAnswerMessage, pendingAttachmentKey, projectContextId, projectDisplayName, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, resolveDraftIssueContext, scrollChatMessagesToBottom, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, shouldHandlePlainChatLinkClick, withOptimisticOutgoingMessage, withOptimisticPlanMode } from "./Chat.parts";
+import { ASK_USER_ANSWER_PREFIX, ApprovalAction, ChatBranchPreview, ChatEmptyStatePromptOptions, ChatEmptyStatePromptStarters, ChatEmptyStateRecentConversations, EmptyStatePromptGroup, EmptyStatePromptSuggestion, INTERRUPTED_CHAT_CONTINUATION_PROMPT, NO_CHAT_AGENT_LABEL, NO_PROJECT_ID, applyChatPromptToDraft, approvalNeedsAction, askUserAnswerFromMessage, askUserRequestFromMessage, buildChatProposalRejectFeedbackPrompt, buildChatProposalRevisionPrompt, buildDraftChatContextLinks, buildMessengerChatThreadSummary, canRefreshAssistantChatMessage, canRefreshDisplayedAssistantChatMessage, chatEmptyStateHeading, chatPromptGroupForExactTrigger, chatPromptQueryKey, chatPromptSuggestionsForDraft, chatSidePanelTargetFromHref, composerMenuPositionForAnchor, computeDisplayedChatMessages, conversationDisplayTitle, draftIssueContextLabel, findLatestUnansweredAskUserMessage, findRetrySourceUserMessage, formatChatPrimaryIssueBreadcrumb, isAskUserMessageAnswered, isChatAgentSelectionLocked, isChatProjectSelectionLocked, isUserVisibleIncomingChatMessage, issueProposalFromMessage, materializePendingAttachment, mergeChatConversationsForStatus, mergeChatMessages, operationProposalFromMessage, operationProposalStatusFromMessage, parseAskUserAnswerMessage, pendingAttachmentKey, projectContextId, projectDisplayName, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, resolveDraftIssueContext, scrollChatMessagesToBottom, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, shouldHandlePlainChatLinkClick, withOptimisticOutgoingMessage, withOptimisticPlanMode } from "./Chat.parts";
+import { ChatPlanModeChip, ChatPlanModeMenuToggle } from "./Chat.plan-mode-controls";
 import { ChatScrollMap, countScrollMapUserMessages } from "./Chat.scroll-map";
+import { buildChatTimelineRows } from "./Chat.timeline";
 import { ChatWorkManifest, ChatWorkManifestToggle, hasChatWorkManifestContent } from "./Chat.work-manifest";
 import { CHAT_ISSUE_MENTION_LIMIT, CHAT_LIST_PREVIEW_LIMIT, CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD, CHAT_STEER_RETRY_DELAYS_MS, EMPTY_CHAT_BODY_SHA256, EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS, RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT, RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT, activeGenerationIdFromSnapshot, applyChatStreamProgressEvent, chatMessageJumpTargetFromHref, chatReferenceMarkdown, clipboardAttachmentPayloadKey, createQueuedComposerMessage, findChatMessageElement, isExternalBoundConversation, revealChatMessageElement, sideChatTargetFromMessage, useChatDraftQueries, type PendingChatSteerRetry, type SendButtonMode } from "./Chat.workspace-helpers";
 export * from "./Chat.attachments";
 export * from "./Chat.messages";
 export * from "./Chat.parts";
 export { applyChatStreamProgressEvent } from "./Chat.workspace-helpers";
-type ChatTimelineRow =
-  | { kind: "message"; message: ChatMessage; messageIndex: number }
-  | { kind: "active_stream" };
 export function Chat() { const { selectedOrganizationId } = useOrganization(); return selectedOrganizationId ? <ChatWorkspace key={selectedOrganizationId} /> : <div className="text-sm text-muted-foreground">Select a organization first.</div>; }
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm } = useDialog();
   const { openImagePreview } = useImagePreview(); const {
@@ -1433,18 +1430,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     activeStream && (
       activeEditCutoffMs !== null
       || !activeStream.userMessageId || !rawMessages.some((message) => message.id === activeStream.userMessageId) ), );
-  const chatTimelineRows = useMemo(() => {
-    const rows: ChatTimelineRow[] = visibleMessages.map((message, messageIndex) => ({
-      kind: "message",
-      message,
-      messageIndex,
-    }));
-    if (!showActiveStreamDraft || !activeStream) return rows;
-    rows.splice(activeChatStreamTimelineInsertionIndex(visibleMessages, activeStream), 0, {
-      kind: "active_stream",
-    });
-    return rows;
-  }, [activeStream, showActiveStreamDraft, visibleMessages]);
+  const chatTimelineRows = useMemo(
+    () => buildChatTimelineRows(visibleMessages, activeStream, showActiveStreamDraft),
+    [activeStream, showActiveStreamDraft, visibleMessages],
+  );
   useEffect(() => {
     if (agentSelectionLocked) {
       setAgentMenuOpen(false); } }, [agentSelectionLocked]);
@@ -2366,30 +2355,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 }} >
                 <Paperclip className="mr-2 h-4 w-4" />
                 Add files </DropdownMenuItem>
-              <button type="button" role="switch" aria-checked={activePlanMode} aria-label="Plan mode" data-testid="chat-plan-mode-toggle" title={PLAN_MODE_HELP_TEXT} className={cn(
-                  "flex w-full cursor-pointer items-center justify-between gap-2 rounded-[var(--radius-md)] px-3 py-2.5 text-left text-sm outline-hidden transition-colors focus:bg-accent focus:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/40",
-                  activePlanMode && "bg-[color:color-mix(in_oklab,var(--accent-soft)_72%,transparent)] text-foreground focus:bg-[color:color-mix(in_oklab,var(--accent-soft)_88%,transparent)]",
-                )} onClick={(event) => { event.preventDefault(); applyPlanMode(!activePlanMode);
-                }} >
-                <div className="flex min-w-0 items-center">
-                  <ListChecks className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                  <div className="font-medium text-foreground">Plan mode</div> </div>
-                <span aria-hidden="true" data-testid="chat-plan-mode-track" className={cn(
-                    "relative mt-0.5 inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-[background-color,border-color,box-shadow,opacity]",
-                    activePlanMode ? "border-[color:color-mix(in_oklab,var(--accent-base)_72%,white)] bg-[color:var(--accent-base)] text-primary-foreground shadow-[0_0_0_1px_color-mix(in_oklab,var(--accent-base)_22%,transparent),0_8px_22px_color-mix(in_oklab,var(--accent-base)_20%,transparent)]" : "border-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-inset)_92%,transparent)] text-muted-foreground",
-                  )} >
-                  <span data-testid="chat-plan-mode-thumb" className={cn(
-                      "inline-block h-5 w-5 rounded-full border border-[color:color-mix(in_oklab,var(--border-soft)_80%,transparent)] bg-[color:var(--surface-elevated)] shadow-[0_4px_12px_rgb(0_0_0/0.18)] transition-transform",
-                      activePlanMode ? "translate-x-5" : "translate-x-0.5",
-                    )} /> </span> </button>
+              <ChatPlanModeMenuToggle active={activePlanMode} onChange={applyPlanMode} />
               </DropdownMenuContent> </DropdownMenu>
-          {activePlanMode ? (
-            <button type="button" className="group/plan inline-flex max-w-[10rem] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] bg-[color:color-mix(in_oklab,var(--accent-soft)_78%,var(--surface-elevated))] px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-[color:color-mix(in_oklab,var(--accent-soft)_92%,var(--surface-elevated))] hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40" aria-label="Turn off plan mode" title={PLAN_MODE_HELP_TEXT} onClick={() => applyPlanMode(false)} >
-              <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center">
-                <ListChecks data-testid="chat-plan-mode-icon" className="h-3.5 w-3.5 group-hover/plan:hidden" aria-hidden="true" />
-                <span data-testid="chat-plan-mode-dismiss-icon" className="hidden h-4 w-4 items-center justify-center rounded-full bg-[color:color-mix(in_oklab,var(--ink-muted)_78%,transparent)] text-[color:var(--surface-elevated)] group-hover/plan:inline-flex">
-                  <X className="h-3 w-3" strokeWidth={2.6} aria-hidden="true" /> </span> </span>
-              <span className="min-w-0 truncate">Plan</span> </button> ) : null}
+          {activePlanMode ? <ChatPlanModeChip onDisable={() => applyPlanMode(false)} /> : null}
           {showProjectSelector ? (
             <div className="group/project relative inline-flex max-w-[min(100%,15rem)] min-w-0">
               <button type="button" data-testid="chat-project-selector" aria-label={`Project context: ${projectPillLabel}`} aria-expanded={projectSelectionLocked ? false : projectMenuOpen} disabled={projectSelectionLocked} title={projectSelectionLocked ? "Project context is locked after conversation starts." : undefined} className={cn(
