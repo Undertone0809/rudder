@@ -84,6 +84,7 @@ test.describe("Chat Work Manifest", () => {
         title: "Current manifest chat",
         preferredAgentId: agent.id,
         contextLinks: [{ entityType: "project", entityId: project.id }],
+        initialMessage: { body: "Prepare the current conversation manifest." },
       },
     });
     expect(chatRes.ok(), await chatRes.text()).toBe(true);
@@ -93,6 +94,7 @@ test.describe("Chat Work Manifest", () => {
         title: "Other project chat",
         preferredAgentId: agent.id,
         contextLinks: [{ entityType: "project", entityId: project.id }],
+        initialMessage: { body: "Track the other project conversation." },
       },
     });
     expect(otherChatRes.ok(), await otherChatRes.text()).toBe(true);
@@ -101,6 +103,7 @@ test.describe("Chat Work Manifest", () => {
       data: {
         title: "Output-only manifest chat",
         preferredAgentId: agent.id,
+        initialMessage: { body: "Prepare one output." },
       },
     });
     expect(outputOnlyChatRes.ok(), await outputOnlyChatRes.text()).toBe(true);
@@ -110,6 +113,7 @@ test.describe("Chat Work Manifest", () => {
         title: "Empty manifest chat",
         preferredAgentId: agent.id,
         contextLinks: [{ entityType: "project", entityId: project.id }],
+        initialMessage: { body: "Keep this conversation free of manifest targets." },
       },
     });
     expect(emptyChatRes.ok(), await emptyChatRes.text()).toBe(true);
@@ -118,6 +122,7 @@ test.describe("Chat Work Manifest", () => {
       data: {
         title: "Unavailable manifest chat",
         preferredAgentId: agent.id,
+        initialMessage: { body: "Exercise the unavailable manifest state." },
       },
     });
     expect(errorChatRes.ok(), await errorChatRes.text()).toBe(true);
@@ -262,15 +267,17 @@ test.describe("Chat Work Manifest", () => {
     await expect(shelf.getByRole("button", { name: /source\.example https:\/\/source\.example\/research/ }))
       .toHaveCount(1);
 
-    const [shelfBox, widestUserMessageBox, composerContentBox] = await Promise.all([
+    const [shelfBox, maxUserMessageRight, composerContentBox] = await Promise.all([
       shelf.boundingBox(),
-      page.getByTestId("chat-user-message-bubble").first().boundingBox(),
+      page.getByTestId("chat-user-message-bubble").evaluateAll((elements) =>
+        Math.max(0, ...elements.map((element) => element.getBoundingClientRect().right))
+      ),
       page.getByTestId("chat-composer-content").boundingBox(),
     ]);
     expect(shelfBox).not.toBeNull();
-    expect(widestUserMessageBox).not.toBeNull();
+    expect(maxUserMessageRight).toBeGreaterThan(0);
     expect(composerContentBox).not.toBeNull();
-    expect(shelfBox!.x - (widestUserMessageBox!.x + widestUserMessageBox!.width)).toBeGreaterThanOrEqual(12);
+    expect(shelfBox!.x - maxUserMessageRight).toBeGreaterThanOrEqual(12);
     expect(shelfBox!.x - (composerContentBox!.x + composerContentBox!.width)).toBeGreaterThanOrEqual(12);
 
     const sources = shelf.getByRole("region", { name: "Sources" });
@@ -287,11 +294,44 @@ test.describe("Chat Work Manifest", () => {
     await references.getByRole("button", { name: issue.identifier, exact: true }).click();
     const issueSidePanel = page.getByTestId("chat-side-panel");
     await expect(issueSidePanel).toBeVisible();
+    await expect(issueSidePanel.getByTestId("chat-side-panel-issue-view")).toBeVisible();
     await expect(issueSidePanel).toContainText("Manifest reference issue");
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
     await page.screenshot({ path: `${screenshotDir}/issue-side-panel.png`, fullPage: true });
     await issueSidePanel.getByTestId("chat-side-panel-tab").hover();
     await issueSidePanel.getByTestId("chat-side-panel-tab-close").click();
     await expect(issueSidePanel).toHaveCount(0);
+    await expect(shelf).toBeVisible();
+    await shelf.locator("section[aria-label='References']")
+      .getByRole("button", { name: "View all 29" })
+      .click();
+
+    await references.getByRole("button", { name: automation.title, exact: true }).click();
+    const automationSidePanel = page.getByTestId("chat-side-panel");
+    await expect(automationSidePanel).toBeVisible();
+    await expect(automationSidePanel.getByTestId("chat-side-panel-automation-view")).toBeVisible();
+    await expect(automationSidePanel).toContainText("Manifest reference automation");
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
+    await page.screenshot({ path: `${screenshotDir}/automation-side-panel.png`, fullPage: true });
+    await automationSidePanel.getByTestId("chat-side-panel-tab").hover();
+    await automationSidePanel.getByTestId("chat-side-panel-tab-close").click();
+    await expect(automationSidePanel).toHaveCount(0);
+    await expect(shelf).toBeVisible();
+    await shelf.locator("section[aria-label='References']")
+      .getByRole("button", { name: "View all 29" })
+      .click();
+
+    await references.getByRole("button", { name: "Other project chat", exact: true }).click();
+    const chatSidePanel = page.getByTestId("chat-side-panel");
+    await expect(chatSidePanel).toBeVisible();
+    await expect(chatSidePanel.getByTestId("chat-side-panel-chat-view")).toBeVisible();
+    await expect(chatSidePanel).toContainText("Other project chat");
+    await expect(chatSidePanel).toContainText("Other project source");
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
+    await page.screenshot({ path: `${screenshotDir}/chat-side-panel.png`, fullPage: true });
+    await chatSidePanel.getByTestId("chat-side-panel-tab").hover();
+    await chatSidePanel.getByTestId("chat-side-panel-tab-close").click();
+    await expect(chatSidePanel).toHaveCount(0);
     await expect(shelf).toBeVisible();
     await shelf.locator("section[aria-label='References']")
       .getByRole("button", { name: "View all 29" })
@@ -437,7 +477,7 @@ test.describe("Chat Work Manifest", () => {
       (compactOutputsCountBox!.x + compactOutputsCountBox!.width)
       - (compactReferencesCountBox!.x + compactReferencesCountBox!.width),
     )).toBeLessThanOrEqual(1);
-    await compactPanel.getByRole("button", { name: "View all 28" }).click();
+    await compactPanel.getByRole("button", { name: "View all 29" }).click();
     const compactScrollRegion = compactPanel.getByTestId("chat-work-manifest-scroll-region");
     const [panelBox, composerBox] = await Promise.all([
       compactPanel.boundingBox(),
