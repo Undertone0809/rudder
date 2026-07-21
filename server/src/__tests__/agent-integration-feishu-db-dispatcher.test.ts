@@ -673,7 +673,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
       conversationId: result.conversationId,
     });
 
-    const messages = await db.select().from(chatMessages);
+    const messages = await db.select().from(chatMessages).orderBy(chatMessages.createdAt, chatMessages.id);
     expect(messages.map((message) => ({
       conversationId: message.conversationId,
       role: message.role,
@@ -762,7 +762,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
       conversationId: next.conversationId,
       externalChatId: "oc_chat",
     });
-    const messages = await db.select().from(chatMessages);
+    const messages = await db.select().from(chatMessages).orderBy(chatMessages.createdAt, chatMessages.id);
     expect(messages.map((message) => ({
       conversationId: message.conversationId,
       role: message.role,
@@ -1108,7 +1108,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
     });
     const conversations = await db.select().from(chatConversations);
     expect(conversations).toHaveLength(1);
-    const messages = await db.select().from(chatMessages);
+    const messages = await db.select().from(chatMessages).orderBy(chatMessages.createdAt, chatMessages.id);
     expect(messages.map((message) => message.body)).toEqual(expect.arrayContaining([
       "start long reply",
       "arrives during active reply",
@@ -1168,7 +1168,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
       conversationId: newOne.conversationId,
     });
 
-    const messages = await db.select().from(chatMessages);
+    const messages = await db.select().from(chatMessages).orderBy(chatMessages.createdAt, chatMessages.id);
     expect(messages.filter((message) => message.role === "user").map((message) => message.body)).toEqual([
       "seed the original session",
     ]);
@@ -1335,7 +1335,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
     expect(result.outbound.text).toBe("No active reply to stop.");
     const [updatedGeneration] = await db.select().from(chatGenerations).where(eq(chatGenerations.id, generation.id));
     expect(updatedGeneration?.status).toBe("active");
-    const messages = await db.select().from(chatMessages);
+    const messages = await db.select().from(chatMessages).orderBy(chatMessages.createdAt, chatMessages.id);
     expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual(expect.arrayContaining([
       { role: "user", kind: "message", body: "start a session with stale DB generation" },
       { role: "system", kind: "system_event", body: "No active Feishu reply to stop." },
@@ -1385,7 +1385,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
       runId: expect.any(String),
     });
 
-    const messages = await db.select().from(chatMessages);
+    const messages = await db.select().from(chatMessages).orderBy(chatMessages.createdAt, chatMessages.id);
     expect(messages).toHaveLength(1);
     expect(messages[0]?.body).toBe("/issue Route Feishu drill\nCreate issue from mock hook.");
 
@@ -1758,7 +1758,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
     expect(result.status).toBe("quick_command");
     expect(streamChatAssistantReply).not.toHaveBeenCalled();
     expect(sent).toEqual([{ chatId: "oc_runtime_new", text: "New session started." }]);
-    const messages = await db.select().from(chatMessages);
+    const messages = await db.select().from(chatMessages).orderBy(chatMessages.createdAt, chatMessages.id);
     expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual(expect.arrayContaining([
       { role: "user", kind: "message", body: "/new" },
       { role: "system", kind: "system_event", body: "New Feishu session started." },
@@ -1869,7 +1869,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
     expect(stopResult.status).toBe("quick_command");
     expect(observedSignal?.aborted).toBe(true);
     expect(sent).toEqual([{ chatId: "oc_runtime_stop", text: "Stop requested." }]);
-    const messages = await db.select().from(chatMessages);
+    const messages = await db.select().from(chatMessages).orderBy(chatMessages.createdAt, chatMessages.id);
     expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual(expect.arrayContaining([
       { role: "user", kind: "message", body: "please start a long reply" },
       { role: "system", kind: "system_event", body: "Feishu session stop requested." },
@@ -1989,7 +1989,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
       expect(observedSignal?.aborted).toBe(true);
     });
     expect(sent).toEqual([{ chatId: "oc_runtime_pending_stop", text: "Stop requested." }]);
-    const messages = await db.select().from(chatMessages);
+    const messages = await db.select().from(chatMessages).orderBy(chatMessages.createdAt, chatMessages.id);
     expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual(expect.arrayContaining([
       { role: "user", kind: "message", body: "please start a reply that I will stop immediately" },
       { role: "system", kind: "system_event", body: "Feishu session stop requested." },
@@ -2480,7 +2480,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
       ]);
       expect(sent).toEqual([{ chatId: "oc_chat", text: "Agent accepted this request." }]);
     });
-    const messages = await db.select().from(chatMessages);
+    const messages = await db.select().from(chatMessages).orderBy(chatMessages.createdAt, chatMessages.id);
     expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
     const outbounds = await db.select().from(agentIntegrationOutboundMessages);
     expect(outbounds).toHaveLength(1);
