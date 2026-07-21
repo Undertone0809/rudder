@@ -61,7 +61,7 @@ The docs site has two Vercel-backed channels:
 
 Both workflows validate the Mintlify project, export the static site, deploy it
 through the Vercel CLI, assign the channel domain, and verify key public paths
-such as `/about`, `/contact`, `/home`, `/robots.txt`, `/sitemap.xml`, `/zh`,
+such as `/contact`, `/home`, `/robots.txt`, `/sitemap.xml`, `/zh`,
 `/llms.txt`, and favicons.
 Production publishes also bind the public Vercel project aliases to the same
 deployment and create a `docs/vYYYY.MM.DD` git tag for the source commit.

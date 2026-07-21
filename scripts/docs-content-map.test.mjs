@@ -466,7 +466,7 @@ test("Batch 3 active docs do not link to retired concept routes or use control-p
   }
 });
 
-test("Batch 3 Project pages keep GDPval facts, release history, and bilingual project entry points", () => {
+test("Batch 3 Project pages keep GDPval facts, release history, and the bilingual contact entry point", () => {
   const manifest = loadManifest();
   const gdpval = manifest.pages.find((page) => page.id === "gdpval-harness");
   assert.equal(gdpval.kind, "project");
@@ -482,17 +482,12 @@ test("Batch 3 Project pages keep GDPval facts, release history, and bilingual pr
     assert.doesNotMatch(source, /correction notice|更正说明/iu);
   }
 
-  for (const pageId of ["about", "contact"]) {
+  for (const pageId of ["contact"]) {
     const page = manifest.pages.find((candidate) => candidate.id === pageId);
     assert.equal(page.kind, "project");
     assert.deepEqual(Object.keys(page.files).sort(), ["en", "zh"]);
     assert.equal(page.pairing_exception, null);
   }
-
-  const about = fs.readFileSync(path.join(REPO_ROOT, "docs/about.mdx"), "utf8");
-  assert.match(about, /Rudder is open-source software for assigning, running, reviewing, and improving\s+agent work\./u);
-  assert.match(about, /It connects goals, tasks, knowledge, runs, reviews, budgets, and\s+workflows/u);
-  assert.doesNotMatch(about, /[\u2013\u2014]/u);
 
   for (const relativeFile of ["docs/releases.mdx", "docs/zh/releases.mdx"]) {
     const source = fs.readFileSync(path.join(REPO_ROOT, relativeFile), "utf8");
@@ -587,8 +582,8 @@ test("integrity rejects duplicate redirect IDs and active sources", () => {
   });
   manifest.redirects.push({
     id: "canonical-collision",
-    source: "/about",
-    destination: "/contact",
+    source: "/contact",
+    destination: "/",
     permanent: true,
     targets: ["mintlify"],
     status: "active",
@@ -597,7 +592,7 @@ test("integrity rejects duplicate redirect IDs and active sources", () => {
   assert.ok(errors.some((error) => error === "duplicate redirect id: manifest"));
   assert.ok(errors.some((error) => error === "duplicate active redirect source for mintlify: /home"));
   assert.ok(errors.some((error) => error === "duplicate active redirect source for vercel: /home"));
-  assert.ok(errors.some((error) => error === "canonical-collision: active redirect source collides with canonical URL /about"));
+  assert.ok(errors.some((error) => error === "canonical-collision: active redirect source collides with canonical URL /contact"));
 });
 
 test("redirect schema rejects invalid status, targets, and permanence", () => {
@@ -674,36 +669,36 @@ test("canonical route collision exemptions only recognize the approved legacy ho
   const manifest = structuredClone(loadManifest());
   manifest.redirects.push({
     id: "host-hijack",
-    source: "/about",
-    destination: "/contact",
+    source: "/contact",
+    destination: "/",
     permanent: true,
     targets: ["vercel"],
     status: "active",
-    owner_page: "contact",
+    owner_page: "home",
     locale: "en",
     has: [{ type: "host", value: "untrusted.example" }],
   });
-  manifest.pages.find((page) => page.id === "contact").aliases.push("host-hijack");
-  assert.ok(collectIntegrityErrors({ manifest }).some((error) => error === "host-hijack: active redirect source collides with canonical URL /about"));
+  manifest.pages.find((page) => page.id === "home").aliases.push("host-hijack");
+  assert.ok(collectIntegrityErrors({ manifest }).some((error) => error === "host-hijack: active redirect source collides with canonical URL /contact"));
 });
 
 test("conditional host redirects are Vercel-only and never lose host scope in Mintlify", () => {
   const manifest = structuredClone(loadManifest());
   manifest.redirects.push({
     id: "mintlify-host-hijack",
-    source: "/about",
-    destination: "/contact",
+    source: "/contact",
+    destination: "/",
     permanent: true,
     targets: ["mintlify", "vercel"],
     status: "active",
-    owner_page: "contact",
+    owner_page: "home",
     locale: "en",
     has: [{ type: "host", value: "doc.rudder.zeeland.studio" }],
   });
-  manifest.pages.find((page) => page.id === "contact").aliases.push("mintlify-host-hijack");
+  manifest.pages.find((page) => page.id === "home").aliases.push("mintlify-host-hijack");
   const errors = collectIntegrityErrors({ manifest });
   assert.ok(errors.some((error) => error === "mintlify-host-hijack: conditional redirects may target only vercel"));
-  assert.ok(errors.some((error) => error === "mintlify-host-hijack: active redirect source collides with canonical URL /about"));
+  assert.ok(errors.some((error) => error === "mintlify-host-hijack: active redirect source collides with canonical URL /contact"));
 });
 
 test("Chinese UI label allowlist is sorted, unique, and covers all rewritten pages", () => {
@@ -721,7 +716,6 @@ test("Chinese UI label allowlist is sorted, unique, and covers all rewritten pag
       ...BATCH_2_CONCEPT_IDS,
       ...BATCH_2_HOW_TO_IDS,
       ...BATCH_3_REFERENCE_IDS,
-      "about",
       "contact",
     ]
       .map((pageId) => manifest.pages.find((page) => page.id === pageId).files.zh),

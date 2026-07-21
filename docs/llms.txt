@@ -48,7 +48,6 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 
 ### Project
 - [GDPval Harness Benchmark](https://docs.rudderhq.dev/benchmarks/gdpval-harness): Methodology and results from Rudder's 10-task GDPval-based harness pilot.
-- [About Rudder](https://docs.rudderhq.dev/about): Learn what Rudder is, why it exists, and where its responsibilities stop.
 - [Contact](https://docs.rudderhq.dev/contact): Choose the public Rudder channel for a question, bug report, feature request, or release update.
 - [Changelog](https://docs.rudderhq.dev/releases): Stable Rudder release notes, upgrade notes, and GitHub Release links.
 
@@ -96,6 +95,5 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 
 ### Project
 - [GDPval Harness Benchmark](https://docs.rudderhq.dev/zh/benchmarks/gdpval-harness): Rudder GDPval-based 10 任务 harness 探索性 pilot 的方法与结果。
-- [关于 Rudder](https://docs.rudderhq.dev/zh/about): 了解 Rudder 是什么、为什么存在，以及它的职责边界。
 - [联系 Rudder](https://docs.rudderhq.dev/zh/contact): 根据问题、缺陷、功能建议或版本更新，选择合适的 Rudder 公开渠道。
 - [更新日志](https://docs.rudderhq.dev/zh/releases): Rudder 稳定版本的发布记录、升级说明和 GitHub Release 链接。

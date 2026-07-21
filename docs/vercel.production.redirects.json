@@ -23,6 +23,28 @@
       ]
     },
     {
+      "source": "/en/about",
+      "destination": "https://docs.rudderhq.dev/",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/en/zh/about",
+      "destination": "https://docs.rudderhq.dev/zh",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
       "source": "/en/manifest.json",
       "destination": "https://docs.rudderhq.dev/site.webmanifest",
       "permanent": true,
@@ -168,6 +190,28 @@
     {
       "source": "/en/:path*",
       "destination": "https://docs.rudderhq.dev/:path*",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/about",
+      "destination": "https://docs.rudderhq.dev/",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "doc.rudder.zeeland.studio"
+        }
+      ]
+    },
+    {
+      "source": "/zh/about",
+      "destination": "https://docs.rudderhq.dev/zh",
       "permanent": true,
       "has": [
         {
@@ -330,6 +374,16 @@
       "permanent": true
     },
     {
+      "source": "/en/about",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/en/zh/about",
+      "destination": "/zh",
+      "permanent": true
+    },
+    {
       "source": "/en/manifest.json",
       "destination": "/site.webmanifest",
       "permanent": true
@@ -397,6 +451,16 @@
     {
       "source": "/en/:path*",
       "destination": "/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/about",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/zh/about",
+      "destination": "/zh",
       "permanent": true
     },
     {
