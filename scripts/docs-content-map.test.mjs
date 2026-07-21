@@ -480,7 +480,18 @@ test("Batch 3 Project pages keep GDPval facts, release history, and bilingual pr
     assert.match(source, /75\.7/u);
     assert.match(source, /75\.6/u);
     assert.doesNotMatch(source, /correction notice|更正说明/iu);
+    assert.doesNotMatch(source, /[\u2013\u2014]/u);
   }
+
+  const chineseGdpval = fs.readFileSync(path.join(REPO_ROOT, gdpval.files.zh), "utf8");
+  assert.match(chineseGdpval, /证据边界/u);
+  const chineseGdpvalProse = chineseGdpval
+    .replace(/^---\n[\s\S]*?\n---\n/u, "")
+    .replace(/```[\s\S]*?```/gu, "")
+    .replace(/`[^`\n]+`/gu, "")
+    .replace(/^\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)\s*$/gmu, "")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/gu, "$1");
+  assert.doesNotMatch(chineseGdpvalProse, /\b(?:harness|pilot|cohort|case|rubric|judge|gold|workspace|session|memory|run)\b/iu);
 
   for (const pageId of ["about", "contact"]) {
     const page = manifest.pages.find((candidate) => candidate.id === pageId);
@@ -721,6 +732,7 @@ test("Chinese UI label allowlist is sorted, unique, and covers all rewritten pag
       ...BATCH_2_CONCEPT_IDS,
       ...BATCH_2_HOW_TO_IDS,
       ...BATCH_3_REFERENCE_IDS,
+      "gdpval-harness",
       "about",
       "contact",
     ]
@@ -733,7 +745,7 @@ test("Chinese UI label allowlist is sorted, unique, and covers all rewritten pag
       .map((match) => match[1])
       .filter((label) => /^(?=.*[a-z])[A-Z][A-Za-z0-9]*(?: [A-Za-z0-9]+)*$/u.test(label));
     return [...emphasized, ...inlineCodeLabels]
-      .filter((label) => /^[\x20-\x7e]+$/u.test(label));
+      .filter((label) => /[A-Za-z]/u.test(label) && /^[\x20-\x7e]+$/u.test(label));
   });
   assert.ok(uiLabels.includes("Inbox"), "extraction must cover the inline Inbox UI label");
   assert.ok(uiLabels.includes("Getting Started"), "extraction must cover backticked multiword UI labels");
@@ -744,11 +756,11 @@ test("Chinese UI label allowlist is sorted, unique, and covers all rewritten pag
   }
 
   const allowedBareEnglishTokens = new Set([
-    "API", "Agent", "Brave", "Browser", "CDP", "CLI", "CRM", "Calendar", "Chat", "Chrome",
+    "API", "Agent", "Brave", "BridgeMind", "Browser", "CDP", "CLI", "CRM", "Calendar", "Chat", "Chrome",
     "Claude", "Code", "Codex", "Cookie", "Cursor", "Dashboard", "Desktop", "Edge",
-    "Gemini", "GitHub", "HTTP", "Inbox", "Issue", "Issues", "JavaScript", "Jira", "Lark", "Library",
-    "Linux", "MCP", "Markdown", "Messenger", "Microsoft", "OpenCode", "PATH", "Pi",
-    "Releases", "Rudder", "UTC", "UUID", "Windows", "macOS", "webhook",
+    "DOCX", "Duplex", "GDPval", "Gemini", "GitHub", "HTTP", "Inbox", "Issue", "Issues", "JavaScript", "Jira", "Lark", "Library",
+    "Linux", "MCP", "Markdown", "Messenger", "Microsoft", "OpenCode", "PATH", "PDF", "POC", "PPTX", "Pi",
+    "Releases", "Rod", "Rudder", "Tiny", "UAT", "UTC", "UUID", "Windows", "XLSX", "gpt-5.6-sol", "macOS", "webhook",
   ]);
   for (const relativeFile of new Set(checkedFiles)) {
     const source = fs.readFileSync(path.join(REPO_ROOT, relativeFile), "utf8")
@@ -758,6 +770,7 @@ test("Chinese UI label allowlist is sorted, unique, and covers all rewritten pag
       .replace(/\*\*[^*]+\*\*/gu, "")
       .replace(/https?:\/\/\S+/gu, "")
       .replace(/<[\s\S]*?>/gu, "")
+      .replace(/^\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)\s*$/gmu, "")
       .replace(/!?\[([^\]]*)\]\([^)]*\)/gu, "$1");
     const bareEnglishTokens = new Set(
       [...source.matchAll(/[A-Za-z][A-Za-z0-9+.-]*/gu)].map((match) => match[0]),
@@ -796,10 +809,11 @@ test("integrity reports navigation, sitemap, and stale llms failures", () => {
   assert.ok(staleLlmsErrors.some((error) => error === "docs/llms.txt is stale"));
 });
 
-test("alignment is warning-only and explicitly non-semantic", () => {
+test("alignment has no unclassified current reminders and remains warning-only", () => {
   const result = runAlignment();
   assert.equal(result.exitCode, 0);
-  assert.ok(result.warnings.length > 0);
+  assert.equal(result.warnings.length, 0);
+  assert.ok(result.records.length > 0);
 });
 
 test("alignment classifications suppress only the reviewed content fingerprint", () => {

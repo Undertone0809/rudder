@@ -40,6 +40,17 @@ Run the exported-site search workflow in Chromium:
 pnpm test:docs-search
 ```
 
+That suite also runs the manifest-complete static acceptance verifier. To run
+the verifier against an already served export directly, use:
+
+```bash
+pnpm docs:static:verify -- http://127.0.0.1:4179
+```
+
+It requires every canonical route to return 200 with its canonical, hreflang,
+and declared anchors. It also requires every generated active alias to return
+one exact 301 or 308 redirect to a 200 destination.
+
 The production site is deployed from Mintlify's offline export. The export
 postprocessor generates `/rudder-search-index.json`, copies the self-contained
 `/rudder-search.js` runtime, and injects it into every page so search does not

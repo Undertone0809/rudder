@@ -504,6 +504,20 @@ describe("bundled rudder docs skill", () => {
       }
     }
     expect(manifestAuthorityMatches).toBe(evals.length);
+    const workspaceContracts = [
+      "CONTEXT.RESOURCES.001",
+      "LIBRARY.FILES.001",
+      "WORKSPACE.PROJECT.001",
+      "WORKSPACE.RUN.001",
+      "WORKSPACE.BACKUP.001",
+    ];
+    const workspaceFixtures = evals.filter((item) =>
+      item.expected_public_path.endsWith("/reference/workspace-boundaries")
+    );
+    expect(workspaceFixtures).toHaveLength(2);
+    for (const fixture of workspaceFixtures) {
+      expect(fixture.required_contract_ids).toEqual(workspaceContracts);
+    }
     const expectedBilingualReferencePaths = contentMap.pages
       .filter((page) => page.kind === "reference" && page.status === "active")
       .flatMap((page) => [

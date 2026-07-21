@@ -5,7 +5,7 @@ const BASE_URL = `http://127.0.0.1:${PORT}`;
 
 export default defineConfig({
   testDir: ".",
-  testMatch: "docs-search.spec.ts",
+  testMatch: ["docs-search.spec.ts", "docs-manifest.spec.ts"],
   timeout: 60_000,
   retries: 0,
   use: {

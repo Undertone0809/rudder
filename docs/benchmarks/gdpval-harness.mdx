@@ -1,6 +1,6 @@
 ---
 title: "GDPval Harness Benchmark"
-description: "Methodology and results from Rudder's 10-task GDPval-based harness pilot."
+description: "Methodology, results, and evidence limits for Rudder's 10-task GDPval-based harness pilot."
 icon: "chart-bar"
 canonical: "https://docs.rudderhq.dev/benchmarks/gdpval-harness"
 "og:url": "https://docs.rudderhq.dev/benchmarks/gdpval-harness"
@@ -8,60 +8,20 @@ hreflang_en: "https://docs.rudderhq.dev/benchmarks/gdpval-harness"
 hreflang_zh: "https://docs.rudderhq.dev/zh/benchmarks/gdpval-harness"
 ---
 
-## Research question
+## What this pilot measures
 
-How much can the execution harness affect professional-work output when every environment requests the same model and reasoning effort?
+This pilot asks how much the execution harness can affect professional-work
+output when each environment requests the same model and reasoning effort. It
+compares three complete, configured systems: Rudder, Codex CLI, and Claude
+Code.
 
-This pilot compares three complete, configured systems: Rudder, Codex CLI, and Claude Code. It does not treat them as identical stateless wrappers. Each environment requested `gpt-5.6-sol` with high reasoning effort, while its normal orchestration, session, and tool boundaries remained part of the treatment.
+Each system requested `gpt-5.6-sol` with high reasoning effort. Its normal
+orchestration, session, and tool boundaries remained part of the condition, so
+this is not a comparison of identical stateless wrappers.
 
 [![GDPval-based harness benchmark with the same requested gpt-5.6-sol model: Rudder 81.7, Codex CLI 75.7, and Claude Code 75.6.](/images/gdpval-harness-benchmark.png)](/images/gdpval-harness-benchmark.png)
 
-## Frozen task selection
-
-The pilot used 10 selected tasks from the 220-task GDPval dataset. The cohort was deliberately frozen rather than randomly sampled: it spans 10 distinct occupations and requires 11 deliverables across XLSX, DOCX, PPTX, and PDF. Each harness received one scored execution per case, for 30 executions in total.
-
-The task packages were imported from the `openai/gdpval` dataset at revision `11e7900cdcac61bc4daf59e65feb238acda98fbf`.
-
-The task prompt and source files were available to the candidate. Rubrics and gold deliverables stayed in a separate scorer workspace.
-
-## What each harness received
-
-| Harness | Execution condition | Persistent state |
-| --- | --- | --- |
-| Rudder | One organization and one default managed Agent reused sequentially across all 10 cases, with Rudder's managed instruction bundle and Rudder tools | Managed memory was active and read/written, but the reconstructed timeline contains one unexplained continuity reset |
-| Codex CLI | A fresh workspace and session for every case | No state reused between cases |
-| Claude Code | A fresh workspace and session for every case, routed through a compatibility adapter | No state reused between cases |
-
-This is a configured-system comparison, not a memory ablation. Rudder's organization context, tools, instructions, and managed memory changed together as part of its normal harness condition.
-
-## Model verification
-
-All three conditions requested `gpt-5.6-sol` with high reasoning effort, but the available verification evidence differed.
-
-| Harness | Verification available |
-| --- | --- |
-| Rudder | Run metadata matched the requested model for all 10 cases |
-| Claude Code | Compatibility-adapter request logs observed `gpt-5.6-sol`, including requests translated from Claude aliases |
-| Codex CLI | The request was configured for `gpt-5.6-sol`, but the event stream did not expose the actual model identity |
-
-## Scoring protocol
-
-Every valid candidate was scored separately by a harness-label-blinded local LLM rubric judge. The judge inspected the source files, candidate deliverables, gold deliverables, and rubric items, then recorded item-level evidence and a candidate-versus-gold judgment.
-
-The same judge configuration—`gpt-5.6-sol` with high reasoning effort—was used for every harness result.
-
-The primary measure gives every case equal weight even though GDPval rubrics have different point scales:
-
-```text
-case_score_i = clamp(100 × awarded_raw_points_i / positive_max_points_i, 0, 100)
-macro_score  = average(case_score_1 ... case_score_10)
-```
-
-Negative rubric penalties can reduce a case score, but the value is bounded to 0–100 before averaging so one penalty-heavy case cannot dominate the cohort.
-
-The full metric label is **Local case-equal macro-normalized rubric score · 0–100**. It is not a completion rate: artifact validity is reported separately.
-
-## Aggregate results
+## Results at a glance
 
 | Harness | Local case-equal score | Valid artifacts | Candidate vs gold |
 | --- | ---: | ---: | ---: |
@@ -69,11 +29,83 @@ The full metric label is **Local case-equal macro-normalized rubric score · 0�
 | Codex CLI | 75.7 | 10/10 | 9W / 0T / 1L |
 | Claude Code | 75.6 | 10/10 | 9W / 0T / 1L |
 
-Rudder led this frozen cohort by 6.0 percentage points over Codex CLI and 6.1 points over Claude Code under the local case-equal metric. The three harnesses had the same coarse candidate-versus-gold result, so the difference came from rubric coverage and penalty avoidance rather than a higher pairwise win count.
+Rudder led this frozen cohort by 6.0 percentage points over Codex CLI and 6.1
+points over Claude Code under the local case-equal metric. All three harnesses
+had the same coarse candidate-versus-gold result. The score difference came
+from rubric coverage and penalty avoidance, not a higher pairwise win count.
+
+These are not official GDPval scores or leaderboard results. The supported
+conclusion is narrower: **the Rudder configured system led this frozen 10-task
+cohort under our local case-equal rubric metric.** This is directional evidence
+about each complete configured system, not a causal estimate of Rudder, Memory,
+or any individual harness component.
+
+## Frozen comparison
+
+The pilot used 10 deliberately selected tasks from the 220-task GDPval dataset.
+The cohort was frozen before execution and was not a random sample. It spans 10
+occupations and requires 11 deliverables across XLSX, DOCX, PPTX, and PDF. Each
+harness received one scored execution per case, for 30 executions in total.
+
+The task packages came from the `openai/gdpval` dataset at revision
+`11e7900cdcac61bc4daf59e65feb238acda98fbf`. The candidate could inspect the task
+prompt and source files. Rubrics and gold deliverables stayed in a separate
+scorer workspace.
+
+## Conditions compared
+
+| Harness | Execution condition | Persistent state |
+| --- | --- | --- |
+| Rudder | One organization and one default managed Agent were reused sequentially across all 10 cases, with Rudder's managed instruction bundle and tools | Managed memory was active and read and written, but the reconstructed timeline contains one unexplained continuity reset |
+| Codex CLI | Every case used a fresh workspace and session | No state was reused between cases |
+| Claude Code | Every case used a fresh workspace and session routed through a compatibility adapter | No state was reused between cases |
+
+This is a configured-system comparison, not a memory ablation. Rudder's
+organization context, tools, instructions, and managed memory changed together
+as part of its normal harness condition.
+
+## Model identity evidence
+
+All three conditions requested `gpt-5.6-sol` with high reasoning effort. The
+available evidence for the model that actually handled each request was not the
+same in every harness.
+
+| Harness | Verification available |
+| --- | --- |
+| Rudder | Run metadata matched the requested model for all 10 cases |
+| Claude Code | Compatibility-adapter request logs observed `gpt-5.6-sol`, including requests translated from Claude aliases |
+| Codex CLI | The request was configured for `gpt-5.6-sol`, but the event stream did not expose the actual model identity |
+
+## How scoring worked
+
+A local LLM rubric judge scored every valid candidate separately without seeing
+the harness label. The judge inspected the source files, candidate
+deliverables, gold deliverables, and rubric items. It then recorded item-level
+evidence and a candidate-versus-gold judgment.
+
+Every result used the same judge configuration: `gpt-5.6-sol` with high
+reasoning effort.
+
+The primary measure gives every case equal weight even though GDPval rubrics
+have different point scales:
+
+```text
+case_score_i = clamp(100 × awarded_raw_points_i / positive_max_points_i, 0, 100)
+macro_score  = average(case_score_1 ... case_score_10)
+```
+
+Negative rubric penalties can reduce a case score. Each case is bounded to 0
+through 100 before averaging, so one penalty-heavy case cannot dominate the
+cohort.
+
+The full metric label is **Local case-equal macro-normalized rubric score ·
+0-100**. It is not a completion rate. Artifact validity is reported separately.
 
 ## Case-level results
 
-The values below are awarded raw rubric points over the positive maximum. A negative result means penalty items outweighed positive points; the macro formula clamps that case to zero.
+The values below are awarded raw rubric points over the positive maximum. A
+negative result means penalty items outweighed positive points. The macro
+formula clamps that case to zero.
 
 | Case | Occupation | Claude Code | Codex CLI | Rudder | Vs gold |
 | --- | --- | ---: | ---: | ---: | --- |
@@ -88,22 +120,31 @@ The values below are awarded raw rubric points over the positive maximum. A nega
 | Tiny Rod finance report | Financial Managers | 62/76 | 62/76 | 62/76 | all loss |
 | Duplex comparative market analysis | Real Estate Brokers | -70/50 | -35/50 | 10/50 | all win |
 
-## Sensitivity and limitations
+## Evidence limits
 
-The comparative market analysis case had unusually large penalty items and amplified the aggregate gap. Excluding that case, Rudder still led by about 4.4–4.6 percentage points.
+The comparative market analysis case had unusually large penalty items and
+amplified the aggregate gap. Excluding that case, Rudder still led by about 4.4
+to 4.6 percentage points.
 
-The result should be read with these boundaries:
+Keep these boundaries with any use of the result:
 
-- This was one execution per harness and case, so it does not estimate run-to-run variance.
-- The 10 tasks were deliberately selected for breadth, not randomly sampled from all 220 tasks.
-- A local LLM judge, not GDPval's blinded expert-human review process, produced the rubric scores.
-- All three harnesses finished 9W / 0T / 1L against gold, which is important counter-evidence to the score gap.
-- The run history was recovered across setup and resume events, then audited from preserved execution and judgment records.
-- Rudder memory was active, but continuity was not complete and no Memory on/off ablation was run. The score difference cannot be attributed to Memory.
+- Each harness ran each case once, so the pilot does not estimate run-to-run
+  variance.
+- The 10 tasks were selected for breadth, not randomly sampled from all 220
+  tasks.
+- A local LLM judge produced the rubric scores, not GDPval's blinded
+  expert-human review process.
+- All three harnesses finished 9W / 0T / 1L against gold. This is important
+  counter-evidence to the score gap.
+- The run history was recovered across setup and resume events, then audited
+  from preserved execution and judgment records.
+- Rudder memory was active, but continuity was incomplete and no Memory on/off
+  ablation was run. The score difference cannot be attributed to Memory.
 - Codex CLI model identity was verifiable only at request time.
 
-These are not official GDPval scores or leaderboard results. The strongest supported conclusion is narrower: **the Rudder configured system led this frozen 10-task cohort under our local case-equal rubric metric.** The ranking is directional evidence about the complete configured system, not a causal estimate of Rudder, Memory, or any individual harness component.
+## What a stronger experiment needs
 
-## Next experiment
-
-A stronger follow-up should use 30–50 cases, at least three repetitions per harness and case, expert-human blind review, alternate judges, and a Rudder Memory on/off comparison with counterbalanced case order. That design would measure stability and begin separating harness effects from memory, ordering, and judge effects.
+A follow-up should use 30 to 50 cases, at least three repetitions per harness
+and case, expert-human blind review, alternate judges, and a Rudder Memory on/off
+comparison with counterbalanced case order. That design would measure stability
+and begin separating harness effects from memory, ordering, and judge effects.
