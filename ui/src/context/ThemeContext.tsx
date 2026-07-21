@@ -46,6 +46,7 @@ const DESIGN_STYLE_STORAGE_KEY = "rudder.designStyle";
 const DEFAULT_DESIGN_STYLE: DesignStyle = "luma";
 const BASE_COLOR_STORAGE_KEY = "rudder.baseColor";
 const ACCENT_THEME_STORAGE_KEY = "rudder.accentTheme";
+const DEFAULT_ACCENT_THEME: AccentTheme = "emerald";
 const DARK_THEME_COLOR = "#1f1f1d";
 const LIGHT_THEME_COLOR = "#f1f0ef";
 const LIGHT_BASE_THEME_COLORS: Record<BaseColor, string> = {
@@ -132,7 +133,7 @@ function getStoredBaseColorPreference(): BaseColor {
 }
 
 function getStoredAccentThemePreference(): AccentTheme {
-  if (typeof window === "undefined") return "neutral";
+  if (typeof window === "undefined") return DEFAULT_ACCENT_THEME;
   try {
     const stored = window.localStorage.getItem(ACCENT_THEME_STORAGE_KEY);
     if (ACCENT_THEMES.includes(stored as AccentTheme)) {
@@ -141,7 +142,7 @@ function getStoredAccentThemePreference(): AccentTheme {
   } catch {
     // Ignore local storage read failures in restricted environments.
   }
-  return "neutral";
+  return DEFAULT_ACCENT_THEME;
 }
 
 function resolveThemePreference(theme: Theme): ResolvedTheme {

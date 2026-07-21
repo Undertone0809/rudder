@@ -10,6 +10,21 @@ function uniqueIssuePrefix() {
 }
 
 test.describe("Settings appearance", () => {
+  test("applies appearance preferences before React hydration", async ({ page }) => {
+    await page.route("**/src/main.tsx*", (route) => route.abort());
+
+    await page.goto("/");
+    await expect(page.locator("html")).toHaveAttribute("data-style", "luma");
+    await expect(page.locator("html")).toHaveAttribute("data-base-color", "neutral");
+    await expect(page.locator("html")).toHaveAttribute("data-theme-color", "emerald");
+
+    await page.evaluate(() => {
+      window.localStorage.setItem("rudder.accentTheme", "neutral");
+    });
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-theme-color", "neutral");
+  });
+
   test("moves color mode from General into Appearance", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
@@ -42,7 +57,17 @@ test.describe("Settings appearance", () => {
     await expect(modal.getByRole("button", { name: /^Dark Low-glare workspace$/ })).toBeVisible();
   });
 
-  test("persists design style choices from Appearance", async ({ page }) => {
+  test("uses the default Rudder preset and persists design style choices", async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.assign(window, {
+        __initialAppearancePreferences: {
+          designStyle: window.localStorage.getItem("rudder.designStyle"),
+          baseColor: window.localStorage.getItem("rudder.baseColor"),
+          accentTheme: window.localStorage.getItem("rudder.accentTheme"),
+        },
+      });
+    });
+
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Appearance Style ${Date.now()}`,
@@ -61,18 +86,48 @@ test.describe("Settings appearance", () => {
 
     await expect(modal.getByRole("heading", { name: "Appearance" })).toBeVisible();
     await expect(modal.getByText("Design style")).toBeVisible();
+    await expect.poll(async () => page.evaluate(() => (
+      window as typeof window & {
+        __initialAppearancePreferences?: Record<string, string | null>;
+      }
+    ).__initialAppearancePreferences)).toEqual({
+      designStyle: null,
+      baseColor: null,
+      accentTheme: null,
+    });
     await expect(page.locator("html")).toHaveAttribute("data-style", "luma");
-    await expect(modal.getByRole("button", { name: /^Rudder low-glare surfaces$/ })).toBeVisible();
-    await expect(modal.getByRole("button", { name: /^Luma Soft spacious controls$/ })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator("html")).toHaveAttribute("data-base-color", "neutral");
+    await expect(page.locator("html")).toHaveAttribute("data-theme-color", "emerald");
+
+    const designSection = modal.getByRole("heading", { name: "Design style", exact: true }).locator("..").locator("..");
+    const designCards = designSection.locator('button[data-slot="settings-choice-card"]');
+    await expect(designCards).toHaveCount(3);
+    await expect(designCards.nth(0)).toHaveAccessibleName("Rudder Soft spacious controls");
+    await expect(designCards.nth(0)).toHaveAttribute("aria-pressed", "true");
+    await expect(designCards.nth(1)).toHaveAccessibleName("Classic Balanced low-glare surfaces");
+    await expect(designCards.nth(2)).toHaveAccessibleName("Compact Compact cards and controls");
+
+    const baseSection = modal.getByRole("heading", { name: "Base color", exact: true }).locator("..").locator("..");
+    await expect(baseSection.getByRole("button", { name: /^Neutral Balanced gray surfaces$/ })).toHaveAttribute("aria-pressed", "true");
+
+    const themeSection = modal.getByRole("heading", { name: "Theme", exact: true }).locator("..").locator("..");
+    const themeCards = themeSection.locator('button[data-slot="settings-choice-card"]');
+    await expect(themeCards.nth(0)).toHaveAccessibleName("Rudder Rudder green action color");
+    await expect(themeCards.nth(0)).toHaveAttribute("aria-pressed", "true");
+
+    await page.setViewportSize({ width: 1980, height: 1250 });
+    await page.screenshot({ path: "/tmp/rudder-appearance-default.png", fullPage: true });
+    await themeCards.nth(0).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: "/tmp/rudder-appearance-default-theme.png", fullPage: true });
 
     await modal.getByRole("button", { name: /^Light Warm paper surfaces$/ }).click();
-    await modal.getByRole("button", { name: /^Mira Compact cards and controls$/ }).click();
+    await modal.getByRole("button", { name: /^Compact Compact cards and controls$/ }).click();
     await expect(page.locator("html")).toHaveAttribute("data-style", "mira");
     await expect.poll(async () => page.evaluate(() => window.localStorage.getItem("rudder.designStyle"))).toBe("mira");
     await expect(page.locator("html")).not.toHaveClass(/dark/);
 
     await modal.getByRole("button", { name: /^Dark Low-glare workspace$/ }).click();
-    await modal.getByRole("button", { name: /^Luma Soft spacious controls$/ }).click();
+    await modal.getByRole("button", { name: /^Rudder Soft spacious controls$/ }).click();
     await expect(page.locator("html")).toHaveAttribute("data-style", "luma");
     await expect.poll(async () => page.evaluate(() => window.localStorage.getItem("rudder.designStyle"))).toBe("luma");
 
@@ -100,6 +155,7 @@ test.describe("Settings appearance", () => {
     await expect(modal.getByRole("heading", { name: "Appearance" })).toBeVisible();
     await expect(modal.getByRole("button", { name: /^Taupe Warm taupe surfaces$/ })).toBeVisible();
     await expect(modal.getByRole("button", { name: /^Pink Pink action color$/ })).toBeVisible();
+    await modal.getByRole("button", { name: /^Neutral Monochrome actions$/ }).click();
 
     const beforeTokens = await page.evaluate(() => {
       const styles = getComputedStyle(document.documentElement);
@@ -115,9 +171,9 @@ test.describe("Settings appearance", () => {
     expect(beforeTokens.primary).toBe("#2d2c29");
 
     await modal.getByRole("button", { name: /^Light Warm paper surfaces$/ }).click();
-    await modal.getByRole("button", { name: /^Mira Compact cards and controls$/ }).click();
+    await modal.getByRole("button", { name: /^Compact Compact cards and controls$/ }).click();
     await modal.getByRole("button", { name: /^Olive Muted olive surfaces$/ }).click();
-    await modal.getByRole("button", { name: /^Emerald Jewel green action color$/ }).click();
+    await modal.getByRole("button", { name: /^Rudder Rudder green action color$/ }).click();
 
     await expect(page.locator("html")).toHaveAttribute("data-style", "mira");
     await expect(page.locator("html")).toHaveAttribute("data-base-color", "olive");
@@ -132,7 +188,7 @@ test.describe("Settings appearance", () => {
     await expect.poll(async () => page.evaluate(() => window.localStorage.getItem("rudder.accentTheme"))).toBe("pink");
 
     await modal.getByRole("button", { name: /^Olive Muted olive surfaces$/ }).click();
-    await modal.getByRole("button", { name: /^Emerald Jewel green action color$/ }).click();
+    await modal.getByRole("button", { name: /^Rudder Rudder green action color$/ }).click();
     await expect(page.locator("html")).toHaveAttribute("data-base-color", "olive");
     await expect(page.locator("html")).toHaveAttribute("data-theme-color", "emerald");
 
