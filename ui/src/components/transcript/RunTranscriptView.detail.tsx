@@ -189,14 +189,40 @@ export function TranscriptDetailTimeline({
 export function RawTranscriptView({
   entries,
   density,
+  limit,
 }: {
   entries: TranscriptEntry[];
   density: TranscriptDensity;
+  limit?: number;
 }) {
   const compact = density === "compact";
+  const displayEntries = useMemo(() => {
+    const coalesced: TranscriptEntry[] = [];
+
+    for (const entry of entries) {
+      const previous = coalesced[coalesced.length - 1];
+      if (
+        (entry.kind === "assistant" || entry.kind === "thinking")
+        && entry.delta === true
+        && previous?.kind === entry.kind
+        && previous.delta === true
+      ) {
+        coalesced[coalesced.length - 1] = {
+          ...previous,
+          ts: entry.ts,
+          text: previous.text + entry.text,
+        };
+        continue;
+      }
+      coalesced.push(entry);
+    }
+
+    return limit ? coalesced.slice(-limit) : coalesced;
+  }, [entries, limit]);
+
   return (
     <div className={cn("font-mono", compact ? "space-y-1 text-[11px]" : "space-y-1.5 text-xs")}>
-      {entries.map((entry, idx) => (
+      {displayEntries.map((entry, idx) => (
         <div
           key={`${entry.kind}-${entry.ts}-${idx}`}
           className={cn(

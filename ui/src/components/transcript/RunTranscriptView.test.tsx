@@ -121,6 +121,55 @@ describe("RunTranscriptView", () => {
     ]);
   });
 
+  it("joins adjacent streamed text fragments in raw mode without losing event boundaries", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          mode="raw"
+          entries={[
+            { kind: "system", ts: "2026-07-20T00:00:00.000Z", text: "reasoning completed" },
+            { kind: "assistant", ts: "2026-07-20T00:00:01.000Z", text: "I ", delta: true },
+            { kind: "assistant", ts: "2026-07-20T00:00:02.000Z", text: "can ", delta: true },
+            { kind: "assistant", ts: "2026-07-20T00:00:03.000Z", text: "see it.", delta: true },
+            { kind: "system", ts: "2026-07-20T00:00:04.000Z", text: "reasoning started" },
+            { kind: "assistant", ts: "2026-07-20T00:00:05.000Z", text: "A separate message.", delta: true },
+            { kind: "thinking", ts: "2026-07-20T00:00:06.000Z", text: "Checking ", delta: true },
+            { kind: "thinking", ts: "2026-07-20T00:00:07.000Z", text: "the renderer.", delta: true },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("I can see it.");
+    expect(html).toContain("A separate message.");
+    expect(html).toContain("Checking the renderer.");
+    expect(countOccurrences(html, "Assistant</span>")).toBe(2);
+    expect(countOccurrences(html, "Thinking</span>")).toBe(1);
+    expect(html).toContain("reasoning completed");
+    expect(html).toContain("reasoning started");
+  });
+
+  it("applies the raw row limit after joining streamed text fragments", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          mode="raw"
+          limit={2}
+          entries={[
+            { kind: "system", ts: "2026-07-20T00:00:00.000Z", text: "older event" },
+            { kind: "assistant", ts: "2026-07-20T00:00:01.000Z", text: "I ", delta: true },
+            { kind: "assistant", ts: "2026-07-20T00:00:02.000Z", text: "can ", delta: true },
+            { kind: "assistant", ts: "2026-07-20T00:00:03.000Z", text: "see it.", delta: true },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("older event");
+    expect(html).toContain("I can see it.");
+    expect(countOccurrences(html, "Assistant</span>")).toBe(1);
+  });
+
   it("keeps a boundary between a complete message and a following delta group", () => {
     const blocks = normalizeTranscript([
       { kind: "assistant", ts: "2026-07-20T00:00:00.000Z", text: "Progress update." },
