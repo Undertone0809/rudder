@@ -6,7 +6,11 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { staticVerificationChecks } from "./verify-docs-static-export.mjs";
+import {
+  assertDocumentMetadata,
+  staticVerificationChecks,
+  verifyStaticDocs,
+} from "./verify-docs-static-export.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const SCRIPT_PATH = path.join(REPO_ROOT, "scripts/postprocess-docs-export.mjs");
@@ -258,6 +262,52 @@ test("static acceptance checks cover every canonical route and generated active 
       destination: "/zh/reference/workspace-boundaries",
     },
   );
+});
+
+test("static metadata checks reject canonical, hreflang, and anchor strings inside scripts", () => {
+  const manifest = { base_url: "https://docs.rudderhq.dev" };
+  const entry = { anchors: ["definition"], locale: "en", route: "/concepts/agents" };
+  const fakeMarkup = [
+    '<link rel="canonical" href="https://docs.rudderhq.dev/concepts/agents">',
+    '<link rel="alternate" hreflang="en" href="https://docs.rudderhq.dev/concepts/agents">',
+    '<link rel="alternate" hreflang="zh-CN" href="https://docs.rudderhq.dev/zh/concepts/agents">',
+    '<div id="definition"></div>',
+  ].join("");
+  const html = `<html><head><script>const serialized = ${JSON.stringify(fakeMarkup)};</script></head><body></body></html>`;
+
+  assert.throws(
+    () => assertDocumentMetadata(html, entry, manifest),
+    /missing canonical/u,
+  );
+});
+
+test("static verification times out stalled responses", async () => {
+  const originalFetch = globalThis.fetch;
+  const keepAlive = setTimeout(() => {}, 1_000);
+  globalThis.fetch = (_url, options) => new Promise((_resolve, reject) => {
+    options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+  });
+  try {
+    const manifest = {
+      base_url: "https://docs.rudderhq.dev",
+      pages: [{
+        status: "active",
+        urls: { en: "/" },
+        anchors: { en: [] },
+      }],
+    };
+    await assert.rejects(
+      verifyStaticDocs("http://127.0.0.1:4179", {
+        generatedConfig: { redirects: [] },
+        manifest,
+        timeoutMs: 25,
+      }),
+      /timed out after 25ms/u,
+    );
+  } finally {
+    clearTimeout(keepAlive);
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("public health, package scripts, CI, and staging cover static docs search", () => {
