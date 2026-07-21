@@ -35,7 +35,7 @@ export function RunTranscriptView({
   limit,
   streaming = false,
   collapseStdout = false,
-  emptyMessage = "No transcript yet.",
+  emptyMessage,
   className,
   thinkingClassName,
   presentation = "default",
@@ -85,6 +85,7 @@ export function RunTranscriptView({
   const visibleNiceEntries = trailingEntriesByVisibleLimit(renderableEntries, limit);
 
   if (renderableEntries.length === 0) {
+    if (!emptyMessage) return null;
     return (
       <div className={cn("rounded-2xl border border-dashed border-border/70 bg-background/40 p-4 text-sm text-muted-foreground", className)}>
         {emptyMessage}
@@ -101,6 +102,7 @@ export function RunTranscriptView({
   }
 
   if (blocks.length === 0) {
+    if (!emptyMessage) return null;
     return (
       <div className={cn("rounded-2xl border border-dashed border-border/70 bg-background/40 p-4 text-sm text-muted-foreground", className)}>
         {emptyMessage}
