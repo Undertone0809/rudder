@@ -204,6 +204,88 @@ test.describe("Chat streaming", () => {
     await expect(transcriptItem.getByText("Final answer shown in the assistant message.", { exact: false })).toHaveCount(0);
   });
 
+  test("does not expose persisted provider protocol envelopes in the process transcript", async ({ page }) => {
+    const organization = await createStreamingOrg(page, `Private-Transcript-${Date.now()}`);
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Provider protocol privacy",
+        preferredAgentId: organization.chatAgent.id,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: {
+          body: "Show the user-facing answer without private runtime data.",
+        },
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json();
+    const assistantMessageId = randomUUID();
+    const rawProviderEnvelope = JSON.stringify({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        model: "gpt-5.6-sol",
+        content: [{
+          type: "redacted_thinking",
+          data: "ccswitch-openai-reasoning-v1:opaque-private-payload",
+        }],
+      },
+      session_id: "session-private",
+      uuid: randomUUID(),
+      timestamp: "2026-07-21T05:37:13.286Z",
+    });
+
+    await e2eDb.insert(chatMessages).values({
+      id: assistantMessageId,
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "The user-facing answer remains readable.",
+      structuredPayload: {
+        __chatTranscript: [
+          {
+            kind: "stdout",
+            ts: "2026-07-21T05:37:13.286Z",
+            text: rawProviderEnvelope,
+          },
+          {
+            kind: "assistant",
+            ts: "2026-07-21T05:37:14.286Z",
+            text: "Readable progress remains visible.",
+          },
+        ],
+      },
+      replyingAgentId: organization.chatAgent.id,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(assistantMessage).toContainText("The user-facing answer remains readable.", {
+      timeout: 15_000,
+    });
+    const transcriptToggle = page.getByRole("button", { name: /Worked for/ }).last();
+    await expect(transcriptToggle).toBeVisible({ timeout: 15_000 });
+    await transcriptToggle.click();
+
+    const transcriptItem = page.getByTestId("chat-transcript-item").last();
+    await expect(transcriptItem.getByText("Readable progress remains visible.", { exact: false }))
+      .toBeVisible({ timeout: 15_000 });
+    await expect(transcriptItem).not.toContainText("ccswitch-openai-reasoning-v1");
+    await expect(transcriptItem).not.toContainText("opaque-private-payload");
+    await expect(transcriptItem).not.toContainText("redacted_thinking");
+    await expect(transcriptItem).not.toContainText("session-private");
+    await expect(transcriptItem).not.toContainText('{"type":"assistant"');
+  });
+
   test("streams a codex reply through to completion", async ({ page }) => {
     const organization = await createStreamingOrg(page, `Str-Chat-${Date.now()}`);
 

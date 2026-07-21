@@ -81,7 +81,7 @@ export function parseClaudeStdoutLine(line: string, ts: string): TranscriptEntry
         });
       }
     }
-    return entries.length > 0 ? entries : [{ kind: "stdout", ts, text: line }];
+    return entries;
   }
 
   if (type === "user") {

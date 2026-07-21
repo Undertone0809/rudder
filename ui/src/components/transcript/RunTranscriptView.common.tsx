@@ -289,6 +289,40 @@ export function isRudderDeveloperDiagnosticContinuationLine(trimmed: string): bo
   return /^[\s./~,-]/.test(trimmed) || /^[A-Za-z]:[\\/]/.test(trimmed);
 }
 
+export function isProviderProtocolEnvelopeLine(trimmed: string): boolean {
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return false;
+
+  try {
+    const payload = asRecord(JSON.parse(trimmed));
+    if (!payload || typeof payload.type !== "string") return false;
+
+    const message = asRecord(payload.message);
+    const hasProviderEventIdentity = typeof payload.session_id === "string"
+      && (typeof payload.uuid === "string" || typeof payload.timestamp === "string");
+    if (
+      (payload.type === "assistant" || payload.type === "user")
+      && hasProviderEventIdentity
+      && message
+      && message.role === payload.type
+      && Array.isArray(message.content)
+    ) {
+      return true;
+    }
+
+    if (
+      (payload.type === "result" || payload.type === "system")
+      && hasProviderEventIdentity
+      && typeof payload.subtype === "string"
+    ) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
 export function isInternalAgentInstructionText(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) return false;
@@ -310,6 +344,8 @@ export function isInternalAgentInstructionText(text: string): boolean {
 
 export function filterRoutineStdout(value: string, showDeveloperDiagnostics: boolean): string {
   if (showDeveloperDiagnostics) return value.trim();
+  const trimmedValue = value.trim();
+  if (isProviderProtocolEnvelopeLine(trimmedValue)) return "";
   let suppressRudderContinuation = false;
   return value
     .split(/\r?\n/)
@@ -319,6 +355,7 @@ export function filterRoutineStdout(value: string, showDeveloperDiagnostics: boo
         suppressRudderContinuation = /:\s*$/.test(trimmed);
         return false;
       }
+      if (isProviderProtocolEnvelopeLine(trimmed)) return false;
       if (suppressRudderContinuation && isRudderDeveloperDiagnosticContinuationLine(trimmed)) {
         return false;
       }
@@ -349,6 +386,12 @@ export function filterRenderableTranscriptEntries(
   for (const entry of entries) {
     if (entry.kind === "init") continue;
     if (entry.kind === "user" && isInternalAgentInstructionText(entry.text)) continue;
+
+    if (entry.kind === "stdout") {
+      const text = filterRoutineStdout(entry.text, false);
+      if (text) result.push({ ...entry, text });
+      continue;
+    }
 
     if (entry.kind !== "stderr") {
       result.push(entry);

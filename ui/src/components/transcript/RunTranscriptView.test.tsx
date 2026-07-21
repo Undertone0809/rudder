@@ -206,6 +206,28 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("No meaningful transcript.");
   });
 
+  it("renders nothing by default when no transcript content is available", () => {
+    const emptyHtml = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView presentation="chat" entries={[]} />
+      </ThemeProvider>,
+    );
+    const lifecycleOnlyHtml = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          presentation="chat"
+          entries={[
+            { kind: "system", ts: "2026-07-20T00:00:00.000Z", text: "reasoning started" },
+            { kind: "system", ts: "2026-07-20T00:00:01.000Z", text: "reasoning completed" },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(emptyHtml).toBe("");
+    expect(lifecycleOnlyHtml).toBe("");
+  });
+
   it("does not let hidden lifecycle rows consume the nice run detail limit", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>

@@ -26,6 +26,9 @@ test("hides internal lifecycle and result protocol entries from Messenger proces
       preferredAgentId: agent.id,
       issueCreationMode: "manual_approval",
       planMode: false,
+      initialMessage: {
+        body: "Show clean process details.",
+      },
     },
   });
   expect(chatRes.ok()).toBe(true);
@@ -93,4 +96,65 @@ test("hides internal lifecycle and result protocol entries from Messenger proces
   await expect(transcript.getByText(/reasoning completed/i)).toHaveCount(0);
   await expect(transcript.getByText(/RUDDER_RESULT/i)).toHaveCount(0);
   await expect(transcript.getByText(/^System$/)).toHaveCount(0);
+});
+
+test("does not show an empty transcript block when Messenger has only internal lifecycle entries", async ({ page }) => {
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Chat-Transcript-Empty-${Date.now()}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+  const agent = await createE2EChatAgent(page.request, organization.id, {
+    name: "Transcript Agent",
+    command: E2E_CODEX_STUB,
+  });
+  const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+    data: {
+      title: "Empty process details",
+      preferredAgentId: agent.id,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      initialMessage: {
+        body: "Show the answer without an empty transcript placeholder.",
+      },
+    },
+  });
+  expect(chatRes.ok()).toBe(true);
+  const chat = await chatRes.json() as { id: string };
+
+  await e2eDb.insert(chatMessages).values({
+    id: randomUUID(),
+    orgId: organization.id,
+    conversationId: chat.id,
+    role: "assistant",
+    kind: "message",
+    status: "completed",
+    body: "The final answer remains visible without transcript details.",
+    structuredPayload: {
+      __chatTranscript: [
+        { kind: "system", ts: "2026-07-21T00:00:00.000Z", text: "turn started" },
+        { kind: "system", ts: "2026-07-21T00:00:01.000Z", text: "reasoning started" },
+        { kind: "system", ts: "2026-07-21T00:00:02.000Z", text: "reasoning completed" },
+      ],
+    },
+    replyingAgentId: agent.id,
+    chatTurnId: randomUUID(),
+    turnVariant: 0,
+  });
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+  await expect(page.getByText("The final answer remains visible without transcript details.", { exact: true }))
+    .toBeVisible();
+  const transcript = page.getByTestId("chat-transcript-item");
+  await expect(transcript).toBeVisible();
+  await transcript.getByRole("button").click();
+
+  await expect(page.getByText("No transcript yet.", { exact: true })).toHaveCount(0);
+  await expect(transcript.locator(".border-dashed")).toHaveCount(0);
+  await page.screenshot({ path: "/tmp/rudder-empty-transcript-block-removed.png" });
 });

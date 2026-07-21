@@ -3782,6 +3782,7 @@ describe("Chat Side Panel link handling", () => {
       configurable: true,
       value: {
         listWorkspaceLaunchTargets: vi.fn(async () => [
+          { id: "cursor", label: "Cursor", kind: "ide" },
           { id: "vscode", label: "VS Code", kind: "ide" },
           { id: "terminal", label: "Terminal", kind: "terminal" },
           { id: "finder", label: "Finder", kind: "folder" },
@@ -3839,10 +3840,13 @@ describe("Chat Side Panel link handling", () => {
     expect(menuItems.map((item) => item.textContent)).toEqual(expect.arrayContaining([
       expect.stringContaining("Open in Library"),
       expect.stringContaining("Default app"),
+      expect.stringContaining("Cursor"),
       expect.stringContaining("VS Code"),
       expect.stringContaining("Terminal"),
       expect.stringContaining("Finder"),
     ]));
+    const cursorItem = menuItems.find((item) => item.textContent?.includes("Cursor"));
+    expect(cursorItem?.querySelector("img")?.getAttribute("src")).toBe("/brands/cursor-app-icon.svg");
 
     const terminalItem = menuItems.find((item) => item.textContent?.includes("Terminal"));
     await act(async () => {

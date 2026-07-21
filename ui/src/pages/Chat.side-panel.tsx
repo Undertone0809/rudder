@@ -10,15 +10,8 @@ import { InlineEditor } from "@/components/InlineEditor";
 import { IssueProperties } from "@/components/IssueProperties";
 import { MarkdownEditor, type MarkdownEditorRef } from "@/components/MarkdownEditor";
 import { PriorityIcon } from "@/components/PriorityIcon";
-import { StatusBadge } from "@/components/StatusBadge";
-import {
-  isWorkspaceCsvPreviewFile,
-  isWorkspaceHtmlPreviewFile,
-  isWorkspaceMarkdownPreviewFile,
-  WorkspaceFilePreview,
-  type WorkspaceFilePreviewMode,
-} from "@/components/WorkspaceFilePreview";
 import { SideChatPanelView } from "@/components/side-panel/SideChatPanelView";
+import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -28,6 +21,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  isWorkspaceCsvPreviewFile,
+  isWorkspaceHtmlPreviewFile,
+  isWorkspaceMarkdownPreviewFile,
+  WorkspaceFilePreview,
+  type WorkspaceFilePreviewMode,
+} from "@/components/WorkspaceFilePreview";
+import { WorkspaceLaunchTargetIcon } from "@/components/workspaces/WorkspaceLaunchControls";
 import { useOrganization } from "@/context/OrganizationContext";
 import { MAX_BROWSER_TABS_PER_CONTEXT, useSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
@@ -71,7 +72,6 @@ import {
   FileText,
   FileWarning,
   Folder,
-  FolderOpen,
   Globe2,
   Image as ImageIcon,
   LibraryBig,
@@ -85,7 +85,6 @@ import {
   Redo2,
   RotateCw,
   Table2,
-  Terminal,
   Undo2,
   UserRound,
   X
@@ -1199,16 +1198,6 @@ function ChatSidePanelLibraryFileView({
     }
   };
 
-  const targetIcon = (target: DesktopWorkspaceLaunchTarget | { id: "defaultApp"; kind: "app" }) => {
-    if ("iconDataUrl" in target && target.iconDataUrl) {
-      return <img src={target.iconDataUrl} alt="" className="h-4 w-4 object-contain" />;
-    }
-    if (target.kind === "terminal") return <Terminal className="h-4 w-4" />;
-    if (target.kind === "folder") return <FolderOpen className="h-4 w-4" />;
-    if (target.kind === "ide") return <FileCode2 className="h-4 w-4" />;
-    return <ExternalLink className="h-4 w-4" />;
-  };
-
   const openInMenu = (
     <DropdownMenu
       open={openMenuOpen}
@@ -1240,7 +1229,7 @@ function ChatSidePanelLibraryFileView({
             disabled={openingTargetId !== null}
             onSelect={() => void openTarget({ id: "defaultApp", label: "Default app", kind: "app" })}
           >
-            {targetIcon({ id: "defaultApp", kind: "app" })}
+            <ExternalLink className="h-4 w-4" />
             <span>Default app</span>
           </DropdownMenuItem>
         ) : null}
@@ -1250,7 +1239,7 @@ function ChatSidePanelLibraryFileView({
             disabled={openingTargetId !== null}
             onSelect={() => void openTarget(target)}
           >
-            {targetIcon(target)}
+            <WorkspaceLaunchTargetIcon target={target} className="h-4 w-4" />
             <span>{target.label}</span>
           </DropdownMenuItem>
         ))}

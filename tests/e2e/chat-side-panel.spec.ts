@@ -71,6 +71,7 @@ async function installDesktopShellFileLauncherStub(page: Page) {
       configurable: true,
       value: {
         listWorkspaceLaunchTargets: async () => [
+          { id: "cursor", label: "Cursor", kind: "ide" },
           { id: "vscode", label: "VS Code", kind: "ide" },
           { id: "terminal", label: "Terminal", kind: "terminal" },
           { id: "finder", label: "Finder", kind: "folder" },
@@ -228,6 +229,7 @@ test.describe("Chat Side Panel", () => {
         title: "Library file launcher host chat",
         issueCreationMode: "manual_approval",
         planMode: false,
+        initialMessage: { body: "Open the Library document beside this chat." },
       },
     });
     expect(chatRes.ok(), await chatRes.text()).toBe(true);
@@ -493,6 +495,9 @@ test.describe("Chat Side Panel", () => {
     await expect(page.getByRole("menuitem", { name: "Open in Library" })).toBeVisible();
     await expect(page.getByTestId("chat-side-panel-library-full-path")).toHaveCount(0);
     await expect(page.getByRole("menuitem", { name: "Default app" })).toBeVisible();
+    const cursorMenuItem = page.getByRole("menuitem", { name: "Cursor" });
+    await expect(cursorMenuItem).toBeVisible();
+    await expect(cursorMenuItem.locator("img")).toHaveAttribute("src", "/brands/cursor-app-icon.svg");
     await expect(page.getByRole("menuitem", { name: "VS Code" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Finder" })).toBeVisible();
     await page.screenshot({

@@ -32,7 +32,84 @@ exec "${E2E_CODEX_STUB}" "$@"
   return scriptPath;
 }
 
+async function createAskUserWithoutPayloadStub() {
+  const dir = await mkdtemp(join(tmpdir(), "rudder-chat-ask-user-fallback-"));
+  const scriptPath = join(dir, "codex-ask-user-without-payload.js");
+  await writeFile(scriptPath, `#!/usr/bin/env node
+let input = "";
+process.stdin.on("data", (chunk) => {
+  input += chunk.toString();
+});
+process.stdin.on("end", () => {
+  const match = input.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i);
+  const sentinel = match ? match[1] : "__RUDDER_RESULT_TEST__";
+  process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "ask-user-fallback-e2e", model: "gpt-5.4" }) + "\\n");
+  process.stdout.write(JSON.stringify({
+    type: "turn.completed",
+    result: sentinel + JSON.stringify({
+      kind: "ask_user",
+      body: "Which topic should I explore for the briefing?",
+      structuredPayload: null,
+    }),
+    usage: { input_tokens: 5, cached_input_tokens: 0, output_tokens: 8 },
+  }) + "\\n");
+});
+`, "utf8");
+  await chmod(scriptPath, 0o755);
+  return scriptPath;
+}
+
 test.describe("Chat error recovery", () => {
+  test("shows an ask-user reply as a normal message when structured questions are missing", async ({ page }) => {
+    const askUserFallbackStub = await createAskUserWithoutPayloadStub();
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Ask-User-Fallback-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+    const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Ask User Fallback Agent",
+      command: askUserFallbackStub,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${chatAgent.id}`);
+
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    await composer.fill("Ask me which topic to explore");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(assistantMessage).toContainText("Which topic should I explore for the briefing?", {
+      timeout: 15_000,
+    });
+    await expect(assistantMessage).not.toContainText("Response failed");
+    await expect(assistantMessage).not.toContainText("chat_result_malformed_json");
+
+    const chatId = page.url().match(/\/messenger\/chat\/([^/?#]+)/)?.[1];
+    expect(chatId).toBeTruthy();
+    const messagesRes = await page.request.get(`/api/chats/${chatId}/messages`);
+    expect(messagesRes.ok()).toBe(true);
+    const messages = await messagesRes.json() as Array<{
+      role: string;
+      kind: string;
+      status: string;
+      body: string;
+      structuredPayload: unknown;
+    }>;
+    const completedAssistant = messages.find((message) => message.role === "assistant");
+    expect(completedAssistant).toMatchObject({
+      kind: "message",
+      status: "completed",
+      body: "Which topic should I explore for the briefing?",
+      structuredPayload: null,
+    });
+  });
+
   test("shows a runtime boot failure instead of a system-level issue", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
