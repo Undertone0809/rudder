@@ -6,6 +6,8 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { staticVerificationChecks } from "./verify-docs-static-export.mjs";
+
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const SCRIPT_PATH = path.join(REPO_ROOT, "scripts/postprocess-docs-export.mjs");
 
@@ -234,6 +236,28 @@ test("staging and production workflows postprocess exported docs", () => {
       `${workflow} must postprocess the static export before deployment`,
     );
   }
+});
+
+test("static acceptance checks cover every canonical route and generated active alias", () => {
+  const checks = staticVerificationChecks();
+  assert.equal(checks.canonical.length, 68);
+  assert.ok(checks.aliases.length > 27);
+  assert.ok(checks.canonical.some((entry) => entry.route === "/benchmarks/gdpval-harness"));
+  assert.ok(checks.canonical.some((entry) => entry.route === "/zh/benchmarks/gdpval-harness"));
+  assert.deepEqual(
+    checks.aliases.find((entry) => entry.source === "/concepts/control-plane"),
+    {
+      source: "/concepts/control-plane",
+      destination: "/reference/approvals-budgets-activity",
+    },
+  );
+  assert.deepEqual(
+    checks.aliases.find((entry) => entry.source === "/en/zh/reference/workspace-boundaries"),
+    {
+      source: "/en/zh/reference/workspace-boundaries",
+      destination: "/zh/reference/workspace-boundaries",
+    },
+  );
 });
 
 test("public health, package scripts, CI, and staging cover static docs search", () => {

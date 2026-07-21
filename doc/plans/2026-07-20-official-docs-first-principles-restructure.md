@@ -301,10 +301,11 @@ and compatibility anchors.
 
 ## Open issues and rollout gates
 
-All three repository implementation batches and deterministic repository gates
-are complete. The plan remains `in_progress` because rollout still depends on
-live Agent retrieval evaluation, the external first-reader study, and an
-explicitly authorized production publication.
+The three rewrite batches have been implemented, but repository completion must
+be established by the current checks and review evidence rather than a
+historical blanket claim in this plan. The plan remains `in_progress` because
+rollout still depends on live Agent retrieval evaluation, the external
+first-reader study, and an explicitly authorized production publication.
 
 - The retrieval fixtures now cover every bilingual Reference route, declare
   source class and required contracts, and validate those declarations against

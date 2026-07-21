@@ -11,6 +11,7 @@ const port = Number.parseInt(process.argv[2] ?? "4179", 10);
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-docs-search-e2e-"));
 const archivePath = path.join(tempDir, "docs.zip");
 const exportDir = path.join(tempDir, "site");
+const redirects = JSON.parse(fs.readFileSync(path.join(docsDir, "docs.json"), "utf8")).redirects;
 
 function run(command, args, { attempts = 1, ...options } = {}) {
   let result;
@@ -61,6 +62,22 @@ function resolveFile(urlPath) {
   return candidates.find((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile()) ?? null;
 }
 
+function matchRedirectSource(source, requestPath) {
+  const wildcard = ":path*";
+  if (!source.includes(wildcard)) return source === requestPath ? "" : null;
+  const prefix = source.slice(0, source.indexOf(wildcard));
+  return requestPath.startsWith(prefix) ? requestPath.slice(prefix.length) : null;
+}
+
+function redirectDestination(requestPath) {
+  for (const redirect of redirects) {
+    const wildcardValue = matchRedirectSource(redirect.source, requestPath);
+    if (wildcardValue === null) continue;
+    return redirect.destination.replace(":path*", wildcardValue);
+  }
+  return null;
+}
+
 const server = http.createServer((request, response) => {
   let pathname;
   try {
@@ -68,6 +85,13 @@ const server = http.createServer((request, response) => {
   } catch {
     response.writeHead(404, { "Content-Type": "text/plain" });
     response.end("404 Not Found");
+    return;
+  }
+
+  const destination = redirectDestination(pathname);
+  if (destination !== null) {
+    response.writeHead(308, { Location: destination });
+    response.end();
     return;
   }
 

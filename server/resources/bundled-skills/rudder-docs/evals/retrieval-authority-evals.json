@@ -184,7 +184,7 @@
     "locale": "en",
     "query_mode": "current",
     "expected_source_class": "official_public_docs_primary",
-    "required_contract_ids": ["WORKSPACE.PROJECT.001", "WORKSPACE.RUN.001", "WORKSPACE.BACKUP.001"],
+    "required_contract_ids": ["CONTEXT.RESOURCES.001", "LIBRARY.FILES.001", "WORKSPACE.PROJECT.001", "WORKSPACE.RUN.001", "WORKSPACE.BACKUP.001"],
     "expected_public_path": "https://docs.rudderhq.dev/reference/workspace-boundaries",
     "expected_anchor": "states",
     "illustrative_case_sufficient": false
@@ -234,7 +234,7 @@
     "locale": "zh",
     "query_mode": "current",
     "expected_source_class": "official_public_docs_primary",
-    "required_contract_ids": ["WORKSPACE.PROJECT.001", "WORKSPACE.RUN.001", "WORKSPACE.BACKUP.001"],
+    "required_contract_ids": ["CONTEXT.RESOURCES.001", "LIBRARY.FILES.001", "WORKSPACE.PROJECT.001", "WORKSPACE.RUN.001", "WORKSPACE.BACKUP.001"],
     "expected_public_path": "https://docs.rudderhq.dev/zh/reference/workspace-boundaries",
     "expected_anchor": "states",
     "illustrative_case_sufficient": false

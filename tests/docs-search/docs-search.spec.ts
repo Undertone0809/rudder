@@ -63,3 +63,27 @@ test("clears stale keyboard selection when the query or dialog is reset", async 
   await reopenedInput.press("Enter");
   await expect(page).toHaveURL(reopenedUrl);
 });
+
+test("renders representative English and Chinese pages on desktop and mobile", async ({ page }) => {
+  const cases = [
+    { route: "/concepts/agents", title: "Agents and Agent Runs", language: "en", width: 1440, height: 900 },
+    { route: "/zh/concepts/agents", title: "Agent 和运行记录", language: "zh-CN", width: 1440, height: 900 },
+    { route: "/reference/workspace-boundaries", title: "Workspace boundaries", language: "en", width: 390, height: 844 },
+    { route: "/zh/reference/workspace-boundaries", title: "工作区边界", language: "zh-CN", width: 390, height: 844 },
+  ];
+
+  for (const item of cases) {
+    await page.setViewportSize({ width: item.width, height: item.height });
+    await page.goto(item.route);
+    await expect(page.locator("html")).toHaveAttribute("lang", item.language);
+    await expect(page.getByRole("heading", { level: 1, name: item.title })).toBeVisible();
+    await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+      "href",
+      `https://docs.rudderhq.dev${item.route}`,
+    );
+    const overflows = await page.evaluate(() =>
+      document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    );
+    expect(overflows, `${item.route} at ${item.width}px`).toBe(false);
+  }
+});
