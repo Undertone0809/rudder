@@ -60,6 +60,7 @@ import {
   messengerFailedRunSourceAction,
   type MessengerFailedRunOriginRow,
 } from "./messenger-run-origin.js";
+import { failedRunUserSummary } from "./messenger-run-summary.js";
 import {
   lockMessengerCustomGroupPlacement,
   lockMessengerSavedViewPlacement,
@@ -85,8 +86,6 @@ const DEFAULT_THREAD_SUMMARY_LIMIT = 40;
 const MAX_THREAD_SUMMARY_LIMIT = 100;
 const DEFAULT_ISSUE_THREAD_DETAIL_LIMIT = 50;
 const MAX_ISSUE_THREAD_DETAIL_LIMIT = 100;
-const FAILED_RUN_USER_SUMMARY =
-  "The run hit a system-level execution problem. Rudder saved the technical details for diagnostics.";
 type ThreadStateRow = typeof messengerThreadUserStates.$inferSelect;
 type ThreadReadState = {
   lastReadAt: Date;
@@ -928,14 +927,6 @@ function failedRunCard(
     },
     origin,
   };
-}
-
-function readNonEmptyString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-function failedRunUserSummary(run: Pick<FailedRunRow, "resultJson">): string {
-  return readNonEmptyString(run.resultJson?.userMessage) ?? FAILED_RUN_USER_SUMMARY;
 }
 
 function budgetCard(incident: BudgetIncidentRow): MessengerBudgetThreadItem {

@@ -21,13 +21,6 @@ import {
 import { SideChatPanelView } from "@/components/side-panel/SideChatPanelView";
 import { Button } from "@/components/ui/button";
 import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -49,7 +42,6 @@ import { readDesktopShell, type DesktopFileLaunchTargetId, type DesktopWorkspace
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath, getOrganizationRouteKey } from "@/lib/organization-routes";
 import { queryKeys } from "@/lib/queryKeys";
 import { useLocation, useNavigate } from "@/lib/router";
-import { sideChatIsReadOnly } from "@/lib/side-chat";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
 import { isWorkspaceHtmlFilePath } from "@/lib/workspace-html-preview";
@@ -113,6 +105,20 @@ import {
 import { createPortal } from "react-dom";
 import { AutomationDetail } from "./AutomationDetail";
 import { conversationDisplayTitle } from "./Chat.parts";
+import { ChatSidePanelTabContextMenu, type SideChatTarget } from "./Chat.side-panel-tab-menu";
+import {
+  chatSidePanelBrowserErrorContent,
+  clearChatSidePanelMarkdownDraft,
+  countChatSidePanelMarkdownWords,
+  isChatSidePanelCloseShortcutInput,
+  joinChatSidePanelYamlFrontmatter,
+  restoreChatSidePanelMarkdownDraft,
+  splitChatSidePanelYamlFrontmatter,
+  storeChatSidePanelMarkdownDraft,
+  type BrowserLoadError,
+  type BrowserWebviewInputEvent,
+  type RestoredChatSidePanelMarkdownDraft,
+} from "./Chat.side-panel.helpers";
 import { IssueDetail } from "./IssueDetail";
 
 const CHAT_SIDE_PANEL_IMAGE_FILE_EXTENSIONS = new Set([
@@ -135,116 +141,10 @@ const CHAT_SIDE_PANEL_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([
   ".text",
 ]);
 const CHAT_SIDE_PANEL_TAB_DND_MIME = "application/x-rudder-side-panel-tab";
-const CHAT_SIDE_PANEL_MARKDOWN_DRAFT_STORAGE_PREFIX = "rudder.chat-side-panel.markdown-draft.v1";
 const CHAT_SIDE_PANEL_MARKDOWN_CONFLICT_MESSAGE = "This file changed while you were editing it.";
 const CHAT_SIDE_PANEL_BROWSER_ZOOM_FACTORS = [
   0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5,
 ] as const;
-
-type SideChatTarget = Extract<SidePanelTarget, { kind: "side_chat" }>;
-
-type ChatSidePanelMarkdownDraft = {
-  baseContent: string;
-  content: string;
-  filePath: string;
-  organizationId: string;
-  updatedAt: string;
-};
-
-type RestoredChatSidePanelMarkdownDraft = {
-  baseContent: string;
-  conflicted: boolean;
-  content: string;
-};
-
-function chatSidePanelMarkdownDraftStorageKey(organizationId: string, filePath: string) {
-  return `${CHAT_SIDE_PANEL_MARKDOWN_DRAFT_STORAGE_PREFIX}:${encodeURIComponent(organizationId)}:${encodeURIComponent(filePath)}`;
-}
-
-function clearChatSidePanelMarkdownDraft(organizationId: string, filePath: string) {
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage.removeItem(chatSidePanelMarkdownDraftStorageKey(organizationId, filePath));
-  } catch {
-    // Storage can be unavailable in hardened browser contexts.
-  }
-}
-
-function storeChatSidePanelMarkdownDraft(
-  organizationId: string,
-  filePath: string,
-  baseContent: string,
-  content: string,
-) {
-  if (typeof window === "undefined") return;
-  if (content === baseContent) {
-    clearChatSidePanelMarkdownDraft(organizationId, filePath);
-    return;
-  }
-  try {
-    const draft: ChatSidePanelMarkdownDraft = {
-      organizationId,
-      filePath,
-      baseContent,
-      content,
-      updatedAt: new Date().toISOString(),
-    };
-    window.sessionStorage.setItem(
-      chatSidePanelMarkdownDraftStorageKey(organizationId, filePath),
-      JSON.stringify(draft),
-    );
-  } catch {
-    // The editor remains usable when session storage is unavailable.
-  }
-}
-
-function restoreChatSidePanelMarkdownDraft(
-  organizationId: string,
-  filePath: string,
-  serverContent: string,
-): RestoredChatSidePanelMarkdownDraft {
-  const serverDraft = { baseContent: serverContent, conflicted: false, content: serverContent };
-  if (typeof window === "undefined") return serverDraft;
-  try {
-    const stored = window.sessionStorage.getItem(chatSidePanelMarkdownDraftStorageKey(organizationId, filePath));
-    if (!stored) return serverDraft;
-    const draft = JSON.parse(stored) as Partial<ChatSidePanelMarkdownDraft>;
-    const valid = draft.organizationId === organizationId
-      && draft.filePath === filePath
-      && typeof draft.baseContent === "string"
-      && typeof draft.content === "string";
-    if (!valid || draft.content === serverContent) {
-      clearChatSidePanelMarkdownDraft(organizationId, filePath);
-      return serverDraft;
-    }
-    return {
-      baseContent: draft.baseContent as string,
-      conflicted: draft.baseContent !== serverContent,
-      content: draft.content as string,
-    };
-  } catch {
-    clearChatSidePanelMarkdownDraft(organizationId, filePath);
-    return serverDraft;
-  }
-}
-
-function splitChatSidePanelYamlFrontmatter(content: string) {
-  const match = content.match(/^(---\r?\n[\s\S]*?\r?\n---)(\r?\n|$)/);
-  if (!match) return { frontmatter: null, separator: "", body: content };
-  return {
-    frontmatter: match[1] ?? "",
-    separator: match[2] ?? "\n",
-    body: content.slice(match[0].length),
-  };
-}
-
-function joinChatSidePanelYamlFrontmatter(frontmatter: string | null, separator: string, body: string) {
-  return frontmatter === null ? body : `${frontmatter}${separator || "\n"}${body}`;
-}
-
-function countChatSidePanelMarkdownWords(content: string) {
-  return content.match(/[\p{L}\p{N}]+(?:[-'][\p{L}\p{N}]+)*/gu)?.length ?? 0;
-}
 
 function useChatSidePanelMobileLayout() {
   const [isMobile, setIsMobile] = useState(() => (
@@ -273,65 +173,6 @@ type BrowserWebviewElement = HTMLElement & {
   reloadIgnoringCache?: () => void;
   setZoomFactor?: (factor: number) => void;
 };
-
-type BrowserWebviewInputEvent = Event & {
-  input?: {
-    type?: string;
-    key?: string;
-    code?: string;
-    meta?: boolean;
-    control?: boolean;
-    alt?: boolean;
-    shift?: boolean;
-  };
-};
-
-type BrowserLoadError = {
-  code: string;
-  url: string;
-};
-
-function chatSidePanelBrowserErrorHost(url: string) {
-  try {
-    return new URL(url).hostname || url;
-  } catch {
-    return url;
-  }
-}
-
-function chatSidePanelBrowserErrorContent(error: BrowserLoadError) {
-  const host = chatSidePanelBrowserErrorHost(error.url);
-  if (error.code === "ERR_CONNECTION_REFUSED") {
-    return {
-      summary: `${host} refused to connect.`,
-      suggestions: ["Checking the connection", "Checking the proxy and firewall"],
-    };
-  }
-  if (error.code === "ERR_NAME_NOT_RESOLVED") {
-    return {
-      summary: `${host}'s server IP address could not be found.`,
-      suggestions: ["Checking the address", "Checking the connection"],
-    };
-  }
-  if (error.code === "ERR_TIMED_OUT") {
-    return {
-      summary: `${host} took too long to respond.`,
-      suggestions: ["Checking the connection", "Trying again later"],
-    };
-  }
-  return {
-    summary: `The page at ${host} could not be loaded.`,
-    suggestions: ["Checking the address", "Trying again later"],
-  };
-}
-
-function isChatSidePanelCloseShortcutInput(input: BrowserWebviewInputEvent["input"]) {
-  if (!input || input.type === "keyUp") return false;
-  const isCloseKey = input.key?.toLowerCase() === "w" || input.code === "KeyW";
-  if (!isCloseKey || input.alt || input.shift) return false;
-  const isMac = navigator.platform.toLowerCase().includes("mac");
-  return isMac ? Boolean(input.meta) && !input.control : Boolean(input.control) && !input.meta;
-}
 
 function LoadingPanelBody() {
   return (
@@ -2002,120 +1843,6 @@ function ChatSidePanelBrowserView({
         )}
       </div>
     </div>
-  );
-}
-
-function ChatSidePanelTabContextMenu({
-  children,
-  closeDisabled,
-  isMobile,
-  moveInProgress,
-  organizationId,
-  tab,
-  onClose,
-  onMoveSideChat,
-}: {
-  children: ReactElement;
-  closeDisabled: boolean;
-  isMobile: boolean;
-  moveInProgress: boolean;
-  organizationId: string | null | undefined;
-  tab: SidePanelTarget;
-  onClose: (tab: SidePanelTarget) => void;
-  onMoveSideChat: (tab: SideChatTarget) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const sideChat = tab.kind === "side_chat" ? tab : null;
-  const conversationQuery = useQuery({
-    queryKey: queryKeys.chats.detail(organizationId ?? "__none__", sideChat?.conversationId ?? "__side-chat-draft__"),
-    queryFn: () => chatsApi.get(sideChat!.conversationId!),
-    enabled: open && Boolean(organizationId && sideChat?.conversationId),
-  });
-  const conversation = conversationQuery.data ?? null;
-  const conversationStatusLoading = Boolean(
-    sideChat?.conversationId
-    && (conversationQuery.isPending || conversationQuery.isFetching),
-  );
-  const canMoveSideChat = Boolean(
-    sideChat?.conversationId
-    && !moveInProgress
-    && !conversationStatusLoading
-    && !conversationQuery.isError
-    && conversation?.sideChatState === "active"
-    && !sideChatIsReadOnly(conversation),
-  );
-  const moveTooltip = !sideChat?.conversationId
-    ? "Send a message first to create this Side Chat."
-    : moveInProgress || conversationStatusLoading
-        ? "Checking whether this Side Chat can be moved…"
-        : canMoveSideChat
-          ? "Make this Side Chat a regular Messenger chat. This tab will close."
-          : "This Side Chat can no longer be moved. Close it instead.";
-
-  return (
-    <ContextMenu
-      onOpenChange={(nextOpen) => {
-        setOpen(nextOpen);
-        if (nextOpen && sideChat?.conversationId) {
-          void conversationQuery.refetch();
-        }
-      }}
-    >
-      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
-      <ContextMenuContent
-        data-testid="chat-side-panel-tab-context-menu"
-        className="surface-overlay z-[70] w-48 text-foreground"
-        onContextMenu={(event) => event.preventDefault()}
-      >
-        {sideChat ? (
-          <>
-            <TooltipProvider delayDuration={300}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <ContextMenuItem
-                    aria-disabled={canMoveSideChat ? undefined : "true"}
-                    data-disabled={canMoveSideChat ? undefined : ""}
-                    onSelect={(event) => {
-                      if (!canMoveSideChat) {
-                        event.preventDefault();
-                        return;
-                      }
-                      onMoveSideChat(sideChat);
-                    }}
-                  >
-                    <MessageSquare />
-                    Move to Messenger
-                  </ContextMenuItem>
-                </TooltipTrigger>
-                <TooltipContent
-                  side={isMobile ? "bottom" : "left"}
-                  align={isMobile ? "start" : "center"}
-                  collisionPadding={8}
-                  className="z-[80] max-w-[calc(100vw-1rem)] whitespace-normal sm:max-w-xs"
-                >
-                  {moveTooltip}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-            <ContextMenuSeparator />
-          </>
-        ) : null}
-        <ContextMenuItem
-          aria-disabled={closeDisabled ? "true" : undefined}
-          data-disabled={closeDisabled ? "" : undefined}
-          onSelect={(event) => {
-            if (closeDisabled) {
-              event.preventDefault();
-              return;
-            }
-            onClose(tab);
-          }}
-        >
-          <X />
-          Close
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
   );
 }
 

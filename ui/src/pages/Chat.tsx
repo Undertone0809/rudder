@@ -1,5 +1,4 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
-import { appendTranscriptEntry } from "@/agent-runtimes/transcript";
 import { agentsApi } from "@/api/agents";
 import { approvalsApi } from "@/api/approvals";
 import { authApi } from "@/api/auth";
@@ -30,7 +29,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
-import { useChatGenerations, type ChatStreamDraft } from "@/context/ChatGenerationContext";
+import { useChatGenerations } from "@/context/ChatGenerationContext";
 import { useDialog } from "@/context/DialogContext";
 import { useI18n } from "@/context/I18nContext";
 import { useImagePreview } from "@/context/ImagePreviewContext";
@@ -79,7 +78,6 @@ import {
   readChatScopedState,
   shouldShowMessageDuringActiveStream,
 } from "@/lib/chat-stream-state";
-import { displayChatTitle } from "@/lib/chat-title";
 import { readDesktopShell } from "@/lib/desktop-shell";
 import { isPreviewableImage } from "@/lib/image-actions";
 import type { AtomicInlineTokenElement } from "@/lib/inline-token-dom";
@@ -105,13 +103,10 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from "@/li
 import { latestSideChatAnchor } from "@/lib/side-chat";
 import { cn } from "@/lib/utils";
 import {
-  buildChatMentionHref,
   type ChatConversation,
-  type ChatGenerationStatus,
   type ChatMessage,
   type ChatOperationProposalDecisionAction,
   type ChatQueuedMessage,
-  type ChatStreamEvent,
   type ChatWorkManifestItem
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -151,154 +146,15 @@ import { PendingAttachmentPreview } from "./Chat.attachments";
 import { AskUserPanel, AssistantDraftItem, ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, OptimisticUserDraftItem, StreamTranscriptItem, chatIssueApprovalPayloadWithProposalOverride, type ChatTurnBranchControls } from "./Chat.messages";
 import { ASK_USER_ANSWER_PREFIX, ApprovalAction, ChatBranchPreview, ChatEmptyStatePromptOptions, ChatEmptyStatePromptStarters, ChatEmptyStateRecentConversations, EmptyStatePromptGroup, EmptyStatePromptSuggestion, INTERRUPTED_CHAT_CONTINUATION_PROMPT, NO_CHAT_AGENT_LABEL, NO_PROJECT_ID, PLAN_MODE_HELP_TEXT, applyChatPromptToDraft, approvalNeedsAction, askUserAnswerFromMessage, askUserRequestFromMessage, buildChatProposalRejectFeedbackPrompt, buildChatProposalRevisionPrompt, buildDraftChatContextLinks, buildMessengerChatThreadSummary, canRefreshAssistantChatMessage, canRefreshDisplayedAssistantChatMessage, chatEmptyStateHeading, chatPromptGroupForExactTrigger, chatPromptQueryKey, chatPromptSuggestionsForDraft, chatSidePanelTargetFromHref, composerMenuPositionForAnchor, computeDisplayedChatMessages, conversationDisplayTitle, draftIssueContextLabel, findLatestUnansweredAskUserMessage, findRetrySourceUserMessage, formatChatPrimaryIssueBreadcrumb, isAskUserMessageAnswered, isChatAgentSelectionLocked, isChatProjectSelectionLocked, isUserVisibleIncomingChatMessage, issueProposalFromMessage, materializePendingAttachment, mergeChatConversationsForStatus, mergeChatMessages, operationProposalFromMessage, operationProposalStatusFromMessage, parseAskUserAnswerMessage, pendingAttachmentKey, projectContextId, projectDisplayName, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, resolveDraftIssueContext, scrollChatMessagesToBottom, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, shouldHandlePlainChatLinkClick, withOptimisticOutgoingMessage, withOptimisticPlanMode } from "./Chat.parts";
 import { ChatScrollMap, countScrollMapUserMessages } from "./Chat.scroll-map";
-import {
-  ChatWorkManifest,
-  ChatWorkManifestToggle,
-  hasChatWorkManifestContent,
-} from "./Chat.work-manifest";
+import { ChatWorkManifest, ChatWorkManifestToggle, hasChatWorkManifestContent } from "./Chat.work-manifest";
+import { CHAT_ISSUE_MENTION_LIMIT, CHAT_LIST_PREVIEW_LIMIT, CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD, CHAT_STEER_RETRY_DELAYS_MS, EMPTY_CHAT_BODY_SHA256, EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS, RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT, RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT, activeGenerationIdFromSnapshot, applyChatStreamProgressEvent, chatMessageJumpTargetFromHref, chatReferenceMarkdown, clipboardAttachmentPayloadKey, createQueuedComposerMessage, findChatMessageElement, isExternalBoundConversation, revealChatMessageElement, sideChatTargetFromMessage, useChatDraftQueries, type PendingChatSteerRetry, type SendButtonMode } from "./Chat.workspace-helpers";
 export * from "./Chat.attachments";
 export * from "./Chat.messages";
 export * from "./Chat.parts";
-type SendButtonMode = "send" | "stop" | "sending" | "stopping" | "queue";
-type PendingChatSteerRetry = {
-  key: string;
-  orgId: string;
-  chatId: string;
-  itemId: string;
-  request: ChatSteerQueuedMessageRequest;
-  retryCount: number;
-  timer: ReturnType<typeof setTimeout> | null;
-  lastFeedbackResult: string | null;
-  transportToastShown: boolean;
-};
-type ChatStreamProgressEvent = Extract<
-  ChatStreamEvent,
-  { type: "assistant_delta" | "assistant_state" | "transcript_entry" }
->;
-const EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS = 250;
-const EMPTY_CHAT_BODY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-const CHAT_STEER_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 5_000] as const;
-const ACTIVE_CHAT_GENERATION_STATUSES = new Set<ChatGenerationStatus>([
-  "starting",
-  "active",
-  "running",
-  "tool_busy",
-  "closing",
-  "stop_requested",
-  "stopping",
-]);
-function activeGenerationIdFromSnapshot(snapshot: {
-  activeGenerationId: string | null;
-  activeGenerationStatus: ChatGenerationStatus | null;
-} | null | undefined) {
-  if (!snapshot?.activeGenerationId) return null;
-  if (snapshot.activeGenerationStatus === null) return snapshot.activeGenerationId;
-  return ACTIVE_CHAT_GENERATION_STATUSES.has(snapshot.activeGenerationStatus)
-    ? snapshot.activeGenerationId
-    : null;
-}
-export function Chat() { const { selectedOrganizationId } = useOrganization();
-  if (!selectedOrganizationId) {
-    return <div className="text-sm text-muted-foreground">Select a organization first.</div>; }
-  return <ChatWorkspace key={selectedOrganizationId} />; }
-function clipboardAttachmentPayloadKey(file: File) {
-  return `${file.name.trim()}\u0000${file.type.trim().toLowerCase()}\u0000${file.size}`;
-}
-function isExternalBoundConversation(conversation: ChatConversation | null | undefined) {
-  return conversation?.mutability === "external_bound_chat";
-}
-
-export function applyChatStreamProgressEvent(
-  current: ChatStreamDraft | null,
-  streamKey: string,
-  event: ChatStreamProgressEvent,
-): ChatStreamDraft | null {
-  if (
-    !current
-    || current.streamKey !== streamKey
-    || (current.state !== "streaming" && current.state !== "finalizing")
-  ) {
-    return current;
-  }
-  if (event.type === "assistant_delta") {
-    return {
-      ...current,
-      body: `${current.body}${event.delta}`,
-      generationId: event.generationId ?? current.generationId ?? null,
-      attemptEpoch: event.attemptEpoch ?? current.attemptEpoch ?? null,
-      lastCommittedRenderSeq: event.generationSeq ?? current.lastCommittedRenderSeq ?? 0,
-      renderedBodyHash: event.bodyHash ?? current.renderedBodyHash ?? EMPTY_CHAT_BODY_SHA256,
-    };
-  }
-  if (event.type === "assistant_state") {
-    return { ...current, state: event.state };
-  }
-  const transcript = [...current.transcript];
-  appendTranscriptEntry(transcript, event.entry);
-  return {
-    ...current,
-    transcript,
-    generationId: event.generationId ?? current.generationId ?? null,
-    attemptEpoch: event.attemptEpoch ?? current.attemptEpoch ?? null,
-    lastCommittedRenderSeq: event.generationSeq ?? current.lastCommittedRenderSeq ?? 0,
-    renderedBodyHash: event.bodyHash ?? current.renderedBodyHash ?? EMPTY_CHAT_BODY_SHA256,
-  };
-}
-function escapeMarkdownLinkLabel(value: string) {
-  return value.replace(/\\/g, "\\\\").replace(/]/g, "\\]");
-}
-function chatReferenceMarkdown(conversation: Pick<ChatConversation, "id" | "title" | "summary">) {
-  const label = escapeMarkdownLinkLabel(displayChatTitle(conversation).trim() || "Chat");
-  return `[${label}](${buildChatMentionHref(conversation.id)})`;
-}
-function chatMessageJumpTargetFromHref(href: string) {
-  try {
-    const url = new URL(href, "http://rudder.local");
-    if (url.protocol !== "chat:") return null;
-
-    const conversationId = `${url.hostname}${url.pathname}`.replace(/^\/+/, "").trim();
-    const messageId = (url.searchParams.get("messageId") ?? url.searchParams.get("targetMessageId") ?? "").trim();
-    if (!conversationId || !messageId) return null;
-    return { conversationId, messageId };
-  } catch {
-    return null;
-  }
-}
-function sideChatTargetFromMessage(conversation: ChatConversation, message: ChatMessage) {
-  return {
-    kind: "side_chat" as const,
-    sourceConversationId: conversation.id,
-    sourceMessageId: message.id,
-    sourcePreview: message.body,
-    conversationId: null,
-    clientMutationId: crypto.randomUUID(),
-    label: "Side Chat",
-  };
-}
-function findChatMessageElement(root: HTMLElement, messageId: string) {
-  const candidates = root.querySelectorAll<HTMLElement>("[data-message-id]");
-  return Array.from(candidates).find((element) => element.dataset.messageId === messageId) ?? null;
-}
-function findChatMessageHighlightElement(target: HTMLElement) {
-  return target.querySelector<HTMLElement>("[data-message-highlight-target='true']") ?? target;
-}
-function revealChatMessageElement(target: HTMLElement) {
-  const highlightTarget = findChatMessageHighlightElement(target);
-  target.scrollIntoView({ block: "center", behavior: "smooth" });
-  target.classList.remove("chat-message-jump-highlight");
-  highlightTarget.classList.remove("chat-message-jump-highlight");
-  void highlightTarget.offsetWidth;
-  highlightTarget.classList.add("chat-message-jump-highlight");
-  window.setTimeout(() => { highlightTarget.classList.remove("chat-message-jump-highlight"); }, 1800);
-}
-const RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT = 5;
-const RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT = 10;
-const CHAT_LIST_PREVIEW_LIMIT = 40;
-const CHAT_ISSUE_MENTION_LIMIT = 50;
-const CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD = 5;
+export { applyChatStreamProgressEvent } from "./Chat.workspace-helpers";
+export function Chat() { const { selectedOrganizationId } = useOrganization(); return selectedOrganizationId ? <ChatWorkspace key={selectedOrganizationId} /> : <div className="text-sm text-muted-foreground">Select a organization first.</div>; }
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm } = useDialog();
-  const { openImagePreview } = useImagePreview();
-  const {
+  const { openImagePreview } = useImagePreview(); const {
     abortChatStream,
     sendInFlightByChatId,
     setChatSendInFlight,
@@ -499,19 +355,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     ? customGroups.find((group) => group.entries.some((entry) => entry.threadKey === selectedConversationThreadKey))?.id ?? null
     : null; const selectedConversationGenerating = Boolean(selectedConversation && (streamDrafts[selectedConversation.id] || sendInFlightByChatId[selectedConversation.id])); const selectedConversationTitleGenerating = Boolean(selectedConversation && generatingChatTitleIds.has(selectedConversation.id)); const draftIssueContext = !selectedConversation ? resolveDraftIssueContext(issues, pendingIssueId) : null; const draftIssueContextId = !selectedConversation && pendingIssueId ? draftIssueContext?.id ?? pendingIssueId : null; const activeAgentId = selectedConversation?.preferredAgentId ?? draftPreferredAgentId; const selectedConversationProjectId = projectContextId(selectedConversation);
   const pendingSelectedConversationProjectId = selectedConversation && pendingProjectContextOverride?.chatId === selectedConversation.id ? pendingProjectContextOverride.projectId : undefined; const activeProjectId = selectedConversation ? (pendingSelectedConversationProjectId ?? selectedConversationProjectId ?? NO_PROJECT_ID) : draftProjectId; const activePlanMode = pendingPlanModeOverride ?? selectedConversation?.planMode ?? draftPlanMode; const activeSkillAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId; const activeSkillAgent = activeSkillAgentId ? (agents ?? []).find((agent) => agent.id === activeSkillAgentId) ?? null : null; const draftProjectScopeKey = `${selectedOrganizationId ?? "__none__"}:${conversationId ?? "new"}:${pendingIssueId || "__no_issue_project__"}`; const draftIssueProjectKey = draftIssueContext?.projectId ?? "__no_issue_project__"; const draftProjectDefaultKey = selectedConversation ? null : `${draftProjectScopeKey}:${activeSkillAgentId ?? "__no_agent__"}:${draftIssueProjectKey}`;
-  const projectConversationsQuery = useQuery({
-    queryKey: queryKeys.chats.listPreview(
-      selectedOrganizationId ?? "__none__",
-      "active",
-      CHAT_LIST_PREVIEW_LIMIT,
-      activeProjectId,
-    ),
-    queryFn: () => chatsApi.list(selectedOrganizationId!, "active", {
-      limit: CHAT_LIST_PREVIEW_LIMIT,
-      projectId: activeProjectId === NO_PROJECT_ID ? undefined : activeProjectId,
-    }),
-    enabled: !!selectedOrganizationId && activeProjectId !== NO_PROJECT_ID,
-  });
   const draftContextLinks = useMemo(
     () => buildDraftChatContextLinks(
       activeProjectId === NO_PROJECT_ID ? null : activeProjectId,
@@ -519,24 +362,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     ),
     [activeProjectId, draftIssueContextId],
   );
-  const draftPreflightQuery = useQuery({
-    queryKey: [
-      "chats",
-      selectedOrganizationId ?? "__none__",
-      "draft-preflight",
-      activeSkillAgentId ?? "__none__",
-      activeProjectId,
-      draftIssueContextId ?? "__none__",
-      activePlanMode,
-    ],
-    queryFn: () => chatsApi.preflightDraft(selectedOrganizationId!, {
-      preferredAgentId: activeSkillAgentId!,
-      issueCreationMode: "manual_approval",
-      planMode: activePlanMode,
-      contextLinks: draftContextLinks,
-    }),
-    enabled: !selectedConversation && Boolean(selectedOrganizationId) && Boolean(activeSkillAgentId),
-    retry: false,
+  const { draftPreflightQuery, projectConversationsQuery } = useChatDraftQueries({
+    selectedOrganizationId,
+    selectedConversation,
+    activeAgentId: activeSkillAgentId,
+    activeProjectId,
+    issueContextId: draftIssueContextId,
+    planMode: activePlanMode,
+    noProjectId: NO_PROJECT_ID,
+    contextLinks: draftContextLinks,
   });
   const {
     data: organizationSkills,
@@ -987,7 +821,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           });
           return;
         }
-
         stopRecoveryRetrier.resolve(recovery);
         stopActionSettled = true;
         const cutoffAccepted = result.stopped || [
@@ -1002,7 +835,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         } else if (streamKey && stopRecoveryStreamKeysRef.current[chatId] === streamKey) {
           delete stopRecoveryStreamKeysRef.current[chatId];
         }
-
         await Promise.allSettled([
           Promise.resolve().then(() => queryClient.invalidateQueries({
             queryKey: queryKeys.chats.messages(orgId, chatId),
@@ -1132,10 +964,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     replayPendingStop();
     window.addEventListener("online", replayPendingStop);
     return () => window.removeEventListener("online", replayPendingStop);
-  }, [conversationId, selectedOrganizationId]); const readComposerDraft = useCallback(
-    () => composerEditorRef.current?.getMarkdown?.() ?? draft,
-    [draft],
-  );
+  }, [conversationId, selectedOrganizationId]); const readComposerDraft = useCallback(() => composerEditorRef.current?.getMarkdown?.() ?? draft, [draft]);
   const queueComposerMessage = async (
     conversation: ChatConversation,
     bodyOverride?: string,
@@ -1153,30 +982,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       pushToast({ title: "Queue does not support new files yet", tone: "error" });
       return false;
     }
-    const queued = await chatsApi.createQueuedMessage(conversation.id, {
-      clientMutationId: `ui:${Date.now()}:${Math.random().toString(36).slice(2)}`,
-      expectedGenerationId: serverActiveGenerationId,
-      payload: {
-        body,
-        attachmentIds: [],
-        skillRefs: [],
-        projectId: activeProjectId === NO_PROJECT_ID ? null : activeProjectId,
-        accessMode: null,
-        model: null,
-        effort: null,
-        metadata: { source: "chat_composer" },
-      },
+    await createQueuedComposerMessage({
+      conversation,
+      body,
+      orgId: selectedOrganizationId,
+      projectId: activeProjectId === NO_PROJECT_ID ? null : activeProjectId,
+      serverActiveGenerationId,
+      queueSnapshot: queueQuery.data,
+      queryClient,
     });
-    queryClient.setQueryData(
-      queryKeys.chats.queue(selectedOrganizationId, conversation.id),
-      (current: Awaited<ReturnType<typeof chatsApi.listQueue>> | undefined) => ({
-        activeGenerationId: current?.activeGenerationId ?? serverActiveGenerationId,
-        activeAttemptEpoch: current?.activeAttemptEpoch ?? queueQuery.data?.activeAttemptEpoch ?? null,
-        activeControlVersion: current?.activeControlVersion ?? queueQuery.data?.activeControlVersion ?? null,
-        activeGenerationStatus: current?.activeGenerationStatus ?? queueQuery.data?.activeGenerationStatus ?? null,
-        items: [...(current?.items ?? []), queued],
-      }),
-    );
     if (options?.clearComposerOnSuccess ?? true) {
       setBranchPreview(null); setDraft(""); clearPendingFilesForCurrentScope();
     }

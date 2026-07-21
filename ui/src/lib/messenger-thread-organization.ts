@@ -1,5 +1,6 @@
 import type { Agent, ChatConversation, MessengerThreadSummary, Project } from "@rudderhq/shared";
 import { isLocalManagedThreadGroupRule, type ThreadOrganizationRule } from "./messenger-preferences";
+import { resolveSourceBadge } from "./source-badge";
 
 export type StandardThreadOrganizationRule = Exclude<ThreadOrganizationRule, "custom" | "latest">;
 
@@ -37,6 +38,99 @@ export interface CustomThreadGroupLayoutInput {
   icon?: string | null;
   pinned: boolean;
   entries: OrganizedThreadEntry[];
+}
+
+export function threadConversationId(threadKey: string) {
+  return threadKey.startsWith("chat:") ? threadKey.slice("chat:".length) : null;
+}
+
+function nonEmptyString(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+export function chatConversationForThreadSummary(
+  thread: MessengerThreadSummary,
+  orgId: string,
+  conversation: ChatConversation | null | undefined,
+): ChatConversation | null {
+  if (thread.kind !== "chat") return null;
+  const conversationId = threadConversationId(thread.threadKey);
+  if (!conversationId) return null;
+
+  const metadata = thread.metadata ?? {};
+  const preferredAgentId = nonEmptyString(metadata.preferredAgentId);
+  const routedAgentId = nonEmptyString(metadata.routedAgentId);
+  const runtimeAgentId = nonEmptyString(metadata.runtimeAgentId);
+  const latestUserMessagePreview = nonEmptyString(metadata.latestUserMessagePreview);
+  const isPinned = typeof thread.isPinned === "boolean" ? thread.isPinned : Boolean(conversation?.isPinned);
+  const sourceBadge = resolveSourceBadge(conversation, metadata);
+  const sourceMetadata = conversation?.sourceMetadata
+    ?? (sourceBadge?.key === "feishu" ? { source: "agent_integration", provider: "feishu" } : null);
+  const mutability = conversation?.mutability
+    ?? (sourceBadge?.key === "feishu" ? "external_bound_chat" : "native_chat");
+  if (conversation) {
+    return {
+      ...conversation,
+      mutability,
+      sourceMetadata,
+      title: thread.title.includes("…") ? conversation.title : thread.title,
+      preferredAgentId: conversation.preferredAgentId ?? preferredAgentId,
+      routedAgentId: conversation.routedAgentId ?? routedAgentId,
+      chatRuntime: {
+        ...conversation.chatRuntime,
+        runtimeAgentId: conversation.chatRuntime?.runtimeAgentId ?? runtimeAgentId,
+      },
+      lastReadAt: thread.lastReadAt ?? conversation.lastReadAt,
+      unreadCount: thread.unreadCount,
+      isUnread: thread.unreadCount > 0,
+      needsAttention: thread.needsAttention,
+      isPinned,
+    };
+  }
+
+  const activityAt = thread.latestActivityAt ? new Date(thread.latestActivityAt) : new Date();
+  const preview = thread.preview ?? thread.subtitle ?? null;
+  return {
+    id: conversationId,
+    orgId,
+    status: "active",
+    mutability,
+    title: thread.title,
+    summary: null,
+    latestReplyPreview: preview,
+    latestUserMessagePreview,
+    userMessageCount: 0,
+    preferredAgentId,
+    routedAgentId,
+    primaryIssueId: null,
+    forkedFromConversationId: null,
+    forkedFromMessageId: null,
+    forkRootConversationId: null,
+    primaryIssue: null,
+    issueCreationMode: "manual_approval",
+    planMode: false,
+    createdByUserId: null,
+    lastMessageAt: activityAt,
+    lastReadAt: thread.lastReadAt,
+    isPinned,
+    isUnread: thread.unreadCount > 0,
+    unreadCount: thread.unreadCount,
+    needsAttention: thread.needsAttention,
+    resolvedAt: null,
+    contextLinks: [],
+    chatRuntime: {
+      sourceType: "unconfigured",
+      sourceLabel: "Agent unavailable",
+      runtimeAgentId,
+      agentRuntimeType: null,
+      model: null,
+      available: false,
+      error: null,
+    },
+    sourceMetadata,
+    createdAt: activityAt,
+    updatedAt: activityAt,
+  };
 }
 
 export function flattenThreadSectionEntries(

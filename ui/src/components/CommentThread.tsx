@@ -15,12 +15,12 @@ import { Check, ChevronDown, Copy, Link2, MoreHorizontal, Paperclip, Pencil, Ter
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import type { TranscriptEntry } from "../agent-runtimes";
-import type { LiveRunForIssue } from "../api/agent-runs";
 import { formatChatAgentLabel } from "../lib/agent-labels";
 import { resolveOperatorDisplayName } from "../lib/operator-display";
 import { formatRunDurationLabel, formatRunTimingTitle, isRunTimingActive } from "../lib/run-duration-label";
 import { formatDateTime, relativeTime } from "../lib/utils";
 import { AgentIdentity } from "./AgentAvatar";
+import { commentThreadTranscriptRuns, type LinkedRunItem } from "./CommentThread.runs";
 import { Identity } from "./Identity";
 import type { MarkdownAgentMentionPreview, MarkdownLinkClickHandler } from "./MarkdownBody";
 import { MarkdownBody } from "./MarkdownBody";
@@ -38,19 +38,6 @@ const COMMENT_HASH_SCROLL_CANCEL_EVENTS = ["wheel", "touchstart", "pointerdown",
 interface CommentWithRunMeta extends IssueComment {
   runId?: string | null;
   runAgentId?: string | null;
-}
-
-interface LinkedRunItem {
-  runId: string;
-  status: string;
-  agentId: string;
-  createdAt: Date | string;
-  startedAt: Date | string | null;
-  finishedAt?: Date | string | null;
-  invocationSource?: string;
-  triggerDetail?: string | null;
-  contextSnapshot?: Record<string, unknown> | null;
-  resultJson?: Record<string, unknown> | null;
 }
 
 export interface CommentThreadActivityItem {
@@ -1097,25 +1084,10 @@ export function CommentThread({
     });
   }, [activityItems, linkedRuns, visibleComments]);
 
-  const transcriptRuns = useMemo<LiveRunForIssue[]>(() => {
-    return linkedRuns.map((run) => {
-      const agent = agentMap?.get(run.agentId);
-      return {
-        id: run.runId,
-        status: run.status,
-        invocationSource: "issue_timeline",
-        triggerDetail: null,
-        startedAt: typeof run.startedAt === "string" ? run.startedAt : run.startedAt?.toISOString() ?? null,
-        finishedAt: typeof run.finishedAt === "string" ? run.finishedAt : run.finishedAt?.toISOString() ?? null,
-        createdAt: typeof run.createdAt === "string" ? run.createdAt : run.createdAt.toISOString(),
-        agentId: run.agentId,
-        agentName: agent?.name ?? run.agentId.slice(0, 8),
-        agentRuntimeType: agent?.agentRuntimeType ?? "process",
-        issueId: null,
-        resultJson: run.resultJson ?? null,
-      };
-    });
-  }, [agentMap, linkedRuns]);
+  const transcriptRuns = useMemo(
+    () => commentThreadTranscriptRuns(linkedRuns, agentMap),
+    [agentMap, linkedRuns],
+  );
 
   const hydratedTranscriptRuns = useMemo(() => (
     transcriptRuns.filter((run) =>

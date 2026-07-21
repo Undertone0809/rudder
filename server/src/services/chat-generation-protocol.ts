@@ -9,24 +9,31 @@ import {
 } from "@rudderhq/db";
 import type {
   ChatControlDisposition,
-  ChatGenerationEventKind,
   ChatGenerationStatus,
-  ChatStreamTranscriptEntry,
+  ChatStreamTranscriptEntry
 } from "@rudderhq/shared";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
+import {
+  assertGenerationFence,
+  EMPTY_BODY_SHA256,
+  lockGeneration,
+  nextGenerationSeq,
+  normalizeBodyHash,
+  SHA256_PATTERN,
+  type AppendEventFields,
+  type ChatGenerationProtocolTransaction,
+} from "./chat-generation-protocol.helpers.js";
 import { withPersistedTranscript } from "./chats.helpers.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
+
+export { hashChatGenerationBody } from "./chat-generation-protocol.helpers.js";
 
 type GenerationRow = typeof chatGenerations.$inferSelect;
 type GenerationEventRow = typeof chatGenerationEvents.$inferSelect;
 type ControlActionRow = typeof chatControlActions.$inferSelect;
 type TerminalOutboxRow = typeof chatGenerationTerminalOutbox.$inferSelect;
-
-export type ChatGenerationProtocolTransaction = Parameters<
-  Parameters<Db["transaction"]>[0]
->[0];
 
 const OUTPUT_ADMITTING_GENERATION_STATUSES = [
   "starting",
@@ -54,94 +61,6 @@ const PROJECTABLE_TERMINAL_STATUSES = [
   "interrupted_unverified",
   "control_lost",
 ] as const satisfies readonly ChatGenerationStatus[];
-
-const EMPTY_BODY_SHA256 = createHash("sha256").update("").digest("hex");
-const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
-
-export function hashChatGenerationBody(body: string): string {
-  return createHash("sha256").update(body).digest("hex");
-}
-
-function normalizeBodyHash(value: string): string {
-  if (!SHA256_PATTERN.test(value)) {
-    throw unprocessable("Chat generation body hash must be a SHA-256 hex digest");
-  }
-  return value.toLowerCase();
-}
-
-function assertGenerationFence(
-  generation: GenerationRow,
-  input: {
-    conversationId?: string;
-    expectedAttemptEpoch: number;
-    expectedOwnerToken?: string | null;
-  },
-) {
-  if (input.conversationId && generation.conversationId !== input.conversationId) {
-    throw notFound("Chat generation not found");
-  }
-  if (generation.attemptEpoch !== input.expectedAttemptEpoch) {
-    throw conflict("Chat generation runtime attempt changed");
-  }
-  if (
-    input.expectedOwnerToken !== undefined
-    && generation.controlOwnerToken !== input.expectedOwnerToken
-  ) {
-    throw conflict("Chat generation control owner changed");
-  }
-}
-
-async function lockGeneration(
-  tx: ChatGenerationProtocolTransaction,
-  input: { orgId: string; generationId: string; conversationId?: string },
-): Promise<GenerationRow> {
-  await tx.execute(sql`
-    select ${chatGenerations.id}
-    from ${chatGenerations}
-    where ${chatGenerations.id} = ${input.generationId}
-      and ${chatGenerations.orgId} = ${input.orgId}
-    for update
-  `);
-  const generation = await tx
-    .select()
-    .from(chatGenerations)
-    .where(and(
-      eq(chatGenerations.id, input.generationId),
-      eq(chatGenerations.orgId, input.orgId),
-    ))
-    .limit(1)
-    .then((rows) => rows[0] ?? null);
-  if (!generation || (input.conversationId && generation.conversationId !== input.conversationId)) {
-    throw notFound("Chat generation not found");
-  }
-  return generation;
-}
-
-async function nextGenerationSeq(
-  tx: ChatGenerationProtocolTransaction,
-  generationId: string,
-): Promise<number> {
-  return tx
-    .select({ value: sql<number>`coalesce(max(${chatGenerationEvents.generationSeq}), 0) + 1` })
-    .from(chatGenerationEvents)
-    .where(eq(chatGenerationEvents.generationId, generationId))
-    .then((rows) => Number(rows[0]?.value ?? 1));
-}
-
-type AppendEventFields = {
-  orgId: string;
-  generationId: string;
-  attemptEpoch: number;
-  eventKind: ChatGenerationEventKind;
-  payload?: Record<string, unknown>;
-  bodyOffset?: number | null;
-  bodyLength?: number | null;
-  assistantMessageId?: string | null;
-  runId?: string | null;
-  controlActionId?: string | null;
-  queueItemId?: string | null;
-  emittedAt?: Date | null;
-};
 
 async function appendEventLocked(
   tx: ChatGenerationProtocolTransaction,

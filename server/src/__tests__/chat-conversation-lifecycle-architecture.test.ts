@@ -4,7 +4,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const SERVER_SRC = fileURLToPath(new URL("../", import.meta.url));
-const APPROVED_WRITERS = new Set(["services/chats.ts", "services/side-chats.ts"]);
+const APPROVED_WRITERS = new Set([
+  "services/chats.create.ts",
+  "services/chats.ts",
+  "services/side-chats.ts",
+]);
 
 function productionTypeScriptFiles(directory: string): string[] {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {

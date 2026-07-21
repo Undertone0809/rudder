@@ -76,8 +76,11 @@ import {
   Sparkles
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
+import { chatForkSystemMessageParts, readStructuredPayloadString, sideChatStartedSystemMessageParts } from "./Chat.message-system-parts";
 import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, statusChipClassName } from "./Chat.parts";
 import { ChatInlineVisualContent } from "./ChatInlineVisual";
+
+export { readStructuredPayloadString } from "./Chat.message-system-parts";
 
 export function ChatAssistantAttributionRow({
   replyingAgentId,
@@ -1370,22 +1373,6 @@ export function ChatUserPlainTextBody({
   );
 }
 
-export function readStructuredPayloadString(payload: Record<string, unknown> | null, key: string): string | null {
-  const value = payload?.[key];
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-function legacyChatForkSourceTitleFromBody(body: string, sourceConversationId: string) {
-  const linkPattern = /\[([^\]]+)\]\(chat:\/\/([^)]+)\)/g;
-  let match: RegExpExecArray | null;
-  while ((match = linkPattern.exec(body)) !== null) {
-    const title = match[1]?.trim();
-    const linkedConversationId = match[2]?.split(/[?#]/)[0]?.trim();
-    if (title && linkedConversationId === sourceConversationId) return title;
-  }
-  return null;
-}
-
 export function issueCreatedSystemMessageParts(message: ChatMessage) {
   const payload = message.structuredPayload;
   if (!payload || payload.eventType !== "issue_created") return null;
@@ -1440,42 +1427,6 @@ function automationSourceSystemMessageParts(message: ChatMessage) {
   return {
     automationId,
     automationTitle,
-  };
-}
-
-function chatForkSystemMessageParts(message: ChatMessage) {
-  const payload = message.structuredPayload;
-  if (!payload || (payload.eventType !== "chat_fork" && payload.type !== "chat_fork")) return null;
-
-  const sourceConversationId = readStructuredPayloadString(payload, "sourceConversationId");
-  const sourceMessageId = readStructuredPayloadString(payload, "sourceMessageId");
-  if (!sourceConversationId) return null;
-  const sourceConversationTitle =
-    readStructuredPayloadString(payload, "sourceConversationTitle")
-    ?? legacyChatForkSourceTitleFromBody(message.body, sourceConversationId)
-    ?? "source chat";
-
-  return {
-    sourceConversationId,
-    sourceConversationTitle,
-    sourceMessageId,
-  };
-}
-
-function sideChatStartedSystemMessageParts(message: ChatMessage) {
-  const payload = message.structuredPayload;
-  if (!payload || payload.eventType !== "side_chat_started") return null;
-
-  const sourceConversationId = readStructuredPayloadString(payload, "sourceConversationId");
-  if (!sourceConversationId) return null;
-  const sourceConversationTitle =
-    readStructuredPayloadString(payload, "sourceConversationTitle")
-    ?? legacyChatForkSourceTitleFromBody(message.body, sourceConversationId)
-    ?? "source chat";
-
-  return {
-    sourceConversationId,
-    sourceConversationTitle,
   };
 }
 

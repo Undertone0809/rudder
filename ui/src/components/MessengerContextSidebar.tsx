@@ -24,7 +24,6 @@ import {
   ChatThreadRow,
   conversationDisplayTitle,
   MessengerDragHandle,
-  nonEmptyString,
   sanitizeThreadKey,
   ThreadRow,
   type SortableDragHandleProps
@@ -88,6 +87,7 @@ import {
 } from "@/lib/messenger-query-cache";
 import { messengerThreadKindLabel } from "@/lib/messenger-thread-labels";
 import {
+  chatConversationForThreadSummary,
   customGroupIdFromSectionKey,
   customGroupSectionKey,
   dedupeThreadSummariesByKey,
@@ -104,6 +104,7 @@ import {
   sortManagedThreadSections,
   splitIssueThreadWatermark,
   storedThreadSectionIdToKey,
+  threadConversationId,
   threadMatchesMessengerIssueRoute,
   threadSectionKeyToStoredId,
   type OrganizedThreadEntry,
@@ -141,7 +142,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { buildChatMentionHref, type Agent, type ChatConversation, type MessengerCustomGroupHydratedEntry, type MessengerCustomGroupHydratedThreadEntry, type MessengerCustomGroupWithEntries, type Project } from "@rudderhq/shared";
+import { buildChatMentionHref, type Agent, type ChatConversation, type MessengerCustomGroupHydratedEntry, type MessengerCustomGroupHydratedThreadEntry, type MessengerCustomGroupWithEntries, type MessengerThreadSummary, type Project } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown,
@@ -279,10 +280,6 @@ function ContextColumnHeader({
 
 function isMessengerSystemThreadKind(kind: string): kind is "failed-runs" | "budget-alerts" | "join-requests" {
   return kind === "failed-runs" || kind === "budget-alerts" || kind === "join-requests";
-}
-
-function threadConversationId(threadKey: string) {
-  return threadKey.startsWith("chat:") ? threadKey.slice("chat:".length) : null;
 }
 
 function threadOrganizationLabel(rule: ThreadOrganizationRule) {
@@ -516,93 +513,6 @@ function useMeasuredSortableNode(setNodeRef: ReturnType<typeof useSortable>["set
   }, [node, updateMeasuredRect]);
 
   return { measureNow, measuredRect, setMeasuredNodeRef };
-}
-
-type MessengerThreadSummaryItem = ReturnType<typeof useMessengerModel>["threadSummaries"][number];
-
-function chatConversationForThreadSummary(
-  thread: MessengerThreadSummaryItem,
-  orgId: string,
-  conversation: ChatConversation | null | undefined,
-): ChatConversation | null {
-  if (thread.kind !== "chat") return null;
-  const conversationId = threadConversationId(thread.threadKey);
-  if (!conversationId) return null;
-
-  const metadata = thread.metadata ?? {};
-  const preferredAgentId = nonEmptyString(metadata.preferredAgentId);
-  const routedAgentId = nonEmptyString(metadata.routedAgentId);
-  const runtimeAgentId = nonEmptyString(metadata.runtimeAgentId);
-  const latestUserMessagePreview = nonEmptyString(metadata.latestUserMessagePreview);
-  const isPinned = typeof thread.isPinned === "boolean" ? thread.isPinned : Boolean(conversation?.isPinned);
-  const sourceBadge = resolveSourceBadge(conversation, metadata);
-  const sourceMetadata = conversation?.sourceMetadata
-    ?? (sourceBadge?.key === "feishu" ? { source: "agent_integration", provider: "feishu" } : null);
-  const mutability = conversation?.mutability
-    ?? (sourceBadge?.key === "feishu" ? "external_bound_chat" : "native_chat");
-  if (conversation) {
-    return {
-      ...conversation,
-      mutability,
-      sourceMetadata,
-      title: thread.title.includes("…") ? conversation.title : thread.title,
-      preferredAgentId: conversation.preferredAgentId ?? preferredAgentId,
-      routedAgentId: conversation.routedAgentId ?? routedAgentId,
-      chatRuntime: {
-        ...conversation.chatRuntime,
-        runtimeAgentId: conversation.chatRuntime?.runtimeAgentId ?? runtimeAgentId,
-      },
-      lastReadAt: thread.lastReadAt ?? conversation.lastReadAt,
-      unreadCount: thread.unreadCount,
-      isUnread: thread.unreadCount > 0,
-      needsAttention: thread.needsAttention,
-      isPinned,
-    };
-  }
-
-  const activityAt = thread.latestActivityAt ? new Date(thread.latestActivityAt) : new Date();
-  const preview = thread.preview ?? thread.subtitle ?? null;
-  return {
-    id: conversationId,
-    orgId,
-    status: "active",
-    mutability,
-    title: thread.title,
-    summary: null,
-    latestReplyPreview: preview,
-    latestUserMessagePreview,
-    userMessageCount: 0,
-    preferredAgentId,
-    routedAgentId,
-    primaryIssueId: null,
-    forkedFromConversationId: null,
-    forkedFromMessageId: null,
-    forkRootConversationId: null,
-    primaryIssue: null,
-    issueCreationMode: "manual_approval",
-    planMode: false,
-    createdByUserId: null,
-    lastMessageAt: activityAt,
-    lastReadAt: thread.lastReadAt,
-    isPinned,
-    isUnread: thread.unreadCount > 0,
-    unreadCount: thread.unreadCount,
-    needsAttention: thread.needsAttention,
-    resolvedAt: null,
-    contextLinks: [],
-    chatRuntime: {
-      sourceType: "unconfigured",
-      sourceLabel: "Agent unavailable",
-      runtimeAgentId,
-      agentRuntimeType: null,
-      model: null,
-      available: false,
-      error: null,
-    },
-    sourceMetadata,
-    createdAt: activityAt,
-    updatedAt: activityAt,
-  };
 }
 
 export function MessengerContextSidebar() {
@@ -954,7 +864,7 @@ export function MessengerContextSidebar() {
     if (locallyReadThreadWatermarks.size === 0) return;
     setLocallyReadThreadWatermarks((current) => {
       const next = new Map(current);
-      const sourceThreadsByKey = new Map<string, MessengerThreadSummaryItem[]>();
+      const sourceThreadsByKey = new Map<string, MessengerThreadSummary[]>();
       for (const thread of model.threadSummaries) {
         sourceThreadsByKey.set(thread.threadKey, [...sourceThreadsByKey.get(thread.threadKey) ?? [], thread]);
       }
@@ -1195,7 +1105,7 @@ export function MessengerContextSidebar() {
     closeMobileSidebar();
   };
 
-  const handleMessengerThreadSelect = (thread: MessengerThreadSummaryItem) => {
+  const handleMessengerThreadSelect = (thread: MessengerThreadSummary) => {
     const orgId = model.selectedOrganizationId;
     handleMessengerEntrySelect(thread.href);
     if (!orgId || (thread.unreadCount === 0 && !thread.needsAttention)) return;
@@ -1626,7 +1536,7 @@ export function MessengerContextSidebar() {
     }));
   };
 
-  const handleHideIssueThread = (thread: MessengerThreadSummaryItem) => {
+  const handleHideIssueThread = (thread: MessengerThreadSummary) => {
     const watermark = splitIssueThreadWatermark(thread);
     if (!watermark || !hiddenIssueThreadsStorageKey) return;
     setHiddenIssueThreadWatermarks((current) => {

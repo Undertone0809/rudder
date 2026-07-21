@@ -252,7 +252,6 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
       .then((rows) => rows[0] ?? null);
     if (existingRun?.linkedChatConversationId) return existingRun.linkedChatConversationId;
     if (!existingRun) return null;
-
     const source = existingRun.source as "schedule" | "manual" | "api" | "webhook";
     const created = await chatSvc.createWithInitialMessage(input.automation.orgId, {
         title: input.automation.title || "New chat",

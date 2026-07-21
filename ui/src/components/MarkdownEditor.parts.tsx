@@ -147,6 +147,27 @@ export function hasCanonicalRudderReference(markdown: string) {
   });
 }
 
+export function hasUnrenderedCanonicalRudderReference(markdown: string, editable: HTMLElement) {
+  let requiredMentionCount = 0;
+  let requiredSkillCount = 0;
+
+  for (const match of findCanonicalReferenceCandidates(markdown)) {
+    const label = match[1] ?? "";
+    const href = match[2] ?? "";
+    if (parseMentionChipHref(href)) {
+      requiredMentionCount += 1;
+    } else if (parseSkillReference(href, label)) {
+      requiredSkillCount += 1;
+    }
+  }
+
+  if (requiredMentionCount === 0 && requiredSkillCount === 0) return false;
+
+  const renderedMentionCount = editable.querySelectorAll("[data-mention-kind]").length;
+  const renderedSkillCount = editable.querySelectorAll("[data-skill-token='true']").length;
+  return requiredMentionCount > renderedMentionCount || requiredSkillCount > renderedSkillCount;
+}
+
 export function getMdastSourceSlice(node: unknown, markdown: string) {
   const positioned = node as {
     position?: {

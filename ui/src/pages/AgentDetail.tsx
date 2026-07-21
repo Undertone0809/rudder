@@ -447,7 +447,6 @@ export function AgentDetail() {
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(resolvedCompanyId) });
     },
   });
-
   const updateIcon = useMutation({
     scope: { id: `agent-avatar:${agentLookupRef}` },
     mutationFn: (icon: string | null) => agentsApi.update(agentLookupRef, { icon }, resolvedCompanyId ?? undefined),
@@ -463,7 +462,6 @@ export function AgentDetail() {
       setActionError(err instanceof Error ? err.message : "Failed to update avatar");
     },
   });
-
   const uploadAvatar = useMutation({
     scope: { id: `agent-avatar:${agentLookupRef}` },
     mutationFn: (file: File) => agentsApi.uploadAvatar(agentLookupRef, file, resolvedCompanyId ?? undefined),

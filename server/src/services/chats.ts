@@ -18,7 +18,7 @@ import {
   messengerCustomGroups,
   organizations
 } from "@rudderhq/db";
-import { chatInlineVisualMappingsFromStructuredPayload, MESSENGER_FORK_GROUP_DEFAULT_ICON, sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatConversation, type ChatConversationMutability, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessage, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
+import { chatInlineVisualMappingsFromStructuredPayload, MESSENGER_FORK_GROUP_DEFAULT_ICON, sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatProviderControlDisposition, type ChatQueuedMessage, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
 import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
@@ -26,109 +26,14 @@ import { logActivity } from "./activity-log.js";
 import { agentService } from "./agents.js";
 import { approvalService } from "./approvals.js";
 import { chatGenerationProtocolService } from "./chat-generation-protocol.js";
-import { issueApprovalService } from "./issue-approvals.js";
-import { issueService } from "./issues.js";
-import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
-import { organizationService } from "./orgs.js";
-import { isPostgresError } from "./postgres-errors.js";
-
-type ConversationRow = typeof chatConversations.$inferSelect;
-type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
-type MessageRow = typeof chatMessages.$inferSelect;
-type ChatQueuedMessageRow = typeof chatQueuedMessages.$inferSelect;
-type ChatGenerationRow = typeof chatGenerations.$inferSelect;
-type ChatControlActionRow = typeof chatControlActions.$inferSelect;
-export type ChatServerQueueClaim = {
-  item: ChatQueuedMessage;
-  generationId: string;
-  userMessageId: string;
-  leaseToken: string;
-  leaseEpoch: number;
-};
-type MessageHydrationRow = MessageRow & {
-  transcriptSummary?: {
-    entryCount: number;
-    startedAt: string | null;
-    endedAt: string | null;
-  } | null;
-};
-type ConversationSummaryCursor = {
-  activityAt: Date;
-  title: string;
-  threadKey: string;
-};
-type ConversationSourceMetadata = {
-  source: "agent_integration";
-  provider: string;
-  integrationId: string;
-  externalChatId: string;
-  externalChatType: string;
-};
-type ContextLinkRow = typeof chatContextLinks.$inferSelect;
-type ApprovalRow = typeof approvals.$inferSelect;
-
-const CHAT_TITLE_MAX_LENGTH = 200;
-const FORK_TITLE_SUFFIX_PATTERN = / \(([1-9]\d*)\)$/;
-const ACTIVE_CHAT_GENERATION_STATUSES = [
-  "starting",
-  "active",
-  "running",
-  "tool_busy",
-  "closing",
-  "stop_requested",
-  "stopping",
-] as const;
-const NATIVE_STEER_GENERATION_STATUSES = ["starting", "active", "running", "tool_busy"] as const;
-const SERVER_QUEUE_RUNNING_STATUSES = ["dequeue_claimed", "running_next"] as const;
-const CHAT_GENERATION_CONTROL_LEASE_MS = 30_000;
-
-function baseForkTitle(title: string, sourceIsFork: boolean, familyTitles: Set<string>) {
-  const trimmed = title.trim() || "Forked conversation";
-  if (!sourceIsFork) return trimmed;
-  const match = trimmed.match(FORK_TITLE_SUFFIX_PATTERN);
-  const index = Number(match?.[1]);
-  if (!match || index < 2) return trimmed;
-  for (const familyTitle of familyTitles) {
-    const candidateBase = familyTitle.trim();
-    if (!candidateBase || candidateBase === trimmed) continue;
-    if (numberedForkTitle(candidateBase, index) !== trimmed) continue;
-    if (index === 2 || familyTitles.has(numberedForkTitle(candidateBase, index - 1))) {
-      return candidateBase;
-    }
-  }
-  return trimmed;
-}
-
-function numberedForkTitle(baseTitle: string, index: number) {
-  const suffix = ` (${index})`;
-  const availableBaseLength = CHAT_TITLE_MAX_LENGTH - suffix.length;
-  const truncatedBase = baseTitle.slice(0, availableBaseLength).trimEnd() || "Forked conversation";
-  return `${truncatedBase}${suffix}`;
-}
-
-function nextForkTitle(source: ConversationRow, familyTitles: string[]) {
-  const existingTitles = new Set(familyTitles);
-  const baseTitle = baseForkTitle(source.title, Boolean(source.forkedFromConversationId), existingTitles);
-  let index = 2;
-  while (existingTitles.has(numberedForkTitle(baseTitle, index))) index += 1;
-  return numberedForkTitle(baseTitle, index);
-}
-
-function conversationMutability(
-  row: ConversationRow,
-  sourceMetadata: ConversationSourceMetadata | null | undefined,
-  sourceMetadataByConversationId: Map<string, ConversationSourceMetadata>,
-): ChatConversationMutability {
-  if (sourceMetadata) return "external_bound_chat";
-  if (
-    (row.forkedFromConversationId && sourceMetadataByConversationId.has(row.forkedFromConversationId)) ||
-    (row.forkRootConversationId && sourceMetadataByConversationId.has(row.forkRootConversationId))
-  ) {
-    return "native_fork_from_external";
-  }
-  return "native_chat";
-}
-
+import {
+  ACTIVE_CHAT_GENERATION_STATUSES,
+  CHAT_GENERATION_CONTROL_LEASE_MS,
+  NATIVE_STEER_GENERATION_STATUSES,
+  SERVER_QUEUE_RUNNING_STATUSES,
+} from "./chats.constants.js";
+import { createChatConversation, createChatWithInitialMessage, type CreateChatInput, type CreateChatWithInitialMessageInput } from "./chats.create.js";
+import { conversationMutability, nextForkTitle } from "./chats.fork-helpers.js";
 import {
   buildSearchSnippet,
   CHAT_TRANSCRIPT_KEY,
@@ -152,6 +57,24 @@ import {
   withOperationProposalDecisionState,
   withPersistedTranscript,
 } from "./chats.helpers.js";
+import type { ChatServerQueueClaim, ConversationSourceMetadata, ConversationSummaryCursor, MessageHydrationRow } from "./chats.types.js";
+import { issueApprovalService } from "./issue-approvals.js";
+import { issueService } from "./issues.js";
+import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
+import { organizationService } from "./orgs.js";
+import { isPostgresError } from "./postgres-errors.js";
+
+type ConversationRow = typeof chatConversations.$inferSelect;
+type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
+type MessageRow = typeof chatMessages.$inferSelect;
+type ChatQueuedMessageRow = typeof chatQueuedMessages.$inferSelect;
+type ChatGenerationRow = typeof chatGenerations.$inferSelect;
+type ChatControlActionRow = typeof chatControlActions.$inferSelect;
+type ApprovalRow = typeof approvals.$inferSelect;
+
+const CHAT_TITLE_MAX_LENGTH = 200;
+
+export type { ChatServerQueueClaim } from "./chats.types.js";
 
 export function chatService(db: Db) {
   const generationProtocol = chatGenerationProtocolService(db);
@@ -2998,197 +2921,17 @@ export function chatService(db: Db) {
       return conversation ?? null;
   }
 
-  async function create(orgId: string, data: {
-      title?: string;
-      summary?: string | null;
-      preferredAgentId?: string | null;
-      issueCreationMode: "manual_approval" | "auto_create";
-      planMode: boolean;
-      createdByUserId: string | null;
-      contextLinks?: Array<{ entityType: "issue" | "project" | "agent"; entityId: string; metadata?: Record<string, unknown> | null }>;
-    }) {
-      const created = await db.transaction(async (tx) => {
-        const [conversation] = await tx
-          .insert(chatConversations)
-          .values({
-            orgId,
-            title: data.title?.trim() || "New chat",
-            summary: data.summary ?? null,
-            preferredAgentId: data.preferredAgentId ?? null,
-            issueCreationMode: data.issueCreationMode,
-            planMode: data.planMode,
-            createdByUserId: data.createdByUserId,
-          })
-          .returning();
-        if (!conversation) throw new Error("Failed to create chat conversation");
-
-        const contextLinks = data.contextLinks ?? [];
-        if (contextLinks.length > 0) {
-          await tx
-            .insert(chatContextLinks)
-            .values(
-              contextLinks.map((link) => ({
-                orgId,
-                conversationId: conversation.id,
-                entityType: link.entityType,
-                entityId: link.entityId,
-                metadata: link.metadata ?? null,
-              })),
-            )
-            .onConflictDoNothing();
-        }
-
-        return conversation;
-      });
-      return getById(created.id);
+  async function create(orgId: string, data: CreateChatInput) {
+    const created = await createChatConversation(db, orgId, data);
+    return getById(created.id);
   }
 
-  async function createWithInitialMessage(orgId: string, data: {
-      title?: string;
-      summary?: string | null;
-      preferredAgentId?: string | null;
-      issueCreationMode: "manual_approval" | "auto_create";
-      planMode: boolean;
-      createdByUserId: string | null;
-      contextLinks?: Array<{ entityType: "issue" | "project" | "agent"; entityId: string; metadata?: Record<string, unknown> | null }>;
-      initialMessage: {
-        role: "user" | "assistant" | "system";
-        kind: "message" | "ask_user" | "issue_proposal" | "operation_proposal" | "system_event";
-        status: "streaming" | "completed" | "stopped" | "failed" | "interrupted";
-        body: string;
-        structuredPayload?: Record<string, unknown> | null;
-        replyingAgentId?: string | null;
-        chatTurnId?: string | null;
-      };
-      activity?: {
-        actorType: "agent" | "user" | "system";
-        actorId: string;
-        agentId?: string | null;
-        runId?: string | null;
-      };
-    }, executor?: Db): Promise<{ conversation: ChatConversation; message: ChatMessage }> {
-      const persist = async (client: Db) => {
-        const now = new Date();
-        const normalizedBody = data.initialMessage.body.trim();
-        if (!normalizedBody) throw unprocessable("Initial chat message body is required");
-        const deterministicTitle = normalizedBody.replace(/\s+/g, " ").slice(0, CHAT_TITLE_MAX_LENGTH);
-        const [conversationRow] = await client
-          .insert(chatConversations)
-          .values({
-            orgId,
-            title: data.title?.trim() || deterministicTitle,
-            summary: data.summary ?? null,
-            preferredAgentId: data.preferredAgentId ?? null,
-            issueCreationMode: data.issueCreationMode,
-            planMode: data.planMode,
-            createdByUserId: data.createdByUserId,
-            lastMessageAt: now,
-            updatedAt: now,
-          })
-          .returning();
-        if (!conversationRow) throw new Error("Failed to create chat conversation");
-
-        const contextLinks = data.contextLinks ?? [];
-        let contextRows: ContextLinkRow[] = [];
-        if (contextLinks.length > 0) {
-          contextRows = await client
-            .insert(chatContextLinks)
-            .values(contextLinks.map((link) => ({
-              orgId,
-              conversationId: conversationRow.id,
-              entityType: link.entityType,
-              entityId: link.entityId,
-              metadata: link.metadata ?? null,
-            })))
-            .onConflictDoNothing()
-            .returning();
-        }
-
-        const structuredPayload = sanitizeChatStructuredPayload(data.initialMessage.structuredPayload ?? null);
-        const [messageRow] = await client
-          .insert(chatMessages)
-          .values({
-            orgId,
-            conversationId: conversationRow.id,
-            role: data.initialMessage.role,
-            kind: data.initialMessage.kind,
-            status: data.initialMessage.status,
-            body: normalizedBody,
-            structuredPayload,
-            replyingAgentId: data.initialMessage.replyingAgentId ?? null,
-            chatTurnId: data.initialMessage.chatTurnId ?? (data.initialMessage.role === "user" ? randomUUID() : null),
-            turnVariant: 0,
-            createdAt: now,
-            updatedAt: now,
-          })
-          .returning();
-        if (!messageRow) throw new Error("Failed to create initial chat message");
-
-        if (data.activity) {
-          const activity = data.activity;
-          await logActivity(client, {
-            orgId,
-            actorType: activity.actorType,
-            actorId: activity.actorId,
-            agentId: activity.agentId ?? null,
-            runId: activity.runId ?? null,
-            action: "chat.created",
-            entityType: "chat",
-            entityId: conversationRow.id,
-            details: {
-              title: conversationRow.title,
-              contextLinkCount: contextLinks.length,
-            },
-          });
-          await logActivity(client, {
-            orgId,
-            actorType: activity.actorType,
-            actorId: activity.actorId,
-            agentId: activity.agentId ?? null,
-            runId: activity.runId ?? null,
-            action: "chat.message_added",
-            entityType: "chat",
-            entityId: conversationRow.id,
-            details: {
-              messageId: messageRow.id,
-              role: messageRow.role,
-              kind: messageRow.kind,
-              status: messageRow.status,
-              preview: messageRow.body.slice(0, 280),
-            },
-          });
-        }
-
-        const conversation = {
-          ...conversationRow,
-          primaryIssue: null,
-          latestReplyPreview: messageRow.role === "assistant" ? messageRow.body.slice(0, 280) : null,
-          latestUserMessagePreview: messageRow.role === "user" ? messageRow.body.slice(0, 280) : null,
-          userMessageCount: messageRow.role === "user" ? 1 : 0,
-          contextLinks: contextRows.map((row) => ({ ...row, entity: null })),
-          sourceMetadata: null,
-          mutability: "native_chat" as const,
-          lastReadAt: null,
-          isPinned: false,
-          isUnread: false,
-          unreadCount: 0,
-          needsAttention: false,
-        } as ChatConversation;
-        const message = {
-          ...messageRow,
-          role: messageRow.role as ChatMessage["role"],
-          kind: messageRow.kind as ChatMessage["kind"],
-          status: messageRow.status as ChatMessage["status"],
-          structuredPayload,
-          approval: null,
-          attachments: [],
-          transcript: [],
-        } as ChatMessage;
-        return { conversation, message };
-      };
-
-      if (executor) return persist(executor);
-      return db.transaction(async (tx) => persist(tx as unknown as Db));
+  async function createWithInitialMessage(
+    orgId: string,
+    data: CreateChatWithInitialMessageInput,
+    executor?: Db,
+  ) {
+    return createChatWithInitialMessage(db, orgId, data, executor);
   }
 
   function forkSystemEventBody(sourceConversation: ConversationRow, sourceMessageId: string | null) {

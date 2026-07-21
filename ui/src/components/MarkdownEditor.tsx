@@ -83,6 +83,7 @@ import {
 import { $createSkillTokenNode, skillTokenPlugin } from "../lib/skill-token-node";
 import { cn, formatDateTime, relativeTime } from "../lib/utils";
 import { AgentIcon } from "./AgentIconPicker";
+import { hasUnrenderedCanonicalRudderReference } from "./MarkdownEditor.parts";
 import {
   MilkdownMarkdownEditor,
   readCanonicalFragmentMarkdown,
@@ -216,27 +217,6 @@ function normalizePlainTextComposerMarkdown(value: string) {
 
 function findCanonicalReferenceCandidates(markdown: string) {
   return Array.from(markdown.matchAll(/\[([^\]\n]+)\]\(([^)\n]+)\)/g));
-}
-
-function hasUnrenderedCanonicalRudderReference(markdown: string, editable: HTMLElement) {
-  let requiredMentionCount = 0;
-  let requiredSkillCount = 0;
-
-  for (const match of findCanonicalReferenceCandidates(markdown)) {
-    const label = match[1] ?? "";
-    const href = match[2] ?? "";
-    if (parseMentionChipHref(href)) {
-      requiredMentionCount += 1;
-    } else if (parseSkillReference(href, label)) {
-      requiredSkillCount += 1;
-    }
-  }
-
-  if (requiredMentionCount === 0 && requiredSkillCount === 0) return false;
-
-  const renderedMentionCount = editable.querySelectorAll("[data-mention-kind]").length;
-  const renderedSkillCount = editable.querySelectorAll("[data-skill-token='true']").length;
-  return requiredMentionCount > renderedMentionCount || requiredSkillCount > renderedSkillCount;
 }
 
 function getMdastSourceSlice(node: unknown, markdown: string) {
