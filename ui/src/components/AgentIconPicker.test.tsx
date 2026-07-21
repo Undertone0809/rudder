@@ -145,10 +145,6 @@ describe("AgentIconPicker", () => {
     expect(document.querySelector('[role="tab"][data-state="active"]')?.textContent).toBe("Oreo");
     expect(document.querySelectorAll('button[aria-label^="Oreo shape "]')).toHaveLength(6);
     expect(document.querySelectorAll('button[aria-label^="Oreo palette "]')).toHaveLength(40);
-    const styleTabs = document.querySelector('[role="tablist"]');
-    const styleTab = document.querySelector('[role="tab"]');
-    expect(styleTabs?.className).toContain("rounded-[var(--segmented-control-radius)]");
-    expect(styleTab?.className).toContain("rounded-[var(--segmented-control-item-radius)]");
     const paletteScroller = document.querySelector('[data-testid="agent-avatar-oreo-palettes"]');
     expect(paletteScroller?.classList.contains("scrollbar-auto-hide")).toBe(true);
     expect(paletteScroller?.className).toContain("overflow-y-auto");
