@@ -295,7 +295,7 @@ When adding endpoints:
 
 ## 9. Review and verify
 
-For the most things, you should spawn an agent as the reviewer and conduct verification; carry out exploratory and adversarial reviews. The verifier needs to perform Black box testing and run the changes in a real local environment to confirm the effect before the acceptance can be deemed passed, especially for UI-related modifications.
+For the every task, you must spawn agents as the reviewer and conduct verifier; carry out exploratory, adversarial reviews and verify. The verifier needs to perform Black box testing and run the changes in a real local environment to confirm the effect before the acceptance can be deemed passed, especially for UI-related modifications.
 
 For simple small tasks, you don't need to spawn an agent, like tweaking some text in the README.
 
