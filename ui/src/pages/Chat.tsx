@@ -74,8 +74,10 @@ import {
   type PendingChatStopRecovery,
 } from "@/lib/chat-stop-recovery";
 import {
+  activeChatStreamTimelineInsertionIndex,
   readChatScopedFlag,
   readChatScopedState,
+  shouldShowMessageDuringActiveEdit,
   shouldShowMessageDuringActiveStream,
 } from "@/lib/chat-stream-state";
 import { readDesktopShell } from "@/lib/desktop-shell";
@@ -152,6 +154,9 @@ export * from "./Chat.attachments";
 export * from "./Chat.messages";
 export * from "./Chat.parts";
 export { applyChatStreamProgressEvent } from "./Chat.workspace-helpers";
+type ChatTimelineRow =
+  | { kind: "message"; message: ChatMessage; messageIndex: number }
+  | { kind: "active_stream" };
 export function Chat() { const { selectedOrganizationId } = useOrganization(); return selectedOrganizationId ? <ChatWorkspace key={selectedOrganizationId} /> : <div className="text-sm text-muted-foreground">Select a organization first.</div>; }
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm } = useDialog();
   const { openImagePreview } = useImagePreview(); const {
@@ -1213,6 +1218,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             setStreamDraftForChat(
               chatId,
               (current) => (current?.streamKey === streamKey ? { ...current,
+                userCreatedAt: new Date(event.userMessage.createdAt),
                 userMessageId: event.userMessage.id,
                 chatTurnId: event.userMessage.chatTurnId ?? null,
                 turnVariant: event.userMessage.turnVariant ?? 0,
@@ -1316,7 +1322,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     hasConversation: Boolean(selectedConversation),
     hasLastMessageAt: Boolean(selectedConversation?.lastMessageAt),
     hasMessages: rawMessages.length > 0,
-    hasActiveStream: Boolean(activeStream), hasActiveSendInFlight: activeSendInFlight, }); const activeEditCutoffMs = activeStream?.editedFromCreatedAt ? activeStream.editedFromCreatedAt.getTime() : null; const activeStreamFilteredMessages = activeEditCutoffMs === null ? displayedMessages : displayedMessages.filter((message) => new Date(message.createdAt).getTime() < activeEditCutoffMs); const activeStreamPreviewHidden = Boolean(activeStream?.chatTurnId && branchPreview?.chatTurnId === activeStream.chatTurnId && branchPreview.turnVariant !== activeStream.turnVariant); const visibleMessages = activeStream && !activeStreamPreviewHidden ? activeStreamFilteredMessages.filter((message) => shouldShowMessageDuringActiveStream(message, activeStream)) : activeStreamFilteredMessages; const scrollMapUserMessageCount = useMemo(
+    hasActiveStream: Boolean(activeStream), hasActiveSendInFlight: activeSendInFlight, }); const activeEditCutoffMs = activeStream?.editedFromCreatedAt ? activeStream.editedFromCreatedAt.getTime() : null; const activeStreamFilteredMessages = activeStream ? displayedMessages.filter((message) => shouldShowMessageDuringActiveEdit(message, activeStream)) : displayedMessages; const activeStreamPreviewHidden = Boolean(activeStream?.chatTurnId && branchPreview?.chatTurnId === activeStream.chatTurnId && branchPreview.turnVariant !== activeStream.turnVariant); const visibleMessages = activeStream && !activeStreamPreviewHidden ? activeStreamFilteredMessages.filter((message) => shouldShowMessageDuringActiveStream(message, activeStream)) : activeStreamFilteredMessages; const scrollMapUserMessageCount = useMemo(
     () => countScrollMapUserMessages(visibleMessages), [visibleMessages],
   ); const showChatScrollMap = scrollMapUserMessageCount > CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD; const jumpToChatMessage = useCallback((messageId: string) => {
     const scrollElement = chatMessagesScrollElementRef.current;
@@ -1427,6 +1433,18 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     activeStream && (
       activeEditCutoffMs !== null
       || !activeStream.userMessageId || !rawMessages.some((message) => message.id === activeStream.userMessageId) ), );
+  const chatTimelineRows = useMemo(() => {
+    const rows: ChatTimelineRow[] = visibleMessages.map((message, messageIndex) => ({
+      kind: "message",
+      message,
+      messageIndex,
+    }));
+    if (!showActiveStreamDraft || !activeStream) return rows;
+    rows.splice(activeChatStreamTimelineInsertionIndex(visibleMessages, activeStream), 0, {
+      kind: "active_stream",
+    });
+    return rows;
+  }, [activeStream, showActiveStreamDraft, visibleMessages]);
   useEffect(() => {
     if (agentSelectionLocked) {
       setAgentMenuOpen(false); } }, [agentSelectionLocked]);
@@ -2785,7 +2803,40 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                         <ChatMessagesLoadingState /> ) : visibleMessages.length === 0 && !activeStream ? (
                         <div className="surface-inset rounded-[var(--radius-xl)] border-dashed px-6 py-12 text-center text-sm text-muted-foreground">
                           No messages yet. Start by describing the work and Rudder will clarify it first. </div> ) : ( <>
-                          {visibleMessages.map((message, messageIndex) => { const previousMessage = visibleMessages[messageIndex - 1] ?? null; const previousPreviousMessage = visibleMessages[messageIndex - 2] ?? null; if (shouldAttachIssueCreatedSystemMessage(previousMessage, message) || shouldAttachApprovalFeedbackSystemMessage(previousPreviousMessage, previousMessage, message)) return null; const nextMessage = visibleMessages[messageIndex + 1] ?? null; const issueCreatedMessage = shouldAttachIssueCreatedSystemMessage(message, nextMessage) ? nextMessage : null; const persistedTranscript = (loadedTranscriptsByMessageId[message.id] ?? message.transcript ?? []) as TranscriptEntry[];
+                          {chatTimelineRows.map((timelineRow) => {
+                            if (timelineRow.kind === "active_stream") {
+                              if (!activeStream) return null;
+                              return (
+                                <Fragment key={`active-stream-${activeStream.streamKey}`}>
+                                  {showOptimisticUserMessage ? (
+                                    <OptimisticUserDraftItem
+                                      body={activeStream.userBody}
+                                      createdAt={activeStream.userCreatedAt} onCopyMessageText={copyChatMessageText} onEditDraftOnly={editDraftOnly}
+                                      skillReferences={chatSkillReferences} onMarkdownLinkClick={handleChatMarkdownLinkClick}
+                                      askUserAnswer={
+                                        activeStreamAskUserRequest ? parseAskUserAnswerMessage(activeStreamAskUserRequest, activeStream.userBody) : null
+                                      }
+                                      animateAskUserAnswer={activeStream.userBody.startsWith(ASK_USER_ANSWER_PREFIX)}
+                                      turnBranchControls={turnBranchControlsForTurn(activeStream.chatTurnId, activeStream.turnVariant)} /> ) : null}
+                                  <StreamTranscriptItem key={`${activeStream.chatId}-${activeStream.createdAt.getTime()}`}
+                                    entries={activeStream.transcript}
+                                    state={activeStream.state}
+                                    streamStartedAt={activeStream.createdAt}
+                                    assistantMessageBody={activeStream.body}
+                                    showDeveloperDiagnostics={showDeveloperDiagnostics} />
+                                  <AssistantDraftItem
+                                    body={activeStream.body}
+                                    createdAt={activeStream.createdAt}
+                                    state={activeStream.state}
+                                    replyingAgentId={activeStream.replyingAgentId}
+                                    conversation={selectedConversation}
+                                    agents={agents} onCopyMessageText={copyChatMessageText}
+                                    skillReferences={chatSkillReferences} onMarkdownLinkClick={handleChatMarkdownLinkClick} />
+                                </Fragment>
+                              );
+                            }
+                            const { message, messageIndex } = timelineRow;
+                            const previousMessage = visibleMessages[messageIndex - 1] ?? null; const previousPreviousMessage = visibleMessages[messageIndex - 2] ?? null; if (shouldAttachIssueCreatedSystemMessage(previousMessage, message) || shouldAttachApprovalFeedbackSystemMessage(previousPreviousMessage, previousMessage, message)) return null; const nextMessage = visibleMessages[messageIndex + 1] ?? null; const issueCreatedMessage = shouldAttachIssueCreatedSystemMessage(message, nextMessage) ? nextMessage : null; const persistedTranscript = (loadedTranscriptsByMessageId[message.id] ?? message.transcript ?? []) as TranscriptEntry[];
                             const messageCanShowProcess = message.role === "assistant"
                               || message.kind === "issue_proposal" || message.kind === "operation_proposal";
                             const shouldRenderPersistedTranscript =
@@ -2864,32 +2915,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                   } : null}
                                   answered={activeStreamUserTurnVisible || isAskUserMessageAnswered(message, visibleMessages)}
                                   askUserAnswer={askUserAnswerFromMessage(message, visibleMessages)}
-                                  animateAskUserAnswer={message.id === recentAskUserAnswerMessageId} /> </Fragment> ); })}
-                          {showActiveStreamDraft && activeStream ? ( <>
-                              {showOptimisticUserMessage ? (
-                                <OptimisticUserDraftItem
-                                  body={activeStream.userBody}
-                                  createdAt={activeStream.userCreatedAt} onCopyMessageText={copyChatMessageText} onEditDraftOnly={editDraftOnly}
-                                  skillReferences={chatSkillReferences} onMarkdownLinkClick={handleChatMarkdownLinkClick}
-                                  askUserAnswer={
-                                    activeStreamAskUserRequest ? parseAskUserAnswerMessage(activeStreamAskUserRequest, activeStream.userBody) : null
-                                  }
-                                  animateAskUserAnswer={activeStream.userBody.startsWith(ASK_USER_ANSWER_PREFIX)}
-                                  turnBranchControls={turnBranchControlsForTurn(activeStream.chatTurnId, activeStream.turnVariant)} /> ) : null}
-                              <StreamTranscriptItem key={`${activeStream.chatId}-${activeStream.createdAt.getTime()}`}
-                                entries={activeStream.transcript}
-                                state={activeStream.state}
-                                streamStartedAt={activeStream.createdAt}
-                                assistantMessageBody={activeStream.body}
-                                showDeveloperDiagnostics={showDeveloperDiagnostics} />
-                              <AssistantDraftItem
-                                body={activeStream.body}
-                                createdAt={activeStream.createdAt}
-                                state={activeStream.state}
-                                replyingAgentId={activeStream.replyingAgentId}
-                                conversation={selectedConversation}
-                                agents={agents} onCopyMessageText={copyChatMessageText}
-                                skillReferences={chatSkillReferences} onMarkdownLinkClick={handleChatMarkdownLinkClick} /> </> ) : null} </>
+                                  animateAskUserAnswer={message.id === recentAskUserAnswerMessageId} /> </Fragment> ); })} </>
                       )} </div> </div> </div> </div>
                 {hasActionableApprovals || hasPendingLightweightProposal ? null : (
                   <div

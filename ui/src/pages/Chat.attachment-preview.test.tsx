@@ -1280,6 +1280,24 @@ async function startControlledChatStream() {
   return {
     ...rendered,
     createdDraft: createdDraft!,
+    emitAck: async (createdAt: Date) => {
+      await act(async () => {
+        await onStreamEvent({
+          type: "ack",
+          userMessage: message({
+            id: "persisted-active-user",
+            body: "Start a controlled reply.",
+            chatTurnId: "persisted-active-turn",
+            createdAt,
+            updatedAt: createdAt,
+          }),
+          generationId: "persisted-generation",
+          attemptEpoch: 1,
+          generationSeq: 0,
+          bodyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        });
+      });
+    },
     emitFinal: async () => {
       await act(async () => {
         await onStreamEvent({
@@ -4887,6 +4905,24 @@ describe("Chat streaming controls", () => {
     ));
   });
 
+  it("rebases the active timeline anchor to the persisted ACK time when the browser clock is ahead", async () => {
+    const controlled = await startControlledChatStream();
+    const persistedCreatedAt = new Date("2020-05-12T09:04:00.000Z");
+    expect(controlled.createdDraft.userCreatedAt.getTime()).toBeGreaterThan(persistedCreatedAt.getTime());
+    const callCountBeforeAck = mockState.setStreamDraftForChat.mock.calls.length;
+
+    await controlled.emitAck(persistedCreatedAt);
+
+    const ackUpdate = mockState.setStreamDraftForChat.mock.calls
+      .slice(callCountBeforeAck)
+      .map((call) => call[1])
+      .find((candidate): candidate is (current: ChatStreamDraft | null) => ChatStreamDraft | null => (
+        typeof candidate === "function"
+      ));
+    expect(ackUpdate).toBeDefined();
+    expect(ackUpdate!(controlled.createdDraft)?.userCreatedAt).toEqual(persistedCreatedAt);
+  });
+
   it("freezes immediately, then aborts and clears the matching stream after Stop acknowledgement", async () => {
     let resolveStop!: (value: { stopped: boolean }) => void;
     mockState.stopMessageStream.mockReturnValue(new Promise((resolve) => {
@@ -5768,6 +5804,133 @@ describe("Chat streaming controls", () => {
     expect(mockState.pushToast).not.toHaveBeenCalledWith(expect.objectContaining({
       body: expect.stringContaining("cannot accept mid-run steering"),
     }));
+  });
+
+  it("keeps accepted Steer feedback after the active response when the response completes", () => {
+    const originalUserMessage = message({
+      id: "user-message-before-steer",
+      body: "Please draft a plan.",
+      chatTurnId: "turn-active",
+      createdAt: new Date("2026-05-12T09:04:00.000Z"),
+      updatedAt: new Date("2026-05-12T09:04:00.000Z"),
+    });
+    const activeAssistantMessage = message({
+      id: "assistant-message-before-steer",
+      role: "assistant",
+      status: "streaming",
+      body: "In-progress answer before Steer",
+      replyingAgentId: "agent-1",
+      chatTurnId: "turn-active",
+      createdAt: new Date("2026-05-12T09:04:01.000Z"),
+      updatedAt: new Date("2026-05-12T09:04:01.000Z"),
+    });
+    const steerUserMessage = message({
+      id: "user-message-from-steer",
+      body: "hi from Steer",
+      chatTurnId: "turn-steer",
+      createdAt: new Date("2026-05-12T09:04:02.000Z"),
+      updatedAt: new Date("2026-05-12T09:04:02.000Z"),
+    });
+    mockState.messagesByChatId = {
+      "chat-1": [originalUserMessage, activeAssistantMessage, steerUserMessage],
+    };
+    mockState.sendInFlightByChatId = { "chat-1": true };
+    mockState.streamDrafts = {
+      "chat-1": {
+        chatId: "chat-1",
+        streamKey: "stream-with-steer-message",
+        userBody: originalUserMessage.body,
+        userCreatedAt: originalUserMessage.createdAt,
+        userMessageId: originalUserMessage.id,
+        chatTurnId: "turn-active",
+        turnVariant: 0,
+        editedFromCreatedAt: null,
+        body: activeAssistantMessage.body,
+        generationId: "generation-1",
+        attemptEpoch: 3,
+        lastCommittedRenderSeq: 12,
+        renderedBodyHash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        state: "streaming",
+        createdAt: activeAssistantMessage.createdAt,
+        transcript: [],
+        replyingAgentId: "agent-1",
+      },
+    };
+
+    const { container, rerender } = renderChat();
+    const content = container.querySelector<HTMLElement>("[data-testid='chat-messages-content']");
+    expect(content).not.toBeNull();
+    expect(content!.textContent!.indexOf(activeAssistantMessage.body))
+      .toBeLessThan(content!.textContent!.indexOf(steerUserMessage.body));
+
+    mockState.messagesByChatId = {
+      "chat-1": [
+        originalUserMessage,
+        { ...activeAssistantMessage, status: "completed" },
+        steerUserMessage,
+      ],
+    };
+    mockState.sendInFlightByChatId = {};
+    mockState.streamDrafts = {};
+    rerender();
+
+    expect(content!.textContent!.indexOf(activeAssistantMessage.body))
+      .toBeLessThan(content!.textContent!.indexOf(steerUserMessage.body));
+  });
+
+  it("keeps accepted Steer feedback visible while an edited message response is active", () => {
+    const editedUserMessage = message({
+      id: "edited-user-message",
+      body: "Edited plan request",
+      chatTurnId: "turn-edited",
+      turnVariant: 1,
+      createdAt: new Date("2026-05-12T09:05:00.000Z"),
+      updatedAt: new Date("2026-05-12T09:05:00.000Z"),
+    });
+    const steerUserMessage = message({
+      id: "user-message-from-edited-steer",
+      body: "visible Steer feedback for edited response",
+      chatTurnId: "turn-steer",
+      createdAt: new Date("2026-05-12T09:05:02.000Z"),
+      updatedAt: new Date("2026-05-12T09:05:02.000Z"),
+    });
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: "message-before-edit",
+          body: "Earlier context",
+          createdAt: new Date("2026-05-12T09:03:00.000Z"),
+          updatedAt: new Date("2026-05-12T09:03:00.000Z"),
+        }),
+        editedUserMessage,
+        steerUserMessage,
+      ],
+    };
+    mockState.sendInFlightByChatId = { "chat-1": true };
+    mockState.streamDrafts = {
+      "chat-1": {
+        chatId: "chat-1",
+        streamKey: "edited-stream-with-steer-message",
+        userBody: editedUserMessage.body,
+        userCreatedAt: editedUserMessage.createdAt,
+        userMessageId: editedUserMessage.id,
+        chatTurnId: editedUserMessage.chatTurnId,
+        turnVariant: editedUserMessage.turnVariant,
+        editedFromCreatedAt: new Date("2026-05-12T09:04:00.000Z"),
+        body: "Edited response still in progress",
+        state: "streaming",
+        createdAt: new Date("2026-05-12T09:05:01.000Z"),
+        transcript: [],
+        replyingAgentId: "agent-1",
+      },
+    };
+
+    const { container } = renderChat();
+    const content = container.querySelector<HTMLElement>("[data-testid='chat-messages-content']");
+
+    expect(content?.textContent).toContain(steerUserMessage.body);
+    expect(content!.textContent!.indexOf("Edited response still in progress"))
+      .toBeLessThan(content!.textContent!.indexOf(steerUserMessage.body));
   });
 
   it("locks Steer immediately and applies the durable response item without waiting for refetch", async () => {
