@@ -42,10 +42,11 @@ or any individual harness component.
 
 ## Frozen comparison
 
-The pilot used 10 deliberately selected tasks from the 220-task GDPval dataset.
-The cohort was frozen before execution and was not a random sample. It spans 10
-occupations and requires 11 deliverables across XLSX, DOCX, PPTX, and PDF. Each
-harness received one scored execution per case, for 30 executions in total.
+The pilot randomly sampled 10 tasks from the 220-task GDPval dataset, then froze
+the cohort before execution. It spans 10 occupations and requires 11
+deliverables across XLSX, DOCX, PPTX, and PDF. Each task was run three times in
+total: once in Rudder, once in Codex CLI, and once in Claude Code. That produced
+30 scored executions, with one execution for each harness-task combination.
 
 The task packages came from the `openai/gdpval` dataset at revision
 `11e7900cdcac61bc4daf59e65feb238acda98fbf`. The candidate could inspect the task
@@ -128,10 +129,11 @@ to 4.6 percentage points.
 
 Keep these boundaries with any use of the result:
 
-- Each harness ran each case once, so the pilot does not estimate run-to-run
-  variance.
-- The 10 tasks were selected for breadth, not randomly sampled from all 220
-  tasks.
+- Each task ran three times in total, once in each harness. Because every
+  harness-task combination still has only one execution, the pilot does not
+  estimate run-to-run variance within a harness.
+- The 10 tasks were randomly sampled from all 220 tasks, but the sample remains
+  small and may not represent the full dataset.
 - A local LLM judge produced the rubric scores, not GDPval's blinded
   expert-human review process.
 - All three harnesses finished 9W / 0T / 1L against gold. This is important
