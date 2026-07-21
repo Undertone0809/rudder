@@ -2175,7 +2175,6 @@
   }
 
   .chat-review-block {
-    --chat-review-fold-size: 2.625rem;
     --chat-review-action-shadow:
       inset 0 1px 0 color-mix(in oklab, white 36%, transparent),
       0 16px 36px -28px color-mix(in oklab, var(--accent-base) 42%, black);
@@ -2214,49 +2213,6 @@
         0 0 0 1px color-mix(in oklab, var(--accent-base) 18%, transparent),
         0 20px 54px -32px color-mix(in oklab, var(--accent-base) 56%, black);
     }
-  }
-
-  .chat-review-block::before {
-    content: "";
-    position: absolute;
-    z-index: 4;
-    top: 0;
-    right: 0;
-    width: var(--chat-review-fold-size);
-    height: var(--chat-review-fold-size);
-    background:
-      linear-gradient(
-        135deg,
-        color-mix(in oklab, white 74%, var(--surface-proposal)) 0%,
-        color-mix(in oklab, var(--surface-proposal) 74%, var(--surface-elevated)) 62%,
-        color-mix(in oklab, var(--surface-shell) 96%, var(--surface-elevated)) 100%
-      );
-    clip-path: polygon(100% 0, 100% 100%, 0 0);
-    border-top-right-radius: calc(var(--radius-lg) - 1px);
-    box-shadow:
-      -8px 8px 14px -16px color-mix(in oklab, var(--accent-base) 54%, black),
-      inset -1px 1px 0 color-mix(in oklab, white 42%, transparent);
-    pointer-events: none;
-  }
-
-  .chat-review-block::after {
-    content: "";
-    position: absolute;
-    z-index: 5;
-    top: 1.31rem;
-    right: -0.54rem;
-    width: 3.7rem;
-    height: 1px;
-    background: linear-gradient(
-      90deg,
-      transparent,
-      color-mix(in oklab, var(--border-base) 64%, transparent) 22%,
-      color-mix(in oklab, var(--border-base) 44%, transparent) 72%,
-      transparent
-    );
-    transform: rotate(45deg);
-    transform-origin: center;
-    pointer-events: none;
   }
 
   .chat-review-docket-header,

@@ -199,18 +199,18 @@ describe("index.css motion rules", () => {
     expect(feishuReadOnlyComposerInner).toContain("border-width: 0");
   });
 
-  it("keeps proposal action feedback from colliding with the review block fold", () => {
+  it("keeps proposal action feedback without a decorative review block fold", () => {
     const reviewBlock =
-      indexCss.match(/\n\s*\.chat-review-block \{\s*\n\s*--chat-review-fold-size:[\s\S]*?\n\s*\}/)?.[0] ?? "";
+      indexCss.match(/\n\s*\.chat-review-block \{[\s\S]*?\n\s*\}/)?.[0] ?? "";
     const actionPending =
       indexCss.match(/\n\s*\.chat-review-block--action-pending \{\s*\n\s*--chat-review-action-shadow:[\s\S]*?\n\s*\}/)?.[0] ?? "";
     const pendingKeyframes = cssBlock("@keyframes chat-review-action-pending-pulse");
     const reducedMotion =
       indexCss.match(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.chat-review-block--action-pending[\s\S]*?\n\s*\}/)?.[0] ?? "";
 
-    expect(reviewBlock).toContain("--chat-review-fold-size");
-    expect(indexCss).toContain(".chat-review-block::before");
-    expect(indexCss).toContain(".chat-review-block::after");
+    expect(reviewBlock).not.toContain("--chat-review-fold-size");
+    expect(indexCss).not.toContain(".chat-review-block::before");
+    expect(indexCss).not.toContain(".chat-review-block::after");
     expect(actionPending).toContain("animation: chat-review-action-pending-pulse 1.6s ease-in-out infinite");
     expect(actionPending).toContain("border-color: color-mix(in oklab, var(--ring) 34%, var(--border-base))");
     expect(actionPending).not.toContain("::before");
