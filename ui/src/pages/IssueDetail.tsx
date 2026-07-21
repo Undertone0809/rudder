@@ -1096,8 +1096,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   const operatorDisplayName = useOperatorDisplayName();
   const relativePath = toOrganizationRelativePath(location.pathname);
   const issueRouteBasePath = relativePath.startsWith("/messenger/issues") ? "/messenger/issues" : "/issues";
-  const [headerMoreOpen, setHeaderMoreOpen] = useState(false);
-  const [sidebarMoreOpen, setSidebarMoreOpen] = useState(false);
+  const [desktopMoreOpen, setDesktopMoreOpen] = useState(false);
   const [copiedIssueId, setCopiedIssueId] = useState(false);
   const [mobilePropsOpen, setMobilePropsOpen] = useState(false);
   const [libraryFileMentionQuery, setLibraryFileMentionQuery] = useState<string | null>(null);
@@ -1629,8 +1628,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     });
     if (!confirmed) return;
     deleteIssue.mutate();
-    setHeaderMoreOpen(false);
-    setSidebarMoreOpen(false);
+    setDesktopMoreOpen(false);
   }, [confirm, deleteIssue, issueDisplayId]);
 
   const updateSubIssueStatus = useMutation({
@@ -2072,16 +2070,18 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     <div
       ref={setIssueDetailRootRef}
       data-testid={embedded ? "embedded-issue-detail" : "issue-detail-main-scroll"}
-      className="h-full min-h-0 w-full scrollbar-auto-hide overflow-y-auto overscroll-contain"
+      className="issue-detail-container h-full min-h-0 w-full scrollbar-auto-hide overflow-x-hidden overflow-y-auto overscroll-contain"
     >
       <IssueDetailFind rootRef={issueFindRootRef} refreshKey={issueFindRefreshKey} />
-      <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col xl:grid xl:grid-cols-[minmax(0,1fr)_280px] xl:gap-6">
-      <div className="min-w-0 space-y-6">
-        <div
-          className="min-w-0 space-y-6"
-          data-testid="issue-detail-primary-content"
+      <div
+        className="issue-detail-layout mx-auto min-h-full max-w-6xl"
+        data-testid="issue-detail-layout"
+      >
+        <section
+          className="issue-detail-heading min-w-0 space-y-3"
+          data-testid="issue-detail-heading"
+          aria-label="Issue identity and context"
         >
-        <div className="space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-2 min-w-0 flex-wrap">
             {hasLiveRuns && (
@@ -2132,12 +2132,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
             </Button>
           </div>
 
-          <div className="hidden md:flex xl:hidden items-center shrink-0">
-            {renderDesktopIssueActions({
-              moreOpen: headerMoreOpen,
-              onMoreOpenChange: setHeaderMoreOpen,
-            })}
-          </div>
         </div>
 
         <InlineEditor
@@ -2148,6 +2142,43 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
         />
 
         <IssueParentContext parentIssue={parentIssue} />
+        </section>
+
+        <aside className="issue-detail-rail min-w-0">
+          <div className="issue-detail-actions min-w-0 items-center justify-end" data-testid="issue-detail-actions">
+            {renderDesktopIssueActions({
+              moreOpen: desktopMoreOpen,
+              onMoreOpenChange: setDesktopMoreOpen,
+              grouped: true,
+            })}
+          </div>
+
+          <div className="issue-detail-properties min-w-0" data-testid="issue-detail-sidebar">
+            <div className="space-y-3">
+              <section
+                aria-label="Issue properties"
+                className="issue-detail-properties-panel rounded-lg border border-border bg-background/80 p-3"
+              >
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                    Properties
+                  </p>
+                </div>
+                <IssueProperties
+                  issue={issue}
+                  onUpdate={(data) => updateIssue.mutate(data)}
+                  childIssues={orderedChildIssues}
+                />
+              </section>
+              <IssueCostSummaryPanel summary={issueCostSummary} />
+            </div>
+          </div>
+        </aside>
+
+        <div
+          className="issue-detail-body min-w-0 space-y-6"
+          data-testid="issue-detail-primary-content"
+        >
 
         <InlineEditor
           value={issue.description ?? ""}
@@ -2165,7 +2196,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
             return attachment.contentPath;
           }}
         />
-      </div>
 
       <PluginSlotOutlet
         slotTypes={["toolbarButton", "contextMenuItem"]}
@@ -2559,8 +2589,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
 
       <Separator />
 
-        </div>
-
       <section aria-label="Activity" className="flex flex-col space-y-2">
         <div className="flex items-center gap-2 text-sm font-semibold">
           <ActivityIcon className="h-3.5 w-3.5 text-muted-foreground" />
@@ -2624,6 +2652,8 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           ))}
         </div>
       ) : null}
+        </div>
+      </div>
 
       <Sheet open={mobilePropsOpen} onOpenChange={setMobilePropsOpen}>
         <SheetContent side="bottom" className="max-h-[85dvh] pb-[env(safe-area-inset-bottom)]">
@@ -2644,32 +2674,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
         </SheetContent>
       </Sheet>
       <ScrollToBottom />
-      </div>
-      <aside className="mt-6 xl:sticky xl:top-4 xl:mt-0 xl:min-h-0 xl:self-start" data-testid="issue-detail-sidebar">
-        <div className="space-y-3">
-          <div className="hidden xl:flex justify-end">
-            {renderDesktopIssueActions({
-              moreOpen: sidebarMoreOpen,
-              onMoreOpenChange: setSidebarMoreOpen,
-              grouped: true,
-            })}
-          </div>
-
-          <section aria-label="Issue properties" className="rounded-lg border border-border bg-background/80 p-3">
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                Properties
-              </p>
-            </div>
-            <IssueProperties
-              issue={issue}
-              onUpdate={(data) => updateIssue.mutate(data)}
-              childIssues={orderedChildIssues}
-            />
-          </section>
-          <IssueCostSummaryPanel summary={issueCostSummary} />
-        </div>
-      </aside>
       <WorkspaceAttachDialog
         orgId={issue.orgId ?? resolvedCompanyId ?? selectedOrganizationId}
         open={workspaceAttachOpen}
@@ -2678,7 +2682,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
         attaching={attachWorkspaceFile.isPending}
         error={attachmentError}
       />
-      </div>
     </div>
   );
 }
