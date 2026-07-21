@@ -286,3 +286,51 @@ export function UnsupportedWorkspaceFileLauncher({
     </div>
   );
 }
+
+export function WorkspaceFileOpenMenu({
+  targets,
+  openingTargetId,
+  onOpenTarget,
+  testId = "workspace-file-open-menu",
+}: {
+  targets: WorkspaceUnsupportedFileLaunchTarget[];
+  openingTargetId: WorkspaceOpenTargetId | null;
+  onOpenTarget: (target: WorkspaceUnsupportedFileLaunchTarget) => void;
+  testId?: string;
+}) {
+  if (targets.length === 0) return null;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 gap-1 px-2"
+          aria-label="Open file options"
+          disabled={openingTargetId !== null}
+          data-testid={testId}
+        >
+          {openingTargetId ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
+          <span>Open</span>
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="center" sideOffset={8} className="w-60 whitespace-nowrap p-1">
+        {targets.map((target) => (
+          <DropdownMenuItem
+            key={target.id}
+            className="h-9 gap-2 rounded-[6px]"
+            disabled={openingTargetId !== null}
+            data-testid={`${testId}-target-${target.id}`}
+            onSelect={() => onOpenTarget(target)}
+          >
+            <WorkspaceLaunchTargetIcon target={target} />
+            <span className="min-w-0 flex-1 truncate">{target.label}</span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}

@@ -1926,6 +1926,10 @@ Product model:
   including PDFs. Truncated Library breadcrumbs reveal the complete
   Library-relative path on hover, and the file `Open` menu offers `Open in
   Library` alongside any Desktop app, IDE, file-browser, or terminal targets.
+- Library audio/video targets reuse the same `LIBRARY.FILES.001` media renderer
+  as the full Library work surface. Native playback never autoplays; a
+  codec/load failure keeps the Side Panel tab active and shows the shared
+  compatibility state with Download plus the Side Panel's `Open` menu.
 - An explicit absolute local-file link in a visible Chat message opens a
   read-only `local_file` target in that Chat's Side Panel context after an
   unmodified operator click. Desktop loads it through the guarded local preview
@@ -2012,19 +2016,23 @@ Flow:
     action use the operating-system browser instead.
 18. From a Library file tab, `Open in Library` navigates to the full Library
     work surface with the same organization-scoped file selected.
-19. Markdown autosave supplies the last confirmed content as a write
+19. A recognized Library audio/video tab delegates playback, file switching,
+    and codec recovery to the shared media renderer. Native seek requests use
+    the organization-scoped byte-range content path without changing the
+    Messenger route or Side Panel tab identity.
+20. Markdown autosave supplies the last confirmed content as a write
     precondition. When the server reports a conflict, the panel pauses autosave,
     keeps the draft visible, and offers `Keep mine` or `Use latest`; an older
     in-flight response must not override the operator's conflict decision.
-20. When the operator adds an eligible active target to Saved Views, Rudder
+21. When the operator adds an eligible active target to Saved Views, Rudder
     persists its typed descriptor under `MESSENGER.SAVED.VIEWS.001` and confirms
     the mutation in place without changing the current route, panel visibility,
     tabs, or active target.
-21. Selecting `/messenger/saved-views/:id` asks the shared Side Panel controller
+22. Selecting `/messenger/saved-views/:id` asks the shared Side Panel controller
     to open or focus the saved target. A saved Browser target reuses the original
     live guest only while that guest exists; after restart, reset, or explicit
     tab close it opens a new Browser target from the last persisted URL.
-22. Selecting a structured transcript file action opens or focuses a local-file
+23. Selecting a structured transcript file action opens or focuses a local-file
     tab keyed by its resolved absolute path. Desktop canonicalizes and validates
     the target through its preview bridge before returning bounded text or binary
     preview data; unsupported, missing, oversized, or Web-only targets fail in
@@ -2084,6 +2092,10 @@ Invariants:
 - Side Panel PDF previews must use the organization-scoped inline workspace
   content endpoint. Full-path hover text and full-Library navigation must use
   the Library-relative path rather than exposing an absolute filesystem root.
+- Side Panel media previews must reuse the shared full-Library player and codec
+  failure semantics. They must retain the current Messenger route and active
+  tab, never autoplay, and must not fall through to the generic binary-file
+  message when the browser rejects a known container or codec.
 - Side Panel chat views must preserve chat lifecycle and Messenger attention
   semantics; opening a chat target in the panel is not a read-state or routing
   rewrite unless the owning Messenger/chat code performs that action.
@@ -2168,6 +2180,10 @@ Evidence:
 - Chat attachment/side-panel tests and Side Panel E2E cover inline PDF rendering,
   complete Library path hover text, and full-Library navigation from the file
   `Open` menu.
+- Shared media component, Library integration, and Side Panel E2E cover the
+  common audio/video renderer, no-autoplay native controls, file switching,
+  byte-range seek delivery, undecodable-container recovery, Download/Open
+  actions, and Messenger route/tab preservation.
 - Local-file resolver, Markdown body, Chat attachment/side-panel, and Side Panel
   E2E tests cover file icons, source-location normalization, route preservation,
   Desktop preview loading, Web fallback, and preview failures.

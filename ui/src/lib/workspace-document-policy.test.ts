@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   containsEmbeddedImageDataUrl,
   displayWorkspaceDocumentKind,
+  isWorkspaceAudioFilePath,
   isWorkspaceCsvContentType,
   isWorkspaceImageFilePath,
+  isWorkspaceVideoFilePath,
   joinYamlFrontmatter,
   splitYamlFrontmatter,
   workspaceImageAssetNamespace,
@@ -14,6 +16,10 @@ describe("workspace document policy", () => {
     expect(displayWorkspaceDocumentKind("notes.MDX")).toBe("MDX");
     expect(displayWorkspaceDocumentKind("data.unknown")).toBe("UNKNOWN");
     expect(isWorkspaceImageFilePath("proof.PNG")).toBe(true);
+    expect(isWorkspaceVideoFilePath("demo.MOV")).toBe(true);
+    expect(isWorkspaceVideoFilePath("demo.mkv")).toBe(true);
+    expect(isWorkspaceAudioFilePath("recording.OPUS")).toBe(true);
+    expect(isWorkspaceAudioFilePath("recording.flac")).toBe(true);
     expect(isWorkspaceCsvContentType("text/csv; charset=utf-8")).toBe(true);
   });
 

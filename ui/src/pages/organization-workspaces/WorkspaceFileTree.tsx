@@ -20,10 +20,12 @@ import {
   ChevronRight,
   Copy,
   ExternalLink,
+  FileAudio2,
   FileCode2,
   FilePlus2,
   Files,
   FileText,
+  FileVideo2,
   Folder,
   FolderPlus,
   Image as ImageIcon,
@@ -44,7 +46,12 @@ import { ProjectIcon } from "../../components/ProjectIdentity";
 import { WorkspaceLaunchTargetIcon } from "../../components/workspaces/WorkspaceLaunchControls";
 import type { DesktopWorkspaceLaunchTarget } from "../../lib/desktop-shell";
 import { queryKeys } from "../../lib/queryKeys";
-import { isWorkspaceImageFilePath, isWorkspaceTextDocumentFilePath } from "../../lib/workspace-document-policy";
+import {
+  isWorkspaceAudioFilePath,
+  isWorkspaceImageFilePath,
+  isWorkspaceTextDocumentFilePath,
+  isWorkspaceVideoFilePath,
+} from "../../lib/workspace-document-policy";
 import { workspaceFileOpenTargets, type WorkspaceFileOpenTarget, type WorkspaceOpenTargetId } from "../../lib/workspace-preferences";
 import {
   canCopyWorkspaceEntry,
@@ -1004,9 +1011,13 @@ export function WorkspaceTreeNode({
   const isSelected = selectedFilePath === entry.path || selectedSkillTreePath === entry.path;
   const FileIcon = isWorkspaceImageFilePath(entry.path)
     ? ImageIcon
-    : isWorkspaceTextDocumentFilePath(entry.path)
-      ? FileText
-      : FileCode2;
+    : isWorkspaceVideoFilePath(entry.path)
+      ? FileVideo2
+      : isWorkspaceAudioFilePath(entry.path)
+        ? FileAudio2
+        : isWorkspaceTextDocumentFilePath(entry.path)
+          ? FileText
+          : FileCode2;
   return (
     <li>
       <div

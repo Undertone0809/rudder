@@ -334,6 +334,93 @@ describe("organization workspace browser", () => {
     expect(detail.contentPath).toContain("path=projects%2Freports%2Fbrief.pdf");
   });
 
+  it.each([
+    ["clip.mp4", "video/mp4", "video"],
+    ["clip.m4v", "video/x-m4v", "video"],
+    ["clip.mov", "video/quicktime", "video"],
+    ["clip.webm", "video/webm", "video"],
+    ["clip.ogv", "video/ogg", "video"],
+    ["clip.avi", "video/x-msvideo", "video"],
+    ["clip.mkv", "video/x-matroska", "video"],
+    ["sound.mp3", "audio/mpeg", "audio"],
+    ["sound.m4a", "audio/mp4", "audio"],
+    ["sound.aac", "audio/aac", "audio"],
+    ["sound.wav", "audio/wav", "audio"],
+    ["sound.ogg", "audio/ogg", "audio"],
+    ["sound.oga", "audio/ogg", "audio"],
+    ["sound.opus", "audio/ogg", "audio"],
+    ["sound.flac", "audio/flac", "audio"],
+  ] as const)("classifies %s as shared inline media", async (filename, contentType, previewKind) => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: `Workspace Browser Media ${filename}`,
+      urlKey: deriveOrganizationUrlKey(`Workspace Browser Media ${filename}`),
+      issuePrefix: `WM${randomUUID().replaceAll("-", "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const mediaPath = path.join(resolveOrganizationWorkspaceRoot(orgId), "media", filename);
+    await fs.mkdir(path.dirname(mediaPath), { recursive: true });
+    await fs.writeFile(mediaPath, Buffer.from([0, 1, 2, 3]));
+
+    const detail = await workspaceBrowser.readFile(orgId, `media/${filename}`);
+
+    expect(detail).toEqual(expect.objectContaining({
+      filePath: `media/${filename}`,
+      rootExists: true,
+      content: null,
+      contentType,
+      previewKind,
+      message: null,
+      truncated: false,
+    }));
+    expect(detail.contentPath).toContain(`/api/orgs/${orgId}/workspace/file/content?`);
+    expect(detail.contentPath).toContain(`path=media%2F${filename}`);
+
+    const contentFile = await workspaceBrowser.resolveContentFile(orgId, `media/${filename}`);
+    expect(contentFile).toEqual(expect.objectContaining({
+      normalizedPath: `media/${filename}`,
+      originalFilename: filename,
+      contentType,
+      resolvedPath: await fs.realpath(mediaPath),
+      byteSize: 4,
+    }));
+  });
+
+  it("rejects traversal and symlinks that resolve outside the organization Library", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Workspace Browser Media Path Safety Org",
+      urlKey: deriveOrganizationUrlKey("Workspace Browser Media Path Safety Org"),
+      issuePrefix: "WMPS",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    const mediaDirectory = path.join(workspaceRoot, "media");
+    const outsideMediaPath = path.join(rudderHome, "outside-secret.mp4");
+    await fs.mkdir(mediaDirectory, { recursive: true });
+    await fs.writeFile(outsideMediaPath, Buffer.from("outside", "utf8"));
+    await fs.symlink(outsideMediaPath, path.join(mediaDirectory, "leak.mp4"));
+
+    await expect(workspaceBrowser.resolveContentFile(orgId, "../outside-secret.mp4"))
+      .rejects.toThrow("Requested path must stay inside the organization Library root");
+    await expect(workspaceBrowser.resolveContentFile(orgId, "media/leak.mp4"))
+      .rejects.toThrow("Requested path must stay inside the organization Library root");
+  });
+
   it("keeps non-image binary files out of inline preview", async () => {
     const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
     cleanupDirs.add(rudderHome);
