@@ -264,7 +264,7 @@ test("static acceptance checks cover every canonical route and generated active 
   );
 });
 
-test("static metadata checks reject canonical, hreflang, and anchor strings inside scripts", () => {
+test("static metadata checks reject non-rendered markup and links outside head", () => {
   const manifest = { base_url: "https://docs.rudderhq.dev" };
   const entry = { anchors: ["definition"], locale: "en", route: "/concepts/agents" };
   const fakeMarkup = [
@@ -273,11 +273,19 @@ test("static metadata checks reject canonical, hreflang, and anchor strings insi
     '<link rel="alternate" hreflang="zh-CN" href="https://docs.rudderhq.dev/zh/concepts/agents">',
     '<div id="definition"></div>',
   ].join("");
-  const html = `<html><head><script>const serialized = ${JSON.stringify(fakeMarkup)};</script></head><body></body></html>`;
+  for (const container of ["script", "style", "textarea", "xmp"]) {
+    const html = `<html><head><${container}>${fakeMarkup}</${container}></head><body></body></html>`;
+    assert.throws(
+      () => assertDocumentMetadata(html, entry, manifest),
+      /missing canonical/u,
+      `${container} content must not satisfy static metadata checks`,
+    );
+  }
 
   assert.throws(
-    () => assertDocumentMetadata(html, entry, manifest),
+    () => assertDocumentMetadata(`<html><head></head><body>${fakeMarkup}</body></html>`, entry, manifest),
     /missing canonical/u,
+    "link metadata outside head must not satisfy static metadata checks",
   );
 });
 
