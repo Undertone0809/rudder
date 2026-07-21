@@ -33,6 +33,10 @@
   "navbar": {
     "links": [
       {
+        "label": "Discord",
+        "href": "https://discord.gg/ZcfWwPVkUz"
+      },
+      {
         "label": "GitHub",
         "href": "https://github.com/Undertone0809/rudder"
       }
@@ -183,6 +187,7 @@
   },
   "footer": {
     "socials": {
+      "discord": "https://discord.gg/ZcfWwPVkUz",
       "github": "https://github.com/Undertone0809/rudder"
     },
     "links": [
@@ -227,6 +232,10 @@
       {
         "header": "Project",
         "items": [
+          {
+            "label": "Discord",
+            "href": "https://discord.gg/ZcfWwPVkUz"
+          },
           {
             "label": "About",
             "href": "/about"
