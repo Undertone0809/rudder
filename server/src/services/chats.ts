@@ -16,7 +16,7 @@ import {
   chatQueuedMessages,
   organizations
 } from "@rudderhq/db";
-import { chatInlineVisualMappingsFromStructuredPayload, parseCodexInlineVisualDirectives, parseRudderInlineVisualPlacements, rudderInlineVisualMappingsFromStructuredPayload, sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatProviderControlDisposition, type ChatQueuedMessage, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
+import { sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatProviderControlDisposition, type ChatQueuedMessage, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
 import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
