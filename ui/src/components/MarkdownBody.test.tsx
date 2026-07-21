@@ -283,6 +283,41 @@ async function advanceTimersAndFlush(ms: number) {
 }
 
 describe("MarkdownBody", () => {
+  it("renders a file-type icon for local file links with source locations", () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {"Open [Chat.parts.tsx](/Users/zeeland/projects/rudder-oss/ui/src/pages/Chat.parts.tsx:656)."}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const link = container.querySelector<HTMLAnchorElement>('a[href$="Chat.parts.tsx:656"]');
+    expect(link).not.toBeNull();
+    expect(link?.querySelector('[data-local-file-icon="code"]')).not.toBeNull();
+  });
+
+  it("renders extension-specific and fallback icons for local file links", () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {[
+            "[image](/tmp/image.png)",
+            "[archive](/tmp/archive.zip)",
+            "[sheet](/tmp/data.xlsx)",
+            "[document](/tmp/notes.md)",
+            "[code](/tmp/main.rs)",
+            "[unknown](/tmp/evidence.custom)",
+          ].join(" ")}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    for (const kind of ["image", "archive", "spreadsheet", "document", "code", "file"]) {
+      expect(container.querySelector(`[data-local-file-icon="${kind}"]`)).not.toBeNull();
+    }
+  });
+
   it("keeps a rendered Mermaid diagram mounted when its parent rerenders", async () => {
     function RerenderingParent() {
       const [draft, setDraft] = useState("");

@@ -1383,6 +1383,9 @@ Product model:
 
 - Rich references render as text-first inline tokens with a compact leading
   icon, canonical title/code text, and normal inline wrapping behavior.
+- Explicit absolute local-file Markdown links use the same inline grammar and
+  show an extension-appropriate code, image, document, spreadsheet, archive,
+  or generic file icon. Resolving the icon does not read the local filesystem.
 - Composer/editor surfaces and read-only markdown surfaces share the same
   visual grammar for the same reference type.
 - Issue references that carry status metadata show the issue status icon inline,
@@ -1399,6 +1402,9 @@ Flow:
    entity, preferring human titles over opaque ids when available.
 3. The token is displayed inline with the surrounding text and remains
    selectable/copyable as part of the editor or rendered body.
+4. When a rendered link is an explicit absolute local-file target, the renderer
+   classifies its icon from the normalized path and leaves filesystem access to
+   an explicit operator action under `CHAT.SIDE.PANEL.001`.
 
 Invariants:
 
@@ -1413,6 +1419,8 @@ Invariants:
   shows the shared token contract is wrong for that whole class of tokens.
 - New reference kinds must join the same token grammar instead of inventing
   separate pill, badge, or icon alignment behavior.
+- Unknown local-file suffixes use the generic file icon. File icons are
+  decorative and must not duplicate the accessible link label.
 - Human-readable entity labels take precedence over raw ids in user-facing
   tokens. Raw ids are acceptable only as fallback or secondary disambiguation.
 - Truncation in editors is only for labels long enough to threaten the current
@@ -1423,6 +1431,8 @@ Evidence:
 - CSS contract tests lock the composer token icon alignment and truncation
   behavior.
 - Markdown editor/body tests cover special markdown rendering consistency.
+- Local-file resolver and Markdown body tests cover encoded paths, source
+  locations, ambiguous colon-digit filenames, icon families, and fallback.
 - Chat message tests cover user-message issue reference status icons and their
   parity with assistant markdown rendering.
 - Chat rich-reference E2E covers real chat insertion and rendering behavior.
@@ -1902,6 +1912,10 @@ Product model:
   including PDFs. Truncated Library breadcrumbs reveal the complete
   Library-relative path on hover, and the file `Open` menu offers `Open in
   Library` alongside any Desktop app, IDE, file-browser, or terminal targets.
+- An explicit absolute local-file link in a visible Chat message opens a
+  read-only `local_file` target in that Chat's Side Panel context after an
+  unmodified operator click. Desktop loads it through the guarded local preview
+  bridge; Web and preview failures remain visible in the panel.
 - Markdown Library targets render as directly editable documents with autosave,
   undo/redo, visible save state, and explicit stale-write conflict resolution.
   The Side Panel preserves the operator's draft until a conditional write
@@ -1917,11 +1931,15 @@ Flow:
    panel add-tab affordance, or a supported internal reference in
    Chat/Messenger. Side Chat source-boundary links bypass this flow and navigate
    directly to their source Chat.
-2. The side-panel target parser normalizes the object into a stable tab key.
+2. The side-panel target parser normalizes the object into a stable tab key. For
+   an explicit absolute local-file Markdown target, URL-encoded path characters
+   are decoded safely and a trailing `:line[:column]` is removed only when the
+   displayed label confirms the basename before that suffix.
 3. If the target is already open, Rudder focuses the existing tab instead of
    duplicating it.
-4. The target view loads through the existing organization-scoped API for that
-   domain.
+4. Domain targets load through their existing organization-scoped APIs. An
+   ephemeral `local_file` target instead loads only through the guarded Desktop
+   preview bridge and never through a Rudder HTTP API.
 5. The panel renders the object in a compact workbench view at the default
    docked width and keeps the current board route stable. On desktop, its right
    edge stays attached to the workspace while the divider and panel left edge
@@ -2026,6 +2044,14 @@ Invariants:
   output, run-history, and dispatch semantics from `AUTOMATION.*`.
 - Side Panel Library views must preserve `LIBRARY.FILES.001` path safety,
   protected paths, previews, and stable reference behavior.
+- A Chat Markdown `local_file` target is ephemeral local Desktop state, not a
+  Library file. Rendering its link must not read the file; loading begins only
+  after an explicit operator click and stays behind the Desktop preview bridge.
+  It must not weaken Library organization scoping or protected-path rules.
+- Opening a Chat Markdown `local_file` target must preserve the current Chat
+  route, transcript, draft, scroll context, and Side Panel session. Web,
+  missing-file, inaccessible, unsupported, and malformed targets show a stable
+  in-panel error instead of navigating externally or failing silently.
 - Side Panel Markdown editing must preserve `LIBRARY.FILES.001` conditional
   write semantics. External updates visible to the server's guarded comparison,
   failed responses, and overlapping in-process saves must not silently discard
@@ -2118,6 +2144,9 @@ Evidence:
 - Chat attachment/side-panel tests and Side Panel E2E cover inline PDF rendering,
   complete Library path hover text, and full-Library navigation from the file
   `Open` menu.
+- Local-file resolver, Markdown body, Chat attachment/side-panel, and Side Panel
+  E2E tests cover file icons, source-location normalization, route preservation,
+  Desktop preview loading, Web fallback, and preview failures.
 - Chat attachment/side-panel tests and Side Panel E2E cover Markdown autosave,
   undo/redo, save errors, stale-write conflicts, both conflict decisions, and
   in-flight responses arriving after conflict resolution.

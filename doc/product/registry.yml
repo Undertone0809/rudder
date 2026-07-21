@@ -1184,16 +1184,20 @@ contracts:
       - ui/src/index.css
       - ui/src/components/MarkdownBody.tsx
       - ui/src/components/MilkdownMarkdownEditor.tsx
+      - ui/src/lib/local-file-targets.ts
       - ui/src/pages/Chat.messages.tsx
       - ui/src/pages/Chat.tsx
     related_tests:
       - ui/src/lib/index-css.test.ts
       - ui/src/components/MilkdownMarkdownEditor.test.ts
       - ui/src/components/MarkdownBody.test.tsx
+      - ui/src/lib/local-file-targets.test.ts
       - ui/src/pages/Chat.messages.test.tsx
       - tests/e2e/chat-rich-references.spec.ts
+      - tests/e2e/chat-side-panel.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-07-21-chat-local-file-side-panel.md
   CHAT.WEBSITE.LINK.ICON.001:
     owner: product
     domain: collaboration
@@ -1265,6 +1269,7 @@ contracts:
       - desktop/src/preload.ts
       - packages/shared/src/browser-shortcuts.ts
       - ui/src/components/DesktopBrowserLinkBridge.tsx
+      - ui/src/components/transcript/TranscriptLocalFilePreview.tsx
       - ui/src/lib/browser-side-panel.ts
       - ui/src/lib/desktop-browser-link-router.ts
       - ui/src/lib/side-panel-targets.ts
@@ -1290,6 +1295,7 @@ contracts:
       - desktop/src/side-panel-close-shortcut.test.ts
       - packages/shared/src/browser-shortcuts.test.ts
       - ui/src/components/DesktopBrowserLinkBridge.test.tsx
+      - ui/src/components/transcript/TranscriptLocalFilePreview.test.tsx
       - ui/src/lib/browser-side-panel.test.ts
       - ui/src/lib/desktop-browser-link-router.test.ts
       - ui/src/lib/side-panel-targets.test.ts
@@ -1308,6 +1314,7 @@ contracts:
       - doc/plans/2026-07-12-built-in-browser.md
       - doc/plans/2026-07-19-side-chat.md
       - doc/plans/2026-07-20-messenger-saved-views.md
+      - doc/plans/2026-07-21-chat-local-file-side-panel.md
   MESSENGER.ATTENTION.001:
     owner: product
     domain: collaboration

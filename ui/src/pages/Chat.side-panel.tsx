@@ -12,6 +12,7 @@ import { MarkdownEditor, type MarkdownEditorRef } from "@/components/MarkdownEdi
 import { PriorityIcon } from "@/components/PriorityIcon";
 import { SideChatPanelView } from "@/components/side-panel/SideChatPanelView";
 import { StatusBadge } from "@/components/StatusBadge";
+import { TranscriptLocalFilePreview } from "@/components/transcript/TranscriptLocalFilePreview";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -1945,6 +1946,7 @@ export function ChatSidePanel({
   const sideChatTarget = activeTarget?.kind === "side_chat" ? activeTarget : null;
   const automationTarget = activeTarget?.kind === "automation" ? activeTarget : null;
   const libraryFileTarget = activeTarget?.kind === "library_file" ? activeTarget : null;
+  const localFileTarget = activeTarget?.kind === "local_file" ? activeTarget : null;
   const libraryDirectoryTarget = activeTarget?.kind === "library_directory" ? activeTarget : null;
   const libraryEntryTarget = activeTarget?.kind === "library_entry" ? activeTarget : null;
   const browserTarget = activeTarget?.kind === "browser" ? activeTarget : null;
@@ -2481,6 +2483,12 @@ export function ChatSidePanel({
               key={libraryFile.filePath}
               libraryFile={libraryFile}
               organizationId={selectedOrganizationId}
+            />
+          ) : localFileTarget ? (
+            <TranscriptLocalFilePreview
+              key={localFileTarget.filePath}
+              targetPath={localFileTarget.filePath}
+              label={localFileTarget.label}
             />
           ) : libraryDirectoryTarget ? (
             <div className="flex min-h-full flex-col" data-testid="chat-side-panel-library-directory-view">

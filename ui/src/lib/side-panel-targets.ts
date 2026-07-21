@@ -45,6 +45,11 @@ export type SidePanelTarget =
       label: string;
     }
   | {
+      kind: "local_file";
+      filePath: string;
+      label: string;
+    }
+  | {
       kind: "library_directory";
       directoryPath: string;
       label: string;
@@ -97,6 +102,7 @@ export function sidePanelTargetKey(target: SidePanelTarget) {
   if (target.kind === "library_document") return `library-document:${target.documentId}`;
   if (target.kind === "library_entry") return `library-entry:${target.entryId}:${target.path ?? ""}`;
   if (target.kind === "library_file") return `library-file:${target.filePath}`;
+  if (target.kind === "local_file") return `local-file:${target.filePath}`;
   if (target.kind === "library_directory") return `library-directory:${target.directoryPath}`;
   if (target.kind === "browser") return `browser-tab:${target.tabId}`;
   return `placeholder:${target.targetKind}`;
@@ -119,6 +125,7 @@ export function sidePanelFullPageHref(target: SidePanelTarget) {
   }
   if (target.kind === "library_document") return `/library?document=${encodeURIComponent(target.documentId)}`;
   if (target.kind === "library_file") return `/library?path=${encodeURIComponent(target.filePath)}`;
+  if (target.kind === "local_file") return null;
   if (target.kind === "library_directory") {
     return target.directoryPath
       ? `/library?directory=${encodeURIComponent(target.directoryPath)}`
