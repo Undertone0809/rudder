@@ -526,6 +526,7 @@ describe("index.css motion rules", () => {
 
     expect(jumpHighlight).toContain("border-width: 1px");
     expect(jumpHighlight).toContain("border-style: solid");
+    expect(jumpHighlight).toContain("border-radius: var(--radius-lg)");
     expect(jumpHighlight).toContain("border-color:");
     expect(jumpHighlight).toContain("background:");
     expect(jumpHighlight).toContain("box-shadow:");

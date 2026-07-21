@@ -66,16 +66,24 @@ async function expectMessageJumpHighlightStylesTargetBlock(page: Page, messageId
     if (!target) return null;
     const highlight = window.getComputedStyle(target);
     const pseudo = window.getComputedStyle(target, "::before");
+    const radiusProbe = document.createElement("div");
+    radiusProbe.style.borderRadius = "var(--radius-lg)";
+    document.body.append(radiusProbe);
+    const expectedBorderRadius = window.getComputedStyle(radiusProbe).borderRadius;
+    radiusProbe.remove();
     return {
       backgroundColor: highlight.backgroundColor,
+      borderRadius: highlight.borderRadius,
       borderStyle: highlight.borderStyle,
       borderWidth: highlight.borderTopWidth,
       boxShadow: highlight.boxShadow,
+      expectedBorderRadius,
       pseudoContent: pseudo.content,
     };
   }, messageId);
 
   expect(highlightStyle).not.toBeNull();
+  expect(highlightStyle?.borderRadius).toBe(highlightStyle?.expectedBorderRadius);
   expect(highlightStyle?.borderStyle).toBe("solid");
   expect(highlightStyle?.borderWidth).toBe("1px");
   expect(highlightStyle?.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");

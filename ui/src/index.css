@@ -2448,6 +2448,7 @@
     position: relative;
     border-width: 1px;
     border-style: solid;
+    border-radius: var(--radius-lg);
     border-color: color-mix(in oklab, var(--accent-base) 46%, var(--border-soft));
     background: color-mix(in oklab, var(--accent-base) 18%, var(--surface-elevated));
     box-shadow: var(--shadow-sm), inset 0 0 0 1px color-mix(in oklab, var(--accent-base) 16%, transparent);
