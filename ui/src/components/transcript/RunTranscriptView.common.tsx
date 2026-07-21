@@ -334,7 +334,8 @@ export function isInternalTranscriptLifecycleEntry(entry: TranscriptEntry): bool
   const text = compactWhitespace(entry.text).toLowerCase();
   return text === "reasoning started"
     || text === "reasoning completed"
-    || /^item (?:started|completed): reasoning(?:\s+\([^)]*\))?$/.test(text);
+    || /^item (?:started|completed): reasoning(?:\s+\([^)]*\))?$/.test(text)
+    || /^item (?:started|completed): user[_-]?message(?:\s+\([^)]*\))?$/.test(text);
 }
 
 export function isTurnStartedText(value: string): boolean {

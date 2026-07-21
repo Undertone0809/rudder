@@ -118,6 +118,10 @@ function parseTodoListItem(item: Record<string, unknown>, ts: string): Transcrip
 function parseCodexItemUpdated(item: Record<string, unknown>, ts: string): TranscriptEntry[] {
   const itemType = asString(item.type);
 
+  if (itemType === "userMessage" || itemType === "user_message") {
+    return [];
+  }
+
   if (itemType === "todo_list") {
     return parseTodoListItem(item, ts);
   }
@@ -295,6 +299,10 @@ function parseCodexItem(
   phase: "started" | "completed",
 ): TranscriptEntry[] {
   const itemType = asString(item.type);
+
+  if (itemType === "userMessage" || itemType === "user_message") {
+    return [];
+  }
 
   if (itemType === "todo_list") {
     return parseTodoListItem(item, ts);

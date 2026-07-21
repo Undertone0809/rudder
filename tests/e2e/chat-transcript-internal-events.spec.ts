@@ -46,6 +46,16 @@ test("hides internal lifecycle and result protocol entries from Messenger proces
       __chatTranscript: [
         { kind: "system", ts: "2026-07-19T00:00:00.000Z", text: "turn started" },
         {
+          kind: "system",
+          ts: "2026-07-19T00:00:00.250Z",
+          text: "item started: userMessage (id=user-message-1)",
+        },
+        {
+          kind: "system",
+          ts: "2026-07-19T00:00:00.500Z",
+          text: "item completed: userMessage (id=user-message-1)",
+        },
+        {
           kind: "tool_call",
           ts: "2026-07-19T00:00:01.000Z",
           name: "command_execution",
@@ -94,8 +104,10 @@ test("hides internal lifecycle and result protocol entries from Messenger proces
   await expect(transcript.getByText("Ran printf done", { exact: true })).toBeVisible();
   await expect(transcript.getByText(/reasoning started/i)).toHaveCount(0);
   await expect(transcript.getByText(/reasoning completed/i)).toHaveCount(0);
+  await expect(transcript.getByText("UserMessage", { exact: true })).toHaveCount(0);
   await expect(transcript.getByText(/RUDDER_RESULT/i)).toHaveCount(0);
   await expect(transcript.getByText(/^System$/)).toHaveCount(0);
+  await page.screenshot({ path: "/tmp/rudder-user-message-lifecycle-hidden.png", fullPage: true });
 });
 
 test("does not show an empty transcript block when Messenger has only internal lifecycle entries", async ({ page }) => {

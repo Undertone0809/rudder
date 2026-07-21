@@ -100,6 +100,18 @@ describe("codex_local stale session detection", () => {
 });
 
 describe("codex_local ui stdout parser", () => {
+  it.each(["userMessage", "user_message"])("drops provider %s lifecycle items", (itemType) => {
+    const ts = "2026-07-22T00:00:00.000Z";
+    const item = {
+      id: "user-message-1",
+      type: itemType,
+      content: [{ type: "text", text: "Already visible in the Chat user bubble." }],
+    };
+
+    expect(parseCodexStdoutLine(JSON.stringify({ type: "item.started", item }), ts)).toEqual([]);
+    expect(parseCodexStdoutLine(JSON.stringify({ type: "item.completed", item }), ts)).toEqual([]);
+  });
+
   it("parses turn and reasoning lifecycle events", () => {
     const ts = "2026-02-20T00:00:00.000Z";
 
