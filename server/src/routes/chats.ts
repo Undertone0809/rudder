@@ -32,6 +32,7 @@ import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import { assertTimeZone } from "../services/automations.scheduler.js";
 import { chatAgentRunService } from "../services/chat-agent-runs.js";
+import { validateCron } from "../services/cron.js";
 import {
   CHAT_ASSISTANT_USER_ERROR_MESSAGE,
   chatAssistantErrorForLog,

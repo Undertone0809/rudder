@@ -193,6 +193,7 @@ vi.mock("../services/index.js", () => ({
 
 vi.mock("../services/chat-assistant.js", () => ({
   CHAT_ASSISTANT_USER_ERROR_MESSAGE: "The assistant hit a system-level issue. Rudder saved the details for diagnostics; retry when ready.",
+  chatAssistantErrorForLog: (error: unknown) => error,
   ChatAssistantStreamError: class ChatAssistantStreamError extends Error {
     partialBody: string;
     partialBodyUserVisible: boolean;
