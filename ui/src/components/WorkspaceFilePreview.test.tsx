@@ -97,6 +97,7 @@ async function renderPreview(
             mode={mode}
             onModeChange={onModeChange}
             htmlOpenAction={<button type="button" data-testid="test-file-open">Open</button>}
+            mediaOpenAction={<button type="button" data-testid="test-media-open">Open media</button>}
             testIdPrefix="test-file"
           />
         </ImagePreviewProvider>
@@ -443,6 +444,26 @@ describe("WorkspaceFilePreview", () => {
     expect(pdfPreview?.tagName).toBe("CANVAS");
     expect(pdfPreview?.getAttribute("data-pdf-src")).toBe("/api/report.pdf");
     expect(pdfPreview?.getAttribute("aria-label")).toBe("reports/report.pdf");
+  });
+
+  it.each([
+    ["video", "reports/demo.mp4", "video/mp4", "VIDEO"],
+    ["audio", "reports/demo.mp3", "audio/mpeg", "AUDIO"],
+  ] as const)("delegates %s files to the shared media renderer", async (previewKind, filePath, contentType, tagName) => {
+    const contentPath = `/api/orgs/org-1/workspace/file/content?path=${encodeURIComponent(filePath)}`;
+    const container = await renderPreview(workspaceFile({
+      filePath,
+      content: null,
+      contentType,
+      previewKind,
+      contentPath,
+    }));
+
+    const preview = container.querySelector<HTMLElement>(`[data-testid='test-file-${previewKind}-preview']`);
+    expect(preview?.tagName).toBe(tagName);
+    expect(preview?.getAttribute("src")).toBe(contentPath);
+    expect(container.querySelector(`[data-workspace-media-preview='${previewKind}']`)).not.toBeNull();
+    expect(container.querySelector("[data-testid='test-media-open']")).not.toBeNull();
   });
 
   it("shows an explicit fallback for unsupported binary files", async () => {

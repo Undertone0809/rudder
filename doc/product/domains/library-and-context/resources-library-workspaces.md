@@ -29,6 +29,7 @@ related_code:
   - ui/src/components/InspectableImage.tsx
   - ui/src/context/ImagePreviewContext.tsx
   - ui/src/components/WorkspaceFilePreview.tsx
+  - ui/src/components/WorkspaceMediaPreview.tsx
   - ui/src/components/WorkspacePdfPreview.tsx
   - ui/src/components/workspaces/WorkspaceLaunchControls.tsx
   - ui/src/lib/workspace-preferences.ts
@@ -51,6 +52,7 @@ related_tests:
   - ui/src/components/ImagePreviewDialog.test.tsx
   - ui/src/context/ImagePreviewContext.test.tsx
   - ui/src/components/WorkspaceFilePreview.test.tsx
+  - ui/src/components/WorkspaceMediaPreview.test.tsx
   - ui/src/components/WorkspacePdfPreview.test.tsx
   - ui/src/components/workspaces/WorkspaceLaunchControls.test.tsx
   - ui/src/lib/workspace-preferences.test.ts
@@ -58,6 +60,8 @@ related_tests:
   - ui/src/pages/Chat.attachment-preview.test.tsx
   - ui/src/components/NewProjectDialog.test.tsx
   - tests/e2e/organization-workspaces-image-preview.spec.ts
+  - tests/e2e/library-media-preview.spec.ts
+  - server/src/__tests__/organization-workspace-media-routes.test.ts
   - tests/e2e/organization-workspaces-launcher.spec.ts
   - tests/e2e/new-project-resource-popover-scroll.spec.ts
   - tests/e2e/workspace-shell.spec.ts
@@ -171,6 +175,18 @@ Product model:
   breadcrumb exposes the complete Library-relative path on hover, and the
   `Open` menu includes `Open in Library` so the operator can move from adjacent
   inspection to the same file in the full Library work surface.
+- Recognized Library audio and video files use one shared browser-native media
+  renderer in the full Library work surface and Messenger Side Panel. The
+  renderer exposes native controls, never autoplays, preloads metadata only,
+  and preserves the current file selection or Side Panel tab when playback
+  fails. Codec/load failures show a compatibility-specific recovery state with
+  Download and the contextual Open actions available on that surface.
+- The validated workspace content endpoint streams recognized image, PDF,
+  audio, and video files with inline, private, `nosniff` responses. It supports
+  HEAD and one byte range so native media seeking does not require reading or
+  returning the whole file. Recognized AVI/MKV and other browser-dependent
+  containers still enter media recovery rather than the generic binary state;
+  classification does not promise that the browser can decode their codecs.
 - Markdown files opened from Messenger render as directly editable documents in
   the Side Panel. Autosave uses the last confirmed server content as a write
   precondition so changes already visible at the server's final guarded read
@@ -211,11 +227,15 @@ Flow:
    replace it with the latest server content (`Use latest`). If a save response
    is ambiguous, Rudder rereads the file before deciding whether the save failed.
 10. From either Library surface, selecting an image opens the shared image
-   overlay without replacing the current Library route or Side Panel target.
-11. Opening a supported HTML file delegates website rendering and inspection
+    overlay without replacing the current Library route or Side Panel target.
+11. Opening recognized audio or video delegates playback and codec recovery to
+    the shared media renderer. Native seek requests use single byte ranges on
+    the validated organization content endpoint; switching files resets player
+    state without autoplaying the next file.
+12. Opening a supported HTML file delegates website rendering and inspection
     controls to `LIBRARY.WEB.PREVIEW.001` while Open continues to target the
     original validated Library file.
-12. When a resolved full-Library file has no remaining built-in presentation
+13. When a resolved full-Library file has no remaining built-in presentation
     capability, Desktop derives launcher choices from the current trusted
     bridge and detected targets. Direct activation reuses the current primary;
     choosing a menu target launches it immediately and remembers it only after
@@ -262,6 +282,19 @@ Invariants:
   read-only text presentations keep precedence. Loading, failed reads, missing
   files, and missing Library roots keep their own states and must not expose the
   fallback launcher.
+- Recognized media must remain inside the media presentation branch even when
+  the browser cannot decode it. Neither codec failure nor a known-but-weakly
+  supported container may fall through to the generic Docs binary message or
+  the terminal unsupported-file launcher.
+- Media responses must preserve organization access and normalized Library path
+  validation, expose no absolute filesystem path, advertise byte ranges, reject
+  malformed/multiple/unsatisfiable ranges with `416`, and retain inline
+  disposition, private caching, and `nosniff` headers for full and partial
+  responses.
+- The shared player must use native controls, `preload="metadata"`, responsive
+  sizing, accessible file-specific labels, no autoplay, and per-file error
+  state. Full Library and Side Panel may inject different Open actions, but
+  their playback and compatibility failure semantics must stay identical.
 - Unsupported-file launch controls require an existing trusted workspace root
   and the Desktop file-open bridge. The default app is always available under
   those conditions; IDEs are drawn from compatible detected targets, and
@@ -312,6 +345,16 @@ Evidence:
 - Messenger Side Panel component and E2E coverage prove PDF files render inline,
   long breadcrumbs reveal the complete Library path on hover, and `Open in
   Library` opens the selected file in the full Library work surface.
+- Workspace browser service tests cover every recognized audio/video extension,
+  MIME type, preview kind, content path, and unknown-binary fallback. Media
+  route tests cover full/HEAD delivery, bounded/open-ended/suffix ranges,
+  invalid and unsatisfiable ranges, response safety headers, unsupported MIME
+  rejection, and cross-organization authorization.
+- Shared media component and Library integration tests prove native attributes,
+  no autoplay, accessible names, file-switch reset, codec recovery actions, and
+  reuse from both terminal presentation paths. Library media E2E proves MP4/WAV
+  playback, byte-range seeking, Library/Messenger switching, undecodable MOV
+  recovery, and route/tab preservation.
 - Messenger Side Panel component and E2E coverage prove Markdown editing,
   autosave failure recovery, stale-write conflict detection, draft preservation,
   both conflict decisions, ambiguous-response confirmation, and in-flight save

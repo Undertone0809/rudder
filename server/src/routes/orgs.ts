@@ -23,7 +23,8 @@ import {
   updateOrganizationWorkspaceFileSchema,
   upsertOrganizationIntelligenceProfileSchema,
 } from "@rudderhq/shared";
-import { Router, type Request } from "express";
+import { Router, type NextFunction, type Request, type Response } from "express";
+import { createReadStream } from "node:fs";
 import path from "node:path";
 import { forbidden, unprocessable } from "../errors.js";
 import { validate } from "../middleware/validate.js";
@@ -69,6 +70,42 @@ function requestBrowserOrigin(req: Request) {
   } catch {
     return "";
   }
+}
+
+type WorkspaceContentRange = { start: number; end: number };
+
+function parseWorkspaceContentRange(value: string | undefined, byteSize: number): WorkspaceContentRange | "invalid" | null {
+  if (!value) return null;
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(value.trim());
+  if (!match || byteSize <= 0) return "invalid";
+  const [, startValue = "", endValue = ""] = match;
+  if (!startValue && !endValue) return "invalid";
+
+  if (!startValue) {
+    const suffixLength = Number(endValue);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return "invalid";
+    return {
+      start: Math.max(0, byteSize - suffixLength),
+      end: byteSize - 1,
+    };
+  }
+
+  const start = Number(startValue);
+  if (!Number.isSafeInteger(start) || start < 0 || start >= byteSize) return "invalid";
+  const requestedEnd = endValue ? Number(endValue) : byteSize - 1;
+  if (!Number.isSafeInteger(requestedEnd) || requestedEnd < start) return "invalid";
+  return {
+    start,
+    end: Math.min(requestedEnd, byteSize - 1),
+  };
+}
+
+function isInlineWorkspaceContentType(contentType: string) {
+  const normalized = contentType.toLowerCase();
+  return normalized.startsWith("image/")
+    || normalized.startsWith("video/")
+    || normalized.startsWith("audio/")
+    || normalized === "application/pdf";
 }
 
 export function organizationRoutes(
@@ -536,7 +573,7 @@ export function organizationRoutes(
     res.json(result);
   });
 
-  router.get("/:orgId/workspace/file/content", async (req, res) => {
+  const sendWorkspaceFileContent = async (req: Request, res: Response, next: NextFunction) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     if (req.actor.type !== "agent") {
@@ -544,23 +581,52 @@ export function organizationRoutes(
     }
     const filePath = typeof req.query.path === "string" ? req.query.path : "";
     assertAgentLibraryProjectPath(req, filePath, "file");
-    const workspaceFile = await workspaceBrowser.readAttachmentFile(orgId, filePath);
-    const normalizedContentType = workspaceFile.contentType.toLowerCase();
-    if (!normalizedContentType.startsWith("image/") && normalizedContentType !== "application/pdf") {
+    const workspaceFile = await workspaceBrowser.resolveContentFile(orgId, filePath);
+    if (!isInlineWorkspaceContentType(workspaceFile.contentType)) {
       res.status(415).json({ error: "Workspace file is not an inline preview" });
       return;
     }
 
+    const range = parseWorkspaceContentRange(req.header("range"), workspaceFile.byteSize);
     res.setHeader("Content-Type", workspaceFile.contentType);
-    res.setHeader("Content-Length", String(workspaceFile.buffer.length));
+    res.setHeader("Accept-Ranges", "bytes");
     res.setHeader("Cache-Control", "private, max-age=60");
     res.setHeader("X-Content-Type-Options", "nosniff");
     if (workspaceFile.contentType === "image/svg+xml") {
       res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'");
     }
-    res.setHeader("Content-Disposition", `inline; filename="${workspaceFile.originalFilename.replaceAll("\"", "")}"`);
-    res.send(workspaceFile.buffer);
-  });
+    const safeFilename = workspaceFile.originalFilename.replace(/["\r\n]/g, "");
+    res.setHeader("Content-Disposition", `inline; filename="${safeFilename}"`);
+
+    if (range === "invalid") {
+      res.status(416);
+      res.setHeader("Content-Range", `bytes */${workspaceFile.byteSize}`);
+      res.setHeader("Content-Length", "0");
+      res.end();
+      return;
+    }
+
+    const start = range?.start ?? 0;
+    const end = range?.end ?? Math.max(0, workspaceFile.byteSize - 1);
+    const contentLength = workspaceFile.byteSize === 0 ? 0 : end - start + 1;
+    if (range) {
+      res.status(206);
+      res.setHeader("Content-Range", `bytes ${start}-${end}/${workspaceFile.byteSize}`);
+    }
+    res.setHeader("Content-Length", String(contentLength));
+    if (req.method === "HEAD" || contentLength === 0) {
+      res.end();
+      return;
+    }
+
+    const stream = createReadStream(workspaceFile.resolvedPath, { start, end });
+    stream.once("error", next);
+    stream.pipe(res);
+  };
+
+  router.route("/:orgId/workspace/file/content")
+    .get(sendWorkspaceFileContent)
+    .head(sendWorkspaceFileContent);
 
   if (workspacePreview) {
     router.post(

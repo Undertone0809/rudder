@@ -55,9 +55,11 @@ import { MarkdownEditor, type InlineTokenClickEvent, type MarkdownEditorRef, typ
 import { PageSkeleton } from "../components/PageSkeleton";
 import { getWorkspaceCodeLanguageLabel, isWorkspaceCodeFilePath, WorkspaceCodeEditor } from "../components/WorkspaceCodeEditor";
 import { WorkspaceHtmlPreview, WorkspaceHtmlPreviewToolbar } from "../components/WorkspaceHtmlPreview";
+import { WorkspaceMediaPreview } from "../components/WorkspaceMediaPreview";
 import { WorkspacePdfPreview } from "../components/WorkspacePdfPreview";
 import {
   UnsupportedWorkspaceFileLauncher,
+  WorkspaceFileOpenMenu,
   WorkspaceLaunchMenu,
   WorkspaceLaunchTargetIcon,
 } from "../components/workspaces/WorkspaceLaunchControls";
@@ -2835,6 +2837,27 @@ export function OrganizationWorkspaceBrowser({
                     title={selectedFilePath ?? "Workspace PDF preview"}
                   />
                 </div>
+              ) : (selectedFileDetail?.previewKind === "video" || selectedFileDetail?.previewKind === "audio")
+                && selectedFileDetail.contentPath ? (
+                <WorkspaceMediaPreview
+                  key={`${viewedOrganizationId}:${selectedFileDetail.filePath}`}
+                  kind={selectedFileDetail.previewKind}
+                  src={selectedFileDetail.contentPath}
+                  contentType={selectedFileDetail.contentType}
+                  title={selectedFilePath ?? `Library ${selectedFileDetail.previewKind}`}
+                  openAction={(
+                    <WorkspaceFileOpenMenu
+                      targets={selectedUnsupportedFileLaunchTargets}
+                      openingTargetId={openingWorkspaceTargetId}
+                      onOpenTarget={(target) => {
+                        void handleOpenUnsupportedFileTarget(selectedFilePath, target);
+                      }}
+                      testId="org-workspaces-media-open-menu"
+                    />
+                  )}
+                  className="h-full min-h-[420px]"
+                  testId={`org-workspaces-${selectedFileDetail.previewKind}-preview`}
+                />
               ) : selectedFileDetail?.content ? (
                 <div
                   ref={setEditorScrollElementRef}
